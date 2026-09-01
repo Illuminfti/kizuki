@@ -50,3 +50,14 @@ export { isRfc3339 } from "./util/time";
 export { ulid } from "./util/ulid";
 export { isNonEmptyString, isPlainObject } from "./util/validate";
 export type { ValidationResult } from "./util/validate";
+
+export { openLedger } from "./ledger/db";
+export { accept, count, readSince, replay } from "./ledger/ledger";
+export type {
+  AcceptDependencies,
+  AcceptResult,
+  LedgerCursor,
+  ReplayFilter,
+} from "./ledger/ledger";
+export { purgeEvents } from "./ledger/purge";
+export type { PurgeFilter, PurgeReceipt } from "./ledger/purge";
