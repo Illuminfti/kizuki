@@ -1,0 +1,20 @@
+name: ci
+on:
+  push: { branches: [main] }
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
+      - run: bun install --frozen-lockfile || bun install
+      - run: bun run typecheck
+      - run: bun test
+      - name: zero-phone-home dependency assertion
+        run: |
+          ! grep -rE '"(posthog|@sentry|sentry|@amplitude|mixpanel|segment)' packages/*/package.json
+      - name: estate-identifier denylist
+        run: |
+          ! grep -rniE 'illumi|hermes|ika-hetzner|albedo|gbrain' packages/ docs/ README.md --include='*.ts' --include='*.md' --include='*.json'
