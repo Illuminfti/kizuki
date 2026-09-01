@@ -4,7 +4,8 @@
   "workspaces": ["packages/*"],
   "scripts": {
     "test": "bun test",
-    "typecheck": "bunx tsc --noEmit"
+    "typecheck": "bunx tsc --noEmit",
+    "verify": "bash scripts/verify.sh"
   },
   "devDependencies": {
     "typescript": "^5.9.0",
