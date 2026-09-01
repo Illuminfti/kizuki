@@ -108,3 +108,37 @@ export type { TimelineEntry, TimelineOptions } from "./query";
 
 export { rebuildDerived } from "./derived";
 export type { DerivedRebuildResult } from "./derived";
+
+export {
+  DEFAULT_GRANT,
+  OWNER,
+  SENSITIVITY_ORDER,
+  TOOLS,
+  addAgent,
+  authenticate,
+  authorize,
+  checkRate,
+  filterServable,
+  getAgent,
+  initAgents,
+  listAudit,
+  listAgents,
+  recordAudit,
+  revokeAgent,
+  rotateToken,
+  setGrant,
+  shapeArguments,
+  toolAllowed,
+} from "./agents";
+export type {
+  Agent,
+  AuditDenial,
+  AuditItem,
+  AuditRow,
+  DenyReason,
+  Grant,
+  Principal,
+  Sensitivity,
+  Servable,
+  Tool,
+} from "./agents";
