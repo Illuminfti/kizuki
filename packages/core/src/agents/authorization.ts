@@ -1,4 +1,4 @@
-import { rfc3339Millis } from "./time";
+import { compareRfc3339, rfc3339Millis } from "./time";
 import { SENSITIVITY_ORDER } from "./types";
 import type {
   DenyReason,
@@ -49,17 +49,16 @@ export function authorize(grant: Grant, item: Servable): Authorization {
     if (item.occurred_at === undefined) {
       return { allow: false, reason: "time_out_of_scope" };
     }
-    let occurredAt: number;
     try {
-      occurredAt = rfc3339Millis(item.occurred_at, "occurred_at");
+      rfc3339Millis(item.occurred_at, "occurred_at");
     } catch {
       return { allow: false, reason: "time_out_of_scope" };
     }
     if (
       (grant.since !== null &&
-        occurredAt < rfc3339Millis(grant.since, "since")) ||
+        compareRfc3339(item.occurred_at, "occurred_at", grant.since, "since") < 0) ||
       (grant.until !== null &&
-        occurredAt > rfc3339Millis(grant.until, "until"))
+        compareRfc3339(item.occurred_at, "occurred_at", grant.until, "until") > 0)
     ) {
       return { allow: false, reason: "time_out_of_scope" };
     }

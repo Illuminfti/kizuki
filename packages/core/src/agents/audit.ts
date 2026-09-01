@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { isPlainObject } from "../util/validate";
 import { ulid } from "../util/ulid";
+import { sha256 } from "./hash";
 import { getAgent } from "./identity";
 import { rfc3339Millis } from "./time";
 import { TOOLS } from "./types";
@@ -13,6 +14,8 @@ import type {
 } from "./types";
 
 const SHORT_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$/;
+const ID_ARRAY_KEY =
+  /^(?:id|ids|[a-z][a-z0-9_]*_ids|subjects|types|tools|provenance)$/;
 
 interface StoredAuditRow {
   audit_id: string;
@@ -24,11 +27,7 @@ interface StoredAuditRow {
   at: string;
 }
 
-function sha256(value: string): string {
-  return new Bun.CryptoHasher("sha256").update(value).digest("hex");
-}
-
-function shapeValue(value: unknown): unknown {
+function shapeValue(value: unknown, key: string | null): unknown {
   if (typeof value === "string") {
     return value.length === 0
       ? ""
@@ -40,6 +39,8 @@ function shapeValue(value: unknown): unknown {
   if (typeof value === "boolean" || value === null) return value;
   if (Array.isArray(value)) {
     if (
+      key !== null &&
+      ID_ARRAY_KEY.test(key) &&
       value.length <= 8 &&
       value.every(
         (entry) => typeof entry === "string" && SHORT_ID.test(entry),
@@ -47,12 +48,12 @@ function shapeValue(value: unknown): unknown {
     ) {
       return [...value];
     }
-    return value.map(shapeValue);
+    return value.map((nested) => shapeValue(nested, null));
   }
   if (isPlainObject(value)) {
     const shaped: Record<string, unknown> = {};
     for (const [key, nested] of Object.entries(value)) {
-      shaped[key] = shapeValue(nested);
+      shaped[key] = shapeValue(nested, key);
     }
     return shaped;
   }
@@ -64,7 +65,7 @@ export function shapeArguments(
 ): Record<string, unknown> {
   const shaped: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(args)) {
-    shaped[key] = shapeValue(value);
+    shaped[key] = shapeValue(value, key);
   }
   return shaped;
 }

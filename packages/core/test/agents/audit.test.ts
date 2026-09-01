@@ -40,21 +40,23 @@ describe("shapeArguments", () => {
         include_archived: false,
         empty: "",
         subjects: ["person:ada", "org:acme"],
+        page_ids: ["page-1"],
       }),
     ).toEqual({
       limit: 12,
       include_archived: false,
       empty: "",
       subjects: ["person:ada", "org:acme"],
+      page_ids: ["page-1"],
     });
   });
 
-  test("hashes strings in arrays that are not bounded short ids", () => {
-    const text = "a phrase with spaces";
-    const shaped = shapeArguments({ values: [text] });
+  test("hashes strings in arrays that are not declared id collections", () => {
+    const text = "secret-1";
+    const shaped = shapeArguments({ queries: [text] });
     expect(JSON.stringify(shaped)).not.toContain(text);
     expect(shaped).toEqual({
-      values: [
+      queries: [
         {
           len: text.length,
           sha256: new Bun.CryptoHasher("sha256").update(text).digest("hex"),

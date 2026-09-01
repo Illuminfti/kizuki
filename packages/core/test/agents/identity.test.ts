@@ -118,7 +118,13 @@ describe("agent identity", () => {
     const target = agentsDb();
     addAgent(target, "target-reader");
 
-    expect(authenticate(target, token)).toBeNull();
+    const principal = authenticate(target, token);
+    expect(principal).toBeNull();
+    expect(
+      principal === null
+        ? { allow: false, reason: "unknown_agent" as const }
+        : { allow: true },
+    ).toEqual({ allow: false, reason: "unknown_agent" });
     source.close();
     target.close();
   });
@@ -136,6 +142,12 @@ describe("agent identity", () => {
     const db = agentsDb();
     addAgent(db, "reader-1");
     expect(() => addAgent(db, "reader-1")).toThrow(/already exists/);
+    db.close();
+  });
+
+  test("reserves the owner principal name", () => {
+    const db = agentsDb();
+    expect(() => addAgent(db, "owner")).toThrow(/reserved/);
     db.close();
   });
 
@@ -231,6 +243,13 @@ describe("grants", () => {
       {
         since: "2026-01-01T01:00:00Z",
         until: "2026-01-01T01:30:00+01:00",
+      },
+    ],
+    [
+      "sub-millisecond reversed bounds",
+      {
+        since: "2026-01-01T00:00:00.0009Z",
+        until: "2026-01-01T00:00:00.0001Z",
       },
     ],
   ];

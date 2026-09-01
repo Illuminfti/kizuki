@@ -1,7 +1,8 @@
 import type { Database } from "bun:sqlite";
 import { timingSafeEqual } from "node:crypto";
 import { ulid } from "../util/ulid";
-import { rfc3339Millis } from "./time";
+import { sha256 } from "./hash";
+import { compareRfc3339, rfc3339Millis } from "./time";
 import {
   DEFAULT_GRANT,
   SENSITIVITY_ORDER,
@@ -15,6 +16,14 @@ const TOKEN_BODY = /^[0-9A-HJKMNP-TV-Z]{52}$/;
 const TOKEN_BYTES = 32;
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+const AGENT_GRANT_SELECT = `
+  SELECT a.agent_id, a.name, a.token_hash, a.created_at, a.revoked_at,
+         g.ceiling, g.types, g.subjects, g.since, g.until, g.tools,
+         g.rate_limit_per_minute
+    FROM agents a
+    JOIN agent_grants g ON g.agent_id = a.agent_id
+`;
 
 interface AgentRow {
   agent_id: string;
@@ -35,7 +44,7 @@ interface AgentGrantRow extends AgentRow {
 }
 
 function hashToken(token: string): string {
-  return new Bun.CryptoHasher("sha256").update(token).digest("hex");
+  return sha256(token);
 }
 
 function encodeCrockford(bytes: Uint8Array): string {
@@ -119,7 +128,7 @@ function validateGrant(grant: Grant): Grant {
   if (
     grant.since !== null &&
     grant.until !== null &&
-    rfc3339Millis(grant.since, "since") > rfc3339Millis(grant.until, "until")
+    compareRfc3339(grant.since, "since", grant.until, "until") > 0
   ) {
     throw new TypeError("since: must not be after until");
   }
@@ -164,12 +173,7 @@ function rowGrant(row: AgentGrantRow): Grant {
 function grantRowByName(db: Database, name: string): AgentGrantRow | null {
   return db
     .query<AgentGrantRow, [string]>(
-      `SELECT a.agent_id, a.name, a.token_hash, a.created_at, a.revoked_at,
-              g.ceiling, g.types, g.subjects, g.since, g.until, g.tools,
-              g.rate_limit_per_minute
-         FROM agents a
-         JOIN agent_grants g ON g.agent_id = a.agent_id
-        WHERE a.name = ?`,
+      `${AGENT_GRANT_SELECT} WHERE a.name = ?`,
     )
     .get(name);
 }
@@ -203,6 +207,9 @@ export function addAgent(
 ): { agent: Agent; token: string } {
   if (!NAME.test(name)) {
     throw new TypeError("name: must match [a-z0-9][a-z0-9-]{1,63}");
+  }
+  if (name === "owner") {
+    throw new TypeError("name: owner is reserved for the owner principal");
   }
   const grant = mergeGrant(DEFAULT_GRANT, grantPatch);
   const token = generateToken();
@@ -239,12 +246,7 @@ export function authenticate(db: Database, token: string): Principal | null {
   const candidateHash = hashToken(token);
   const rows = db
     .query<AgentGrantRow, []>(
-      `SELECT a.agent_id, a.name, a.token_hash, a.created_at, a.revoked_at,
-              g.ceiling, g.types, g.subjects, g.since, g.until, g.tools,
-              g.rate_limit_per_minute
-         FROM agents a
-         JOIN agent_grants g ON g.agent_id = a.agent_id
-        ORDER BY a.agent_id`,
+      `${AGENT_GRANT_SELECT} ORDER BY a.agent_id`,
     )
     .all();
   let match: AgentGrantRow | null = null;
@@ -267,12 +269,7 @@ export function getAgent(db: Database, name: string): Agent | null {
 export function listAgents(db: Database): (Agent & { grant: Grant })[] {
   return db
     .query<AgentGrantRow, []>(
-      `SELECT a.agent_id, a.name, a.token_hash, a.created_at, a.revoked_at,
-              g.ceiling, g.types, g.subjects, g.since, g.until, g.tools,
-              g.rate_limit_per_minute
-         FROM agents a
-         JOIN agent_grants g ON g.agent_id = a.agent_id
-        ORDER BY a.name`,
+      `${AGENT_GRANT_SELECT} ORDER BY a.name`,
     )
     .all()
     .map((row) => ({ ...rowAgent(row), grant: rowGrant(row) }));

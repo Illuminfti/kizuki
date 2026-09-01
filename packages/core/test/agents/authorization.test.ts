@@ -140,6 +140,15 @@ describe("authorize", () => {
     expect(authorize(restricted, item())).toEqual({ allow: true });
   });
 
+  test("compares fractional seconds without losing precision", () => {
+    expect(
+      authorize(
+        grant({ until: "2026-06-01T12:00:00.0001Z" }),
+        item({ occurred_at: "2026-06-01T12:00:00.0009Z" }),
+      ),
+    ).toEqual({ allow: false, reason: "time_out_of_scope" });
+  });
+
   const outOfTime: [string, string][] = [
     ["malformed", "not-a-time"],
     ["before", "2026-05-31T23:59:59Z"],
@@ -218,6 +227,8 @@ describe("serving helpers", () => {
   test("checks the tool allowlist exactly", () => {
     const restricted = grant({ tools: ["search", "timeline"] });
     expect(toolAllowed(restricted, "search")).toBe(true);
-    expect(toolAllowed(restricted, "get_page")).toBe(false);
+    const denied = toolAllowed(restricted, "get_page");
+    expect(denied).toBe(false);
+    expect(denied ? null : "tool_not_granted").toBe("tool_not_granted");
   });
 });
