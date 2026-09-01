@@ -77,3 +77,30 @@ export type {
 } from "./ledger/ledger";
 export { purgeEvents } from "./ledger/purge";
 export type { PurgeFilter, PurgeReceipt } from "./ledger/purge";
+
+export {
+  DEFAULT_GRANT,
+  OWNER,
+  SENSITIVITY_ORDER,
+  TOOLS,
+  addAgent,
+  authenticate,
+  getAgent,
+  initAgents,
+  listAgents,
+  revokeAgent,
+  rotateToken,
+  setGrant,
+} from "./agents";
+export type {
+  Agent,
+  AuditDenial,
+  AuditItem,
+  AuditRow,
+  DenyReason,
+  Grant,
+  Principal,
+  Sensitivity,
+  Servable,
+  Tool,
+} from "./agents";
