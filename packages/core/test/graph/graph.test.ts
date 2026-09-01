@@ -97,6 +97,18 @@ describe("graph rebuild", () => {
     ]);
   });
 
+  test("does not treat an unmatched backtick as a code span", () => {
+    const db = new Database(":memory:");
+    const path = vault();
+    writeCanon(path, "origin", "fact:origin", "Unmatched ` then [[Visible]].");
+
+    rebuildGraph(db, path);
+
+    expect(edgeRows(db)).toEqual([
+      { src: "fact:origin", dst: "Visible", kind: "wikilink" },
+    ]);
+  });
+
   test("adds subject and source edges from frontmatter", () => {
     const db = new Database(":memory:");
     const path = vault();

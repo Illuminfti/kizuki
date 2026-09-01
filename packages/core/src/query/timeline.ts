@@ -75,15 +75,18 @@ export function timeline(
   const bindings: (string | number)[] = [];
   if (opts.day !== undefined) {
     const window = dayWindow(opts.day);
-    clauses.push("events.occurred_at >= ?", "events.occurred_at < ?");
+    clauses.push(
+      "julianday(events.occurred_at) >= julianday(?)",
+      "julianday(events.occurred_at) < julianday(?)",
+    );
     bindings.push(window.since, window.until);
   }
   if (opts.since !== undefined) {
-    clauses.push("events.occurred_at >= ?");
+    clauses.push("julianday(events.occurred_at) >= julianday(?)");
     bindings.push(opts.since);
   }
   if (opts.until !== undefined) {
-    clauses.push("events.occurred_at < ?");
+    clauses.push("julianday(events.occurred_at) < julianday(?)");
     bindings.push(opts.until);
   }
   if (opts.subject !== undefined) {

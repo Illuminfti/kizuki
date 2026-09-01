@@ -25,6 +25,20 @@ describe("timeline", () => {
     );
   });
 
+  test("normalizes valid RFC3339 offsets into the UTC day window", () => {
+    const db = searchDb();
+    const inside = storedEvent(db, "inside", {
+      occurred_at: "2026-02-02T23:30:00-02:00",
+    });
+    storedEvent(db, "outside", {
+      occurred_at: "2026-02-03T23:30:00-02:00",
+    });
+
+    expect(timeline(db, { day: "2026-02-03" }).map(({ event_id }) => event_id)).toEqual([
+      inside.event_id,
+    ]);
+  });
+
   test("filters subjects through the stored JSON array", () => {
     const db = searchDb();
     storedEvent(db, "ada", {

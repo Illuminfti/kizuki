@@ -5,18 +5,18 @@ import { listCanonPages } from "../vault/pages";
 import type { CanonPage } from "../vault/pages";
 import { initSearch } from "./schema";
 
-type SearchDocBindings = [
-  string,
-  string,
-  string,
-  string,
-  string,
-  string,
-  string,
-  string,
-  string,
-  string,
-];
+interface SearchDocument {
+  docId: string;
+  scope: "canon" | "ledger";
+  title: string;
+  body: string;
+  path: string;
+  pageType: string;
+  sensitivity: string;
+  occurredAt: string;
+  connectorId: string;
+  subjects: string[];
+}
 
 export interface SearchRebuildResult {
   pages: number;
@@ -34,50 +34,79 @@ function stringArray(value: unknown): string[] {
     : [];
 }
 
-function insertDoc(db: Database, bindings: SearchDocBindings): void {
-  db.query<never, SearchDocBindings>(
+function pageSensitivity(value: unknown): string {
+  return value === "public" || value === "personal" || value === "private"
+    ? value
+    : "unlabeled";
+}
+
+function insertDoc(db: Database, doc: SearchDocument): void {
+  db.query<
+    never,
+    [string, string, string, string, string, string, string, string, string, string]
+  >(
     `INSERT INTO search_docs (
        doc_id, scope, title, body, path, page_type, sensitivity,
        occurred_at, connector_id, subjects
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(...bindings);
+  ).run(
+    doc.docId,
+    doc.scope,
+    doc.title,
+    doc.body,
+    doc.path,
+    doc.pageType,
+    doc.sensitivity,
+    doc.occurredAt,
+    doc.connectorId,
+    JSON.stringify(doc.subjects),
+  );
 }
 
 function replacePage(db: Database, page: CanonPage): void {
   db.query<never, [string]>("DELETE FROM search_docs WHERE doc_id = ?").run(
     page.id,
   );
-  insertDoc(db, [
-    page.id,
-    "canon",
-    text(page.data["title"]),
-    page.body,
-    page.relPath,
-    text(page.data["type"]),
-    text(page.data["sensitivity"]) || "unlabeled",
-    "",
-    "",
-    JSON.stringify(stringArray(page.data["subjects"])),
-  ]);
+  insertDoc(db, {
+    docId: page.id,
+    scope: "canon",
+    title: text(page.data["title"]),
+    body: page.body,
+    path: page.relPath,
+    pageType: text(page.data["type"]),
+    sensitivity: pageSensitivity(page.data["sensitivity"]),
+    occurredAt: "",
+    connectorId: "",
+    subjects: stringArray(page.data["subjects"]),
+  });
 }
 
 function replaceEvent(db: Database, event: CaptureEvent): void {
   db.query<never, [string]>("DELETE FROM search_docs WHERE doc_id = ?").run(
     event.event_id,
   );
-  if (event.deleted) return;
-  insertDoc(db, [
-    event.event_id,
-    "ledger",
-    `${event.connector_id} ${event.kind}`,
-    event.text,
-    "",
-    event.kind,
-    event.sensitivity_hint ?? "unlabeled",
-    event.occurred_at,
-    event.connector_id,
-    JSON.stringify(event.subjects.map(({ subject_id }) => subject_id)),
-  ]);
+  if (event.deleted) {
+    db.query<never, [string, string]>(
+      `DELETE FROM search_docs
+       WHERE doc_id IN (
+         SELECT event_id FROM events
+         WHERE connector_id = ? AND source_record_id = ?
+       )`,
+    ).run(event.connector_id, event.source_record_id);
+    return;
+  }
+  insertDoc(db, {
+    docId: event.event_id,
+    scope: "ledger",
+    title: `${event.connector_id} ${event.kind}`,
+    body: event.text,
+    path: "",
+    pageType: event.kind,
+    sensitivity: event.sensitivity_hint ?? "unlabeled",
+    occurredAt: event.occurred_at,
+    connectorId: event.connector_id,
+    subjects: event.subjects.map(({ subject_id }) => subject_id),
+  });
 }
 
 export function indexPage(db: Database, page: CanonPage): void {
@@ -100,19 +129,23 @@ export function rebuildSearch(
 ): SearchRebuildResult {
   initSearch(db);
   const pages = listCanonPages(vaultPath);
-  const events = [...replay(db, {})].filter(({ deleted }) => !deleted);
+  const events = [...replay(db, {})];
   const rebuiltAt = new Date().toISOString();
+  let pageCount = 0;
+  let eventCount = 0;
 
   db.transaction(() => {
     db.exec("DELETE FROM search_docs");
     for (const page of pages) replacePage(db, page);
     for (const event of events) replaceEvent(db, event);
-    const docCount =
-      db
-        .query<{ count: number }, []>(
-          "SELECT count(*) AS count FROM search_docs",
-        )
-        .get()?.count ?? 0;
+    const counts = db
+      .query<{ scope: string; count: number }, []>(
+        "SELECT scope, count(*) AS count FROM search_docs GROUP BY scope",
+      )
+      .all();
+    pageCount = counts.find(({ scope }) => scope === "canon")?.count ?? 0;
+    eventCount = counts.find(({ scope }) => scope === "ledger")?.count ?? 0;
+    const docCount = pageCount + eventCount;
     db.query<never, [string, string, number]>(
       `INSERT INTO derived_meta (layer, rebuilt_at, doc_count)
        VALUES (?, ?, ?)
@@ -122,5 +155,5 @@ export function rebuildSearch(
     ).run("search", rebuiltAt, docCount);
   }).immediate();
 
-  return { pages: pages.length, events: events.length, rebuilt_at: rebuiltAt };
+  return { pages: pageCount, events: eventCount, rebuilt_at: rebuiltAt };
 }

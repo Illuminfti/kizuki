@@ -98,13 +98,19 @@ describe("search indexing", () => {
     ).toEqual({ count: 1 });
   });
 
-  test("a later tombstone removes the event document", () => {
+  test("a later tombstone removes every indexed version of its source record", () => {
     const db = searchDb();
-    const event = storedEvent(db, "event-one", { text: "vanishing record" });
+    const event = storedEvent(db, "same-source", { text: "vanishing record" });
     indexEvent(db, event);
     expect(search(db, "vanishing")).toHaveLength(1);
 
-    indexEvent(db, { ...event, deleted: true });
+    const tombstone = storedEvent(db, "same-source", {
+      text: "",
+      deleted: true,
+    });
+    expect(tombstone.event_id).not.toBe(event.event_id);
+    indexEvent(db, tombstone);
+
     expect(search(db, "vanishing")).toEqual([]);
   });
 
@@ -194,6 +200,17 @@ describe("search rebuild", () => {
     storedEvent(db, "gone", { text: "never indexed", deleted: true });
     expect(rebuildSearch(db, vault.path).events).toBe(0);
     expect(search(db, "indexed")).toEqual([]);
+  });
+
+  test("rebuild applies tombstones after earlier source versions", () => {
+    const db = searchDb();
+    const vault = tempVault();
+    disposers.push(vault.dispose);
+    storedEvent(db, "same-source", { text: "obsolete record" });
+    storedEvent(db, "same-source", { text: "", deleted: true });
+
+    expect(rebuildSearch(db, vault.path).events).toBe(0);
+    expect(search(db, "obsolete")).toEqual([]);
   });
 });
 

@@ -28,21 +28,37 @@ export interface NeighborResult {
 
 function withoutCodeSpans(body: string): string {
   let result = "";
-  let delimiter = 0;
 
   for (let index = 0; index < body.length; index += 1) {
     if (body[index] !== "`") {
-      const character = body[index] as string;
-      result += delimiter === 0 || character === "\n" ? character : " ";
+      result += body[index] as string;
       continue;
     }
 
     let run = 1;
     while (body[index + run] === "`") run += 1;
-    if (delimiter === 0) delimiter = run;
-    else if (delimiter === run) delimiter = 0;
-    result += " ".repeat(run);
-    index += run - 1;
+    let closing = index + run;
+    while (closing < body.length) {
+      if (body[closing] !== "`") {
+        closing += 1;
+        continue;
+      }
+      let closingRun = 1;
+      while (body[closing + closingRun] === "`") closingRun += 1;
+      if (closingRun === run) break;
+      closing += closingRun;
+    }
+    if (closing >= body.length) {
+      result += "`".repeat(run);
+      index += run - 1;
+      continue;
+    }
+
+    const end = closing + run;
+    for (let cursor = index; cursor < end; cursor += 1) {
+      result += body[cursor] === "\n" ? "\n" : " ";
+    }
+    index = end - 1;
   }
 
   return result;
@@ -65,7 +81,7 @@ function wikilinks(body: string): string[] {
         nested = true;
         depth += 1;
         cursor += 2;
-      } else if (pair === "]]" ) {
+      } else if (pair === "]]") {
         depth -= 1;
         if (depth > 0) cursor += 2;
       } else {
