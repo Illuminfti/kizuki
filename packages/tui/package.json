@@ -1,0 +1,8 @@
+{
+  "name": "@kizuki/tui",
+  "type": "module",
+  "module": "src/index.ts",
+  "dependencies": {
+    "@kizuki/core": "workspace:*"
+  }
+}

@@ -28,6 +28,12 @@
     "packages/core": {
       "name": "@kizuki/core",
     },
+    "packages/tui": {
+      "name": "@kizuki/tui",
+      "dependencies": {
+        "@kizuki/core": "workspace:*",
+      },
+    },
   },
   "packages": {
     "@kizuki/cli": ["@kizuki/cli@workspace:packages/cli"],
@@ -35,6 +41,8 @@
     "@kizuki/connectors": ["@kizuki/connectors@workspace:packages/connectors"],
 
     "@kizuki/core": ["@kizuki/core@workspace:packages/core"],
+
+    "@kizuki/tui": ["@kizuki/tui@workspace:packages/tui"],
 
     "@types/bun": ["@types/bun@1.4.0", "", { "dependencies": { "bun-types": "1.4.0" } }, "sha512-K+lZULY23vRgK/CfTjFIV+tyifaNdSMlPh9j+6mQ/cLfpOznLyAuzgV/JQysyECpkBQLVMSyvjlr2fBUSA9wFQ=="],
 
