@@ -39,6 +39,27 @@ const CEILING_RANK: Record<Sensitivity, number> = {
   private: 2,
 };
 
+// SQLite's date parser rejects lowercase RFC3339 separators and leap seconds,
+// both of which the frozen event contract accepts. A leap second is mapped to
+// the final representable instant of its stated minute for window membership.
+const OCCURRED_AT_INSTANT = `julianday(
+  replace(
+    replace(
+      CASE
+        WHEN substr(events.occurred_at, 18, 2) = '60' THEN
+          substr(events.occurred_at, 1, 17) || '59.999' ||
+          CASE
+            WHEN lower(substr(events.occurred_at, -1)) = 'z' THEN 'Z'
+            ELSE substr(events.occurred_at, -6)
+          END
+        ELSE events.occurred_at
+      END,
+      't', 'T'
+    ),
+    'z', 'Z'
+  )
+)`;
+
 function dayWindow(day: string): { since: string; until: string } {
   if (!DAY.test(day)) {
     throw new RangeError("timeline day must be YYYY-MM-DD");
@@ -76,17 +97,17 @@ export function timeline(
   if (opts.day !== undefined) {
     const window = dayWindow(opts.day);
     clauses.push(
-      "julianday(events.occurred_at) >= julianday(?)",
-      "julianday(events.occurred_at) < julianday(?)",
+      `${OCCURRED_AT_INSTANT} >= julianday(?)`,
+      `${OCCURRED_AT_INSTANT} < julianday(?)`,
     );
     bindings.push(window.since, window.until);
   }
   if (opts.since !== undefined) {
-    clauses.push("julianday(events.occurred_at) >= julianday(?)");
+    clauses.push(`${OCCURRED_AT_INSTANT} >= julianday(?)`);
     bindings.push(opts.since);
   }
   if (opts.until !== undefined) {
-    clauses.push("julianday(events.occurred_at) < julianday(?)");
+    clauses.push(`${OCCURRED_AT_INSTANT} < julianday(?)`);
     bindings.push(opts.until);
   }
   if (opts.subject !== undefined) {

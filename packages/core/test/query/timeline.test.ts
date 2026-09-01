@@ -39,6 +39,21 @@ describe("timeline", () => {
     ]);
   });
 
+  test("includes contract-valid lowercase and leap-second timestamps", () => {
+    const db = searchDb();
+    const lowercase = storedEvent(db, "lowercase", {
+      occurred_at: "2026-06-30t12:00:00z",
+    });
+    const leap = storedEvent(db, "leap", {
+      occurred_at: "2026-06-30T23:59:60Z",
+    });
+
+    expect(timeline(db, { day: "2026-06-30" }).map(({ event_id }) => event_id)).toEqual([
+      leap.event_id,
+      lowercase.event_id,
+    ]);
+  });
+
   test("filters subjects through the stored JSON array", () => {
     const db = searchDb();
     storedEvent(db, "ada", {
