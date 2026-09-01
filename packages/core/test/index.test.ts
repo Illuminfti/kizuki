@@ -36,6 +36,7 @@ describe("public surface", () => {
       "parseFrontmatter",
       "purgeEvents",
       "readSince",
+      "rebuildDerived",
       "rebuildGraph",
       "rebuildSearch",
       "removeDoc",

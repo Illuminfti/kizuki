@@ -104,3 +104,6 @@ export type {
 
 export { timeline } from "./query";
 export type { TimelineEntry, TimelineOptions } from "./query";
+
+export { rebuildDerived } from "./derived";
+export type { DerivedRebuildResult } from "./derived";
