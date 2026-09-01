@@ -9,6 +9,15 @@
         "typescript": "^5.9.0",
       },
     },
+    "packages/cli": {
+      "name": "@kizuki/cli",
+      "bin": {
+        "kizuki": "src/main.ts",
+      },
+      "dependencies": {
+        "@kizuki/core": "workspace:*",
+      },
+    },
     "packages/connectors": {
       "name": "@kizuki/connectors",
       "dependencies": {
@@ -20,6 +29,8 @@
     },
   },
   "packages": {
+    "@kizuki/cli": ["@kizuki/cli@workspace:packages/cli"],
+
     "@kizuki/connectors": ["@kizuki/connectors@workspace:packages/connectors"],
 
     "@kizuki/core": ["@kizuki/core@workspace:packages/core"],

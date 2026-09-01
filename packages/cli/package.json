@@ -1,0 +1,11 @@
+{
+  "name": "@kizuki/cli",
+  "type": "module",
+  "module": "src/main.ts",
+  "bin": {
+    "kizuki": "src/main.ts"
+  },
+  "dependencies": {
+    "@kizuki/core": "workspace:*"
+  }
+}
