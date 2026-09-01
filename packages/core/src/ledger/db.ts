@@ -45,6 +45,18 @@ const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX events_kind_idx ON events(kind);
     `,
   },
+  {
+    version: 2,
+    sql: `
+      CREATE TABLE checkpoints (
+        connector_id TEXT NOT NULL,
+        source_key TEXT NOT NULL,
+        cursor TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (connector_id, source_key)
+      );
+    `,
+  },
 ];
 
 function migrate(db: Database): void {
@@ -59,9 +71,7 @@ function migrate(db: Database): void {
 
   const current =
     db
-      .query<SchemaVersionRow, []>(
-        "SELECT version FROM schema_version LIMIT 1",
-      )
+      .query<SchemaVersionRow, []>("SELECT version FROM schema_version LIMIT 1")
       .get()?.version ?? 0;
   const latest = MIGRATIONS.at(-1)?.version ?? 0;
   if (current > latest) {

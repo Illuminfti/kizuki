@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { CaptureEvent, SubjectRef } from "../contracts/event";
+import { fileProposal } from "./proposals";
 import type { ProposalInput } from "./proposals";
 
 /**
@@ -98,16 +99,18 @@ export function proposalsForEvent(event: CaptureEvent): ProposalInput[] {
 
 /**
  * A source tombstone cascades to staging: every open proposal citing the event
- * is withdrawn. Promoted proposals are untouched — canon retraction is a
- * separate owner decision, not an automatic one.
+ * is withdrawn. Promoted proposals are untouched here — canon retraction goes
+ * through the owner's review queue via `cascadeTombstone`.
  */
 export function withdrawForTombstone(db: Database, eventId: string): string[] {
   const withdraw = db.transaction((): string[] => {
+    // Deletion proposals are exempt: they are retraction decisions provoked BY
+    // a tombstone, so a tombstone must never withdraw them.
     const rows = db
       .query(
         `SELECT DISTINCT p.proposal_id AS proposal_id
            FROM proposals p, json_each(p.provenance) j
-          WHERE p.status = 'pending' AND j.value = ?`,
+          WHERE p.status = 'pending' AND p.kind != 'deletion' AND j.value = ?`,
       )
       .all(eventId) as { proposal_id: string }[];
 
@@ -120,4 +123,77 @@ export function withdrawForTombstone(db: Database, eventId: string): string[] {
   });
 
   return withdraw();
+}
+
+export interface TombstoneCascade {
+  /** Pending proposal ids withdrawn because their source record is gone. */
+  withdrawn: string[];
+  /** Deletion proposal ids filed for promoted pages that cite the record. */
+  retractions_filed: string[];
+}
+
+/**
+ * The full tombstone rail. Proposals cite the ORIGINAL capture event ids, not
+ * the tombstone's fresh id, so the cascade is keyed by the tombstone's
+ * (connector_id, source_record_id): every ledger row for that record is looked
+ * up, pending proposals citing any of them are withdrawn, and each promoted
+ * page citing any of them gets a `deletion` proposal filed into the review
+ * queue — canon changes only through an owner decision, never automatically.
+ * Requires a database that holds both the ledger and staging schemas.
+ */
+export function cascadeTombstone(
+  db: Database,
+  tombstone: CaptureEvent,
+): TombstoneCascade {
+  const eventRows = db
+    .query(
+      "SELECT event_id FROM events WHERE connector_id = ? AND source_record_id = ?",
+    )
+    .all(tombstone.connector_id, tombstone.source_record_id) as {
+    event_id: string;
+  }[];
+  const eventIds = new Set(eventRows.map((r) => r.event_id));
+  eventIds.add(tombstone.event_id);
+  const ids = [...eventIds];
+
+  const withdrawn: string[] = [];
+  for (const id of ids) withdrawn.push(...withdrawForTombstone(db, id));
+
+  const placeholders = ids.map(() => "?").join(", ");
+  const promotedPages = db
+    .query(
+      `SELECT DISTINCT pr.proposal_id AS proposal_id, pr.page_path AS page_path
+         FROM promotions pr, proposals p, json_each(p.provenance) j
+        WHERE p.proposal_id = pr.proposal_id
+          AND p.status = 'promoted'
+          AND j.value IN (${placeholders})`,
+    )
+    .all(...ids) as { proposal_id: string; page_path: string }[];
+
+  const retractions: string[] = [];
+  for (const page of promotedPages) {
+    const result = fileProposal(db, {
+      kind: "deletion",
+      // The page path minus the extension round-trips through pageRelPath, so
+      // promoting this proposal targets the existing page instead of minting one.
+      target: page.page_path.replace(/\.md$/, ""),
+      body:
+        `Source record \`${tombstone.source_record_id}\` was deleted at ` +
+        `\`${tombstone.connector_id}\`; canon page \`${page.page_path}\` cites it. ` +
+        "Promote to archive the page; reject to keep it.",
+      frontmatter: {
+        "x-connector": tombstone.connector_id,
+        "x-source-record-id": tombstone.source_record_id,
+        "x-page-proposal": page.proposal_id,
+      },
+      provenance: [tombstone.event_id],
+      producer: "deterministic",
+      confidence: 1,
+    });
+    if (result.outcome === "stored") {
+      retractions.push(result.proposal.proposal_id);
+    }
+  }
+
+  return { withdrawn, retractions_filed: retractions };
 }

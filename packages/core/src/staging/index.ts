@@ -20,7 +20,12 @@ export type {
   StagingStatus,
 } from "./proposals";
 
-export { proposalsForEvent, withdrawForTombstone } from "./producers";
+export {
+  cascadeTombstone,
+  proposalsForEvent,
+  withdrawForTombstone,
+} from "./producers";
+export type { TombstoneCascade } from "./producers";
 
 export {
   PAGE_TYPES,

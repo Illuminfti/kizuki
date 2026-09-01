@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { ulid } from "../util/ulid";
-import { serializePage } from "../vault/frontmatter";
+import { parseFrontmatter, serializePage } from "../vault/frontmatter";
 import type { VaultPage } from "../vault/frontmatter";
 import { PAGE_TYPES } from "../vault/schema";
 import type { PageType } from "../vault/schema";
@@ -170,17 +170,31 @@ export function promote(
 
   const relPath = pageRelPath(proposal);
   const pagePath = join(vaultPath, relPath);
-  if (existsSync(pagePath)) {
+
+  let page: VaultPage;
+  if (proposal.kind === "deletion") {
+    // Retraction: the owner archives the existing page the tombstoned source
+    // fed. The page keeps its identity; only its status flips, and the vault
+    // writer preserves the prior revision under archive/.
+    if (!existsSync(pagePath)) {
+      throw new PromoteError(
+        `page ${relPath} does not exist; nothing to retract`,
+      );
+    }
+    page = parseFrontmatter(readFileSync(pagePath, "utf8"));
+    page.data["status"] = "archived";
+  } else if (existsSync(pagePath)) {
     throw new PromoteError(
       `page ${relPath} already exists; supersede it with an edit proposal`,
     );
+  } else {
+    page = buildPage(
+      proposal,
+      opts.sensitivity,
+      opts.editBody ?? proposal.body,
+    );
   }
 
-  const page = buildPage(
-    proposal,
-    opts.sensitivity,
-    opts.editBody ?? proposal.body,
-  );
   const pageHash = hashPage(serializePage(page));
   const receipt: PromotionReceipt = {
     receipt_id: ulid(),
@@ -194,8 +208,9 @@ export function promote(
 
   mkdirSync(dirname(pagePath), { recursive: true });
   // The vault writer validates the page against the canon schema and refuses
-  // to clobber; the format has exactly one owner.
-  writePage(pagePath, page);
+  // to clobber unless this is a retraction revision; the format has exactly
+  // one owner.
+  writePage(pagePath, page, { revision: proposal.kind === "deletion" });
 
   // Receipt first, database second: a crash between the two leaves a visible
   // orphan receipt, which `doctor` can report. The reverse order would leave a

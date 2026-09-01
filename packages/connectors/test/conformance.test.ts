@@ -58,3 +58,19 @@ test("all registry connectors pass conformance", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("a tombstones:true connector without hooks supplied fails, not skips", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-conformance-"));
+  try {
+    await writeFile(path.join(root, "one.md"), "# One\n");
+    const result = await runConformance(
+      getConnector(MARKDOWN_FOLDER_CONNECTOR_ID, { path: root }),
+    );
+    expect(result.pass).toBe(false);
+    expect(result.failures).toEqual([
+      "tombstones capability declared but no tombstone hooks were supplied to the suite",
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

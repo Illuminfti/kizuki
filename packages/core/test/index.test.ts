@@ -30,6 +30,7 @@ describe("public surface", () => {
       "openLedger",
       "parseFrontmatter",
       "purgeEvents",
+      "readCheckpoint",
       "readSince",
       "replay",
       "serializePage",
@@ -37,6 +38,7 @@ describe("public surface", () => {
       "validateEventInput",
       "validatePage",
       "validateProposal",
+      "writeCheckpoint",
       "writePage",
     ]);
   });

@@ -52,6 +52,10 @@ describe("kizuki CLI", () => {
       join(fixture, "beta.md"),
       "A river-stone phrase unique to the rejected proposal.\n",
     );
+    writeFileSync(
+      join(fixture, "gamma.md"),
+      "A moth-lantern phrase unique to the withdrawn proposal.\n",
+    );
 
     expect(runCli("init", vault)).toMatchObject({ exitCode: 0 });
 
@@ -65,9 +69,12 @@ describe("kizuki CLI", () => {
     );
     expect(firstIngest).toMatchObject({
       exitCode: 0,
-      stdout: "events_stored=2 duplicates=0 proposals_created=2\n",
+      stdout:
+        "events_stored=3 duplicates=0 proposals_created=3 withdrawn=0 retractions_filed=0\n",
     });
 
+    // The checkpoint stored by the first run makes the second an incremental
+    // sync: an unchanged source emits nothing.
     const secondIngest = runCli(
       "ingest",
       "kizuki.markdown-folder",
@@ -78,7 +85,8 @@ describe("kizuki CLI", () => {
     );
     expect(secondIngest).toMatchObject({
       exitCode: 0,
-      stdout: "events_stored=0 duplicates=2 proposals_created=0\n",
+      stdout:
+        "events_stored=0 duplicates=0 proposals_created=0 withdrawn=0 retractions_filed=0\n",
     });
 
     const proposals = runCli("proposals", "--vault", vault);
@@ -87,7 +95,7 @@ describe("kizuki CLI", () => {
       .trimEnd()
       .split("\n")
       .filter((line) => /^01[A-Z0-9]{24}\s/.test(line));
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(3);
     const promotedRow = rows.find((line) => line.includes("celestial-piano"));
     const rejectedRow = rows.find((line) => line.includes("river-stone"));
     expect(promotedRow).toBeDefined();
@@ -137,6 +145,67 @@ describe("kizuki CLI", () => {
 
     const doctor = runCli("doctor", "--vault", vault);
     expect(doctor).toMatchObject({ exitCode: 0 });
-    expect(doctor.stdout).toContain("events=2");
+    expect(doctor.stdout).toContain("events=3");
+
+    // Source deletions: gamma still has a pending proposal (withdrawn), alpha
+    // was promoted (a deletion proposal reaches the review queue).
+    rmSync(join(fixture, "alpha.md"));
+    rmSync(join(fixture, "gamma.md"));
+    const thirdIngest = runCli(
+      "ingest",
+      "kizuki.markdown-folder",
+      "--vault",
+      vault,
+      "--source",
+      fixture,
+    );
+    expect(thirdIngest).toMatchObject({
+      exitCode: 0,
+      stdout:
+        "events_stored=2 duplicates=0 proposals_created=0 withdrawn=1 retractions_filed=1\n",
+    });
+
+    const doctorAfterDeletion = runCli("doctor", "--vault", vault);
+    expect(doctorAfterDeletion.exitCode).toBe(0);
+    expect(doctorAfterDeletion.stdout).toMatch(
+      /^retraction-pending 01[A-Z0-9]{24} page=captures\/01[A-Z0-9]{24}\.md$/m,
+    );
+
+    const pendingAfterDeletion = runCli("proposals", "--vault", vault);
+    expect(pendingAfterDeletion.exitCode).toBe(0);
+    const retractionRow = pendingAfterDeletion.stdout
+      .trimEnd()
+      .split("\n")
+      .find((line) => /^01[A-Z0-9]{24}\s+deletion\s/.test(line));
+    expect(retractionRow).toBeDefined();
+    const retractionId = retractionRow?.split(/\s+/)[0];
+    if (retractionId === undefined) {
+      throw new Error("retraction proposal id was not rendered");
+    }
+
+    const retraction = runCli(
+      "promote",
+      retractionId,
+      "--vault",
+      vault,
+      "--sensitivity",
+      "personal",
+    );
+    expect(retraction.exitCode).toBe(0);
+    expect(readFileSync(pagePath, "utf8")).toContain('status: "archived"');
+
+    // Neither the archived page nor the tombstoned record's events are served.
+    const queryAfterRetraction = runCli(
+      "query",
+      "celestial-piano",
+      "--vault",
+      vault,
+    );
+    expect(queryAfterRetraction.exitCode).toBe(0);
+    expect(queryAfterRetraction.stdout).toBe("");
+
+    const finalDoctor = runCli("doctor", "--vault", vault);
+    expect(finalDoctor).toMatchObject({ exitCode: 0 });
+    expect(finalDoctor.stdout).not.toContain("retraction-pending");
   });
 });

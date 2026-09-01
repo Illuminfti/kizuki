@@ -63,13 +63,17 @@ async function runConformanceChecks(
     try {
       const fixture = await connector.fixture();
       if (!Array.isArray(fixture) || fixture.length === 0) {
-        failures.push("fixture capability declared but fixture() returned no events");
+        failures.push(
+          "fixture capability declared but fixture() returned no events",
+        );
       } else {
         fixtureEvents = fixture;
         inspectEvents(fixture, "fixture", manifest, failures);
       }
     } catch (error) {
-      failures.push(`fixture capability declared but fixture() rejected: ${errorMessage(error)}`);
+      failures.push(
+        `fixture capability declared but fixture() rejected: ${errorMessage(error)}`,
+      );
     }
   }
 
@@ -82,7 +86,9 @@ async function runConformanceChecks(
         failures,
       );
     } catch (error) {
-      failures.push(`backfill capability declared but backfill(null) rejected: ${errorMessage(error)}`);
+      failures.push(
+        `backfill capability declared but backfill(null) rejected: ${errorMessage(error)}`,
+      );
     }
   }
 
@@ -95,7 +101,9 @@ async function runConformanceChecks(
         failures,
       );
     } catch (error) {
-      failures.push(`sync capability declared but sync(null) rejected: ${errorMessage(error)}`);
+      failures.push(
+        `sync capability declared but sync(null) rejected: ${errorMessage(error)}`,
+      );
     }
   }
 
@@ -108,10 +116,14 @@ async function runConformanceChecks(
         !Array.isArray(plan["source_record_ids"]) ||
         !Array.isArray(plan["unreachable_source_record_ids"])
       ) {
-        failures.push("purge capability declared but purgeSource() returned an invalid plan");
+        failures.push(
+          "purge capability declared but purgeSource() returned an invalid plan",
+        );
       }
     } catch (error) {
-      failures.push(`purge capability declared but purgeSource() rejected: ${errorMessage(error)}`);
+      failures.push(
+        `purge capability declared but purgeSource() rejected: ${errorMessage(error)}`,
+      );
     }
   }
 
@@ -119,11 +131,15 @@ async function runConformanceChecks(
     const ledger = new InMemoryLedger();
     const first = ledger.acceptMany(fixtureEvents);
     if (!first.every((accept) => accept.status === "stored")) {
-      failures.push("fixture round-trip: first accept did not store every event");
+      failures.push(
+        "fixture round-trip: first accept did not store every event",
+      );
     }
     const second = ledger.acceptMany(fixtureEvents);
     if (!second.every((accept) => accept.status === "duplicate")) {
-      failures.push("fixture round-trip: repeated accept was not entirely duplicate");
+      failures.push(
+        "fixture round-trip: repeated accept was not entirely duplicate",
+      );
     }
   }
 
@@ -133,7 +149,9 @@ async function runConformanceChecks(
     };
     try {
       await connector.connect(rejectResolver);
-      failures.push("connect fail-closed: connector accepted missing required secrets");
+      failures.push(
+        "connect fail-closed: connector accepted missing required secrets",
+      );
     } catch (error) {
       if (!(error instanceof KizukiError)) {
         failures.push("connect fail-closed: rejection was not a KizukiError");
@@ -166,12 +184,22 @@ async function runConformanceChecks(
         }
         const secondAccepts = ledger.acceptMany(second.events);
         if (!secondAccepts.every((accept) => accept.status === "duplicate")) {
-          failures.push("double-backfill: second batch was not entirely duplicate");
+          failures.push(
+            "double-backfill: second batch was not entirely duplicate",
+          );
         }
       }
     } catch (error) {
       failures.push(`double-backfill rejected: ${errorMessage(error)}`);
     }
+  }
+
+  if (manifest.capabilities.tombstones && opts.tombstone === undefined) {
+    // Fail, don't skip: a tombstones:true manifest with no hooks supplied
+    // would otherwise self-certify without ever emitting a deleted event.
+    failures.push(
+      "tombstones capability declared but no tombstone hooks were supplied to the suite",
+    );
   }
 
   if (manifest.capabilities.tombstones && opts.tombstone !== undefined) {
@@ -198,10 +226,7 @@ async function runConformanceChecks(
   return result(failures);
 }
 
-function parseManifest(
-  raw: unknown,
-  failures: string[],
-): Manifest | undefined {
+function parseManifest(raw: unknown, failures: string[]): Manifest | undefined {
   if (!isPlainObject(raw)) {
     failures.push("manifest: must be an object");
     return undefined;
@@ -217,9 +242,7 @@ function parseManifest(
   if (
     !Array.isArray(raw["kinds"]) ||
     raw["kinds"].length === 0 ||
-    !raw["kinds"].every(
-      (kind) => typeof kind === "string" && kind.length > 0,
-    )
+    !raw["kinds"].every((kind) => typeof kind === "string" && kind.length > 0)
   ) {
     failures.push("manifest.kinds: must contain non-empty strings");
   }
@@ -287,9 +310,7 @@ function inspectEvents(
       return;
     }
     if (validated.value.connector_id !== manifest.connector_id) {
-      failures.push(
-        `${label}[${index}]: connector_id does not match manifest`,
-      );
+      failures.push(`${label}[${index}]: connector_id does not match manifest`);
     }
     if (!manifest.kinds.includes(validated.value.kind)) {
       failures.push(`${label}[${index}]: kind is not declared in manifest`);

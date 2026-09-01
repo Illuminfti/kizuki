@@ -32,12 +32,14 @@ function storedEvent(db: Database, input: CaptureEventInput) {
 }
 
 describe("openLedger", () => {
-  test("applies migration v1 and enables foreign keys", () => {
+  test("applies all migrations and enables foreign keys", () => {
     const db = openLedger(":memory:");
 
     expect(
-      db.query<{ version: number }, []>("SELECT version FROM schema_version").get(),
-    ).toEqual({ version: 1 });
+      db
+        .query<{ version: number }, []>("SELECT version FROM schema_version")
+        .get(),
+    ).toEqual({ version: 2 });
     expect(
       db.query<{ foreign_keys: number }, []>("PRAGMA foreign_keys").get(),
     ).toEqual({ foreign_keys: 1 });
@@ -48,7 +50,7 @@ describe("openLedger", () => {
         )
         .all()
         .map(({ name }) => name),
-    ).toEqual(["event_purges", "events", "schema_version"]);
+    ).toEqual(["checkpoints", "event_purges", "events", "schema_version"]);
 
     db.close();
   });
@@ -65,11 +67,9 @@ describe("openLedger", () => {
       expect(count(reopened)).toBe(1);
       expect(
         reopened
-          .query<{ version: number }, []>(
-            "SELECT version FROM schema_version",
-          )
+          .query<{ version: number }, []>("SELECT version FROM schema_version")
           .get(),
-      ).toEqual({ version: 1 });
+      ).toEqual({ version: 2 });
       expect(
         reopened
           .query<{ journal_mode: string }, []>("PRAGMA journal_mode")
@@ -110,7 +110,10 @@ describe("accept", () => {
   test("stores an edited source record as a new event", () => {
     const db = openLedger(":memory:");
     const first = storedEvent(db, validEvent());
-    const edited = storedEvent(db, { ...validEvent(), text: "the kettle boiled" });
+    const edited = storedEvent(db, {
+      ...validEvent(),
+      text: "the kettle boiled",
+    });
 
     expect(edited.event_id).not.toBe(first.event_id);
     expect(edited.content_hash).not.toBe(first.content_hash);
@@ -246,10 +249,16 @@ describe("purgeEvents", () => {
     storedEvent(db, event("b", { connector_id: "mail" }));
     storedEvent(db, event("c", { connector_id: "calendar" }));
 
-    const receipts = purgeEvents(db, { connector_id: "mail" }, "account erased");
+    const receipts = purgeEvents(
+      db,
+      { connector_id: "mail" },
+      "account erased",
+    );
 
     expect(receipts).toHaveLength(2);
-    expect(receipts.every(({ receipt_id }) => ULID.test(receipt_id))).toBe(true);
+    expect(receipts.every(({ receipt_id }) => ULID.test(receipt_id))).toBe(
+      true,
+    );
     expect(receipts.every(({ connector_id }) => connector_id === "mail")).toBe(
       true,
     );
@@ -310,9 +319,9 @@ describe("purgeEvents", () => {
     const db = openLedger(":memory:");
     storedEvent(db, validEvent());
 
-    expect(
-      purgeEvents(db, { connector_id: "missing" }, "no match"),
-    ).toEqual([]);
+    expect(purgeEvents(db, { connector_id: "missing" }, "no match")).toEqual(
+      [],
+    );
     expect(count(db)).toBe(1);
     db.close();
   });

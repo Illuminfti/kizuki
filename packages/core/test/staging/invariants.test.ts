@@ -10,7 +10,10 @@ import { join, relative } from "node:path";
  * "owner", and is only ever supplied by `ownerPromote`.
  */
 
-const SRC = join(import.meta.dir, "..", "..", "src");
+// The gate holds workspace-wide, not just in core: a raw promote() call added
+// in the CLI or connectors packages must fail this suite too.
+const PACKAGES = join(import.meta.dir, "..", "..", "..");
+const SRC = join(PACKAGES, "core", "src");
 const PROMOTE = join(SRC, "staging", "promote.ts");
 
 function sourceFiles(dir: string): string[] {
@@ -23,7 +26,18 @@ function sourceFiles(dir: string): string[] {
   return out.sort();
 }
 
-const files = sourceFiles(SRC);
+const files = readdirSync(PACKAGES, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => join(PACKAGES, entry.name, "src"))
+  .filter((srcDir) => {
+    try {
+      return readdirSync(srcDir).length >= 0;
+    } catch {
+      return false;
+    }
+  })
+  .flatMap(sourceFiles)
+  .sort();
 const promoteSource = readFileSync(PROMOTE, "utf8");
 
 /** Everything from `export function ownerPromote` to its closing brace. */
@@ -45,8 +59,8 @@ describe("the promote path is the only door to canon", () => {
     const carriers = files.filter((file) =>
       /\binvokedBy\b/.test(readFileSync(file, "utf8")),
     );
-    expect(carriers.map((f) => relative(SRC, f))).toEqual([
-      join("staging", "promote.ts"),
+    expect(carriers.map((f) => relative(PACKAGES, f))).toEqual([
+      join("core", "src", "staging", "promote.ts"),
     ]);
   });
 
@@ -84,7 +98,7 @@ describe("the promote path is the only door to canon", () => {
         file !== PROMOTE &&
         /(?<![A-Za-z0-9_.])promote\s*\(/.test(readFileSync(file, "utf8")),
     );
-    expect(callers.map((f) => relative(SRC, f))).toEqual([]);
+    expect(callers.map((f) => relative(PACKAGES, f))).toEqual([]);
   });
 
   test("the public staging surface exposes ownerPromote, not promote", () => {

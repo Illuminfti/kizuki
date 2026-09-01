@@ -9,12 +9,15 @@ import {
   initVault,
   openLedger,
   parseFrontmatter,
+  readCheckpoint,
   replay,
+  writeCheckpoint,
 } from "@kizuki/core";
 import type { CaptureEvent } from "@kizuki/core";
 import {
   SENSITIVITY_LEVELS,
   STAGING_STATUSES,
+  cascadeTombstone,
   fileProposal,
   initStaging,
   listProposals,
@@ -22,7 +25,6 @@ import {
   proposalsForEvent,
   readReceiptsLog,
   setProposalStatus,
-  withdrawForTombstone,
 } from "@kizuki/core/staging";
 import type {
   Sensitivity,
@@ -149,6 +151,8 @@ function readCanonPages(vaultPath: string): CanonPage[] {
     );
     for (const entry of entries) {
       if (entry.name === ".kizuki") continue;
+      // archive/ holds retracted pages and prior revisions; never served.
+      if (entry.name === "archive" && directory === vaultPath) continue;
       const target = join(directory, entry.name);
       if (entry.isDirectory()) {
         walk(target);
@@ -165,7 +169,7 @@ function readCanonPages(vaultPath: string): CanonPage[] {
       try {
         const page = parseFrontmatter(readFileSync(target, "utf8"));
         const id = page.data["id"];
-        if (typeof id === "string") {
+        if (typeof id === "string" && page.data["status"] !== "archived") {
           pages.push({ body: page.body, id, path: target });
         }
       } catch {
@@ -202,18 +206,25 @@ async function run(args: string[]): Promise<number> {
     requirePositionals(parsed.positionals, 1);
     const connectorId = parsed.positionals[0] ?? "";
     const vaultPath = assertVault(requireOption(parsed.options, "--vault"));
-    const connector = getConnector(connectorId, {
-      path: parsed.options.get("--source") ?? process.cwd(),
-    });
+    const sourcePath = resolve(parsed.options.get("--source") ?? process.cwd());
+    const connector = getConnector(connectorId, { path: sourcePath });
     await connector.connect(async (secretRef: string) => {
       throw new Error(`no secret configured for ${secretRef}`);
     });
-    const batch = await connector.backfill(null);
     const db = openVaultDb(vaultPath);
     let stored = 0;
     let duplicates = 0;
     let proposalsCreated = 0;
+    let withdrawn = 0;
+    let retractionsFiled = 0;
     try {
+      // First run backfills; later runs resume from the stored checkpoint so
+      // `sync` can emit tombstones for records that vanished at the source.
+      const cursor = readCheckpoint(db, connectorId, sourcePath);
+      const batch =
+        cursor === null
+          ? await connector.backfill(null)
+          : await connector.sync(cursor);
       const storedEvents: CaptureEvent[] = [];
       for (const input of batch.events) {
         const result = accept(db, input);
@@ -229,7 +240,9 @@ async function run(args: string[]): Promise<number> {
       }
       for (const event of storedEvents) {
         if (event.deleted) {
-          withdrawForTombstone(db, event.event_id);
+          const cascade = cascadeTombstone(db, event);
+          withdrawn += cascade.withdrawn.length;
+          retractionsFiled += cascade.retractions_filed.length;
           continue;
         }
         for (const input of proposalsForEvent(event)) {
@@ -238,11 +251,14 @@ async function run(args: string[]): Promise<number> {
           }
         }
       }
+      if (batch.cursor !== null) {
+        writeCheckpoint(db, connectorId, sourcePath, batch.cursor);
+      }
     } finally {
       db.close();
     }
     console.log(
-      `events_stored=${stored} duplicates=${duplicates} proposals_created=${proposalsCreated}`,
+      `events_stored=${stored} duplicates=${duplicates} proposals_created=${proposalsCreated} withdrawn=${withdrawn} retractions_filed=${retractionsFiled}`,
     );
     return 0;
   }
@@ -322,7 +338,19 @@ async function run(args: string[]): Promise<number> {
     }
     const db = openVaultDb(vaultPath);
     try {
-      for (const event of replay(db, {})) {
+      // Two passes: a record with a tombstone is deleted at the source, so
+      // none of its events are served, only stored.
+      const events = [...replay(db, {})];
+      const tombstoned = new Set(
+        events
+          .filter((event) => event.deleted)
+          .map((event) => `${event.connector_id} ${event.source_record_id}`),
+      );
+      for (const event of events) {
+        if (event.deleted) continue;
+        if (tombstoned.has(`${event.connector_id} ${event.source_record_id}`)) {
+          continue;
+        }
         if (
           event.text.toLocaleLowerCase().includes(query.toLocaleLowerCase())
         ) {
@@ -343,6 +371,16 @@ async function run(args: string[]): Promise<number> {
     const db = openVaultDb(vaultPath);
     try {
       console.log(`events=${count(db)}`);
+      // A pending deletion proposal is a source record that vanished while its
+      // canon page still stands — the owner decision doctor must surface.
+      for (const proposal of listProposals(db, {
+        kind: "deletion",
+        status: "pending",
+      })) {
+        console.log(
+          `retraction-pending ${proposal.proposal_id} page=${proposal.target ?? ""}.md`,
+        );
+      }
     } finally {
       db.close();
     }
