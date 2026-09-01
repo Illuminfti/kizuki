@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { timingSafeEqual } from "node:crypto";
-import { isRfc3339 } from "../util/time";
 import { ulid } from "../util/ulid";
+import { rfc3339Millis } from "./time";
 import {
   DEFAULT_GRANT,
   SENSITIVITY_ORDER,
@@ -82,16 +82,6 @@ function parseStringArray(raw: string | null, field: string): string[] | null {
   return parsed;
 }
 
-function timestampMillis(value: string): number {
-  const leapSecond = /:60(?=(?:\.\d+)?(?:[zZ]|[+-]\d{2}:\d{2})$)/.test(value);
-  const adjusted = leapSecond ? value.replace(":60", ":59") : value;
-  const parsed = Date.parse(adjusted);
-  if (!Number.isFinite(parsed)) {
-    throw new TypeError("timestamp could not be normalized");
-  }
-  return parsed + (leapSecond ? 1_000 : 0);
-}
-
 function validateScope(value: unknown, field: string): string[] | null {
   if (value === null) return null;
   if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string" && entry.length > 0)) {
@@ -124,14 +114,12 @@ function validateGrant(grant: Grant): Grant {
     ["since", grant.since],
     ["until", grant.until],
   ] as const) {
-    if (value !== null && !isRfc3339(value)) {
-      throw new TypeError(`${field}: must be null or an RFC3339 timestamp`);
-    }
+    if (value !== null) rfc3339Millis(value, field);
   }
   if (
     grant.since !== null &&
     grant.until !== null &&
-    timestampMillis(grant.since) > timestampMillis(grant.until)
+    rfc3339Millis(grant.since, "since") > rfc3339Millis(grant.until, "until")
   ) {
     throw new TypeError("since: must not be after until");
   }

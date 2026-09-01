@@ -27,3 +27,11 @@ export {
   rotateToken,
   setGrant,
 } from "./identity";
+
+export { authorize, filterServable, toolAllowed } from "./authorization";
+export {
+  checkRate,
+  listAudit,
+  recordAudit,
+  shapeArguments,
+} from "./audit";
