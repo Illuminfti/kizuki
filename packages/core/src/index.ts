@@ -92,3 +92,12 @@ export type {
   SearchOptions,
   SearchRebuildResult,
 } from "./search";
+
+export { initGraph, neighbors, rebuildGraph } from "./graph";
+export type {
+  GraphEdge,
+  GraphEdgeKind,
+  GraphRebuildResult,
+  NeighborOptions,
+  NeighborResult,
+} from "./graph";
