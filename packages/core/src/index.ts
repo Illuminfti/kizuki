@@ -101,3 +101,6 @@ export type {
   NeighborOptions,
   NeighborResult,
 } from "./graph";
+
+export { timeline } from "./query";
+export type { TimelineEntry, TimelineOptions } from "./query";

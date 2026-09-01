@@ -42,6 +42,7 @@ describe("public surface", () => {
       "replay",
       "search",
       "serializePage",
+      "timeline",
       "toFtsQuery",
       "ulid",
       "validateEventInput",
