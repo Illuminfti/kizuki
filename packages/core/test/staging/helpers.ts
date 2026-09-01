@@ -3,12 +3,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CaptureEvent } from "../../src/contracts/event";
+import { initSearch } from "../../src/search/schema";
 import { initStaging } from "../../src/staging/proposals";
 import type { ProposalInput } from "../../src/staging/proposals";
 
 export function memoryDb(): Database {
   const db = new Database(":memory:");
   initStaging(db);
+  initSearch(db);
   return db;
 }
 

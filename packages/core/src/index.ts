@@ -78,3 +78,33 @@ export type {
 } from "./ledger/ledger";
 export { purgeEvents } from "./ledger/purge";
 export type { PurgeFilter, PurgeReceipt } from "./ledger/purge";
+
+export {
+  indexEvent,
+  indexPage,
+  initSearch,
+  rebuildSearch,
+  removeDoc,
+  search,
+  toFtsQuery,
+} from "./search";
+export type {
+  SearchHit,
+  SearchOptions,
+  SearchRebuildResult,
+} from "./search";
+
+export { initGraph, neighbors, rebuildGraph } from "./graph";
+export type {
+  GraphEdge,
+  GraphEdgeKind,
+  GraphRebuildResult,
+  NeighborOptions,
+  NeighborResult,
+} from "./graph";
+
+export { timeline } from "./query";
+export type { TimelineEntry, TimelineOptions } from "./query";
+
+export { rebuildDerived } from "./derived";
+export type { DerivedRebuildResult } from "./derived";
