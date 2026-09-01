@@ -10,6 +10,7 @@ export const PROPOSAL_KINDS = [
   "edit",
   "merge",
   "deletion",
+  "purge_review",
 ] as const;
 export type ProposalKind = (typeof PROPOSAL_KINDS)[number];
 
