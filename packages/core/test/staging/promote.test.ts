@@ -102,7 +102,7 @@ describe("the canon page", () => {
     const proposal = staged({
       target: "person:ada",
       kind: "entity",
-      frontmatter: { type: "person", "x-handle": "ada" },
+      frontmatter: { type: "person", title: "Ada", "x-handle": "ada" },
       body: "Stub entity page.",
       provenance: ["01ARZ3NDEKTSV4RRFFQ69G5FAV", "01ARZ3NDEKTSV4RRFFQ69G5FB2"],
     });
@@ -118,9 +118,8 @@ describe("the canon page", () => {
         'type: "person"',
         'status: "active"',
         'sensitivity: "private"',
-        "sources:",
-        '  - "01ARZ3NDEKTSV4RRFFQ69G5FAV"',
-        '  - "01ARZ3NDEKTSV4RRFFQ69G5FB2"',
+        'sources: ["01ARZ3NDEKTSV4RRFFQ69G5FAV","01ARZ3NDEKTSV4RRFFQ69G5FB2"]',
+        'title: "Ada"',
         'x-handle: "ada"',
         "---",
         "",
@@ -186,7 +185,7 @@ describe("the canon page", () => {
   test("frontmatter strings are escaped, not interpolated", () => {
     const proposal: StagedProposal = {
       ...staged(),
-      frontmatter: { type: "note", title: 'a "quoted"\nline\\here' },
+      frontmatter: { type: "fact", title: 'a "quoted"\nline\\here' },
     };
     expect(renderPage(proposal, "private", "body")).toContain(
       'title: "a \\"quoted\\"\\nline\\\\here"',

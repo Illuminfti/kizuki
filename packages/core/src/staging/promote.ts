@@ -1,40 +1,31 @@
 import type { Database } from "bun:sqlite";
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { ulid } from "../util/ulid";
+import { serializePage } from "../vault/frontmatter";
+import type { VaultPage } from "../vault/frontmatter";
+import { PAGE_TYPES } from "../vault/schema";
+import type { PageType } from "../vault/schema";
+import { writePage } from "../vault/write";
 import { getProposal } from "./proposals";
 import type { FrontmatterValue, StagedProposal } from "./proposals";
 
 /**
  * The only door to canon. Architecture invariant 3: nothing writes canon except
  * an owner-invoked promote, so this module refuses to run for any other caller
- * and no scheduled rail may reach it.
+ * and no scheduled rail may reach it. Pages are rendered and validated by the
+ * vault layer — promote owns the gate, the vault owns the format.
  */
 
 export const SENSITIVITY_LEVELS = ["public", "personal", "private"] as const;
 export type Sensitivity = (typeof SENSITIVITY_LEVELS)[number];
 
-/** Closed enum: an unknown page type is a refusal, not a new type. */
-export const PAGE_TYPES = [
-  "person",
-  "org",
-  "place",
-  "project",
-  "note",
-  "claim",
-] as const;
-export type PageType = (typeof PAGE_TYPES)[number];
+export { PAGE_TYPES } from "../vault/schema";
+export type { PageType } from "../vault/schema";
 
 /** Frontmatter the spine owns; a producer that sets one is forging provenance. */
 const RESERVED_KEYS = ["id", "status", "sensitivity", "sources"] as const;
 
-const KEY = /^[A-Za-z_][A-Za-z0-9_-]*$/;
 const PATH_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const MAX_SEGMENTS = 8;
 const MAX_SEGMENT_LENGTH = 64;
@@ -61,53 +52,6 @@ export interface PromotionReceipt {
   page_path: string;
   page_hash: string;
   at: string;
-}
-
-function yamlScalar(value: string | number | boolean): string {
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) {
-      throw new PromoteError("frontmatter: numbers must be finite");
-    }
-    return String(value);
-  }
-  if (typeof value === "boolean") return value ? "true" : "false";
-  // Every string is double-quoted and escaped, so captured text cannot inject
-  // a key, close the fence, or start a nested document.
-  let out = "";
-  for (const ch of value) {
-    const code = ch.codePointAt(0) ?? 0;
-    if (ch === "\\") out += "\\\\";
-    else if (ch === '"') out += '\\"';
-    else if (ch === "\n") out += "\\n";
-    else if (ch === "\r") out += "\\r";
-    else if (ch === "\t") out += "\\t";
-    else if (code < 0x20 || code === 0x7f) {
-      out += `\\u${code.toString(16).padStart(4, "0")}`;
-    } else out += ch;
-  }
-  return `"${out}"`;
-}
-
-function yamlEntry(key: string, value: FrontmatterValue): string {
-  if (!KEY.test(key)) {
-    throw new PromoteError(`frontmatter: unusable key ${JSON.stringify(key)}`);
-  }
-  if (Array.isArray(value)) {
-    if (value.length === 0) return `${key}: []`;
-    return [`${key}:`, ...value.map((item) => `  - ${yamlScalar(item)}`)].join(
-      "\n",
-    );
-  }
-  if (
-    typeof value !== "string" &&
-    typeof value !== "number" &&
-    typeof value !== "boolean"
-  ) {
-    throw new PromoteError(
-      `frontmatter: ${key} must be a scalar or an array of scalars`,
-    );
-  }
-  return `${key}: ${yamlScalar(value)}`;
 }
 
 function pageType(proposal: StagedProposal): PageType {
@@ -148,11 +92,11 @@ export function pageRelPath(proposal: StagedProposal): string {
   return `${segments.join("/")}.md`;
 }
 
-export function renderPage(
+function buildPage(
   proposal: StagedProposal,
   sensitivity: Sensitivity,
   body: string,
-): string {
+): VaultPage {
   for (const reserved of RESERVED_KEYS) {
     if (reserved in proposal.frontmatter) {
       throw new PromoteError(
@@ -161,20 +105,27 @@ export function renderPage(
     }
   }
 
-  const lines = [
-    yamlEntry("id", proposal.proposal_id),
-    yamlEntry("type", pageType(proposal)),
-    yamlEntry("status", "active"),
-    yamlEntry("sensitivity", sensitivity),
-    yamlEntry("sources", proposal.provenance),
-  ];
+  const data: Record<string, unknown> = {
+    id: proposal.proposal_id,
+    type: pageType(proposal),
+    status: "active",
+    sensitivity,
+    sources: proposal.provenance,
+  };
   for (const key of Object.keys(proposal.frontmatter).sort()) {
     if (key === "type") continue;
-    lines.push(yamlEntry(key, proposal.frontmatter[key] as FrontmatterValue));
+    data[key] = proposal.frontmatter[key] as FrontmatterValue;
   }
 
-  const trimmed = body.replace(/\s+$/, "");
-  return `---\n${lines.join("\n")}\n---\n\n${trimmed}\n`;
+  return { data, body: `\n${body.replace(/\s+$/, "")}\n` };
+}
+
+export function renderPage(
+  proposal: StagedProposal,
+  sensitivity: Sensitivity,
+  body: string,
+): string {
+  return serializePage(buildPage(proposal, sensitivity, body));
 }
 
 function hashPage(content: string): string {
@@ -225,12 +176,12 @@ export function promote(
     );
   }
 
-  const content = renderPage(
+  const page = buildPage(
     proposal,
     opts.sensitivity,
     opts.editBody ?? proposal.body,
   );
-  const pageHash = hashPage(content);
+  const pageHash = hashPage(serializePage(page));
   const receipt: PromotionReceipt = {
     receipt_id: ulid(),
     proposal_id: proposal.proposal_id,
@@ -242,7 +193,9 @@ export function promote(
   };
 
   mkdirSync(dirname(pagePath), { recursive: true });
-  writeFileSync(pagePath, content, { encoding: "utf8", flag: "wx" });
+  // The vault writer validates the page against the canon schema and refuses
+  // to clobber; the format has exactly one owner.
+  writePage(pagePath, page);
 
   // Receipt first, database second: a crash between the two leaves a visible
   // orphan receipt, which `doctor` can report. The reverse order would leave a

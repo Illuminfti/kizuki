@@ -6,6 +6,7 @@
     "kizuki": "src/main.ts"
   },
   "dependencies": {
+    "@kizuki/connectors": "workspace:*",
     "@kizuki/core": "workspace:*"
   }
 }

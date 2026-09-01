@@ -46,7 +46,7 @@ export function proposalInput(
     kind: "claim",
     target: null,
     body: "a staged body",
-    frontmatter: { type: "note", title: "a staged body" },
+    frontmatter: { type: "fact", title: "a staged body" },
     provenance: ["01ARZ3NDEKTSV4RRFFQ69G5FAV"],
     subjects: ["person:ada"],
     producer: "deterministic",

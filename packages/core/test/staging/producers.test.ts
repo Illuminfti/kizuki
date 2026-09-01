@@ -82,7 +82,7 @@ describe("proposalsForEvent", () => {
     expect(note?.body).toBe(
       "Captured from `fixture` (message) at 2026-02-28T10:30:00Z.\n\n> line one\n>\n> line two",
     );
-    expect(note?.frontmatter["type"]).toBe("note");
+    expect(note?.frontmatter["type"]).toBe("source");
     expect(note?.subjects).toEqual(["person:ada"]);
   });
 

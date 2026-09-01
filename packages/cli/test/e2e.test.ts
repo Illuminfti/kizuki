@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
-  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -100,14 +100,10 @@ describe("kizuki CLI", () => {
       throw new Error("proposal ids were not rendered");
     }
 
-    const unsafePromotion = runCli(
-      "promote",
-      promotedId,
-      "--vault",
-      vault,
-    );
+    const unsafePromotion = runCli("promote", promotedId, "--vault", vault);
     expect(unsafePromotion.exitCode).not.toBe(0);
-    expect(readdirSync(join(vault, "canon"))).toHaveLength(0);
+    // A targetless capture promotes into captures/; nothing may exist there yet.
+    expect(existsSync(join(vault, "captures"))).toBe(false);
 
     const promotion = runCli(
       "promote",
@@ -123,16 +119,9 @@ describe("kizuki CLI", () => {
     expect(pagePath).toBeDefined();
     expect(receiptId).toMatch(/^01[A-Z0-9]{24}$/);
     if (pagePath === undefined) throw new Error("page path was not printed");
-    expect(readFileSync(pagePath, "utf8")).toContain(
-      "sensitivity: personal",
-    );
+    expect(readFileSync(pagePath, "utf8")).toContain('sensitivity: "personal"');
 
-    const query = runCli(
-      "query",
-      "celestial-piano",
-      "--vault",
-      vault,
-    );
+    const query = runCli("query", "celestial-piano", "--vault", vault);
     expect(query.exitCode).toBe(0);
     expect(query.stdout).toMatch(/^page\s+\S+\s+\S+.*celestial-piano/m);
 

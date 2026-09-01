@@ -3,6 +3,7 @@
   "type": "module",
   "module": "src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./staging": "./src/staging/index.ts"
   }
 }

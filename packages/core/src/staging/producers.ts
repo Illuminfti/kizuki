@@ -64,7 +64,8 @@ function captureNoteProposal(event: CaptureEvent): ProposalInput {
     target: null,
     body: `${header}\n\n${blockquote(event.text)}`,
     frontmatter: {
-      type: "note",
+      // "source" in the vault schema: a source-faithful capture, not owner prose.
+      type: "source",
       title: `Capture from ${event.connector_id} at ${event.occurred_at}`,
       "x-connector": event.connector_id,
       "x-capture-kind": event.kind,
