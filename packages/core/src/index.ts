@@ -45,6 +45,22 @@ export type {
   SyncBatch,
 } from "./contracts/connector";
 
+export { doctorVault } from "./vault/doctor";
+export type { DoctorPageResult, DoctorVaultResult } from "./vault/doctor";
+export { parseFrontmatter, serializePage } from "./vault/frontmatter";
+export type { VaultPage } from "./vault/frontmatter";
+export { initVault } from "./vault/init";
+export type { InitVaultResult } from "./vault/init";
+export {
+  PAGE_SENSITIVITIES,
+  PAGE_STATUSES,
+  PAGE_TYPES,
+  validatePage,
+} from "./vault/schema";
+export type { PageSensitivity, PageStatus, PageType } from "./vault/schema";
+export { writePage } from "./vault/write";
+export type { WritePageOptions } from "./vault/write";
+
 export { canonicalSerialize, computeContentHash } from "./util/hash";
 export { isRfc3339 } from "./util/time";
 export { ulid } from "./util/ulid";
