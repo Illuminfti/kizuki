@@ -2,27 +2,19 @@ name: ci
 on:
   push: { branches: [main] }
   pull_request:
+permissions:
+  contents: read
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
       - uses: oven-sh/setup-bun@v2
         with: { bun-version: 1.3.10 }
-      - run: bun install --frozen-lockfile
-      - run: bun run typecheck
-      - run: bun test
+      - run: bun run verify
       - name: exact-head diff integrity
         run: |
           git fetch --no-tags origin main
           git diff --check FETCH_HEAD...HEAD
-      - name: zero-phone-home dependency assertion
-        run: |
-          ! grep -rE '"(posthog|@sentry|sentry|@amplitude|mixpanel|segment)' packages/*/package.json
-      - name: zero-phone-home source assertion
-        run: |
-          ! grep -rnE 'fetch\(|XMLHttpRequest|WebSocket|node:https?|node:net|node:dns|node:tls|Bun\.serve|Bun\.connect|axios|undici' packages/*/src
-      - name: estate-identifier denylist
-        run: |
-          ! grep -rniE 'illumi|hermes|ika-hetzner|albedo|gbrain' packages/ docs/ README.md --include='*.ts' --include='*.md' --include='*.json'
