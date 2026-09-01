@@ -28,12 +28,15 @@ export type {
 } from "./contracts/proposal";
 
 export {
+  AUTH_MODES,
   CONNECTOR_SCHEMA,
   HEALTH_STATES,
   HealthReport,
+  isAuthMode,
   isHealthState,
 } from "./contracts/connector";
 export type {
+  AuthMode,
   Connector,
   Cursor,
   HealthReportInit,
@@ -42,6 +45,8 @@ export type {
   ManifestCapabilities,
   PurgePlan,
   SecretResolver,
+  SignInIo,
+  SignInResult,
   SyncBatch,
 } from "./contracts/connector";
 

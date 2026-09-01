@@ -1,5 +1,7 @@
 import {
+  AUTH_MODES,
   CONNECTOR_SCHEMA,
+  isAuthMode,
   isPlainObject,
   validateEventInput,
 } from "@kizuki/core";
@@ -57,6 +59,19 @@ async function runConformanceChecks(
   }
   const manifest = parseManifest(rawManifest, failures);
   if (manifest === undefined) return result(failures);
+  const interactive = manifest.auth_modes.some(
+    (mode) => mode === "sign_in" || mode === "oauth",
+  );
+  if (interactive && typeof connector.signIn !== "function") {
+    failures.push(
+      "manifest.auth_modes: declares an interactive mode but signIn() is not implemented",
+    );
+  }
+  if (!interactive && typeof connector.signIn === "function") {
+    failures.push(
+      "manifest.auth_modes: signIn() exists but no interactive mode is declared",
+    );
+  }
 
   let fixtureEvents: unknown[] | undefined;
   if (manifest.capabilities.fixture) {
@@ -273,6 +288,16 @@ function parseManifest(raw: unknown, failures: string[]): Manifest | undefined {
   }
   if (typeof raw["emits_sensitivity_hint"] !== "boolean") {
     failures.push("manifest.emits_sensitivity_hint: must be boolean");
+  }
+  const authModes = raw["auth_modes"];
+  if (
+    !Array.isArray(authModes) ||
+    authModes.length === 0 ||
+    !authModes.every(isAuthMode)
+  ) {
+    failures.push(
+      `manifest.auth_modes: must be a non-empty array of ${AUTH_MODES.join(" | ")}`,
+    );
   }
 
   if (failures.length > 0) return undefined;

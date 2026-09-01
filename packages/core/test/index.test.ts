@@ -4,6 +4,7 @@ import * as core from "../src/index";
 describe("public surface", () => {
   test("re-exports every runtime value the contract layer defines", () => {
     expect(Object.keys(core).sort()).toEqual([
+      "AUTH_MODES",
       "CONNECTOR_SCHEMA",
       "DEFAULT_GRANT",
       "EVENT_SCHEMA",
@@ -37,6 +38,7 @@ describe("public surface", () => {
       "initGraph",
       "initSearch",
       "initVault",
+      "isAuthMode",
       "isHealthState",
       "isNonEmptyString",
       "isPlainObject",

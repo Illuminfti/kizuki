@@ -78,6 +78,17 @@ credentials, idempotent double-backfill, tombstone emission, purge plan,
 checkpoint resume, manifest honesty. Credentials via `secret_ref` URIs
 (`env:`, `file:`; keychain as optional package); core never stores plaintext.
 
+**Sign-in, not setup.** `manifest.auth_modes` declares how a source is
+connected: `sign_in` (phone code / app password in the terminal), `oauth`
+(browser consent via PKCE and a loopback listener; core helper in
+`auth/oauth.ts`), `secret_ref` (an existing token the owner points at),
+`none` (files). `sign_in`/`oauth` require `signIn(io, secretsDir)`; the CLI
+lends the terminal and the connector writes only `file:` refs under
+`<vault>/.kizuki/secrets/`. Project-owned app credentials are compiled in;
+nothing user-facing ever asks for a client id. Where a service has no
+sanctioned user sign-in, the connector says so and offers export import
+instead.
+
 ## Storage
 
 Bun + TypeScript (strict). One SQLite DB (`bun:sqlite`, WAL) per vault under

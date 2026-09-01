@@ -105,6 +105,7 @@ describe("Connector shape", () => {
     },
     required_secrets: ["env:FIXTURE_TOKEN"],
     emits_sensitivity_hint: true,
+    auth_modes: ["secret_ref"],
   };
 
   const empty: SyncBatch = { events: [], cursor: null };

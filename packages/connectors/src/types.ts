@@ -1,16 +1,19 @@
 export {
+  AUTH_MODES,
   CONNECTOR_SCHEMA,
   EVENT_SCHEMA,
   HEALTH_STATES,
   HealthReport,
   canonicalSerialize,
   computeContentHash,
+  isAuthMode,
   isHealthState,
   ulid,
   validateEventInput,
 } from "@kizuki/core";
 export type {
   AttachmentRef,
+  AuthMode,
   CaptureEvent,
   CaptureEventInput,
   Connector,
@@ -22,6 +25,8 @@ export type {
   PurgePlan,
   SecretResolver,
   SensitivityHint,
+  SignInIo,
+  SignInResult,
   SubjectRef,
   SubjectRole,
   SyncBatch,

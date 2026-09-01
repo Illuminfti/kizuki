@@ -26,6 +26,18 @@ export function isHealthState(v: unknown): v is HealthState {
  */
 export type Cursor = string;
 
+/**
+ * How a person connects a source. `sign_in` and `oauth` mean the owner runs
+ * `kizuki connect <id>` and signs in interactively — no developer console,
+ * no keys to paste; the connector persists what it needs under secret_refs.
+ */
+export const AUTH_MODES = ["none", "sign_in", "oauth", "secret_ref"] as const;
+export type AuthMode = (typeof AUTH_MODES)[number];
+
+export function isAuthMode(v: unknown): v is AuthMode {
+  return typeof v === "string" && (AUTH_MODES as readonly string[]).includes(v);
+}
+
 export interface ManifestCapabilities {
   backfill: boolean;
   sync: boolean;
@@ -43,6 +55,27 @@ export interface Manifest {
   /** `secret_ref` URIs the connector needs (`env:`, `file:`); never plaintext. */
   required_secrets: string[];
   emits_sensitivity_hint: boolean;
+  /** Non-empty; `sign_in`/`oauth` require a `signIn` implementation. */
+  auth_modes: AuthMode[];
+}
+
+/** Terminal-facing prompts the CLI lends a connector during `signIn`. */
+export interface SignInIo {
+  prompt(question: string, opts?: { secret?: boolean }): Promise<string>;
+  notify(text: string): void;
+  /** Opens the owner's browser; resolves once the URL was handed off. */
+  openUrl(url: string): Promise<void>;
+}
+
+export interface SignInResult {
+  /** Identifies this source within the connector (account, phone, folder). */
+  source_key: string;
+  /** Human label for `doctor`/`connect` output; never a secret. */
+  display: string;
+  /** `secret_ref` URIs written during sign-in (`file:` under the secrets dir). */
+  secret_refs: string[];
+  /** Connector config to persist alongside the connection; never plaintext secrets. */
+  config: Record<string, unknown>;
 }
 
 export interface HealthReportInit {
@@ -116,6 +149,13 @@ export interface Connector {
   /** Incremental sweep from a checkpoint; emits tombstones as `deleted: true` events. */
   sync(cursor: Cursor | null): Promise<SyncBatch>;
   revoke(): Promise<void>;
+  /**
+   * Interactive first-time sign-in (phone code, browser OAuth, app
+   * password). Writes secrets only under `secretsDir` as `file:` refs and
+   * returns what `connect` needs afterwards. Required when `auth_modes`
+   * includes `sign_in` or `oauth`.
+   */
+  signIn?(io: SignInIo, secretsDir: string): Promise<SignInResult>;
   purgeSource(subject_id: string): Promise<PurgePlan>;
   /** Offline sample used by the conformance suite; must need no credentials. */
   fixture(): Promise<CaptureEventInput[]>;

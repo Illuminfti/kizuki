@@ -81,6 +81,7 @@ const MANIFEST: Manifest = {
   },
   required_secrets: [],
   emits_sensitivity_hint: false,
+  auth_modes: ["none"],
 };
 
 export class ChatGptImportConnector implements Connector {
