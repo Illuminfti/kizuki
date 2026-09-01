@@ -77,3 +77,18 @@ export type {
 } from "./ledger/ledger";
 export { purgeEvents } from "./ledger/purge";
 export type { PurgeFilter, PurgeReceipt } from "./ledger/purge";
+
+export {
+  indexEvent,
+  indexPage,
+  initSearch,
+  rebuildSearch,
+  removeDoc,
+  search,
+  toFtsQuery,
+} from "./search";
+export type {
+  SearchHit,
+  SearchOptions,
+  SearchRebuildResult,
+} from "./search";
