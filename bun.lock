@@ -9,11 +9,22 @@
         "typescript": "^5.9.0",
       },
     },
+    "packages/cli": {
+      "name": "@kizuki/cli",
+      "bin": {
+        "kizuki": "src/main.ts",
+      },
+      "dependencies": {
+        "@kizuki/core": "workspace:*",
+      },
+    },
     "packages/core": {
       "name": "@kizuki/core",
     },
   },
   "packages": {
+    "@kizuki/cli": ["@kizuki/cli@workspace:packages/cli"],
+
     "@kizuki/core": ["@kizuki/core@workspace:packages/core"],
 
     "@types/bun": ["@types/bun@1.4.0", "", { "dependencies": { "bun-types": "1.4.0" } }, "sha512-K+lZULY23vRgK/CfTjFIV+tyifaNdSMlPh9j+6mQ/cLfpOznLyAuzgV/JQysyECpkBQLVMSyvjlr2fBUSA9wFQ=="],
