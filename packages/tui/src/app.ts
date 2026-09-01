@@ -110,14 +110,21 @@ function indexCanon(vaultPath: string): CanonIndex {
   return index;
 }
 
+/**
+ * A capture's frontmatter title names the connector and time; what the owner
+ * scans for is the first line the source actually said, so quoted text wins
+ * when it exists.
+ */
 function titleOf(proposal: StagedProposal): string {
+  const lines = sanitize(proposal.body).split("\n");
+  if (proposal.kind === "claim") {
+    const quoted = lines.find((l) => /^>\s*\S/.test(l));
+    if (quoted !== undefined) return truncate(quoted.replace(/^>\s*/, "").trim(), 80);
+  }
   const title = proposal.frontmatter["title"];
   if (typeof title === "string" && title.trim().length > 0)
     return sanitize(title.trim());
-  const firstLine =
-    sanitize(proposal.body)
-      .split("\n")
-      .find((l) => l.trim().length > 0) ?? "(empty)";
+  const firstLine = lines.find((l) => l.trim().length > 0) ?? "(empty)";
   return truncate(firstLine.trim(), 80);
 }
 

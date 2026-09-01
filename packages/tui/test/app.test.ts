@@ -224,6 +224,11 @@ describe("loadItems", () => {
     const items = loadItems(db, vault);
     expect(items).toHaveLength(3);
     expect(items.every((i) => i.targetPath === null)).toBe(true);
+    const captures = items.filter((i) => i.proposal.kind === "claim");
+    expect(captures.map((i) => i.title).sort()).toEqual([
+      "rain on the roof",
+      "the kettle is on",
+    ]);
     db.close();
   });
 });
