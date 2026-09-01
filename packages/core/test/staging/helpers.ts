@@ -3,12 +3,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CaptureEvent } from "../../src/contracts/event";
+import { openLedger } from "../../src/ledger/db";
 import { initSearch } from "../../src/search/schema";
 import { initStaging } from "../../src/staging/proposals";
 import type { ProposalInput } from "../../src/staging/proposals";
+import { initVault } from "../../src/vault/init";
 
 export function memoryDb(): Database {
-  const db = new Database(":memory:");
+  const db = openLedger(":memory:");
   initStaging(db);
   initSearch(db);
   return db;
@@ -16,6 +18,7 @@ export function memoryDb(): Database {
 
 export function tempVault(): { path: string; dispose: () => void } {
   const path = mkdtempSync(join(tmpdir(), "kizuki-vault-"));
+  initVault(path);
   return {
     path,
     dispose: () => rmSync(path, { recursive: true, force: true }),

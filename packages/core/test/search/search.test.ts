@@ -20,9 +20,11 @@ function page(
   body: string,
   overrides: Record<string, unknown> = {},
 ): CanonPage {
+  const relPath = `facts/${id.replace(":", "-")}.md`;
   return {
     id,
-    relPath: `facts/${id.replace(":", "-")}.md`,
+    path: relPath,
+    relPath,
     data: {
       id,
       title: `Title ${id}`,

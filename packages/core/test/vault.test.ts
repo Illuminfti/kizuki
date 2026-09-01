@@ -11,7 +11,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   doctorVault,
+  findPageById,
   initVault,
+  listCanonPages,
   parseFrontmatter,
   serializePage,
   validatePage,
@@ -202,6 +204,41 @@ describe("doctorVault", () => {
   });
 });
 
+describe("canon page discovery", () => {
+  test("lists active canon pages and excludes control and archive files", () => {
+    const vault = tempDir();
+    initVault(vault);
+    writePage(join(vault, "entities", "ada.md"), {
+      data: validData(),
+      body: "Ada body.\n",
+    });
+    writeFileSync(
+      join(vault, ".kizuki", "ignored.md"),
+      serializePage({ data: validData({ id: "ignored" }), body: "Ignored.\n" }),
+    );
+    writeFileSync(
+      join(vault, "archive", "old.md"),
+      serializePage({ data: validData({ id: "old" }), body: "Old.\n" }),
+    );
+
+    const pages = listCanonPages(vault);
+    expect(pages.map((page) => page.relPath)).toEqual(["entities/ada.md"]);
+    expect(pages[0]?.body).toBe("Ada body.\n");
+  });
+
+  test("finds a canon page by frontmatter id", () => {
+    const vault = tempDir();
+    initVault(vault);
+    writePage(join(vault, "facts", "engine.md"), {
+      data: validData({ id: "fact:engine", type: "fact", title: "Engine" }),
+      body: "A fact.\n",
+    });
+
+    expect(findPageById(vault, "fact:engine")?.relPath).toBe("facts/engine.md");
+    expect(findPageById(vault, "fact:missing")).toBeNull();
+  });
+});
+
 describe("writePage", () => {
   test("refuses clobbers and archives the old content for an explicit revision", () => {
     const vault = tempDir();
@@ -242,5 +279,32 @@ describe("writePage", () => {
       }),
     ).toThrow(/invalid page/i);
     expect(existsSync(path)).toBe(false);
+  });
+
+  test("archives a deleted page in place and preserves the prior revision", () => {
+    const vault = tempDir();
+    initVault(vault);
+    const path = join(vault, "entities", "ada.md");
+    const original = { data: validData(), body: "Former canon.\n" };
+    writePage(path, original);
+
+    // Reconciliation rule 4 keeps the archived page at its canon path.
+    writePage(
+      path,
+      { data: validData({ status: "archived" }), body: "Former canon.\n" },
+      { revision: true },
+    );
+
+    expect(existsSync(path)).toBe(true);
+    const page = parseFrontmatter(readFileSync(path, "utf8"));
+    expect(page.data["status"]).toBe("archived");
+    expect(page.body).toBe("Former canon.\n");
+    const revisions = readdirSync(join(vault, "archive")).filter((name) =>
+      name.startsWith("ada.prev-"),
+    );
+    expect(revisions).toHaveLength(1);
+    expect(readFileSync(join(vault, "archive", revisions[0] as string), "utf8")).toBe(
+      serializePage(original),
+    );
   });
 });

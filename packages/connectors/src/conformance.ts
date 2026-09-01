@@ -2,6 +2,7 @@ import {
   AUTH_MODES,
   CONNECTOR_SCHEMA,
   isAuthMode,
+  isSecretRef,
   isPlainObject,
   validateEventInput,
 } from "@kizuki/core";
@@ -280,11 +281,9 @@ function parseManifest(raw: unknown, failures: string[]): Manifest | undefined {
   }
   if (
     !Array.isArray(raw["required_secrets"]) ||
-    !raw["required_secrets"].every(
-      (secret) => typeof secret === "string" && secret.length > 0,
-    )
+    !raw["required_secrets"].every(isSecretRef)
   ) {
-    failures.push("manifest.required_secrets: must contain strings");
+    failures.push("manifest.required_secrets: must contain secret_ref URIs");
   }
   if (typeof raw["emits_sensitivity_hint"] !== "boolean") {
     failures.push("manifest.emits_sensitivity_hint: must be boolean");

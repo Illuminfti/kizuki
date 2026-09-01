@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Cursor } from "../contracts/connector";
+import type { RunResult } from "../ingest/run";
+import { getCheckpoint, saveCheckpoint } from "./connections";
 
 /**
  * Persisted resume tokens, one per (connector, source). The cursor is opaque:
@@ -12,12 +14,7 @@ export function readCheckpoint(
   connectorId: string,
   sourceKey: string,
 ): Cursor | null {
-  const row = db
-    .query<{ cursor: string }, [string, string]>(
-      "SELECT cursor FROM checkpoints WHERE connector_id = ? AND source_key = ?",
-    )
-    .get(connectorId, sourceKey);
-  return row === null ? null : row.cursor;
+  return getCheckpoint(db, connectorId, sourceKey)?.cursor ?? null;
 }
 
 export function writeCheckpoint(
@@ -26,10 +23,14 @@ export function writeCheckpoint(
   sourceKey: string,
   cursor: Cursor,
 ): void {
-  db.query<never, [string, string, string, string]>(
-    `INSERT INTO checkpoints (connector_id, source_key, cursor, updated_at)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT (connector_id, source_key)
-       DO UPDATE SET cursor = excluded.cursor, updated_at = excluded.updated_at`,
-  ).run(connectorId, sourceKey, cursor, new Date().toISOString());
+  const result: RunResult = {
+    stored: 0,
+    duplicates: 0,
+    errors: [],
+    proposals_created: 0,
+    withdrawn: 0,
+    retractions_filed: 0,
+    cursor,
+  };
+  saveCheckpoint(db, connectorId, sourceKey, cursor, "sync", result);
 }

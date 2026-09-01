@@ -1,4 +1,10 @@
-import { copyFileSync, existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { serializePage } from "./frontmatter";
 import type { VaultPage } from "./frontmatter";

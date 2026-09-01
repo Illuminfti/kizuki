@@ -46,7 +46,8 @@ export type {
   PurgePlan,
   SecretResolver,
   SignInIo,
-  SignInResult,
+  SignInDisplay,
+  ConnectionStateWriter,
   SyncBatch,
 } from "./contracts/connector";
 
@@ -65,6 +66,8 @@ export {
 export type { PageSensitivity, PageStatus, PageType } from "./vault/schema";
 export { writePage } from "./vault/write";
 export type { WritePageOptions } from "./vault/write";
+export { findPageById, listCanonPages } from "./vault/pages";
+export type { CanonPage } from "./vault/pages";
 
 export { canonicalSerialize, computeContentHash } from "./util/hash";
 export { isRfc3339 } from "./util/time";
@@ -81,8 +84,36 @@ export type {
   LedgerCursor,
   ReplayFilter,
 } from "./ledger/ledger";
-export { purgeEvents } from "./ledger/purge";
-export type { PurgeFilter, PurgeReceipt } from "./ledger/purge";
+export { isHeld, purgeEvents, readHolds } from "./ledger/purge";
+export type {
+  CanonHold,
+  PurgeFilter,
+  PurgeOutcome,
+  PurgeReceipt,
+} from "./ledger/purge";
+export {
+  LedgerError,
+  disconnect,
+  getCheckpoint,
+  getConnection,
+  listCheckpoints,
+  listConnections,
+  saveCheckpoint,
+} from "./ledger/connections";
+export type { Checkpoint, Connection, ConnectionConfig } from "./ledger/connections";
+export {
+  ConnectionStateStore,
+  enrollConnection,
+  CONNECTION_CONFIG_SCHEMA,
+  MAX_CONNECTION_STATE_BYTES,
+} from "./ledger/connection-state";
+export type { ConnectionStateReader } from "./ledger/connection-state";
+export { isSecretRef, parseSecretRef } from "./contracts/secret-ref";
+export type { SecretRef, SecretRefScheme } from "./contracts/secret-ref";
+export type { RunResult } from "./ingest/run";
+export { runBackfill, runBatch, runSync } from "./ingest/run";
+export { exportVault } from "./export";
+export type { ExportManifest, ExportManifestEntry } from "./export";
 
 export {
   indexEvent,

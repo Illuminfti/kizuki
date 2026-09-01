@@ -4,20 +4,20 @@ import { parseFrontmatter } from "./frontmatter";
 
 export interface CanonPage {
   id: string;
+  path: string;
   relPath: string;
   data: Record<string, unknown>;
   body: string;
 }
 
-function markdownFiles(path: string): string[] {
+function markdownFiles(directory: string): string[] {
   const files: string[] = [];
-  const entries = readdirSync(path, { withFileTypes: true }).sort((a, b) =>
+  const entries = readdirSync(directory, { withFileTypes: true }).sort((a, b) =>
     a.name.localeCompare(b.name),
   );
-
   for (const entry of entries) {
-    if (entry.name === ".kizuki") continue;
-    const target = join(path, entry.name);
+    if (entry.name === ".kizuki" || entry.name === "archive") continue;
+    const target = join(directory, entry.name);
     if (entry.isDirectory()) {
       files.push(...markdownFiles(target));
     } else if (
@@ -29,18 +29,21 @@ function markdownFiles(path: string): string[] {
       files.push(target);
     }
   }
-
   return files;
 }
 
 export function listCanonPages(vaultPath: string): CanonPage[] {
-  return markdownFiles(vaultPath).map((file) => {
-    const relPath = relative(vaultPath, file).split(sep).join("/");
-    const page = parseFrontmatter(readFileSync(file, "utf8"));
+  return markdownFiles(vaultPath).map((path) => {
+    const relPath = relative(vaultPath, path).split(sep).join("/");
+    const page = parseFrontmatter(readFileSync(path, "utf8"));
     const id = page.data["id"];
     if (typeof id !== "string" || id.length === 0) {
       throw new TypeError(`${relPath}: frontmatter.id must be a non-empty string`);
     }
-    return { id, relPath, data: page.data, body: page.body };
+    return { id, path, relPath, data: page.data, body: page.body };
   });
+}
+
+export function findPageById(vaultPath: string, id: string): CanonPage | null {
+  return listCanonPages(vaultPath).find((page) => page.id === id) ?? null;
 }

@@ -89,12 +89,13 @@ CREATE TABLE IF NOT EXISTS proposals (
   body_hash   TEXT NOT NULL
 ) STRICT;
 
--- SQLite cannot express an expression in a table-level UNIQUE clause, so the
--- (kind, target, body_hash) idempotency key lives in this index instead. The
--- coalesce keeps NULL targets colliding with each other, which plain SQL NULL
--- semantics would not do.
-CREATE UNIQUE INDEX IF NOT EXISTS proposals_idempotency
-  ON proposals (kind, coalesce(target, ''), body_hash);
+-- Purge reviews need a fresh proposal when different purged provenance reaches
+-- the same unchanged page body. Their pending duplicates are resolved in the
+-- filing transaction; every other kind keeps the durable database constraint.
+DROP INDEX IF EXISTS proposals_idempotency;
+CREATE UNIQUE INDEX proposals_idempotency
+  ON proposals (kind, coalesce(target, ''), body_hash)
+  WHERE kind <> 'purge_review';
 
 CREATE INDEX IF NOT EXISTS proposals_by_status
   ON proposals (status, created_at);
@@ -113,7 +114,9 @@ CREATE TABLE IF NOT EXISTS promotions (
   provenance  TEXT NOT NULL,
   sensitivity TEXT NOT NULL,
   page_path   TEXT NOT NULL,
-  page_hash   TEXT NOT NULL,
+  kind        TEXT NOT NULL DEFAULT 'claim',
+  before_hash TEXT,
+  after_hash  TEXT NOT NULL,
   at          TEXT NOT NULL
 ) STRICT;
 `;
@@ -217,30 +220,44 @@ function validateInput(input: ProposalInput): void {
 export function fileProposal(
   db: Database,
   input: ProposalInput,
+  opts: { bypassSuppression?: boolean } = {},
 ): FileProposalResult {
   validateInput(input);
 
   const bodyHash = hashBody(input.body);
   const target = input.target ?? null;
   const targetKey = target ?? "";
+  const provenance = input.kind === "purge_review"
+    ? [...new Set(input.provenance)].sort()
+    : [...input.provenance];
 
   const file = db.transaction((): FileProposalResult => {
-    const rejection = db
-      .query("SELECT reason FROM rejections WHERE body_hash = ? LIMIT 1")
-      .get(bodyHash) as { reason: string } | null;
-    if (rejection !== null) {
-      return {
-        outcome: "suppressed",
-        body_hash: bodyHash,
-        reason: rejection.reason,
-      };
+    if (opts.bypassSuppression !== true) {
+      const rejection = db
+        .query("SELECT reason FROM rejections WHERE body_hash = ? LIMIT 1")
+        .get(bodyHash) as { reason: string } | null;
+      if (rejection !== null) {
+        return {
+          outcome: "suppressed",
+          body_hash: bodyHash,
+          reason: rejection.reason,
+        };
+      }
     }
 
-    const existing = db
-      .query(
-        "SELECT * FROM proposals WHERE kind = ? AND coalesce(target, '') = ? AND body_hash = ?",
-      )
-      .get(input.kind, targetKey, bodyHash) as ProposalRow | null;
+    const existing = input.kind === "purge_review"
+      ? db
+          .query(
+            `SELECT * FROM proposals
+              WHERE kind = ? AND coalesce(target, '') = ? AND body_hash = ?
+                AND provenance = ? AND status = 'pending'`,
+          )
+          .get(input.kind, targetKey, bodyHash, JSON.stringify(provenance)) as ProposalRow | null
+      : db
+          .query(
+            "SELECT * FROM proposals WHERE kind = ? AND coalesce(target, '') = ? AND body_hash = ?",
+          )
+          .get(input.kind, targetKey, bodyHash) as ProposalRow | null;
     if (existing !== null) {
       return { outcome: "duplicate", proposal: rowToProposal(existing) };
     }
@@ -251,7 +268,7 @@ export function fileProposal(
       target,
       body: input.body,
       frontmatter: input.frontmatter,
-      provenance: [...input.provenance],
+      provenance,
       subjects: [...(input.subjects ?? [])],
       producer: input.producer,
       confidence: input.confidence,

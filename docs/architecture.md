@@ -82,10 +82,12 @@ checkpoint resume, manifest honesty. Credentials via `secret_ref` URIs
 connected: `sign_in` (phone code / app password in the terminal), `oauth`
 (browser consent via PKCE and a loopback listener; core helper in
 `auth/oauth.ts`), `secret_ref` (an existing token the owner points at),
-`none` (files). `sign_in`/`oauth` require `signIn(io, secretsDir)`; the CLI
-lends the terminal and the connector writes only `file:` refs under
-`<vault>/.kizuki/secrets/`. Project-owned app credentials are compiled in;
-nothing user-facing ever asks for a client id. Where a service has no
+`none` (files). `sign_in`/`oauth` receive `signIn(io, stateWriter)`; the
+trusted host lends the terminal plus a scoped opaque-state writer, mints the
+source key and state filename, and persists only a fixed safe envelope and
+vault-relative state reference. Connector code neither chooses a path nor
+returns durable connection config. Project-owned app credentials are compiled
+in; nothing user-facing ever asks for a client id. Where a service has no
 sanctioned user sign-in, the connector says so and offers export import
 instead.
 

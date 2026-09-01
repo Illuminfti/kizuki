@@ -48,13 +48,79 @@ const MIGRATIONS: readonly Migration[] = [
   {
     version: 2,
     sql: `
+      CREATE TABLE connections (
+        connector_id TEXT NOT NULL,
+        source_key TEXT NOT NULL CHECK (
+          length(source_key) = 26
+          AND source_key NOT GLOB '*[^0123456789ABCDEFGHJKMNPQRSTVWXYZ]*'
+        ),
+        config TEXT NOT NULL CHECK (
+          config = '{"schema":"kizuki.connection-config/v1","state_ref_index":null}'
+          OR config = '{"schema":"kizuki.connection-config/v1","state_ref_index":0}'
+        ),
+        secret_refs TEXT NOT NULL CHECK (
+          (config = '{"schema":"kizuki.connection-config/v1","state_ref_index":null}' AND secret_refs = '[]')
+          OR (
+            config = '{"schema":"kizuki.connection-config/v1","state_ref_index":0}'
+            AND secret_refs = '["file:connections/' || source_key || '.state"]'
+          )
+        ),
+        connected_at TEXT NOT NULL,
+        disconnected_at TEXT,
+        PRIMARY KEY (connector_id, source_key)
+      ) STRICT;
+
       CREATE TABLE checkpoints (
         connector_id TEXT NOT NULL,
         source_key TEXT NOT NULL,
-        cursor TEXT NOT NULL,
+        cursor TEXT,
+        mode TEXT NOT NULL,
         updated_at TEXT NOT NULL,
+        last_run_at TEXT NOT NULL,
+        last_result TEXT NOT NULL,
         PRIMARY KEY (connector_id, source_key)
-      );
+      ) STRICT;
+
+      CREATE TABLE canon_holds (
+        page_path TEXT NOT NULL,
+        proposal_id TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        held_at TEXT NOT NULL,
+        PRIMARY KEY (page_path, proposal_id)
+      ) STRICT;
+
+      CREATE TABLE IF NOT EXISTS promotions (
+        receipt_id TEXT PRIMARY KEY,
+        proposal_id TEXT NOT NULL UNIQUE,
+        provenance TEXT NOT NULL,
+        sensitivity TEXT NOT NULL,
+        page_path TEXT NOT NULL,
+        page_hash TEXT NOT NULL,
+        at TEXT NOT NULL
+      ) STRICT;
+
+      CREATE TABLE promotions_v2 (
+        receipt_id TEXT PRIMARY KEY,
+        proposal_id TEXT NOT NULL UNIQUE,
+        provenance TEXT NOT NULL,
+        sensitivity TEXT NOT NULL,
+        page_path TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'claim',
+        before_hash TEXT,
+        after_hash TEXT NOT NULL,
+        at TEXT NOT NULL
+      ) STRICT;
+
+      INSERT INTO promotions_v2 (
+        receipt_id, proposal_id, provenance, sensitivity, page_path,
+        kind, before_hash, after_hash, at
+      )
+      SELECT receipt_id, proposal_id, provenance, sensitivity, page_path,
+             'claim', NULL, page_hash, at
+        FROM promotions;
+
+      DROP TABLE promotions;
+      ALTER TABLE promotions_v2 RENAME TO promotions;
     `,
   },
 ];

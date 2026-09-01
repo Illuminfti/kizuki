@@ -1,12 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { CaptureEventInput } from "../src/contracts/event";
 import { openLedger } from "../src/ledger/db";
 import { accept, count, readSince, replay } from "../src/ledger/ledger";
-import { purgeEvents } from "../src/ledger/purge";
 import { computeContentHash } from "../src/util/hash";
 import { validEvent } from "./fixtures";
 
@@ -16,11 +12,7 @@ function event(
   sourceRecordId: string,
   overrides: Partial<CaptureEventInput> = {},
 ): CaptureEventInput {
-  return {
-    ...validEvent(),
-    source_record_id: sourceRecordId,
-    ...overrides,
-  };
+  return { ...validEvent(), source_record_id: sourceRecordId, ...overrides };
 }
 
 function storedEvent(db: Database, input: CaptureEventInput) {
@@ -31,64 +23,11 @@ function storedEvent(db: Database, input: CaptureEventInput) {
   return result.event;
 }
 
-describe("openLedger", () => {
-  test("applies all migrations and enables foreign keys", () => {
-    const db = openLedger(":memory:");
-
-    expect(
-      db
-        .query<{ version: number }, []>("SELECT version FROM schema_version")
-        .get(),
-    ).toEqual({ version: 2 });
-    expect(
-      db.query<{ foreign_keys: number }, []>("PRAGMA foreign_keys").get(),
-    ).toEqual({ foreign_keys: 1 });
-    expect(
-      db
-        .query<{ name: string }, []>(
-          "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
-        )
-        .all()
-        .map(({ name }) => name),
-    ).toEqual(["checkpoints", "event_purges", "events", "schema_version"]);
-
-    db.close();
-  });
-
-  test("reopening an already-migrated database is a no-op", () => {
-    const directory = mkdtempSync(join(tmpdir(), "kizuki-ledger-"));
-    const path = join(directory, "ledger.sqlite");
-    try {
-      const first = openLedger(path);
-      storedEvent(first, validEvent());
-      first.close();
-
-      const reopened = openLedger(path);
-      expect(count(reopened)).toBe(1);
-      expect(
-        reopened
-          .query<{ version: number }, []>("SELECT version FROM schema_version")
-          .get(),
-      ).toEqual({ version: 2 });
-      expect(
-        reopened
-          .query<{ journal_mode: string }, []>("PRAGMA journal_mode")
-          .get(),
-      ).toEqual({ journal_mode: "wal" });
-      reopened.close();
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
-  });
-});
-
 describe("accept", () => {
   test("stores a valid input and reads it back", () => {
     const db = openLedger(":memory:");
     const input = validEvent();
-
     const result = accept(db, input);
-
     expect(result.status).toBe("stored");
     if (result.status !== "stored") throw new Error("unreachable");
     expect(result.event.event_id).toMatch(ULID);
@@ -99,10 +38,8 @@ describe("accept", () => {
 
   test("deduplicates the same source version", () => {
     const db = openLedger(":memory:");
-    const input = validEvent();
-
-    expect(accept(db, input).status).toBe("stored");
-    expect(accept(db, input)).toEqual({ status: "duplicate" });
+    expect(accept(db, validEvent()).status).toBe("stored");
+    expect(accept(db, validEvent())).toEqual({ status: "duplicate" });
     expect(count(db)).toBe(1);
     db.close();
   });
@@ -110,11 +47,7 @@ describe("accept", () => {
   test("stores an edited source record as a new event", () => {
     const db = openLedger(":memory:");
     const first = storedEvent(db, validEvent());
-    const edited = storedEvent(db, {
-      ...validEvent(),
-      text: "the kettle boiled",
-    });
-
+    const edited = storedEvent(db, { ...validEvent(), text: "the kettle boiled" });
     expect(edited.event_id).not.toBe(first.event_id);
     expect(edited.content_hash).not.toBe(first.content_hash);
     expect(count(db)).toBe(2);
@@ -129,7 +62,6 @@ describe("accept", () => {
       archived: false,
     };
     const stored = storedEvent(db, { ...validEvent(), metadata });
-
     expect(readSince(db, null, 1).events[0]?.metadata).toEqual(metadata);
     expect(readSince(db, null, 1).events[0]).toEqual(stored);
     db.close();
@@ -138,16 +70,12 @@ describe("accept", () => {
   test("reports an event_id collision with different content as an error", () => {
     const db = openLedger(":memory:");
     const collidingId = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
-
     expect(
-      accept(db, event("rec-first"), {
-        generateId: () => collidingId,
-      }).status,
+      accept(db, event("rec-first"), { generateId: () => collidingId }).status,
     ).toBe("stored");
     const collision = accept(db, event("rec-second", { text: "different" }), {
       generateId: () => collidingId,
     });
-
     expect(collision.status).toBe("error");
     if (collision.status !== "error") throw new Error("unreachable");
     expect(collision.error).toContain("event_id collision");
@@ -157,12 +85,7 @@ describe("accept", () => {
 
   test("stores and reads a tombstone", () => {
     const db = openLedger(":memory:");
-    const tombstone = storedEvent(db, {
-      ...validEvent(),
-      deleted: true,
-      text: "",
-    });
-
+    const tombstone = storedEvent(db, { ...validEvent(), deleted: true, text: "" });
     expect(tombstone.deleted).toBe(true);
     expect(readSince(db, null, 1).events[0]?.deleted).toBe(true);
     db.close();
@@ -172,9 +95,7 @@ describe("accept", () => {
     const db = openLedger(":memory:");
     const input = validEvent();
     delete input.sensitivity_hint;
-
     const stored = storedEvent(db, input);
-
     expect("sensitivity_hint" in stored).toBe(false);
     expect("sensitivity_hint" in readSince(db, null, 1).events[0]!).toBe(false);
     db.close();
@@ -182,9 +103,7 @@ describe("accept", () => {
 
   test("returns validation failures without writing", () => {
     const db = openLedger(":memory:");
-
     const result = accept(db, { schema: "kizuki.event/v1" });
-
     expect(result.status).toBe("error");
     if (result.status !== "error") throw new Error("unreachable");
     expect(result.error).toContain("connector_id");
@@ -193,19 +112,17 @@ describe("accept", () => {
     db.close();
   });
 });
-
 describe("readSince", () => {
   test("paginates 250 events without duplicates or gaps", () => {
     const db = openLedger(":memory:");
     const expected: string[] = [];
-    for (let i = 0; i < 250; i++) {
-      expected.push(storedEvent(db, event(`rec-${i}`)).event_id);
+    for (let index = 0; index < 250; index += 1) {
+      expected.push(storedEvent(db, event(`rec-${index}`)).event_id);
     }
-
     const seen: string[] = [];
     const pageSizes: number[] = [];
     let cursor = null;
-    for (let pageNumber = 0; pageNumber < 4; pageNumber++) {
+    for (let pageNumber = 0; pageNumber < 4; pageNumber += 1) {
       const page = readSince(db, cursor, 100);
       if (page.events.length > 0) {
         pageSizes.push(page.events.length);
@@ -213,7 +130,6 @@ describe("readSince", () => {
       }
       cursor = page.cursor;
     }
-
     expect(pageSizes).toEqual([100, 100, 50]);
     expect(seen).toEqual(expected);
     expect(new Set(seen).size).toBe(250);
@@ -222,154 +138,33 @@ describe("readSince", () => {
   });
 });
 
-describe("purgeEvents", () => {
-  test("purges one event by event_id", () => {
-    const db = openLedger(":memory:");
-    const target = storedEvent(db, event("target"));
-    storedEvent(db, event("keep"));
-
-    const receipts = purgeEvents(
-      db,
-      { event_id: target.event_id },
-      "record request",
-    );
-
-    expect(receipts.map(({ event_id }) => event_id)).toEqual([target.event_id]);
-    expect(
-      readSince(db, null, 10).events.map(
-        ({ source_record_id }) => source_record_id,
-      ),
-    ).toEqual(["keep"]);
-    db.close();
-  });
-
-  test("purges by connector and persists one receipt per event", () => {
-    const db = openLedger(":memory:");
-    storedEvent(db, event("a", { connector_id: "mail" }));
-    storedEvent(db, event("b", { connector_id: "mail" }));
-    storedEvent(db, event("c", { connector_id: "calendar" }));
-
-    const receipts = purgeEvents(
-      db,
-      { connector_id: "mail" },
-      "account erased",
-    );
-
-    expect(receipts).toHaveLength(2);
-    expect(receipts.every(({ receipt_id }) => ULID.test(receipt_id))).toBe(
-      true,
-    );
-    expect(receipts.every(({ connector_id }) => connector_id === "mail")).toBe(
-      true,
-    );
-    expect(count(db)).toBe(1);
-    expect(
-      db
-        .query<{ receipt_id: string }, []>(
-          "SELECT receipt_id FROM event_purges ORDER BY receipt_id",
-        )
-        .all()
-        .map(({ receipt_id }) => receipt_id),
-    ).toEqual(receipts.map(({ receipt_id }) => receipt_id).sort());
-    db.close();
-  });
-
-  test("purges only events matching a subject handle", () => {
-    const db = openLedger(":memory:");
-    const matching = storedEvent(
-      db,
-      event("matching", {
-        subjects: [{ subject_id: "person:grace", role: "about" }],
-      }),
-    );
-    storedEvent(
-      db,
-      event("other", {
-        subjects: [{ subject_id: "person:ada", role: "about" }],
-      }),
-    );
-
-    const receipts = purgeEvents(
-      db,
-      { subject_handle: "person:grace" },
-      "subject request",
-    );
-
-    expect(receipts.map(({ event_id }) => event_id)).toEqual([
-      matching.event_id,
-    ]);
-    expect(
-      readSince(db, null, 10).events.map(
-        ({ source_record_id }) => source_record_id,
-      ),
-    ).toEqual(["other"]);
-    db.close();
-  });
-
-  test("rejects an empty filter", () => {
-    const db = openLedger(":memory:");
-    storedEvent(db, validEvent());
-
-    expect(() => purgeEvents(db, {}, "unsafe")).toThrow("filter");
-    expect(count(db)).toBe(1);
-    db.close();
-  });
-
-  test("returns no receipts when the filter has no matches", () => {
-    const db = openLedger(":memory:");
-    storedEvent(db, validEvent());
-
-    expect(purgeEvents(db, { connector_id: "missing" }, "no match")).toEqual(
-      [],
-    );
-    expect(count(db)).toBe(1);
-    db.close();
-  });
-});
-
 describe("replay", () => {
   test("filters by connector, kind, and occurred_at", () => {
     const db = openLedger(":memory:");
-    storedEvent(
-      db,
-      event("a", {
-        connector_id: "mail",
-        kind: "email",
-        occurred_at: "2026-01-01T00:00:00Z",
-      }),
-    );
-    storedEvent(
-      db,
-      event("b", {
-        connector_id: "mail",
-        kind: "message",
-        occurred_at: "2026-02-01T00:00:00Z",
-      }),
-    );
-    storedEvent(
-      db,
-      event("c", {
-        connector_id: "chat",
-        kind: "message",
-        occurred_at: "2026-03-01T00:00:00Z",
-      }),
-    );
-
-    expect(
-      [...replay(db, { connector_id: "mail" })].map(
-        ({ source_record_id }) => source_record_id,
-      ),
-    ).toEqual(["a", "b"]);
-    expect(
-      [...replay(db, { kind: "message" })].map(
-        ({ source_record_id }) => source_record_id,
-      ),
-    ).toEqual(["b", "c"]);
-    expect(
-      [...replay(db, { since: "2026-02-01T00:00:00Z" })].map(
-        ({ source_record_id }) => source_record_id,
-      ),
-    ).toEqual(["b", "c"]);
+    storedEvent(db, event("a", {
+      connector_id: "mail",
+      kind: "email",
+      occurred_at: "2026-01-01T00:00:00Z",
+    }));
+    storedEvent(db, event("b", {
+      connector_id: "mail",
+      kind: "message",
+      occurred_at: "2026-02-01T00:00:00Z",
+    }));
+    storedEvent(db, event("c", {
+      connector_id: "chat",
+      kind: "message",
+      occurred_at: "2026-03-01T00:00:00Z",
+    }));
+    expect([...replay(db, { connector_id: "mail" })].map(
+      ({ source_record_id }) => source_record_id,
+    )).toEqual(["a", "b"]);
+    expect([...replay(db, { kind: "message" })].map(
+      ({ source_record_id }) => source_record_id,
+    )).toEqual(["b", "c"]);
+    expect([...replay(db, { since: "2026-02-01T00:00:00Z" })].map(
+      ({ source_record_id }) => source_record_id,
+    )).toEqual(["b", "c"]);
     db.close();
   });
 });

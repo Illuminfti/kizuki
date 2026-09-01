@@ -67,15 +67,14 @@ export interface SignInIo {
   openUrl(url: string): Promise<void>;
 }
 
-export interface SignInResult {
-  /** Identifies this source within the connector (account, phone, folder). */
-  source_key: string;
-  /** Human label for `doctor`/`connect` output; never a secret. */
+export interface SignInDisplay {
+  /** Ephemeral terminal label; hosts must not persist connector-authored text. */
   display: string;
-  /** `secret_ref` URIs written during sign-in (`file:` under the secrets dir). */
-  secret_refs: string[];
-  /** Connector config to persist alongside the connection; never plaintext secrets. */
-  config: Record<string, unknown>;
+}
+
+/** A capability scoped to one enrollment, supplied by the trusted host. */
+export interface ConnectionStateWriter {
+  write(state: Uint8Array): Promise<void>;
 }
 
 export interface HealthReportInit {
@@ -151,11 +150,11 @@ export interface Connector {
   revoke(): Promise<void>;
   /**
    * Interactive first-time sign-in (phone code, browser OAuth, app
-   * password). Writes secrets only under `secretsDir` as `file:` refs and
-   * returns what `connect` needs afterwards. Required when `auth_modes`
-   * includes `sign_in` or `oauth`.
+   * password). The trusted host lends a scoped opaque-state writer and owns
+   * both the filename and persisted connection record. Required when
+   * `auth_modes` includes `sign_in` or `oauth`.
    */
-  signIn?(io: SignInIo, secretsDir: string): Promise<SignInResult>;
+  signIn?(io: SignInIo, state: ConnectionStateWriter): Promise<SignInDisplay>;
   purgeSource(subject_id: string): Promise<PurgePlan>;
   /** Offline sample used by the conformance suite; must need no credentials. */
   fixture(): Promise<CaptureEventInput[]>;

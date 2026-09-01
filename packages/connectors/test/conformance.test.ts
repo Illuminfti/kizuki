@@ -11,6 +11,7 @@ import {
   getConnector,
   runConformance,
 } from "../src";
+import type { Connector } from "@kizuki/core";
 
 test("all registry connectors pass conformance", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-conformance-"));
@@ -73,4 +74,17 @@ test("a tombstones:true connector without hooks supplied fails, not skips", asyn
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("required_secrets rejects malformed references", async () => {
+  const base = getConnector(CHATGPT_IMPORT_CONNECTOR_ID, { path: "fixture.json" });
+  const malformed: Connector = {
+    ...base,
+    manifest: () => ({ ...base.manifest(), required_secrets: ["ordinary-plaintext-token"] }),
+  };
+  const result = await runConformance(malformed);
+  expect(result.pass).toBe(false);
+  expect(result.failures).toContain(
+    "manifest.required_secrets: must contain secret_ref URIs",
+  );
 });
