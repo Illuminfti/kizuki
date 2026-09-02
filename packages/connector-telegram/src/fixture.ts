@@ -149,18 +149,18 @@ const CHANNEL_MESSAGES: TelegramMessage[] = [
   },
 ];
 
-/**
- * Frozen because it is exported, and because the scripted client that edits an
- * account it is handed is exported beside it. A caller reaching for either
- * must not be able to move the sample the conformance suite measures this
- * connector against; an attempt to fails loudly rather than quietly.
- */
 function deepFreeze<T>(value: T): T {
   if (typeof value !== "object" || value === null) return value;
   for (const entry of Object.values(value)) deepFreeze(entry);
   return Object.freeze(value);
 }
 
+/**
+ * Frozen because it is exported, and because the scripted client that edits
+ * whatever account it is handed is exported beside it. Nothing reaching for
+ * either may move the sample the conformance suite measures this connector
+ * against, so an attempt fails loudly rather than quietly.
+ */
 export const FIXTURE_ACCOUNT: ScriptedAccount = deepFreeze({
   me: ADA,
   authorized: true,
