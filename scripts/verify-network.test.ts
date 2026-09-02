@@ -59,6 +59,10 @@ describe("network allowlist", () => {
     );
   });
 
+  test("rejects an empty path", () => {
+    expect(() => parseAllowlist(":sign-in transport")).toThrow("empty path");
+  });
+
   test("rejects an empty reason", () => {
     expect(() => parseAllowlist("packages/core/src/a.ts:")).toThrow("empty reason");
   });
@@ -130,14 +134,19 @@ describe("allowlist application", () => {
     expect(withMarker.allowlisted).toHaveLength(1);
   });
 
-  test("refuses a path outside packages/<pkg>/src", () => {
-    const scan = applyAllowlist(
-      [finding("scripts/probe.ts")],
-      parseAllowlist("scripts/probe.ts:handy"),
-      ["scripts/probe.ts"],
-    );
-    expect(scan.stale).toHaveLength(1);
-  });
+  test.each(["scripts/probe.ts", "tools/probe.ts"])(
+    "refuses %s, which is outside packages/<pkg>/src",
+    (path) => {
+      const scan = applyAllowlist(
+        [finding(path)],
+        parseAllowlist(`${path}:reads a fixture endpoint`),
+        [path],
+      );
+      expect(scan.stale).toHaveLength(1);
+      expect(scan.allowlisted).toEqual([]);
+      expect(scan.findings).toHaveLength(1);
+    },
+  );
 });
 
 describe("this tree", () => {
@@ -145,6 +154,6 @@ describe("this tree", () => {
     const scan = await scanTrackedSources();
     expect(scan.findings).toEqual([]);
     expect(scan.stale).toEqual([]);
-    expect(scan.allowlisted).toHaveLength(2);
+    expect(scan.allowlisted).toHaveLength(4);
   });
 });

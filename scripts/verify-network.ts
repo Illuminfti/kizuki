@@ -202,9 +202,7 @@ export function parseAllowlist(text: string): AllowlistEntry[] {
       throw new Error(`network allowlist line ${line}: empty reason`);
     }
     if (claimed.has(path)) {
-      throw new Error(
-        `network allowlist line ${line}: duplicate path ${path}`,
-      );
+      throw new Error(`network allowlist line ${line}: duplicate path ${path}`);
     }
     claimed.add(path);
     entries.push({ path, reason, line });
@@ -249,19 +247,20 @@ export function applyAllowlist(
   };
 }
 
-function staleReason(
-  entry: AllowlistEntry,
-  tracked: Set<string>,
-  findingCount: number,
-): string {
+/**
+ * An entry reaches `stale` for exactly one of three reasons, tested in the
+ * order `applyAllowlist` tests them, so a tracked and allowlistable entry can
+ * only be here because nothing in the file touches the network any more.
+ */
+function staleReason(entry: AllowlistEntry, tracked: Set<string>): string {
   if (!tracked.has(entry.path)) return "not a tracked source file";
   if (!isAllowlistablePath(entry)) {
     return 'outside packages/<pkg>/src, and not a packages/<pkg>/test entry with a "test:" reason';
   }
-  if (findingCount === 0) return "no network surface left in the file";
-  return "unusable entry";
+  return "no network surface left in the file";
 }
 
+/** Every tracked source file in the workspace packages. */
 async function trackedSourceFiles(): Promise<string[]> {
   const result = Bun.spawnSync({
     cmd: ["git", "ls-files", "-z", "--", "packages"],
@@ -282,20 +281,22 @@ async function trackedSourceFiles(): Promise<string[]> {
 interface Scan {
   scan: TreeScan;
   tracked: Set<string>;
-  findings: NetworkFinding[];
 }
 
 async function scanTree(allowlistPath: string): Promise<Scan> {
+  const allowlistFile = Bun.file(allowlistPath);
+  if (!(await allowlistFile.exists())) {
+    throw new Error(`network allowlist missing: ${allowlistPath}`);
+  }
+  const entries = parseAllowlist(await allowlistFile.text());
   const trackedFiles = await trackedSourceFiles();
   const findings: NetworkFinding[] = [];
   for (const file of trackedFiles) {
     findings.push(...scanSourceText(file, await Bun.file(file).text()));
   }
-  const entries = parseAllowlist(await Bun.file(allowlistPath).text());
   return {
     scan: applyAllowlist(findings, entries, trackedFiles),
     tracked: new Set(trackedFiles),
-    findings,
   };
 }
 
@@ -308,16 +309,15 @@ export async function scanTrackedSources(
 }
 
 async function main(): Promise<void> {
-  const { scan, tracked, findings } = await scanTree(defaultAllowlistPath);
+  const { scan, tracked } = await scanTree(defaultAllowlistPath);
   for (const finding of scan.findings) {
     console.error(
       `${finding.file}:${finding.line}:${finding.column}: ${finding.reason}`,
     );
   }
   for (const entry of scan.stale) {
-    const owned = findings.filter((finding) => finding.file === entry.path);
     console.error(
-      `stale allowlist entry: ${entry.path} (${staleReason(entry, tracked, owned.length)})`,
+      `stale allowlist entry: ${entry.path} (${staleReason(entry, tracked)})`,
     );
   }
   if (scan.findings.length > 0 || scan.stale.length > 0) {
