@@ -1,12 +1,11 @@
 export interface ChatMessage {
-  role: "system" | "user";
+  role: "system" | "user" | "assistant";
   content: string;
 }
 
 export interface ChatRequest {
   model: string;
-  /** Exactly one instruction message and one data message; nothing else. */
-  messages: [ChatMessage, ChatMessage];
+  messages: readonly ChatMessage[];
   temperature: number;
   max_tokens: number;
   response_format?: { type: "json_object" };
@@ -57,6 +56,34 @@ function retryAfterMs(header: string | null): number | null {
 }
 
 /**
+ * Reads the reply chunk by chunk and gives up the moment the running total
+ * passes the cap, so an endpoint that streams without a `content-length`
+ * cannot make this process allocate more than the owner allowed.
+ */
+export async function readBoundedBody(
+  response: Response,
+  maxBytes: number,
+): Promise<string | null> {
+  const body = response.body;
+  if (body === null) return "";
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value === undefined) continue;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+/**
  * The single network call of the product, allowlisted in
  * scripts/network-allowlist.txt. It speaks only to the URL the owner
  * configured, sends no identifying header, follows no redirect, and reads a
@@ -100,15 +127,13 @@ export const fetchTransport: ChatTransport = async (request, opts) => {
     return { ok: false, status: 0, failure: "too_large" };
   }
 
-  let text: string;
+  let text: string | null;
   try {
-    text = await response.text();
+    text = await readBoundedBody(response, opts.max_response_bytes);
   } catch (error) {
     return { ok: false, status: 0, failure: failureOf(error) };
   }
-  if (Buffer.byteLength(text, "utf8") > opts.max_response_bytes) {
-    return { ok: false, status: 0, failure: "too_large" };
-  }
+  if (text === null) return { ok: false, status: 0, failure: "too_large" };
 
   try {
     return { ok: true, status: response.status, body: JSON.parse(text) };

@@ -1,36 +1,30 @@
-export type LlmErrorCode =
-  | "unconfigured"
-  | "malformed_config"
-  | "unknown_key"
-  | "bad_value"
-  | "bad_base_url"
-  | "cloud_not_allowed"
-  | "insecure_remote"
-  | "plaintext_key"
-  | "bad_secret_ref"
-  | "missing_key"
-  | "key_file_permissions"
-  | "budget_exhausted"
-  | "timeout"
-  | "network"
-  | "redirect"
-  | "http_error"
-  | "response_too_large"
-  | "bad_response";
+import { PortError } from "@kizuki/core";
+import type { RejectReason } from "@kizuki/core";
 
 /**
- * Every failure of the producer is one of these codes with a closed-form
- * message. Messages never carry captured text, model output, response bodies
- * or secrets, so they are safe on stderr, in receipts, and in tests.
+ * A provider answer this package refuses to hand on. It is a `PortError` so
+ * any host sees the contract's failure shape, and it carries the
+ * producer-level reject reason so `kizuki.producer.model` can report the
+ * tri-state without parsing a message string.
  */
-export class LlmError extends Error {
-  override name = "LlmError";
-  readonly code: LlmErrorCode;
-  readonly status: number | null;
+export class LlmRejection extends PortError {
+  readonly reason: RejectReason;
 
-  constructor(code: LlmErrorCode, message: string, status?: number) {
-    super(message);
-    this.code = code;
-    this.status = status ?? null;
+  constructor(reason: RejectReason, message: string) {
+    super("not_supported", message, false);
+    this.reason = reason;
   }
+}
+
+/** The reject reason of a refused answer, or `null` for any other failure. */
+export function rejectionOf(error: unknown): RejectReason | null {
+  return error instanceof LlmRejection ? error.reason : null;
+}
+
+export function configError(message: string): never {
+  throw new PortError("config_invalid", message, false);
+}
+
+export function reject(reason: RejectReason, message: string): never {
+  throw new LlmRejection(reason, message);
 }

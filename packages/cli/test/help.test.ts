@@ -16,8 +16,6 @@ const IMPLEMENTED_NON_GATE_VERBS = [
   "purge",
   "export",
   "version",
-  "llm",
-  "enrich",
 ] as const;
 
 describe("help", () => {

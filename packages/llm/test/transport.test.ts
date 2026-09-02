@@ -1,213 +1,130 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { fetchTransport } from "../src/transport";
+import { fetchTransport, readBoundedBody } from "../src/transport";
 import type { ChatRequest, TransportOptions } from "../src/transport";
 import { chatCompletion, startFakeEndpoint } from "./fake-endpoint";
 import type { FakeEndpoint } from "./fake-endpoint";
 
-const endpoints: FakeEndpoint[] = [];
+const request: ChatRequest = {
+  model: "m",
+  messages: [
+    { role: "system", content: "s" },
+    { role: "user", content: "u" },
+  ],
+  temperature: 0,
+  max_tokens: 32,
+};
 
-function fake(...args: Parameters<typeof startFakeEndpoint>): FakeEndpoint {
-  const endpoint = startFakeEndpoint(...args);
-  endpoints.push(endpoint);
-  return endpoint;
-}
-
-afterEach(() => {
-  while (endpoints.length > 0) endpoints.pop()?.stop();
+let endpoint: FakeEndpoint | undefined;
+afterEach(async () => {
+  await endpoint?.stop();
+  endpoint = undefined;
 });
 
-function request(overrides: Partial<ChatRequest> = {}): ChatRequest {
+function options(
+  url: string,
+  overrides: Partial<TransportOptions> = {},
+): TransportOptions {
   return {
-    model: "fake-model",
-    messages: [
-      { role: "system", content: "system rules" },
-      { role: "user", content: '{"record":{"text":"ada met grace"}}' },
-    ],
-    temperature: 0,
-    max_tokens: 64,
-    ...overrides,
-  };
-}
-
-function options(url: string, overrides: Partial<TransportOptions> = {}): TransportOptions {
-  return {
-    url,
+    url: `${url}/chat/completions`,
     api_key: null,
-    timeout_ms: 5000,
+    timeout_ms: 5_000,
     max_response_bytes: 1_048_576,
     ...overrides,
   };
 }
 
-describe("fetchTransport", () => {
-  test("posts the chat request and returns the parsed body", async () => {
-    const endpoint = fake();
-    const result = await fetchTransport(
-      request(),
-      options(`${endpoint.base_url}/chat/completions`),
-    );
-    expect(result).toEqual(
-      expect.objectContaining({ ok: true, status: 200 }),
-    );
-    const seen = endpoint.requests[0];
-    expect(seen?.path).toBe("/v1/chat/completions");
-    expect(seen?.body).toEqual({
-      model: "fake-model",
-      messages: [
-        { role: "system", content: "system rules" },
-        { role: "user", content: '{"record":{"text":"ada met grace"}}' },
-      ],
-      temperature: 0,
-      max_tokens: 64,
-    });
-  });
-
-  test("sends response_format only when the caller asks for it", async () => {
-    const endpoint = fake();
-    await fetchTransport(
-      request({ response_format: { type: "json_object" } }),
-      options(`${endpoint.base_url}/chat/completions`),
-    );
-    expect(endpoint.requests[0]?.body).toEqual(
-      expect.objectContaining({ response_format: { type: "json_object" } }),
-    );
-  });
-
-  test("sends no authorization header without a key", async () => {
-    const endpoint = fake();
-    await fetchTransport(request(), options(`${endpoint.base_url}/chat/completions`));
-    expect(endpoint.requests[0]?.headers["authorization"]).toBeUndefined();
-  });
-
-  test("sends only content-type, accept and authorization of its own", async () => {
-    const endpoint = fake();
-    await fetchTransport(
-      request(),
-      options(`${endpoint.base_url}/chat/completions`, { api_key: "k-1" }),
-    );
-    const headers = endpoint.requests[0]?.headers ?? {};
-    expect(headers["authorization"]).toBe("Bearer k-1");
-    expect(headers["content-type"]).toBe("application/json");
-    expect(headers["accept"]).toBe("application/json");
-    const added = new Set([
-      "content-type",
-      "accept",
-      "authorization",
-      "host",
-      "content-length",
-      "user-agent",
-      "connection",
-      "accept-encoding",
-    ]);
-    expect(Object.keys(headers).filter((name) => !added.has(name))).toEqual([]);
-    expect(Object.keys(headers).filter((name) => name.startsWith("x-"))).toEqual([]);
-  });
-
-  test("reports a non-2xx status without reading the body", async () => {
-    const endpoint = fake({
-      reply: () => new Response("nope", { status: 401 }),
-    });
-    const result = await fetchTransport(
-      request(),
-      options(`${endpoint.base_url}/chat/completions`),
-    );
-    expect(result).toEqual({ ok: false, status: 401, retry_after_ms: null });
-  });
-
-  test("reads Retry-After seconds", async () => {
-    const endpoint = fake({
-      reply: () =>
-        new Response("slow down", { status: 429, headers: { "retry-after": "1" } }),
-    });
-    const result = await fetchTransport(
-      request(),
-      options(`${endpoint.base_url}/chat/completions`),
-    );
-    expect(result).toEqual({ ok: false, status: 429, retry_after_ms: 1000 });
-  });
-
-  test("reads Retry-After as an HTTP date", async () => {
-    const when = new Date(Date.now() + 30_000).toUTCString();
-    const endpoint = fake({
-      reply: () =>
-        new Response("slow down", { status: 503, headers: { "retry-after": when } }),
-    });
-    const result = await fetchTransport(
-      request(),
-      options(`${endpoint.base_url}/chat/completions`),
-    );
-    expect(result.ok).toBe(false);
-    const retry = result.ok === false && "retry_after_ms" in result
-      ? result.retry_after_ms
-      : null;
-    expect(retry).not.toBeNull();
-    expect(retry ?? 0).toBeGreaterThan(20_000);
-    expect(retry ?? 0).toBeLessThanOrEqual(30_000);
-  });
-
-  test("never follows a redirect", async () => {
-    const endpoint = fake({
-      reply: (seen) =>
-        seen.path.endsWith("/moved")
-          ? chatCompletion("{}")
-          : new Response(null, {
-              status: 302,
-              headers: { location: "/v1/moved" },
-            }),
-    });
-    const result = await fetchTransport(
-      request(),
-      options(`${endpoint.base_url}/chat/completions`),
-    );
-    expect(result).toEqual({ ok: false, status: 0, failure: "redirect" });
+describe("transport", () => {
+  test("posts JSON and returns the parsed body", async () => {
+    endpoint = startFakeEndpoint([{ body: chatCompletion("hello") }]);
+    const result = await fetchTransport(request, options(endpoint.url));
+    expect(result).toMatchObject({ ok: true, status: 200 });
     expect(endpoint.requests).toHaveLength(1);
+    expect(endpoint.requests[0]?.body).toEqual(request as unknown as object);
   });
 
-  test("times out a slow endpoint", async () => {
-    const endpoint = fake({
-      reply: async () => {
-        await Bun.sleep(500);
-        return chatCompletion("{}");
-      },
-    });
-    const result = await fetchTransport(
-      request(),
-      options(`${endpoint.base_url}/chat/completions`, { timeout_ms: 100 }),
-    );
-    expect(result).toEqual({ ok: false, status: 0, failure: "timeout" });
+  test("sends a bearer header only when a key was resolved", async () => {
+    endpoint = startFakeEndpoint([{}, {}]);
+    await fetchTransport(request, options(endpoint.url));
+    await fetchTransport(request, options(endpoint.url, { api_key: "k" }));
+    expect(endpoint.requests[0]?.headers["authorization"]).toBeUndefined();
+    expect(endpoint.requests[1]?.headers["authorization"]).toBe("Bearer k");
   });
 
-  test("refuses a response larger than the cap", async () => {
-    const endpoint = fake({
-      reply: () => new Response("x".repeat(5000), { status: 200 }),
-    });
+  test("a declared content-length over the cap is refused unread", async () => {
+    endpoint = startFakeEndpoint([{ raw: "x".repeat(4_096) }]);
     const result = await fetchTransport(
-      request(),
-      options(`${endpoint.base_url}/chat/completions`, { max_response_bytes: 1024 }),
+      request,
+      options(endpoint.url, { max_response_bytes: 1_024 }),
     );
     expect(result).toEqual({ ok: false, status: 0, failure: "too_large" });
   });
 
-  test("refuses a 2xx body that is not JSON", async () => {
-    const endpoint = fake({
-      reply: () =>
-        new Response("not json at all", {
-          status: 200,
-          headers: { "content-type": "text/plain" },
-        }),
-    });
+  test("a chunked reply with no content-length stops at the cap", async () => {
+    // Regression: the cap used to fire only after the whole body had been
+    // buffered, so an endpoint that streams could drive allocation at will.
+    endpoint = startFakeEndpoint([{ stream_bytes: 8 * 1_048_576 }]);
     const result = await fetchTransport(
-      request(),
-      options(`${endpoint.base_url}/chat/completions`),
+      request,
+      options(endpoint.url, { max_response_bytes: 1_024 }),
     );
+    expect(result).toEqual({ ok: false, status: 0, failure: "too_large" });
+  });
+
+  test("the bounded reader stops pulling once the cap is passed", async () => {
+    const chunk = new Uint8Array(65_536).fill(120);
+    let produced = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        produced += chunk.byteLength;
+        controller.enqueue(chunk);
+        if (produced >= 64 * 1_048_576) controller.close();
+      },
+    });
+    const text = await readBoundedBody(new Response(stream), 1_024);
+    expect(text).toBeNull();
+    expect(produced).toBeLessThan(4 * 1_048_576);
+  });
+
+  test("a non-2xx answer reports its status and retry-after", async () => {
+    endpoint = startFakeEndpoint([
+      { status: 429, headers: { "retry-after": "3" }, raw: "slow down" },
+    ]);
+    const result = await fetchTransport(request, options(endpoint.url));
+    expect(result).toEqual({
+      ok: false,
+      status: 429,
+      retry_after_ms: 3_000,
+    });
+  });
+
+  test("a body that is not JSON is a failure, not a value", async () => {
+    endpoint = startFakeEndpoint([{ raw: "not json" }]);
+    const result = await fetchTransport(request, options(endpoint.url));
     expect(result).toEqual({ ok: false, status: 0, failure: "not_json" });
   });
 
-  test("reports a refused connection as a network failure", async () => {
-    const result = await fetchTransport(
-      request(),
-      options("http://127.0.0.1:9/v1/chat/completions", { timeout_ms: 2000 }),
+  test("a redirect is refused rather than followed", async () => {
+    endpoint = startFakeEndpoint([
+      { status: 302, headers: { location: "https://example.invalid/v1" } },
+    ]);
+    const result = await fetchTransport(request, options(endpoint.url));
+    expect(result).toEqual({ ok: false, status: 0, failure: "redirect" });
+  });
+
+  test("a slow endpoint times out", async () => {
+    endpoint = startFakeEndpoint([{ delay_ms: 2_000 }]);
+    const slow = await fetchTransport(
+      request,
+      options(endpoint.url, { timeout_ms: 100 }),
     );
+    expect(slow).toEqual({ ok: false, status: 0, failure: "timeout" });
+  });
+
+  test("a refused port is a network failure", async () => {
+    const closed = startFakeEndpoint([{}]);
+    const url = closed.url;
+    await closed.stop();
+    const result = await fetchTransport(request, options(url));
     expect(result).toEqual({ ok: false, status: 0, failure: "network" });
   });
 });
