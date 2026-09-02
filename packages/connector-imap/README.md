@@ -32,8 +32,11 @@ the same way in `metadata.charset_fallback`.
 
 When a server answers a body fetch without the body — the message was
 expunged between the two fetches of one page, say — that UID is left out of
-the batch and out of the checkpoint's seen set, and the run's health report
-says `message bodies not returned: <folder> (<n>)` once.
+the batch and out of the checkpoint's seen set, and goes on the checkpoint's
+retry list instead. Every later walk re-requests it, and it leaves the list
+only once the body arrives or the server stops listing the UID at all. While
+anything is on that list the run's health report says
+`message bodies not returned: <folder> (<n>)`.
 
 IMAP flags are captured nowhere. A `\Seen` toggle is not a change to the
 message, and recording it would fork a ledger row every time the mailbox was
@@ -96,8 +99,8 @@ disconnects the source.
 
 - Certificates are verified. A server whose certificate the system trust store
   does not accept is unsupported. There is no insecure switch: nothing in this
-  tree can turn certificate verification off, and `scripts/verify.sh` fails the
-  build on a tracked file that tries.
+  package can turn certificate verification off, and the state file's parser
+  refuses any key that would try.
 - The hostname is checked against the certificate by this package, because the
   runtime does not fail the handshake on a mismatch. Not one byte is written
   before both checks pass.
@@ -105,7 +108,9 @@ disconnects the source.
 - The password and username never appear in the manifest, an error message, a
   health detail, an event, or the cursor.
 - `EXAMINE`, never `SELECT`. `BODY.PEEK`, never `BODY`. There is no `STORE`,
-  `EXPUNGE` or `APPEND` anywhere in the client.
+  `EXPUNGE` or `APPEND` anywhere in the client, and a command argument that is
+  not printable ASCII is refused rather than folded onto the line, so captured
+  text can never write a command of its own.
 
 ## Deletion and purge
 
