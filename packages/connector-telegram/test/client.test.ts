@@ -28,9 +28,13 @@ class RPCError extends Error {
 const pages: {
   dialogs: () => AsyncGenerator<unknown>;
   messages: () => AsyncGenerator<unknown>;
+  invoke: (request: unknown) => Promise<unknown>;
+  invoked: string[];
 } = {
   dialogs: async function* () {},
   messages: async function* () {},
+  invoke: async () => ({}),
+  invoked: [],
 };
 
 class FakeClient {
@@ -41,13 +45,29 @@ class FakeClient {
   iterMessages(): AsyncGenerator<unknown> {
     return pages.messages();
   }
+
+  invoke(request: unknown): Promise<unknown> {
+    pages.invoked.push((request as { name: string }).name);
+    return pages.invoke(request);
+  }
 }
 
 if (OFFLINE) {
   mock.module("telegram", () => ({
     TelegramClient: FakeClient,
     Logger: class {},
-    Api: { auth: { LogOut: class {} } },
+    Api: {
+      auth: {
+        LogOut: class {
+          readonly name = "auth.LogOut";
+        },
+      },
+      updates: {
+        GetState: class {
+          readonly name = "updates.GetState";
+        },
+      },
+    },
     utils: {
       getPeerId: (peer: { id: string }) => peer.id,
       getDisplayName: () => "grace",
@@ -136,3 +156,40 @@ test.skipIf(!OFFLINE)("a channel with only inactive aliases is not treated as pu
   const listed = (await drain(api().dialogs(10))) as { public: boolean }[];
   expect(listed.map((dialog) => dialog.public)).toEqual([false, true]);
 });
+
+async function thrown(operation: () => Promise<unknown>): Promise<unknown> {
+  try {
+    await operation();
+  } catch (error) {
+    return error;
+  }
+  return null;
+}
+
+test.skipIf(!OFFLINE)("a live session answers the authorization probe", async () => {
+  pages.invoked = [];
+  pages.invoke = async () => ({});
+  expect(await api().isAuthorized()).toBe(true);
+  expect(pages.invoked).toEqual(["updates.GetState"]);
+});
+
+test.skipIf(!OFFLINE)("a session the provider has finished answers no", async () => {
+  pages.invoke = async () => {
+    throw new RPCError("SESSION_REVOKED");
+  };
+  expect(await api().isAuthorized()).toBe(false);
+});
+
+test.skipIf(!OFFLINE)(
+  "a transport fault is not mistaken for a revoked session",
+  async () => {
+    pages.invoke = async () => {
+      throw new Error("connect ETIMEDOUT");
+    };
+    const caught = await thrown(() => api().isAuthorized());
+    expect(caught).toBeInstanceOf(TelegramConnectorError);
+    // The provider never answered; reporting a revoked sign-in would send the
+    // owner to authenticate again over a connection that is merely down.
+    expect((caught as TelegramConnectorError).code).toBe("unreachable");
+  },
+);

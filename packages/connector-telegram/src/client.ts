@@ -27,6 +27,7 @@ interface Runtime extends ProviderErrors {
   session: StringSession;
   utils: typeof Utils;
   logOutRequest: () => Api.AnyRequest;
+  stateRequest: () => Api.AnyRequest;
 }
 
 /**
@@ -56,7 +57,18 @@ class RealTelegramApi implements TelegramApi {
 
   async isAuthorized(): Promise<boolean> {
     const runtime = await this.#load();
-    return this.#guard(() => runtime.client.checkAuthorization(), runtime);
+    try {
+      await runtime.client.invoke(runtime.stateRequest());
+      return true;
+    } catch (error) {
+      const classified = classify(error, runtime);
+      // Only the provider saying the session is finished is an answer of no.
+      // A socket or timeout fault is no answer at all, and calling it a
+      // revoked sign-in would send the owner to authenticate again over a
+      // connection that is merely down.
+      if (classified.code === "unauthenticated") return false;
+      throw classified;
+    }
   }
 
   async start(flow: SignInFlow): Promise<void> {
@@ -183,6 +195,7 @@ class RealTelegramApi implements TelegramApi {
       isRpcError: (error): error is { errorMessage: string } =>
         error instanceof failures.RPCError,
       logOutRequest: () => new library.Api.auth.LogOut(),
+      stateRequest: () => new library.Api.updates.GetState(),
     };
   }
 
