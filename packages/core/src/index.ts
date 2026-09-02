@@ -2,7 +2,6 @@ export {
   EVENT_SCHEMA,
   SENSITIVITY_HINTS,
   SUBJECT_ROLES,
-  isSensitivityHint,
   raiseSensitivity,
   validateEventInput,
 } from "./contracts/event";

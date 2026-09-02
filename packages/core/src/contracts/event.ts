@@ -10,13 +10,6 @@ export type SubjectRole = (typeof SUBJECT_ROLES)[number];
 export const SENSITIVITY_HINTS = ["public", "personal", "private"] as const;
 export type SensitivityHint = (typeof SENSITIVITY_HINTS)[number];
 
-export function isSensitivityHint(value: unknown): value is SensitivityHint {
-  return (
-    typeof value === "string" &&
-    (SENSITIVITY_HINTS as readonly string[]).includes(value)
-  );
-}
-
 /**
  * The lattice `public < personal < private` (RFC 0002 §8.1). Sensitivity
  * resolves as a `max` over the floor, the default or model label and the

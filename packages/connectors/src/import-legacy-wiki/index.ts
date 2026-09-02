@@ -16,10 +16,6 @@ import type {
 import { KizukiError } from "../errors";
 import { defaultMappingPath, loadMapping } from "../legacy/mapping-file";
 import { resolveReportPath, writeReport } from "../legacy/report-file";
-import {
-  LEGACY_DEFAULT_SENSITIVITY,
-  LEGACY_SENSITIVITY_FLOOR,
-} from "../legacy/sensitivity";
 import { compareStrings, pathHealth, requirePathConfig } from "../util";
 import {
   LEGACY_WIKI_FIXTURE,
@@ -61,10 +57,10 @@ const MANIFEST: Manifest = {
     page_candidates: true,
   },
   required_secrets: [],
+  // Every page leaves this connector labeled at or above the floor its own
+  // source class carries; see `../legacy/sensitivity.ts`.
   emits_sensitivity_hint: true,
   auth_modes: ["none"],
-  default_sensitivity: LEGACY_DEFAULT_SENSITIVITY,
-  sensitivity_floor: LEGACY_SENSITIVITY_FLOOR,
 };
 
 interface SnapshotEntry {

@@ -1,4 +1,4 @@
-import type { CaptureEventInput, SensitivityHint } from "./event";
+import type { CaptureEventInput } from "./event";
 import { isRfc3339 } from "../util/time";
 
 export const CONNECTOR_SCHEMA = "kizuki.connector/v1" as const;
@@ -75,15 +75,6 @@ export interface Manifest {
   sensitivity_floor?: SensitivityHint;
   /** Non-empty; `sign_in`/`oauth` require a `signIn` implementation. */
   auth_modes: AuthMode[];
-  /**
-   * RFC 0002 §8.2, the source-class policy: what a record from this source is
-   * absent any other signal, and the lowest label anything from it may carry.
-   * Optional only because the seed policy lands per connector; where a floor
-   * is declared the host raises every hint to it before the event is stored,
-   * so a source cannot publish itself below the class it belongs to.
-   */
-  default_sensitivity?: SensitivityHint;
-  sensitivity_floor?: SensitivityHint;
 }
 
 /** Terminal-facing prompts the CLI lends a connector during `signIn`. */

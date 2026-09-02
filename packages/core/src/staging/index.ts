@@ -27,7 +27,7 @@ export {
   proposalsForEvent,
   withdrawForTombstone,
 } from "./producers";
-export type { TombstoneCascade } from "./producers";
+export type { ProducerGrants, TombstoneCascade } from "./producers";
 
 export {
   PAGE_TYPES,

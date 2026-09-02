@@ -148,7 +148,6 @@ describe("public surface", () => {
       "isRegisteredPredicate",
       "isRfc3339",
       "isSecretRef",
-      "isSensitivityHint",
       "isSingleValuedPredicate",
       "isWriter",
       "laterReceiptsForPage",

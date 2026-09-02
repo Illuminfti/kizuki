@@ -1,64 +1,18 @@
 import type { Database } from "bun:sqlite";
 import type { Connector, Manifest, SyncBatch } from "../contracts/connector";
-import { isSensitivityHint, raiseSensitivity } from "../contracts/event";
-import type { SensitivityHint } from "../contracts/event";
 import { getCheckpoint, saveCheckpoint } from "../ledger/connections";
 import { accept } from "../ledger/ledger";
 import { cascadeTombstone, proposalsForEvent } from "../staging/producers";
 import type { ProducerGrants } from "../staging/producers";
 import { fileProposal } from "../staging/proposals";
-import { isPlainObject } from "../util/validate";
 
 /**
  * What the manifest of the connector a batch came from grants that source.
- * The host reads it once per run; a batch handed over without one is treated
- * as granting nothing, so a caller cannot skip the check by omitting it.
+ * The host reads it from the connector it enrolled, never from an event, so
+ * captured metadata cannot ask for an authority its own source was not given.
  */
-export interface SourcePolicy extends ProducerGrants {
-  /** RFC 0002 §8.2: no hint from this source may resolve below this label. */
-  sensitivity_floor: SensitivityHint | null;
-  /** What a record from this source is when it carries no hint of its own. */
-  default_sensitivity: SensitivityHint | null;
-}
-
-const CLOSED_POLICY: SourcePolicy = {
-  page_candidates: false,
-  sensitivity_floor: null,
-  default_sensitivity: null,
-};
-
-export function sourcePolicy(manifest: Manifest): SourcePolicy {
-  return {
-    page_candidates: manifest.capabilities.page_candidates === true,
-    sensitivity_floor: isSensitivityHint(manifest.sensitivity_floor)
-      ? manifest.sensitivity_floor
-      : null,
-    default_sensitivity: isSensitivityHint(manifest.default_sensitivity)
-      ? manifest.default_sensitivity
-      : null,
-  };
-}
-
-/**
- * RFC 0002 §8.1 at the ledger door: `max(floor, default, hint)`. A hint below
- * the source's floor is raised, an absent one resolves to the source's own
- * default, and one the grammar refuses is left exactly as it arrived so
- * `accept` refuses the event rather than laundering it.
- */
-function atFloor(input: unknown, policy: SourcePolicy): unknown {
-  const floor = policy.sensitivity_floor;
-  // What a record from this source is when it carries no label of its own; a
-  // source that declares neither field is left exactly as it arrived.
-  const absent = policy.default_sensitivity ?? floor;
-  if (absent === null || !isPlainObject(input)) return input;
-  const hint = input["sensitivity_hint"];
-  if (hint !== undefined && !isSensitivityHint(hint)) return input;
-  const declared = hint ?? absent;
-  return {
-    ...input,
-    sensitivity_hint:
-      floor === null ? declared : raiseSensitivity(floor, declared),
-  };
+export function sourceGrants(manifest: Manifest): ProducerGrants {
+  return { page_candidates: manifest.capabilities.page_candidates === true };
 }
 
 export interface RunResult {
@@ -80,47 +34,54 @@ type EventResult = Omit<RunResult, "cursor">;
 function processEvent(
   db: Database,
   input: unknown,
-  policy: SourcePolicy,
+  grants: ProducerGrants,
 ): EventResult {
-  return db.transaction((): EventResult => {
-    const result: EventResult = {
-      stored: 0,
-      duplicates: 0,
-      errors: [],
-      proposals_created: 0,
-      withdrawn: 0,
-      retractions_filed: 0,
-    };
-    const accepted = accept(db, atFloor(input, policy));
-    if (accepted.status === "error") {
-      result.errors.push(accepted.error);
-      return result;
-    }
-    if (accepted.status === "duplicate") {
-      result.duplicates = 1;
-      return result;
-    }
-
-    result.stored = 1;
-    if (accepted.event.deleted) {
-      const cascade = cascadeTombstone(db, accepted.event);
-      result.withdrawn = cascade.withdrawn.length;
-      result.retractions_filed = cascade.retractions_filed.length;
-      return result;
-    }
-    for (const proposal of proposalsForEvent(accepted.event, policy)) {
-      if (fileProposal(db, proposal).outcome === "stored") {
-        result.proposals_created += 1;
+  return db
+    .transaction((): EventResult => {
+      const result: EventResult = {
+        stored: 0,
+        duplicates: 0,
+        errors: [],
+        proposals_created: 0,
+        withdrawn: 0,
+        retractions_filed: 0,
+      };
+      const accepted = accept(db, input);
+      if (accepted.status === "error") {
+        result.errors.push(accepted.error);
+        return result;
       }
-    }
-    return result;
-  }).immediate();
+      if (accepted.status === "duplicate") {
+        result.duplicates = 1;
+        return result;
+      }
+
+      result.stored = 1;
+      if (accepted.event.deleted) {
+        const cascade = cascadeTombstone(db, accepted.event);
+        result.withdrawn = cascade.withdrawn.length;
+        result.retractions_filed = cascade.retractions_filed.length;
+        return result;
+      }
+      for (const proposal of proposalsForEvent(accepted.event, grants)) {
+        if (fileProposal(db, proposal).outcome === "stored") {
+          result.proposals_created += 1;
+        }
+      }
+      return result;
+    })
+    .immediate();
 }
 
+/**
+ * The grants are the caller's to name: this seam is handed a batch with no
+ * connector behind it, so nothing here can decide what that batch is entitled
+ * to, and a default would decide it by omission.
+ */
 export function runBatch(
   db: Database,
   batch: SyncBatch,
-  policy: SourcePolicy = CLOSED_POLICY,
+  grants: ProducerGrants,
 ): RunResult {
   const result: RunResult = {
     stored: 0,
@@ -134,7 +95,7 @@ export function runBatch(
 
   for (const input of batch.events) {
     try {
-      const event = processEvent(db, input, policy);
+      const event = processEvent(db, input, grants);
       result.stored += event.stored;
       result.duplicates += event.duplicates;
       result.errors.push(...event.errors);
@@ -156,16 +117,17 @@ export async function runBackfill(
   source_key: string,
 ): Promise<RunResult> {
   const checkpoint = getCheckpoint(db, connector_id, source_key);
+  const manifest = connector.manifest();
   const result = runBatch(
     db,
     await connector.backfill(checkpoint?.cursor ?? null),
-    sourcePolicy(connector.manifest()),
+    sourceGrants(manifest),
   );
   saveCheckpoint(
     db,
     connector_id,
     source_key,
-    result.errors.length === 0 ? result.cursor : checkpoint?.cursor ?? null,
+    result.errors.length === 0 ? result.cursor : (checkpoint?.cursor ?? null),
     "backfill",
     result,
   );
@@ -180,10 +142,11 @@ export async function runSync(
 ): Promise<RunResult> {
   const checkpoint = getCheckpoint(db, connector_id, source_key);
   const cursor = checkpoint?.cursor ?? null;
+  const manifest = connector.manifest();
   const result = runBatch(
     db,
     await connector.sync(cursor),
-    sourcePolicy(connector.manifest()),
+    sourceGrants(manifest),
   );
   saveCheckpoint(
     db,
