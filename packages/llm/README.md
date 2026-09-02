@@ -106,6 +106,13 @@ disable a bound. A pasted key is refused without being echoed.
   come back on the result as `dropped_predicates` so the registry can grow
   deliberately; anything else is counted and discarded, because provider text
   must not travel into a log line or a receipt.
+- **A bound port is a boundary too.** The producer is handed whichever
+  `kizuki.llm/v1` a host bound, so the reply is checked against the contract
+  before it is read: text and model must be strings within their bounds, and
+  usage and attempts must be whole numbers that can be charged. A reply that
+  is not is `PortError("contract_mismatch")` — a fault in that port, neither
+  an outage to retry nor an answer to reject, and never a count floored to
+  zero for a port that misreports what it spent.
 - **Silence is not emptiness.** A model that could not be reached returns
   `unavailable`, so the caller leaves its checkpoint where it was. `ok` with
   no claims means the records held nothing durable.

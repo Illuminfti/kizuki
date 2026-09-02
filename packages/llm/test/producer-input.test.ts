@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { PortError } from "@kizuki/core";
 import { MODEL_PRODUCER, ModelProducer, modelProducer } from "../src/producer";
 import {
+  answeringLlm,
   claimsPayload,
   event,
   minorZeroLlm,
@@ -121,19 +122,54 @@ describe("input validation", () => {
     expect(built.llm.calls).toHaveLength(0);
   });
 
-  test("a model port that reports nonsense usage is charged the minimum", async () => {
+  test("a model port that answers off contract is refused, not read", async () => {
+    // Regression: a non-string `text` escaped as a raw TypeError out of the
+    // first field this package touched, and a nonsense usage was floored to
+    // zero - so a port that misreports what it spent was charged nothing.
+    const answers: unknown[] = [
+      { text: 42, model: "m", usage: { input_tokens: 1, output_tokens: 1 } },
+      { text: "{}", model: 7, usage: { input_tokens: 1, output_tokens: 1 } },
+      { text: "{}", model: "m", usage: null },
+      {
+        text: "{}",
+        model: "m",
+        usage: { input_tokens: Number.NaN, output_tokens: 5 },
+      },
+      {
+        text: "{}",
+        model: "m",
+        usage: { input_tokens: 1, output_tokens: -5 },
+      },
+      {
+        text: "{}",
+        model: "m",
+        usage: { input_tokens: 1, output_tokens: 1 },
+        attempts: 0,
+      },
+    ];
+    for (const answer of answers) {
+      const built = portContext(MODEL_PRODUCER);
+      cleanups.push(built.cleanup);
+      const port = new ModelProducer(built.ctx, answeringLlm(answer));
+      await expect(
+        port.produce(produceInput([event("ev-1", "hi")])),
+      ).rejects.toBeInstanceOf(PortError);
+    }
+  });
+
+  test("a model port at minor zero is charged one request per call", async () => {
     const built = producer([claimsPayload()], {
-      input_tokens: Number.NaN,
-      output_tokens: -5,
-      attempts: 0,
+      input_tokens: 11,
+      output_tokens: 5,
+      attempts: 1,
     });
     const result = ok(
       await built.port.produce(produceInput([event("ev-1", "hi")])),
     );
     expect(result.usage).toEqual({
       calls: 1,
-      input_tokens: 0,
-      output_tokens: 0,
+      input_tokens: 11,
+      output_tokens: 5,
     });
   });
 

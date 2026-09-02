@@ -1,6 +1,7 @@
 import {
   PRODUCER_CONTRACT,
   PortError,
+  isPlainObject,
   validatePortDescriptor,
 } from "@kizuki/core";
 import type {
@@ -109,13 +110,61 @@ function scrubReason(error: unknown): string {
 }
 
 /**
- * The model port is replaceable, so what it reports about a call is checked
- * like anything else crossing a port boundary rather than added blind.
+ * The largest answer this producer will read. The port in this package stops
+ * a body at its configured `max_response_bytes`, whose ceiling this is, but
+ * the producer is handed whichever implementation a host bound.
  */
-function counted(value: unknown, least: number): number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > least
-    ? value
-    : least;
+const MAX_ANSWER_CHARS = 8_388_608;
+const MAX_MODEL_REF_CHARS = 200;
+
+function isWholeNumber(value: unknown, least: number): boolean {
+  return (
+    typeof value === "number" && Number.isSafeInteger(value) && value >= least
+  );
+}
+
+/**
+ * The model port is replaceable, so what it hands back is checked like
+ * anything else crossing a port boundary rather than read blind. A reply that
+ * is not the shape `kizuki.llm/v1` states is a fault in that port: reading it
+ * raised a `TypeError` from the first field this package touched, and
+ * flooring a nonsense token count charged a port that misreports its spend
+ * nothing at all. Both leave as `contract_mismatch`, which is neither an
+ * outage to retry nor an answer to reject.
+ */
+function checkedAnswer(answer: LlmResponse): LlmResponse {
+  const fault = (what: string): never => {
+    throw new PortError(
+      "contract_mismatch",
+      `the model port answered with ${what}`,
+      false,
+    );
+  };
+  if (!isPlainObject(answer)) fault("a value that is not an object");
+  if (typeof answer.text !== "string" || answer.text.length > MAX_ANSWER_CHARS) {
+    fault("no usable text");
+  }
+  if (
+    typeof answer.model !== "string" ||
+    answer.model.length === 0 ||
+    answer.model.length > MAX_MODEL_REF_CHARS
+  ) {
+    fault("no usable model");
+  }
+  const usage: unknown = answer.usage;
+  if (
+    !isPlainObject(usage) ||
+    !isWholeNumber(usage["input_tokens"], 0) ||
+    !isWholeNumber(usage["output_tokens"], 0)
+  ) {
+    fault("a usage it cannot be charged for");
+  }
+  // Absent below minor 1, where a retried call cannot be told from a single
+  // request and one is charged; present and malformed is a fault.
+  if (answer.attempts !== undefined && !isWholeNumber(answer.attempts, 1)) {
+    fault("an attempt count it cannot be charged for");
+  }
+  return answer;
 }
 
 /** `ModelUsage` is readonly on the wire; this is the tally behind it. */
@@ -234,11 +283,12 @@ export class ModelProducer implements ProducerPort {
         break;
       }
 
+      const checked = checkedAnswer(answer);
       // Never under-charge: what the endpoint says it counted wins over what
       // this port reserved, and a run that overran its budget stops here.
-      usage.calls += counted(answer.attempts, 1);
-      usage.input_tokens += counted(answer.usage.input_tokens, 0);
-      usage.output_tokens += counted(answer.usage.output_tokens, 0);
+      usage.calls += checked.attempts ?? 1;
+      usage.input_tokens += checked.usage.input_tokens;
+      usage.output_tokens += checked.usage.output_tokens;
       if (
         usage.calls > input.budget.max_calls ||
         usage.input_tokens > input.budget.max_input_tokens ||
@@ -248,7 +298,7 @@ export class ModelProducer implements ProducerPort {
         break;
       }
 
-      if (leaksFence(answer.text, prompt.nonce)) {
+      if (leaksFence(checked.text, prompt.nonce)) {
         stop = { status: "rejected", reason: "fence_leak" };
         break;
       }
@@ -256,7 +306,7 @@ export class ModelProducer implements ProducerPort {
       let outcome: ExtractOutcome;
       try {
         outcome = parseExtractResponse(
-          answer.text,
+          checked.text,
           new Set(prompt.event_ids),
           predicates,
         );

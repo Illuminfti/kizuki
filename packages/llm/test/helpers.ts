@@ -178,6 +178,29 @@ export function scriptedLlm(
   };
 }
 
+/**
+ * A model port that answers with whatever a host's implementation might. The
+ * producer is handed whichever `kizuki.llm/v1` a vault bound, so a reply that
+ * does not match the contract has to be refused at that boundary rather than
+ * trusted; the assertion is the point of the double.
+ */
+export function answeringLlm(answer: unknown): ScriptedLlm {
+  const calls: LlmRequest[] = [];
+  return {
+    descriptor: OPENAI_COMPATIBLE_LLM,
+    model_ref: "kizuki.llm.fake:m@127.0.0.1",
+    calls,
+    async complete(request: LlmRequest): Promise<LlmResponse> {
+      calls.push(request);
+      return answer as LlmResponse;
+    },
+    async health(): Promise<PortHealth> {
+      return { status: "ready", detail: {} };
+    },
+    async close(): Promise<void> {},
+  };
+}
+
 export interface ProducerHarness {
   port: ModelProducer;
   llm: ScriptedLlm;
