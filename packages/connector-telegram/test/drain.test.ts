@@ -247,7 +247,7 @@ test("a wait during a resumed edit scan reads as a wait, not a stuck connector",
   db.close();
 });
 
-test("a wait that reached only skipped records is reported, not drained", async () => {
+test("a wait that reached only skipped records keeps its place", async () => {
   const account = fixtureAccount();
   account.dialogs = [
     {
@@ -277,11 +277,16 @@ test("a wait that reached only skipped records is reported, not drained", async 
     "backfill",
   );
   expect(throttled.stored).toBe(0);
-  expect(throttled.errors).toEqual([
-    "kizuki.telegram: telegram asked us to wait 600s",
-  ]);
+  expect(throttled.errors).toEqual([]);
+  // The record it skipped is behind the checkpoint, so the wait costs the run
+  // nothing but the time it asks for.
+  expect(
+    parseCursor(throttled.cursor as string).dialogs["1"]?.last_id,
+  ).toBe(1);
+  expect((await built.connector.health()).state).toBe("rate_limited");
 
   built.clock.now += 600_000;
+  built.api.calls.length = 0;
   const resumed = await runToCompletion(
     db,
     built.connector,
@@ -291,6 +296,11 @@ test("a wait that reached only skipped records is reported, not drained", async 
   );
   expect(resumed.errors).toEqual([]);
   expect(resumed.stored).toBe(1);
+  expect(
+    built.api.calls
+      .filter((call) => call.method === "messages")
+      .map((call) => (call.args[1] as { min_id: number }).min_id),
+  ).toEqual([1]);
   db.close();
 });
 
@@ -320,5 +330,76 @@ test("nothing this connector captured is served under the default agent ceiling"
   expect(
     timeline(db, { connector_id: TELEGRAM_CONNECTOR_ID, ceiling: "private" }),
   ).toHaveLength(12);
+  db.close();
+});
+
+function chatter(peer_id: string, from: number, to: number, service: boolean): TelegramMessage[] {
+  const messages: TelegramMessage[] = [];
+  for (let id = from; id <= to; id += 1) {
+    messages.push({
+      peer_id,
+      id,
+      date: Math.floor(Date.UTC(2026, 1, 1, 0, 0, 0) / 1000) + id,
+      text: service ? "" : `note ${id}`,
+      out: false,
+      service,
+    });
+  }
+  return messages;
+}
+
+/**
+ * A dialog whose leading history emits nothing — service messages, or dates
+ * the ledger refuses — reaches a wait before the batch has collected its first
+ * event. The pages it consumed are real work, and the ids it advanced past are
+ * what makes the next run start further on. Throwing them away turns an
+ * ordinary throttle into a run that reads the same pages for ever and never
+ * reaches the messages behind them.
+ */
+test("a throttled run keeps the ground the walk already covered", async () => {
+  const account = fixtureAccount();
+  account.dialogs = [
+    { peer_id: "1", peer_type: "user", title: "grace", top_message_id: 2005 },
+  ];
+  account.messages = {
+    "1": [...chatter("1", 1, 2000, true), ...chatter("1", 2001, 2005, false)],
+  };
+  const built = await connected({ account, now: FEBRUARY });
+  const db = ledger();
+
+  const marks: number[] = [];
+  let stored = 0;
+  for (let attempt = 0; attempt < 8 && stored < 5; attempt += 1) {
+    // The provider throttles this account on every run, two pages in.
+    built.api.floodAfter(2, 600);
+    const result = await runToCompletion(
+      db,
+      built.connector,
+      TELEGRAM_CONNECTOR_ID,
+      SOURCE,
+      "backfill",
+    );
+    stored += result.stored;
+    // A run inside a wait reports the wait and nothing else.
+    for (const error of result.errors) {
+      expect(error).toBe("kizuki.telegram: telegram asked us to wait 600s");
+    }
+    if (attempt === 0) {
+      // The wait is not lost with the batch: it is what health reports.
+      expect((await built.connector.health()).state).toBe("rate_limited");
+    }
+    const checkpoint = result.cursor;
+    expect(checkpoint).not.toBeNull();
+    marks.push(parseCursor(checkpoint as string).dialogs["1"]?.last_id ?? 0);
+    built.clock.now += 600_000;
+  }
+
+  // Every run moved the durable checkpoint on, so the five messages behind
+  // two thousand skipped ones are reached in a handful of runs rather than
+  // never.
+  expect(marks).toEqual([...marks].sort((left, right) => left - right));
+  expect(new Set(marks).size).toBe(marks.length);
+  expect(marks.length).toBeLessThanOrEqual(4);
+  expect(stored).toBe(5);
   db.close();
 });

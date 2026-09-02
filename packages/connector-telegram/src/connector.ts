@@ -384,16 +384,16 @@ export class TelegramConnector implements Connector {
     // The pass stopped where the provider told it to, not where it meant to:
     // that instant is the last failure, not the last success.
     this.#floodUntil = result.floodUntil;
-    // Only a batch that both carries records and moves the cursor is worth
-    // handing back mid-wait. An empty one reads as a drained account, and one
-    // whose cursor did not move leaves a runner to choose between reading the
-    // same records for ever and calling honest backpressure a broken
-    // connector. Anything else goes back with the wait; the records it reached
-    // are still there to be read once the pause has lapsed.
+    // A batch is worth handing back mid-wait when the pass actually moved:
+    // records collected, or pages read past ids that will not be asked for
+    // again. Dropping the second kind is what makes a dialog whose leading
+    // history emits nothing unreadable — no checkpoint is ever written, and
+    // every run spends the wait re-reading the same pages. A pass that moved
+    // nothing goes back with the wait instead, because an empty batch that
+    // moved no cursor either reads as a drained account.
+    const moved = result.batch.events.length > 0 || result.read > 0;
     const resumable =
-      result.batch.events.length > 0 &&
-      result.batch.cursor !== null &&
-      result.batch.cursor !== cursor;
+      moved && result.batch.cursor !== null && result.batch.cursor !== cursor;
     if (!resumable) throw this.#waiting();
     return result.batch;
   }

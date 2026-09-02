@@ -36,6 +36,8 @@ export interface WalkResult {
   floodUntil: number | null;
   /** `null` leaves the caller's view of the account's dialogs as it was. */
   listing: DialogListing | null;
+  /** Records this pass read for the first time, skipped ones included. */
+  read: number;
 }
 
 interface Batch {
@@ -104,6 +106,7 @@ export async function walk(
       batch: { events: [], cursor: encodeCursor(stored) },
       floodUntil: null,
       listing: null,
+      read: 0,
     };
   }
   // The listing supplies the titles and hints the mapper needs, so it is not
@@ -130,6 +133,7 @@ export async function walk(
         batch: { events: [], cursor: cursorText },
         floodUntil: deps.now() + seconds * 1000,
         listing: null,
+        read: 0,
       };
     }
     dialogs = listed.dialogs;
@@ -229,6 +233,7 @@ export async function walk(
     floodUntil,
     listing:
       limitReached === null ? null : { dialogs, limitReached },
+    read: batch.read,
   };
 }
 
