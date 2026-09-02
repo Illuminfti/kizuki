@@ -10,19 +10,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Database } from "bun:sqlite";
 import type {
   Connector,
   ConnectionStateWriter,
-  SecretResolver,
   SignInIo,
 } from "../src/contracts/connector";
-import type { OAuthProvider } from "../src/auth/oauth";
-import { encodeOAuthState, parseOAuthState } from "../src/auth/state";
-import type { OAuthState } from "../src/auth/state";
 import {
   ConnectionStateStore,
-  MAX_CONNECTION_STATE_BYTES,
   enrollConnection,
   writeAll,
 } from "../src/ledger/connection-state";
@@ -31,7 +25,6 @@ import {
   getConnection,
   listConnections,
 } from "../src/ledger/connections";
-import type { Connection } from "../src/ledger/connections";
 import { openLedger } from "../src/ledger/db";
 
 const directories: string[] = [];
