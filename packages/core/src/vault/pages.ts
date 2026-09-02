@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative, sep } from "node:path";
+import { compareCodePoints } from "../util/text";
 import { parseFrontmatter } from "./frontmatter";
 
 export interface CanonPage {
@@ -26,14 +27,10 @@ export function stringArray(value: unknown): string[] {
     : [];
 }
 
-function compareName(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
 function markdownFiles(directory: string): string[] {
   const files: string[] = [];
   const entries = readdirSync(directory, { withFileTypes: true }).sort((a, b) =>
-    compareName(a.name, b.name),
+    compareCodePoints(a.name, b.name),
   );
   for (const entry of entries) {
     if (entry.name === ".kizuki" || entry.name === "archive") continue;

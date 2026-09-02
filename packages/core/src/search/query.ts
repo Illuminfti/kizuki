@@ -1,7 +1,13 @@
 import type { Database } from "bun:sqlite";
 import { SENSITIVITY_ORDER } from "../agents/types";
 import type { Sensitivity } from "../agents/types";
-import { ceilingSql, instantBound, instantSql } from "../query/sql";
+import {
+  ceilingSql,
+  instantBound,
+  instantSql,
+  placeholders,
+  validLimit,
+} from "../query/sql";
 import type { DocScope } from "./indexer";
 
 export interface SearchOptions {
@@ -95,17 +101,6 @@ export function toFtsQuery(raw: string): string {
     .join(" ");
 }
 
-function placeholders(count: number): string {
-  return new Array<string>(count).fill("?").join(", ");
-}
-
-function validLimit(limit: number): number {
-  if (!Number.isInteger(limit) || limit < 0) {
-    throw new RangeError("search limit must be a non-negative integer");
-  }
-  return limit;
-}
-
 export function search(
   db: Database,
   query: string,
@@ -113,7 +108,7 @@ export function search(
 ): SearchHit[] {
   const ftsQuery = toFtsQuery(query);
   if (ftsQuery.length === 0) return [];
-  const limit = validLimit(opts.limit ?? 50);
+  const limit = validLimit(opts.limit ?? 50, "search");
   if (limit === 0 || opts.types?.length === 0 || opts.subjects?.length === 0) {
     return [];
   }

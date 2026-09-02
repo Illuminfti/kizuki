@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { stampDerived } from "../derived-meta";
+import { placeholders, validLimit } from "../query/sql";
+import { compareCodePoints } from "../util/text";
 import { listCanonPagesReport, stringArray } from "../vault/pages";
 import type { SkippedPage } from "../vault/pages";
 import { initGraph } from "./schema";
@@ -147,14 +149,6 @@ export function rebuildGraph(
   return { pages: pages.length, edges, skipped, rebuilt_at: rebuiltAt };
 }
 
-function placeholders(count: number): string {
-  return new Array<string>(count).fill("?").join(", ");
-}
-
-function compareText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
 function chunks<T>(items: T[], size: number): T[][] {
   const result: T[][] = [];
   for (let index = 0; index < items.length; index += size) {
@@ -191,13 +185,6 @@ function incidentEdges(
   return collected;
 }
 
-function validLimit(limit: number): number {
-  if (!Number.isInteger(limit) || limit < 0) {
-    throw new RangeError("neighbors limit must be a non-negative integer");
-  }
-  return limit;
-}
-
 export function neighbors(
   db: Database,
   id: string,
@@ -207,7 +194,7 @@ export function neighbors(
   if (depth !== 1 && depth !== 2) {
     throw new RangeError("neighbors depth must be 1 or 2");
   }
-  const limit = validLimit(opts.limit ?? DEFAULT_NEIGHBOR_LIMIT);
+  const limit = validLimit(opts.limit ?? DEFAULT_NEIGHBOR_LIMIT, "neighbors");
   if (limit === 0 || opts.kinds?.length === 0) {
     return { id, edges: [], truncated: false };
   }
@@ -241,9 +228,9 @@ export function neighbors(
 
   result.sort(
     (a, b) =>
-      compareText(a.src, b.src) ||
-      compareText(a.dst, b.dst) ||
-      compareText(a.kind, b.kind),
+      compareCodePoints(a.src, b.src) ||
+      compareCodePoints(a.dst, b.dst) ||
+      compareCodePoints(a.kind, b.kind),
   );
   return { id, edges: result, truncated };
 }

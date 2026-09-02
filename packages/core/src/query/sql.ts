@@ -1,3 +1,8 @@
+/**
+ * SQL fragments and caller-bound validation shared by the derived query
+ * layers. Search, timeline and graph must spell an instant, the sensitivity
+ * lattice and a bound check exactly once, or two of them will drift.
+ */
 import { SENSITIVITY_ORDER } from "../agents/types";
 import type { Sensitivity } from "../agents/types";
 import { isRfc3339 } from "../util/time";
@@ -60,4 +65,17 @@ export function ceilingSql(column: string): string {
     .map((label) => `WHEN '${label}' THEN ${SENSITIVITY_ORDER[label]}`)
     .join(" ");
   return `CASE ${column} ${branches} ELSE NULL END <= ?`;
+}
+
+/** `?, ?, …` for an `IN` list of `count` bindings. */
+export function placeholders(count: number): string {
+  return new Array<string>(count).fill("?").join(", ");
+}
+
+/** `label` names the caller's option so the message points at the argument. */
+export function validLimit(limit: number, label: string): number {
+  if (!Number.isInteger(limit) || limit < 0) {
+    throw new RangeError(`${label} limit must be a non-negative integer`);
+  }
+  return limit;
 }

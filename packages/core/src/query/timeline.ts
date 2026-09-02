@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { SENSITIVITY_ORDER } from "../agents/types";
 import type { Sensitivity } from "../agents/types";
-import { ceilingSql, instantBound, instantSql } from "./sql";
+import { ceilingSql, instantBound, instantSql, validLimit } from "./sql";
 
 export interface TimelineOptions {
   day?: string;
@@ -59,18 +59,11 @@ function preview(text: string): string {
     .join("");
 }
 
-function validLimit(limit: number): number {
-  if (!Number.isInteger(limit) || limit < 0) {
-    throw new RangeError("timeline limit must be a non-negative integer");
-  }
-  return limit;
-}
-
 export function timeline(
   db: Database,
   opts: TimelineOptions = {},
 ): TimelineEntry[] {
-  const limit = validLimit(opts.limit ?? 200);
+  const limit = validLimit(opts.limit ?? 200, "timeline");
   if (limit === 0) return [];
 
   const clauses = ["events.deleted = 0"];

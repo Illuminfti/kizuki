@@ -1,3 +1,4 @@
+import { compareCodePoints } from "../util/text";
 import { listCanonPagesReport } from "./pages";
 import { validatePage } from "./schema";
 
@@ -15,10 +16,6 @@ export interface DoctorVaultResult {
   };
 }
 
-function comparePath(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
 export function doctorVault(path: string): DoctorVaultResult {
   const report = listCanonPagesReport(path);
   const pages: DoctorPageResult[] = [
@@ -30,7 +27,7 @@ export function doctorVault(path: string): DoctorVaultResult {
       page: skipped.relPath,
       errors: [`frontmatter: ${skipped.reason}`],
     })),
-  ].sort((a, b) => comparePath(a.page, b.page));
+  ].sort((a, b) => compareCodePoints(a.page, b.page));
   const valid = pages.filter(({ errors }) => errors.length === 0).length;
 
   return {
