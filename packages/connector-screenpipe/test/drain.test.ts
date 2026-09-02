@@ -1,13 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import type { Cursor, SyncBatch } from "@kizuki/core";
-import {
-  BATCH_LIMIT,
-  MAX_PAGES_PER_CALL,
-  ScreenpipeConnector,
-  isDrained,
-  parseCursor,
-} from "../src";
+import type { SyncBatch } from "@kizuki/core";
+import { BATCH_LIMIT, ScreenpipeConnector, parseCursor } from "../src";
 import {
   cleanupFixtureDatabases,
   createFixtureDatabase,
@@ -17,6 +11,9 @@ import {
 } from "./helpers";
 
 afterEach(cleanupFixtureDatabases);
+
+/** Longer than any page a single call reads, so paging has to carry the walk. */
+const LONG_IDLE_RUN = 10_000;
 
 describe("ScreenpipeConnector drain signal", () => {
   test("a full page of skipped frames still yields the rows behind it", async () => {
@@ -60,14 +57,44 @@ describe("ScreenpipeConnector drain signal", () => {
     await connector.revoke();
   });
 
-  test("draining until an empty batch reaches every settled row", async () => {
+  test("an idle run of any length still yields the row behind it", async () => {
     const fixture = createFixtureDatabase({ rows: false });
+    const total = LONG_IDLE_RUN + 1;
     fixture.writer.transaction(() => {
-      for (let id = 1; id <= 1_100; id += 1) {
+      for (let id = 1; id <= total; id += 1) {
         insertFrame(fixture.writer, {
           id,
           timestamp: "2026-01-01T00:00:00Z",
-          fullText: id <= BATCH_LIMIT ? null : `frame ${id}`,
+          fullText: id === total ? "the row behind the idle run" : null,
+        });
+      }
+    })();
+    const connector = new ScreenpipeConnector(
+      { path: fixture.path, settle_seconds: 0 },
+      fixtureDeps("2026-01-09T00:00:00.000Z"),
+    );
+
+    // A locked or unchanged screen writes frames without text for as long as
+    // it stays that way. Ending the call on a page count would report no
+    // events with rows still behind the checkpoint, and the only signal a host
+    // reads is the event count, so the run has to be walked out in one call.
+    const batch = await connector.backfill(null);
+
+    expect(batch.events.map(({ source_record_id }) => source_record_id)).toEqual([
+      `frame:${total}`,
+    ]);
+    await connector.revoke();
+  });
+
+  test("an empty batch means every settled row was read", async () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    const total = LONG_IDLE_RUN + 2;
+    fixture.writer.transaction(() => {
+      for (let id = 1; id <= total; id += 1) {
+        insertFrame(fixture.writer, {
+          id,
+          timestamp: "2026-01-01T00:00:00Z",
+          fullText: id > LONG_IDLE_RUN ? `frame ${id}` : null,
         });
       }
       insertTranscription(fixture.writer, {
@@ -92,9 +119,13 @@ describe("ScreenpipeConnector drain signal", () => {
       );
     }
 
-    expect(collected).toHaveLength(601);
-    expect(collected[0]).toBe(`frame:${BATCH_LIMIT + 1}`);
-    expect(collected.at(-1)).toBe("transcription:1");
+    expect(collected).toEqual([
+      `frame:${LONG_IDLE_RUN + 1}`,
+      `frame:${total}`,
+      "transcription:1",
+    ]);
+    if (cursor === null) throw new Error("expected a screenpipe cursor");
+    expect(parseCursor(cursor).last_frame_id).toBe(total);
     await connector.revoke();
   });
 });
@@ -138,10 +169,10 @@ describe("ScreenpipeConnector read bounds", () => {
     await connector.revoke();
   });
 
-  test("a capped frame walk still reads the transcription table", async () => {
+  test("a long frame walk still reads the transcription table", async () => {
     const fixture = createFixtureDatabase({ rows: false });
     fixture.writer.transaction(() => {
-      for (let id = 1; id <= MAX_PAGES_PER_CALL * BATCH_LIMIT + 100; id += 1) {
+      for (let id = 1; id <= LONG_IDLE_RUN; id += 1) {
         insertFrame(fixture.writer, {
           id,
           timestamp: "2026-01-01T00:00:00Z",
@@ -159,8 +190,8 @@ describe("ScreenpipeConnector read bounds", () => {
       fixtureDeps("2026-01-09T00:00:00.000Z"),
     );
 
-    // The frame bound is per table: spending it must not hide a table the
-    // caller would otherwise read in the same call.
+    // Frames are walked first: spending a whole call on them must not hide a
+    // table the caller would otherwise read in the same call.
     const batch = await connector.backfill(null);
 
     expect(batch.events.map(({ source_record_id }) => source_record_id)).toEqual([
@@ -169,15 +200,14 @@ describe("ScreenpipeConnector read bounds", () => {
     await connector.revoke();
   });
 
-  test("an empty batch that moved the cursor is not the end of the source", async () => {
+  test("a batch stops at BATCH_LIMIT with rows still behind it", async () => {
     const fixture = createFixtureDatabase({ rows: false });
-    const total = MAX_PAGES_PER_CALL * BATCH_LIMIT + 1;
     fixture.writer.transaction(() => {
-      for (let id = 1; id <= total; id += 1) {
+      for (let id = 1; id <= BATCH_LIMIT + 10; id += 1) {
         insertFrame(fixture.writer, {
           id,
           timestamp: "2026-01-01T00:00:00Z",
-          fullText: id === total ? "the row behind the bound" : null,
+          fullText: `frame ${id}`,
         });
       }
     })();
@@ -186,75 +216,11 @@ describe("ScreenpipeConnector read bounds", () => {
       fixtureDeps("2026-01-09T00:00:00.000Z"),
     );
 
-    // A long run of frames without text is ordinary screenpipe output — a
-    // locked or unchanged screen — so a call can spend its page bound without
-    // producing an event while rows remain. Counting events cannot tell that
-    // apart from exhaustion; a cursor that moved can.
-    const first = await connector.backfill(null);
-    expect(first.events).toEqual([]);
-    expect(isDrained(null, first)).toBe(false);
+    const batch = await connector.backfill(null);
 
-    const collected: string[] = [];
-    let cursor: Cursor | null = first.cursor;
-    for (let call = 0; call < 10; call += 1) {
-      const previous = cursor;
-      const batch: SyncBatch = await connector.backfill(previous);
-      cursor = batch.cursor;
-      collected.push(
-        ...batch.events.map(({ source_record_id }) => source_record_id),
-      );
-      if (isDrained(previous, batch)) break;
-    }
-
-    expect(collected).toEqual([`frame:${total}`]);
-    expect(isDrained(cursor, await connector.backfill(cursor))).toBe(true);
-    await connector.revoke();
-  });
-
-  test("a caught-up call is drained, a null cursor ends the source", () => {
-    const cursor = '{"schema":"kizuki.screenpipe-cursor/v1"}';
-    expect(isDrained(cursor, { events: [], cursor })).toBe(true);
-    expect(isDrained(cursor, { events: [], cursor: null })).toBe(true);
-    expect(isDrained(cursor, { events: [], cursor: `${cursor} ` })).toBe(false);
-    expect(isDrained(null, { events: [], cursor })).toBe(false);
-  });
-
-  test("one call reads a bounded number of pages and resumes after them", async () => {
-    const fixture = createFixtureDatabase({ rows: false });
-    const total = MAX_PAGES_PER_CALL * BATCH_LIMIT + BATCH_LIMIT;
-    fixture.writer.transaction(() => {
-      for (let id = 1; id <= total; id += 1) {
-        insertFrame(fixture.writer, {
-          id,
-          timestamp: "2026-01-01T00:00:00Z",
-          fullText: id === total ? "the row behind the bound" : null,
-        });
-      }
-    })();
-    const connector = new ScreenpipeConnector(
-      { path: fixture.path, settle_seconds: 0 },
-      fixtureDeps("2026-01-09T00:00:00.000Z"),
-    );
-
-    const first = await connector.backfill(null);
-
-    expect(first.events).toEqual([]);
-    if (first.cursor === null) throw new Error("expected a screenpipe cursor");
-    expect(parseCursor(first.cursor).last_frame_id).toBe(
-      MAX_PAGES_PER_CALL * BATCH_LIMIT,
-    );
-
-    let cursor: string | null = first.cursor;
-    const collected: string[] = [];
-    for (let call = 0; call < 5; call += 1) {
-      const batch: SyncBatch = await connector.backfill(cursor);
-      cursor = batch.cursor;
-      collected.push(
-        ...batch.events.map(({ source_record_id }) => source_record_id),
-      );
-      if (batch.events.length > 0) break;
-    }
-    expect(collected).toEqual([`frame:${total}`]);
+    expect(batch.events).toHaveLength(BATCH_LIMIT);
+    if (batch.cursor === null) throw new Error("expected a screenpipe cursor");
+    expect(parseCursor(batch.cursor).last_frame_id).toBe(BATCH_LIMIT);
     await connector.revoke();
   });
 });

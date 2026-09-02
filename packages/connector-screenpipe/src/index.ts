@@ -10,7 +10,6 @@ export type {
 export {
   BATCH_LIMIT,
   DEFAULT_SETTLE_SECONDS,
-  MAX_PAGES_PER_CALL,
   MAX_PLAN_IDS,
   MAX_SUBJECT_CHARS,
   MAX_TEXT_CHARS,
@@ -18,7 +17,6 @@ export {
   SCREENPIPE_CURSOR_SCHEMA,
   encodeCursor,
   initialCursor,
-  isDrained,
   parseCursor,
 } from "./cursor";
 export type { ScreenpipeCursor, SkippedCounters } from "./cursor";

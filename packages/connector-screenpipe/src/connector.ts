@@ -18,10 +18,8 @@ import {
 } from "./config";
 import {
   BATCH_LIMIT,
-  MAX_PAGES_PER_CALL,
   encodeCursor,
   initialCursor,
-  isDrained,
   parseCursor,
   type ScreenpipeCursor,
   type SkippedCounters,
@@ -183,9 +181,8 @@ export class ScreenpipeConnector implements Connector {
       while (true) {
         const batch = await connector.backfill(cursor);
         events.push(...batch.events);
-        const previous = cursor;
         cursor = batch.cursor;
-        if (isDrained(previous, batch)) break;
+        if (batch.events.length === 0) break;
       }
       return events;
     } finally {
@@ -220,31 +217,23 @@ export class ScreenpipeConnector implements Connector {
       };
       const events: CaptureEventInput[] = [];
 
-      // An empty batch is the drain signal every caller uses, so the walk
-      // keeps reading pages until it has an event, both tables are exhausted
-      // for this cursor, or the settle window stops it. A page of frames
-      // without text is ordinary screenpipe output, not the end of the data.
-      // MAX_PAGES_PER_CALL bounds that retry, per table: a run of skipped rows
-      // longer than the bound returns an advanced cursor and no events, and
-      // the next call resumes behind it rather than scanning the table in one
-      // go. Spending the bound on one table never hides the other.
+      // An empty batch is the drain signal every caller uses — the CLI reads
+      // exactly `events.length` — so a call may only return one when nothing
+      // more is readable. A page of frames without text is ordinary screenpipe
+      // output, not the end of the data, so the walk keeps reading pages until
+      // it has an event, both tables are exhausted for this cursor, or the
+      // settle window stops it. A long idle run therefore costs a slow call
+      // rather than a silent stop with rows still behind the checkpoint.
       let framesDone = false;
       let transcriptionsDone = false;
-      let framePages = 0;
-      let transcriptionPages = 0;
       while (
         events.length < BATCH_LIMIT &&
         !(framesDone && transcriptionsDone)
       ) {
-        if (!framesDone && framePages < MAX_PAGES_PER_CALL) {
-          framePages += 1;
+        if (!framesDone) {
           framesDone = walkFrames(db, current, events, walk);
           continue;
         }
-        if (transcriptionsDone || transcriptionPages >= MAX_PAGES_PER_CALL) {
-          break;
-        }
-        transcriptionPages += 1;
         transcriptionsDone = walkTranscriptions(db, current, events, walk);
       }
 

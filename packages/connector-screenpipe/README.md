@@ -31,11 +31,9 @@ kizuki backfill screenpipe
 kizuki sync screenpipe
 ```
 
-Repeat `backfill` until a call reports no new events **and hands back the same
-checkpoint it was given**. Both halves matter: a call that spends its page bound
-on rows it skips also reports no events, but its checkpoint has moved and rows
-remain behind it. This package exports that condition as
-`isDrained(previousCursor, batch)` for hosts driving the loop themselves.
+Repeat `backfill` until a call reports no new events. A call reports none only
+when nothing more is readable: a run of frames without text is walked out inside
+the call rather than ending it, so the event count is the whole drain signal.
 `sync` then continues from the same checkpoint.
 
 The `connect`, `backfill`, and `sync` verbs are wired by the CLI lanes; until
@@ -111,13 +109,10 @@ screenpipe schema older than supported: migration 20260613130000 not applied (ma
   approximation costs a few reads rather than history. The cutoff applies on
   every call, so raising it later excludes rows from then on, while lowering it
   does not bring back rows the checkpoint has already passed.
-- A call emits at most 500 events and reads at most 20 pages of 500 rows from
-  each of the two tables.
-  Within that bound the connector keeps reading until it has an event, so a
-  long run of frames without text costs extra reads instead of cutting the
-  import short. A run longer than the bound ends the call with no events and an
-  advanced checkpoint, and the next call resumes behind it — which is why the
-  drain condition above is the checkpoint, not the event count.
+- A call emits at most 500 events and reads rows in pages of 500. It keeps
+  paging until it has an event, both tables are read out, or the settle window
+  stops it, so a long idle run costs a slower call rather than a call that
+  reports nothing while rows remain behind the checkpoint.
 - A row whose `offset_index` or `audio_chunk_id` holds something that is not a
   usable number is read with that field as `0` rather than failing the batch.
   Those columns position a row inside its capture; the identity columns still
