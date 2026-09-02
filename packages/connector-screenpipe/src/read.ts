@@ -120,12 +120,19 @@ export function seedAfterIds(
   since: string,
 ): { frame: number; transcription: number } {
   const normalized = new Date(since).toISOString();
+  // Rows carry either the RFC3339 encoding sqlx writes today or the legacy
+  // space-separated one, and the two do not sort against each other. The seed
+  // is therefore taken from the first row that could be at or after `since`
+  // under either encoding: re-reading a few older rows costs one deduplicated
+  // ledger write each, while a row seeded past is never read again.
+  const legacy = normalized.replace("T", " ");
   return {
-    frame: maxIdBefore(db, "frames", normalized),
-    transcription: maxIdBefore(
+    frame: seedBefore(db, "frames", normalized, legacy),
+    transcription: seedBefore(
       db,
       "audio_transcriptions",
       normalized,
+      legacy,
     ),
   };
 }
@@ -191,16 +198,32 @@ function mapTranscriptionRow(
   };
 }
 
-function maxIdBefore(
+function seedBefore(
   db: Database,
   table: "frames" | "audio_transcriptions",
-  since: string,
+  isoSince: string,
+  legacySince: string,
+): number {
+  const first = db
+    .query<{ id: unknown }, [string, string]>(
+      `SELECT COALESCE(MIN(id), 0) AS id FROM ${table}
+        WHERE timestamp >= ? OR timestamp >= ?`,
+    )
+    .get(isoSince, legacySince);
+  const firstAfter = requiredCursorId(first?.id);
+  if (firstAfter > 0) return firstAfter - 1;
+  return maxId(db, table);
+}
+
+function maxId(
+  db: Database,
+  table: "frames" | "audio_transcriptions",
 ): number {
   const row = db
-    .query<{ id: unknown }, [string]>(
-      `SELECT COALESCE(MAX(id), 0) AS id FROM ${table} WHERE timestamp < ?`,
+    .query<{ id: unknown }, []>(
+      `SELECT COALESCE(MAX(id), 0) AS id FROM ${table}`,
     )
-    .get(since);
+    .get();
   return requiredCursorId(row?.id);
 }
 

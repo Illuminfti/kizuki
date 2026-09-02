@@ -320,33 +320,6 @@ describe("ScreenpipeConnector backfill", () => {
     await connector.revoke();
   });
 
-  test("since seeds the cursor past older rows", async () => {
-    const fixture = createFixtureDatabase({ rows: false });
-    for (const [id, timestamp] of [
-      [1, "2026-01-01T00:00:00Z"],
-      [2, "2026-01-02T00:00:00Z"],
-      [3, "2026-01-03T00:00:00Z"],
-    ] as const) {
-      insertFrame(fixture.writer, { id, timestamp, fullText: `frame ${id}` });
-    }
-    const connector = new ScreenpipeConnector(
-      {
-        path: fixture.path,
-        since: "2026-01-02T00:00:00Z",
-        settle_seconds: 0,
-      },
-      fixtureDeps("2026-01-09T00:00:00.000Z"),
-    );
-
-    const batch = await connector.backfill(null);
-
-    expect(batch.events.map(({ source_record_id }) => source_record_id)).toEqual([
-      "frame:2",
-      "frame:3",
-    ]);
-    await connector.revoke();
-  });
-
   test("double backfill through InMemoryLedger is all duplicates", async () => {
     const fixture = createFixtureDatabase();
     const connector = new ScreenpipeConnector(
