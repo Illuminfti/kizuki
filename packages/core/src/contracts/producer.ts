@@ -112,9 +112,13 @@ export type ProduceResult =
        */
       dropped_predicates?: string[];
       /**
-       * Covered events whose text ran past what the producer will quote, so a
-       * caller can see that a claim rests on part of a record rather than all
-       * of it. Absent below minor 1. `contract_minor >= 1`.
+       * Covered events whose text ran past what the producer will quote. They
+       * are covered — coverage has to keep advancing, or one oversized record
+       * stalls every later one behind it on every pass — and the remainder is
+       * not quoted on a later pass either, so a claim citing one of these
+       * rests on the record's first part and nothing after it. A writer marks
+       * such a claim rather than treating it as resting on the whole record.
+       * Absent below minor 1. `contract_minor >= 1`.
        */
       truncated_event_ids?: string[];
       /**
