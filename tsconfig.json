@@ -8,8 +8,7 @@
     "exactOptionalPropertyTypes": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
-    "types": ["bun"],
-    "noUnusedLocals": true
+    "types": ["bun"]
   },
   "include": [
     "packages/*/src/**/*.ts",
