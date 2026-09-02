@@ -110,6 +110,42 @@ describe("model answers", () => {
     expect(outcome.claims[0]?.body).toBe("line one[31m red\nline two");
   });
 
+  test("a line separator never survives into a single-line value", () => {
+    // Regression: U+2028 and U+2029 are neither C0 nor C1, so a subject or an
+    // object the code treats as one line could still carry a second one into
+    // a page, a receipt or a terminal.
+    const outcome = parse(
+      claimsPayload({
+        subject: "person:ada\u2028sensitivity: public",
+        object: "acme\u2029trusted: yes",
+        body: "one\u2028two",
+      }),
+    );
+    expect(outcome.claims[0]?.subject).toBe("person:ada sensitivity: public");
+    expect(outcome.claims[0]?.object).toBe("acme trusted: yes");
+    expect(outcome.claims[0]?.body).toBe("one\ntwo");
+    for (const value of Object.values(outcome.claims[0] ?? {})) {
+      expect(JSON.stringify(value)).not.toContain("u2028");
+      expect(JSON.stringify(value)).not.toContain("u2029");
+    }
+  });
+
+  test("a claim outside the registry is still checked for its shape", () => {
+    // Regression: the registry decided a claim's fate before its own fields
+    // were read, so the same malformed answer was `schema_invalid` with a
+    // known predicate and a silent drop with an unknown one - which reaches a
+    // caller as `ok` with no claims, the shape reserved for "nothing durable".
+    expect(refuses(claimsPayload({ predicate: "vibes.about", body: 12_345 }))).toBe(
+      "schema_invalid",
+    );
+    expect(
+      refuses(claimsPayload({ predicate: "vibes.about", object: "o".repeat(401) })),
+    ).toBe("schema_invalid");
+    expect(
+      refuses(claimsPayload({ predicate: "vibes.about", valid_from: "yesterday" })),
+    ).toBe("schema_invalid");
+  });
+
   test("a wikilink or frontmatter fence stays inert text", () => {
     const outcome = parse(
       claimsPayload({

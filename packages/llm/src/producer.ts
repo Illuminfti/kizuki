@@ -96,7 +96,7 @@ function stopFor(error: unknown): Stop {
 function scrubReason(error: unknown): string {
   if (!(error instanceof PortError)) return "the model port failed";
   return error.message
-    .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ")
     .slice(0, MAX_REASON_CHARS)
     .trim();
 }

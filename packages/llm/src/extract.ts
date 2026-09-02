@@ -36,6 +36,12 @@ const PREDICATE_ID = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/;
 
 /** C0 and C1 controls, newline excepted, plus the delete character. */
 const CONTROL = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g;
+/**
+ * Every break a renderer or a terminal treats as one, including the two
+ * separators that are neither C0 nor C1 and would otherwise carry a second
+ * line into a value this package promises is single-line.
+ */
+const LINE_BREAK = /\r\n|\r|\u2028|\u2029/g;
 
 export interface ExtractOutcome {
   claims: ClaimDraft[];
@@ -51,7 +57,7 @@ export interface ExtractOutcome {
  * are removed before a value can reach a page, a receipt or a terminal.
  */
 function sanitize(value: string, allowNewlines: boolean): string {
-  const stripped = value.replaceAll("\r\n", "\n").replace(CONTROL, "");
+  const stripped = value.replace(LINE_BREAK, "\n").replace(CONTROL, "");
   return allowNewlines
     ? stripped.trim()
     : stripped.replaceAll("\n", " ").trim();
@@ -182,19 +188,13 @@ export function parseExtractResponse(
       reject("schema_invalid", "a claim has an invalid confidence");
     }
 
-    const predicate = text(entry, "predicate", MAX_PREDICATE_CHARS, false);
-    const eventIds = citations(entry, allowedEventIds);
-    if (!allowedPredicates.has(predicate)) {
-      if (PREDICATE_ID.test(predicate) && unknown.size < MAX_UNKNOWN_PREDICATES) {
-        unknown.add(predicate);
-      }
-      continue;
-    }
-
-    claims.push({
+    // The whole draft is validated before the registry decides its fate, so
+    // a broken claim is `schema_invalid` whatever it named: an answer that
+    // fails its shape must never reach a caller as `ok` with no claims.
+    const draft: ClaimDraft = {
       kind: kind as ClaimDraftKind,
       subject: text(entry, "subject", MAX_SUBJECT_CHARS, false),
-      predicate,
+      predicate: text(entry, "predicate", MAX_PREDICATE_CHARS, false),
       object: text(entry, "object", MAX_OBJECT_CHARS, false),
       polarity,
       body: text(entry, "body", MAX_BODY_CHARS, true),
@@ -202,8 +202,18 @@ export function parseExtractResponse(
       valid_to: timestamp(entry, "valid_to"),
       confidence,
       sensitivity: sensitivity as Sensitivity,
-      event_ids: eventIds,
-    });
+      event_ids: citations(entry, allowedEventIds),
+    };
+    if (!allowedPredicates.has(draft.predicate)) {
+      if (
+        PREDICATE_ID.test(draft.predicate) &&
+        unknown.size < MAX_UNKNOWN_PREDICATES
+      ) {
+        unknown.add(draft.predicate);
+      }
+      continue;
+    }
+    claims.push(draft);
   }
 
   return { claims, unknown_predicates: [...unknown].sort() };
