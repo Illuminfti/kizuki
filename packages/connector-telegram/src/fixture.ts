@@ -165,9 +165,9 @@ export const FIXTURE_ACCOUNT: ScriptedAccount = deepFreeze({
   me: ADA,
   authorized: true,
   dialogs: [
-    { peer_id: "1002", peer_type: "user", title: "grace", public: false, top_message_id: 5 },
-    { peer_id: "-42", peer_type: "group", title: "acme planning", public: false, top_message_id: 13 },
-    { peer_id: "-100777", peer_type: "channel", title: "acme news", public: true, top_message_id: 23 },
+    { peer_id: "1002", peer_type: "user", title: "grace", top_message_id: 5 },
+    { peer_id: "-42", peer_type: "group", title: "acme planning", top_message_id: 13 },
+    { peer_id: "-100777", peer_type: "channel", title: "acme news", top_message_id: 23 },
   ],
   messages: {
     "1002": PRIVATE_MESSAGES,

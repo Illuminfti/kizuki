@@ -26,7 +26,6 @@ function busyAccount(count: number) {
       peer_id: "1002",
       peer_type: "user",
       title: "grace",
-      public: false,
       top_message_id: count,
     },
   ];
@@ -149,7 +148,6 @@ function pair(count: number) {
     peer_id,
     peer_type: "user" as const,
     title: "grace",
-    public: false,
     top_message_id: count,
   }));
   account.messages = { "1002": crowd("1002", count), "1003": crowd("1003", count) };
@@ -216,7 +214,6 @@ test("a page holding only skipped records never looks like a drained source", as
       peer_id: "-42",
       peer_type: "group",
       title: "acme planning",
-      public: false,
       top_message_id: BATCH_LIMIT + 3,
     },
   ];
@@ -259,8 +256,8 @@ test("continuing a walk costs one dialog listing, not one per batch", async () =
 test("an edit made while the backfill ran is still re-emitted after it", async () => {
   const account = fixtureAccount();
   account.dialogs = [
-    { peer_id: "1", peer_type: "user", title: "grace", public: false, top_message_id: 400 },
-    { peer_id: "2", peer_type: "user", title: "linus", public: false, top_message_id: 600 },
+    { peer_id: "1", peer_type: "user", title: "grace", top_message_id: 400 },
+    { peer_id: "2", peer_type: "user", title: "linus", top_message_id: 600 },
   ];
   account.messages = { "1": crowd("1", 400), "2": crowd("2", 600) };
   const built = await connected({ account });

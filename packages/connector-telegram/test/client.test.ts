@@ -198,25 +198,6 @@ test.skipIf(!OFFLINE)("a socket fault while paging history is reported as unreac
   expect((thrown as TelegramConnectorError).code).toBe("unreachable");
 });
 
-test.skipIf(!OFFLINE)("a channel with only inactive aliases is not treated as public", async () => {
-  pages.dialogs = async function* () {
-    yield {
-      entity: { id: "-100777", usernames: [{ username: "acme", active: false }] },
-      isUser: false,
-      isGroup: false,
-      message: { id: 4 },
-    };
-    yield {
-      entity: { id: "-100888", usernames: [{ username: "acme2", active: true }] },
-      isUser: false,
-      isGroup: false,
-      message: { id: 9 },
-    };
-  };
-  const listed = (await drain(api().dialogs(10))) as { public: boolean }[];
-  expect(listed.map((dialog) => dialog.public)).toEqual([false, true]);
-});
-
 async function thrown(operation: () => Promise<unknown>): Promise<unknown> {
   try {
     await operation();
@@ -357,21 +338,18 @@ test.skipIf(!OFFLINE)("dialogs arrive as the plain records the walk reads", asyn
       peer_id: "1002",
       peer_type: "user",
       title: "grace",
-      public: false,
       top_message_id: 5,
     },
     {
       peer_id: "-42",
       peer_type: "group",
       title: "acme planning",
-      public: false,
       top_message_id: 13,
     },
     {
       peer_id: "-100777",
       peer_type: "channel",
       title: "acme news",
-      public: true,
       top_message_id: 0,
     },
   ] satisfies TelegramDialog[]);

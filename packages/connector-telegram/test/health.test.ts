@@ -78,7 +78,6 @@ test("hitting the dialog listing bound degrades health", async () => {
       peer_id: String(9_000_000 + index),
       peer_type: "user",
       title: "grace",
-      public: false,
       top_message_id: 0,
     });
   }

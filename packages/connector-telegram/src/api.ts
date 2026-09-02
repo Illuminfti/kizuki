@@ -20,8 +20,6 @@ export interface TelegramDialog {
   peer_id: string;
   peer_type: PeerType;
   title: string;
-  /** A channel reachable by public username; drives the sensitivity hint. */
-  public: boolean;
   top_message_id: number;
 }
 

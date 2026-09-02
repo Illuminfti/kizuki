@@ -80,7 +80,6 @@ test("a dialog that appeared after the last pass is walked from its start", asyn
       peer_id: "-100999",
       peer_type: "channel",
       title: "acme releases",
-      public: true,
       top_message_id: 2,
     },
     [
@@ -104,7 +103,7 @@ test("a dialog that appeared after the last pass is walked from its start", asyn
   );
   const batch = await built.connector.sync(cursor);
   expect(ids(batch.events)).toEqual(["-100999:1", "-100999:2"]);
-  expect(batch.events[0]?.sensitivity_hint).toBe("public");
+  expect(batch.events[0]?.sensitivity_hint).toBe("private");
 });
 
 test("a pass interrupted by a reported wait resumes at the dialog it stopped on", async () => {
@@ -158,7 +157,6 @@ function twoDialogs() {
     peer_id,
     peer_type: "user" as const,
     title: "grace",
-    public: false,
     top_message_id: peer_id === "1" ? 1 : 5,
   }));
   account.messages = { "1": bulk("1", 1, 1), "2": bulk("2", 1, 5) };
@@ -218,7 +216,6 @@ function crowded(count: number) {
       peer_id: String(9_000_000 + index),
       peer_type: "user",
       title: "grace",
-      public: false,
       top_message_id: 0,
     });
   }
@@ -240,7 +237,6 @@ test("the cursor never tracks more dialogs than a listing may return", async () 
       peer_id: "9999999",
       peer_type: "user",
       title: "linus",
-      public: false,
       top_message_id: 1,
     },
     [{ peer_id: "9999999", id: 1, date: LATER, text: "hello", out: false, service: false }],
@@ -264,7 +260,6 @@ test("edits are found even when the batch fills before the scan ends", async () 
       peer_id: "1",
       peer_type: "user",
       title: "grace",
-      public: false,
       top_message_id: 1000,
     },
   ];

@@ -17,7 +17,6 @@ import { classify, guarded, isRefusedCredential } from "./guard";
 import type { ProviderErrors } from "./guard";
 import { TELEGRAM_CONNECTOR_VERSION } from "./map";
 import { describeMedia } from "./media";
-import { hasPublicHandle } from "./peer";
 
 /** Telegram's own ceiling for one history page. */
 const MAX_PAGE = 500;
@@ -277,7 +276,6 @@ function mapDialog(dialog: Dialog, runtime: Runtime): TelegramDialog | null {
     peer_id: runtime.utils.getPeerId(entity, true),
     peer_type: peerType,
     title: runtime.utils.getDisplayName(entity),
-    public: hasPublicHandle(entity),
     top_message_id: dialog.message?.id ?? 0,
   };
 }

@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test";
-import { openLedger, runBackfill, runToCompletion } from "@kizuki/core";
+import {
+  DEFAULT_GRANT,
+  openLedger,
+  runBackfill,
+  runToCompletion,
+  timeline,
+} from "@kizuki/core";
 import { initStaging } from "@kizuki/core/staging";
 import { parseCursor } from "../src/cursor";
 import { fixtureAccount } from "../src/fixture";
@@ -101,7 +107,6 @@ test("a record with an impossible date does not stall the backfill", async () =>
       peer_id: "1002",
       peer_type: "user",
       title: "grace",
-      public: false,
       top_message_id: 3,
     },
   ];
@@ -201,7 +206,6 @@ test("a wait during a resumed edit scan reads as a wait, not a stuck connector",
       peer_id: "1",
       peer_type: "user",
       title: "grace",
-      public: false,
       top_message_id: 1000,
     },
   ];
@@ -250,7 +254,6 @@ test("a wait that reached only skipped records is reported, not drained", async 
       peer_id: "1",
       peer_type: "user",
       title: "grace",
-      public: false,
       top_message_id: 2,
     },
   ];
@@ -288,5 +291,34 @@ test("a wait that reached only skipped records is reported, not drained", async 
   );
   expect(resumed.errors).toEqual([]);
   expect(resumed.stored).toBe(1);
+  db.close();
+});
+
+/**
+ * Telegram is a chat source, and RFC 0002 §8.2 puts that class at a `private`
+ * default: what the owner reads and writes in their own dialogs is not
+ * evidence an agent holding the default grant may be handed. The hint is the
+ * only label anything downstream has today, so it is the whole of the
+ * defence.
+ */
+test("nothing this connector captured is served under the default agent ceiling", async () => {
+  const built = await connected({ now: FEBRUARY });
+  const db = ledger();
+  const stored = await runToCompletion(
+    db,
+    built.connector,
+    TELEGRAM_CONNECTOR_ID,
+    SOURCE,
+    "backfill",
+  );
+  expect(stored.stored).toBe(12);
+
+  expect(
+    timeline(db, { connector_id: TELEGRAM_CONNECTOR_ID, ceiling: DEFAULT_GRANT.ceiling }),
+  ).toEqual([]);
+  // And it is withheld because it is labeled, not because it is missing.
+  expect(
+    timeline(db, { connector_id: TELEGRAM_CONNECTOR_ID, ceiling: "private" }),
+  ).toHaveLength(12);
   db.close();
 });

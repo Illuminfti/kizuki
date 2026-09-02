@@ -46,11 +46,14 @@ function senderSubject(
   };
 }
 
-function hintFor(dialog: TelegramDialog): SensitivityHint {
-  if (dialog.peer_type === "user") return "private";
-  if (dialog.peer_type === "group") return "personal";
-  return dialog.public ? "public" : "personal";
-}
+/**
+ * Telegram is a chat source, and RFC 0002 §8.2 puts that class at a `private`
+ * default: a resolved label may be raised from there and never lowered, so no
+ * dialog of the owner's own account is evidence to hand out more freely. A
+ * public channel is no exception. Its posts may be published, but which
+ * channels this account reads, and when, is not.
+ */
+const CHAT_HINT: SensitivityHint = "private";
 
 function subjectsFor(
   message: TelegramMessage,
@@ -148,7 +151,7 @@ export function mapMessage(
     observed_at,
     text: message.text,
     subjects: subjectsFor(message, dialog, self),
-    sensitivity_hint: hintFor(dialog),
+    sensitivity_hint: CHAT_HINT,
     deleted: false,
     attachments,
     // Deliberately no view or forward counters: metadata is hashed, and a

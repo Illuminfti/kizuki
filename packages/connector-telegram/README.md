@@ -6,12 +6,12 @@ This package signs in as you and reads your own Telegram dialogs: private
 chats, groups, and the channels you follow. It is not a bot. It never posts,
 and it never removes anything at the source.
 
-Every non-service message becomes one `message` event. The sensitivity hint
-follows the chat rather than the words in it: a private chat is `private`, a
-group is `personal`, and a channel is `public` only when Telegram still lists
-a live public handle for it. A retired handle counts for nothing. Subjects
-are the sender, the other party, and the chat itself, so a later purge can be
-aimed at one correspondent.
+Every non-service message becomes one `message` event, and every one of them
+is labeled `private`. Messaging is a private source class, a label may only
+be raised from where the source puts it, and a channel you follow is no
+exception: the posts may be published, but which channels you read is not.
+Subjects are the sender, the other party, and the chat itself, so a later
+purge can be aimed at one correspondent.
 
 This is the only package in the repository with a runtime dependency. It uses
 `telegram` (GramJS) to speak MTProto, and the library is loaded lazily inside

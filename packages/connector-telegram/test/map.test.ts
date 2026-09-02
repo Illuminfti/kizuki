@@ -16,28 +16,24 @@ const PRIVATE: TelegramDialog = {
   peer_id: "1002",
   peer_type: "user",
   title: "grace",
-  public: false,
   top_message_id: 4,
 };
 const GROUP: TelegramDialog = {
   peer_id: "-42",
   peer_type: "group",
   title: "acme planning",
-  public: false,
   top_message_id: 12,
 };
 const PUBLIC_CHANNEL: TelegramDialog = {
   peer_id: "-100777",
   peer_type: "channel",
   title: "acme news",
-  public: true,
   top_message_id: 20,
 };
 const PRIVATE_CHANNEL: TelegramDialog = {
   ...PUBLIC_CHANNEL,
   peer_id: "-100888",
   title: "acme internal",
-  public: false,
 };
 
 function message(overrides: Partial<TelegramMessage> = {}): TelegramMessage {
@@ -69,7 +65,6 @@ test("an incoming private message is from the peer and to the owner", () => {
   expect(event.kind).toBe("message");
   expect(event.occurred_at).toBe("2026-01-02T09:00:00.000Z");
   expect(event.observed_at).toBe(OBSERVED_AT);
-  expect(event.sensitivity_hint).toBe("private");
   expect(event.deleted).toBe(false);
   expect(event.subjects).toEqual([
     { subject_id: "telegram:user:1002", role: "from", display_name: "grace" },
@@ -95,7 +90,6 @@ test("a group message is from its sender and about the chat", () => {
     }),
     GROUP,
   );
-  expect(event.sensitivity_hint).toBe("personal");
   expect(event.subjects).toEqual([
     { subject_id: "telegram:user:1003", role: "from", display_name: "linus" },
     {
@@ -115,12 +109,11 @@ test("a group message with no sender is attributed to the chat", () => {
   });
 });
 
-test("a public channel post is public and signed by its author", () => {
+test("a channel post is signed by its author", () => {
   const event = mapped(
     message({ peer_id: "-100777", id: 20, post_author: "grace" }),
     PUBLIC_CHANNEL,
   );
-  expect(event.sensitivity_hint).toBe("public");
   expect(event.subjects).toEqual([
     {
       subject_id: "telegram:chat:-100777",
@@ -136,12 +129,19 @@ test("a public channel post is public and signed by its author", () => {
   expect(event.metadata["post_author"]).toBe("grace");
 });
 
-test("a channel without a public handle stays personal", () => {
-  const event = mapped(
-    message({ peer_id: "-100888", id: 20 }),
-    PRIVATE_CHANNEL,
+/**
+ * A chat source resolves to `private` and refinement may only raise a label
+ * (RFC 0002 §8.1, §8.2), so no kind of dialog is hinted below it. A published
+ * channel post is the case that looks safe to lower and is not: the post is
+ * public, the fact that this account reads that channel is not.
+ */
+test("every dialog the owner reads is labeled private", () => {
+  const hints = [PRIVATE, GROUP, PUBLIC_CHANNEL, PRIVATE_CHANNEL].map(
+    (dialog) =>
+      mapped(message({ peer_id: dialog.peer_id, id: 20 }), dialog)
+        .sensitivity_hint,
   );
-  expect(event.sensitivity_hint).toBe("personal");
+  expect(hints).toEqual(["private", "private", "private", "private"]);
 });
 
 test("a media-only message keeps empty text and one attachment reference", () => {
