@@ -1,4 +1,5 @@
 import { lstat, readdir } from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import { basename, join } from "node:path";
 import { HealthReport } from "@kizuki/core";
 import type {
@@ -259,7 +260,14 @@ async function resolveSources(path: string): Promise<string[]> {
   if (!info.isDirectory()) {
     throw misconfigured(`not an export directory or file: ${path}`);
   }
-  const entries = await readdir(path, { withFileTypes: true });
+  let entries: Dirent[];
+  try {
+    entries = await readdir(path, { withFileTypes: true });
+  } catch (error) {
+    // A directory that cannot be listed is a configuration problem like any
+    // other unreadable path, not an error only the filesystem understands.
+    throw misconfigured(`cannot read ${path}: ${errorMessage(error)}`);
+  }
   const files = entries
     .filter(
       (entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".csv"),

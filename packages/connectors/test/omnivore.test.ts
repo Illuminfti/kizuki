@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { validateEventInput } from "@kizuki/core";
@@ -468,6 +475,24 @@ test("an unzipped export reads from disk exactly as from memory", async () => {
         "a1b2c3d4-0000-4000-8000-000000000003",
       ],
     });
+  });
+});
+
+test("an export directory that cannot be listed is refused, not thrown", async () => {
+  await withTempRoot(async (root) => {
+    const locked = path.join(root, "locked");
+    await mkdir(locked);
+    await chmod(locked, 0o000);
+    try {
+      const connector = createOmnivoreImportConnector({ path: locked });
+      const error = await rejected(() => connector.backfill(null));
+      expect(error.code).toBe("misconfigured");
+      expect(error.message).toContain("cannot read");
+      const report = await connector.health();
+      expect(report.state).toBe("misconfigured");
+    } finally {
+      await chmod(locked, 0o700);
+    }
   });
 });
 

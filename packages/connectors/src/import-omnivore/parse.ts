@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { lstat, readdir } from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import { isPlainObject } from "@kizuki/core";
 import type { CaptureEventInput } from "@kizuki/core";
 import { KizukiError } from "../errors";
@@ -278,7 +279,14 @@ export async function fsOmnivoreFiles(
   if (!info.isDirectory()) {
     throw misconfigured(`not an export directory: ${dir}`);
   }
-  const entries = await readdir(dir, { withFileTypes: true });
+  let entries: Dirent[];
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch (error) {
+    // A directory that cannot be listed is a configuration problem like any
+    // other unreadable path, not an error only the filesystem understands.
+    throw misconfigured(`cannot read ${dir}: ${errorMessage(error)}`);
+  }
   const names = entries
     .filter((entry) => entry.isFile() && METADATA_FILE.test(entry.name))
     .map((entry) => entry.name)

@@ -1,4 +1,5 @@
 import { lstat, readdir } from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { HealthReport } from "@kizuki/core";
 import type {
@@ -98,6 +99,19 @@ function misconfigured(detail: string): KizukiError {
   );
 }
 
+/**
+ * A directory that cannot be listed is a configuration problem like any other
+ * unreadable path, so it leaves as a refusal callers can discriminate on
+ * rather than as whatever the filesystem threw.
+ */
+async function readEntries(path: string): Promise<Dirent[]> {
+  try {
+    return await readdir(path, { withFileTypes: true });
+  } catch (error) {
+    throw misconfigured(`cannot read ${path}: ${errorMessage(error)}`);
+  }
+}
+
 interface ResolvedExport {
   txt: string;
   mediaDir: string;
@@ -127,7 +141,7 @@ export async function resolveExport(path: string): Promise<ResolvedExport> {
   if (!info.isDirectory()) {
     throw misconfigured(`not a chat export directory or file: ${path}`);
   }
-  const entries = await readdir(path, { withFileTypes: true });
+  const entries = await readEntries(path);
   const texts = entries
     .filter(
       (entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".txt"),
