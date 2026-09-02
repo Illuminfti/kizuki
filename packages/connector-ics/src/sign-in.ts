@@ -4,21 +4,11 @@ import type {
   SignInIo,
 } from "@kizuki/core";
 import type { IcsFetcher } from "./fetch";
+import { sanitize } from "./map";
 import { parseIcs } from "./parse";
 import { normalizeCalendarUrl, serializeIcsState } from "./state";
 
 export const MAX_DISPLAY_CHARS = 80;
-
-function label(text: string): string {
-  return Array.from(text)
-    .filter((character) => {
-      const code = character.codePointAt(0) ?? 0;
-      return code >= 0x20 && code !== 0x7f;
-    })
-    .join("")
-    .trim()
-    .slice(0, MAX_DISPLAY_CHARS);
-}
 
 /**
  * URL mode. The owner types one address; it is verified by fetching and
@@ -37,8 +27,9 @@ export async function signInIcs(
   await writer.write(serializeIcsState({ schema: "kizuki.ics-state/v1", url }));
   const name = parsed.calendar.name;
   return {
-    display: label(
+    display: sanitize(
       name !== null && name.length > 0 ? name : new URL(url).hostname,
+      MAX_DISPLAY_CHARS,
     ),
   };
 }

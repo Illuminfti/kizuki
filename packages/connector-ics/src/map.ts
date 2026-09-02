@@ -44,7 +44,8 @@ export function single(params: Record<string, string[]>): Record<string, string>
   return flat;
 }
 
-function sanitize(text: string, limit: number): string {
+/** Producer-controlled text is never shown or stored as it arrives. */
+export function sanitize(text: string, limit: number): string {
   const cleaned = Array.from(text)
     .filter((character) => {
       const code = character.codePointAt(0) ?? 0;

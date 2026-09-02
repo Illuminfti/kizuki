@@ -1,5 +1,6 @@
 import { KizukiError } from "@kizuki/core";
 import type { KizukiErrorCode } from "@kizuki/core";
+import { stripControls } from "../text";
 
 const MAX_DETAIL_CHARS = 200;
 
@@ -15,16 +16,7 @@ const CODE_MAP: Record<string, KizukiErrorCode> = {
 
 /** Server text is untrusted display data: no control characters, bounded. */
 export function sanitizeDetail(text: string): string {
-  const stripped = Array.from(text)
-    .filter((character) => {
-      const code = character.codePointAt(0) ?? 0;
-      return code >= 0x20 && code !== 0x7f;
-    })
-    .join("")
-    .trim();
-  return stripped.length > MAX_DETAIL_CHARS
-    ? stripped.slice(0, MAX_DETAIL_CHARS)
-    : stripped;
+  return stripControls(text, MAX_DETAIL_CHARS);
 }
 
 export function responseCode(text: string): string | null {
