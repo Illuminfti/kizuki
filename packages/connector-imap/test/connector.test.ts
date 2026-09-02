@@ -1,0 +1,256 @@
+import { describe, expect, test } from "bun:test";
+import { KizukiError } from "@kizuki/core";
+import type { SecretResolver } from "@kizuki/core";
+import { createImapConnector } from "../src/connector";
+import { serializeImapState } from "../src/state";
+import type { ImapState } from "../src/state";
+import { FakeImapServer } from "../src/testing/fake-imap";
+import type { FakeImapOptions } from "../src/testing/fake-imap";
+import { memoryDialer } from "../src/testing/memory-dialer";
+import {
+  FIXTURE_PASSWORD,
+  FIXTURE_USERNAME,
+  fixtureMailbox,
+  fixtureState,
+} from "../src/testing";
+
+const REF = "file:connections/01ABCDEFGHJKMNPQRSTVWXYZ00.state";
+
+function server(options: FakeImapOptions = {}): FakeImapServer {
+  return new FakeImapServer(fixtureMailbox(), {
+    username: FIXTURE_USERNAME,
+    password: FIXTURE_PASSWORD,
+    ...options,
+  });
+}
+
+function resolverFor(state: ImapState): SecretResolver {
+  const text = new TextDecoder().decode(serializeImapState(state));
+  return async () => text;
+}
+
+function connectorFor(
+  fake: FakeImapServer,
+  state: ImapState = fixtureState(),
+): {
+  connector: ReturnType<typeof createImapConnector>;
+  resolve: SecretResolver;
+} {
+  return {
+    connector: createImapConnector(
+      { secret_ref: REF },
+      { dial: memoryDialer(fake), now: () => new Date("2026-03-02T00:00:00Z") },
+    ),
+    resolve: resolverFor(state),
+  };
+}
+
+describe("manifest", () => {
+  test("declares sign-in, tombstones and purge with no required secrets", () => {
+    const manifest = createImapConnector({}).manifest();
+    expect(manifest).toEqual({
+      schema: "kizuki.connector/v1",
+      connector_id: "kizuki.imap",
+      version: "0.1.0",
+      kinds: ["email"],
+      capabilities: {
+        backfill: true,
+        sync: true,
+        tombstones: true,
+        purge: true,
+        fixture: true,
+      },
+      required_secrets: [],
+      emits_sensitivity_hint: true,
+      auth_modes: ["sign_in"],
+    });
+    expect(JSON.stringify(manifest)).not.toContain(FIXTURE_USERNAME);
+  });
+});
+
+describe("connect fails closed", () => {
+  test("without a secret_ref", async () => {
+    const error = await createImapConnector({})
+      .connect(async () => "{}")
+      .catch((caught: unknown) => caught);
+    expect((error as KizukiError).code).toBe("missing_secret");
+  });
+
+  test("with a non-file secret_ref", async () => {
+    const error = await createImapConnector({ secret_ref: "env:MAIL" })
+      .connect(async () => "{}")
+      .catch((caught: unknown) => caught);
+    expect((error as KizukiError).code).toBe("missing_secret");
+  });
+
+  test("when the resolver rejects", async () => {
+    const error = await createImapConnector({ secret_ref: REF })
+      .connect(async () => {
+        throw new Error("no such file");
+      })
+      .catch((caught: unknown) => caught);
+    expect((error as KizukiError).code).toBe("missing_secret");
+  });
+
+  test("when the state is malformed", async () => {
+    const error = await createImapConnector({ secret_ref: REF })
+      .connect(async () => '{"schema":"kizuki.imap-state/v9"}')
+      .catch((caught: unknown) => caught);
+    expect((error as KizukiError).code).toBe("misconfigured");
+  });
+
+  test("backfill before connect refuses", async () => {
+    const error = await createImapConnector({ secret_ref: REF })
+      .backfill(null)
+      .catch((caught: unknown) => caught);
+    expect((error as KizukiError).code).toBe("missing_secret");
+  });
+});
+
+describe("health", () => {
+  test("is disabled before connect and ok afterwards", async () => {
+    const { connector, resolve } = connectorFor(server());
+    const before = await connector.health();
+    expect(before.state).toBe("disabled");
+    expect(before.detail).toBe("not connected");
+
+    await connector.connect(resolve);
+    const after = await connector.health();
+    expect(after.state).toBe("ok");
+    expect(after.detail).toBeUndefined();
+  });
+
+  test("reports a missing folder as misconfigured by display name", async () => {
+    const fake = server();
+    const state = fixtureState({ folders: ["INBOX", "Gone"] });
+    const connector = createImapConnector(
+      { secret_ref: REF },
+      { dial: memoryDialer(fake) },
+    );
+    await connector.connect(resolverFor(state));
+    const report = await connector.health();
+    expect(report.state).toBe("misconfigured");
+    expect(report.detail).toBe("folder not found: Gone");
+  });
+
+  test("maps a refused LOGIN, a rate limit and a BYE", async () => {
+    const refused = createImapConnector(
+      { secret_ref: REF },
+      { dial: memoryDialer(server({ password: "different" })) },
+    );
+    await expect(refused.connect(resolverFor(fixtureState()))).rejects.toThrow(
+      KizukiError,
+    );
+
+    const limited = server({
+      password: "different",
+      loginFailureCode: "LIMIT",
+    });
+    const limitedConnector = createImapConnector(
+      { secret_ref: REF },
+      { dial: memoryDialer(limited) },
+    );
+    const limitError = await limitedConnector
+      .connect(resolverFor(fixtureState()))
+      .catch((caught: unknown) => caught);
+    expect((limitError as KizukiError).code).toBe("rate_limited");
+
+    const bye = server();
+    const byeConnector = createImapConnector(
+      { secret_ref: REF },
+      { dial: memoryDialer(bye) },
+    );
+    await byeConnector.connect(resolverFor(fixtureState()));
+    bye.byeNext();
+    const report = await byeConnector.health();
+    expect(report.state).toBe("unreachable");
+  });
+
+  test("records the last success once a walk has run", async () => {
+    const { connector, resolve } = connectorFor(server());
+    await connector.connect(resolve);
+    await connector.backfill(null);
+    const report = await connector.health();
+    expect(report.last_success_at).toBe("2026-03-02T00:00:00.000Z");
+  });
+});
+
+describe("purge plans", () => {
+  test("lists what a subject touched but claims no deletion", async () => {
+    const { connector, resolve } = connectorFor(server());
+    await connector.connect(resolve);
+    const plan = await connector.purgeSource("email:ada@acme.example");
+    expect(plan.subject_id).toBe("email:ada@acme.example");
+    expect(plan.source_record_ids).toEqual([]);
+    expect(plan.unreachable_source_record_ids.length).toBeGreaterThan(0);
+    for (const id of plan.unreachable_source_record_ids) {
+      expect(id.startsWith("42:")).toBe(true);
+      expect(id.endsWith(":INBOX")).toBe(true);
+    }
+  });
+
+  test("is empty for a non-email subject and before connect", async () => {
+    const { connector, resolve } = connectorFor(server());
+    const before = await connector.purgeSource("email:ada@acme.example");
+    expect(before.unreachable_source_record_ids).toEqual([]);
+
+    await connector.connect(resolve);
+    const other = await connector.purgeSource("conformance:subject");
+    expect(other).toEqual({
+      subject_id: "conformance:subject",
+      source_record_ids: [],
+      unreachable_source_record_ids: [],
+    });
+  });
+
+  test("refuses to build a query from an address with quoting metacharacters", async () => {
+    const { connector, resolve } = connectorFor(server());
+    await connector.connect(resolve);
+    const plan = await connector.purgeSource('email:a"b@acme.example');
+    expect(plan.unreachable_source_record_ids).toEqual([]);
+  });
+});
+
+describe("revocation and redaction", () => {
+  test("revoke drops the in-memory state", async () => {
+    const { connector, resolve } = connectorFor(server());
+    await connector.connect(resolve);
+    await connector.revoke();
+    expect((await connector.health()).state).toBe("disabled");
+  });
+
+  test("no error or health detail ever carries the credentials", async () => {
+    const details: string[] = [];
+    const fake = server({ password: "different" });
+    const connector = createImapConnector(
+      { secret_ref: REF },
+      { dial: memoryDialer(fake) },
+    );
+    const connectError = await connector
+      .connect(resolverFor(fixtureState()))
+      .catch((caught: unknown) => caught);
+    details.push((connectError as KizukiError).message);
+    details.push((await connector.health()).detail ?? "");
+
+    const stateError = await createImapConnector({ secret_ref: REF })
+      .connect(async () => '{"schema":"kizuki.imap-state/v1","host":""}')
+      .catch((caught: unknown) => caught);
+    details.push((stateError as KizukiError).message);
+
+    for (const detail of details) {
+      expect(detail).not.toContain(FIXTURE_PASSWORD);
+      expect(detail).not.toContain(FIXTURE_USERNAME);
+      expect(detail).not.toContain("mail.acme.example");
+    }
+  });
+
+  test("the cursor never carries the credentials", async () => {
+    const { connector, resolve } = connectorFor(server());
+    await connector.connect(resolve);
+    const batch = await connector.backfill(null);
+    expect(batch.cursor).not.toBeNull();
+    expect(batch.cursor ?? "").not.toContain(FIXTURE_PASSWORD);
+    expect(batch.cursor ?? "").not.toContain(FIXTURE_USERNAME);
+    expect(JSON.stringify(batch.events)).not.toContain(FIXTURE_PASSWORD);
+  });
+});
