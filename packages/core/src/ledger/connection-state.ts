@@ -18,6 +18,7 @@ import type {
   Connector,
   SignInIo,
 } from "../contracts/connector";
+import type { StatePersister } from "../auth/session";
 import { ulid } from "../util/ulid";
 import { isRfc3339 } from "../util/time";
 import { LedgerError, getConnection, type Connection } from "./connections";
@@ -409,19 +410,16 @@ export class ConnectionStateStore implements ConnectionStateReader {
   }
 
   /**
-   * Re-authentication keeps the core source identity. New opaque bytes are
-   * staged in a 0600 sibling then atomically renamed only after sign-in
-   * succeeds, so a connector never observes or chooses the durable pathname.
+   * The one staging path for replacing the state of an existing source: it
+   * validates the caller's connection against the persisted row, stages new
+   * bytes in a 0600 sibling, and swaps only once `update` has written.
    */
-  async replace(
+  private async swap(
     db: Database,
     connection: Connection,
-    connector: Connector,
-    io: SignInIo,
+    update: (writer: ConnectionStateWriter) => Promise<void>,
+    missingStateMessage: string,
   ): Promise<Connection> {
-    if (typeof connector.signIn !== "function") {
-      throw new LedgerError("connector does not implement interactive sign-in");
-    }
     this.recover(db);
     const persisted = getConnection(
       db,
@@ -449,9 +447,9 @@ export class ConnectionStateStore implements ConnectionStateReader {
     this.read(persisted);
     const pending = this.beginFor(persisted.source_key);
     try {
-      await connector.signIn(io, pending.writer);
+      await update(pending.writer);
       if (!pending.pending.written) {
-        throw new LedgerError("replacement sign-in did not provide connection state");
+        throw new LedgerError(missingStateMessage);
       }
       return this.save(db, persisted.connector_id, pending.pending);
     } catch (error) {
@@ -459,6 +457,81 @@ export class ConnectionStateStore implements ConnectionStateReader {
       throw error;
     }
   }
+
+  /**
+   * Re-authentication keeps the core source identity. New opaque bytes are
+   * staged in a 0600 sibling then atomically renamed only after sign-in
+   * succeeds, so a connector never observes or chooses the durable pathname.
+   */
+  async replace(
+    db: Database,
+    connection: Connection,
+    connector: Connector,
+    io: SignInIo,
+  ): Promise<Connection> {
+    const signIn = connector.signIn;
+    if (typeof signIn !== "function") {
+      throw new LedgerError("connector does not implement interactive sign-in");
+    }
+    return this.swap(
+      db,
+      connection,
+      async (writer) => {
+        await signIn.call(connector, io, writer);
+      },
+      "replacement sign-in did not provide connection state",
+    );
+  }
+
+  /**
+   * Non-interactive state replacement for the same source: token refresh and
+   * refresh-token rotation. The connection must already hold state, and
+   * `update` gets a one-shot writer scoped to it. `save` advances
+   * `connected_at` on every rewrite, so from here on that column means
+   * "state last written at", not "signed in at".
+   */
+  async rewrite(
+    db: Database,
+    connection: Connection,
+    update: (writer: ConnectionStateWriter) => Promise<void>,
+  ): Promise<Connection> {
+    return this.swap(
+      db,
+      connection,
+      update,
+      "state rewrite did not provide connection state",
+    );
+  }
+}
+
+export interface StatePersisterHandle {
+  /** Serialised: calls run one after another, never concurrently. */
+  persist: StatePersister;
+  /** The connection as of the latest successful rewrite. */
+  current(): Connection;
+}
+
+/**
+ * Lends a connector the ability to persist refreshed state for exactly one
+ * connection. Writes are chained because two overlapping refreshes would
+ * otherwise collide on the store's single active enrollment per source.
+ */
+export function createStatePersister(
+  db: Database,
+  store: ConnectionStateStore,
+  connection: Connection,
+): StatePersisterHandle {
+  let current = connection;
+  let queue: Promise<void> = Promise.resolve();
+  const persist: StatePersister = (bytes) => {
+    const write = queue.then(async () => {
+      current = await store.rewrite(db, current, (writer) => writer.write(bytes));
+    });
+    // A rejected write must not poison the queue for the next refresh.
+    queue = write.catch(() => undefined);
+    return write;
+  };
+  return { persist, current: () => current };
 }
 
 /** Runs an interactive sign-in and persists only host-minted opaque state. */
