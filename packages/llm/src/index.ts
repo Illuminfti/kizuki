@@ -1,3 +1,6 @@
+export { readLlmPortConfig } from "./config";
+export type { LlmPortConfig } from "./config";
+
 export { LlmRejection, rejectionOf } from "./errors";
 
 export { parseExtractResponse } from "./extract";
@@ -9,9 +12,8 @@ export {
   OpenAiCompatibleLlm,
   estimateTokens,
   openAiCompatibleLlm,
-  readLlmPortConfig,
 } from "./llm-port";
-export type { Clock, LlmPortConfig, LlmPortOverrides } from "./llm-port";
+export type { Clock, LlmPortOverrides } from "./llm-port";
 
 export {
   MODEL_PRODUCER,

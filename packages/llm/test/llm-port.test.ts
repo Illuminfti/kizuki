@@ -2,11 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { PortError } from "@kizuki/core";
 import type { LlmRequest } from "@kizuki/core";
 import { LlmRejection } from "../src/errors";
-import {
-  OPENAI_COMPATIBLE_LLM,
-  OpenAiCompatibleLlm,
-  readLlmPortConfig,
-} from "../src/llm-port";
+import { readLlmPortConfig } from "../src/config";
+import { OPENAI_COMPATIBLE_LLM, OpenAiCompatibleLlm } from "../src/llm-port";
 import type { Clock } from "../src/llm-port";
 import type { ChatTransport, TransportResult } from "../src/transport";
 import { chatCompletion, startFakeEndpoint } from "./fake-endpoint";
