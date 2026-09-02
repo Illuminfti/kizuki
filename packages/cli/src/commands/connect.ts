@@ -1,4 +1,9 @@
 import { resolve } from "node:path";
+import {
+  applyConnectionSensitivity,
+  isSensitivity,
+} from "@kizuki/core";
+import type { Sensitivity } from "@kizuki/core";
 import { getConnector } from "@kizuki/connectors";
 import { UsageError, parseArguments, requirePositional } from "../args";
 import {
@@ -12,12 +17,20 @@ import {
 import { withVault } from "../context";
 import type { CliIo, Command } from "./index";
 
+function parseSensitivityFlag(raw: string | undefined): Sensitivity | undefined {
+  if (raw === undefined) return undefined;
+  if (!isSensitivity(raw)) {
+    throw new UsageError("connect <connector> --source PATH [--sensitivity public|personal|private]");
+  }
+  return raw;
+}
+
 export const connectCommand: Command = {
   name: "connect",
-  usage: "connect <connector> --source PATH",
+  usage: "connect <connector> --source PATH [--sensitivity public|personal|private]",
   summary: "enroll a none-mode source as an opaque host-authored connection",
   async run(io: CliIo, args: string[]): Promise<number> {
-    const parsed = parseArguments(args, { options: ["--source"] });
+    const parsed = parseArguments(args, { options: ["--source", "--sensitivity"] });
     const [rawId] = requirePositional(parsed.positionals, 1);
     const source = parsed.options.get("--source");
     if (rawId === undefined || source === undefined) {
@@ -25,6 +38,7 @@ export const connectCommand: Command = {
     }
     const connectorId = resolveConnectorId(rawId);
     const absolute = resolve(source);
+    const requested = parseSensitivityFlag(parsed.options.get("--sensitivity"));
 
     return withVault(io, async (ctx) => {
       const existing = listHostConnections(ctx.db, ctx.store, connectorId).find(
@@ -39,6 +53,12 @@ export const connectCommand: Command = {
           );
           return 1;
         }
+        applyConnectionSensitivity(
+          ctx.db,
+          existing.connection,
+          connector.manifest(),
+          requested,
+        );
         io.out(
           `connected ${connectorId} source=${existing.connection.source_key} path=${absolute} health=ok`,
         );
@@ -69,6 +89,12 @@ export const connectCommand: Command = {
           connector_id: connectorId,
           config: { path: absolute },
         },
+      );
+      applyConnectionSensitivity(
+        ctx.db,
+        connection,
+        connector.manifest(),
+        requested,
       );
       io.out(
         `connected ${connectorId} source=${connection.source_key} path=${absolute} health=ok`,

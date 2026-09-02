@@ -89,7 +89,7 @@ describe("help", () => {
     const result = runCli(isolatedEnv(), "help", "connect");
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain(
-      "usage: kizuki connect <connector> --source PATH",
+      "usage: kizuki connect <connector> --source PATH [--sensitivity public|personal|private]",
     );
   });
 
