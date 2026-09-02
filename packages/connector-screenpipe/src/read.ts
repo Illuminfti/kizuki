@@ -144,10 +144,7 @@ function mapFrameRow(row: RawFrameRow): FrameRow {
     capture_trigger: nullableText(row.capture_trigger),
     snapshot_path: nullableText(row.snapshot_path),
     document_path: nullableText(row.document_path),
-    video_chunk_id: nullablePositiveId(
-      row.video_chunk_id,
-      "frames.video_chunk_id",
-    ),
+    video_chunk_id: nullablePositiveId(row.video_chunk_id),
     offset_index: requiredNonNegativeInteger(
       row.offset_index,
       "frames.offset_index",
@@ -182,10 +179,7 @@ function mapTranscriptionRow(
       row.is_input_device,
       "audio_transcriptions.is_input_device",
     ),
-    speaker_id: nullablePositiveId(
-      row.speaker_id,
-      "audio_transcriptions.speaker_id",
-    ),
+    speaker_id: nullablePositiveId(row.speaker_id),
     speaker_name:
       speakerName !== null && speakerName.length > 0 ? speakerName : null,
     transcription_engine: requiredText(
@@ -247,12 +241,13 @@ function requiredNonNegativeInteger(
   return converted;
 }
 
-function nullablePositiveId(
-  value: unknown,
-  column: string,
-): number | null {
-  if (value === null) return null;
-  return requiredPositiveInteger(value, column);
+// `frames.video_chunk_id` and `audio_transcriptions.speaker_id` are optional
+// links the spec types `number | null`. A value that is not a usable row id
+// means the row carries no link; failing the read would abandon the whole
+// batch, including the sound rows around it, with no way to make progress.
+function nullablePositiveId(value: unknown): number | null {
+  const converted = toSafeNumber(value);
+  return converted !== null && converted > 0 ? converted : null;
 }
 
 function requiredText(value: unknown, column: string): string {

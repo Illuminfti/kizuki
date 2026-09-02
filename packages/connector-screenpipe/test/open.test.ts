@@ -92,7 +92,7 @@ describe("openReadOnly", () => {
     }
   });
 
-  test("negative source references fail closed", async () => {
+  test("a negative source reference becomes no subject, not a failed batch", async () => {
     const fixture = createFixtureDatabase({ rows: false });
     insertTranscription(fixture.writer, {
       id: 1,
@@ -104,11 +104,15 @@ describe("openReadOnly", () => {
       fixtureDeps("2026-01-09T00:00:00.000Z"),
     );
 
-    await expect(connector.backfill(null)).rejects.toMatchObject({
-      code: "parse_error",
-      message:
-        "kizuki.screenpipe: audio_transcriptions.speaker_id has an invalid value",
-    });
+    const batch = await connector.backfill(null);
+
+    expect(batch.events.map(({ source_record_id }) => source_record_id)).toEqual([
+      "transcription:1",
+    ]);
+    expect(batch.events[0]?.metadata["speaker_id"]).toBeNull();
+    expect(
+      batch.events[0]?.subjects.map(({ subject_id }) => subject_id),
+    ).toEqual(["screenpipe:audio-device:fixture-microphone"]);
     await connector.revoke();
   });
 });

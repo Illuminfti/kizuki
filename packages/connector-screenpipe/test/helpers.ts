@@ -66,6 +66,8 @@ export function insertFrame(
     fullText?: string | null;
     appName?: string | null;
     browserUrl?: string | null;
+    windowName?: string | null;
+    videoChunkId?: number | null;
   },
 ): void {
   writer
@@ -74,13 +76,15 @@ export function insertFrame(
          (id, video_chunk_id, offset_index, timestamp, app_name, window_name,
           browser_url, device_name, focused, full_text, text_source,
           capture_trigger, snapshot_path, document_path)
-       VALUES (?, NULL, 0, ?, ?, NULL, ?, 'Fixture Display', 1, ?,
+       VALUES (?, ?, 0, ?, ?, ?, ?, 'Fixture Display', 1, ?,
                'accessibility', 'fixture', NULL, NULL)`,
     )
     .run(
       values.id ?? null,
+      values.videoChunkId ?? null,
       values.timestamp,
       values.appName ?? "Fixture App",
+      values.windowName ?? null,
       values.browserUrl ?? null,
       values.fullText === undefined ? "fixture text" : values.fullText,
     );

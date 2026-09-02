@@ -279,6 +279,47 @@ describe("ScreenpipeConnector backfill", () => {
     await connector.revoke();
   });
 
+  test("an unusable foreign key does not abort the batch", async () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    insertFrame(fixture.writer, {
+      id: 1,
+      timestamp: "2026-01-01T00:00:00Z",
+      fullText: "first",
+      videoChunkId: 0,
+    });
+    insertFrame(fixture.writer, {
+      id: 2,
+      timestamp: "2026-01-01T00:01:00Z",
+      fullText: "second",
+    });
+    insertTranscription(fixture.writer, {
+      id: 1,
+      timestamp: "2026-01-01T00:02:00Z",
+      transcription: "spoken words",
+      speakerId: 0,
+    });
+    const connector = new ScreenpipeConnector(
+      { path: fixture.path, settle_seconds: 0 },
+      fixtureDeps("2026-01-09T00:00:00.000Z"),
+    );
+
+    const batch = await connector.backfill(null);
+
+    expect(batch.events.map(({ source_record_id }) => source_record_id)).toEqual([
+      "frame:1",
+      "frame:2",
+      "transcription:1",
+    ]);
+    expect(batch.events[0]?.metadata["video_chunk_id"]).toBeNull();
+    expect(batch.events[2]?.metadata["speaker_id"]).toBeNull();
+    expect(batch.events[2]?.subjects.map(({ subject_id }) => subject_id)).toEqual(
+      ["screenpipe:audio-device:fixture-microphone"],
+    );
+    if (batch.cursor === null) throw new Error("expected a screenpipe cursor");
+    expect(parseCursor(batch.cursor).last_frame_id).toBe(2);
+    await connector.revoke();
+  });
+
   test("since seeds the cursor past older rows", async () => {
     const fixture = createFixtureDatabase({ rows: false });
     for (const [id, timestamp] of [
