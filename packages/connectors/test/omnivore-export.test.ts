@@ -351,3 +351,47 @@ test("a malformed config fails construction", () => {
     expect(thrown(() => construct(config)).code).toBe("misconfigured");
   }
 });
+
+test("health proves the export opens without reading all of it", async () => {
+  await withTempRoot(async (root) => {
+    const exportDir = path.join(root, "export");
+    await writeExport(
+      exportDir,
+      metadataFile([{ id: "1", slug: "one", savedAt: "2026-01-01T09:00:00Z" }]),
+    );
+    const connector = createOmnivoreImportConnector({ path: exportDir });
+    expect((await connector.health()).state).toBe("ok");
+
+    // An import reads every metadata part, and the command line asks for
+    // health first, so a health check that read them too would read the whole
+    // export twice. It opens the first part and looks at its opening bytes; a
+    // fault past them belongs to the read that actually happens.
+    const part = path.join(exportDir, "metadata_0_to_9.json");
+    await writeFile(
+      part,
+      Buffer.concat([
+        Buffer.from('[{"id":"1","slug":"one","savedAt":"'),
+        Buffer.from([0xff]),
+        Buffer.from('"}]'),
+      ]),
+    );
+    expect((await connector.health()).state).toBe("ok");
+    expect((await rejected(() => connector.backfill(null))).code).toBe(
+      "parse_error",
+    );
+
+    // What the opening does prove: the part is readable and is the array of
+    // items an export holds, rather than some other JSON.
+    await writeFile(part, '{"items": []}');
+    const report = await connector.health();
+    expect(report.state).toBe("misconfigured");
+    expect(report.detail).toContain("does not begin a JSON array");
+
+    await chmod(part, 0o000);
+    try {
+      expect((await connector.health()).state).toBe("misconfigured");
+    } finally {
+      await chmod(part, 0o600);
+    }
+  });
+});

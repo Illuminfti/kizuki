@@ -7,6 +7,7 @@ import {
   folderEntries,
   folderSubdirectory,
   readFolderFile,
+  readFolderHead,
   statFolderFile,
 } from "../folder";
 import type { ExportFolder } from "../folder";
@@ -167,10 +168,20 @@ export async function omnivoreEvents(
   return events;
 }
 
-export async function fsOmnivoreFiles(
+/** The metadata files of an export, and the folder they were listed in. */
+export interface OmnivoreExport {
+  folder: ExportFolder;
+  names: string[];
+}
+
+/**
+ * Proves a path is an unzipped export and finds its metadata parts, without
+ * reading any of them: what an export holds is what an import pays for, and a
+ * health check is not an import.
+ */
+export async function resolveOmnivoreExport(
   dir: string,
-  maxBytes = MAX_EXPORT_BYTES,
-): Promise<OmnivoreFiles> {
+): Promise<OmnivoreExport> {
   if (dir.toLowerCase().endsWith(".zip")) {
     throw misconfigured(`unzip the export first: ${dir}`);
   }
@@ -202,6 +213,52 @@ export async function fsOmnivoreFiles(
   if (names.length === 0) {
     throw misconfigured(`no metadata_*.json in ${dir}`);
   }
+  return { folder, names };
+}
+
+/** Enough bytes to reach the first thing a metadata file has to say. */
+const OPENING_BYTES = 64;
+
+/**
+ * Opens the export's first metadata part and reads only far enough to see it
+ * begin as the array of items it claims to be. A file that is unreadable, or
+ * that is some other JSON, is reported now rather than at ingest; a fault past
+ * its opening is found where the file is actually read.
+ */
+export async function probeOmnivoreExport(dir: string): Promise<void> {
+  const { folder, names } = await resolveOmnivoreExport(dir);
+  const first = names[0];
+  if (first === undefined) return;
+  const head = await readFolderHead(
+    folder,
+    first,
+    OMNIVORE_IMPORT_CONNECTOR_ID,
+    OPENING_BYTES,
+    join(dir, first),
+  );
+  // A part name is a shape, not captured text, so a refusal may carry it.
+  if (!opensAnArray(head)) {
+    throw misconfigured(`${first} does not begin a JSON array`);
+  }
+}
+
+const UTF8_BOM = [0xef, 0xbb, 0xbf];
+const JSON_ARRAY_START = 0x5b;
+// Space, tab, line feed, carriage return: everything JSON allows before a
+// value, and all of it single-byte, so no character is cut in half by this.
+const JSON_SPACE = new Set([0x20, 0x09, 0x0a, 0x0d]);
+
+function opensAnArray(head: Buffer): boolean {
+  let at = UTF8_BOM.every((byte, index) => head[index] === byte) ? 3 : 0;
+  while (at < head.length && JSON_SPACE.has(head[at] ?? 0)) at += 1;
+  return head[at] === JSON_ARRAY_START;
+}
+
+export async function fsOmnivoreFiles(
+  dir: string,
+  maxBytes = MAX_EXPORT_BYTES,
+): Promise<OmnivoreFiles> {
+  const { folder, names } = await resolveOmnivoreExport(dir);
   // A symlink is not a directory here and never the directory it points at:
   // an export whose `highlights` is a link elsewhere has no highlights rather
   // than a route out of the export folder.

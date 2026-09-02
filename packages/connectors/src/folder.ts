@@ -7,6 +7,7 @@ import { KizukiError } from "./errors";
 import {
   boundedFile,
   firstLineOf,
+  headOf,
   notARegularFile,
   openFile,
   readReason,
@@ -69,7 +70,11 @@ async function openFolder(folder: ExportFolder): Promise<FileHandle> {
     await handle.close();
     throw error;
   });
-  if (!info.isDirectory() || info.dev !== folder.dev || info.ino !== folder.ino) {
+  if (
+    !info.isDirectory() ||
+    info.dev !== folder.dev ||
+    info.ino !== folder.ino
+  ) {
     await handle.close();
     throw new Error("the export folder was replaced while it was read");
   }
@@ -205,5 +210,21 @@ export async function readFolderFirstLine(
     await openFolderFile(folder, name, connectorId, label),
     connectorId,
     label,
+  );
+}
+
+/** The opening bytes of a file of the folder that was listed. */
+export async function readFolderHead(
+  folder: ExportFolder,
+  name: string,
+  connectorId: string,
+  windowBytes: number,
+  label = name,
+): Promise<Buffer> {
+  return headOf(
+    await openFolderFile(folder, name, connectorId, label),
+    connectorId,
+    label,
+    windowBytes,
   );
 }

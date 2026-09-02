@@ -20,6 +20,7 @@ import {
   fsOmnivoreFiles,
   mapOmnivoreFiles,
   omnivoreEvents,
+  probeOmnivoreExport,
 } from "./parse";
 
 export {
@@ -119,7 +120,9 @@ export class OmnivoreImportConnector implements Connector {
   async health(): Promise<HealthReport> {
     const checked_at = new Date().toISOString();
     try {
-      await fsOmnivoreFiles(this.path);
+      // The export is proved, not read: an import reads every part, and a
+      // health check that did the same would read the whole export twice.
+      await probeOmnivoreExport(this.path);
       return new HealthReport({ state: "ok", checked_at });
     } catch (error) {
       return new HealthReport({

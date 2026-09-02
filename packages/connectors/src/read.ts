@@ -238,6 +238,28 @@ export async function readFirstLine(
   );
 }
 
+/**
+ * The opening bytes of an open file, closing it either way. For a probe that
+ * has to prove a file opens and says what it claims to be without paying for
+ * an export it is not going to keep.
+ */
+export async function headOf(
+  handle: FileHandle,
+  connectorId: string,
+  label: string,
+  windowBytes: number,
+): Promise<Buffer> {
+  try {
+    const info = await handle.stat();
+    if (!info.isFile()) throw notARegularFile(label, connectorId);
+    const buffer = Buffer.alloc(windowBytes);
+    const read = await fill(handle, buffer, 0, windowBytes);
+    return buffer.subarray(0, read);
+  } finally {
+    await handle.close();
+  }
+}
+
 /** The first line of an open file, closing it either way. */
 export async function firstLineOf(
   handle: FileHandle,
