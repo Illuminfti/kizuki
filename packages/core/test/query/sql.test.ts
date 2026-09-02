@@ -8,6 +8,10 @@ const CONTRACT_INSTANTS = [
   "2026-02-03t02:00:00z",
   "2026-06-30T23:59:60Z",
   "2026-06-30T23:59:60+05:30",
+  // A leap second may carry a fraction; both sides drop it for :59.999.
+  "2026-06-30T23:59:60.5Z",
+  "2026-06-30T23:59:60.500+05:30",
+  "2026-06-30t23:59:60.250z",
   "2026-01-01T00:00:00.123456Z",
   "2026-12-31T23:59:59-00:00",
 ] as const;
@@ -17,9 +21,10 @@ describe("instant helpers", () => {
     const db = new Database(":memory:");
     db.exec("CREATE TABLE t (v TEXT)");
     const insert = db.query<never, [string]>("INSERT INTO t (v) VALUES (?)");
-    const column = db.query<{ bound: number | null; column: number | null }, [string]>(
-      `SELECT julianday(?) AS bound, ${instantSql("t.v")} AS column FROM t`,
-    );
+    const column = db.query<
+      { bound: number | null; column: number | null },
+      [string]
+    >(`SELECT julianday(?) AS bound, ${instantSql("t.v")} AS column FROM t`);
     for (const value of CONTRACT_INSTANTS) {
       db.exec("DELETE FROM t");
       insert.run(value);
@@ -50,10 +55,14 @@ describe("ceilingSql", () => {
       `SELECT sensitivity FROM t WHERE ${ceilingSql("sensitivity")} ORDER BY sensitivity`,
     );
     expect(
-      allowed.all(SENSITIVITY_ORDER.personal).map(({ sensitivity }) => sensitivity),
+      allowed
+        .all(SENSITIVITY_ORDER.personal)
+        .map(({ sensitivity }) => sensitivity),
     ).toEqual(["personal", "public"]);
     expect(
-      allowed.all(SENSITIVITY_ORDER.public).map(({ sensitivity }) => sensitivity),
+      allowed
+        .all(SENSITIVITY_ORDER.public)
+        .map(({ sensitivity }) => sensitivity),
     ).toEqual(["public"]);
   });
 });

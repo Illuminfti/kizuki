@@ -32,11 +32,19 @@ export function instantSql(column: string): string {
 )`;
 }
 
+const LEAP_FRACTION = /^\.\d+/;
+
 function normalizeInstant(value: string): string {
-  const leap =
-    value.slice(17, 19) === "60"
-      ? `${value.slice(0, 17)}59.999${value.slice(19)}`
-      : value;
+  if (value.slice(17, 19) !== "60") {
+    return value.replace("t", "T").replace(/z$/i, "Z");
+  }
+  // The rewritten `59.999` replaces the whole seconds component, fraction
+  // included: `instantSql`'s CASE branch drops the original fraction too, so
+  // keeping it here would build `23:59:59.999.500Z` and disagree with the
+  // column on a timestamp the frozen contract accepts.
+  const rest = value.slice(19);
+  const fraction = LEAP_FRACTION.exec(rest)?.[0] ?? "";
+  const leap = `${value.slice(0, 17)}59.999${rest.slice(fraction.length)}`;
   return leap.replace("t", "T").replace(/z$/i, "Z");
 }
 

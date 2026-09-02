@@ -13,10 +13,9 @@ describe("timeline", () => {
     });
     storedEvent(db, "next", { occurred_at: "2026-02-04T00:00:00Z" });
 
-    expect(timeline(db, { day: "2026-02-03" }).map(({ event_id }) => event_id)).toEqual([
-      start.event_id,
-      end.event_id,
-    ]);
+    expect(
+      timeline(db, { day: "2026-02-03" }).map(({ event_id }) => event_id),
+    ).toEqual([start.event_id, end.event_id]);
   });
 
   test("rejects a calendar date that does not exist", () => {
@@ -34,9 +33,9 @@ describe("timeline", () => {
       occurred_at: "2026-02-03T23:30:00-02:00",
     });
 
-    expect(timeline(db, { day: "2026-02-03" }).map(({ event_id }) => event_id)).toEqual([
-      inside.event_id,
-    ]);
+    expect(
+      timeline(db, { day: "2026-02-03" }).map(({ event_id }) => event_id),
+    ).toEqual([inside.event_id]);
   });
 
   test("includes contract-valid lowercase and leap-second timestamps", () => {
@@ -48,10 +47,9 @@ describe("timeline", () => {
       occurred_at: "2026-06-30T23:59:60Z",
     });
 
-    expect(timeline(db, { day: "2026-06-30" }).map(({ event_id }) => event_id)).toEqual([
-      lowercase.event_id,
-      leap.event_id,
-    ]);
+    expect(
+      timeline(db, { day: "2026-06-30" }).map(({ event_id }) => event_id),
+    ).toEqual([lowercase.event_id, leap.event_id]);
   });
 
   test("filters subjects through the stored JSON array", () => {
@@ -81,9 +79,9 @@ describe("timeline", () => {
       occurred_at: "2026-03-01T00:00:00Z",
     };
     const unlabeled = storedEvent(db, "unlabeled", unlabeledInput);
-    db.query("UPDATE events SET sensitivity_hint = NULL WHERE event_id = ?").run(
-      unlabeled.event_id,
-    );
+    db.query(
+      "UPDATE events SET sensitivity_hint = NULL WHERE event_id = ?",
+    ).run(unlabeled.event_id);
 
     expect(
       timeline(db, { ceiling: "personal" }).map(({ event_id }) => event_id),
@@ -185,6 +183,20 @@ describe("timeline", () => {
     storedEvent(db, "live");
     expect(() => timeline(db, { since: "garbage" })).toThrow(RangeError);
     expect(() => timeline(db, { until: "garbage" })).toThrow(RangeError);
+  });
+
+  test("accepts a fractional leap second echoed back from an entry as a bound", () => {
+    const db = searchDb();
+    const stored = storedEvent(db, "fractional-leap", {
+      occurred_at: "2026-06-30T23:59:60.500Z",
+    });
+    const echoed = timeline(db)[0]?.occurred_at ?? "";
+    expect(echoed).toBe(stored.occurred_at);
+
+    expect(
+      timeline(db, { since: echoed }).map(({ event_id }) => event_id),
+    ).toEqual([stored.event_id]);
+    expect(timeline(db, { until: echoed })).toEqual([]);
   });
 
   test("does not split a trailing emoji into a lone UTF-16 surrogate", () => {
