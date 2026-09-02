@@ -9,6 +9,11 @@ export const SCREENPIPE_CONNECTOR_ID = "kizuki.screenpipe" as const;
 
 export interface ScreenpipeConfig {
   path: string;
+  /**
+   * RFC3339. A row dated before this is never emitted. The cutoff is checked on
+   * every call, not only used to seed the first one, so it holds where id order
+   * and timestamp order disagree. Absent means all history.
+   */
   since?: string;
   settle_seconds?: number;
 }

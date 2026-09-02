@@ -107,7 +107,9 @@ screenpipe schema older than supported: migration 20260613130000 not applied (ma
   RFC3339 otherwise allows. The starting ID is still probed through the
   timestamp index and is approximate at the boundary second and for legacy
   encodings; the probe only ever starts earlier than it needs to, so the
-  approximation costs a few reads rather than history.
+  approximation costs a few reads rather than history. The cutoff applies on
+  every call, so raising it later excludes rows from then on, while lowering it
+  does not bring back rows the checkpoint has already passed.
 - A call emits at most 500 events and reads at most 20 pages of 500 rows from
   each of the two tables.
   Within that bound the connector keeps reading until it has an event, so a
