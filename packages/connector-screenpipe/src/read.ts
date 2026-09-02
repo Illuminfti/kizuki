@@ -75,18 +75,20 @@ interface RawTranscriptionRow {
 }
 
 /**
+ * How much of a text column a read keeps. Two units past the event limit, not
+ * one: dropping a split surrogate pair costs a unit, so a single spare unit
+ * lets astral text arrive at exactly the limit and read as untruncated while
+ * half of it was thrown away.
+ */
+const READ_TEXT_CHARS = MAX_TEXT_CHARS + 2;
+
+/**
  * Every TEXT column here is provider-controlled and unbounded in the file, so
  * the value is cut in SQLite rather than read whole and cut afterwards. A
  * column holding something other than text is passed through unchanged so it
  * still fails its own validation. SQLite counts code points here, so the
  * readers cut again in code units — the unit every bound downstream counts.
- *
- * Two units past the event limit are kept, not one: dropping a split surrogate
- * pair costs a unit, so a single spare unit lets astral text arrive at exactly
- * the limit and read as untruncated while half of it was thrown away.
  */
-const READ_TEXT_CHARS = MAX_TEXT_CHARS + 2;
-
 function bounded(column: string, alias = column): string {
   return `CASE WHEN typeof(${column}) = 'text'
                THEN substr(${column}, 1, ${READ_TEXT_CHARS})

@@ -64,8 +64,8 @@ function withFingerprint(head: string, source: string): string {
   const cut = head
     .slice(0, SLUG_CHARS - digest.length - 1)
     .replace(/[-._]+$/g, "");
-  // Nothing of the name survives the reduction, so the fingerprint is the whole
-  // segment and carries a prefix rather than starting on a digit.
+  // A name that reduces to nothing leaves the fingerprint as the whole segment;
+  // the prefix keeps it from reading as a name of its own.
   return cut.length > 0 ? `${cut}-${digest}` : `x-${digest}`;
 }
 
