@@ -214,6 +214,7 @@ export type {
   ModelUsage,
   ProduceInput,
   ProduceResult,
+  ProduceStop,
   ProducerCapability,
   ProducerPort,
   QuotedEvent,

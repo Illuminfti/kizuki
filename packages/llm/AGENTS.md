@@ -70,3 +70,7 @@ writes canon; it returns drafts to whoever bound it.
   ever quote from it has gone out, in input order, so the covered list is
   always a prefix of the input: a gap in it is a record checkpointed past
   unread. Where a record is quoted only in part, say so on the result.
+- A result is the whole story of a run. Anything a caller must act on - a stop,
+  a truncation, an outage - belongs on it, never only in a log line: stderr is
+  not a receipt, and a run that covered a prefix must never be indistinguish-
+  able from one that covered everything.

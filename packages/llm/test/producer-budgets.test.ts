@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { PortError } from "@kizuki/core";
 import { OpenAiCompatibleLlm } from "../src/llm-port";
 import { MODEL_PRODUCER, ModelProducer } from "../src/producer";
 import { EXTRACT_BATCH, EXTRACT_INPUT_CHARS } from "../src/prompt";
@@ -218,6 +219,40 @@ describe("budgets", () => {
     expect(built.logs.map((line) => line.message)).toEqual([
       "the run stopped before the last batch",
     ]);
+    expect(result.stopped).toEqual({
+      status: "rejected",
+      reason: "schema_invalid",
+    });
+  });
+
+  test("a stop after the first call is on the result, not only in a log", async () => {
+    const events = Array.from({ length: EXTRACT_BATCH + 1 }, (_, index) =>
+      event(`ev-${index}`, "short"),
+    );
+    const built = producer([
+      claimsPayload({}, ["ev-0"]),
+      new PortError("unavailable", "connection refused", true),
+    ]);
+    const result = ok(await built.port.produce(produceInput(events)));
+    // Regression: an outage part way through a run came back as `ok`, the
+    // shape reserved for "nothing durable here", and survived only as a line
+    // on stderr - so a loop could not count it, doctor could not degrade the
+    // rail, and a caller could not tell a truncated run from a complete one.
+    expect(result.stopped).toEqual({
+      status: "unavailable",
+      reason: "connection refused",
+    });
+    expect(result.covered_event_ids).toEqual(
+      events.slice(0, EXTRACT_BATCH).map((item) => item.event_id),
+    );
+  });
+
+  test("a run that worked through every record stopped at nothing", async () => {
+    const built = producer(['{"claims":[]}']);
+    const result = ok(
+      await built.port.produce(produceInput([event("ev-1", "short")])),
+    );
+    expect(result.stopped).toBeNull();
   });
 
   test("an event the call had no room for is carried, not dropped", async () => {

@@ -83,6 +83,11 @@ export interface ExtractResponse {
   readonly claims: readonly ClaimDraft[];
 }
 
+/** Why a run stopped before it had worked through every event. */
+export type ProduceStop =
+  | { status: "unavailable"; reason: string }
+  | { status: "rejected"; reason: RejectReason };
+
 export type ProduceResult =
   | {
       status: "ok";
@@ -110,6 +115,16 @@ export type ProduceResult =
        * of it. Absent below minor 1. `contract_minor >= 1`.
        */
       truncated_event_ids?: string[];
+      /**
+       * Why a run that produced work still stopped before its last call, or
+       * `null` when it worked through every event it was given. A caller
+       * reads this to increment `run_receipt.model_unavailable` and to report
+       * the rail degraded: an outage that reached only a log line is an
+       * outage no receipt can show, and `ok` with a prefix would otherwise be
+       * indistinguishable from a complete run. Absent below minor 1.
+       * `contract_minor >= 1`.
+       */
+      stopped?: ProduceStop | null;
     }
   | {
       status: "unavailable";

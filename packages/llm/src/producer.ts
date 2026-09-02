@@ -14,6 +14,7 @@ import type {
   PortHealth,
   ProduceInput,
   ProduceResult,
+  ProduceStop,
   ProducerPort,
   RejectReason,
 } from "@kizuki/core";
@@ -83,12 +84,7 @@ const PERMANENT: ReadonlySet<string> = new Set([
   "space_mismatch",
 ]);
 
-/** Why a run stopped before it had worked through every batch. */
-type Stop =
-  | { status: "unavailable"; reason: string }
-  | { status: "rejected"; reason: RejectReason };
-
-function stopFor(error: unknown): Stop {
+function stopFor(error: unknown): ProduceStop {
   const reason = rejectionOf(error);
   if (reason !== null) return { status: "rejected", reason };
   if (error instanceof PortError) {
@@ -190,7 +186,7 @@ export class ModelProducer implements ProducerPort {
     const covered: string[] = [];
     const truncated = new Set<string>();
     const unknownPredicates = new Set<string>();
-    let stop: Stop | null = null;
+    let stop: ProduceStop | null = null;
 
     for (const batch of batchEvents(input.events)) {
       const prompt = buildExtractPrompt(batch, input.context, quoteNonce());
@@ -324,6 +320,10 @@ export class ModelProducer implements ProducerPort {
       covered_event_ids: covered,
       dropped_predicates: [...unknownPredicates].sort(),
       truncated_event_ids: [...truncated],
+      // The stop travels on the result, not only to the logger: a caller has
+      // to be able to count an outage and degrade the rail, and a run that
+      // covered a prefix must not read as one that covered everything.
+      stopped: stop,
     };
   }
 }

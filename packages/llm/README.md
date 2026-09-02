@@ -96,12 +96,14 @@ disable a bound. A pasted key is refused without being echoed.
 - **Silence is not emptiness.** A model that could not be reached returns
   `unavailable`, so the caller leaves its checkpoint where it was. `ok` with
   no claims means the records held nothing durable.
-- **A stop is not a loss.** A run stops at the first call that fails. The
-  calls that already answered come back as `ok` with `covered_event_ids`,
-  which names exactly the events this result accounts for; a caller advances
-  its checkpoint that far and re-reads the rest on its next pass. When the
-  first call is the one that failed, nothing is covered and the failure is
-  what is returned.
+- **A stop is not a loss, and never a silence.** A run stops at the first call
+  that fails. The calls that already answered come back as `ok` with
+  `covered_event_ids`, which names exactly the events this result accounts
+  for; a caller advances its checkpoint that far and re-reads the rest on its
+  next pass. `stopped` says why it went no further, or is `null` when it
+  worked through everything, so an outage can still be counted and the rail
+  still reported degraded. When the first call is the one that failed, nothing
+  is covered and the failure is what is returned.
 
 ## Budgets
 
