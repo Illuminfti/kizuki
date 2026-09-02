@@ -1,3 +1,4 @@
+import { PAGE_CANDIDATE_KEY } from "@kizuki/core";
 import type {
   CaptureEventInput,
   PageSensitivity,
@@ -188,6 +189,10 @@ function rowMetadata(
 
   for (const column of wanted) {
     if (column === ROWID_ALIAS) continue;
+    // The floor stages `metadata[PAGE_CANDIDATE_KEY]` as a typed page. This
+    // connector emits capture notes and is never entitled to one, so a column
+    // that happens to carry the key must not become an instruction.
+    if (column === PAGE_CANDIDATE_KEY) continue;
     if (!Object.prototype.hasOwnProperty.call(values, column)) continue;
     const value = values[column];
     // An empty cell is not evidence, and carrying it would put a null in

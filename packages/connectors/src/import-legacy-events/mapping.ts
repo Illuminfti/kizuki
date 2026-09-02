@@ -1,4 +1,9 @@
-import { PAGE_SENSITIVITIES, SUBJECT_ROLES, isPlainObject } from "@kizuki/core";
+import {
+  PAGE_CANDIDATE_KEY,
+  PAGE_SENSITIVITIES,
+  SUBJECT_ROLES,
+  isPlainObject,
+} from "@kizuki/core";
 import type { PageSensitivity, SubjectRole } from "@kizuki/core";
 import { TIMESTAMP_FORMATS, vocabularyMap } from "../legacy/coerce";
 import type { TimestampFormat } from "../legacy/coerce";
@@ -247,9 +252,16 @@ function parseMetadata(raw: unknown): LegacyEventsMapping["metadata"] {
     );
   }
   return {
-    columns: columns.map((name, index) =>
-      column(name, `mapping.metadata.columns[${index}]`),
-    ),
+    columns: columns.map((name, index) => {
+      const path = `mapping.metadata.columns[${index}]`;
+      if (name === PAGE_CANDIDATE_KEY) {
+        fail(
+          path,
+          `must not be ${PAGE_CANDIDATE_KEY}; the floor reads that key as a page it should stage`,
+        );
+      }
+      return column(name, path);
+    }),
   };
 }
 

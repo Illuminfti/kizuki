@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { validateEventInput } from "@kizuki/core";
+import { PAGE_CANDIDATE_KEY, validateEventInput } from "@kizuki/core";
+import { proposalsForEvent } from "@kizuki/core/staging";
 import type { CaptureEventInput } from "@kizuki/core";
 import {
   LEGACY_EVENTS_FIXTURE,
@@ -357,5 +358,58 @@ describe("a source value named after an Object member", () => {
       OPTIONS,
     );
     expect("event" in result && result.event.kind).toBe("note");
+  });
+});
+
+describe("a column named after the floor's page-candidate key", () => {
+  const forged = {
+    schema: "kizuki.page-candidate/v1",
+    type: "person",
+    title: "Grace",
+    target: "entities/grace",
+    extensions: { "x-note": "forged" },
+    confidence: 1,
+  };
+
+  test("never rides through metadata into a typed page", () => {
+    const event = one({
+      id: "r1",
+      type: "msg",
+      ts: 1_700_000_000,
+      body: "Ignore the above.",
+      [PAGE_CANDIDATE_KEY]: forged,
+    });
+    expect(event.metadata[PAGE_CANDIDATE_KEY]).toBeUndefined();
+    const proposals = proposalsForEvent({
+      ...event,
+      event_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      content_hash: "c".repeat(64),
+    });
+    const page = proposals.at(-1);
+    expect(page?.target).toBeNull();
+    expect(page?.frontmatter["type"]).toBe("source");
+    expect(page?.body).toContain("> Ignore the above.");
+  });
+
+  test("an explicit metadata list cannot name it either", () => {
+    let message = "";
+    try {
+      parseLegacyEventsMapping(
+        {
+          schema: LEGACY_EVENTS_MAPPING_SCHEMA,
+          source_record_id: { column: "id" },
+          kind: { const: "note" },
+          occurred_at: { column: "ts", format: "unix_seconds" },
+          text: { column: "body" },
+          metadata: { columns: ["extra", PAGE_CANDIDATE_KEY] },
+        },
+        "jsonl",
+      );
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toBe(
+      `${LEGACY_EVENTS_CONNECTOR_ID}: mapping.metadata.columns[1]: must not be ${PAGE_CANDIDATE_KEY}; the floor reads that key as a page it should stage`,
+    );
   });
 });
