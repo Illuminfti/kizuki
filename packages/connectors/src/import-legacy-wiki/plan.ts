@@ -2,7 +2,7 @@ import {
   ENTITY_PAGE_TYPES,
   PAGE_CANDIDATE_KEY,
   PAGE_CANDIDATE_SCHEMA,
-  PAGE_TYPES,
+  PAGE_SENSITIVITIES,
   validatePageCandidate,
 } from "@kizuki/core";
 import type { CaptureEventInput, PageSensitivity, PageType } from "@kizuki/core";
@@ -13,10 +13,7 @@ import {
   rfc3339From,
   sanitizeLine,
 } from "../legacy/coerce";
-import {
-  LEGACY_SENSITIVITY_FLOOR,
-  atLegacyFloor,
-} from "../legacy/sensitivity";
+import { atLegacyFloor } from "../legacy/sensitivity";
 import { compareStrings } from "../util";
 import {
   jsonSafeFrontmatter,
@@ -48,7 +45,6 @@ import type { ScanResult } from "./scan";
 
 export const MAX_TEXT_LENGTH = 262_144;
 const MAX_VOCABULARY = 64;
-const IDENTITY_SENSITIVITIES = ["public", "personal", "private"] as const;
 
 export interface PlanOptions {
   observedAt: string;
@@ -117,9 +113,9 @@ function planPage(
     legacySensitivity === null
       ? null
       : (mappedValue(mapping.sensitivity.values, legacySensitivity) ??
-        ((IDENTITY_SENSITIVITIES as readonly string[]).includes(
-          legacySensitivity,
-        )
+        // The three Kizuki labels map to themselves, so a mapping only
+        // has to name the estate's own vocabulary.
+        ((PAGE_SENSITIVITIES as readonly string[]).includes(legacySensitivity)
           ? (legacySensitivity as PageSensitivity)
           : null));
   const sensitivityDecision: LegacyWikiPageReport["sensitivity"]["decision"] =

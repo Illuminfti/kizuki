@@ -47,13 +47,13 @@ export function sourcePolicy(manifest: Manifest): SourcePolicy {
  */
 function atFloor(input: unknown, policy: SourcePolicy): unknown {
   const floor = policy.sensitivity_floor;
-  const fallback = policy.default_sensitivity;
-  if ((floor === null && fallback === null) || !isPlainObject(input)) {
-    return input;
-  }
+  // What a record from this source is when it carries no label of its own; a
+  // source that declares neither field is left exactly as it arrived.
+  const absent = policy.default_sensitivity ?? floor;
+  if (absent === null || !isPlainObject(input)) return input;
   const hint = input["sensitivity_hint"];
   if (hint !== undefined && !isSensitivityHint(hint)) return input;
-  const declared = hint ?? fallback ?? (floor as SensitivityHint);
+  const declared = hint ?? absent;
   return {
     ...input,
     sensitivity_hint:
