@@ -303,3 +303,49 @@ describe("purgeEvents", () => {
     db.close();
   });
 });
+
+describe("purgeEvents with an optional package's enrichment table", () => {
+  function withEnrichments(db: Database): void {
+    db.exec(`
+      CREATE TABLE llm_enrichments (
+        event_id TEXT NOT NULL,
+        at       TEXT NOT NULL
+      ) STRICT;
+    `);
+  }
+
+  test("forgets the rows of purged events and keeps the rest", () => {
+    const db = openLedger(":memory:");
+    initStaging(db);
+    withEnrichments(db);
+    const target = storedEvent(db, event("target"));
+    const kept = storedEvent(db, event("keep"));
+    const insert = db.query<never, [string, string]>(
+      "INSERT INTO llm_enrichments (event_id, at) VALUES (?, ?)",
+    );
+    insert.run(target.event_id, "2026-03-01T00:00:00Z");
+    insert.run(kept.event_id, "2026-03-01T00:00:00Z");
+
+    purgeEvents(db, temporaryVault(), { event_id: target.event_id }, "erased");
+
+    expect(
+      db.query("SELECT event_id FROM llm_enrichments").all(),
+    ).toEqual([{ event_id: kept.event_id }]);
+    db.close();
+  });
+
+  test("purges normally when no optional package has run", () => {
+    const db = openLedger(":memory:");
+    initStaging(db);
+    const target = storedEvent(db, event("target"));
+    const outcome = purgeEvents(
+      db,
+      temporaryVault(),
+      { event_id: target.event_id },
+      "erased",
+    );
+    expect(outcome.receipts).toHaveLength(1);
+    expect(count(db)).toBe(0);
+    db.close();
+  });
+});

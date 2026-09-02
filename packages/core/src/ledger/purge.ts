@@ -153,6 +153,15 @@ export function purgeEvents(
       }
     }
 
+    // An optional package owns this table; core cannot import it, so the
+    // cascade is existence-guarded like the staging guard above.
+    if (tableExists(db, "llm_enrichments")) {
+      const forget = db.query<never, [string]>(
+        "DELETE FROM llm_enrichments WHERE event_id = ?",
+      );
+      for (const eventId of purgedIds) forget.run(eventId);
+    }
+
     const holds: { page_path: string; proposal_id: string }[] = [];
     for (const page of report.pages) {
       const provenance = pageSources(page.data["sources"])
