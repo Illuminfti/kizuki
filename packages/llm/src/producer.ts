@@ -50,6 +50,9 @@ const MAX_ROLE_CHARS = 40;
 const MAX_PREDICATE_CHARS = 100;
 const MAX_OBJECT_CHARS = 400;
 const MAX_OUTPUT_TOKENS_PER_CALL = 2_048;
+const MAX_DROPPED_PREDICATES = 32;
+/** A spine-generated event id. It names a fence, so it may not reshape one. */
+const EVENT_ID = /^[A-Za-z0-9:._-]{1,200}$/;
 const CALL_DEADLINE_MS = 60_000;
 const MAX_REASON_CHARS = 200;
 
@@ -96,6 +99,16 @@ function scrubReason(error: unknown): string {
     .trim();
 }
 
+/**
+ * The model port is replaceable, so what it reports about a call is checked
+ * like anything else crossing a port boundary rather than added blind.
+ */
+function counted(value: unknown, least: number): number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > least
+    ? value
+    : least;
+}
+
 /** `ModelUsage` is readonly on the wire; this is the tally behind it. */
 interface Tally {
   calls: number;
@@ -113,8 +126,7 @@ function quotedEvent(value: unknown): QuotedEvent {
   if (
     !isPlainObject(value) ||
     typeof value["event_id"] !== "string" ||
-    value["event_id"].length === 0 ||
-    value["event_id"].length > 200 ||
+    !EVENT_ID.test(value["event_id"]) ||
     typeof value["connector_id"] !== "string" ||
     typeof value["occurred_at"] !== "string" ||
     typeof value["observed_at"] !== "string" ||
@@ -296,9 +308,9 @@ export class ModelProducer implements ProducerPort {
 
       // Never under-charge: what the endpoint says it counted wins over what
       // this port reserved, and a run that overran its budget stops here.
-      usage.calls += Math.max(1, answer.attempts);
-      usage.input_tokens += Math.max(0, answer.usage.input_tokens);
-      usage.output_tokens += Math.max(0, answer.usage.output_tokens);
+      usage.calls += counted(answer.attempts, 1);
+      usage.input_tokens += counted(answer.usage.input_tokens, 0);
+      usage.output_tokens += counted(answer.usage.output_tokens, 0);
       if (
         usage.calls > input.budget.max_calls ||
         usage.input_tokens > input.budget.max_input_tokens ||
@@ -325,6 +337,7 @@ export class ModelProducer implements ProducerPort {
         break;
       }
       for (const predicate of outcome.unknown_predicates) {
+        if (unknownPredicates.size >= MAX_DROPPED_PREDICATES) break;
         unknownPredicates.add(predicate);
       }
       claims.push(...outcome.claims);

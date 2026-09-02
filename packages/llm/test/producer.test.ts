@@ -445,6 +445,33 @@ describe("input validation", () => {
     expect(built.llm.calls).toHaveLength(0);
   });
 
+  test("an event id that could reshape the prompt is refused", async () => {
+    const built = producer(['{"claims":[]}']);
+    const input = produceInput([event("ev-1", "hi")]);
+    for (const id of ["ev>>>1", "ev\n1", "ev 1", "ev\u0000"]) {
+      await expect(
+        built.port.produce({ ...input, events: [event(id, "hi")] }),
+      ).rejects.toBeInstanceOf(PortError);
+    }
+    expect(built.llm.calls).toHaveLength(0);
+  });
+
+  test("a model port that reports nonsense usage is charged the minimum", async () => {
+    const built = producer([claimsPayload()], {
+      input_tokens: Number.NaN,
+      output_tokens: -5,
+      attempts: 0,
+    });
+    const result = ok(
+      await built.port.produce(produceInput([event("ev-1", "hi")])),
+    );
+    expect(result.usage).toEqual({
+      calls: 1,
+      input_tokens: 0,
+      output_tokens: 0,
+    });
+  });
+
   test("a permanent port failure is not reported as an outage", async () => {
     const built = producer([
       new PortError("config_invalid", "the request is malformed", false),
