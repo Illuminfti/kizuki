@@ -179,4 +179,34 @@ if ! git -C "$restrict_root" show-ref --verify --quiet refs/remotes/origin/main;
 fi
 rm -rf -- "$restrict_root"
 
+history_messages="$(mktemp)"
+github_owner='Ill''uminfti'
+printf 'Merge pull request #379 from %s/cursor/llm-port-8afe\n' "$github_owner" >"$history_messages"
+assert_safe_reachable_commit_messages "$history_messages"
+printf 'Merge pull request #379 from %s/cursor/llm-port-8afe\n' 'ILL''UMINFTI' >"$history_messages"
+assert_safe_reachable_commit_messages "$history_messages"
+
+standalone_token='ill''umi'
+printf 'review notes mention %s in the body\n' "$standalone_token" >"$history_messages"
+if assert_safe_reachable_commit_messages "$history_messages" >/dev/null 2>&1; then
+  printf 'policy test failed: standalone first-token identifier passed history scan\n' >&2
+  exit 1
+fi
+printf 'Merge pull request #379 from %s/cursor/llm-port-8afe\n\nmentions %s\n' \
+  "$github_owner" "$standalone_token" >"$history_messages"
+if assert_safe_reachable_commit_messages "$history_messages" >/dev/null 2>&1; then
+  printf 'policy test failed: mixed owner-token plus standalone identifier passed history scan\n' >&2
+  exit 1
+fi
+
+remaining_tokens=('her''mes' 'ika-''hetzner' 'alb''edo' 'g''brain')
+for remaining in "${remaining_tokens[@]}"; do
+  printf 'review notes mention %s\n' "$remaining" >"$history_messages"
+  if assert_safe_reachable_commit_messages "$history_messages" >/dev/null 2>&1; then
+    printf 'policy test failed: remaining denylist token passed history scan\n' >&2
+    exit 1
+  fi
+done
+rm -f -- "$history_messages"
+
 printf 'verification policy tests passed\n'

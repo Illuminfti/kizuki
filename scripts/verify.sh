@@ -133,6 +133,21 @@ phone_home_dependency_pattern() {
   printf '%s' '"(posthog|@sentry|sentry|@amplitude|mixpanel|segment|@datadog|newrelic|@newrelic|bugsnag|@bugsnag|rollbar|analytics-node|@vercel/analytics|@opentelemetry|telemetry)'
 }
 
+reachable_commit_identifier_pattern() {
+  # Bound the first denylist token with POSIX ERE delimiters so a longer
+  # public GitHub owner name that only shares that prefix cannot match.
+  # Remaining tokens stay unanchored substring matches. No Perl regex.
+  printf '%s' '(^|[^[:alnum:]])ill''umi([^[:alnum:]]|$)|her''mes|ika-''hetzner|alb''edo|g''brain'
+}
+
+assert_safe_reachable_commit_messages() {
+  local messages_file="$1"
+
+  assert_no_match \
+    "forbidden identifier in reachable commit messages" \
+    grep -I -n -i -E "$(reachable_commit_identifier_pattern)" "$messages_file"
+}
+
 gate() {
   printf 'gate: %s\n' "$1"
 }
@@ -190,7 +205,7 @@ main() {
     printf 'verification failed: reachable commit-message scan produced no text\n' >&2
     return 2
   fi
-  assert_no_match "forbidden identifier in reachable commit messages" grep -I -n -i -E "$forbidden_identifier_re|$attributed_identifier_re" "$commit_messages"
+  assert_safe_reachable_commit_messages "$commit_messages"
   gate denylist-history
   bun "$verify_script_dir/verify-secrets.ts"
   gate secrets
