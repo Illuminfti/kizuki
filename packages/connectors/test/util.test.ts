@@ -1,9 +1,17 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  open,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { KizukiError } from "../src/errors";
 import {
+  readBoundedBytes,
   readBoundedUtf8,
   readBoundedUtf8File,
   readFirstLine,
@@ -274,4 +282,56 @@ test("a dense run of numbered ids costs one pass, not one per repeat", () => {
   expect(new Set(numbered).size).toBe(ids.length);
   expect(numbered[run]).toBe(`u#${run + 1}`);
   expect(elapsed).toBeLessThan(1500);
+});
+
+test("a bounded read stops at the bound, whatever the file's size said", async () => {
+  await withTempRoot(async (root) => {
+    // The public reader refuses a file whose reported size is already over the
+    // bound, so what it delivers is proved here: a size is a claim made before
+    // the read, and a file that reports less than it holds — or grows after it
+    // was measured — must still not spend more than the bound.
+    const file = path.join(root, "long.txt");
+    await writeFile(file, "x".repeat(64));
+    const handle = await open(file, "r");
+    try {
+      const error = await rejected(() =>
+        readBoundedBytes(handle, 16, "kizuki.test", "long.txt"),
+      );
+      expect(error.code).toBe("misconfigured");
+      expect(error.message).toBe(
+        "kizuki.test: long.txt exceeds the 16 byte import limit",
+      );
+    } finally {
+      await handle.close();
+    }
+  });
+});
+
+test("a bounded read returns a whole file its size understated", async () => {
+  await withTempRoot(async (root) => {
+    const file = path.join(root, "grown.txt");
+    const contents = "abcdefghij".repeat(500);
+    await writeFile(file, contents);
+    const handle = await open(file, "r");
+    try {
+      // `expected` is the size a stat reported; nothing is truncated when the
+      // file turns out to hold more, and the bound is still what refuses.
+      const bytes = await readBoundedBytes(
+        handle,
+        1024 * 1024,
+        "kizuki.test",
+        "grown.txt",
+      );
+      expect(bytes.toString("utf8")).toBe(contents);
+      const exact = await readBoundedBytes(
+        handle,
+        contents.length,
+        "kizuki.test",
+        "grown.txt",
+      );
+      expect(exact.byteLength).toBe(contents.length);
+    } finally {
+      await handle.close();
+    }
+  });
 });

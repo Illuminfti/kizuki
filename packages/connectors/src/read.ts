@@ -43,6 +43,74 @@ function isErrno(error: unknown, code: string): boolean {
  * `O_NONBLOCK` keeps a pipe planted in an export folder from hanging the
  * import before its file type is even known.
  */
+function overLimit(
+  label: string,
+  connectorId: string,
+  maxBytes: number,
+): KizukiError {
+  return new KizukiError(
+    "misconfigured",
+    `${connectorId}: ${label} exceeds the ${maxBytes} byte import limit`,
+  );
+}
+
+/**
+ * Fills a buffer, or as much of it as the file has left. A regular file hands
+ * back everything asked for until it ends, but a short read is not an end, and
+ * treating one as an end would silently truncate an export.
+ */
+async function fill(
+  handle: FileHandle,
+  bytes: Buffer,
+  from: number,
+  through: number,
+): Promise<number> {
+  let at = from;
+  while (at < through) {
+    const { bytesRead } = await handle.read(bytes, at, through - at, at);
+    if (bytesRead === 0) return at;
+    at += bytesRead;
+  }
+  return at;
+}
+
+/**
+ * The bytes of an open file, up to a bound the file cannot talk its way past.
+ * A size is what a file claims before the read; a file that reports less than
+ * it holds, or that grows after it was measured, would otherwise spend more of
+ * an import's budget than the bound allows. Reading one byte past the bound is
+ * what proves the bound was passed.
+ *
+ * `expected` is only the first allocation: an honest file is read into one
+ * buffer of its own size and never copied.
+ */
+export async function readBoundedBytes(
+  handle: FileHandle,
+  maxBytes: number,
+  connectorId: string,
+  label: string,
+  expected = 0,
+): Promise<Buffer> {
+  const limit = maxBytes + 1;
+  let capacity = Math.min(Math.max(expected, 0) + 1, limit);
+  let bytes = Buffer.alloc(capacity);
+  let total = 0;
+  for (;;) {
+    if (total === capacity) {
+      if (capacity === limit) break;
+      capacity = Math.min(capacity * 2, limit);
+      const grown = Buffer.alloc(capacity);
+      bytes.copy(grown);
+      bytes = grown;
+    }
+    const read = await fill(handle, bytes, total, capacity);
+    if (read === total) break;
+    total = read;
+  }
+  if (total > maxBytes) throw overLimit(label, connectorId, maxBytes);
+  return bytes.subarray(0, total);
+}
+
 export interface BoundedFile {
   text: string;
   /**
@@ -83,13 +151,17 @@ export async function readBoundedUtf8File(
   try {
     const info = await handle.stat();
     if (!info.isFile()) throw notARegularFile(label, connectorId);
-    if (info.size > maxBytes) {
-      throw new KizukiError(
-        "misconfigured",
-        `${connectorId}: ${label} exceeds the ${maxBytes} byte import limit`,
-      );
-    }
-    bytes = await handle.readFile();
+    // Refused before a byte is read, when the file says up front that it is
+    // too big. What it says is not what it delivers, so the read is bounded
+    // on its own below.
+    if (info.size > maxBytes) throw overLimit(label, connectorId, maxBytes);
+    bytes = await readBoundedBytes(
+      handle,
+      maxBytes,
+      connectorId,
+      label,
+      info.size,
+    );
   } finally {
     await handle.close();
   }
@@ -156,11 +228,13 @@ export async function readFirstLine(
   try {
     const info = await handle.stat();
     if (!info.isFile()) throw notARegularFile(path, connectorId);
-    const wanted = Math.min(info.size, windowBytes);
-    const buffer = Buffer.alloc(wanted);
-    const { bytesRead } = await handle.read(buffer, 0, wanted, 0);
-    window = buffer.subarray(0, bytesRead);
-    complete = info.size <= windowBytes;
+    const buffer = Buffer.alloc(windowBytes);
+    // Where the file ends is what the read says, not what the size said: a
+    // file that reports less than it holds would otherwise look complete and
+    // its first line would be whatever the window happened to cut.
+    const read = await fill(handle, buffer, 0, windowBytes);
+    window = buffer.subarray(0, read);
+    complete = read < windowBytes;
   } finally {
     await handle.close();
   }
