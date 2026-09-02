@@ -1,0 +1,196 @@
+import { isPlainObject, isRfc3339 } from "@kizuki/core";
+import type { ClaimDraft, ClaimDraftKind, Sensitivity } from "@kizuki/core";
+import { reject } from "./errors";
+
+const CLAIM_KEYS = new Set([
+  "kind",
+  "subject",
+  "predicate",
+  "object",
+  "polarity",
+  "body",
+  "valid_from",
+  "valid_to",
+  "confidence",
+  "sensitivity",
+  "event_ids",
+]);
+const KINDS = new Set<string>(["entity", "claim", "edit", "merge", "deletion"]);
+const SENSITIVITIES = new Set<string>(["public", "personal", "private"]);
+
+const MAX_CLAIMS = 64;
+const MAX_SUBJECT_CHARS = 200;
+const MAX_PREDICATE_CHARS = 100;
+const MAX_OBJECT_CHARS = 400;
+const MAX_BODY_CHARS = 1200;
+const MAX_EVENT_IDS = 32;
+
+/** C0 and C1 controls, newline excepted, plus the delete character. */
+const CONTROL = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g;
+
+export interface ExtractOutcome {
+  claims: ClaimDraft[];
+  /** Predicates the model invented, so the registry can grow deliberately. */
+  unknown_predicates: string[];
+}
+
+/**
+ * Model output is untrusted text. Escapes, NULs and other control characters
+ * are removed before a value can reach a page, a receipt or a terminal.
+ */
+function sanitize(value: string, allowNewlines: boolean): string {
+  const stripped = value.replaceAll("\r\n", "\n").replace(CONTROL, "");
+  return allowNewlines
+    ? stripped.trim()
+    : stripped.replaceAll("\n", " ").trim();
+}
+
+function text(
+  claim: Record<string, unknown>,
+  key: string,
+  max: number,
+  allowNewlines: boolean,
+): string {
+  const raw = claim[key];
+  if (typeof raw !== "string" || raw.length > max) {
+    reject("schema_invalid", `a claim has an invalid ${key}`);
+  }
+  const value = sanitize(raw, allowNewlines);
+  if (value.length === 0) {
+    reject("schema_invalid", `a claim has an empty ${key}`);
+  }
+  return value;
+}
+
+function timestamp(claim: Record<string, unknown>, key: string): string | null {
+  const raw = claim[key];
+  if (raw === null) return null;
+  if (typeof raw !== "string" || !isRfc3339(raw)) {
+    reject("schema_invalid", `a claim has an invalid ${key}`);
+  }
+  return raw;
+}
+
+function citations(
+  claim: Record<string, unknown>,
+  allowed: ReadonlySet<string>,
+): string[] {
+  const raw = claim["event_ids"];
+  if (
+    !Array.isArray(raw) ||
+    raw.length === 0 ||
+    raw.length > MAX_EVENT_IDS ||
+    !raw.every((id) => typeof id === "string")
+  ) {
+    reject("schema_invalid", "a claim has an invalid event_ids list");
+  }
+  const ids = [...new Set(raw as string[])];
+  if (!ids.every((id) => allowed.has(id))) {
+    reject(
+      "provenance_not_cited",
+      "a claim cited an event that was not in the request",
+    );
+  }
+  return ids;
+}
+
+/**
+ * Validates the model's answer against `ExtractResponse` exactly. An extra
+ * key is a rejection, not a warning; an unknown predicate drops that one
+ * draft so the registry stays a deliberate list rather than a drifting enum.
+ */
+export function parseExtractResponse(
+  answer: string,
+  allowedEventIds: ReadonlySet<string>,
+  allowedPredicates: ReadonlySet<string>,
+): ExtractOutcome {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(answer);
+  } catch {
+    reject(
+      "schema_invalid",
+      "the endpoint answered with text that is not JSON",
+    );
+  }
+  if (!isPlainObject(parsed)) {
+    reject(
+      "schema_invalid",
+      "the endpoint answered with a value that is not an object",
+    );
+  }
+  for (const key of Object.keys(parsed)) {
+    if (key !== "claims") {
+      reject("schema_invalid", `the answer carries an unexpected key ${key}`);
+    }
+  }
+  const rawClaims = parsed["claims"];
+  if (!Array.isArray(rawClaims) || rawClaims.length > MAX_CLAIMS) {
+    reject("schema_invalid", "the answer carries an invalid claims list");
+  }
+
+  const claims: ClaimDraft[] = [];
+  const unknown = new Set<string>();
+  for (const entry of rawClaims) {
+    if (!isPlainObject(entry)) {
+      reject(
+        "schema_invalid",
+        "the answer carries a claim that is not an object",
+      );
+    }
+    for (const key of Object.keys(entry)) {
+      if (!CLAIM_KEYS.has(key)) {
+        reject("schema_invalid", `a claim carries an unexpected key ${key}`);
+      }
+    }
+    for (const key of CLAIM_KEYS) {
+      if (!(key in entry))
+        reject("schema_invalid", `a claim is missing ${key}`);
+    }
+
+    const kind = entry["kind"];
+    if (typeof kind !== "string" || !KINDS.has(kind)) {
+      reject("schema_invalid", "a claim has an invalid kind");
+    }
+    const polarity = entry["polarity"];
+    if (polarity !== "positive" && polarity !== "negative") {
+      reject("schema_invalid", "a claim has an invalid polarity");
+    }
+    const sensitivity = entry["sensitivity"];
+    if (typeof sensitivity !== "string" || !SENSITIVITIES.has(sensitivity)) {
+      reject("schema_invalid", "a claim has an invalid sensitivity");
+    }
+    const confidence = entry["confidence"];
+    if (
+      typeof confidence !== "number" ||
+      !Number.isFinite(confidence) ||
+      confidence < 0 ||
+      confidence > 1
+    ) {
+      reject("schema_invalid", "a claim has an invalid confidence");
+    }
+
+    const predicate = text(entry, "predicate", MAX_PREDICATE_CHARS, false);
+    const eventIds = citations(entry, allowedEventIds);
+    if (!allowedPredicates.has(predicate)) {
+      unknown.add(predicate);
+      continue;
+    }
+
+    claims.push({
+      kind: kind as ClaimDraftKind,
+      subject: text(entry, "subject", MAX_SUBJECT_CHARS, false),
+      predicate,
+      object: text(entry, "object", MAX_OBJECT_CHARS, false),
+      polarity,
+      body: text(entry, "body", MAX_BODY_CHARS, true),
+      valid_from: timestamp(entry, "valid_from"),
+      valid_to: timestamp(entry, "valid_to"),
+      confidence,
+      sensitivity: sensitivity as Sensitivity,
+      event_ids: eventIds,
+    });
+  }
+
+  return { claims, unknown_predicates: [...unknown].sort() };
+}

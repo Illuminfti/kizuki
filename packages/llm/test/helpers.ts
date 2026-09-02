@@ -1,11 +1,17 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PortError } from "@kizuki/core";
+import { PortError, predicateIds } from "@kizuki/core";
 import type {
+  LlmPort,
+  LlmRequest,
+  LlmResponse,
   PortContext,
   PortDescriptor,
+  PortHealth,
   PortLogLine,
+  ProduceInput,
+  QuotedEvent,
 } from "@kizuki/core";
 import { OPENAI_COMPATIBLE_LLM, OpenAiCompatibleLlm } from "../src/llm-port";
 import type { LlmPortOverrides } from "../src/llm-port";
@@ -54,5 +60,104 @@ export function llmPort(
   return {
     port: new OpenAiCompatibleLlm(built.ctx, overrides),
     cleanup: built.cleanup,
+  };
+}
+
+export function event(
+  id: string,
+  text: string,
+  taint: "untrusted" | "owner" = "untrusted",
+): QuotedEvent {
+  return {
+    event_id: id,
+    connector_id: "markdown-folder",
+    occurred_at: "2026-01-01T00:00:00.000Z",
+    observed_at: "2026-01-01T00:00:01.000Z",
+    text,
+    subjects: [{ subject_id: "person:ada", role: "about" }],
+    taint,
+  };
+}
+
+export function produceInput(
+  events: QuotedEvent[],
+  budget: Partial<ProduceInput["budget"]> = {},
+): ProduceInput {
+  return {
+    events,
+    context: {
+      subjects: [{ subject_id: "person:ada", role: "about" }],
+      known_claims: [],
+      predicates: predicateIds(),
+    },
+    budget: {
+      max_calls: 8,
+      max_input_tokens: 100_000,
+      max_output_tokens: 100_000,
+      ...budget,
+    },
+  };
+}
+
+export function claimsPayload(
+  overrides: Record<string, unknown> = {},
+  eventIds: string[] = ["ev-1"],
+): string {
+  return JSON.stringify({
+    claims: [
+      {
+        kind: "claim",
+        subject: "person:ada",
+        predicate: "employment.works_at",
+        object: "acme",
+        polarity: "positive",
+        body: "Ada works at acme.",
+        valid_from: null,
+        valid_to: null,
+        confidence: 0.6,
+        sensitivity: "personal",
+        event_ids: eventIds,
+        ...overrides,
+      },
+    ],
+  });
+}
+
+export interface ScriptedLlm extends LlmPort {
+  readonly calls: LlmRequest[];
+}
+
+/**
+ * An in-process `kizuki.llm/v1` so producer tests never need a socket. The
+ * script is a list of answers or errors, replayed in order.
+ */
+export function scriptedLlm(
+  script: (string | Error)[],
+  health: PortHealth = { status: "ready", detail: {} },
+): ScriptedLlm {
+  const calls: LlmRequest[] = [];
+  let index = 0;
+  return {
+    descriptor: OPENAI_COMPATIBLE_LLM,
+    model_ref: "kizuki.llm.fake:m@127.0.0.1",
+    calls,
+    async complete(request: LlmRequest): Promise<LlmResponse> {
+      calls.push(request);
+      const next = script[Math.min(index, script.length - 1)];
+      index += 1;
+      if (next === undefined) {
+        throw new PortError("unavailable", "the script is exhausted", false);
+      }
+      if (next instanceof Error) throw next;
+      return {
+        text: next,
+        model: "m",
+        usage: { input_tokens: 10, output_tokens: 5 },
+      };
+    },
+    async health(): Promise<PortHealth> {
+      return health;
+    },
+    async close(): Promise<void> {},
   };
 }
