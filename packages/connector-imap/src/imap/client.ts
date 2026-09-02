@@ -5,6 +5,11 @@ import { ResponseReader } from "./tokenizer";
 import type { ImapResponse } from "./tokenizer";
 
 export const COMMAND_TIMEOUT_MS = 60_000;
+/**
+ * Above the largest legitimate reply: a 1000-UID FETCH window answers with one
+ * untagged line per message, plus a handful of status lines.
+ */
+export const MAX_UNTAGGED = 5_000;
 
 export type CommandArg =
   | { kind: "atom"; value: string }
@@ -70,13 +75,21 @@ export class ImapClient {
     this.conn.close();
   }
 
-  private async read(): Promise<ImapResponse> {
+  /**
+   * `deadline` is the whole command's budget, not one response's: a server that
+   * trickles an untagged line under the timeout would otherwise hold a command
+   * open for as long as it liked.
+   */
+  private async read(deadline: number): Promise<ImapResponse> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => {
-        this.close();
-        reject(new KizukiError("unreachable", "command timed out"));
-      }, this.timeoutMs);
+      timer = setTimeout(
+        () => {
+          this.close();
+          reject(new KizukiError("unreachable", "command timed out"));
+        },
+        Math.max(0, deadline - Date.now()),
+      );
     });
     try {
       const response = await Promise.race([this.reader.next(), timeout]);
@@ -96,7 +109,7 @@ export class ImapClient {
 
   /** The server's opening line; a `* BYE` greeting surfaces as unreachable. */
   async greeting(): Promise<ImapResponse> {
-    return this.read();
+    return this.read(Date.now() + this.timeoutMs);
   }
 
   private buildPieces(command: string, args: CommandArg[], tag: string): Piece[] {
@@ -134,6 +147,7 @@ export class ImapClient {
     this.counter += 1;
     const tag = `A${String(this.counter).padStart(4, "0")}`;
     const pieces = this.buildPieces(command, args, tag);
+    const deadline = Date.now() + this.timeoutMs;
 
     for (let index = 0; index < pieces.length; index += 1) {
       const piece = pieces[index];
@@ -144,7 +158,7 @@ export class ImapClient {
       }
       await this.conn.send(asciiBytes(`${piece.text}\r\n`));
       if (index + 1 < pieces.length) {
-        const continuation = await this.read();
+        const continuation = await this.read(deadline);
         if (continuation.tag !== "+") {
           throw failureFor(continuation.text, { login: options.login === true });
         }
@@ -153,8 +167,12 @@ export class ImapClient {
 
     const untagged: ImapResponse[] = [];
     for (;;) {
-      const response = await this.read();
+      const response = await this.read(deadline);
       if (response.tag !== tag) {
+        if (untagged.length >= MAX_UNTAGGED) {
+          this.close();
+          throw new KizukiError("protocol", "too many untagged responses");
+        }
         untagged.push(response);
         continue;
       }

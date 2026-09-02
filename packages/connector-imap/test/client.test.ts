@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { KizukiError } from "@kizuki/core";
 import type { KizukiErrorCode } from "@kizuki/core";
-import { ImapClient, atom, str } from "../src/imap/client";
+import { ImapClient, MAX_UNTAGGED, atom, str } from "../src/imap/client";
 import { failureFor, sanitizeDetail } from "../src/imap/codes";
 import type { ImapConn } from "../src/transport";
 
 interface Scripted extends ImapConn {
   sent: string[];
   closed: boolean;
+  push(text: string): void;
 }
 
 function scripted(reply: (text: string, index: number) => string[]): Scripted {
@@ -22,6 +23,7 @@ function scripted(reply: (text: string, index: number) => string[]): Scripted {
   const conn: Scripted = {
     sent: [],
     closed: false,
+    push,
     async send(bytes) {
       const text = new TextDecoder().decode(bytes);
       conn.sent.push(text);
@@ -141,6 +143,37 @@ describe("failure handling", () => {
     const error = await client.send("NOOP").catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(KizukiError);
     expect((error as KizukiError).code).toBe("unreachable");
+    expect(conn.closed).toBe(true);
+  });
+
+  test("a slow drip cannot hold a command open past its deadline", async () => {
+    const conn = scripted(() => []);
+    const client = new ImapClient(conn, { commandTimeoutMs: 60 });
+    const started = Date.now();
+    const drip = setInterval(() => {
+      conn.push("* 1 EXISTS chatter\r\n");
+    }, 10);
+    const error = await client.send("NOOP").catch((caught: unknown) => caught);
+    clearInterval(drip);
+    expect((error as KizukiError).code).toBe("unreachable");
+    expect((error as KizukiError).message).toBe("command timed out");
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(conn.closed).toBe(true);
+  });
+
+  test("an endless untagged stream is refused rather than buffered", async () => {
+    const conn = scripted((text) =>
+      text.startsWith("A0001")
+        ? Array.from(
+            { length: MAX_UNTAGGED + 10 },
+            (_unused, index) => `* ${index + 1} EXISTS chatter\r\n`,
+          )
+        : [],
+    );
+    const client = new ImapClient(conn, { commandTimeoutMs: 5_000 });
+    const error = await client.send("NOOP").catch((caught: unknown) => caught);
+    expect((error as KizukiError).code).toBe("protocol");
+    expect((error as KizukiError).message).toBe("too many untagged responses");
     expect(conn.closed).toBe(true);
   });
 
