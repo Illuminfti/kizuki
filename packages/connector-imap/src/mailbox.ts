@@ -6,12 +6,25 @@ import { ImapSession } from "./imap/session";
 import type { MessageSummary, SessionOptions } from "./imap/session";
 import type { ImapState } from "./state";
 import type { ImapDialer } from "./transport";
-import { addUid, chunk, formatSet, parseSet, removeUid, uids } from "./uidset";
+import {
+  addUid,
+  chunk,
+  countUids,
+  formatSet,
+  parseSet,
+  removeUid,
+  uids,
+} from "./uidset";
 
 export const WINDOW = 1000;
 export const BATCH = 200;
 export const EXPUNGE_CHUNK = 500;
 export const BODY_FETCH = 20;
+/**
+ * A server that keeps refusing bodies must not grow the cursor without limit,
+ * so the hole list stops accepting new UIDs once it reaches a page's worth.
+ */
+export const MAX_PENDING = 1_000;
 
 export interface WalkDeps {
   dial: ImapDialer;
@@ -75,6 +88,7 @@ function initialEntry(uidvalidity: number, uidnext: number): ImapFolderCursor {
     scan_from: 1,
     uidnext,
     known: "",
+    pending: "",
     done: 1 >= uidnext,
   };
 }
@@ -134,6 +148,17 @@ export async function walkMailboxes(
       plan.entry.uidnext = status.uidnext;
       plan.entry.done = plan.entry.scan_from >= status.uidnext;
 
+      // A hole from an earlier walk is retried before anything else: the UID
+      // is still the only handle on that message.
+      await retryPending(
+        session,
+        plan,
+        deps.state.max_message_bytes,
+        observedAt,
+        events.length + folderTombstones.length,
+        folderEvents,
+      );
+
       if (mode === "sync" && wasDone && !renumbered) {
         await detectExpunges(
           session,
@@ -143,19 +168,21 @@ export async function walkMailboxes(
           folderTombstones,
         );
       } else {
-        const withheld = await pageFolder(
+        await pageFolder(
           session,
           plan,
           deps.state.max_message_bytes,
           observedAt,
-          events.length + folderTombstones.length,
+          events.length + folderTombstones.length + folderEvents.length,
           folderEvents,
         );
-        // A body the server did not hand over leaves a hole in the ledger, so
-        // the run says so rather than reading as a clean page.
-        if (withheld > 0) {
-          notes.push(`message bodies not returned: ${display} (${withheld})`);
-        }
+      }
+
+      // A body the server did not hand over leaves a hole in the ledger, so
+      // the run says so rather than reading as a clean page.
+      const holes = countUids(parseSet(plan.entry.pending));
+      if (holes > 0) {
+        notes.push(`message bodies not returned: ${display} (${holes})`);
       }
 
       cursor.folders[wire] = plan.entry;
@@ -170,6 +197,55 @@ export async function walkMailboxes(
   return { batch: { events, cursor: encodeCursor(cursor) }, notes };
 }
 
+/**
+ * Re-requests the bodies an earlier walk did not get. A UID the server no
+ * longer lists was expunged before it could be read: nothing was emitted for
+ * it, so it simply leaves the hole list without a tombstone.
+ */
+async function retryPending(
+  session: ImapSession,
+  plan: FolderPlan,
+  maxMessageBytes: number,
+  observedAt: string,
+  alreadyEmitted: number,
+  into: CaptureEventInput[],
+): Promise<void> {
+  const entry = plan.entry;
+  let pending = parseSet(entry.pending);
+  if (pending.length === 0) return;
+  for (const piece of chunk(parseSet(entry.pending), BODY_FETCH)) {
+    if (alreadyEmitted + into.length >= BATCH) break;
+    const summaries = await session.fetchSummaries(piece);
+    const present = new Set(summaries.map((summary) => summary.uid));
+    for (const uid of uids(parseSet(piece))) {
+      if (!present.has(uid)) pending = removeUid(pending, uid);
+    }
+    const room = BATCH - (alreadyEmitted + into.length);
+    const selected = summaries.slice(0, room);
+    const bodies = await fetchBodiesFor(session, selected, maxMessageBytes);
+    for (const summary of selected) {
+      const body = bodies.get(summary.uid);
+      if (body === undefined) continue;
+      into.push(
+        messageEvent({
+          folderWire: plan.wire,
+          folderDisplay: plan.display,
+          uidvalidity: entry.uidvalidity,
+          uid: summary.uid,
+          internaldate: summary.internaldate,
+          size: summary.size,
+          raw: body.raw,
+          section: body.section,
+          observedAt,
+        }),
+      );
+      entry.known = formatSet(addUid(parseSet(entry.known), summary.uid));
+      pending = removeUid(pending, summary.uid);
+    }
+  }
+  entry.pending = formatSet(pending);
+}
+
 async function pageFolder(
   session: ImapSession,
   plan: FolderPlan,
@@ -177,9 +253,8 @@ async function pageFolder(
   observedAt: string,
   alreadyEmitted: number,
   into: CaptureEventInput[],
-): Promise<number> {
+): Promise<void> {
   const entry = plan.entry;
-  let withheld = 0;
   while (!entry.done && alreadyEmitted + into.length < BATCH) {
     const windowEnd = Math.min(entry.scan_from + WINDOW - 1, entry.uidnext - 1);
     // `n:*` is never used for scanning: a server answers it with the last
@@ -195,9 +270,12 @@ async function pageFolder(
     for (const summary of selected) {
       const body = bodies.get(summary.uid);
       if (body === undefined) {
-        // The UID stays out of `known`: nothing was emitted for it, so a later
-        // sync must not tombstone a message the ledger never saw.
-        withheld += 1;
+        // The UID stays out of `known` (nothing was emitted for it, so a later
+        // sync must not tombstone it) and goes on the retry list instead, or
+        // the scan would walk past the only handle the message has.
+        if (countUids(parseSet(entry.pending)) < MAX_PENDING) {
+          entry.pending = formatSet(addUid(parseSet(entry.pending), summary.uid));
+        }
         continue;
       }
       into.push(
@@ -222,9 +300,8 @@ async function pageFolder(
         ? lastSelected.uid + 1
         : windowEnd + 1;
     entry.done = entry.scan_from >= entry.uidnext;
-    if (truncated) return withheld;
+    if (truncated) return;
   }
-  return withheld;
 }
 
 /**

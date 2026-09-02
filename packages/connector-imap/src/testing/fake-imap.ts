@@ -120,6 +120,11 @@ export class FakeImapServer {
     this.withheld.add(`${wire}\u0001${uid}`);
   }
 
+  /** Hands the body back, the way a server does once the fault clears. */
+  restoreBody(wire: string, uid: number): void {
+    this.withheld.delete(`${wire}\u0001${uid}`);
+  }
+
   /** Re-numbers a mailbox the way a restored server does. */
   resetUidValidity(wire: string): void {
     const folder = this.folder(wire);

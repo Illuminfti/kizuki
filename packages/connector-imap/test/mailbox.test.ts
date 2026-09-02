@@ -209,7 +209,7 @@ describe("sync", () => {
     expect(second.notes).toEqual(["uidvalidity changed: INBOX"]);
   });
 
-  test("a body the server withholds is reported, not silently dropped", async () => {
+  test("a body the server withholds is retried, not walked past", async () => {
     const server = new FakeImapServer([folder("INBOX", 3)]);
     const walkDeps = deps(server, state(["INBOX"]));
     server.withholdBody("INBOX", 2);
@@ -218,13 +218,43 @@ describe("sync", () => {
     expect(uidsOf(first.batch.events)).toEqual([1, 3]);
     expect(first.notes).toEqual(["message bodies not returned: INBOX (1)"]);
 
-    // The UID never entered `known`, so no tombstone claims it was deleted.
-    expect(decodeCursor(first.batch.cursor ?? "").folders["INBOX"]?.known).toBe(
-      "1,3",
-    );
+    // The UID never entered `known`, so no tombstone claims it was deleted;
+    // it waits on the retry list instead, which is the only handle left on it.
+    const held = decodeCursor(first.batch.cursor ?? "").folders["INBOX"];
+    expect(held?.known).toBe("1,3");
+    expect(held?.pending).toBe("2");
+
     const second = await walkMailboxes(walkDeps, first.batch.cursor, "sync");
     expect(second.batch.events).toEqual([]);
+    expect(second.notes).toEqual(["message bodies not returned: INBOX (1)"]);
+
+    server.restoreBody("INBOX", 2);
+    const third = await walkMailboxes(walkDeps, second.batch.cursor, "sync");
+    expect(uidsOf(third.batch.events)).toEqual([2]);
+    expect(third.notes).toEqual([]);
+    const healed = decodeCursor(third.batch.cursor ?? "").folders["INBOX"];
+    expect(healed?.known).toBe("1:3");
+    expect(healed?.pending).toBe("");
+  });
+
+  test("a message expunged before its body arrived leaves the retry list", async () => {
+    const server = new FakeImapServer([folder("INBOX", 3)]);
+    const walkDeps = deps(server, state(["INBOX"]));
+    server.withholdBody("INBOX", 2);
+
+    const first = await walkMailboxes(walkDeps, null, "backfill");
+    expect(decodeCursor(first.batch.cursor ?? "").folders["INBOX"]?.pending).toBe(
+      "2",
+    );
+
+    server.expunge("INBOX", 2);
+    const second = await walkMailboxes(walkDeps, first.batch.cursor, "sync");
+    // Nothing was ever emitted for it, so its disappearance is not a deletion.
+    expect(second.batch.events).toEqual([]);
     expect(second.notes).toEqual([]);
+    expect(
+      decodeCursor(second.batch.cursor ?? "").folders["INBOX"]?.pending,
+    ).toBe("");
   });
 
   test("a decorated body section is still read as the body", async () => {

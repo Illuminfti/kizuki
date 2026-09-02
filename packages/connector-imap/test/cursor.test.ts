@@ -6,7 +6,14 @@ import type { ImapCursor } from "../src/cursor";
 const CURSOR: ImapCursor = {
   schema: "kizuki.imap-cursor/v1",
   folders: {
-    INBOX: { uidvalidity: 7, scan_from: 341, uidnext: 901, known: "1:340", done: false },
+    INBOX: {
+      uidvalidity: 7,
+      scan_from: 341,
+      uidnext: 901,
+      known: "1:340",
+      pending: "342",
+      done: false,
+    },
   },
 };
 
@@ -14,6 +21,17 @@ describe("cursor", () => {
   test("round-trips", () => {
     expect(decodeCursor(encodeCursor(CURSOR))).toEqual(CURSOR);
     expect(decodeCursor(encodeCursor(emptyCursor()))).toEqual(emptyCursor());
+  });
+
+  test("a cursor written before retries existed decodes with no holes", () => {
+    const { pending: _dropped, ...older } = CURSOR.folders["INBOX"] ?? {
+      pending: "",
+    };
+    const raw = JSON.stringify({
+      schema: "kizuki.imap-cursor/v1",
+      folders: { INBOX: older },
+    });
+    expect(decodeCursor(raw).folders["INBOX"]?.pending).toBe("");
   });
 
   test("rejects any deviation", () => {
@@ -37,6 +55,10 @@ describe("cursor", () => {
       JSON.stringify({
         schema: "kizuki.imap-cursor/v1",
         folders: { INBOX: { ...CURSOR.folders["INBOX"], known: "1:" } },
+      }),
+      JSON.stringify({
+        schema: "kizuki.imap-cursor/v1",
+        folders: { INBOX: { ...CURSOR.folders["INBOX"], pending: 3 } },
       }),
     ];
     for (const raw of deviations) {

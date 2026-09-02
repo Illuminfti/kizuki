@@ -12,6 +12,12 @@ export interface ImapFolderCursor {
   uidnext: number;
   /** Sequence set of UIDs already emitted; `""` means none. */
   known: string;
+  /**
+   * Sequence set of UIDs the server listed but whose body it did not hand
+   * over. They are retried on every later walk; without them a transient
+   * FETCH failure would lose a message with nothing left to find it by.
+   */
+  pending: string;
   done: boolean;
 }
 
@@ -25,6 +31,7 @@ const FOLDER_FIELDS = [
   "scan_from",
   "uidnext",
   "known",
+  "pending",
   "done",
 ] as const;
 
@@ -69,11 +76,15 @@ export function decodeCursor(raw: Cursor): ImapCursor {
     }
     if (typeof value["done"] !== "boolean") invalid("done");
     if (typeof value["known"] !== "string") invalid("known");
+    // A cursor written before retries existed simply has no holes recorded.
+    const pending = value["pending"] ?? "";
+    if (typeof pending !== "string") invalid("pending");
     decoded[folder] = {
       uidvalidity: positiveInteger(value["uidvalidity"], "uidvalidity"),
       scan_from: positiveInteger(value["scan_from"], "scan_from"),
       uidnext: positiveInteger(value["uidnext"], "uidnext"),
       known: formatSet(parseSet(value["known"])),
+      pending: formatSet(parseSet(pending)),
       done: value["done"],
     };
   }
