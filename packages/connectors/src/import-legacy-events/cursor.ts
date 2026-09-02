@@ -141,4 +141,3 @@ export function decodeCursor(cursor: Cursor): LegacyEventsCursor {
     run: decodeTotals(parsed["run"], position),
   };
 }
-

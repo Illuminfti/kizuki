@@ -293,7 +293,6 @@ export function createLegacyEventsConnector(
   return new LegacyEventsConnector(config);
 }
 
-
 export {
   IDENTIFIER,
   KIND,
