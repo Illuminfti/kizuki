@@ -292,8 +292,28 @@ describe("authority is re-read on every served call", () => {
 
     const row = listAudit(live.db, "search-only", { limit: 1 })[0];
     const shaped = row?.query_shape["frontmatter"] as Record<string, unknown>;
-    expect(Object.keys(shaped)).toHaveLength(33);
-    expect(shaped["+truncated"]).toBe(968);
-    expect(JSON.stringify(row?.query_shape).length).toBeLessThan(4_096);
+    expect(Object.keys(shaped)).toHaveLength(32);
+    expect(row?.query_shape["+truncated"]).toBe(968);
+    expect(JSON.stringify(row?.query_shape).length).toBeLessThan(8_192);
+  });
+
+  test("the per-key caps cannot multiply into a large audit row", () => {
+    const ctx = live.agent("search-only");
+    const wide: Record<string, string[]> = {};
+    for (let index = 0; index < 200; index += 1) {
+      wide[`key-${index}`] = Array.from(
+        { length: 200 },
+        (_unused, entry) => `value-${index}-${entry}`,
+      );
+    }
+    expect(
+      refusal(() =>
+        gate(ctx, "propose", { frontmatter: wide, provenance: [] }, emptyRun),
+      ).code,
+    ).toBe("tool_not_granted");
+
+    const row = listAudit(live.db, "search-only", { limit: 1 })[0];
+    expect(JSON.stringify(row?.query_shape).length).toBeLessThan(20_000);
+    expect(row?.query_shape["+truncated"]).toBeGreaterThan(0);
   });
 });

@@ -22,12 +22,18 @@ const AUDIT_DENIAL_CAP = 200;
 /**
  * A refused call is audited before its arguments are validated, so the bag
  * that reaches the row is whatever the caller sent. These caps keep one row
- * small enough to store and read; the markers say what was dropped.
+ * small enough to store and read; the count says how much was dropped.
  */
 const AUDIT_KEY_CAP = 32;
 const AUDIT_ITEM_CAP = 64;
 const AUDIT_DEPTH_CAP = 3;
-/** Refused by the frontmatter key rule, so it can never collide with a real key. */
+/** A ceiling on the whole bag, so the three caps above cannot multiply. */
+const AUDIT_LEAF_CAP = 192;
+/**
+ * No tool argument is named this: every input schema is a closed object of
+ * fixed keys, so the marker can never be mistaken for something the caller
+ * sent. It is a number, which the audit layer records rather than hashes.
+ */
 const TRUNCATION_KEY = "+truncated";
 
 export interface Served<T> {
@@ -62,35 +68,48 @@ export function auditArguments(args: object): Record<string, unknown> {
   return shaped;
 }
 
-function boundedValue(value: unknown, depth: number): unknown {
+interface Budget {
+  leaves: number;
+  dropped: number;
+}
+
+function boundedValue(value: unknown, depth: number, budget: Budget): unknown {
+  if (budget.leaves <= 0 || depth > AUDIT_DEPTH_CAP) {
+    budget.dropped += 1;
+    return null;
+  }
   if (Array.isArray(value)) {
-    if (depth === AUDIT_DEPTH_CAP) return `${TRUNCATION_KEY}:depth`;
-    const kept = value
+    budget.dropped += Math.max(0, value.length - AUDIT_ITEM_CAP);
+    return value
       .slice(0, AUDIT_ITEM_CAP)
-      .map((entry) => boundedValue(entry, depth + 1));
-    if (value.length <= AUDIT_ITEM_CAP) return kept;
-    return [...kept, `${TRUNCATION_KEY}:${value.length - AUDIT_ITEM_CAP}`];
+      .map((entry) => boundedValue(entry, depth + 1, budget));
   }
   if (isPlainObject(value)) {
-    if (depth === AUDIT_DEPTH_CAP) return { [TRUNCATION_KEY]: "depth" };
     const entries = Object.entries(value);
+    budget.dropped += Math.max(0, entries.length - AUDIT_KEY_CAP);
     const shaped: Record<string, unknown> = {};
     for (const [key, nested] of entries.slice(0, AUDIT_KEY_CAP)) {
-      shaped[key] = boundedValue(nested, depth + 1);
-    }
-    if (entries.length > AUDIT_KEY_CAP) {
-      shaped[TRUNCATION_KEY] = entries.length - AUDIT_KEY_CAP;
+      shaped[key] = boundedValue(nested, depth + 1, budget);
     }
     return shaped;
   }
+  budget.leaves -= 1;
   return value;
 }
 
-/** Bounds the row a caller can grow: key count, array length and nesting. */
+/**
+ * Bounds the row a caller can grow: key count, array length, nesting, and a
+ * ceiling on the whole bag. A dropped value becomes null and the count of
+ * them rides on one extra key, so the row stays honest about what is missing.
+ */
 function boundedArguments(
   args: Record<string, unknown>,
 ): Record<string, unknown> {
-  return boundedValue(args, 0) as Record<string, unknown>;
+  const budget: Budget = { leaves: AUDIT_LEAF_CAP, dropped: 0 };
+  const shaped = boundedValue(args, 0, budget) as Record<string, unknown>;
+  return budget.dropped === 0
+    ? shaped
+    : { ...shaped, [TRUNCATION_KEY]: budget.dropped };
 }
 
 export function principalName(principal: Principal): string {
