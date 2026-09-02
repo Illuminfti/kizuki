@@ -225,6 +225,44 @@ describe("exdates, rdates and bounds", () => {
     ]);
   });
 
+  test("a month without the anchor day is skipped, never clamped", () => {
+    expect(starts("FREQ=MONTHLY;COUNT=5", "20260131T090000")).toEqual([
+      "20260131T090000",
+      "20260331T090000",
+      "20260531T090000",
+      "20260731T090000",
+      "20260831T090000",
+    ]);
+    expect(starts("FREQ=MONTHLY;BYMONTHDAY=31;COUNT=3", "20260131T090000")).toEqual([
+      "20260131T090000",
+      "20260331T090000",
+      "20260531T090000",
+    ]);
+    expect(
+      starts("FREQ=MONTHLY;BYMONTHDAY=-1;COUNT=3", "20260131T090000"),
+    ).toEqual([
+      "20260131T090000",
+      "20260228T090000",
+      "20260331T090000",
+    ]);
+  });
+
+  test("a leap-day anchor recurs only in leap years", () => {
+    const window = { windowEnd: "20331231T000000" };
+    expect(starts("FREQ=YEARLY;COUNT=3", "20240229T090000", window)).toEqual([
+      "20240229T090000",
+      "20280229T090000",
+      "20320229T090000",
+    ]);
+    expect(
+      starts(
+        "FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29;COUNT=2",
+        "20240229T090000",
+        window,
+      ),
+    ).toEqual(["20240229T090000", "20280229T090000"]);
+  });
+
   test("the step guard truncates rather than spinning", () => {
     const result = expand(rule("FREQ=DAILY"), parseLocal("20260301T100000"), {
       windowEnd: parseLocal("20990101T000000"),

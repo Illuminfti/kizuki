@@ -1,5 +1,5 @@
 import type { IcsInstant, LocalDateTime } from "./datetime";
-import { formatLocal, localToMs, msToLocal, parseLocal } from "./datetime";
+import { daysInMonth, formatLocal, localToMs, msToLocal, parseLocal } from "./datetime";
 
 export type Weekday = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 
@@ -173,10 +173,6 @@ function withDay(
   return { ...base, year, month, day };
 }
 
-function daysInMonth(year: number, month: number): number {
-  return new Date(Date.UTC(year, month, 0)).getUTCDate();
-}
-
 function monthCandidates(
   rule: RecurrenceRule,
   base: LocalDateTime,
@@ -209,7 +205,12 @@ function monthCandidates(
       if (day !== undefined) days.add(day);
     }
   }
-  if (days.size === 0) days.add(Math.min(base.day, total));
+  // RFC 5545 §3.3.10: an instance whose civil date does not exist is skipped,
+  // never clamped onto a neighbouring day. With an explicit BY* constraint the
+  // empty set is the answer; without one the anchor day has to exist.
+  const constrained =
+    rule.bymonthday !== undefined || rule.byday !== undefined;
+  if (days.size === 0 && !constrained && base.day <= total) days.add(base.day);
   return [...days]
     .sort((a, b) => a - b)
     .map((day) => withDay(base, year, month, day));
@@ -289,7 +290,9 @@ export function expand(
       candidates = months.flatMap((month) =>
         rule.byday !== undefined || rule.bymonthday !== undefined
           ? monthCandidates(rule, dtstart, cursor.year, month)
-          : [withDay(dtstart, cursor.year, month, dtstart.day)],
+          : dtstart.day <= daysInMonth(cursor.year, month)
+            ? [withDay(dtstart, cursor.year, month, dtstart.day)]
+            : [],
       );
     }
 
