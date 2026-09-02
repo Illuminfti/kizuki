@@ -1,3 +1,5 @@
+> **VOID as written, 2026-09-02.** Reissue against rfcs/0002-autonomous-canon.md.
+
 # Lane: serve-daemon — `kizuki serve`: loopback daemon with a receipted scheduler, sync loops, the daily brief, notifiers and the standing MCP endpoint
 
 Packages: `packages/core` (NEW directory `src/serve/`, one additive export in
