@@ -152,6 +152,58 @@ describe("backfill paging", () => {
       expect(event.text).not.toContain("Body of");
     }
   });
+
+  test("an oversized multipart message keeps its attachment references", async () => {
+    const raw = encoder.encode(
+      [
+        "From: Ada <ada@acme.example>",
+        "To: grace@acme.example",
+        "Subject: Quarterly export",
+        "Date: Sun, 01 Mar 2026 08:00:00 +0000",
+        'Content-Type: multipart/mixed; boundary="edge"',
+        "",
+        "--edge",
+        "Content-Type: text/plain; charset=utf-8",
+        "",
+        "See attached.",
+        "--edge",
+        'Content-Type: application/zip; name="export.zip"',
+        'Content-Disposition: attachment; filename="export.zip"',
+        "",
+        "PK",
+        "--edge--",
+        "",
+      ].join("\r\n"),
+    );
+    const server = new FakeImapServer([
+      {
+        wire: "INBOX",
+        attributes: ["\\HasNoChildren"],
+        uidvalidity: 4,
+        uidnext: 2,
+        messages: [{ uid: 1, internaldate: "01-Mar-2026 08:00:00 +0000", raw }],
+      },
+    ]);
+    const result = await walkMailboxes(
+      deps(server, state(["INBOX"], { max_message_bytes: 100 })),
+      null,
+      "backfill",
+    );
+    const event = result.batch.events[0];
+    expect(event?.metadata["body_omitted"]).toBe("size");
+    // The top-level headers describe a container, not its parts; without the
+    // structure the server describes, the attachment would simply vanish.
+    expect(event?.attachments).toEqual([
+      {
+        attachment_id: "2",
+        media_type: "application/zip",
+        filename: "export.zip",
+      },
+    ]);
+    expect(server.received.some((line) => line.includes("BODYSTRUCTURE"))).toBe(
+      true,
+    );
+  });
 });
 
 describe("sync", () => {

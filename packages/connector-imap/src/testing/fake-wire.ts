@@ -1,3 +1,6 @@
+import { parseMessage } from "../mime/parse";
+import type { MimePart } from "../mime/parse";
+
 const encoder = new TextEncoder();
 
 /**
@@ -91,4 +94,43 @@ export function headerBytes(raw: Uint8Array): Uint8Array {
     if (blank || index === 0) return raw.slice(0, index + 1);
   }
   return raw;
+}
+
+function quotedString(value: string): string {
+  return `"${value.replace(/(["\\])/g, "\\$1")}"`;
+}
+
+function paramList(params: Record<string, string>): string {
+  const entries = Object.entries(params);
+  return entries.length === 0
+    ? "NIL"
+    : `(${entries.map(([key, value]) => `${quotedString(key)} ${quotedString(value)}`).join(" ")})`;
+}
+
+function dispositionText(part: MimePart): string {
+  return part.disposition === null
+    ? "NIL"
+    : `(${quotedString(part.disposition.type)} ${paramList(part.disposition.params)})`;
+}
+
+/**
+ * RFC 3501 section 7.4.2 puts the extension data after a different number of
+ * fields for each shape of part, and the reader depends on that.
+ */
+function renderPart(part: MimePart): string {
+  const { type, subtype, params } = part.contentType;
+  if (part.children.length > 0) {
+    return `(${part.children.map(renderPart).join("")} ${quotedString(subtype)} ${paramList(params)} ${dispositionText(part)})`;
+  }
+  const head = `${quotedString(type)} ${quotedString(subtype)} ${paramList(params)} NIL NIL "7bit" ${part.body.byteLength}`;
+  if (type === "text") return `(${head} 1 NIL ${dispositionText(part)})`;
+  if (type === "message" && subtype === "rfc822") {
+    return `(${head} NIL NIL 1 NIL ${dispositionText(part)})`;
+  }
+  return `(${head} NIL ${dispositionText(part)})`;
+}
+
+/** The `BODYSTRUCTURE` a real server would send for these bytes. */
+export function bodyStructure(raw: Uint8Array): string {
+  return renderPart(parseMessage(raw).root);
 }

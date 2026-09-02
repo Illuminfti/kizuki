@@ -4,7 +4,8 @@ import { collectSubjects } from "./addresses";
 import { htmlToText } from "./mime/html";
 import { headerValue } from "./mime/headers";
 import { decodeHeaderText, parseMessage, partText } from "./mime/parse";
-import type { MimePart } from "./mime/parse";
+import type { ContentDisposition, ContentType, MimePart } from "./mime/parse";
+import type { StructurePart } from "./mime/structure";
 import { decodeModifiedUtf7 } from "./imap/utf7";
 import {
   MAX_FILENAME_CHARS,
@@ -58,6 +59,8 @@ export interface MessageEventInput {
   size: number;
   raw: Uint8Array;
   section: "" | "HEADER";
+  /** The parts of an oversized message, which its headers alone cannot name. */
+  structure?: StructurePart[];
   observedAt: string;
 }
 
@@ -121,7 +124,18 @@ function walkParts(part: MimePart, into: MimePart[] = []): MimePart[] {
   return into;
 }
 
-function isAttachment(part: MimePart): boolean {
+/**
+ * What deciding "this is an attachment" needs. A full capture reads it off the
+ * parsed message and a header-only one off `BODYSTRUCTURE`; both answer the
+ * same questions, so both go through one rule.
+ */
+interface AttachmentSource {
+  path: string;
+  contentType: ContentType;
+  disposition: ContentDisposition | null;
+}
+
+function isAttachment(part: AttachmentSource): boolean {
   if (part.disposition?.type === "attachment") return true;
   // An enclosed message is an attachment whatever it claims: the walk never
   // recurses into one, so anything else would drop it from the event entirely.
@@ -136,7 +150,7 @@ function isAttachment(part: MimePart): boolean {
   return named !== undefined && part.contentType.type !== "text";
 }
 
-function attachmentName(part: MimePart, fallbacks: string[]): string {
+function attachmentName(part: AttachmentSource, fallbacks: string[]): string {
   const raw =
     part.disposition?.params["filename"] ??
     part.contentType.params["name"] ??
@@ -145,7 +159,7 @@ function attachmentName(part: MimePart, fallbacks: string[]): string {
   return stripControls(decoded, MAX_FILENAME_CHARS);
 }
 
-function mediaType(part: MimePart): string {
+function mediaType(part: AttachmentSource): string {
   const { type, subtype } = part.contentType;
   if (type.length === 0 || subtype.length === 0)
     return "application/octet-stream";
@@ -219,8 +233,21 @@ export function messageEvent(input: MessageEventInput): CaptureEventInput {
     input.observedAt;
 
   const attachments: AttachmentRef[] = [];
-  for (const part of walkParts(parsed.root)) {
-    if (part.children.length > 0) continue;
+  // An oversized multipart message has no bodies to walk, and its top-level
+  // headers say nothing about the parts below them, so its refs come from the
+  // structure the server described. Without one, the headers alone still
+  // describe a single-part message honestly.
+  const structure = input.structure ?? [];
+  const sources: { part: AttachmentSource; bytes: number | null }[] =
+    headerOnly && structure.length > 0
+      ? structure.map((part) => ({ part, bytes: null }))
+      : walkParts(parsed.root)
+          .filter((part) => part.children.length === 0)
+          .map((part) => ({
+            part,
+            bytes: headerOnly ? null : part.body.byteLength,
+          }));
+  for (const { part, bytes } of sources) {
     if (!isAttachment(part)) continue;
     const filename = attachmentName(part, fallbacks);
     attachments.push({
@@ -228,7 +255,7 @@ export function messageEvent(input: MessageEventInput): CaptureEventInput {
       attachment_id: part.path.length === 0 ? "1" : part.path,
       media_type: mediaType(part),
       ...(filename.length > 0 ? { filename } : {}),
-      ...(headerOnly ? {} : { byte_size: part.body.byteLength }),
+      ...(bytes === null ? {} : { byte_size: bytes }),
     });
   }
 

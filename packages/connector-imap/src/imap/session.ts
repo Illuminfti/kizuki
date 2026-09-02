@@ -7,6 +7,8 @@ import type { ClientOptions } from "./client";
 import { tokenText } from "./tokenizer";
 import type { ImapResponse, Token } from "./tokenizer";
 import { folderLabel, parseInternalDate } from "../events";
+import { structureParts } from "../mime/structure";
+import type { StructurePart } from "../mime/structure";
 
 export const MAX_BODY_FETCH = 20;
 
@@ -270,6 +272,39 @@ export class ImapSession {
       );
     }
     return bodies;
+  }
+
+  /**
+   * The part list of a message without its bodies. A message over
+   * `max_message_bytes` is captured header-only, and its top-level headers say
+   * nothing about the parts below them, so this is what keeps its attachment
+   * references from disappearing.
+   */
+  async fetchStructures(
+    uids: number[],
+  ): Promise<Map<number, StructurePart[]>> {
+    const structures = new Map<number, StructurePart[]>();
+    if (uids.length === 0) return structures;
+    if (uids.length > MAX_BODY_FETCH) {
+      throw protocolError("structure fetch exceeds the per-command bound");
+    }
+    const result = await this.client.send("UID FETCH", [
+      atom(uids.join(",")),
+      atom("(BODYSTRUCTURE)"),
+    ]);
+    const wanted = new Set(uids);
+    for (const items of fetchLists(result.untagged)) {
+      const fields = fetchFields(items);
+      if (!fields.has("UID")) continue;
+      const uid = requiredInteger(fields, "UID", "uid", 1);
+      const token = fields.get("BODYSTRUCTURE");
+      if (token === undefined) continue;
+      if (!wanted.has(uid)) {
+        throw protocolError("server sent an unrequested structure");
+      }
+      structures.set(uid, structureParts(token));
+    }
+    return structures;
   }
 
   async search(criteria: string): Promise<number[]> {

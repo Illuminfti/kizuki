@@ -1,5 +1,6 @@
 import {
   ascii,
+  bodyStructure,
   headerBytes,
   joined,
   parseRanges,
@@ -317,6 +318,14 @@ export class FakeImapServer {
         items.includes("BODY.PEEK[HEADER]") || items.includes("BODY.PEEK[]");
       if (bodyWanted && this.withheld.has(`${folder.wire}\u0001${message.uid}`)) {
         lines.push(ascii(`* ${sequence} FETCH (UID ${message.uid})\r\n`));
+        return;
+      }
+      if (items.includes("BODYSTRUCTURE")) {
+        lines.push(
+          ascii(
+            `* ${sequence} FETCH (UID ${message.uid} BODYSTRUCTURE ${bodyStructure(message.raw)})\r\n`,
+          ),
+        );
         return;
       }
       if (items.includes("BODY.PEEK[HEADER]")) {

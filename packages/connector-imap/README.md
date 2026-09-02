@@ -17,6 +17,8 @@ Per configured folder, in configured order:
   HTML part rendered as text)
 - `From`, `To` and `Cc` as subjects; `Reply-To` and group syntax are ignored
 - attachment **refs** only: section path, media type, filename, byte size.
+  A message captured header-only keeps its refs, read from the part list the
+  server describes; only the byte sizes are missing.
   Nothing is ever downloaded or stored.
 - message metadata: folder, UID, UIDVALIDITY, `Message-ID`, `In-Reply-To`,
   `References`, `Date`, INTERNALDATE, size, `List-Id`

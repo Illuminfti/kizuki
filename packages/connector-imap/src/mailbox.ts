@@ -4,6 +4,7 @@ import type { ImapCursor, ImapFolderCursor } from "./cursor";
 import { folderLabel, messageEvent, tombstoneEvent } from "./events";
 import { ImapSession } from "./imap/session";
 import type { MessageSummary, SessionOptions } from "./imap/session";
+import type { StructurePart } from "./mime/structure";
 import { MAX_COMMAND_BYTES } from "./imap/client";
 import { MAX_LINE_BYTES } from "./imap/tokenizer";
 import type { ImapState } from "./state";
@@ -63,12 +64,19 @@ function group<T>(items: T[], size: number): T[][] {
   return groups;
 }
 
+interface FetchedBody {
+  raw: Uint8Array;
+  section: "" | "HEADER";
+  /** Only for a header-only capture, where the parts cannot be walked. */
+  structure?: StructurePart[];
+}
+
 async function fetchBodiesFor(
   session: ImapSession,
   summaries: MessageSummary[],
   maxMessageBytes: number,
-): Promise<Map<number, { raw: Uint8Array; section: "" | "HEADER" }>> {
-  const bodies = new Map<number, { raw: Uint8Array; section: "" | "HEADER" }>();
+): Promise<Map<number, FetchedBody>> {
+  const bodies = new Map<number, FetchedBody>();
   const full = summaries.filter((summary) => summary.size <= maxMessageBytes);
   const headerOnly = summaries.filter(
     (summary) => summary.size > maxMessageBytes,
@@ -82,12 +90,18 @@ async function fetchBodiesFor(
     for (const [uid, raw] of fetched) bodies.set(uid, { raw, section: "" });
   }
   for (const batch of group(headerOnly, BODY_FETCH)) {
-    const fetched = await session.fetchBodies(
-      batch.map((summary) => summary.uid),
-      "HEADER",
-    );
-    for (const [uid, raw] of fetched)
-      bodies.set(uid, { raw, section: "HEADER" });
+    const ids = batch.map((summary) => summary.uid);
+    const fetched = await session.fetchBodies(ids, "HEADER");
+    // The parts of a message too large to fetch are described, never
+    // downloaded: the event still names what it carried.
+    const structures = await session.fetchStructures(ids);
+    for (const [uid, raw] of fetched) {
+      bodies.set(uid, {
+        raw,
+        section: "HEADER",
+        structure: structures.get(uid) ?? [],
+      });
+    }
   }
   return bodies;
 }
@@ -260,6 +274,7 @@ async function retryPending(
           size: summary.size,
           raw: body.raw,
           section: body.section,
+          ...(body.structure !== undefined ? { structure: body.structure } : {}),
           observedAt,
         }),
       );
@@ -317,6 +332,7 @@ async function pageFolder(
           size: summary.size,
           raw: body.raw,
           section: body.section,
+          ...(body.structure !== undefined ? { structure: body.structure } : {}),
           observedAt,
         }),
       );
