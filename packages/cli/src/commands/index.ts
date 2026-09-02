@@ -5,6 +5,7 @@ import { doctorCommand } from "./doctor";
 import { exportCommand } from "./export";
 import { importCommand } from "./import";
 import { initCommand } from "./init";
+import { modelsCommand } from "./models";
 import { promoteCommand } from "./promote";
 import { purgeCommand } from "./purge";
 import { queryCommand } from "./query";
@@ -36,6 +37,7 @@ export const COMMANDS: readonly Command[] = [
   backfillCommand,
   syncCommand,
   importCommand,
+  modelsCommand,
   auditCommand,
   undoCommand,
   reviewCommand,

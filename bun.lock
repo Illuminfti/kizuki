@@ -18,6 +18,7 @@
       "dependencies": {
         "@kizuki/connectors": "workspace:*",
         "@kizuki/core": "workspace:*",
+        "@kizuki/embed-gguf": "workspace:*",
         "@kizuki/tui": "workspace:*",
       },
     },
@@ -36,6 +37,12 @@
     },
     "packages/core": {
       "name": "@kizuki/core",
+    },
+    "packages/embed-gguf": {
+      "name": "@kizuki/embed-gguf",
+      "dependencies": {
+        "@kizuki/core": "workspace:*",
+      },
     },
     "packages/llm": {
       "name": "@kizuki/llm",
@@ -58,6 +65,8 @@
     "@kizuki/connectors": ["@kizuki/connectors@workspace:packages/connectors"],
 
     "@kizuki/core": ["@kizuki/core@workspace:packages/core"],
+
+    "@kizuki/embed-gguf": ["@kizuki/embed-gguf@workspace:packages/embed-gguf"],
 
     "@kizuki/llm": ["@kizuki/llm@workspace:packages/llm"],
 

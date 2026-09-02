@@ -9,6 +9,7 @@
   "dependencies": {
     "@kizuki/connectors": "workspace:*",
     "@kizuki/core": "workspace:*",
+    "@kizuki/embed-gguf": "workspace:*",
     "@kizuki/tui": "workspace:*"
   }
 }
