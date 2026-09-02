@@ -75,12 +75,18 @@ function resolve(ctx: ServeContext, target: CorrectTarget | undefined): Claim[] 
   }
 
   if (target.claim_id !== undefined) {
-    const claim = getClaim(ctx.db, identifier("target.claim_id", target.claim_id));
+    const claim = getClaim(
+      ctx.db,
+      identifier("target.claim_id", target.claim_id),
+    );
     if (claim === null || claim.status !== "live") {
       throw refuse("target.claim_id", "names no live claim");
     }
     if (claim.claim_key === null) {
-      throw refuse("target.claim_id", "names a claim with no predicate to correct");
+      throw refuse(
+        "target.claim_id",
+        "names a claim with no predicate to correct",
+      );
     }
     return [claim];
   }
@@ -146,7 +152,9 @@ function recordStatement(
   // accepted instant would otherwise make every repeat a new record.
   const existing = ctx.db
     .query<{ event_id: string }, [string, string]>(
-      "SELECT event_id FROM events WHERE connector_id = ? AND source_record_id = ? ORDER BY accepted_at LIMIT 1",
+      `SELECT event_id FROM events
+         WHERE connector_id = ? AND source_record_id = ?
+         ORDER BY accepted_at LIMIT 1`,
     )
     .get(CORRECTION_CONNECTOR, sourceRecordId);
   if (existing !== null) return existing.event_id;
@@ -184,7 +192,9 @@ function ambiguousAnswer(groups: Map<string, Claim[]>): CorrectData {
       claim_key,
       claim_ids: claims.map((claim) => claim.claim_id),
     })),
-    answer: `Nothing was corrected: ${groups.size} claim groups match that subject. Name one with claim_id or claim_key.`,
+    answer:
+      `Nothing was corrected: ${groups.size} claim groups match that ` +
+      "subject. Name one with claim_id or claim_key.",
   };
 }
 
@@ -269,7 +279,8 @@ export async function serveCorrect(
           ? "That correction was already recorded; nothing changed."
           : superseded.length === 0
             ? "Recorded the correction. Nothing live contradicted it."
-            : `Recorded the correction and retired ${superseded.length} claim(s) about ${subject}.`;
+            : `Recorded the correction and retired ${superseded.length} ` +
+              `claim(s) about ${subject}.`;
 
       return {
         canon: [],
@@ -282,7 +293,12 @@ export async function serveCorrect(
           ambiguous: [],
           answer: `${answer} Relayed by ${principalName(ctx.principal)}.`,
         },
-        audit_ids: { claim_ids: [claim.claim_id, ...superseded.map((s) => s.claim_id)] },
+        audit_ids: {
+          claim_ids: [
+            claim.claim_id,
+            ...superseded.map((retired) => retired.claim_id),
+          ],
+        },
       };
     },
   );
