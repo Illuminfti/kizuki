@@ -41,11 +41,15 @@ export function failureFor(
   options: { login: boolean },
 ): KizukiError {
   const code = responseCode(text);
-  const mapped =
-    code !== null ? CODE_MAP[code] : options.login ? "unauthenticated" : undefined;
+  const mapped = code === null ? undefined : CODE_MAP[code];
+  // Only a LOGIN refused without any response code is a credential verdict.
+  // A server fault carrying an unmapped code during LOGIN is a fault, and
+  // telling the owner their password is wrong would send them the wrong way.
+  const fallback =
+    code === null && options.login ? "unauthenticated" : "protocol";
   const detail = sanitizeDetail(text);
   return new KizukiError(
-    mapped ?? (options.login ? "unauthenticated" : "protocol"),
+    mapped ?? fallback,
     detail.length > 0 ? detail : "server refused the command",
   );
 }

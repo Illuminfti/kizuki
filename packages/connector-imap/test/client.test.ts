@@ -281,6 +281,18 @@ describe("failure handling", () => {
     expect(failureFor(text, { login: false }).code).toBe(code);
   });
 
+  test("an unmapped code during LOGIN is a fault, not a credential verdict", () => {
+    expect(failureFor("[ALERT] mailbox is full", { login: true }).code).toBe(
+      "protocol",
+    );
+    expect(failureFor("[SERVERBUG] oops", { login: true }).code).toBe(
+      "protocol",
+    );
+    expect(failureFor("[LIMIT] too many", { login: true }).code).toBe(
+      "rate_limited",
+    );
+  });
+
   test("a codeless NO to LOGIN is unauthenticated, elsewhere protocol", () => {
     expect(failureFor("no such user", { login: true }).code).toBe(
       "unauthenticated",
