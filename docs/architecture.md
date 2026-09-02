@@ -9,27 +9,56 @@ agent harness brings its own loop and connects here as a first-class client.
    leaves a readable vault.
 2. Derived layers (search index, embeddings, graph) are rebuildable from the
    event ledger + canon with one command.
-3. Nothing writes canon except an owner-invoked promote. No scheduled path
-   may write canon — enforced by a test.
+3. Canon is written autonomously by the loop. Every canon write is a
+   receipted, reversible transaction carrying provenance (`event_ids` that
+   resolve in the ledger), confidence, a sensitivity label, a writer stamp,
+   the model reference when a model produced it, and before/after content
+   hashes. `kizuki undo <receipt>` reverses any write. There is no owner
+   review queue and no owner approval step — enforced by tests.
 4. Append-only event ledger; purge is physical deletion plus a receipt.
-5. Deterministic floor: capture, dedup, staging, search, review, and promote
-   all work with zero LLM configured. LLM is strictly additive.
+5. Deterministic floor: capture, dedup, the ledger, search, timeline,
+   context packets, audit and undo all work with zero models configured. A
+   configured model is required for canon writing only. With no model,
+   `kizuki doctor` reports `canon writing: off (no model configured)` and
+   the loop still syncs, ledgers, indexes and serves.
 6. Zero phone-home: the only network calls are user-configured connectors and
    the user-configured model endpoint.
 7. Captured content is attacker-controlled input. Serving surfaces separate
    canon prose from quoted capture and carry provenance.
 8. Fail closed: missing sensitivity label → not served; missing credentials →
    connector refuses; unknown agent → no access.
-9. Every scheduled rail emits a liveness receipt visible in `kizuki doctor`.
+9. Every scheduled rail emits a liveness receipt visible in `kizuki
+   doctor`. A rail is reported down when its receipt is stale, when its
+   service unit is absent, disabled or masked, or when its last runs
+   produced nothing for a rail that should produce. Absence is never read
+   as health.
 10. No fake surface: no registry entry, CLI verb, or README claim without a
     working implementation behind it.
+11. Owner correction is the highest evidence tier. It supersedes the
+    contradicted claim immediately, rewrites affected canon in the same
+    pass, needs no confirmation, and answers with a diff.
+12. Captured text is data, never instruction. Extraction runs with no
+    tools; instructions found inside captured text are never executed;
+    canon pages carry a `taint` field; serving keeps canon prose and quoted
+    capture in separate fields.
+13. Every replaceable component sits behind a versioned port contract in
+    `packages/core/src/contracts`, with a registry, a shared conformance
+    suite, and config-driven selection. No component reads another
+    component's storage.
+14. Purge is computable and verifiable across every store, including the
+    retrieval engine. `kizuki purge --verify <receipt>` prints an absence
+    proof per store, and an unresolved purge operation is a `doctor`
+    failure.
 
 ## Layers
 
 ```
-connectors → event ledger → staging proposals → owner review (TUI)
-          → canon vault (Markdown) → derived (FTS/embeddings/graph)
-          → serving (CLI · MCP · context packets) → proactive (serve daemon)
+connectors → event ledger → extraction (deterministic → model)
+          → claims (provenance · confidence · sensitivity · authority)
+          → canon vault (Markdown) via the receipted writer
+          → derived (retrieval port: lexical/vector/graph)
+          → serving (CLI · MCP · context packets)
+          → audit & undo (TUI) · proactive (kizuki serve)
 ```
 
 ## Contracts
@@ -59,15 +88,18 @@ interface CaptureEvent {
 Queue semantics: `accept` → `stored | duplicate | error`; dedupe on
 `(connector_id, source_record_id, content_hash)`; `event_id` collision with
 different content is an error, not a duplicate. Read path: `readSince`,
-`replay`. Tombstones cascade to open proposals automatically and to canon
-only through the owner's review queue.
+`replay`. Tombstones cascade to open claims automatically and to canon
+through the receipted writer.
 
-### kizuki.proposal/v1 — the only write path above the ledger
+### kizuki.claim/v1 — the working model and the write journal
 
-Entity / claim / edit / merge / deletion proposals with mandatory provenance
+Entity / claim / edit / merge / deletion records with mandatory provenance
 (`event_ids`), a `producer` stamp (`deterministic | llm | agent:<id>`), and
-idempotency by content hash. Agents file proposals through the MCP `propose`
-tool; there is no put_page and no in-place canon mutation, ever.
+idempotency by content hash. Agents file claims through the MCP `propose`
+tool and correct the model through the MCP `correct` tool. There is no
+put_page and no in-place canon mutation by any client, ever: every canon
+byte is written by the receipted writer from a claim, and every write is
+undoable by receipt.
 
 ### kizuki.connector/v1
 
@@ -93,13 +125,15 @@ instead.
 
 ## Storage
 
-Bun + TypeScript (strict). One SQLite DB (`bun:sqlite`, WAL) per vault under
-`<vault>/.kizuki/`: events, purge receipts, proposals, promotion receipts,
-checkpoints, schedules, run receipts, agents/grants/audit, FTS5, optional
-embeddings, derived graph edges. The canon vault is a plain Markdown
-directory (Obsidian-compatible) with machine-validated frontmatter: closed
-type enum, required `sensitivity`, provenance `sources`, free `x-*`
-extension namespace.
+Bun + TypeScript (strict). Authoritative state is one SQLite database (`bun:sqlite`, WAL) per vault
+under `<vault>/.kizuki/`: events, purge receipts and purge operations,
+claims, canon receipts, checkpoints, schedules, run receipts, leases,
+agents/grants/audit, and the minimal FTS5 index. Derived retrieval is a
+port; its implementation owns its own store under
+`<vault>/.kizuki/retrieval/` and is rebuildable from ledger + canon with one
+command. Canon is a plain Markdown directory (Obsidian-compatible) with
+machine-validated frontmatter: closed type enum, required `sensitivity`,
+required `taint`, provenance `sources`, free `x-*` extension namespace.
 
 ## Serving — agents as first-class citizens
 
@@ -108,16 +142,21 @@ extension namespace.
   query engine, below the prompt layer. Every call is audited.
 - MCP (stdio per-harness, standing loopback under `kizuki serve`): read tools
   `search, get_page, query_entities, timeline, context_packet,
-graph_neighbors, system_health`; one write tool `propose`.
+graph_neighbors, system_health`; two write tools, `propose` and `correct`.
 - CLI: `query, timeline, entity, context --budget <n>` — bounded context
   packets for harness hooks without MCP overhead.
 
 ## Proactive (`kizuki serve`)
 
-Program-first: the CLI works with no daemon. `serve` adds the scheduler
+`kizuki init` installs `kizuki serve` as an always-on user service. The
+daemon owns the loop, the retrieval writer lease and the standing MCP
+endpoint. The CLI still runs with no daemon: it reads the ledger, canon and
+the lexical index directly, declares `degraded: ["engine-unavailable"]`
+when the retrieval port is daemon-owned, and refuses to write canon while
+another process holds the writer lease. `serve` adds the scheduler
 (connector syncs, daily brief, rollups, doctor sweeps), notifier plugins
-(Telegram bot, email, webhook) that push digests and point back at
-`kizuki review`, and the standing MCP endpoint. Every scheduled run writes a
+(Telegram bot, email, webhook) that push digests and point back at audit
+and correction, and the standing MCP endpoint. Every scheduled run writes a
 receipt; stale receipts are reported as failures.
 
 ## Security

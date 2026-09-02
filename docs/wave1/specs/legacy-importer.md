@@ -1,3 +1,11 @@
+> **Superseded owner-gate framing, 2026-09-02.** `kizuki review --batch` is
+> not the owner gate. Reissue import-to-canon text against
+> `rfcs/0002-autonomous-canon.md`.
+
+> **Superseded owner-gate framing, 2026-09-02.** `kizuki review --batch` is
+> not the owner gate. Reissue import-to-canon text against
+> `rfcs/0002-autonomous-canon.md`.
+
 # Lane: legacy-importer — migrate a previous personal-knowledge estate through mapping files, on synthetic fixtures only
 
 Packages: `packages/connectors` (two NEW in-tree connectors under

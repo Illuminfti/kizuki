@@ -1,6 +1,6 @@
 # RFC 0002 — Autonomous canon
 
-Status: DRAFT (binds only when merged). On merge this RFC is BINDING and
+Status: BINDING (merged 2026-09-02). This RFC is BINDING and
 amends `rfcs/0000-constraints.md` §2, §3, §4, §5 and `docs/architecture.md`
 invariants 3, 5, 9 by the exact replacement text in §2. It supersedes the
 "current design tension" section of `docs/product-context.md`. It does not

@@ -6,13 +6,16 @@ These rules apply under `packages/cli` in addition to the root `AGENTS.md`.
 
 The CLI is a thin, predictable composition layer over public core and connector
 APIs. It may collect explicit owner input and render results. It must not
-reimplement storage, authorization, promotion, or connector policy.
+reimplement storage, authorization, the receipted canon writer, or
+connector policy.
 
 ## Rules
 
 - Route state changes through public core APIs. Never write the database or
   canon directly from a command handler.
-- Preserve the owner promotion gate and agent proposal-only authority.
+- Preserve the receipted-writer boundary. Agents propose claims and relay
+  owner corrections; no CLI verb writes a page except through core undo or
+  the leftover Wave 1 `promote` path, which is not the product gate.
 - Keep argument parsing, orchestration, and presentation separable and testable.
 - Use deterministic exit codes and stable, actionable errors.
 - Reserve stdout for the command's promised output. Send diagnostics and
@@ -34,5 +37,6 @@ reimplement storage, authorization, promotion, or connector policy.
 Use temporary vaults and synthetic fixtures. Cover the public process seam:
 valid invocation, invalid arguments, exit status, stdout/stderr separation,
 repeated invocation, interruption and cleanup, denied authorization,
-redaction, and proof that canon writes still pass through owner promotion.
+redaction, and proof that canon writes still pass through the receipted
+writer. Do not add a second canon write path.
 Run CLI tests, typecheck, and the full repository gate.

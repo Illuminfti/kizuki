@@ -1,3 +1,7 @@
+> **Superseded owner-gate framing, 2026-09-02.** This lane shipped. Promotion
+> for every proposal kind is leftover implementation. It is not the product
+> gate. See `rfcs/0002-autonomous-canon.md`.
+
 # Lane: core-spine — checkpoints, connections, ingest runner, promote kinds, purge cascade, export
 
 Package: `packages/core` only (plus its tests). Read CONVENTIONS.md first.

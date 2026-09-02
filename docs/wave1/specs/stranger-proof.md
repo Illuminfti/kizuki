@@ -1,3 +1,6 @@
+> **VOID as written, 2026-09-02.** The proof path treats `review` / `promote`
+> as the owner gate. Reissue against `rfcs/0002-autonomous-canon.md`.
+
 # Lane: stranger-proof — the Wave 5 exit proof as code: fresh-machine run, recorded demo, GO/NO-GO
 
 Scope: `scripts/` only, plus `docs/`, one job appended to

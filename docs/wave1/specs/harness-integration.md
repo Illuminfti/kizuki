@@ -1,3 +1,7 @@
+> **Superseded owner-gate framing, 2026-09-02.** Promotion receipts are not
+> the owner gate. Correction and undo are the human path. See
+> `rfcs/0002-autonomous-canon.md`.
+
 # Lane: harness-integration — session hook, MCP registration, agent recipe, parity shadow harness, doctor freshness
 
 Packages: `packages/cli` (NEW `src/invocation.ts`, `src/bounded-process.ts`,
