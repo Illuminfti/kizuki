@@ -15,9 +15,9 @@ import type { OAuthState } from "../src/auth/state";
 import {
   ConnectionStateStore,
   MAX_CONNECTION_STATE_BYTES,
-  createStatePersister,
   enrollConnection,
 } from "../src/ledger/connection-state";
+import { createStatePersister } from "../src/ledger/state-persister";
 import {
   LedgerError,
   disconnect,

@@ -475,15 +475,13 @@ export {
 export type { Checkpoint, Connection, ConnectionConfig } from "./ledger/connections";
 export {
   ConnectionStateStore,
-  createStatePersister,
   enrollConnection,
   CONNECTION_CONFIG_SCHEMA,
   MAX_CONNECTION_STATE_BYTES,
 } from "./ledger/connection-state";
-export type {
-  ConnectionStateReader,
-  StatePersisterHandle,
-} from "./ledger/connection-state";
+export type { ConnectionStateReader } from "./ledger/connection-state";
+export { createStatePersister } from "./ledger/state-persister";
+export type { StatePersisterHandle } from "./ledger/state-persister";
 export { isSecretRef, parseSecretRef } from "./contracts/secret-ref";
 export type { SecretRef, SecretRefScheme } from "./contracts/secret-ref";
 export type { RunResult, RunToCompletionOptions } from "./ingest/run";

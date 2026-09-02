@@ -23,7 +23,6 @@ import type { OAuthState } from "../src/auth/state";
 import {
   ConnectionStateStore,
   MAX_CONNECTION_STATE_BYTES,
-  createStatePersister,
   enrollConnection,
   writeAll,
 } from "../src/ledger/connection-state";
