@@ -196,6 +196,18 @@ test("carriage returns do not change a single event", async () => {
   });
 });
 
+test("newlines at the end of a file do not change the last message", async () => {
+  const chat = "1/4/26, 9:15 AM - Ada: hi";
+  const bare = await parse(chat, { date_order: "mdy" });
+  // Carriage returns are normalized by the reader, so the parser sees the
+  // run of line feeds an editor left behind.
+  for (const suffix of ["\n", "\n\n", "\n\n\n"]) {
+    expect(await parse(`${chat}${suffix}`, { date_order: "mdy" })).toEqual(
+      bare,
+    );
+  }
+});
+
 test("system notices are skipped and never become events", async () => {
   const events = await parse(FIXTURE_CHAT);
   expect(
