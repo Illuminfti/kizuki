@@ -66,11 +66,15 @@ const HEALTH_BY_CODE: Record<string, HealthState> = {
   parse_error: "degraded",
 };
 
-/** Addresses with IMAP quoting metacharacters yield no plan rather than a query. */
+/**
+ * Only a printable-ASCII address becomes a query. A subject id arrives from a
+ * mail header or a third-party calendar, and a code point whose low byte is
+ * CR, LF or SPACE would otherwise reach the wire as a second command line.
+ */
 function searchableAddress(subjectId: string): string | null {
   const address = subjectId.slice("email:".length);
-  if (address.length === 0) return null;
-  return /["\\\r\n\0]/.test(address) ? null : address;
+  if (!/^[\x21-\x7e]+$/.test(address)) return null;
+  return /["\\]/.test(address) ? null : address;
 }
 
 export class ImapConnector implements Connector {

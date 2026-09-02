@@ -170,6 +170,26 @@ describe("argument encoding", () => {
     await new ImapClient(conn).send("UID FETCH", [atom("1:5"), atom("(UID)")]);
     expect(conn.sent[0]).toBe("A0001 UID FETCH 1:5 (UID)\r\n");
   });
+
+  test("refuses an atom carrying a character the line cannot hold", async () => {
+    const conn = scripted(() => []);
+    const error = await new ImapClient(conn)
+      .send("UID SEARCH", [atom('FROM "a\u030db@acme.example"')])
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(KizukiError);
+    expect((error as KizukiError).code).toBe("misconfigured");
+    expect(conn.sent).toEqual([]);
+  });
+
+  test("a combining mark in a quoted value travels as a literal", async () => {
+    const conn = scripted((_text, index) =>
+      index === 0 ? ["+ go ahead\r\n"] : ["A0001 OK done\r\n"],
+    );
+    await new ImapClient(conn).send("LOGIN", [str("ada"), str("a\u030ab")]);
+    // Masked into a byte, U+030A would have been the LF that ends the line.
+    expect(conn.sent[0]).toBe('A0001 LOGIN "ada" {4}\r\n');
+    expect(conn.sent[1]).toBe("a\u030ab");
+  });
 });
 
 describe("failure handling", () => {

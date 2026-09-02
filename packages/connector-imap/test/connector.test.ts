@@ -241,6 +241,41 @@ describe("purge plans", () => {
     const plan = await connector.purgeSource('email:a"b@acme.example');
     expect(plan.unreachable_source_record_ids).toEqual([]);
   });
+
+  test("a subject id whose code points mask down to CR, LF or SPACE sends nothing", async () => {
+    const fake = server();
+    const { connector, resolve } = connectorFor(fake);
+    await connector.connect(resolve);
+    // Combining marks survive toLowerCase() and do not match /\s/, so an
+    // address minted from a third-party calendar can carry them all the way
+    // here; masked into bytes they would be CR, LF and SPACE.
+    const hostile =
+      "email:ada\u030d\u030aA0009\u0320STORE\u03201\u0320+FLAGS\u0320(Deleted)\u030d\u030a@acme.example".toLowerCase();
+    fake.received.length = 0;
+    const plan = await connector.purgeSource(hostile);
+    expect(plan.unreachable_source_record_ids).toEqual([]);
+    expect(fake.received).toEqual([]);
+  });
+
+  test("every line a purge sends is one of the sanctioned read-only commands", async () => {
+    const fake = server();
+    const { connector, resolve } = connectorFor(fake);
+    await connector.connect(resolve);
+    fake.received.length = 0;
+    await connector.purgeSource("email:ada@acme.example");
+    // A literal payload line carries no tag; every line that opens a command
+    // has to be one of the read-only verbs this connector is allowed to use.
+    const commands = fake.received
+      .map((line) => /^A\d{4} ([A-Z]+(?: [A-Z]+)?)/.exec(line)?.[1])
+      .filter((command): command is string => command !== undefined);
+    expect(commands).toEqual([
+      "CAPABILITY",
+      "LOGIN",
+      "EXAMINE",
+      "UID SEARCH",
+      "LOGOUT",
+    ]);
+  });
 });
 
 describe("revocation and redaction", () => {

@@ -31,22 +31,38 @@ type Piece = { text: string } | { literal: Uint8Array };
 
 const encoder = new TextEncoder();
 
-function needsLiteral(value: string): boolean {
+/**
+ * A command line carries printable US-ASCII and nothing else. Everything
+ * outside that range travels as a literal, whose length the server reads
+ * before the bytes, so no value can ever end a line the caller did not end.
+ */
+function fitsOnTheLine(value: string): boolean {
   for (const character of value) {
     const code = character.codePointAt(0) ?? 0;
-    if (code === 0x0d || code === 0x0a || code > 0x7e) return true;
+    if (code < 0x20 || code > 0x7e) return false;
   }
-  return false;
+  return true;
 }
 
 function quote(value: string): string {
   return `"${value.replace(/([\\"])/g, "\\$1")}"`;
 }
 
+/**
+ * The last gate before the socket. Masking a code unit into a byte would let a
+ * character whose low byte is CR, LF or SPACE split one command into two.
+ */
 function asciiBytes(text: string): Uint8Array {
   const bytes = new Uint8Array(text.length);
   for (let index = 0; index < text.length; index += 1) {
-    bytes[index] = text.charCodeAt(index) & 0xff;
+    const code = text.charCodeAt(index);
+    if (code > 0x7e || (code < 0x20 && code !== 0x0d && code !== 0x0a)) {
+      throw new KizukiError(
+        "protocol",
+        "kizuki.imap: refusing to send a command line that is not ASCII",
+      );
+    }
+    bytes[index] = code;
   }
   return bytes;
 }
@@ -134,10 +150,18 @@ export class ImapClient {
         );
       }
       if (arg.kind === "atom") {
+        // An atom is spliced into the line verbatim, so it has no escape hatch:
+        // anything the line cannot hold has to be refused, not folded down.
+        if (!fitsOnTheLine(arg.value)) {
+          throw new KizukiError(
+            "misconfigured",
+            "kizuki.imap: a command argument is not printable ASCII",
+          );
+        }
         text += ` ${arg.value}`;
         continue;
       }
-      if (!needsLiteral(arg.value)) {
+      if (fitsOnTheLine(arg.value)) {
         text += ` ${quote(arg.value)}`;
         continue;
       }
