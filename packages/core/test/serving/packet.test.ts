@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { listAudit } from "../../src/agents";
 import { rebuildDerived } from "../../src/derived";
 import { serveContextPacket } from "../../src/serving/packet";
+import type { ContextPacketArgs } from "../../src/serving/packet";
 import { serveSearch } from "../../src/serving/search";
 import { serveTimeline } from "../../src/serving/timeline";
 import { ServeError } from "../../src/serving/types";
@@ -115,6 +116,29 @@ describe("serveContextPacket", () => {
     expect(
       refusal(() => serveContextPacket(ctx, { budget_tokens: 2_001 })).code,
     ).toBe("invalid_arguments");
+  });
+
+  test("an include that is not an array is a caller error, not an engine one", () => {
+    const live = newFixture();
+    const ctx = live.owner();
+    const shapes: unknown[] = ["canon", 5, {}, null];
+    for (const shape of shapes) {
+      expect(
+        refusal(() =>
+          serveContextPacket(ctx, {
+            include: shape as NonNullable<ContextPacketArgs["include"]>,
+          }),
+        ).code,
+      ).toBe("invalid_arguments");
+    }
+    // The audit row has to blame the caller, not the engine.
+    expect(
+      listAudit(live.db, "owner", { limit: 4 }).map((row) => row.denied),
+    ).toEqual(
+      shapes.map(() => [
+        { id: "tool:context_packet", reason: "invalid_arguments" },
+      ]),
+    );
   });
 
   test("a corrupted vault page degrades the packet but fails other tools", () => {

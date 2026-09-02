@@ -32,6 +32,7 @@ import {
   quotedChunk,
   timelineSource,
 } from "./ledger";
+import { ServeError } from "./types";
 import type { CanonChunk, Envelope, QuotedChunk, ServeContext } from "./types";
 
 export const PACKET_SECTIONS = ["canon", "graph", "timeline"] as const;
@@ -85,9 +86,26 @@ interface Piece {
 }
 
 /**
- * The bounded brief a harness hook runs at session start. It never throws:
- * a session that cannot start because one vault page is malformed would be
- * a worse failure than a thin packet.
+ * Every other tool guards its array arguments, and an unguarded `map` here
+ * would blame the engine for a caller's mistake in the audit row.
+ */
+function sectionList(
+  value: unknown,
+): (typeof PACKET_SECTIONS)[number][] {
+  if (value === undefined) return [...PACKET_SECTIONS];
+  if (!Array.isArray(value)) {
+    throw new ServeError(
+      "invalid_arguments",
+      "invalid arguments: include: must be an array",
+    );
+  }
+  return value.map((section) => enumOf("include", section, PACKET_SECTIONS));
+}
+
+/**
+ * The bounded brief a harness hook runs at session start. A failure while
+ * gathering the packet degrades to the header instead of failing the
+ * session; refusals and argument errors still throw.
  */
 export function serveContextPacket(
   ctx: ServeContext,
@@ -106,12 +124,7 @@ export function serveContextPacket(
         MAX_BUDGET,
         DEFAULT_BUDGET,
       );
-      const include =
-        args.include === undefined
-          ? [...PACKET_SECTIONS]
-          : args.include.map((section) =>
-              enumOf("include", section, PACKET_SECTIONS),
-            );
+      const include = sectionList(args.include);
       const query =
         args.query === undefined
           ? undefined
