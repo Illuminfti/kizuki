@@ -51,10 +51,10 @@ test("the fixture export maps to four bookmarks", async () => {
     path: "/nonexistent",
   }).fixture();
   expect(events.map((event) => event.source_record_id)).toEqual([
-    "1767225600:https://example.com/local-first",
-    "1767312000:https://example.com/heron",
-    "1767398400:https://example.com/quoted",
-    "1767484800:https://example.com/heron",
+    "https://example.com/local-first",
+    "https://example.com/heron",
+    "https://example.com/quoted",
+    "https://example.com/heron#2",
   ]);
   expect(events[0]?.occurred_at).toBe("2026-01-01T00:00:00.000Z");
   expect(events[2]?.text).toBe('A "quoted" title\nhttps://example.com/quoted');
@@ -90,8 +90,8 @@ test("a directory of parts is read in name order", async () => {
     );
     expect(batch.cursor).toBeNull();
     expect(batch.events.map((event) => event.source_record_id)).toEqual([
-      "1767225600:https://example.com/first",
-      "1767312000:https://example.com/second",
+      "https://example.com/first",
+      "https://example.com/second",
     ]);
   });
 });
@@ -148,31 +148,34 @@ test("a malformed row names its position and never its title", () => {
   }
 });
 
-test("the same url saved twice is one record per save", () => {
+test("the same url saved twice is two records, numbered in file order", () => {
   const rows = `${HEADER}\nA,https://example.com/a,1767225600,,unread\nA,https://example.com/a,1767312000,,archive\n`;
-  const events = pocketEvents(parsePocketCsv(rows, "part.csv"), FIXTURE_OBSERVED_AT);
+  const events = pocketEvents(
+    parsePocketCsv(rows, "part.csv"),
+    FIXTURE_OBSERVED_AT,
+  );
   expect(events.map((event) => event.source_record_id)).toEqual([
-    "1767225600:https://example.com/a",
-    "1767312000:https://example.com/a",
+    "https://example.com/a",
+    "https://example.com/a#2",
   ]);
 });
 
-test("an export holding only the later save keeps that save's identity", () => {
-  const full = pocketEvents(
+test("two saves of one url in the same second stay two records", () => {
+  const events = pocketEvents(
     parsePocketCsv(
-      `${HEADER}\nFirst,https://example.com/a,1767225600,,unread\nSecond,https://example.com/a,1767312000,,unread\n`,
+      [
+        HEADER,
+        "A,https://example.com/a,1767225600,notes,unread",
+        "A,https://example.com/a,1767225600,birds,unread",
+      ].join("\n"),
       "part.csv",
     ),
     FIXTURE_OBSERVED_AT,
   );
-  const later = pocketEvents(
-    parsePocketCsv(
-      `${HEADER}\nSecond,https://example.com/a,1767312000,,unread\n`,
-      "part.csv",
-    ),
-    FIXTURE_OBSERVED_AT,
-  );
-  expect(later[0]?.source_record_id).toBe(full[1]?.source_record_id);
+  expect(events.map((event) => event.source_record_id)).toEqual([
+    "https://example.com/a",
+    "https://example.com/a#2",
+  ]);
 });
 
 test("a url that already ends in a number cannot claim another record", () => {
@@ -190,7 +193,11 @@ test("a url that already ends in a number cannot claim another record", () => {
   );
   const ids = events.map((event) => event.source_record_id);
   expect(new Set(ids).size).toBe(3);
-  expect(ids).toContain("1767312000:https://example.com/a#2");
+  expect(ids).toEqual([
+    "https://example.com/a",
+    "https://example.com/a#2",
+    "https://example.com/a#3",
+  ]);
 });
 
 test("the byte and row budgets are spent across the whole export", async () => {
@@ -324,10 +331,10 @@ test("a healthy export reports ok", async () => {
       subject_id: "pocket:self",
       source_record_ids: [],
       unreachable_source_record_ids: [
-        "1767225600:https://example.com/local-first",
-        "1767312000:https://example.com/heron",
-        "1767398400:https://example.com/quoted",
-        "1767484800:https://example.com/heron",
+        "https://example.com/heron",
+        "https://example.com/heron#2",
+        "https://example.com/local-first",
+        "https://example.com/quoted",
       ],
     });
     expect(await connector.purgeSource("conformance:subject")).toEqual({
