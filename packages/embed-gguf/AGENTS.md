@@ -31,7 +31,8 @@ It does not write canon, own retrieval, or download weights on a read path.
 - Write only under `ctx.data_dir`. Never import `bun:sqlite` or name
   `kizuki.db`.
 - Runtime network access is forbidden. `installGgufModel` copies a local
-  file and verifies a hash; it does not fetch.
+  file and reports sha256; it verifies that digest only when
+  `expected_sha256` is set. It does not fetch.
 - Transformer GGUF architectures are refused until a native runtime is
   bound. Table-embedding GGUF files (including the test fixture) are the
   supported local path.

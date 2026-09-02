@@ -44,6 +44,30 @@ describe("kizuki models pull", () => {
     expect(result.stderr).toContain("usage: kizuki models pull --from PATH");
   });
 
+  test("matching --sha256 copies and reports the digest", () => {
+    const setup = tempVault();
+    const source = join(setup.root, "fixture.gguf");
+    const bytes = writeFixtureGguf();
+    writeFileSync(source, bytes);
+    const digest = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+
+    const result = runCli(
+      setup.env,
+      "models",
+      "pull",
+      "--from",
+      source,
+      "--sha256",
+      digest,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain(`sha256=${digest}`);
+    expect(existsSync(join(setup.vault, ".kizuki", "models", "fixture.gguf"))).toBe(
+      true,
+    );
+  });
+
   test("hash mismatch fails closed", () => {
     const setup = tempVault();
     const source = join(tempDir(), "fixture.gguf");

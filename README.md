@@ -57,12 +57,13 @@ One Bun workspace. Five packages. There is no MCP package.
   with receipts, and agent identity, grants, and audit.
 - **`@kizuki/cli`** is a thin command-line composition over public core and
   connector APIs. Implemented verbs on this branch: `init`, `connect`,
-  `backfill`, `sync`, `import`, `models`, `query`, `doctor`, `purge`,
-  `export`, `version`. `models pull` copies a local GGUF into the vault
-  models directory and verifies a hash; it does not download weights.
-  Leftover Wave 1 verbs `review`, `promote`, and `reject` still run; they
-  are not the product gate. Accepted design verbs, not built: `audit`,
-  `tell`, `undo`, `context`, `timeline`, `rebuild`, `serve`.
+  `backfill`, `sync`, `import`, `models`, `audit`, `undo`, `query`,
+  `doctor`, `purge`, `export`, `version`. `models pull --from PATH` copies
+  a local GGUF into the vault models directory and reports sha256; it
+  verifies that digest only when `--sha256 HEX` is given. It does not
+  download weights. Leftover Wave 1 verbs `review`, `promote`, and
+  `reject` still run; they are not the product gate. Accepted design
+  verbs, not built: `tell`, `context`, `timeline`, `rebuild`, `serve`.
 - **`@kizuki/connectors`** owns the connector interface, the in-tree
   registry, and the shared conformance suite. Registry today:
   `kizuki.markdown-folder`, `kizuki.import-chatgpt`, `kizuki.import-claude`.

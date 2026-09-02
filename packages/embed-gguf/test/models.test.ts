@@ -18,7 +18,7 @@ afterEach(() => {
 });
 
 describe("local GGUF model install", () => {
-  test("copies a local GGUF, reports size, and verifies sha256", () => {
+  test("copies a local GGUF and reports sha256 without requiring a pin", () => {
     const temporary = temporaryEmbed();
     cleanups.push(temporary.cleanup);
     const destDir = vaultModelsDir(temporary.vault);
@@ -32,6 +32,19 @@ describe("local GGUF model install", () => {
     expect(installed.path).toBe(join(destDir, "model.gguf"));
     expect(installed.space.id).toBe(fixtureSpaceId());
     expect(GGUF_MODEL_CATALOG[0]?.id).toBe("kizuki-fixture-embed");
+  });
+
+  test("verifies sha256 when an expected digest is supplied", () => {
+    const temporary = temporaryEmbed();
+    cleanups.push(temporary.cleanup);
+    const destDir = vaultModelsDir(temporary.vault);
+    const digest = sha256File(temporary.modelPath);
+    const installed = installGgufModel({
+      source_path: temporary.modelPath,
+      dest_dir: destDir,
+      expected_sha256: digest,
+    });
+    expect(installed.sha256).toBe(digest);
   });
 
   test("hash mismatch and missing source fail closed without a download", () => {
