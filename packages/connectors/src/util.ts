@@ -229,10 +229,11 @@ export function subjectSlug(name: string): string {
  * unrecognized key fails construction rather than quietly changing behavior.
  */
 export function requireKnownKeys(
-  config: Record<string, unknown>,
+  config: unknown,
   connectorId: string,
   allowed: readonly string[],
 ): void {
+  if (!isPlainObject(config)) return;
   for (const key of Object.keys(config)) {
     if (!allowed.includes(key)) {
       throw new KizukiError(

@@ -94,7 +94,10 @@ export function splitWhatsAppMessages(
   text: string,
   date_order?: DateOrder,
 ): { messages: ParsedWhatsAppMessage[]; date_order: DateOrder } {
-  const lines = text.split("\n");
+  // A file's final newline terminates the last message; it is not an
+  // empty continuation line inside it.
+  const body = text.endsWith("\n") ? text.slice(0, -1) : text;
+  const lines = body.split("\n");
   const starts: StartLine[] = [];
   const continuations = new Map<number, string[]>();
   let current: number | undefined;
