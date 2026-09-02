@@ -209,6 +209,7 @@ describe("grants", () => {
       until: null,
       tools: ["search", "get_page"],
       rate_limit_per_minute: 12,
+      relay_owner_corrections: true,
     });
     db.close();
   });

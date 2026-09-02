@@ -39,7 +39,7 @@ describe("serveHealth", () => {
     expect(data?.live_claims).toBe(0);
     expect(data?.derived.search).not.toBeNull();
     expect(data?.derived.graph).not.toBeNull();
-    expect(data?.agents).toEqual({ total: 9, revoked: 1 });
+    expect(data?.agents).toEqual({ total: 11, revoked: 1 });
   });
 
   test("a filed claim shows up as one the writer can act on", async () => {

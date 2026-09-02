@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { listAudit } from "../../src/agents";
+import { DEFAULT_GRANT, listAudit } from "../../src/agents";
 import { getClaim, listClaims, listSupersessions } from "../../src/claims/store";
 import { serveCorrect } from "../../src/serving/correct";
 import type { CorrectArgs } from "../../src/serving/correct";
@@ -330,5 +330,27 @@ describe("serveCorrect retires what the owner says is wrong", () => {
       }),
     );
     expect(error.code).toBe("tool_not_granted");
+  });
+
+  test("the default grant does not carry the relay", async () => {
+    const live = newFixture();
+    const wrong = await fileClaim(
+      live,
+      "Ada works at Acme.",
+      "employment.works_at",
+      "Acme",
+    );
+    expect(DEFAULT_GRANT.tools).not.toContain("correct");
+
+    // An agent nobody wrote a grant for speaks at the top authority tier and
+    // retires live claims only if someone chose to let it.
+    const error = await refusal(() =>
+      serveCorrect(live.agent("plain"), {
+        statement: "Ada left Acme.",
+        target: { claim_id: wrong },
+      }),
+    );
+    expect(error.code).toBe("tool_not_granted");
+    expect(getClaim(live.db, wrong)?.status).toBe("live");
   });
 });

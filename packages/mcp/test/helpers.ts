@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   OWNER,
+  TOOLS,
   accept,
   addAgent,
   authenticate,
@@ -30,10 +31,12 @@ export interface McpFixture {
 }
 
 const AGENTS: Record<string, Partial<Grant>> = {
-  "reader-personal": { ceiling: "personal" },
-  "reader-private": { ceiling: "private" },
+  "reader-personal": { ceiling: "personal", tools: [...TOOLS] },
+  "reader-private": { ceiling: "private", tools: [...TOOLS] },
   "search-only": { ceiling: "private", tools: ["search"] },
   slow: { ceiling: "private", rate_limit_per_minute: 2 },
+  /** Nothing but the defaults, which do not include the relay. */
+  plain: { ceiling: "private" },
   gone: { ceiling: "private" },
 };
 

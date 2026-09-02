@@ -26,16 +26,37 @@ export interface Grant {
   until: string | null;
   tools: Tool[];
   rate_limit_per_minute: number;
+  /**
+   * RFC 0002 §6.4. When false, a correction this agent relays is filed one
+   * tier down: it still outranks connectors and models, but it cannot
+   * overturn a correction the owner made directly.
+   */
+  relay_owner_corrections: boolean;
 }
 
+/**
+ * Everything but `correct`. Relaying the owner's own words files at the top
+ * authority tier and retires live claims, so it is granted deliberately or
+ * not at all (RFC 0002 §6.4; invariant 8).
+ */
 export const DEFAULT_GRANT: Grant = {
   ceiling: "personal",
   types: null,
   subjects: null,
   since: null,
   until: null,
-  tools: [...TOOLS],
+  tools: [
+    "search",
+    "get_page",
+    "query_entities",
+    "timeline",
+    "context_packet",
+    "graph_neighbors",
+    "system_health",
+    "propose",
+  ],
   rate_limit_per_minute: 60,
+  relay_owner_corrections: true,
 };
 
 export interface Agent {
@@ -60,6 +81,7 @@ export const OWNER: Principal = {
     until: null,
     tools: [...TOOLS],
     rate_limit_per_minute: Number.MAX_SAFE_INTEGER,
+    relay_owner_corrections: true,
   },
 };
 

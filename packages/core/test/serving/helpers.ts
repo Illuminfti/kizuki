@@ -9,7 +9,8 @@ import {
   initAgents,
   revokeAgent,
 } from "../../src/agents";
-import type { Grant, Principal } from "../../src/agents";
+import { TOOLS } from "../../src/agents";
+import type { Grant, Principal, Tool } from "../../src/agents";
 import { rebuildDerived } from "../../src/derived";
 import { initGraph } from "../../src/graph/schema";
 import { saveCheckpoint } from "../../src/ledger/connections";
@@ -36,18 +37,34 @@ export interface Fixture {
   dispose: () => void;
 }
 
+/** `correct` is not in the default grant, so a relay agent asks for it. */
+const RELAY_TOOLS: Tool[] = [...TOOLS];
+
 const AGENTS: Record<string, Partial<Grant>> = {
-  "reader-public": { ceiling: "public" },
-  "reader-personal": { ceiling: "personal" },
-  "reader-private": { ceiling: "private" },
-  typed: { ceiling: "private", types: ["person"] },
-  subjected: { ceiling: "private", subjects: ["person:ada"] },
+  "reader-public": { ceiling: "public", tools: RELAY_TOOLS },
+  "reader-personal": { ceiling: "personal", tools: RELAY_TOOLS },
+  "reader-private": { ceiling: "private", tools: RELAY_TOOLS },
+  typed: { ceiling: "private", types: ["person"], tools: RELAY_TOOLS },
+  subjected: {
+    ceiling: "private",
+    subjects: ["person:ada"],
+    tools: RELAY_TOOLS,
+  },
   "search-only": { ceiling: "private", tools: ["search"] },
   slow: { ceiling: "private", rate_limit_per_minute: 2 },
   windowed: {
     ceiling: "private",
     since: "2026-02-28T10:30:00Z",
     until: "2026-02-28T13:30:00Z",
+    tools: RELAY_TOOLS,
+  },
+  /** Nothing but the defaults: what an agent gets when nobody chose. */
+  plain: { ceiling: "private" },
+  /** May relay, but not at the tier a correction from the owner carries. */
+  downgraded: {
+    ceiling: "private",
+    tools: RELAY_TOOLS,
+    relay_owner_corrections: false,
   },
   gone: { ceiling: "private" },
 };

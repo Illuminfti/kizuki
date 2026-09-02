@@ -263,6 +263,17 @@ describe("the stdio MCP server over a real client", () => {
     expect(errorOf(result).error).toBe("tool_not_granted");
   });
 
+  test("an agent on the default grant cannot relay a correction", async () => {
+    const running = live();
+    const client = await connect(running.agent("plain"));
+    const result = await call(client, "correct", {
+      statement: "That is wrong.",
+      target: { subject: "person:ada" },
+    });
+    expect(result.isError).toBe(true);
+    expect(errorOf(result).error).toBe("tool_not_granted");
+  });
+
   test("the rate limit refuses the third call in a minute", async () => {
     const running = live();
     const client = await connect(running.agent("slow"));
