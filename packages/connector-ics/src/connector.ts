@@ -406,7 +406,6 @@ export class IcsConnector implements Connector {
   async fixture(): Promise<CaptureEventInput[]> {
     return fixtureIcsEvents();
   }
-
 }
 
 export function createIcsConnector(
