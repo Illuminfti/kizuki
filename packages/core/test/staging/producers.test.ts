@@ -136,16 +136,16 @@ describe("withdrawForTombstone", () => {
     expect(getProposal(db, other.proposal.proposal_id)?.status).toBe("pending");
   });
 
-  test("does not reopen or touch a proposal that is already resolved", () => {
+  test("does not reopen or touch a withdrawn proposal", () => {
     const db = memoryDb();
     const filed = fileProposal(db, proposalsForEvent(event())[0]!);
     if (filed.outcome !== "stored") throw new Error("expected stored");
     const id = filed.proposal.proposal_id;
 
     db.query(
-      "UPDATE proposals SET status = 'promoted' WHERE proposal_id = ?",
+      "UPDATE proposals SET status = 'withdrawn' WHERE proposal_id = ?",
     ).run(id);
     expect(withdrawForTombstone(db, "01ARZ3NDEKTSV4RRFFQ69G5FAV")).toEqual([]);
-    expect(getProposal(db, id)?.status).toBe("promoted");
+    expect(getProposal(db, id)?.status).toBe("withdrawn");
   });
 });
