@@ -319,6 +319,13 @@ describe("hostile files", () => {
     expect(await readWikiFile(join(wiki, "huge.md"))).toEqual({
       reason: "too_large",
     });
+    // At the cap exactly: the read has to fill the buffer, not stop at
+    // whatever the first read(2) happened to return.
+    const big = "y".repeat(4 * 1024 * 1024);
+    writeFileSync(join(wiki, "big.md"), big);
+    const read = await readWikiFile(join(wiki, "big.md"));
+    expect("file" in read && read.file.content).toBe(big);
+    expect("file" in read && read.file.size).toBe(big.length);
   });
 
   test("health degrades after a run that skipped unreadable pages", async () => {

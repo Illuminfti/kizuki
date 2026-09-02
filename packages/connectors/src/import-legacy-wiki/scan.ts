@@ -95,17 +95,29 @@ export async function readWikiFile(absolute: string): Promise<FileRead> {
     // One byte past what the descriptor just reported: enough to notice that
     // the file grew, never enough to read an unbounded one.
     const buffer = Buffer.alloc(info.size + 1);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    if (bytesRead > MAX_FILE_BYTES) return { reason: "too_large" };
-    if (bytesRead > info.size) return { reason: "unreadable" };
+    let filled = 0;
+    while (filled < buffer.length) {
+      // A single read may stop short of what was asked for; a page cut off
+      // there would import as a silent prefix of itself.
+      const { bytesRead } = await handle.read(
+        buffer,
+        filled,
+        buffer.length - filled,
+        filled,
+      );
+      if (bytesRead === 0) break;
+      filled += bytesRead;
+    }
+    if (filled > MAX_FILE_BYTES) return { reason: "too_large" };
+    if (filled > info.size) return { reason: "unreadable" };
     let content: string;
     try {
-      content = utf8.decode(buffer.subarray(0, bytesRead));
+      content = utf8.decode(buffer.subarray(0, filled));
     } catch {
       // A page Kizuki cannot decode is not a page it can honestly import.
       return { reason: "not_utf8" };
     }
-    return { file: { content, mtimeMs: info.mtimeMs, size: bytesRead } };
+    return { file: { content, mtimeMs: info.mtimeMs, size: filled } };
   } catch {
     return { reason: "unreadable" };
   } finally {
