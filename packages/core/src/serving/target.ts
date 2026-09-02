@@ -149,4 +149,3 @@ export function readable(grant: Grant, claims: Claim[]): void {
     throw new ServeError(decision.reason, OUT_OF_SCOPE[decision.reason]);
   }
 }
-
