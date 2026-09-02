@@ -13,6 +13,15 @@ import {
 } from "./helpers";
 import type { ScriptedLlm } from "./helpers";
 
+const knownClaim = {
+  claim_id: "c1",
+  subject: "person:ada",
+  predicate: "employment.works_at",
+  object: "acme",
+  polarity: "positive" as const,
+  confidence: 0.6,
+};
+
 const cleanups: (() => void)[] = [];
 afterEach(() => {
   while (cleanups.length > 0) cleanups.pop()?.();
@@ -258,6 +267,31 @@ describe("input validation", () => {
         budget: { ...input.budget, max_calls: -1 },
       }),
     ).rejects.toBeInstanceOf(PortError);
+    expect(built.llm.calls).toHaveLength(0);
+  });
+
+  test("a malformed context element is a PortError, never a silent pass", async () => {
+    const built = producer(['{"claims":[]}']);
+    const input = produceInput([event("ev-1", "hi")]);
+    // Regression: only the arrays were checked, so a bad element either
+    // escaped as a raw TypeError or was sent to the model as `null`.
+    const broken = [
+      { subjects: [null as never] },
+      { subjects: ["oops" as never] },
+      { subjects: [{ subject_id: "", role: "about" } as never] },
+      { known_claims: [null as never] },
+      { known_claims: [42 as never] },
+      { known_claims: [{ ...knownClaim, object: "o".repeat(401) } as never] },
+      { predicates: ["p".repeat(101)] },
+    ];
+    for (const patch of broken) {
+      await expect(
+        built.port.produce({
+          ...input,
+          context: { ...input.context, ...patch },
+        }),
+      ).rejects.toBeInstanceOf(PortError);
+    }
     expect(built.llm.calls).toHaveLength(0);
   });
 
