@@ -84,6 +84,8 @@ function configField(
 
 interface Snapshot {
   events: CaptureEventInput[];
+  /** UIDs the calendar still carries but this run could not read. */
+  unreadableUids: string[];
   etag: string | null;
   lastModified: string | null;
   unchanged: boolean;
@@ -228,6 +230,7 @@ export class IcsConnector implements Connector {
       this.noteSkipped(mapping.skipped);
       return {
         events: mapping.events,
+        unreadableUids: mapping.unreadableUids,
         etag: null,
         lastModified: null,
         unchanged: false,
@@ -248,6 +251,7 @@ export class IcsConnector implements Connector {
     if (response.status === 304) {
       return {
         events: [],
+        unreadableUids: [],
         etag: response.etag,
         lastModified: response.last_modified,
         unchanged: true,
@@ -261,6 +265,7 @@ export class IcsConnector implements Connector {
     this.noteSkipped(mapping.skipped);
     return {
       events: mapping.events,
+      unreadableUids: mapping.unreadableUids,
       etag: response.etag,
       lastModified: response.last_modified,
       unchanged: false,
@@ -276,6 +281,18 @@ export class IcsConnector implements Connector {
             computeContentHash(event).slice(0, HASH_PREFIX_CHARS),
           ]),
         );
+    // An entry this run could not read keeps the rows it had, so a deletion
+    // that happens later is still visible instead of being lost with the
+    // parse failure.
+    const unreadable = new Set(snapshot.unreadableUids);
+    if (unreadable.size > 0) {
+      for (const [id, hash] of Object.entries(previous.records)) {
+        if (id in records) continue;
+        if (unreadable.has(decodeUid(id.split("#")[0] ?? id))) {
+          records[id] = hash;
+        }
+      }
+    }
     const etag = snapshot.etag ?? previous.etag;
     const lastModified = snapshot.lastModified ?? previous.last_modified;
     return {
@@ -316,11 +333,15 @@ export class IcsConnector implements Connector {
     const present = new Map(
       snapshot.events.map((event) => [event.source_record_id, event]),
     );
+    // An entry the calendar still carries but this run could not read is not
+    // a deletion; its ids keep their ledger rows until it parses again.
+    const unreadable = new Set(snapshot.unreadableUids);
     const tombstones: CaptureEventInput[] = [];
     for (const id of Object.keys(previous.records)) {
       if (present.has(id)) continue;
       const [encoded = id, recurrenceId] = id.split("#");
       const uid = decodeUid(encoded);
+      if (unreadable.has(uid)) continue;
       tombstones.push(
         tombstone(
           id,

@@ -152,6 +152,41 @@ describe("file mode", () => {
     expect(edited?.text).toBe("One (edited)");
   });
 
+  test("an entry that stops parsing is not read as a deletion", async () => {
+    const path = await writeCalendar(SMALL);
+    const connector = createIcsConnector({ path }, { now: NOW });
+    const first = await connector.backfill(null);
+
+    await Bun.write(
+      path,
+      SMALL.replace("DTSTART:20260303T090000Z", "DTSTART:not-a-date"),
+    );
+    const second = await connector.sync(first.cursor);
+    expect(second.events).toEqual([]);
+    expect((await connector.health()).state).toBe("degraded");
+
+    // The row is still tracked, so a real removal later is still a tombstone.
+    await Bun.write(
+      path,
+      SMALL.replace(
+        [
+          "BEGIN:VEVENT",
+          "UID:two@acme.example",
+          "DTSTART:20260303T090000Z",
+          "SUMMARY:Two",
+          "END:VEVENT",
+          "",
+        ].join("\r\n"),
+        "",
+      ),
+    );
+    const third = await connector.sync(second.cursor);
+    expect(third.events.map((event) => event.source_record_id)).toEqual([
+      "two@acme.example",
+    ]);
+    expect(third.events[0]?.deleted).toBe(true);
+  });
+
   test("a truncated file refuses the sync instead of tombstoning everything", async () => {
     const path = await writeCalendar(SMALL);
     const connector = createIcsConnector({ path }, { now: NOW });

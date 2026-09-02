@@ -106,6 +106,11 @@ export interface CalendarMapping {
   events: CaptureEventInput[];
   /** Entries whose own date values were unreadable and could not be mapped. */
   skipped: number;
+  /**
+   * UIDs of those entries. The calendar still carries them, so a sync must
+   * not read their absence from the mapping as a deletion.
+   */
+  unreadableUids: string[];
 }
 
 interface SeriesContext {
@@ -138,7 +143,7 @@ export function calendarEvents(
     duplicates,
   };
   const events: CaptureEventInput[] = [];
-  let skipped = 0;
+  const unreadableUids: string[] = [];
 
   for (const [uid, entry] of series) {
     try {
@@ -149,7 +154,7 @@ export function calendarEvents(
       if (!(error instanceof KizukiError) || error.code !== "parse_error") {
         throw error;
       }
-      skipped += 1;
+      unreadableUids.push(uid);
     }
   }
 
@@ -160,7 +165,7 @@ export function calendarEvents(
         ? 1
         : 0,
   );
-  return { events, skipped };
+  return { events, skipped: unreadableUids.length, unreadableUids };
 }
 
 function seriesEvents(
