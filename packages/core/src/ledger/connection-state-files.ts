@@ -180,13 +180,33 @@ export function restoreStateFile(
   fsyncDirectory(directory);
 }
 
-/** Drops the rollback copy and the journal a committed swap no longer needs. */
+/**
+ * Drops the rollback copy and the journal a committed swap no longer needs.
+ * The row and the durable file are both committed by the time this runs, so
+ * nothing here may throw: a file it cannot remove is debris the next
+ * `recover()` clears from the journal, while raising would report failure for
+ * a swap that landed and leave the caller holding a connection the store has
+ * already moved past.
+ */
 export function clearSwapDebris(
   directory: string,
   paths: { backupPath: string | null; journalPath: string | null },
 ): void {
-  if (paths.backupPath === null && paths.journalPath === null) return;
-  if (paths.backupPath !== null) rmSync(paths.backupPath, { force: true });
-  if (paths.journalPath !== null) rmSync(paths.journalPath, { force: true });
-  fsyncDirectory(directory);
+  let removed = false;
+  for (const path of [paths.backupPath, paths.journalPath]) {
+    if (path === null) continue;
+    try {
+      rmSync(path, { force: true });
+      removed = true;
+    } catch {
+      // Left for recovery; the swap it belonged to is already durable.
+    }
+  }
+  if (!removed) return;
+  try {
+    fsyncDirectory(directory);
+  } catch {
+    // Same: the removals are visible to this process either way, and the
+    // journal is what makes an unflushed directory entry recoverable.
+  }
 }

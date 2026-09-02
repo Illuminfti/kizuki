@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import {
+  existsSync,
+  mkdirSync,
   readFileSync,
   readdirSync,
   rmSync,
@@ -10,6 +12,7 @@ import {
 import { basename, join } from "node:path";
 import { openLedger } from "../src/ledger/db";
 import { ConnectionStateStore } from "../src/ledger/connection-state";
+import { clearSwapDebris } from "../src/ledger/connection-state-files";
 import { enrollConnection } from "../src/ledger/enroll";
 import { LedgerError } from "../src/ledger/connections";
 import {
@@ -97,6 +100,58 @@ describe("connection state recovery and locking", () => {
     );
     expect(readdirSync(store.directory).sort()).toEqual(
       [finalName, backupName, journalName].sort(),
+    );
+    db.close();
+  });
+
+  test("debris a committed swap cannot remove does not fail the swap", () => {
+    const directory = temporary();
+    const store = new ConnectionStateStore(directory);
+    // The row and the durable file are already committed when this runs, so a
+    // removal that fails is debris, never a lost write. Refusing here would
+    // report failure for a swap that landed and leave the caller holding a
+    // connection the store has moved past.
+    const backupPath = join(store.directory, "held.rollback");
+    mkdirSync(backupPath);
+    writeFileSync(join(backupPath, "occupant"), "not removable in one call");
+    const journalPath = join(store.directory, "spent.journal");
+    writeFileSync(journalPath, "{}", { mode: 0o600 });
+
+    expect(() => clearSwapDebris(store.directory, { backupPath, journalPath })).not.toThrow();
+    // The one it could remove is still gone.
+    expect(existsSync(journalPath)).toBe(false);
+    rmSync(backupPath, { recursive: true, force: true });
+  });
+
+  test("recovery clears the debris a committed swap left behind", async () => {
+    const directory = temporary();
+    const { db, store, connection } = await enrolled(directory, "second-envelope");
+    const finalName = `${connection.source_key}.state`;
+    const backupName = `${finalName}.01ARZ3NDEKTSV4RRFFQ69G5FAV.rollback`;
+    const journalName = `${finalName}.01ARZ3NDEKTSV4RRFFQ69G5FAW.journal`;
+    // What is on disk when the post-commit cleanup could not finish: the row
+    // names the new bytes, and the journal that proves it is still there.
+    writeFileSync(join(store.directory, backupName), "first-envelope", {
+      mode: 0o600,
+    });
+    writeFileSync(
+      join(store.directory, journalName),
+      JSON.stringify({
+        schema: "kizuki.connection-state-swap/v1",
+        connector_id: connection.connector_id,
+        source_key: connection.source_key,
+        connected_at: connection.connected_at,
+        final_name: finalName,
+        backup_name: backupName,
+      }),
+      { mode: 0o600 },
+    );
+
+    new ConnectionStateStore(directory).recover(db);
+
+    expect(readdirSync(store.directory)).toEqual([finalName]);
+    expect(new TextDecoder().decode(store.read(connection) ?? new Uint8Array())).toBe(
+      "second-envelope",
     );
     db.close();
   });
