@@ -8,6 +8,10 @@ import type {
   SyncBatch,
 } from "../src/contracts/connector";
 import type { CaptureEventInput } from "../src/contracts/event";
+import {
+  PAGE_CANDIDATE_KEY,
+  PAGE_CANDIDATE_SCHEMA,
+} from "../src/contracts/page-candidate";
 import { getCheckpoint } from "../src/ledger/connections";
 import { openLedger } from "../src/ledger/db";
 import {
@@ -19,6 +23,10 @@ import {
 import { listProposals, initStaging } from "../src/staging/proposals";
 import { validEvent } from "./fixtures";
 
+type ManifestOverrides = Partial<Pick<Manifest, "connector_id" | "kinds">> & {
+  page_candidates?: boolean;
+};
+
 class FixtureConnector implements Connector {
   readonly backfillCursors: (string | null)[] = [];
   readonly syncCursors: (string | null)[] = [];
@@ -26,20 +34,24 @@ class FixtureConnector implements Connector {
   constructor(
     private readonly backfillBatch: SyncBatch,
     private readonly syncBatch: SyncBatch = { events: [], cursor: null },
+    private readonly declared: ManifestOverrides = {},
   ) {}
 
   manifest(): Manifest {
     return {
       schema: "kizuki.connector/v1",
-      connector_id: "fixture",
+      connector_id: this.declared.connector_id ?? "fixture",
       version: "1.0.0",
-      kinds: ["message"],
+      kinds: this.declared.kinds ?? ["message"],
       capabilities: {
         backfill: true,
         sync: true,
         tombstones: true,
         purge: true,
         fixture: true,
+        ...(this.declared.page_candidates === undefined
+          ? {}
+          : { page_candidates: this.declared.page_candidates }),
       },
       required_secrets: [],
       emits_sensitivity_hint: true,
@@ -84,6 +96,26 @@ class FixtureConnector implements Connector {
 
 /** The grant a caller with no page authority names. */
 const NOTHING = { page_candidates: false } as const;
+
+/** An event asking the floor to stage its text as a typed page, not a quote. */
+function candidate(over: Partial<CaptureEventInput> = {}): CaptureEventInput {
+  return {
+    ...validEvent(),
+    subjects: [],
+    text: "UNQUOTED BODY",
+    metadata: {
+      [PAGE_CANDIDATE_KEY]: {
+        schema: PAGE_CANDIDATE_SCHEMA,
+        type: "topic",
+        title: "Injected",
+        target: "entities/injected",
+        extensions: {},
+        confidence: 1,
+      },
+    },
+    ...over,
+  };
+}
 
 function database() {
   const db = openLedger(":memory:");
@@ -471,6 +503,87 @@ describe("runToCompletion", () => {
     // interrupted run reports.
     expect(result.cursor).toBe("page-2");
     expect(getCheckpoint(db, "fixture", "src-1")?.cursor).toBe("page-2");
+/**
+ * The grant belongs to the connection the host enrolled. These are the three
+ * ways a batch can claim one that was never given to it.
+ */
+describe("a batch that does not match the enrolled connection", () => {
+  test("a manifest naming another connector runs nothing", async () => {
+    const db = database();
+    const connector = new FixtureConnector(
+      { events: [validEvent()], cursor: "next" },
+      undefined,
+      { connector_id: "elsewhere", page_candidates: true },
+    );
+    const result = await runBackfill(db, connector, "fixture", "/source/a");
+    expect(result.errors).toEqual([
+      "fixture: manifest connector_id does not match the enrolled connection",
+    ]);
+    expect(result.stored).toBe(0);
+    expect(getCheckpoint(db, "fixture", "/source/a")?.cursor).toBeNull();
+    expect(listProposals(db)).toEqual([]);
+    db.close();
+  });
+
+  test("an event from another connector cannot borrow the page grant", async () => {
+    const db = database();
+    const connector = new FixtureConnector(
+      {
+        events: [candidate({ connector_id: "elsewhere" })],
+        cursor: "next",
+      },
+      undefined,
+      { page_candidates: true },
+    );
+    const result = await runBackfill(db, connector, "fixture", "/source/a");
+    expect(result.errors).toEqual([
+      "fixture: batch carries an event from another connector",
+    ]);
+    expect(result.stored).toBe(0);
+    // The whole batch is refused, so the injected page never reaches staging.
+    expect(listProposals(db)).toEqual([]);
+    db.close();
+  });
+
+  test("a kind the manifest never declared refuses the batch", async () => {
+    const db = database();
+    const connector = new FixtureConnector(
+      { events: [], cursor: null },
+      {
+        events: [
+          validEvent(),
+          { ...validEvent(), source_record_id: "b", kind: "page" },
+        ],
+        cursor: "next",
+      },
+    );
+    const result = await runSync(db, connector, "fixture", "/source/a");
+    expect(result.errors).toEqual([
+      "fixture: batch carries a kind the manifest does not declare",
+    ]);
+    // Refusal is the whole batch: the well-formed event ahead of it is not
+    // stored either, because the batch is what the connection vouched for.
+    expect(result.stored).toBe(0);
+    expect(
+      db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM events").get()
+        ?.count,
+    ).toBe(0);
+    db.close();
+  });
+
+  test("a matching batch still stages the page its manifest grants", async () => {
+    const db = database();
+    const connector = new FixtureConnector(
+      { events: [candidate()], cursor: "next" },
+      undefined,
+      { page_candidates: true },
+    );
+    const result = await runBackfill(db, connector, "fixture", "/source/a");
+    expect(result.errors).toEqual([]);
+    expect(result.proposals_created).toBe(1);
+    const [staged] = listProposals(db);
+    expect(staged?.target).toBe("entities/injected");
+    expect(staged?.body).toBe("UNQUOTED BODY");
     db.close();
   });
 });

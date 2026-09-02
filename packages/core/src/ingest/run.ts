@@ -110,50 +110,74 @@ export function runBatch(
   return result;
 }
 
-export async function runBackfill(
-  db: Database,
-  connector: Connector,
+/**
+ * Why this batch may not run under the enrolled connection's grants, or null.
+ * Authority belongs to the connector the host enrolled: the grant is read from
+ * that manifest, so an event carrying a different source's id — or a kind the
+ * manifest never declared — would be staged under authority nobody gave it.
+ * One mismatch refuses the whole batch rather than the event, because a batch
+ * that mixes sources is not a batch this connection can vouch for.
+ *
+ * The message names only the enrolled id: every other string on this path came
+ * from the connector, and a runner's error is not where one is echoed back.
+ */
+function batchRefusal(
+  manifest: Manifest,
   connector_id: string,
-  source_key: string,
-): Promise<RunResult> {
-  const checkpoint = getCheckpoint(db, connector_id, source_key);
-  const manifest = connector.manifest();
-  const result = runBatch(
-    db,
-    await connector.backfill(checkpoint?.cursor ?? null),
-    sourceGrants(manifest),
-  );
-  saveCheckpoint(
-    db,
-    connector_id,
-    source_key,
-    result.errors.length === 0 ? result.cursor : (checkpoint?.cursor ?? null),
-    "backfill",
-    result,
-  );
-  return result;
+  batch: SyncBatch,
+): string | null {
+  if (manifest.connector_id !== connector_id) {
+    return `${connector_id}: manifest connector_id does not match the enrolled connection`;
+  }
+  const kinds = new Set(manifest.kinds);
+  for (const event of batch.events) {
+    if (event.connector_id !== connector_id) {
+      return `${connector_id}: batch carries an event from another connector`;
+    }
+    if (!kinds.has(event.kind)) {
+      return `${connector_id}: batch carries a kind the manifest does not declare`;
+    }
+  }
+  return null;
 }
 
-export async function runSync(
+function refusedRun(reason: string, cursor: string | null): RunResult {
+  return {
+    stored: 0,
+    duplicates: 0,
+    errors: [reason],
+    proposals_created: 0,
+    withdrawn: 0,
+    retractions_filed: 0,
+    cursor,
+  };
+}
+
+async function runConnector(
   db: Database,
   connector: Connector,
   connector_id: string,
   source_key: string,
+  mode: "backfill" | "sync",
 ): Promise<RunResult> {
   const checkpoint = getCheckpoint(db, connector_id, source_key);
   const cursor = checkpoint?.cursor ?? null;
   const manifest = connector.manifest();
-  const result = runBatch(
-    db,
-    await connector.sync(cursor),
-    sourceGrants(manifest),
-  );
+  const batch =
+    mode === "backfill"
+      ? await connector.backfill(cursor)
+      : await connector.sync(cursor);
+  const refusal = batchRefusal(manifest, connector_id, batch);
+  const result =
+    refusal === null
+      ? runBatch(db, batch, sourceGrants(manifest))
+      : refusedRun(refusal, cursor);
   saveCheckpoint(
     db,
     connector_id,
     source_key,
     result.errors.length === 0 ? result.cursor : cursor,
-    "sync",
+    mode,
     result,
   );
   return result;
@@ -190,6 +214,7 @@ function absorb(total: RunResult, batch: RunResult): void {
  * the batches before it stored.
  */
 export async function runToCompletion(
+export function runBackfill(
   db: Database,
   connector: Connector,
   connector_id: string,
@@ -240,4 +265,15 @@ export async function runToCompletion(
   }
   total.errors.push(`run did not complete within ${maxBatches} batches`);
   return total;
+): Promise<RunResult> {
+  return runConnector(db, connector, connector_id, source_key, "backfill");
+}
+
+export function runSync(
+  db: Database,
+  connector: Connector,
+  connector_id: string,
+  source_key: string,
+): Promise<RunResult> {
+  return runConnector(db, connector, connector_id, source_key, "sync");
 }
