@@ -34,10 +34,12 @@ kizuki sync screenpipe
 Repeat `backfill` until a call reports no new events **and hands back the same
 checkpoint it was given**. Both halves matter: a call that spends its page bound
 on rows it skips also reports no events, but its checkpoint has moved and rows
-remain behind it. `isDrained(previousCursor, batch)` is that condition, exported
-for hosts that drive the loop. `sync` then continues from the same checkpoint. The `connect`, `backfill`, and
-`sync` verbs are wired by the CLI lanes; until they merge, the connector is
-reachable through `@kizuki/connectors` via
+remain behind it. This package exports that condition as
+`isDrained(previousCursor, batch)` for hosts driving the loop themselves.
+`sync` then continues from the same checkpoint.
+
+The `connect`, `backfill`, and `sync` verbs are wired by the CLI lanes; until
+they merge, the connector is reachable through `@kizuki/connectors` via
 `getConnector("kizuki.screenpipe", { path })`.
 
 screenpipe can keep recording throughout. It runs the database in WAL mode
@@ -96,8 +98,8 @@ screenpipe schema older than supported: migration 20260613130000 not applied (ma
   emitted with a fabricated time.
 - Screen text and transcripts longer than 65,536 UTF-16 code units are cut on a
   code point boundary and marked with `metadata.text_truncated: true`. Every
-  other string read from the database is held to the same length, counted the
-  same way, including the display names that reach subjects.
+  other string read from the database is bounded the same way and counted in the
+  same units, including the display names that reach subjects.
 - The optional `since` setting excludes every row dated before it. The cutoff is
   compared against each row's own timestamp, so it holds even where ID order and
   timestamp order disagree, which is ordinary for `audio_transcriptions`. It
