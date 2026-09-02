@@ -256,14 +256,26 @@ describe("browser sign-in", () => {
 
 describe("token response parsing", () => {
   test("rejects a token endpoint failure without echoing the body", () => {
-    expect(() =>
+    let raised: unknown;
+    try {
       parseTokenResponse(
         provider(),
         500,
         { error: "server_error", detail: "SENTINEL-ACCESS" },
         NOW,
-      ),
-    ).toThrow("server_error");
+      );
+    } catch (error) {
+      raised = error;
+    }
+
+    expect(raised).toBeInstanceOf(OAuthError);
+    const failure = raised as OAuthError;
+    expect(failure.message).toContain("server_error");
+    // The rest of the body is provider-controlled text that may quote the
+    // request, so naming the error code is the whole of what may be repeated.
+    expect(failure.message).not.toContain("SENTINEL-ACCESS");
+    expect(String(failure)).not.toContain("SENTINEL-ACCESS");
+    expect(JSON.stringify(failure)).not.toContain("SENTINEL-ACCESS");
   });
 
   test.each([
