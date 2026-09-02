@@ -102,6 +102,38 @@ describe("parseLegacyEventsMapping", () => {
     ).toHaveLength(2);
   });
 
+  test("a subject column may not be one a core role already owns", () => {
+    // Subjects share with each other and with nothing else: a body column read
+    // as a list of names would mint subject ids out of prose.
+    const roles: Record<string, unknown>[] = [
+      { text: { column: "body" }, column: "body", owner: "text" },
+      { source_record_id: { column: "id" }, column: "id", owner: "source_record_id" },
+      { occurred_at: { column: "ts", format: "unix_seconds" }, column: "ts", owner: "occurred_at" },
+      { deleted: { column: "gone", true_values: [1] }, column: "gone", owner: "deleted" },
+      {
+        sensitivity_hint: { column: "vis", values: {} },
+        column: "vis",
+        owner: "sensitivity_hint",
+      },
+      { kind: { column: "type", values: {}, default: "note" }, column: "type", owner: "kind" },
+    ];
+    for (const entry of roles) {
+      const { column, owner, ...role } = entry;
+      expect(
+        refusal(
+          mapping({
+            ...role,
+            subjects: [
+              { column: column as string, role: "from", namespace: "legacy" },
+            ],
+          }),
+        ),
+      ).toBe(
+        `mapping.subjects[0].column: column ${column as string} is already consumed by ${owner as string}`,
+      );
+    }
+  });
+
   test("kinds must be a bounded lowercase token", () => {
     expect(refusal(mapping({ kind: { const: "Message" } }))).toContain(
       "mapping.kind.const: must match",

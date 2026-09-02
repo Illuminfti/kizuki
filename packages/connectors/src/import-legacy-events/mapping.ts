@@ -298,6 +298,18 @@ function assertDistinct(mapping: LegacyEventsMapping): void {
   ) {
     claim(mapping.sensitivity_hint.column, "sensitivity_hint");
   }
+  // Subjects may share a column with each other — one column of names can be
+  // read as several roles — but never with a core role, whose value means
+  // something else entirely.
+  for (const [index, subject] of mapping.subjects.entries()) {
+    const owner = owners.get(subject.column);
+    if (owner !== undefined) {
+      fail(
+        `mapping.subjects[${index}].column`,
+        `column ${subject.column} is already consumed by ${owner}`,
+      );
+    }
+  }
 }
 
 export function parseLegacyEventsMapping(
