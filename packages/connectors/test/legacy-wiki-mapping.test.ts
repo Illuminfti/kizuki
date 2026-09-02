@@ -8,6 +8,7 @@ import {
   DEFAULT_DIRECTORIES,
   LEGACY_WIKI_CONNECTOR_ID,
   LEGACY_WIKI_MAPPING_SCHEMA,
+  RESERVED_EXTENSIONS,
   parseLegacyWikiMapping,
 } from "../src/import-legacy-wiki/mapping";
 
@@ -92,6 +93,14 @@ describe("parseLegacyWikiMapping", () => {
     ).toBe(
       "mapping.fields.created: already consumed by mapping.occurred_at.field",
     );
+  });
+
+  test("a field cannot be renamed onto a name the importer sets itself", () => {
+    for (const name of RESERVED_EXTENSIONS) {
+      expect(refusal(mapping({ fields: { origin: name } }))).toBe(
+        `mapping.fields.origin: already consumed by the importer, which sets ${name} itself`,
+      );
+    }
   });
 
   test("subject namespaces are a bounded lowercase token", () => {

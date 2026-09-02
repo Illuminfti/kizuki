@@ -8,8 +8,8 @@ import type { FrontmatterValue } from "@kizuki/core/staging";
  */
 
 const CONTROL_CHARACTER = /[\u0000-\u001F\u007F]/g;
-export const MAX_FRONTMATTER_STRING = 4096;
-export const MAX_FRONTMATTER_ARRAY = 256;
+const MAX_FRONTMATTER_STRING = 4096;
+const MAX_FRONTMATTER_ARRAY = 256;
 
 /**
  * One display-safe line. Control characters become spaces rather than

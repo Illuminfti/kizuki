@@ -25,8 +25,8 @@ import type { LegacyRow } from "./source";
  */
 
 export const MAX_TEXT_LENGTH = 262_144;
-export const MAX_SOURCE_RECORD_ID = 512;
-export const MAX_METADATA_STRING = 16_384;
+const MAX_SOURCE_RECORD_ID = 512;
+const MAX_METADATA_STRING = 16_384;
 const MAX_SUBJECTS = 200;
 
 export type RowSkipReason =

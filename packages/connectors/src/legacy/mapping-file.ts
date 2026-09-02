@@ -9,7 +9,10 @@ import { errorMessage } from "../util";
  * touched, so a typo is a refusal rather than a half-finished import.
  */
 
-export const MAX_MAPPING_BYTES = 1024 * 1024;
+const MAX_MAPPING_BYTES = 1024 * 1024;
+
+/** The sibling name a directory source is expected to carry. */
+export const MAPPING_FILE_NAME = "kizuki-mapping.json";
 
 export interface LoadedMapping {
   raw: unknown;
@@ -26,8 +29,8 @@ export function defaultMappingPath(
   kind: "directory" | "file",
 ): string {
   return kind === "directory"
-    ? join(sourcePath, "kizuki-mapping.json")
-    : `${sourcePath}.kizuki-mapping.json`;
+    ? join(sourcePath, MAPPING_FILE_NAME)
+    : `${sourcePath}.${MAPPING_FILE_NAME}`;
 }
 
 function sortDeep(value: unknown): unknown {

@@ -14,7 +14,6 @@ import {
 } from "../legacy/coerce";
 import { compareStrings } from "../util";
 import {
-  MAX_EXTENSIONS,
   jsonSafeFrontmatter,
   planFields,
   planSubjects,
@@ -127,9 +126,7 @@ function planPage(
   const occurred = occurredAt ?? new Date(file.mtimeMs).toISOString();
 
   const subjects = planSubjects(data, mapping);
-  const reserved =
-    2 + (legacyType === null ? 0 : 1) + (read === null ? 0 : 1);
-  const fields = planFields(data, mapping, slots, reserved);
+  const fields = planFields(data, mapping, slots);
   if (unusableType) {
     fields.reports.push({
       key: sanitizeLine(mapping.type.field, 120),

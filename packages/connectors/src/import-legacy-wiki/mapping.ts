@@ -70,6 +70,23 @@ export const DEFAULT_DIRECTORIES: Record<PageType, string> = {
   rollup: "dashboards",
 };
 
+/**
+ * Extension names nothing in a legacy estate may claim. The first four are
+ * stamped by the planner, the last three by the floor when it turns the
+ * candidate into a proposal; either way the stamp wins, so a mapping or a page
+ * that aims a field at one of them would lose the value while the report said
+ * it had been carried over.
+ */
+export const RESERVED_EXTENSIONS: readonly string[] = [
+  "x-legacy-path",
+  "x-legacy-sensitivity",
+  "x-legacy-title-source",
+  "x-legacy-type",
+  "x-connector",
+  "x-capture-kind",
+  "x-source-record-id",
+];
+
 const rules = mappingRules(LEGACY_WIKI_CONNECTOR_ID);
 const fail: MappingRules["fail"] = rules.fail;
 const objectAt: MappingRules["objectAt"] = rules.objectAt;
@@ -203,6 +220,12 @@ function parseFields(
     if (typeof mapped !== "string" || !EXTENSION_NAME.test(mapped)) {
       fail(`mapping.fields.${legacy}`, "must be an x-* name or null");
     }
+    if (RESERVED_EXTENSIONS.includes(mapped)) {
+      fail(
+        `mapping.fields.${legacy}`,
+        `already consumed by the importer, which sets ${mapped} itself`,
+      );
+    }
     if (taken.has(mapped)) {
       fail(`mapping.fields.${legacy}`, `must be distinct; ${mapped} is taken`);
     }
@@ -294,16 +317,4 @@ export function parseLegacyWikiMapping(raw: unknown): LegacyWikiMapping {
     target: parseTarget(source["target"]),
     ignore: parseIgnore(source["ignore"]),
   };
-}
-
-/** The field names the mapping itself consumes; everything else is an x-* field. */
-export function consumedFields(mapping: LegacyWikiMapping): Set<string> {
-  const consumed = new Set([
-    mapping.title.field,
-    mapping.type.field,
-    mapping.sensitivity.field,
-  ]);
-  if (mapping.occurred_at !== null) consumed.add(mapping.occurred_at.field);
-  if (mapping.subjects !== null) consumed.add(mapping.subjects.field);
-  return consumed;
 }

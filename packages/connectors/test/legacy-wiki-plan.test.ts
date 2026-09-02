@@ -636,6 +636,32 @@ describe("the candidate the floor will actually accept", () => {
     expect(checked !== null && checked.ok).toBe(true);
   });
 
+  test("a page cannot overwrite a name the importer or the floor sets", () => {
+    const { events, report } = plan(
+      pageWithKeys(
+        'x-legacy-path: "/elsewhere"\nx-legacy-title-source: heading\nx-connector: kizuki.trustworthy',
+      ),
+    );
+    const extensions = candidate(events[0] as CaptureEventInput)[
+      "extensions"
+    ] as Record<string, unknown>;
+    expect(extensions["x-legacy-path"]).toBe("a.md");
+    expect(extensions["x-legacy-title-source"]).toBe("field");
+    expect(extensions["x-connector"]).toBeUndefined();
+    for (const key of [
+      "x-legacy-path",
+      "x-legacy-title-source",
+      "x-connector",
+    ]) {
+      expect(page(report, "a.md").fields).toContainEqual({
+        key,
+        outcome: "dropped",
+        to: key,
+        note: "name_conflict",
+      });
+    }
+  });
+
   test("keys that differ only outside the grammar collide, once", () => {
     const { report } = plan(pageWithKeys("date.created: 1\ndate-created: 2"));
     const outcomes = page(report, "a.md").fields.map(

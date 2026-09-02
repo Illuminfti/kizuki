@@ -8,6 +8,7 @@ import {
   subjectId,
   toFrontmatterValue,
 } from "../legacy/coerce";
+import { RESERVED_EXTENSIONS } from "./mapping";
 import type { LegacyWikiMapping } from "./mapping";
 import type { LegacyWikiFieldReport } from "./report";
 
@@ -16,7 +17,7 @@ import type { LegacyWikiFieldReport } from "./report";
  * wiki can hold, it returns both what the page becomes and what that cost.
  */
 
-export const MAX_EXTENSIONS = 64;
+const MAX_EXTENSIONS = 64;
 const MAX_SUBJECTS = 200;
 const MAX_SEGMENT_LENGTH = 64;
 const MAX_METADATA_FRONTMATTER = 64 * 1024;
@@ -98,12 +99,13 @@ export function planFields(
   data: Record<string, unknown>,
   mapping: LegacyWikiMapping,
   slots: Map<string, string>,
-  reserved: number,
 ): FieldPlan {
   const extensions: Record<string, FrontmatterValue> = {};
   const reports: LegacyWikiFieldReport[] = [];
-  const taken = new Set<string>();
-  const budget = MAX_EXTENSIONS - reserved;
+  // Seeded with the names the planner and the floor stamp: a page whose own
+  // frontmatter produces one loses the collision, and the report says so
+  // rather than claiming the value was carried over.
+  const taken = new Set(RESERVED_EXTENSIONS);
 
   for (const key of Object.keys(data)) {
     const label = sanitizeLine(key, 120);
@@ -134,7 +136,7 @@ export function planFields(
       });
       continue;
     }
-    if (taken.size >= budget) {
+    if (taken.size >= MAX_EXTENSIONS) {
       // The page-candidate contract caps the extension bag; past the cap the
       // page still imports, and the report says which fields did not.
       reports.push({

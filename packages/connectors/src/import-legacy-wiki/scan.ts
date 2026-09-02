@@ -4,6 +4,7 @@ import path from "node:path";
 import { KizukiError } from "../errors";
 import { compareStrings, errorMessage } from "../util";
 import { matchesGlob } from "../legacy/coerce";
+import { MAPPING_FILE_NAME } from "../legacy/mapping-file";
 import { LEGACY_WIKI_CONNECTOR_ID } from "./mapping";
 
 /**
@@ -13,10 +14,9 @@ import { LEGACY_WIKI_CONNECTOR_ID } from "./mapping";
  */
 
 /** Entries the walk will consider at all, not only the ones it keeps. */
-export const MAX_FILES = 50_000;
-export const MAX_FILE_BYTES = 4 * 1024 * 1024;
-export const MAX_DEPTH = 16;
-export const MAPPING_FILE_NAME = "kizuki-mapping.json";
+const MAX_FILES = 50_000;
+const MAX_FILE_BYTES = 4 * 1024 * 1024;
+const MAX_DEPTH = 16;
 
 const MARKDOWN = /\.(?:md|markdown)$/i;
 
