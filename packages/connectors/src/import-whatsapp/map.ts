@@ -19,11 +19,26 @@ export interface WhatsAppParseOptions {
   media: MediaLookup;
 }
 
-function digest(message: ParsedWhatsAppMessage): string {
+function digest(value: string, length: number): string {
   return new Bun.CryptoHasher("sha256")
-    .update(`${message.sender}\n${message.text}`)
+    .update(value)
     .digest("hex")
-    .slice(0, 16);
+    .slice(0, length);
+}
+
+/**
+ * `whatsapp:self` is the owner. A participant whose display name happens to
+ * slug to the same word — and in a group chat that name is whatever the other
+ * person set on their own profile — would otherwise have their messages
+ * stored, and proposed downstream, as the owner's. The reserved id is handed
+ * out only to the configured owner; anyone else keeps a name of their own.
+ */
+function senderSubjectId(sender: string, self: string | undefined): string {
+  if (self !== undefined && sender === self) return "whatsapp:self";
+  const slug = subjectSlug(sender);
+  return slug === "self"
+    ? `whatsapp:self-${digest(sender, 8)}`
+    : `whatsapp:${slug}`;
 }
 
 /**
@@ -35,7 +50,7 @@ function sourceRecordId(
   message: ParsedWhatsAppMessage,
   occurrence: number,
 ): string {
-  return `${message.local_timestamp}/${digest(message)}/${occurrence}`;
+  return `${message.local_timestamp}/${digest(`${message.sender}\n${message.text}`, 16)}/${occurrence}`;
 }
 
 async function attachmentFor(
@@ -78,10 +93,7 @@ export async function parseWhatsAppExport(
     // would fix the record as media-less forever. The size is hashed, so a
     // repaired export comes back as a new version of the same message.
     const mediaBytes = attachments[0]?.byte_size ?? null;
-    const senderId =
-      opts.self !== undefined && message.sender === opts.self
-        ? "whatsapp:self"
-        : `whatsapp:${subjectSlug(message.sender)}`;
+    const senderId = senderSubjectId(message.sender, opts.self);
 
     events.push({
       schema: "kizuki.event/v1",

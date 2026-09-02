@@ -257,6 +257,27 @@ test("the configured owner name becomes the self subject", async () => {
   expect(events[1]?.subjects[0]?.subject_id).toBe("whatsapp:grace");
 });
 
+test("a participant cannot claim the owner's subject by their name", async () => {
+  const chat = [
+    "1/13/26, 09:00 - Self: hi",
+    "1/13/26, 09:01 - \u202fSELF\u202f: hello",
+    "1/13/26, 09:02 - Ada: hey",
+  ].join("\n");
+  const events = await parse(chat, { date_order: "mdy" });
+  const ids = events.map((event) => event.subjects[0]?.subject_id ?? "");
+  expect(ids).not.toContain("whatsapp:self");
+  expect(new Set(ids).size).toBe(3);
+  for (const id of ids.slice(0, 2)) {
+    expect(id.startsWith("whatsapp:self-")).toBe(true);
+  }
+  expect(ids[2]).toBe("whatsapp:ada");
+
+  // The reserved id is still the configured owner's, and only theirs.
+  const owned = await parse(chat, { date_order: "mdy", self: "Self" });
+  expect(owned[0]?.subjects[0]?.subject_id).toBe("whatsapp:self");
+  expect(owned[1]?.subjects[0]?.subject_id).not.toBe("whatsapp:self");
+});
+
 test("the chat name comes from the export file name", () => {
   expect(chatNameFromFile(`/exports/${CHAT_FILE}`)).toBe("Acme Planning");
   expect(chatNameFromFile("/exports/Acme Planning/_chat.txt")).toBe(
