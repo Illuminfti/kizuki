@@ -257,6 +257,40 @@ describe("bounds on a call", () => {
     expect(llm.attempts).toBe(2);
   });
 
+  test("a call never runs past the deadline it was given", async () => {
+    const granted: number[] = [];
+    const waited: number[] = [];
+    let now = 0;
+    const advancing: Clock = {
+      now: () => now,
+      sleep: async (ms) => {
+        waited.push(ms);
+        now += ms;
+      },
+    };
+    // The endpoint burns every millisecond it is granted, then asks for more.
+    const transport: ChatTransport = async (_request, opts) => {
+      granted.push(opts.timeout_ms);
+      now += opts.timeout_ms;
+      return { ok: false, status: 503, retry_after_ms: 30_000 };
+    };
+    const llm = port(
+      { base_url: "https://host.test/v1", model: "m", max_retries: 5 },
+      { transport, clock: advancing },
+    );
+    await expect(
+      llm.complete({ ...request, deadline_ms: 60_000 }),
+    ).rejects.toBeInstanceOf(PortError);
+    // Regression: the deadline was applied per attempt, so a caller asking
+    // for a minute could be parked for the retry count times that, plus the
+    // backoff, which no scheduler can plan against.
+    const spent =
+      granted.reduce((total, ms) => total + ms, 0) +
+      waited.reduce((total, ms) => total + ms, 0);
+    expect(spent).toBeLessThanOrEqual(60_000);
+    expect(now).toBeLessThanOrEqual(60_000);
+  });
+
   test("a status that is not retryable is not retried", async () => {
     const scripted = counting([{ ok: false, status: 400, retry_after_ms: null }]);
     const llm = port(
@@ -290,7 +324,7 @@ describe("bounds on a call", () => {
     await llm.complete(request);
     // An NTP correction or a resume from suspend can move the clock back.
     now -= 3_600_000;
-    await llm.complete(request);
+    await llm.complete({ ...request, deadline_ms: 120_000 });
     expect(Math.max(...slept)).toBeLessThanOrEqual(60_000);
   });
 

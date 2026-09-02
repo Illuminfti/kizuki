@@ -143,7 +143,9 @@ export class OpenAiCompatibleLlm implements LlmPort {
       throw new PortError("unavailable", "port is closed", false);
     }
     const messages = this.validate(request);
-    const timeout = Math.min(request.deadline_ms, this.config.timeout_ms);
+    // One deadline for the whole call. A retry that cannot finish inside it is
+    // not a retry, it is an overrun no scheduler above this port can plan for.
+    const deadline = this.clock.now() + request.deadline_ms;
     const chat: ChatRequest = {
       model: this.config.model,
       messages,
@@ -156,7 +158,8 @@ export class OpenAiCompatibleLlm implements LlmPort {
 
     let attempt = 0;
     for (;;) {
-      const result = await this.send(chat, timeout);
+      if (this.clock.now() >= deadline) throw this.deadlineError();
+      const result = await this.send(chat, deadline);
       if (result.ok) {
         const answer = readChatAnswer(result.body);
         const inputChars = messages.reduce(
@@ -178,10 +181,13 @@ export class OpenAiCompatibleLlm implements LlmPort {
       if (!retryable || attempt >= this.config.max_retries) {
         throw this.transportError(result);
       }
-      attempt += 1;
-      await this.clock.sleep(
-        Math.min(result.retry_after_ms ?? DEFAULT_RETRY_MS, MAX_RETRY_MS),
+      const wait = Math.min(
+        result.retry_after_ms ?? DEFAULT_RETRY_MS,
+        MAX_RETRY_MS,
       );
+      if (this.clock.now() + wait >= deadline) throw this.transportError(result);
+      attempt += 1;
+      await this.clock.sleep(wait);
     }
   }
 
@@ -254,7 +260,7 @@ export class OpenAiCompatibleLlm implements LlmPort {
    */
   private async send(
     request: ChatRequest,
-    timeoutMs: number,
+    deadline: number,
   ): Promise<TransportResult> {
     this.prune();
     const oldest = this.window[0];
@@ -262,21 +268,37 @@ export class OpenAiCompatibleLlm implements LlmPort {
       this.window.length >= this.config.requests_per_minute &&
       oldest !== undefined
     ) {
-      const wait = oldest + RATE_WINDOW_MS - this.clock.now();
-      await this.clock.sleep(Math.max(0, Math.min(wait, RATE_WINDOW_MS)));
+      const wait = Math.max(
+        0,
+        Math.min(oldest + RATE_WINDOW_MS - this.clock.now(), RATE_WINDOW_MS),
+      );
+      // Waiting out the rate window is part of the call, so it is spent from
+      // the same deadline rather than added on top of it.
+      if (this.clock.now() + wait > deadline) throw this.deadlineError();
+      await this.clock.sleep(wait);
       this.prune();
     }
     // Resolve the credential first: a request that fails closed here never
     // happened, so it must not consume a slot in the rate window either.
     const key = await this.apiKey();
+    const remaining = deadline - this.clock.now();
+    if (remaining <= 0) throw this.deadlineError();
     this.window.push(this.clock.now());
     this.physicalAttempts += 1;
     return await this.transport(request, {
       url: this.url,
       api_key: key,
-      timeout_ms: timeoutMs,
+      timeout_ms: Math.min(remaining, this.config.timeout_ms),
       max_response_bytes: this.config.max_response_bytes,
     });
+  }
+
+  private deadlineError(): PortError {
+    return new PortError(
+      "timeout",
+      `${new URL(this.url).host} did not answer within its deadline`,
+      true,
+    );
   }
 
   private prune(): void {
