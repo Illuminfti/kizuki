@@ -134,3 +134,86 @@ test("a failed reconnect does not tear down the connection that works", async ()
   expect(api.calls.map((call) => call.method)).not.toContain("disconnect");
   expect((await connector.health()).state).toBe("ok");
 });
+
+/** A connector whose every `connect` builds a fresh client, as re-auth does. */
+function reconnecting(accounts: (() => ScriptedTelegramApi)[]) {
+  const built: ScriptedTelegramApi[] = [];
+  let index = 0;
+  const connector = new TelegramConnector(
+    { state_ref: STATE_REF },
+    {
+      api: () => {
+        const make = accounts[Math.min(index, accounts.length - 1)];
+        index += 1;
+        const api = (make as () => ScriptedTelegramApi)();
+        built.push(api);
+        return api;
+      },
+      credentials: () => FIXTURE_CREDENTIALS,
+      now: () => Date.parse(FIXTURE_OBSERVED_AT),
+      sleep: async () => {},
+    },
+  );
+  return { connector, built };
+}
+
+function unreachableApi(): ScriptedTelegramApi {
+  const api = new ScriptedTelegramApi(fixtureAccount());
+  api.disconnectNetwork();
+  return api;
+}
+
+test("a reconnect that cannot reach telegram keeps the live connection", async () => {
+  const { connector, built } = reconnecting([
+    () => new ScriptedTelegramApi(fixtureAccount()),
+    unreachableApi,
+  ]);
+  await connector.connect(stateResolver());
+
+  const error = await rejection(() => connector.connect(stateResolver()));
+  expect(error.code).toBe("unreachable");
+  // The replacement never proved itself, so the client that works is still
+  // the one the connector holds.
+  expect(built[0]?.calls.map((call) => call.method)).not.toContain("disconnect");
+  expect((await connector.health()).state).toBe("ok");
+});
+
+test("a reconnect answered by another account keeps the live connection", async () => {
+  const { connector, built } = reconnecting([
+    () => new ScriptedTelegramApi(fixtureAccount()),
+    () =>
+      new ScriptedTelegramApi(
+        fixtureAccount({ me: { id: "2002", username: "linus", bot: false } }),
+      ),
+  ]);
+  await connector.connect(stateResolver());
+
+  const error = await rejection(() => connector.connect(stateResolver()));
+  expect(error.code).toBe("identity_mismatch");
+  expect(built[0]?.calls.map((call) => call.method)).not.toContain("disconnect");
+  expect(built[1]?.calls.map((call) => call.method)).toContain("disconnect");
+  expect((await connector.health()).state).toBe("ok");
+});
+
+test("a reconnect to a session signed out elsewhere keeps the live connection", async () => {
+  const { connector, built } = reconnecting([
+    () => new ScriptedTelegramApi(fixtureAccount()),
+    () => new ScriptedTelegramApi(fixtureAccount({ authorized: false })),
+  ]);
+  await connector.connect(stateResolver());
+
+  const error = await rejection(() => connector.connect(stateResolver()));
+  expect(error.code).toBe("unauthenticated");
+  expect(built[0]?.calls.map((call) => call.method)).not.toContain("disconnect");
+  expect((await connector.health()).state).toBe("ok");
+});
+
+test("connecting again over one client does not hang up on it", async () => {
+  const { connector, api } = harness();
+  await connector.connect(stateResolver());
+  await connector.connect(stateResolver());
+  // A host whose factory hands back the client it already built is handing
+  // back the live one; letting go of it would close the connection just made.
+  expect(api.calls.map((call) => call.method)).not.toContain("disconnect");
+  expect((await connector.health()).state).toBe("ok");
+});

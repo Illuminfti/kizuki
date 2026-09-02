@@ -154,17 +154,10 @@ export class TelegramConnector implements Connector {
     }
     const state = parseState(text);
     const credentials = requireAppCredentials(this.#deps.credentials);
-    // Re-authentication keeps the same connection, so a second connect
-    // supersedes the first: hand its client back rather than abandon a live
-    // one for the life of the process. Only once nothing else can refuse.
-    const superseded = this.#api;
-    this.#api = null;
-    this.#self = null;
-    if (superseded !== null) await this.#disconnectQuietly(superseded);
     const api = this.#deps.api(state.session, credentials);
-    await api.connect();
     let me: TelegramUser;
     try {
+      await api.connect();
       if (!(await api.isAuthorized())) {
         throw new TelegramConnectorError(
           "unauthenticated",
@@ -179,8 +172,18 @@ export class TelegramConnector implements Connector {
         );
       }
     } catch (error) {
+      // Nothing the replacement did is worth the connection already in hand:
+      // a reconnect that could not prove itself leaves the working client in
+      // place rather than trading it for none at all.
       await this.#disconnectQuietly(api);
       throw error;
+    }
+    // Re-authentication keeps the same connection, so a second connect
+    // supersedes the first: hand its client back rather than abandon a live
+    // one for the life of the process. Only once the replacement is proven.
+    const superseded = this.#api;
+    if (superseded !== null && superseded !== api) {
+      await this.#disconnectQuietly(superseded);
     }
     this.#api = api;
     this.#self = me;
