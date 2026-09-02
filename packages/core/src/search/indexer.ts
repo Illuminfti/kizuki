@@ -97,8 +97,13 @@ function eventDocument(event: CaptureEvent): SearchDocument {
   };
 }
 
+/**
+ * Injective. Both fields accept any non-empty string, so joining them with a
+ * separator either may contain would let two distinct records share a key and
+ * one record's tombstone suppress another record's live event on rebuild.
+ */
 function recordKey(event: CaptureEvent): string {
-  return `${event.connector_id}\u0000${event.source_record_id}`;
+  return JSON.stringify([event.connector_id, event.source_record_id]);
 }
 
 function replacePage(db: Database, page: CanonPage): void {

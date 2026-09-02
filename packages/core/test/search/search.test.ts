@@ -316,6 +316,34 @@ describe("search rebuild", () => {
     expect(search(db, "obsolete")).toEqual([]);
   });
 
+  test("rebuild keys a record by connector and source id, not their join", () => {
+    const db = searchDb();
+    const vault = tempVault();
+    disposers.push(vault.dispose);
+    // Both fields accept any non-empty string, so joining them with a
+    // separator either may contain lets two distinct records share a key and
+    // one record's tombstone suppress another record's live event.
+    const kept = storedEvent(db, "b\u0000c", {
+      connector_id: "acme",
+      text: "collidable record",
+    });
+    indexEvent(db, kept);
+    const tombstone = storedEvent(db, "c", {
+      connector_id: "acme\u0000b",
+      text: "",
+      deleted: true,
+    });
+    indexEvent(db, tombstone);
+    expect(search(db, "collidable").map(({ doc_id }) => doc_id)).toEqual([
+      kept.event_id,
+    ]);
+
+    expect(rebuildSearch(db, vault.path).events).toBe(1);
+    expect(search(db, "collidable").map(({ doc_id }) => doc_id)).toEqual([
+      kept.event_id,
+    ]);
+  });
+
   test("rebuildSearch stays linear for thousands of ledger rows", () => {
     const db = searchDb();
     const vault = tempVault();
