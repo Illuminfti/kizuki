@@ -40,11 +40,12 @@ const CREDENTIAL_AUTHORIZATION_PARAMS = new Set([
 ]);
 
 /**
- * Below this length a match is far likelier to be an accident — a word in the
- * provider's own path, or a run inside the 43-character random nonce — than
- * the credential, and refusing on an accident fails a sign-in for a collision
- * the owner cannot see and cannot reproduce. Installed-app secrets are much
- * longer than this.
+ * The assembled URL also carries values this module generated or joined — the
+ * state nonce, the PKCE challenge, the scope list — where a short match is far
+ * likelier to be an accident than the credential, and refusing on an accident
+ * fails a sign-in for a collision the owner cannot see and cannot reproduce.
+ * Installed-app secrets are much longer than this. A field the provider
+ * authored gets no such exemption: see refuseSecretInField.
  */
 const MIN_GUARDED_SECRET_LENGTH = 8;
 
@@ -70,11 +71,24 @@ function percentDecoded(text: string): string {
 }
 
 /**
+ * Percent-encoding hides a secret from a plain substring test while a browser,
+ * a referrer header and the provider's access log all still see it decoded.
+ */
+function carriesSecret(secret: string, text: string): boolean {
+  let form = text;
+  for (let round = 0; round <= SECRET_DECODE_ROUNDS; round += 1) {
+    if (form.includes(secret)) return true;
+    const decoded = percentDecoded(form);
+    if (decoded === form) return false;
+    form = decoded;
+  }
+  return false;
+}
+
+/**
  * Refusing a parameter name is not enough: a secret carried as somebody else's
  * value, or in the endpoint's own userinfo or path, reaches the same browser
- * history, referrer headers and provider access log — and percent-encoding
- * hides it from a plain substring test while every one of those readers still
- * sees it decoded.
+ * history, referrer headers and provider access log.
  */
 export function refuseSecret(
   secret: string | undefined,
@@ -82,14 +96,25 @@ export function refuseSecret(
   where: string,
 ): void {
   if (secret === undefined || secret.length < MIN_GUARDED_SECRET_LENGTH) return;
-  let form = text;
-  for (let round = 0; round <= SECRET_DECODE_ROUNDS; round += 1) {
-    if (form.includes(secret)) {
-      throw new TypeError(`${where} may not carry the client secret`);
-    }
-    const decoded = percentDecoded(form);
-    if (decoded === form) return;
-    form = decoded;
+  if (carriesSecret(secret, text)) {
+    throw new TypeError(`${where} may not carry the client secret`);
+  }
+}
+
+/**
+ * A field the provider authored is judged at every length. Nothing but the
+ * provider definition could have put the credential there, so there is no
+ * accidental collision to protect and a four-character secret reaches the
+ * browser's history exactly as a long one does.
+ */
+function refuseSecretInField(
+  secret: string | undefined,
+  text: string,
+  where: string,
+): void {
+  if (secret === undefined || secret.length === 0) return;
+  if (carriesSecret(secret, text)) {
+    throw new TypeError(`${where} may not carry the client secret`);
   }
 }
 
@@ -172,6 +197,23 @@ function assertProviderEndpoints(provider: OAuthProvider): void {
   }
 }
 
+/** Every provider-authored value that reaches the browser URL verbatim. */
+function browserVisibleFields(provider: OAuthProvider): [string, string][] {
+  const fields: [string, string][] = [
+    ["authorization_url", provider.authorization_url],
+    ["client_id", provider.client_id],
+  ];
+  if (provider.redirect_path !== undefined) {
+    fields.push(["redirect_path", provider.redirect_path]);
+  }
+  for (const [key, value] of Object.entries(
+    provider.extra_authorization_params ?? {},
+  )) {
+    fields.push([`extra_authorization_params.${key}`, value]);
+  }
+  return fields;
+}
+
 /** Everything a browser URL can be judged on before the listener exists. */
 export function assertBrowserSafeProvider(provider: OAuthProvider): void {
   assertProviderEndpoints(provider);
@@ -185,11 +227,6 @@ export function assertBrowserSafeProvider(provider: OAuthProvider): void {
   if (url.username.length > 0 || url.password.length > 0) {
     throw new TypeError("authorization_url may not carry userinfo credentials");
   }
-  refuseSecret(
-    provider.client_secret,
-    provider.authorization_url,
-    "authorization_url",
-  );
   for (const [key, value] of Object.entries(
     provider.extra_authorization_params ?? {},
   )) {
@@ -203,10 +240,8 @@ export function assertBrowserSafeProvider(provider: OAuthProvider): void {
         `extra_authorization_params may not put the credential ${key} in a browser URL`,
       );
     }
-    refuseSecret(
-      provider.client_secret,
-      value,
-      `extra_authorization_params.${key}`,
-    );
+  }
+  for (const [where, value] of browserVisibleFields(provider)) {
+    refuseSecretInField(provider.client_secret, value, where);
   }
 }

@@ -125,15 +125,34 @@ describe("a hostile authorization URL", () => {
 
   test("a secret too short to tell from an accident does not abort sign-in", () => {
     // "read" is one of the requested scopes, so the assembled URL contains it
-    // whatever the provider's credentials are. Refusing here would fail a
-    // sign-in for a collision, and a collision with the random nonce would
-    // fail it only on some runs.
+    // whatever the provider's credentials are. Refusing on a value this module
+    // generated or joined itself would fail a sign-in for a collision, and a
+    // collision with the random nonce would fail it only on some runs.
     const url = buildAuthorizationUrl(
       provider({ client_secret: "read" }),
       urlParams,
     );
     expect(url).toContain("scope=read+profile");
     expect(url).not.toContain("client_secret");
+  });
+
+  test.each([
+    [
+      "an extra parameter",
+      { client_secret: "tiny", extra_authorization_params: { login_hint: "tiny" } },
+    ],
+    [
+      "the endpoint path",
+      { client_secret: "tiny", authorization_url: "https://provider.invalid/tiny" },
+    ],
+    ["the client id", { client_secret: "tiny", client_id: "tiny" }],
+    ["the redirect path", { client_secret: "tiny", redirect_path: "/tiny" }],
+  ])("refuses a short secret the provider itself put in %s", (_label, overrides) => {
+    // Length is no excuse in a field the provider authored: nothing else could
+    // have put the value there, so there is no accident to protect.
+    expect(() => buildAuthorizationUrl(provider(overrides), urlParams)).toThrow(
+      TypeError,
+    );
   });
 
   test("a sign-in refuses such an endpoint before it opens a listener", async () => {
