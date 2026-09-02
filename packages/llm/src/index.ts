@@ -25,7 +25,7 @@ export {
 export {
   EXTRACT_BATCH,
   EXTRACT_INPUT_CHARS,
-  PROMPT_VERSION,
+  EXTRACT_PROMPT_OVERHEAD_CHARS,
   SYSTEM_PROMPT,
   batchEvents,
   buildExtractPrompt,

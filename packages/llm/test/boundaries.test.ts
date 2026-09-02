@@ -17,6 +17,7 @@ describe("the package boundary", () => {
     expect(Object.keys(llm).sort()).toEqual([
       "EXTRACT_BATCH",
       "EXTRACT_INPUT_CHARS",
+      "EXTRACT_PROMPT_OVERHEAD_CHARS",
       "LlmRejection",
       "MODEL_PRODUCER",
       "MODEL_PRODUCER_ID",
@@ -24,7 +25,6 @@ describe("the package boundary", () => {
       "OPENAI_COMPATIBLE_LLM",
       "OPENAI_COMPATIBLE_LLM_ID",
       "OpenAiCompatibleLlm",
-      "PROMPT_VERSION",
       "SYSTEM_PROMPT",
       "batchEvents",
       "buildExtractPrompt",
