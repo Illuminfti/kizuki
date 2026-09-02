@@ -1,4 +1,4 @@
-import type { CaptureEventInput } from "./event";
+import type { CaptureEventInput, SensitivityHint } from "./event";
 import { isRfc3339 } from "../util/time";
 
 export const CONNECTOR_SCHEMA = "kizuki.connector/v1" as const;
@@ -55,6 +55,17 @@ export interface Manifest {
   /** `secret_ref` URIs the connector needs (`env:`, `file:`); never plaintext. */
   required_secrets: string[];
   emits_sensitivity_hint: boolean;
+  /**
+   * What a record from this source is labeled when the source says nothing.
+   * Sensitivity is assigned from the connector, never asked of the owner.
+   */
+  default_sensitivity?: SensitivityHint;
+  /**
+   * The least sensitive label a record from this source may carry. A
+   * `sensitivity_hint` is honored only upward from here: a source that claims
+   * less than its floor is raised to it rather than believed.
+   */
+  sensitivity_floor?: SensitivityHint;
   /** Non-empty; `sign_in`/`oauth` require a `signIn` implementation. */
   auth_modes: AuthMode[];
 }

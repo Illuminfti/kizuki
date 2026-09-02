@@ -27,7 +27,11 @@ import {
 import { isDateOrder, resolveTimezone } from "./dates";
 import type { DateOrder } from "./dates";
 import { fsMediaLookup, mapMediaLookup } from "./media";
-import { WHATSAPP_IMPORT_CONNECTOR_ID, parseWhatsAppExport } from "./map";
+import {
+  WHATSAPP_IMPORT_CONNECTOR_ID,
+  WHATSAPP_SENSITIVITY,
+  parseWhatsAppExport,
+} from "./map";
 
 export { WHATSAPP_IMPORT_CONNECTOR_ID, parseWhatsAppExport } from "./map";
 export type { WhatsAppParseOptions } from "./map";
@@ -93,6 +97,7 @@ const MANIFEST: Manifest = {
   },
   required_secrets: [],
   emits_sensitivity_hint: true,
+  ...WHATSAPP_SENSITIVITY,
   auth_modes: ["none"],
 };
 

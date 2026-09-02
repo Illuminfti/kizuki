@@ -3,6 +3,8 @@ import { lstat } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import type { CaptureEventInput } from "@kizuki/core";
 import { KizukiError } from "../errors";
+import { resolveSensitivity } from "../sensitivity";
+import type { SensitivityPolicy } from "../sensitivity";
 import {
   folderEntries,
   folderSubdirectory,
@@ -25,7 +27,10 @@ import type { OmnivoreItem } from "./metadata";
 export const OMNIVORE_IMPORT_CONNECTOR_ID = "kizuki.import-omnivore" as const;
 
 /** A reading list is about the owner, not a secret, and not public either. */
-const OMNIVORE_SENSITIVITY = "personal" as const;
+export const OMNIVORE_SENSITIVITY: SensitivityPolicy = {
+  default_sensitivity: "personal",
+  sensitivity_floor: "public",
+};
 
 export { parseOmnivoreMetadata } from "./metadata";
 export type { OmnivoreItem } from "./metadata";
@@ -112,6 +117,7 @@ export async function omnivoreEvents(
   }
 
   const ids = numberRepeats(items.map(({ item }) => item.id));
+  const sensitivity_hint = resolveSensitivity(OMNIVORE_SENSITIVITY);
   const events: CaptureEventInput[] = [];
   let textLeft = maxBytes;
   for (const [index, { item, at }] of items.entries()) {
@@ -141,7 +147,7 @@ export async function omnivoreEvents(
       observed_at,
       text,
       subjects: [{ subject_id: "omnivore:self", role: "from" }],
-      sensitivity_hint: OMNIVORE_SENSITIVITY,
+      sensitivity_hint,
       deleted: false,
       attachments:
         content === null
