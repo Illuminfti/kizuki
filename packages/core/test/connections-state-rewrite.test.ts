@@ -449,18 +449,33 @@ describe("OAuth state through the trusted host", () => {
       encodeOAuthState(envelope("SENTINEL-SECOND", "SENTINEL-ROTATED")),
     );
 
-    const sqlite = new TextDecoder().decode(
-      readFileSync(join(directory, "ledger.sqlite")),
-    );
-    for (const secret of [
+    const secrets = [
       "SENTINEL-ACCESS",
       "SENTINEL-REFRESH",
       "SENTINEL-SECOND",
       "SENTINEL-ROTATED",
-    ]) {
-      expect(sqlite).not.toContain(secret);
+    ];
+    const rows = db
+      .query<Record<string, unknown>, []>("SELECT * FROM connections")
+      .all();
+    expect(rows).toHaveLength(1);
+    for (const secret of secrets) {
+      expect(JSON.stringify(rows)).not.toContain(secret);
     }
+
+    // Closing checkpoints the write-ahead log: a row scan of the main file
+    // alone would miss bytes that are still only in ledger.sqlite-wal.
     db.close();
+    const artifacts = readdirSync(directory).filter((name) =>
+      name.startsWith("ledger.sqlite"),
+    );
+    expect(artifacts).toContain("ledger.sqlite");
+    for (const name of artifacts) {
+      const bytes = new TextDecoder().decode(readFileSync(join(directory, name)));
+      for (const secret of secrets) {
+        expect(bytes).not.toContain(secret);
+      }
+    }
   });
 
   test("the host resolver convention hands the connector state as text", async () => {
