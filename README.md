@@ -49,7 +49,7 @@ graph are disposable. They rebuild from the ledger plus canon.
 
 ## Packages
 
-One Bun workspace. Four packages. There is no MCP package.
+One Bun workspace. Five packages. There is no MCP package.
 
 - **`@kizuki/core`** owns the durable contracts and policy boundary: event
   ingest, the append-only ledger, connection state, claims, the receipted
@@ -57,15 +57,20 @@ One Bun workspace. Four packages. There is no MCP package.
   with receipts, and agent identity, grants, and audit.
 - **`@kizuki/cli`** is a thin command-line composition over public core and
   connector APIs. Implemented verbs on this branch: `init`, `connect`,
-  `backfill`, `sync`, `import`, `query`, `doctor`, `purge`, `export`,
-  `version`. Leftover Wave 1 verbs `review`, `promote`, and `reject` still
-  run; they are not the product gate. Accepted design verbs, not built:
-  `audit`, `tell`, `undo`, `context`, `timeline`, `rebuild`, `models`,
-  `serve`.
+  `backfill`, `sync`, `import`, `models`, `query`, `doctor`, `purge`,
+  `export`, `version`. `models pull` copies a local GGUF into the vault
+  models directory and verifies a hash; it does not download weights.
+  Leftover Wave 1 verbs `review`, `promote`, and `reject` still run; they
+  are not the product gate. Accepted design verbs, not built: `audit`,
+  `tell`, `undo`, `context`, `timeline`, `rebuild`, `serve`.
 - **`@kizuki/connectors`** owns the connector interface, the in-tree
   registry, and the shared conformance suite. Registry today:
   `kizuki.markdown-folder`, `kizuki.import-chatgpt`, `kizuki.import-claude`.
   All three read local files. No sign-in or OAuth connector is built.
+- **`@kizuki/embed-gguf`** is the optional local embedding port
+  (`kizuki.embedding.gguf`). It loads an owner-supplied GGUF from a pinned
+  path, records space identity, and embeds in-process. It does not download
+  weights on the read path.
 - **`@kizuki/tui`** is the audit and undo interface: pure state transitions and
   rendering, with terminal I/O at the edge. The leftover CLI `review` verb
   still opens it when stdin and stdout are a terminal.

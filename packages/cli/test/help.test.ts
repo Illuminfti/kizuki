@@ -11,6 +11,7 @@ const IMPLEMENTED_NON_GATE_VERBS = [
   "backfill",
   "sync",
   "import",
+  "models",
   "audit",
   "undo",
   "query",

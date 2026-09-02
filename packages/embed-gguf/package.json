@@ -1,0 +1,11 @@
+{
+  "name": "@kizuki/embed-gguf",
+  "type": "module",
+  "module": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@kizuki/core": "workspace:*"
+  }
+}
