@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { isRfc3339 } from "@kizuki/core";
 import { normalizeTimestamp, offsetSeconds } from "../src/time";
 
 describe("normalizeTimestamp", () => {
@@ -66,5 +67,14 @@ describe("offsetSeconds", () => {
     }
     expect(offsetSeconds(base, "12")).toBe(base);
     expect(offsetSeconds(base, null)).toBe(base);
+  });
+
+  test("keeps the base when the shifted instant leaves RFC3339", () => {
+    // An event carrying an expanded-year timestamp fails validateEventInput,
+    // and the ingest runner keeps the previous checkpoint on any error, so the
+    // batch would be re-read and rejected on every later call.
+    const base = "9999-12-31T23:59:59.000Z";
+    expect(offsetSeconds(base, 10)).toBe(base);
+    expect(isRfc3339(offsetSeconds(base, 10))).toBe(true);
   });
 });

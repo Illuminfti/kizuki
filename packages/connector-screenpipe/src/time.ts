@@ -35,5 +35,9 @@ export function offsetSeconds(base: string, seconds: unknown): string {
   ) {
     return base;
   }
-  return new Date(Date.parse(base) + seconds * 1_000).toISOString();
+  const shifted = new Date(Date.parse(base) + seconds * 1_000).toISOString();
+  // Past year 9999 the runtime writes an expanded year, which is not RFC3339.
+  // Such an event fails validation, and the runner keeps the checkpoint on any
+  // error, so the batch would be re-read and rejected on every later call.
+  return isRfc3339(shifted) ? shifted : base;
 }
