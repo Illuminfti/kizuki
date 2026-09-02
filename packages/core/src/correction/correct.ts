@@ -262,6 +262,9 @@ function acceptOwnerEvent(
 ): { event_id: string; duplicate: boolean } {
   const sourceId = sourceRecordId(input.statement, input.target);
   const existing = findOwnerEvent(io.db, sourceId);
+  if (existing !== null) {
+    return { event_id: existing, duplicate: true };
+  }
   const event: CaptureEventInput = {
     schema: "kizuki.event/v1",
     connector_id: OWNER_CONNECTOR_ID,
