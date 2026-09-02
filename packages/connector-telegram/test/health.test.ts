@@ -150,3 +150,21 @@ test("a wait reported while listing dialogs is recorded, not raised", async () =
   const resumed = await built.connector.backfill(null);
   expect(resumed.events).toHaveLength(12);
 });
+
+test("a wait reported by the authorization probe is a pause, not an outage", async () => {
+  const built = await connected();
+  built.api.floodProbe(300);
+
+  const limited = await built.connector.health();
+  expect(limited.state).toBe("rate_limited");
+  expect(limited.detail).toBe("retry after 300s");
+
+  // The wait was recorded, not merely rendered: a second report answers from
+  // what the first one learned rather than spending another request into it.
+  built.api.calls.length = 0;
+  expect((await built.connector.health()).state).toBe("rate_limited");
+  expect(built.api.calls).toEqual([]);
+
+  built.clock.now += 300_000;
+  expect((await built.connector.health()).state).toBe("ok");
+});

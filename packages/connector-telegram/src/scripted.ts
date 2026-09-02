@@ -27,6 +27,7 @@ export class ScriptedTelegramApi implements TelegramApi {
   #floodFired = false;
   #signInFloods = 0;
   #listingFlood: number | null = null;
+  #probeFlood: number | null = null;
 
   constructor(account: ScriptedAccount, session: string = FIXTURE_SESSION) {
     this.#account = account;
@@ -46,6 +47,11 @@ export class ScriptedTelegramApi implements TelegramApi {
   async isAuthorized(): Promise<boolean> {
     this.#record("isAuthorized", []);
     this.#assertReachable();
+    const probeFlood = this.#probeFlood;
+    if (probeFlood !== null) {
+      this.#probeFlood = null;
+      throw waitError(probeFlood);
+    }
     return this.#authorized;
   }
 
@@ -178,6 +184,11 @@ export class ScriptedTelegramApi implements TelegramApi {
   /** Puts back everything `hideDialog` took out, in its original order. */
   showDialogs(): void {
     this.#account.dialogs.push(...this.#hidden.splice(0));
+  }
+
+  /** Arms one wait report on the next authorization probe. */
+  floodProbe(seconds: number): void {
+    this.#probeFlood = seconds;
   }
 
   /** Arms one wait report on the next dialog listing. */

@@ -27,7 +27,7 @@ import {
   FIXTURE_ACCOUNT,
   FIXTURE_OBSERVED_AT,
 } from "./fixture";
-import { PHONE_FORMAT, runSignIn, terminalSafe } from "./sign-in";
+import { PHONE_FORMAT, runSignIn, terminalSafe, waitSeconds } from "./sign-in";
 import { TELEGRAM_STATE_SCHEMA, encodeState, parseState } from "./state";
 import { walk } from "./walk";
 import type { DialogListing } from "./walk";
@@ -243,12 +243,33 @@ export class TelegramConnector implements Connector {
         });
       }
     } catch (error) {
+      if (
+        error instanceof TelegramConnectorError &&
+        error.code === "unauthenticated"
+      ) {
+        return new HealthReport({
+          state: "unauthenticated",
+          checked_at,
+          detail: "the stored session is no longer authorized",
+          ...success,
+        });
+      }
+      const seconds = waitSeconds(error);
+      if (seconds !== null) {
+        // Telegram answered the probe by asking for a pause. Recording it is
+        // what keeps the next batch from spending a request into the same
+        // wait, and calling throttling an outage would send `doctor` looking
+        // for a fault there is none of.
+        this.#floodUntil = this.#deps.now() + seconds * 1000;
+        return new HealthReport({
+          state: "rate_limited",
+          checked_at,
+          detail: `retry after ${seconds}s`,
+          ...success,
+        });
+      }
       return new HealthReport({
-        state:
-          error instanceof TelegramConnectorError &&
-          error.code === "unauthenticated"
-            ? "unauthenticated"
-            : "unreachable",
+        state: "unreachable",
         checked_at,
         detail: "telegram did not answer the authorization probe",
         ...success,
