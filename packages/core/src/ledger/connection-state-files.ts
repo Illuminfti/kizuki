@@ -190,4 +190,3 @@ export function clearSwapDebris(
   if (paths.journalPath !== null) rmSync(paths.journalPath, { force: true });
   fsyncDirectory(directory);
 }
-
