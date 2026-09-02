@@ -30,8 +30,7 @@ product: "your life, queryable as a CLI and MCP". Read these first, in order:
 - **No fake surfaces**: no CLI verb, registry entry, README claim or doc line
   without a working implementation behind it. If you cannot finish a verb,
   do not wire it.
-- **Banned words in any file** (CI denylist, case-insensitive): illumi,
-  hermes, ika-hetzner, albedo, gbrain. Never write them, not even in
+- **Banned identifiers are the CI denylist in scripts/verify.sh. Never write them, not even in comments or fixtures.
   comments, tests, fixtures or commit messages. Use neutral fixture names
   (ada, grace, linus, "acme").
 - Tests use synthetic fixtures only. Never read from paths outside the
