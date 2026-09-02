@@ -6,6 +6,7 @@ import type {
   OAuthTransport,
   TokenSet,
 } from "../../src/auth/oauth";
+import type { OAuthState } from "../../src/auth/state";
 
 export const NOW = new Date("2026-03-01T10:00:00.000Z");
 
@@ -176,4 +177,15 @@ export function countingRandom(): (length: number) => Uint8Array {
 
 export function base64url(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64url");
+}
+
+export function oauthState(overrides: Partial<OAuthState> = {}): OAuthState {
+  return {
+    schema: "kizuki.oauth-state/v1",
+    provider: "fixture",
+    account: { id: "acct-ada", display: "ada@example.invalid" },
+    tokens: tokenSet(),
+    written_at: "2026-03-01T10:00:00.000Z",
+    ...overrides,
+  };
 }
