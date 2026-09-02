@@ -18,6 +18,7 @@ export {
   SCREENPIPE_CURSOR_SCHEMA,
   encodeCursor,
   initialCursor,
+  isDrained,
   parseCursor,
 } from "./cursor";
 export type { ScreenpipeCursor, SkippedCounters } from "./cursor";

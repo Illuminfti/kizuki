@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import type { SyncBatch } from "@kizuki/core";
+import type { Cursor, SyncBatch } from "@kizuki/core";
 import {
   BATCH_LIMIT,
   MAX_PAGES_PER_CALL,
   ScreenpipeConnector,
+  isDrained,
   parseCursor,
 } from "../src";
 import {
@@ -166,6 +167,56 @@ describe("ScreenpipeConnector read bounds", () => {
       "transcription:1",
     ]);
     await connector.revoke();
+  });
+
+  test("an empty batch that moved the cursor is not the end of the source", async () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    const total = MAX_PAGES_PER_CALL * BATCH_LIMIT + 1;
+    fixture.writer.transaction(() => {
+      for (let id = 1; id <= total; id += 1) {
+        insertFrame(fixture.writer, {
+          id,
+          timestamp: "2026-01-01T00:00:00Z",
+          fullText: id === total ? "the row behind the bound" : null,
+        });
+      }
+    })();
+    const connector = new ScreenpipeConnector(
+      { path: fixture.path, settle_seconds: 0 },
+      fixtureDeps("2026-01-09T00:00:00.000Z"),
+    );
+
+    // A long run of frames without text is ordinary screenpipe output — a
+    // locked or unchanged screen — so a call can spend its page bound without
+    // producing an event while rows remain. Counting events cannot tell that
+    // apart from exhaustion; a cursor that moved can.
+    const first = await connector.backfill(null);
+    expect(first.events).toEqual([]);
+    expect(isDrained(null, first)).toBe(false);
+
+    const collected: string[] = [];
+    let cursor: Cursor | null = first.cursor;
+    for (let call = 0; call < 10; call += 1) {
+      const previous = cursor;
+      const batch: SyncBatch = await connector.backfill(previous);
+      cursor = batch.cursor;
+      collected.push(
+        ...batch.events.map(({ source_record_id }) => source_record_id),
+      );
+      if (isDrained(previous, batch)) break;
+    }
+
+    expect(collected).toEqual([`frame:${total}`]);
+    expect(isDrained(cursor, await connector.backfill(cursor))).toBe(true);
+    await connector.revoke();
+  });
+
+  test("a caught-up call is drained, a null cursor ends the source", () => {
+    const cursor = '{"schema":"kizuki.screenpipe-cursor/v1"}';
+    expect(isDrained(cursor, { events: [], cursor })).toBe(true);
+    expect(isDrained(cursor, { events: [], cursor: null })).toBe(true);
+    expect(isDrained(cursor, { events: [], cursor: `${cursor} ` })).toBe(false);
+    expect(isDrained(null, { events: [], cursor })).toBe(false);
   });
 
   test("one call reads a bounded number of pages and resumes after them", async () => {

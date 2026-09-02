@@ -1,4 +1,5 @@
 import { isPlainObject } from "@kizuki/core";
+import type { Cursor, SyncBatch } from "@kizuki/core";
 import { ScreenpipeConnectorError } from "./errors";
 
 export const SCREENPIPE_CURSOR_SCHEMA =
@@ -108,6 +109,21 @@ export function parseCursor(cursor: string): ScreenpipeCursor {
         skipped["transcriptions_bad_timestamp"],
     },
   };
+}
+
+/**
+ * Whether a batch means the source is caught up. An empty batch alone does not:
+ * `MAX_PAGES_PER_CALL` ends a call mid-run whenever a long stretch of rows is
+ * skipped, and that call reports no events while rows remain. Exhaustion is an
+ * empty batch that left the checkpoint where it was, or the `null` cursor the
+ * connector contract reserves for a source that is finished.
+ */
+export function isDrained(
+  previous: Cursor | null,
+  batch: SyncBatch,
+): boolean {
+  if (batch.events.length > 0) return false;
+  return batch.cursor === null || batch.cursor === previous;
 }
 
 export function encodeCursor(cursor: ScreenpipeCursor): string {

@@ -28,9 +28,11 @@ kizuki backfill screenpipe
 kizuki sync screenpipe
 ```
 
-Repeat `backfill` until a call reports no new events. That empty batch is the
-drain signal: it means every settled row up to the checkpoint has been read.
-`sync` then continues from the same checkpoint. The `connect`, `backfill`, and
+Repeat `backfill` until a call reports no new events **and hands back the same
+checkpoint it was given**. Both halves matter: a call that spends its page bound
+on rows it skips also reports no events, but its checkpoint has moved and rows
+remain behind it. `isDrained(previousCursor, batch)` is that condition, exported
+for hosts that drive the loop. `sync` then continues from the same checkpoint. The `connect`, `backfill`, and
 `sync` verbs are wired by the CLI lanes; until they merge, the connector is
 reachable through `@kizuki/connectors` via
 `getConnector("kizuki.screenpipe", { path })`.
@@ -105,7 +107,8 @@ screenpipe schema older than supported: migration 20260613130000 not applied (ma
   Within that bound the connector keeps reading until it has an event, so a
   long run of frames without text costs extra reads instead of cutting the
   import short. A run longer than the bound ends the call with no events and an
-  advanced checkpoint, and the next call resumes behind it.
+  advanced checkpoint, and the next call resumes behind it — which is why the
+  drain condition above is the checkpoint, not the event count.
 - A row whose `offset_index` or `audio_chunk_id` holds something that is not a
   usable number is read with that field as `0` rather than failing the batch.
   Those columns position a row inside its capture; the identity columns still

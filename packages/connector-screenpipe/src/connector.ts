@@ -21,6 +21,7 @@ import {
   MAX_PAGES_PER_CALL,
   encodeCursor,
   initialCursor,
+  isDrained,
   parseCursor,
   type ScreenpipeCursor,
   type SkippedCounters,
@@ -182,8 +183,9 @@ export class ScreenpipeConnector implements Connector {
       while (true) {
         const batch = await connector.backfill(cursor);
         events.push(...batch.events);
+        const previous = cursor;
         cursor = batch.cursor;
-        if (batch.events.length === 0) break;
+        if (isDrained(previous, batch)) break;
       }
       return events;
     } finally {
