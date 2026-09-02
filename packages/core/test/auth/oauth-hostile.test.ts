@@ -229,6 +229,22 @@ describe("a sign-in that fails while it is being set up", () => {
     }
   });
 
+  test("a listener that will not shut down keeps the completed grant", async () => {
+    const transport = new FakeTransport({ status: 200, body: tokenResponse() });
+    transport.listenerCloseError = new Error("listener could not be stopped");
+    const io = fakeIo();
+    const flow = signInWithBrowser(provider(), io, transport, {
+      ...deterministic(),
+      now: () => NOW,
+    });
+    await io.firstOpen;
+    transport.redirect({ code: "SENTINEL-CODE", state: NONCE });
+    await expect(flow).resolves.toMatchObject({
+      access_token: "SENTINEL-ACCESS",
+      refresh_token: "SENTINEL-REFRESH",
+    });
+  });
+
   test("a listener that will not shut down keeps the real failure", async () => {
     const transport = new FakeTransport();
     transport.listenerCloseError = new Error("listener could not be stopped");

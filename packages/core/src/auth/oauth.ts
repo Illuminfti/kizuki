@@ -308,7 +308,6 @@ export async function signInWithBrowser(
   const secrets = operationSecrets(provider, pkce.verifier, nonce);
 
   const listener = await transport.listen(provider.redirect_path ?? "/callback");
-  let tokens: TokenSet;
   try {
     const url = buildAuthorizationUrl(provider, {
       redirect_uri: listener.redirect_uri,
@@ -363,15 +362,15 @@ export async function signInWithBrowser(
       code_verifier: pkce.verifier,
       ...clientSecretForm(provider),
     });
-    tokens = parseTokenResponse(provider, response.status, response.body, now());
+    return parseTokenResponse(provider, response.status, response.body, now());
   } catch (error) {
-    // A listener that will not shut down must not displace the failure the
-    // caller has to act on.
-    await listener.close().catch(() => undefined);
     throw withoutSecrets(error, secrets);
+  } finally {
+    // A listener that will not shut down must neither displace the failure the
+    // caller has to act on nor discard a grant the owner already made: the
+    // provider has minted tokens by now and only this process can store them.
+    await listener.close().catch(() => undefined);
   }
-  await listener.close();
-  return tokens;
 }
 
 export async function refreshTokens(
