@@ -185,10 +185,10 @@ export async function serveCorrect(
         args.object === undefined
           ? undefined
           : text("object", args.object, MAX_OBJECT_CHARS);
-      const candidates = resolve(ctx, args.target);
-      readable(grant, candidates);
+      const resolved = resolve(ctx, args.target);
+      readable(grant, resolved.claims);
 
-      const groups = groupByKey(candidates);
+      const groups = groupByKey(resolved.claims);
       if (groups.size > 1) {
         return {
           canon: [],
@@ -235,7 +235,7 @@ export async function serveCorrect(
       const eventId = recordStatement(
         ctx,
         statement,
-        recordId(statement, args.target as CorrectTarget),
+        recordId(statement, resolved.target),
         subject,
         at,
       );

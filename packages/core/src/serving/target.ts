@@ -44,10 +44,16 @@ export function groupByKey(claims: Claim[]): Map<string, Claim[]> {
  * an implicit target out of the sentence, and none is bound here, so an
  * unnamed target fails closed instead of guessing which claim to retire.
  */
+export interface Resolved {
+  /** The target as the caller named it, once it is known to be usable. */
+  target: CorrectTarget;
+  claims: Claim[];
+}
+
 export function resolve(
   ctx: ServeContext,
   target: CorrectTarget | undefined,
-): Claim[] {
+): Resolved {
   if (target === undefined) {
     throw refuse("target", "name a claim, a claim key or a subject");
   }
@@ -72,7 +78,7 @@ export function resolve(
         "names a claim with no predicate to correct",
       );
     }
-    return [claim];
+    return { target, claims: [claim] };
   }
 
   if (target.claim_key !== undefined) {
@@ -87,7 +93,7 @@ export function resolve(
     if (claims.length === 0) {
       throw refuse("target.claim_key", "names no live claim");
     }
-    return claims;
+    return { target, claims };
   }
 
   // Narrowed in SQL. Reading a default page of the table and filtering it in
@@ -105,7 +111,7 @@ export function resolve(
   if (claims.length === MAX_CANDIDATES) {
     throw refuse("target.subject", "names too many live claims to resolve");
   }
-  return claims;
+  return { target, claims };
 }
 
 /**
