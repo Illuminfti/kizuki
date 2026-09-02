@@ -87,17 +87,31 @@ assert_safe_tracked_paths() {
   rm -f -- "$paths_file"
 }
 
+# Extensions whose files must be readable text. A tracked binary asset (an
+# image, a font) is not covered: only a file that claims to be source is.
+TEXT_SOURCE_PATHSPECS=(
+  ':(glob)**/*.ts'
+  ':(glob)**/*.js'
+  ':(glob)**/*.json'
+  ':(glob)**/*.md'
+  ':(glob)**/*.sh'
+  ':(glob)**/*.txt'
+  ':(glob)**/*.yml'
+  ':(glob)**/*.yaml'
+  ':(glob)**/*.toml'
+)
+
 assert_scannable_tracked_text() {
   # The identifier and attribution gates below run `git grep -I`, which never
-  # reads a file git classifies as binary. A tracked file that carries a NUL
-  # byte is therefore invisible to every one of them.
+  # reads a file git classifies as binary. A tracked source file that carries a
+  # NUL byte is therefore invisible to every one of them.
   local nonempty
   local scannable
   local unscannable
   local status
 
   set +e
-  nonempty="$(git grep -a -l -e '.' -- .)"
+  nonempty="$(git grep -a -l -e '.' -- "${TEXT_SOURCE_PATHSPECS[@]}")"
   status=$?
   set -e
   if ((status > 1)); then
@@ -106,7 +120,7 @@ assert_scannable_tracked_text() {
   fi
 
   set +e
-  scannable="$(git grep -I -l -e '.' -- .)"
+  scannable="$(git grep -I -l -e '.' -- "${TEXT_SOURCE_PATHSPECS[@]}")"
   status=$?
   set -e
   if ((status > 1)); then
@@ -116,7 +130,7 @@ assert_scannable_tracked_text() {
 
   unscannable="$(comm -23 <(printf '%s\n' "$nonempty" | sort) <(printf '%s\n' "$scannable" | sort))"
   if [[ -n "$unscannable" ]]; then
-    printf 'verification failed: tracked file is not scannable text\n%s\n' "$unscannable" >&2
+    printf 'verification failed: tracked source is not scannable text\n%s\n' "$unscannable" >&2
     return 1
   fi
 }

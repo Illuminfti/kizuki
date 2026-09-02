@@ -166,6 +166,14 @@ if (
 fi
 git -C "$fixture_root" rm -q -f packages/unscannable.ts
 
+printf 'PNG\r\n\032\n\0binary fixture\n' >"$fixture_root/packages/asset.png"
+git -C "$fixture_root" add packages/asset.png
+(
+  cd "$fixture_root"
+  assert_scannable_tracked_text
+)
+git -C "$fixture_root" rm -q -f packages/asset.png
+
 mkdir -p "$fixture_root/packages/phone"
 printf '{"dependencies":{"@datadog/browser-rum":"1.0.0"}}\n' >"$fixture_root/packages/phone/package.json"
 git -C "$fixture_root" add packages/phone/package.json
