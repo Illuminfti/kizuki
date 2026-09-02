@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { validateEventInput } from "@kizuki/core";
 import type { CaptureEventInput } from "@kizuki/core";
-import { calendarEvents } from "../src/events";
+import { MAX_CALENDAR_EVENTS, calendarEvents } from "../src/events";
 import type { CalendarMapping } from "../src/events";
 import {
   MAX_METADATA_VALUE_CHARS,
@@ -904,5 +904,49 @@ describe("subjects are deduplicated per event", () => {
       "to",
       "about",
     ]);
+  });
+});
+
+describe("calendar-wide bounds", () => {
+  function seriesFile(count: number, dtstart: string): string[] {
+    return Array.from({ length: count }, (_unused, index) => [
+      "BEGIN:VEVENT",
+      `UID:series-${index}@acme.example`,
+      `DTSTART:${dtstart}`,
+      "RRULE:FREQ=DAILY",
+      `SUMMARY:Series ${index}`,
+      "END:VEVENT",
+    ]).flat();
+  }
+
+  test("a thousand daily series cannot buy a million ledger rows", () => {
+    const started = Bun.nanoseconds();
+    const mapping = mapAll(seriesFile(1_000, "20220101T090000Z"));
+    // Per-series caps bound one master; without a budget across the file the
+    // same feed produced a million events in one batch.
+    expect(mapping.events.length).toBeLessThanOrEqual(MAX_CALENDAR_EVENTS);
+    expect(mapping.budgetSpent).toBe(true);
+    expect((Bun.nanoseconds() - started) / 1e6).toBeLessThan(20_000);
+  }, 30_000);
+
+  test("a rule that starts in year one costs a bounded number of steps", () => {
+    const started = Bun.nanoseconds();
+    const mapping = mapAll(seriesFile(1_000, "00010101T000000Z"));
+    expect(mapping.budgetSpent).toBe(true);
+    expect((Bun.nanoseconds() - started) / 1e6).toBeLessThan(20_000);
+  }, 30_000);
+
+  test("an entry the budget never reached is not read as a deletion", () => {
+    const mapping = mapAll(seriesFile(1_000, "20220101T090000Z"));
+    const unmapped = Object.entries(mapping.truncatedFrom).filter(
+      ([, keptFrom]) => keptFrom === null,
+    );
+    expect(unmapped.length).toBeGreaterThan(0);
+  });
+
+  test("an ordinary calendar is nowhere near the budget", () => {
+    const mapping = mapAll(seriesFile(5, "20260101T090000Z"));
+    expect(mapping.budgetSpent).toBe(false);
+    expect(mapping.events.length).toBeGreaterThan(1_000);
   });
 });

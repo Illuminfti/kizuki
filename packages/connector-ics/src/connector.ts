@@ -27,6 +27,7 @@ import {
 } from "./cursor";
 import type { IcsCursor } from "./cursor";
 import { calendarEvents } from "./events";
+import type { CalendarMapping } from "./events";
 import { fetchIcs } from "./fetch";
 import type { IcsFetcher } from "./fetch";
 import { fixtureIcsEvents } from "./fixture";
@@ -86,8 +87,10 @@ interface Snapshot {
   events: CaptureEventInput[];
   /** UIDs the calendar still carries but this run could not read. */
   unreadableUids: string[];
-  /** Per capped series, the oldest instance key still kept (null: none). */
+  /** Per partly mapped series, the oldest instance key still kept (null: none). */
   truncatedFrom: Record<string, string | null>;
+  /** The calendar-wide expansion budget ran out before every entry was mapped. */
+  budgetSpent: boolean;
   etag: string | null;
   lastModified: string | null;
   unchanged: boolean;
@@ -180,11 +183,18 @@ export class IcsConnector implements Connector {
   }
 
   /** A run that dropped entries must not read as healthy afterwards. */
-  private noteSkipped(skipped: number): void {
-    if (skipped === 0) return;
-    this.pendingNotes.push(
-      `${skipped} calendar ${skipped === 1 ? "entry" : "entries"} could not be read`,
-    );
+  private noteMapping(mapping: CalendarMapping): void {
+    const skipped = mapping.skipped;
+    if (skipped > 0) {
+      this.pendingNotes.push(
+        `${skipped} calendar ${skipped === 1 ? "entry" : "entries"} could not be read`,
+      );
+    }
+    if (mapping.budgetSpent) {
+      this.pendingNotes.push(
+        "calendar too large to expand in full; some entries were not mapped",
+      );
+    }
   }
 
   /** `ok`, unless the last run had something the owner needs to hear. */
@@ -229,11 +239,12 @@ export class IcsConnector implements Connector {
         observedAt,
         now: this.now(),
       });
-      this.noteSkipped(mapping.skipped);
+      this.noteMapping(mapping);
       return {
         events: mapping.events,
         unreadableUids: mapping.unreadableUids,
         truncatedFrom: mapping.truncatedFrom,
+        budgetSpent: mapping.budgetSpent,
         etag: null,
         lastModified: null,
         unchanged: false,
@@ -256,6 +267,7 @@ export class IcsConnector implements Connector {
         events: [],
         unreadableUids: [],
         truncatedFrom: {},
+        budgetSpent: false,
         etag: response.etag,
         lastModified: response.last_modified,
         unchanged: true,
@@ -266,11 +278,12 @@ export class IcsConnector implements Connector {
       observedAt,
       now: this.now(),
     });
-    this.noteSkipped(mapping.skipped);
+    this.noteMapping(mapping);
     return {
       events: mapping.events,
       unreadableUids: mapping.unreadableUids,
       truncatedFrom: mapping.truncatedFrom,
+      budgetSpent: mapping.budgetSpent,
       etag: response.etag,
       lastModified: response.last_modified,
       unchanged: false,

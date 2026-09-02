@@ -101,7 +101,10 @@ expanded. The series is emitted once as its master with
 `metadata.recurrence.expanded: false`, rather than expanded into a wrong set
 of dates.
 
-Expansion runs from `DTSTART` to one year from now, capped at 1000 instances.
+Expansion runs from `DTSTART` to one year from now, capped at 1000 instances
+per series and at 20 000 events and a million candidate iterations across the
+whole calendar — the per-series caps bound one entry, and a file may hold
+twenty thousand of them.
 When the cap bites, the most recent 1000 are kept and every emitted instance
 carries `metadata.recurrence.truncated: true`. A series that begins past the
 window still yields its first instance, so a conference booked two years out

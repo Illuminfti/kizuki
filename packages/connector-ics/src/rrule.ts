@@ -31,6 +31,8 @@ export interface ExpandOptions {
 export interface ExpandResult {
   instances: LocalDateTime[];
   truncated: boolean;
+  /** Candidate iterations spent, so a caller can budget across a whole file. */
+  steps: number;
 }
 
 const WEEKDAYS = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"] as const;
@@ -432,7 +434,11 @@ export function expand(
   if (collected.length > opts.maxInstances) {
     // Keep the most recent window: a long-running series is more useful at
     // its tail than at its beginning.
-    return { instances: collected.slice(-opts.maxInstances), truncated: true };
+    return {
+      instances: collected.slice(-opts.maxInstances),
+      truncated: true,
+      steps,
+    };
   }
-  return { instances: collected, truncated };
+  return { instances: collected, truncated, steps };
 }

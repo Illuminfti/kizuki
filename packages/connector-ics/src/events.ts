@@ -30,6 +30,13 @@ export const MAX_INSTANCES = 1_000;
 const FALLBACK_SLUG = "unnamed";
 export const MAX_STEPS = 100_000;
 export const WINDOW_DAYS = 365;
+/**
+ * The per-series bounds say nothing about their sum, and a calendar may hold
+ * twenty thousand components inside the 8 MiB text bound. These are what stop
+ * a small feed from becoming millions of ledger rows in one batch.
+ */
+export const MAX_CALENDAR_EVENTS = 20_000;
+export const MAX_CALENDAR_STEPS = 1_000_000;
 
 function exdateKeys(event: RawVEvent): Set<string> {
   const keys = new Set<string>();
@@ -112,12 +119,14 @@ export interface CalendarMapping {
    */
   unreadableUids: string[];
   /**
-   * For a series whose expansion hit the instance cap, the key of the oldest
-   * instance still kept, or null when nothing was kept at all. An id below it
-   * left because the kept window slid forward, not because the calendar
-   * dropped it; an id inside the window that is gone really is gone.
+   * For a series this run did not map in full, the key of the oldest instance
+   * still kept, or null when nothing of it was kept. An id below that left
+   * because the kept window slid forward, not because the calendar dropped
+   * it; an id inside the window that is gone really is gone.
    */
   truncatedFrom: Record<string, string | null>;
+  /** True when the calendar-wide budget ran out before every entry was mapped. */
+  budgetSpent: boolean;
 }
 
 interface SeriesContext {
@@ -128,6 +137,8 @@ interface SeriesContext {
   windowEnd: LocalDateTime;
   duplicates: Set<string>;
   truncated: Map<string, string | null>;
+  /** What the whole file may still spend, not what one series may. */
+  budget: { events: number; steps: number };
 }
 
 /** Turns a parsed calendar into the events the ledger stores. */
@@ -150,13 +161,16 @@ export function calendarEvents(
     windowEnd: msToLocal(opts.now.getTime() + WINDOW_DAYS * 86_400_000),
     duplicates,
     truncated: new Map<string, string | null>(),
+    budget: { events: MAX_CALENDAR_EVENTS, steps: MAX_CALENDAR_STEPS },
   };
   const events: CaptureEventInput[] = [];
   const unreadableUids: string[] = [];
 
   for (const [uid, entry] of series) {
     try {
-      events.push(...seriesEvents(uid, entry, context));
+      const produced = seriesEvents(uid, entry, context);
+      context.budget.events -= produced.length;
+      events.push(...produced);
     } catch (error) {
       // One entry with an unreadable date must not cost the calendar: the
       // producer is a third party, and the rest of the file is still good.
@@ -179,6 +193,7 @@ export function calendarEvents(
     skipped: unreadableUids.length,
     unreadableUids,
     truncatedFrom: Object.fromEntries(context.truncated),
+    budgetSpent: context.budget.events <= 0 || context.budget.steps <= 0,
   };
 }
 
@@ -214,6 +229,12 @@ function seriesEvents(
   const events: CaptureEventInput[] = [];
   const master = entry.master;
   if (isCancelled(master) && entry.overrides.length === 0) return events;
+  // The file's budget is gone. The entry is still on the calendar, so it is
+  // recorded as unmapped rather than left to read as a deletion.
+  if (context.budget.events <= 0 || context.budget.steps <= 0) {
+    context.truncated.set(uid, null);
+    return events;
+  }
   const startLine = firstValue(master, "DTSTART");
   const start = instantOf(startLine);
   // An entry with no DTSTART has no time to record, but the calendar still
@@ -286,6 +307,12 @@ function seriesEvents(
   // The window always reaches at least the series' own first instance.
   const seriesWindowEnd =
     localToMs(dtstartLocal) > localToMs(windowEnd) ? dtstartLocal : windowEnd;
+  // Both caps are the smaller of what this series may have and what the file
+  // has left, so one series cannot spend the whole calendar's allowance.
+  const maxInstances = Math.max(
+    1,
+    Math.min(MAX_INSTANCES, context.budget.events),
+  );
   const expansion =
     parsedRule === null
       ? // RFC 5545 §3.8.5.2: RDATE adds to the recurrence set, which always
@@ -295,14 +322,16 @@ function seriesEvents(
           rdates,
           exdateKeys(master),
           seriesWindowEnd,
+          maxInstances,
         )
       : expand(parsedRule.rule, dtstartLocal, {
           windowEnd: seriesWindowEnd,
-          maxInstances: MAX_INSTANCES,
+          maxInstances,
           exdates: exdateKeys(master),
           rdates,
-          maxSteps: MAX_STEPS,
+          maxSteps: Math.max(1, Math.min(MAX_STEPS, context.budget.steps)),
         });
+  context.budget.steps -= expansion.steps;
 
   if (expansion.truncated) {
     const oldest = expansion.instances[0];
@@ -428,7 +457,8 @@ function withStart(
   rdates: LocalDateTime[],
   exdates: Set<string>,
   windowEnd: LocalDateTime,
-): { instances: LocalDateTime[]; truncated: boolean } {
+  maxInstances: number,
+): { instances: LocalDateTime[]; truncated: boolean; steps: number } {
   const limitMs = localToMs(windowEnd);
   const byKey = new Map<string, LocalDateTime>();
   for (const local of [dtstart, ...rdates]) {
@@ -438,9 +468,10 @@ function withStart(
     if (!byKey.has(key)) byKey.set(key, local);
   }
   const sorted = [...byKey.values()].sort((a, b) => localToMs(a) - localToMs(b));
-  return sorted.length > MAX_INSTANCES
-    ? { instances: sorted.slice(-MAX_INSTANCES), truncated: true }
-    : { instances: sorted, truncated: false };
+  const steps = rdates.length + 1;
+  return sorted.length > maxInstances
+    ? { instances: sorted.slice(-maxInstances), truncated: true, steps }
+    : { instances: sorted, truncated: false, steps };
 }
 
 function instanceStart(master: IcsInstant, local: LocalDateTime): IcsInstant {
