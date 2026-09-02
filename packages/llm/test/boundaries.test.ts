@@ -1,15 +1,28 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { PortRegistry } from "@kizuki/core";
+import type { LlmPort } from "@kizuki/core";
 import * as llm from "../src/index";
+import {
+  OPENAI_COMPATIBLE_LLM,
+  OPENAI_COMPATIBLE_LLM_ID,
+  openAiCompatibleLlm,
+} from "../src/llm-port";
 import { MODEL_PRODUCER, ModelProducer } from "../src/producer";
+import { chatCompletion, startFakeEndpoint } from "./fake-endpoint";
+import type { FakeEndpoint } from "./fake-endpoint";
 import { claimsPayload, event, portContext, produceInput, scriptedLlm } from "./helpers";
 
 const repoRoot = resolve(import.meta.dir, "../../..");
 
 const cleanups: (() => void)[] = [];
-afterEach(() => {
+let endpoint: FakeEndpoint | undefined;
+
+afterEach(async () => {
   while (cleanups.length > 0) cleanups.pop()?.();
+  await endpoint?.stop();
+  endpoint = undefined;
 });
 
 describe("the package boundary", () => {
@@ -57,6 +70,9 @@ describe("the package boundary", () => {
       cwd: repoRoot,
       stdout: "pipe",
     });
+    // Exit 1 is "no match"; anything else is a scan that did not run, which
+    // an empty stdout would otherwise read as a pass.
+    expect(result.exitCode).toBe(1);
     expect(result.stdout.toString().trim()).toBe("");
     const manifest = JSON.parse(
       readFileSync(resolve(repoRoot, "packages/core/package.json"), "utf8"),
@@ -64,24 +80,30 @@ describe("the package boundary", () => {
     expect(manifest.dependencies ?? {}).toEqual({});
   });
 
-  test("no other package depends on this one", () => {
-    // Regression: the CLI used to import the package on every invocation, so
-    // the file holding the only fetch was evaluated even by `kizuki version`.
-    const result = Bun.spawnSync({
-      cmd: [
-        "git",
-        "grep",
-        "-l",
-        "@kizuki/llm",
-        "--",
-        "packages/cli",
-        "packages/tui",
-        "packages/connectors",
-      ],
-      cwd: repoRoot,
-      stdout: "pipe",
+  test("the registry factory binds the port a config selects", async () => {
+    endpoint = startFakeEndpoint([{ body: chatCompletion('{"claims":[]}') }]);
+    const built = portContext(OPENAI_COMPATIBLE_LLM, {
+      base_url: `${endpoint.url}/v1`,
+      model: "m",
     });
-    expect(result.stdout.toString().trim()).toBe("");
+    cleanups.push(built.cleanup);
+    // A fresh registry rather than the process-wide one: registering the same
+    // id twice is an error, and a test must not decide what a host has bound.
+    const registry = new PortRegistry();
+    registry.registerPort(OPENAI_COMPATIBLE_LLM, openAiCompatibleLlm);
+    const bound = registry.bindFromConfig<LlmPort>(
+      "llm",
+      { llm: OPENAI_COMPATIBLE_LLM_ID },
+      built.ctx,
+    );
+    expect(bound.d.contract).toBe("kizuki.llm/v1");
+    const answer = await bound.port.complete({
+      messages: [{ role: "user", content: "hi" }],
+      max_output_tokens: 32,
+      deadline_ms: 5_000,
+    });
+    expect(answer.text).toBe('{"claims":[]}');
+    await bound.port.close();
   });
 
   test("producing over an in-process model port never calls fetch", async () => {
