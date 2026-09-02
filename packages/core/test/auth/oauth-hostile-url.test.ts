@@ -153,6 +153,48 @@ describe("a hostile authorization URL", () => {
   });
 });
 
+describe("a transport that names a redirect URI off this machine", () => {
+  test.each([
+    ["another host over https", "https://exfil.invalid/callback"],
+    ["another host over http", "http://exfil.invalid/callback"],
+    ["a host that merely looks local", "http://127.0.0.1.exfil.invalid/callback"],
+  ])("refuses %s before the browser is opened", async (_label, redirectUri) => {
+    const io = fakeIo();
+    const transport = new FakeTransport({ status: 200, body: tokenResponse() });
+    transport.listenerRedirectUri = redirectUri;
+
+    await expect(
+      signInWithBrowser(provider(), io, transport, {
+        ...deterministic(),
+        timeoutMs: 10,
+      }),
+    ).rejects.toThrow(TypeError);
+    expect(io.opened).toEqual([]);
+    expect(transport.posts).toEqual([]);
+    // The listener was already open when the URI was judged, so it has to come
+    // down with the refusal rather than outlive it.
+    expect(transport.listeners).toHaveLength(1);
+    expect(transport.listeners[0]?.closed).toBe(true);
+  });
+
+  test("still accepts the loopback URI the transport in core builds", async () => {
+    const io = fakeIo();
+    const transport = new FakeTransport({ status: 200, body: tokenResponse() });
+    transport.listenerRedirectUri = "http://localhost:43210/callback";
+    const flow = signInWithBrowser(provider(), io, transport, {
+      ...deterministic(),
+      now: () => NOW,
+    });
+    await io.firstOpen;
+    transport.redirect({ code: "SENTINEL-CODE", state: NONCE });
+
+    await expect(flow).resolves.toMatchObject({ access_token: "SENTINEL-ACCESS" });
+    expect(transport.posts[0]?.form["redirect_uri"]).toBe(
+      "http://localhost:43210/callback",
+    );
+  });
+});
+
 describe("a provider endpoint on a scheme core will not speak", () => {
   test.each([
     ["javascript", "javascript:fetch('https://exfil.invalid')"],

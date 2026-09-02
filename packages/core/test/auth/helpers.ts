@@ -30,8 +30,12 @@ export class FakeListener implements LoopbackListener {
   private readonly waiters: Waiter[] = [];
   private readonly closeError: Error | null;
 
-  constructor(redirectPath: string, closeError: Error | null = null) {
-    this.redirect_uri = `http://127.0.0.1:43210${redirectPath}`;
+  constructor(
+    redirectPath: string,
+    closeError: Error | null = null,
+    redirectUri?: string,
+  ) {
+    this.redirect_uri = redirectUri ?? `http://127.0.0.1:43210${redirectPath}`;
     this.closeError = closeError;
   }
 
@@ -69,13 +73,19 @@ export class FakeTransport implements OAuthTransport {
   readonly listeners: FakeListener[] = [];
   /** Set to make every listener this transport hands out fail to shut down. */
   listenerCloseError: Error | null = null;
+  /** Set to make every listener report a redirect URI of the test's choosing. */
+  listenerRedirectUri: string | null = null;
 
   constructor(...responses: ScriptedResponse[]) {
     this.responses.push(...responses);
   }
 
   async listen(redirectPath: string): Promise<LoopbackListener> {
-    const listener = new FakeListener(redirectPath, this.listenerCloseError);
+    const listener = new FakeListener(
+      redirectPath,
+      this.listenerCloseError,
+      this.listenerRedirectUri ?? undefined,
+    );
     this.listeners.push(listener);
     return listener;
   }

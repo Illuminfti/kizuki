@@ -5,6 +5,7 @@ import { OAuthError, asOAuthError, withoutSecrets } from "./oauth-error";
 import { base64url, buildPkce, defaultRandomBytes, randomOf } from "./pkce";
 import {
   assertBrowserSafeProvider,
+  assertLoopbackRedirectUri,
   assertTransportScheme,
   parseEndpoint,
   refuseSecret,
@@ -236,6 +237,16 @@ export async function signInWithBrowser(
   const secrets = operationSecrets(provider, pkce.verifier, nonce);
 
   const listener = await transport.listen(provider.redirect_path ?? "/callback");
+  // The transport chose this URI and the provider is about to be told to send
+  // the owner's authorization code to it. A refusal is a configuration fault
+  // like every other guard here, so it keeps its TypeError rather than being
+  // relabelled as something the provider did.
+  try {
+    assertLoopbackRedirectUri(listener.redirect_uri);
+  } catch (error) {
+    await listener.close().catch(() => undefined);
+    throw error;
+  }
   try {
     const url = buildAuthorizationUrl(provider, {
       redirect_uri: listener.redirect_uri,

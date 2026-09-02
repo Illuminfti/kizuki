@@ -127,6 +127,21 @@ export function assertTransportScheme(endpoint: string, where: string): void {
 }
 
 /**
+ * The transport picks the redirect URI, and it is the one value that reaches
+ * both the consent screen and the token exchange. A URI off this machine turns
+ * the owner's browser into a courier: the provider sends the authorization code
+ * to whatever host it names. The only transport in core builds a loopback URI,
+ * but the transport is a public seam a provider package supplies, so the URI is
+ * judged rather than trusted.
+ */
+export function assertLoopbackRedirectUri(redirectUri: string): void {
+  const url = parseEndpoint(redirectUri, "redirect_uri");
+  if (url.protocol !== "http:" || !LOOPBACK_HOSTS.has(url.hostname)) {
+    throw new TypeError("redirect_uri must be http on a loopback host");
+  }
+}
+
+/**
  * The listener interpolates this straight after `host:port`, so anything but a
  * bare rooted path rewrites the redirect URI: `@host/cb` moves the authority
  * to another host and would hand the owner's authorization code to it.
