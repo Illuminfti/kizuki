@@ -52,11 +52,16 @@ export function mapFrame(
   }
   const host = siteHost(row.browser_url);
   if (host !== null) {
-    subjects.push({
-      subject_id: `screenpipe:site:${host}`,
-      role: "about",
-      display_name: host,
-    });
+    // Staging reads an entity handle from the segment after the last colon, so
+    // an address host has to reach the subject id without colons of its own.
+    const hostSlug = slug(host);
+    if (hostSlug.length > 0) {
+      subjects.push({
+        subject_id: `screenpipe:site:${hostSlug}`,
+        role: "about",
+        display_name: host,
+      });
+    }
   }
 
   return {

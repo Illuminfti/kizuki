@@ -95,6 +95,26 @@ describe("screenpipe mapping", () => {
     expect(subjects).toEqual([]);
   });
 
+  test("a site subject id has no separator inside its own segment", () => {
+    const subjects = mapFrame(
+      frame({ app_name: null, browser_url: "https://[2001:db8::1]/inbox" }),
+      OBSERVED_AT,
+    ).subjects;
+
+    expect(subjects).toEqual([
+      {
+        subject_id: "screenpipe:site:2001-db8-1",
+        role: "about",
+        display_name: "[2001:db8::1]",
+      },
+    ]);
+    // Staging derives an entity handle from the segment after the last colon.
+    const subjectId = subjects[0]?.subject_id ?? "";
+    expect(subjectId.slice(subjectId.lastIndexOf(":") + 1)).toBe(
+      "2001-db8-1",
+    );
+  });
+
   test("snapshot becomes a jpeg attachment reference with basename only", () => {
     expect(
       mapFrame(

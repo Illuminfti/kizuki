@@ -64,6 +64,26 @@ describe("ScreenpipeConnector purge planning", () => {
     await connector.revoke();
   });
 
+  test("a site plan follows the subject id of an address host", async () => {
+    const fixture = createFixtureDatabase();
+    insertFrame(fixture.writer, {
+      id: 9,
+      timestamp: "2026-01-05T12:00:00Z",
+      browserUrl: "https://[2001:db8::1]/inbox",
+    });
+    const connector = new ScreenpipeConnector(
+      { path: fixture.path },
+      fixtureDeps("2026-01-09T00:00:00.000Z"),
+    );
+
+    expect(await connector.purgeSource("screenpipe:site:2001-db8-1")).toEqual({
+      subject_id: "screenpipe:site:2001-db8-1",
+      source_record_ids: [],
+      unreachable_source_record_ids: ["frame:9"],
+    });
+    await connector.revoke();
+  });
+
   test("a speaker plan and a device plan", async () => {
     const fixture = createFixtureDatabase();
     const connector = new ScreenpipeConnector(

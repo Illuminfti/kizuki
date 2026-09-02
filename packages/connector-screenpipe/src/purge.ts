@@ -67,7 +67,10 @@ function pageSiteIds(db: Database, host: string): string[] {
       const id = planId(row.id);
       afterId = id;
       const url = typeof row.browser_url === "string" ? row.browser_url : null;
-      if (siteHost(url) === host) ids.push(`frame:${id}`);
+      const rowHost = siteHost(url);
+      if (rowHost !== null && slug(rowHost) === host) {
+        ids.push(`frame:${id}`);
+      }
       if (ids.length === MAX_PLAN_IDS) break;
     }
     if (rows.length < PLAN_PAGE) break;
