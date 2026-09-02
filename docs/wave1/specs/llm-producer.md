@@ -1,3 +1,5 @@
+> **VOID as written, 2026-09-02.** Reissue against rfcs/0002-autonomous-canon.md.
+
 # Lane: llm-producer — optional OpenAI-compatible staging producer (summary, entities, claims)
 
 Packages: NEW `packages/llm` (`@kizuki/llm`, zero runtime dependencies,
