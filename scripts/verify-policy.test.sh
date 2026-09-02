@@ -6,8 +6,12 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/verify.sh"
 
 fixture_root="$(mktemp -d)"
+shallow_copy=""
 cleanup() {
   rm -rf -- "$fixture_root"
+  if [[ -n "$shallow_copy" ]]; then
+    rm -rf -- "$shallow_copy"
+  fi
 }
 trap cleanup EXIT
 
@@ -106,5 +110,73 @@ if (
   printf 'policy test failed: forbidden tracked pathname passed\n' >&2
   exit 1
 fi
+
+printf '# Credits\n\n%s\n' "$exact_name" >"$fixture_root/README.md"
+if (
+  cd "$fixture_root"
+  assert_exact_attribution_spelling README.md docs/absent-attribution.md
+) >/dev/null 2>&1; then
+  printf 'policy test failed: missing attribution path passed\n' >&2
+  exit 1
+fi
+
+mkdir -p "$fixture_root/packages/phone"
+printf '{"dependencies":{"@datadog/browser-rum":"1.0.0"}}\n' >"$fixture_root/packages/phone/package.json"
+git -C "$fixture_root" add packages/phone/package.json
+if (
+  cd "$fixture_root"
+  assert_no_match \
+    "phone-home dependency" \
+    git grep -I -n -E "$(phone_home_dependency_pattern)" -- ':(glob)**/package.json'
+) >/dev/null 2>&1; then
+  printf 'policy test failed: phone-home dependency passed\n' >&2
+  exit 1
+fi
+printf '{"dependencies":{"typescript":"5.9.0"}}\n' >"$fixture_root/packages/phone/package.json"
+git -C "$fixture_root" add packages/phone/package.json
+(
+  cd "$fixture_root"
+  assert_no_match \
+    "phone-home dependency" \
+    git grep -I -n -E "$(phone_home_dependency_pattern)" -- ':(glob)**/package.json'
+)
+
+git -C "$fixture_root" config user.name verifier
+git -C "$fixture_root" config user.email verifier@example.invalid
+git -C "$fixture_root" add README.md docs/upstream-policy.md
+git -C "$fixture_root" commit -q -m 'policy fixture'
+shallow_copy="$(mktemp -d)"
+git clone -q --depth 1 "file://${fixture_root}" "$shallow_copy"
+if (
+  cd "$shallow_copy"
+  assert_full_history
+) >/dev/null 2>&1; then
+  printf 'policy test failed: shallow clone passed history check\n' >&2
+  exit 1
+fi
+rm -rf -- "$shallow_copy"
+
+restrict_root="$(mktemp -d)"
+git -C "$restrict_root" init -q
+git -C "$restrict_root" config user.name verifier
+git -C "$restrict_root" config user.email verifier@example.invalid
+printf 'keep\n' >"$restrict_root/README.md"
+git -C "$restrict_root" add README.md
+git -C "$restrict_root" commit -q -m 'restrict fixture'
+git -C "$restrict_root" update-ref refs/remotes/origin/main HEAD
+git -C "$restrict_root" update-ref refs/remotes/origin/sibling HEAD
+(
+  cd "$restrict_root"
+  bash "$script_dir/ci-restrict-origin-refs.sh"
+)
+if git -C "$restrict_root" show-ref --verify --quiet refs/remotes/origin/sibling; then
+  printf 'policy test failed: sibling origin ref survived restrict\n' >&2
+  exit 1
+fi
+if ! git -C "$restrict_root" show-ref --verify --quiet refs/remotes/origin/main; then
+  printf 'policy test failed: origin/main was dropped by restrict\n' >&2
+  exit 1
+fi
+rm -rf -- "$restrict_root"
 
 printf 'verification policy tests passed\n'
