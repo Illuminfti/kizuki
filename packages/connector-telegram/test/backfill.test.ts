@@ -66,9 +66,20 @@ test("a cursor from a completed walk makes backfill a no-op", async () => {
   const built = await connected();
   const drained = await drain(built.connector, "backfill");
   expect(parseCursor(drained.cursor).phase).toBe("synced");
+  built.api.calls.length = 0;
   const again = await built.connector.backfill(drained.cursor);
   expect(again.events).toEqual([]);
   expect(again.cursor).toBe(drained.cursor);
+  // A settled backfill costs nothing: no listing, so no further chance to be
+  // told to wait by an account that has nothing left to give.
+  expect(built.api.calls).toEqual([]);
+});
+
+test("a settled backfill stays quiet even when telegram is unreachable", async () => {
+  const built = await connected();
+  const drained = await drain(built.connector, "backfill");
+  built.api.disconnectNetwork();
+  expect((await built.connector.backfill(drained.cursor)).events).toEqual([]);
 });
 
 test("resuming after a reported wait replays nothing and misses nothing", async () => {

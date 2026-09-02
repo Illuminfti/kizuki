@@ -22,11 +22,17 @@ export interface WalkDeps {
   plan: PurgeIndex;
 }
 
+/** What one dialog listing showed; absent when the pass needed no listing. */
+export interface DialogListing {
+  limitReached: boolean;
+}
+
 export interface WalkResult {
   batch: SyncBatch;
   /** Milliseconds until the provider will accept requests again, or null. */
   floodUntil: number | null;
-  dialogLimitReached: boolean;
+  /** `null` leaves the caller's view of the account's dialogs as it was. */
+  listing: DialogListing | null;
 }
 
 interface Batch {
@@ -75,16 +81,18 @@ export async function walk(
   mode: WalkMode,
   deps: WalkDeps,
 ): Promise<WalkResult> {
-  const listing = await listDialogs(deps.api);
-  const cursor =
-    cursorText === null ? seedCursor(listing.dialogs) : parseCursor(cursorText);
-  const idle = {
-    floodUntil: null,
-    dialogLimitReached: listing.limitReached,
-  } as const;
-  if (mode === "backfill" && cursor.phase === "synced") {
-    return { batch: { events: [], cursor: encodeCursor(cursor) }, ...idle };
+  const stored = cursorText === null ? null : parseCursor(cursorText);
+  if (mode === "backfill" && stored !== null && stored.phase === "synced") {
+    // Nothing is left to read, so nothing is worth asking for: a listing here
+    // would only spend a request, and one more chance to be told to wait.
+    return {
+      batch: { events: [], cursor: encodeCursor(stored) },
+      floodUntil: null,
+      listing: null,
+    };
   }
+  const listing = await listDialogs(deps.api);
+  const cursor = stored ?? seedCursor(listing.dialogs);
   if (mode === "sync" && cursor.pass === null) {
     for (const dialog of listing.dialogs) {
       cursor.dialogs[dialog.peer_id] ??= {
@@ -158,7 +166,7 @@ export async function walk(
   return {
     batch: { events: batch.events, cursor: encodeCursor(cursor) },
     floodUntil,
-    dialogLimitReached: listing.limitReached,
+    listing: { limitReached: listing.limitReached },
   };
 }
 

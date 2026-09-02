@@ -314,7 +314,10 @@ export class TelegramConnector implements Connector {
       now: this.#deps.now,
       plan: this.#plan,
     });
-    this.#dialogLimitReached = result.dialogLimitReached;
+    // A pass that listed nothing says nothing about the account's dialogs.
+    if (result.listing !== null) {
+      this.#dialogLimitReached = result.listing.limitReached;
+    }
     if (result.floodUntil !== null) this.#floodUntil = result.floodUntil;
     this.#lastSuccessAt = this.#nowIso();
     return result.batch;
