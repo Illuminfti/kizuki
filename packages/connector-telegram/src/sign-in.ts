@@ -1,5 +1,5 @@
 import type { SignInIo } from "@kizuki/core";
-import { TelegramConnectorError } from "./api";
+import { TelegramConnectorError, safeCause } from "./api";
 import type { SignInFlow, TelegramApi } from "./api";
 
 /** Rejected codes or passwords tolerated before sign-in is abandoned. */
@@ -85,7 +85,7 @@ export async function runSignIn(
         throw new TelegramConnectorError(
           "sign_in_aborted",
           "kizuki.telegram: sign-in was abandoned after repeated rejected attempts",
-          { cause: error },
+          { cause: safeCause(error) },
         );
       }
       const seconds = waitSeconds(error);

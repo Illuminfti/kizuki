@@ -1,4 +1,4 @@
-import { TelegramConnectorError } from "./api";
+import { TelegramConnectorError, redactedCause } from "./api";
 
 /** Provider errors that mean the stored session is finished, not merely failing. */
 const DEAD_SESSION = new Set([
@@ -37,45 +37,71 @@ export interface ProviderErrors {
   isRpcError(error: unknown): error is { errorMessage: string };
 }
 
+/** A length the connector can actually wait out, or nothing to act on. */
+function waitLength(seconds: unknown): number | null {
+  return Number.isSafeInteger(seconds) && (seconds as number) >= 0
+    ? (seconds as number)
+    : null;
+}
+
+/**
+ * Every field of a provider failure is text the provider chose, and this
+ * connector holds a credential that would be worth writing into one. So no
+ * part of such a failure is repeated or retained: a name is echoed only when
+ * it is spelled like one of the provider's own, a wait only when its length
+ * is a number, and the failure itself never becomes a cause a renderer would
+ * walk into.
+ */
 export function classify(
   error: unknown,
   errors: ProviderErrors,
 ): TelegramConnectorError {
   if (error instanceof TelegramConnectorError) return error;
+  const cause = redactedCause(error);
   if (errors.isFloodWait(error)) {
-    return new TelegramConnectorError(
-      "flood_wait",
-      `kizuki.telegram: telegram asked us to wait ${error.seconds}s`,
-      { retry_after: error.seconds, cause: error },
-    );
+    const seconds = waitLength(error.seconds);
+    return seconds === null
+      ? new TelegramConnectorError(
+          "flood_wait",
+          "kizuki.telegram: telegram asked us to wait, without saying how long",
+          { cause },
+        )
+      : new TelegramConnectorError(
+          "flood_wait",
+          `kizuki.telegram: telegram asked us to wait ${seconds}s`,
+          { retry_after: seconds, cause },
+        );
   }
   if (!errors.isRpcError(error)) {
     // Socket, timeout and name-resolution faults never reach the RPC layer.
     return new TelegramConnectorError(
       "unreachable",
       "kizuki.telegram: telegram is unreachable",
-      { cause: error },
+      { cause },
     );
   }
-  const name = error.errorMessage;
-  if (DEAD_SESSION.has(name)) {
+  const raw = error.errorMessage;
+  if (DEAD_SESSION.has(raw)) {
     return new TelegramConnectorError(
       "unauthenticated",
       "kizuki.telegram: the stored session is no longer authorized; sign in again",
-      { cause: error },
+      { cause },
     );
   }
-  if (name === "PHONE_NUMBER_INVALID") {
+  if (raw === "PHONE_NUMBER_INVALID") {
     return new TelegramConnectorError(
       "invalid_phone",
       "kizuki.telegram: telegram rejected the phone number",
-      { cause: error },
+      { cause },
     );
   }
+  // A name this connector never taught itself to read is provider text like
+  // any other, and repeating it is how a credential written into a reply frame
+  // would reach a log. The code is what a caller acts on either way.
   return new TelegramConnectorError(
     "parse_error",
-    `kizuki.telegram: telegram returned ${name}`,
-    { cause: error },
+    "kizuki.telegram: telegram refused the request",
+    { cause },
   );
 }
 

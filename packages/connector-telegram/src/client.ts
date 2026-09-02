@@ -1,7 +1,7 @@
 import type { Api, TelegramClient, utils as Utils } from "telegram";
 import type { Dialog } from "telegram/tl/custom/dialog.js";
 import type { StringSession } from "telegram/sessions/index.js";
-import { TelegramConnectorError } from "./api";
+import { TelegramConnectorError, redactedCause } from "./api";
 import type {
   AppCredentials,
   MessagesQuery,
@@ -171,7 +171,7 @@ class RealTelegramApi implements TelegramApi {
       throw new TelegramConnectorError(
         "unreachable",
         "kizuki.telegram: the telegram client could not be started",
-        { cause: error },
+        { cause: redactedCause(error) },
       );
     }
     return this.#runtime;

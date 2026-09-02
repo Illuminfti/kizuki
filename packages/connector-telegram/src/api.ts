@@ -99,13 +99,20 @@ export type TelegramErrorCode =
   | "parse_error";
 
 /**
- * A parser quotes the token it failed on, so an error raised over credential
- * bytes carries them into every rendered cause chain. Only the failure's shape
- * may cross that boundary.
+ * A parser quotes the token it failed on, and a provider names its own
+ * failures in text it chose, so an error raised over credential bytes carries
+ * them into every rendered cause chain. Nothing but the runtime kind of the
+ * failure crosses that boundary: a credential can be spelled like a class
+ * name, so even the name is left behind.
  */
 export function redactedCause(error: unknown): Error {
-  const shape = error instanceof Error ? error.name : typeof error;
+  const shape = error instanceof Error ? "Error" : typeof error;
   return new Error(`kizuki.telegram: ${shape} (details withheld)`);
+}
+
+/** Ours already says only what it chose to; anything else is reduced to shape. */
+export function safeCause(error: unknown): Error {
+  return error instanceof TelegramConnectorError ? error : redactedCause(error);
 }
 
 /**

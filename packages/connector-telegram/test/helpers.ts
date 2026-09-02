@@ -8,6 +8,7 @@ import type {
   SignInIo,
 } from "@kizuki/core";
 import { TelegramConnectorError } from "../src/api";
+import type { ProviderErrors } from "../src/guard";
 import { TelegramConnector } from "../src/connector";
 import type { TelegramConnectorConfig, TelegramDeps } from "../src/connector";
 import {
@@ -173,3 +174,24 @@ export async function rejection(
   expect(thrown).toBeInstanceOf(TelegramConnectorError);
   return thrown as TelegramConnectorError;
 }
+
+/** A provider wait, shaped as the library raises it. */
+export class Wait extends Error {
+  constructor(readonly seconds: unknown) {
+    super(`A wait of ${String(seconds)} seconds is required`);
+    this.name = "FloodWaitError";
+  }
+}
+
+/** A provider RPC failure, shaped as the library raises it. */
+export class Rpc extends Error {
+  constructor(readonly errorMessage: string) {
+    super(errorMessage);
+    this.name = "RPCError";
+  }
+}
+
+export const PROVIDER: ProviderErrors = {
+  isFloodWait: (error): error is { seconds: number } => error instanceof Wait,
+  isRpcError: (error): error is { errorMessage: string } => error instanceof Rpc,
+};

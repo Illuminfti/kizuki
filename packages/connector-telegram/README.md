@@ -77,7 +77,10 @@ string. Core, not this connector, chooses the filename and writes it to
 `<vault>/.kizuki/connections/<source key>.state` with mode `0600` inside a
 `0700` directory. The database records only the reference
 `file:connections/<source key>.state`. The session bytes never reach SQLite, a
-log line, an error message, a cursor, or event metadata.
+log line, an error message, a cursor, or event metadata. Telegram writes the
+text of the failures it sends, so none of it is repeated either: an error from
+this package says what this package concluded, with a redacted cause, and
+never quotes the reply it read.
 
 Re-authenticating replaces that file in place and keeps the same source key,
 so checkpoints survive. Connecting with a session that belongs to a different

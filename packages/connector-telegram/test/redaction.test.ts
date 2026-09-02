@@ -1,12 +1,17 @@
 import { expect, test } from "bun:test";
 import { parseCursor } from "../src/cursor";
+import { classify } from "../src/guard";
+import { waitSeconds } from "../src/sign-in";
 import {
   FIXTURE_SESSION,
   fixtureAccount,
 } from "../src/fixture";
 import {
   CapturingWriter,
+  PROVIDER,
+  Rpc,
   ScriptedIo,
+  Wait,
   connected,
   drain,
   harness,
@@ -136,4 +141,49 @@ test("a failure raised over credential bytes hands back its shape only", async (
   );
   expect(stored.code).toBe("parse_error");
   expect(chain(stored)).not.toContain(STORED);
+});
+
+/**
+ * Every field of a provider failure is text the provider chose, and a
+ * connection whose reply frames are being written by someone else is exactly
+ * the case this connector is built for. None of that text may be repeated in
+ * an error, a message or a cause chain, so a credential planted in any of it
+ * has nowhere to surface.
+ */
+test("a provider failure carrying a credential in every field says none of it", () => {
+  const hostile = (): Rpc => {
+    const error = new Rpc(`UNEXPECTED_${OPAQUE_SESSION}`);
+    error.name = `RPCError_${FIXTURE_SESSION}`;
+    error.message = `failed: ${PASSWORD}`;
+    error.cause = new Error(`${PHONE} ${CODE} ${OPAQUE_SESSION}`);
+    return error;
+  };
+
+  const classified = [
+    classify(hostile(), PROVIDER),
+    // The named branches take the same text through a different message.
+    classify(new Rpc("SESSION_REVOKED"), PROVIDER),
+    // A wait whose length is text rather than a number: the number is the only
+    // part of a wait worth repeating, so an unreadable one is not repeated.
+    classify(new Wait(`${OPAQUE_SESSION}`), PROVIDER),
+    // Nothing that reached the RPC layer at all.
+    classify(new Error(`socket ${OPAQUE_SESSION}`), PROVIDER),
+  ];
+  for (const error of classified) {
+    assertClean("classified", error.message);
+    assertClean("classified chain", chain(error));
+  }
+});
+
+test("a wait the provider did not measure is not slept through as though it had", () => {
+  const measured = classify(new Wait(42), PROVIDER);
+  expect(measured.code).toBe("flood_wait");
+  expect(measured.retry_after).toBe(42);
+
+  // Without a length there is nothing to wait out, and inventing one would
+  // have the connector report a pause it was never given.
+  const unmeasured = classify(new Wait("42"), PROVIDER);
+  expect(unmeasured.code).toBe("flood_wait");
+  expect(unmeasured.retry_after).toBeUndefined();
+  expect(waitSeconds(unmeasured)).toBeNull();
 });
