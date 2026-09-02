@@ -358,10 +358,16 @@ export interface SignInOptions {
 
 const DEFAULT_TIMEOUT_MS = 300_000;
 
+/**
+ * An empty secret is a public client spelling "none" the long way. Posting the
+ * field with an empty value is not the same request: a provider reads it as an
+ * authentication attempt and may reject the exchange for it.
+ */
 function clientSecretForm(provider: OAuthProvider): Record<string, string> {
-  return provider.client_secret === undefined
+  const secret = provider.client_secret;
+  return secret === undefined || secret.length === 0
     ? {}
-    : { client_secret: provider.client_secret };
+    : { client_secret: secret };
 }
 
 /** The only place a transport rejection becomes an error owners may see. */

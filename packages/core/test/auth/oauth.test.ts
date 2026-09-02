@@ -143,6 +143,33 @@ describe("browser sign-in", () => {
     expect(io.opened[0]).not.toContain("installed-app");
   });
 
+  test("omits a client secret the provider declared as empty", async () => {
+    const transport = new FakeTransport(
+      { status: 200, body: tokenResponse() },
+      { status: 200, body: tokenResponse({ access_token: "SENTINEL-SECOND" }) },
+      { status: 200, body: null },
+    );
+    const io = fakeIo();
+    // A public client that spells the absent secret as "" must post the same
+    // form as one that omits the field: an empty client_secret is a value the
+    // provider has to interpret, and some read it as a failed authentication.
+    const empty = provider({ client_secret: "" });
+    const flow = signInWithBrowser(empty, io, transport, {
+      ...deterministic(),
+      now: () => NOW,
+    });
+    await io.firstOpen;
+    transport.redirect({ code: "SENTINEL-CODE", state: NONCE });
+    const tokens = await flow;
+    await refreshTokens(empty, tokens, transport, () => NOW);
+    await revokeToken(empty, tokens.access_token, transport);
+
+    expect(transport.posts).toHaveLength(3);
+    for (const post of transport.posts) {
+      expect(Object.keys(post.form)).not.toContain("client_secret");
+    }
+  });
+
   test("a failing browser opener does not abort a completed sign-in", async () => {
     const transport = new FakeTransport({ status: 200, body: tokenResponse() });
     const io = fakeIo({ openUrl: () => Promise.reject(new Error("no browser")) });
