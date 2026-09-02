@@ -69,6 +69,25 @@ describe("the sqlite reader", () => {
     expect(message).toContain("table has no rowid; export it to JSONL");
   });
 
+  test("a table that declares the rowid alias is refused, not silently NaN", () => {
+    const path = dbAt(
+      "shadow.db",
+      "CREATE TABLE events (id TEXT, __rowid TEXT, ts INTEGER);",
+    );
+    let message = "";
+    try {
+      openSqliteSource(path, "events");
+    } catch (error) {
+      if (!(error instanceof KizukiError)) throw error;
+      message = error.message;
+    }
+    // Shadowing the alias makes every position NaN, the cursor serialises the
+    // position as null, and the next run cannot decode its own cursor.
+    expect(message).toContain(
+      "table declares the reserved column __rowid; export it to JSONL: events",
+    );
+  });
+
   test("keyset paging visits every row exactly once", () => {
     const path = join(root, "many.db");
     const db = new Database(path);

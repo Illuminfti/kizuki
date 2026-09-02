@@ -101,6 +101,13 @@ export function openSqliteSource(path: string, table: string): LegacyRowSource {
       );
     }
     const names = columns.map((column) => column.name);
+    if (names.includes(ROWID_ALIAS)) {
+      // The reader names the rowid so it can page by it; a declared column of
+      // the same name shadows the alias and every position becomes NaN.
+      throw misconfigured(
+        `table declares the reserved column ${ROWID_ALIAS}; export it to JSONL: ${table}`,
+      );
+    }
     const read = db.query(
       `SELECT rowid AS ${ROWID_ALIAS}, * FROM ${name} WHERE rowid > ? ORDER BY rowid LIMIT ?`,
     );
