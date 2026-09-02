@@ -10,6 +10,14 @@ export const COMMAND_TIMEOUT_MS = 60_000;
  * untagged line per message, plus a handful of status lines.
  */
 export const MAX_UNTAGGED = 5_000;
+/**
+ * Every other bound on a reply is per item: per line, per literal, per
+ * response, per untagged response. Their product is not a bound at all, so
+ * one command also carries a budget for everything it reads. A legitimate
+ * reply stays far below it: the largest is a body fetch, and `bodyFetchSize`
+ * shrinks that batch to fit whatever the owner set `max_message_bytes` to.
+ */
+export const MAX_COMMAND_BYTES = 67_108_864;
 
 export type CommandArg =
   | { kind: "atom"; value: string }
@@ -25,6 +33,8 @@ export interface CommandResult {
 
 export interface ClientOptions {
   commandTimeoutMs?: number;
+  /** Total response bytes one command may read before the peer is cut off. */
+  commandByteBudget?: number;
   /**
    * Strings the server must never be able to quote back into an error. The
    * session passes the account name and the app password.
@@ -92,9 +102,11 @@ function refusal(
 export class ImapClient {
   private readonly reader: ResponseReader;
   private readonly timeoutMs: number;
+  private readonly byteBudget: number;
   private readonly secrets: readonly string[];
   private counter = 0;
   private closed = false;
+  private commandStartBytes = 0;
 
   constructor(
     private readonly conn: ImapConn,
@@ -102,6 +114,7 @@ export class ImapClient {
   ) {
     this.reader = new ResponseReader(conn);
     this.timeoutMs = options.commandTimeoutMs ?? COMMAND_TIMEOUT_MS;
+    this.byteBudget = options.commandByteBudget ?? MAX_COMMAND_BYTES;
     this.secrets = options.secrets ?? [];
   }
 
@@ -137,6 +150,10 @@ export class ImapClient {
         this.close();
         throw new KizukiError("unreachable", "server said BYE");
       }
+      if (this.reader.bytesRead - this.commandStartBytes > this.byteBudget) {
+        this.close();
+        throw new KizukiError("protocol", "reply exceeds the command budget");
+      }
       return response;
     } finally {
       if (timer !== undefined) clearTimeout(timer);
@@ -145,6 +162,7 @@ export class ImapClient {
 
   /** The server's opening line; a `* BYE` greeting surfaces as unreachable. */
   async greeting(): Promise<ImapResponse> {
+    this.commandStartBytes = this.reader.bytesRead;
     return this.read(Date.now() + this.timeoutMs);
   }
 
@@ -214,6 +232,7 @@ export class ImapClient {
     options: { login?: boolean } = {},
   ): Promise<CommandResult> {
     this.counter += 1;
+    this.commandStartBytes = this.reader.bytesRead;
     const tag = `A${String(this.counter).padStart(4, "0")}`;
     const pieces = this.buildPieces(command, args, tag);
     const deadline = Date.now() + this.timeoutMs;

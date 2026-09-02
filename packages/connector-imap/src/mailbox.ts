@@ -4,6 +4,8 @@ import type { ImapCursor, ImapFolderCursor } from "./cursor";
 import { folderLabel, messageEvent, tombstoneEvent } from "./events";
 import { ImapSession } from "./imap/session";
 import type { MessageSummary, SessionOptions } from "./imap/session";
+import { MAX_COMMAND_BYTES } from "./imap/client";
+import { MAX_LINE_BYTES } from "./imap/tokenizer";
 import type { ImapState } from "./state";
 import type { ImapDialer } from "./transport";
 import {
@@ -25,6 +27,20 @@ export const BODY_FETCH = 20;
  * so the hole list stops accepting new UIDs once it reaches a page's worth.
  */
 export const MAX_PENDING = 1_000;
+
+/**
+ * A body fetch is the one command that legitimately moves megabytes, and the
+ * client cuts off a reply that outgrows its budget. The batch therefore
+ * shrinks to whatever `max_message_bytes` the owner set, rather than asking
+ * for twenty large messages at once and being disconnected for it.
+ */
+export function bodyFetchSize(maxMessageBytes: number): number {
+  const perMessage = Math.max(1, maxMessageBytes) + MAX_LINE_BYTES;
+  return Math.max(
+    1,
+    Math.min(BODY_FETCH, Math.floor(MAX_COMMAND_BYTES / perMessage)),
+  );
+}
 
 export interface WalkDeps {
   dial: ImapDialer;
@@ -58,7 +74,7 @@ async function fetchBodiesFor(
     (summary) => summary.size > maxMessageBytes,
   );
 
-  for (const batch of group(full, BODY_FETCH)) {
+  for (const batch of group(full, bodyFetchSize(maxMessageBytes))) {
     const fetched = await session.fetchBodies(
       batch.map((summary) => summary.uid),
       "",

@@ -145,6 +145,41 @@ describe("argument encoding", () => {
     expect((error as KizukiError).message).toBe("too many untagged responses");
   });
 
+  test("refuses a reply whose responses add up past the command budget", async () => {
+    const body = "x".repeat(512);
+    const conn = scripted(() => [
+      ...Array.from(
+        { length: 40 },
+        (_value, uid) => `* ${uid + 1} FETCH (UID ${uid + 1} BODY[] {512}\r\n${body})\r\n`,
+      ),
+      "A0001 OK done\r\n",
+    ]);
+    // Every line, literal and response here is inside its own bound, and the
+    // count is far under MAX_UNTAGGED; only the total is out of hand.
+    const client = new ImapClient(conn, { commandByteBudget: 4_096 });
+    const error = await client
+      .send("UID FETCH", [atom("1:40"), atom("(BODY.PEEK[])")])
+      .catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(KizukiError);
+    expect((error as KizukiError).code).toBe("protocol");
+    expect((error as KizukiError).message).toBe("reply exceeds the command budget");
+    expect(conn.closed).toBe(true);
+  });
+
+  test("counts the budget per command, not per connection", async () => {
+    const body = "y".repeat(200);
+    const conn = scripted((text) => [
+      `* 1 FETCH (UID 1 BODY[] {200}\r\n${body})\r\n`,
+      `${text.split(" ")[0] ?? ""} OK done\r\n`,
+    ]);
+    const client = new ImapClient(conn, { commandByteBudget: 1_024 });
+    for (let round = 0; round < 5; round += 1) {
+      const result = await client.send("UID FETCH", [atom("1"), atom("(BODY.PEEK[])")]);
+      expect(result.untagged).toHaveLength(1);
+    }
+    expect(conn.closed).toBe(false);
+  });
+
   test("sends a value containing CRLF as a literal", async () => {
     const conn = scripted((_text, index) =>
       index === 0

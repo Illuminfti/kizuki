@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { KizukiError } from "@kizuki/core";
 import {
+  MAX_LINE_BYTES,
   MAX_LIST_DEPTH,
   MAX_LITERAL_BYTES,
   ResponseReader,
   parseResponse,
   tokenText,
 } from "../src/imap/tokenizer";
+import type { ImapResponse } from "../src/imap/tokenizer";
 import type { ImapConn } from "../src/transport";
 
 function conn(chunks: string[]): ImapConn & { closed: boolean } {
@@ -121,6 +123,27 @@ describe("response tokenizer", () => {
       token = token?.kind === "list" ? token.items[0] : undefined;
     }
     expect(token).toEqual({ kind: "list", items: [{ kind: "atom", value: "A" }] });
+  });
+
+  test("refuses one response whose literals add up past the bound", async () => {
+    const literal = "x".repeat(64);
+    const line = `* 1 FETCH (${`BODY[] {64}\r\n${literal} `.repeat(8)})\r\n`;
+    const socket = conn([line]);
+    // Each literal is inside the per-literal bound; only their sum is not.
+    const reader = new ResponseReader(socket, MAX_LINE_BYTES, MAX_LITERAL_BYTES, 256);
+    const error = (await reader.next().catch((caught: unknown) => caught)) as
+      | KizukiError
+      | ImapResponse
+      | null;
+    expect(error).toBeInstanceOf(KizukiError);
+    expect((error as KizukiError).message).toBe("response exceeds bound");
+    expect(socket.closed).toBe(true);
+  });
+
+  test("counts every byte it hands back", async () => {
+    const reader = new ResponseReader(conn(["* OK {5}\r\nhello\r\n"]));
+    await reader.next();
+    expect(reader.bytesRead).toBe("* OK {5}".length + 5 + 0);
   });
 
   test("an unterminated final line is read once, then EOF", async () => {

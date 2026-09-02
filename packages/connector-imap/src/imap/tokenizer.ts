@@ -9,6 +9,13 @@ export const MAX_LITERAL_BYTES = 8_388_608;
  * as an untyped RangeError instead of the protocol error the caller handles.
  */
 export const MAX_LIST_DEPTH = 32;
+/**
+ * One response may carry several literals, and the per-literal bound says
+ * nothing about their sum. Without this a server answering a single FETCH
+ * with three hundred in-bound literals allocates hundreds of megabytes on the
+ * deterministic sync path.
+ */
+export const MAX_RESPONSE_BYTES = MAX_LITERAL_BYTES + MAX_LINE_BYTES;
 
 export type Token =
   | { kind: "atom"; value: string }
@@ -41,12 +48,19 @@ function latin1(bytes: Uint8Array): string {
 export class ResponseReader {
   private buffer: Uint8Array = new Uint8Array(0);
   private ended = false;
+  /** Every byte handed to a caller so far; the client meters commands with it. */
+  private consumed = 0;
 
   constructor(
     private readonly conn: ImapConn,
     private readonly maxLineBytes: number = MAX_LINE_BYTES,
     private readonly maxLiteralBytes: number = MAX_LITERAL_BYTES,
+    private readonly maxResponseBytes: number = MAX_RESPONSE_BYTES,
   ) {}
+
+  get bytesRead(): number {
+    return this.consumed;
+  }
 
   private async pull(): Promise<boolean> {
     const chunk = await this.conn.receive();
@@ -108,6 +122,16 @@ export class ResponseReader {
     if (segment === null) return null;
     const literals: Uint8Array[] = [];
     let line = "";
+    let bytes = 0;
+    const take = (count: number): void => {
+      bytes += count;
+      this.consumed += count;
+      if (bytes > this.maxResponseBytes) {
+        this.conn.close();
+        throw protocolError("response exceeds bound");
+      }
+    };
+    take(segment.length);
 
     // Only the freshly read segment can announce a literal; the markers
     // already folded into `line` stay put as placeholders for the scanner.
@@ -120,11 +144,15 @@ export class ResponseReader {
         this.conn.close();
         throw protocolError("literal exceeds bound");
       }
+      // Charged before the read so a single announced literal cannot push the
+      // response past its budget by being allocated first and checked after.
+      take(size);
       literals.push(await this.readExact(size));
       const continuation = await this.readLine();
       if (continuation === null) {
         throw protocolError("connection ended after a literal");
       }
+      take(continuation.length);
       segment = continuation;
     }
 
