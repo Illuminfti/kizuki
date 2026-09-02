@@ -279,6 +279,21 @@ describe("mapping edges", () => {
     ]);
   });
 
+  test("an out-of-range entity in an html body still yields an event", () => {
+    const event = build(
+      [
+        "From: linus@example.org",
+        "Subject: Hostile",
+        "Content-Type: text/html; charset=utf-8",
+        "",
+        "<p>before &#1114112; after</p>",
+        "",
+      ].join("\r\n"),
+    );
+    expect(event.text).toBe("Hostile\n\nbefore &#1114112; after");
+    expect(validateEventInput(event).ok).toBe(true);
+  });
+
   test("a tombstone carries only the identity of what vanished", () => {
     const event = tombstoneEvent({
       folderWire: "INBOX",

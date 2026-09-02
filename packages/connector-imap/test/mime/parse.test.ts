@@ -154,7 +154,20 @@ describe("html to text", () => {
     ["<ul><li>one</li><li>two</li></ul>", "one\ntwo"],
     ["<h1>Title</h1>body", "Title\nbody"],
     ["&unknown;", "&unknown;"],
+    ["over &#1114112; end", "over &#1114112; end"],
+    ["over &#x110000; end", "over &#x110000; end"],
+    ["lone &#55296; end", "lone &#55296; end"],
+    ["lone &#xDFFF; end", "lone &#xDFFF; end"],
+    ["proto &constructor; end", "proto &constructor; end"],
+    ["proto &toString; end", "proto &toString; end"],
+    ["proto &__proto__; end", "proto &__proto__; end"],
   ])("renders %s", (html, expected) => {
     expect(htmlToText(html)).toBe(expected);
+  });
+
+  test("a hostile entity cannot abort the capture of a whole page", () => {
+    expect(htmlToText("<p>before</p><p>&#1114112;</p><p>after</p>")).toBe(
+      "before\n&#1114112;\nafter",
+    );
   });
 });

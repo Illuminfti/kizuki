@@ -8,17 +8,27 @@ const NAMED_ENTITIES: Record<string, string> = {
   nbsp: " ",
 };
 
+/** A code point `String.fromCodePoint` accepts and that is not a lone surrogate. */
+function isScalarValue(code: number): boolean {
+  if (!Number.isInteger(code) || code <= 0 || code > 0x10ffff) return false;
+  return code < 0xd800 || code > 0xdfff;
+}
+
 function decodeEntities(text: string): string {
   return text.replace(/&(#[xX]?[0-9a-fA-F]+|[a-zA-Z]+);/g, (whole, body: string) => {
-    const named = NAMED_ENTITIES[body];
+    // Own-property only: an object literal answers `constructor` and `toString`
+    // with function source, which a hostile message would inject into capture.
+    const named = Object.hasOwn(NAMED_ENTITIES, body) ? NAMED_ENTITIES[body] : undefined;
     if (named !== undefined) return named;
+    // A malformed or out-of-range reference stays verbatim rather than throwing:
+    // one hostile message must not abort the capture of everything around it.
     if (body.startsWith("#x") || body.startsWith("#X")) {
       const code = Number.parseInt(body.slice(2), 16);
-      return Number.isFinite(code) && code > 0 ? String.fromCodePoint(code) : whole;
+      return isScalarValue(code) ? String.fromCodePoint(code) : whole;
     }
     if (body.startsWith("#")) {
       const code = Number.parseInt(body.slice(1), 10);
-      return Number.isFinite(code) && code > 0 ? String.fromCodePoint(code) : whole;
+      return isScalarValue(code) ? String.fromCodePoint(code) : whole;
     }
     return whole;
   });
