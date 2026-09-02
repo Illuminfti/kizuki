@@ -113,9 +113,9 @@ export async function walk(
       const seconds = waitSeconds(error);
       if (seconds === null) throw error;
       // The listing is the first request a walk makes and the likeliest place
-      // on a large account to be told to wait. Raising it here would leave the
-      // wait unrecorded, health calling the connection healthy, and the
-      // caller's cursor lost along with the batch.
+      // on a large account to be told to wait. Raising it from here would
+      // leave the wait unrecorded and health calling the connection healthy;
+      // the caller reports it once the walk has handed it back.
       return {
         batch: { events: [], cursor: cursorText },
         floodUntil: deps.now() + seconds * 1000,

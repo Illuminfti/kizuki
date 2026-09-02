@@ -4,7 +4,7 @@ import {
   fixtureAccount,
 } from "../src/fixture";
 import type { TelegramMessage } from "../src/api";
-import { connected, drain } from "./helpers";
+import { connected, drain, rejection } from "./helpers";
 
 const NON_SERVICE = 12;
 
@@ -96,11 +96,12 @@ test("resuming after a reported wait replays nothing and misses nothing", async 
   expect(stopped.dialogs["-42"]?.last_id).toBe(0);
 
   // Inside the wait the connector spends nothing: asking again is how a pause
-  // becomes a longer one.
+  // becomes a longer one. It says so rather than answering with the empty
+  // batch that means a drained account.
   built.api.calls.length = 0;
-  const early = await built.connector.backfill(first.cursor);
-  expect(early.events).toEqual([]);
-  expect(early.cursor).toBe(first.cursor);
+  const early = await rejection(() => built.connector.backfill(first.cursor));
+  expect(early.code).toBe("flood_wait");
+  expect(early.retry_after).toBe(5);
   expect(built.api.calls).toEqual([]);
 
   built.clock.now += 5_000;

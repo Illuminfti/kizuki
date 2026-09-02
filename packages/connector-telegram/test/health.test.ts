@@ -132,15 +132,17 @@ test("a pass cut short by a wait is not recorded as a success", async () => {
   expect(recovered.last_success_at).toBe("2026-01-01T00:01:45.000Z");
 });
 
-test("a wait reported while listing dialogs is recorded, not raised", async () => {
+test("a wait reported while listing dialogs is recorded and reported", async () => {
   const built = await connected();
   built.api.floodListing(300);
 
   // The first request of a fresh backfill is the listing, and it is the one
-  // most likely to be told to wait on a large account.
-  const batch = await built.connector.backfill(null);
-  expect(batch.events).toEqual([]);
-  expect(batch.cursor).toBeNull();
+  // most likely to be told to wait on a large account. Nothing was read, so
+  // there is no batch to hand back and no cursor to resume from: the caller
+  // is told about the pause instead.
+  const waiting = await rejection(() => built.connector.backfill(null));
+  expect(waiting.code).toBe("flood_wait");
+  expect(waiting.retry_after).toBe(300);
 
   const report = await built.connector.health();
   expect(report.state).toBe("rate_limited");

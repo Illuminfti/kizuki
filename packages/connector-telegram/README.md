@@ -111,9 +111,13 @@ entry keeps the id it reached and the backfill stays unfinished, so a chat
 that comes back resumes instead of starting again. At the bound, the resume
 cursor may drop such a peer to stay within the same 5000, finished ones first.
 
-Waits are obeyed. When Telegram asks for a pause, the batch ends early with a
-cursor describing exactly the events it returned, health reports how many
-seconds are left, and no further request is made until the pause has lapsed.
+Waits are obeyed. When Telegram asks for a pause, a batch that had already
+read something ends early with a cursor describing exactly the events it
+returned. A pause that leaves nothing to resume from is reported to the caller
+as the wait it is, because an empty batch is how this connector says an account
+is drained, and a paused run must not be mistaken for a finished one. Either
+way health reports how many seconds are left, and no further request is made
+until the pause has lapsed.
 
 Secret chats cannot be read. They are end-to-end encrypted per device, and
 the library this connector uses implements no part of that protocol: the

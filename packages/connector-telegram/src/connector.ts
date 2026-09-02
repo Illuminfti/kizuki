@@ -361,10 +361,11 @@ export class TelegramConnector implements Connector {
     const self = this.#self;
     if (api === null || self === null) throw notConnected();
     if (this.#deps.now() < this.#floodUntil) {
-      // Telegram asked for a pause. Spending a request to be told so again is
-      // how a wait becomes a longer one, so the cursor comes back untouched
-      // and the caller resumes once the pause has lapsed.
-      return { events: [], cursor };
+      // Telegram asked for a pause, and spending a request to be told so again
+      // is how a wait becomes a longer one. The caller is told what it is
+      // waiting for rather than handed an empty batch, which is this
+      // connector's word for an account with nothing left to give.
+      throw this.#waiting();
     }
     const result = await walk(cursor, mode, {
       api,
@@ -377,12 +378,29 @@ export class TelegramConnector implements Connector {
     if (result.listing !== null) this.#listing = result.listing;
     if (result.floodUntil === null) {
       this.#lastSuccessAt = this.#nowIso();
-    } else {
-      // The pass stopped where the provider told it to, not where it meant to:
-      // that instant is the last failure, not the last success.
-      this.#floodUntil = result.floodUntil;
+      return result.batch;
+    }
+    // The pass stopped where the provider told it to, not where it meant to:
+    // that instant is the last failure, not the last success.
+    this.#floodUntil = result.floodUntil;
+    // A batch whose cursor did not move cannot be resumed from, so returning
+    // it would leave a runner to choose between reading the same records for
+    // ever and calling honest backpressure a broken connector. The records go
+    // back with the wait; they are still there to be read once it lapses.
+    if (result.batch.cursor === null || result.batch.cursor === cursor) {
+      throw this.#waiting();
     }
     return result.batch;
+  }
+
+  /** The pause still in force, as the error a caller can act on. */
+  #waiting(): TelegramConnectorError {
+    const seconds = Math.ceil((this.#floodUntil - this.#deps.now()) / 1000);
+    return new TelegramConnectorError(
+      "flood_wait",
+      `kizuki.telegram: telegram asked us to wait ${seconds}s`,
+      { retry_after: seconds },
+    );
   }
 
   #nowIso(): string {
