@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import {
   canonicalSerialize,
+  computeContentHash,
   validateEventInput,
 } from "@kizuki/core";
 import {
@@ -238,6 +240,33 @@ describe("screenpipe mapping", () => {
 
     expect(event.text).toHaveLength(MAX_TEXT_CHARS - 1);
     expect(event.metadata["text_truncated"]).toBe(true);
+  });
+
+  test("truncated text keeps its hash across a SQLite round trip", () => {
+    // The content hash is taken from the event before the ledger stores it. A
+    // cut between the halves of a surrogate pair leaves a lone surrogate,
+    // which SQLite replaces on the way back out, so the stored row would no
+    // longer hash to the value the ledger recorded for it.
+    const event = mapFrame(
+      frame({ full_text: `${"a".repeat(MAX_TEXT_CHARS - 1)}\u{1f600}tail` }),
+      OBSERVED_AT,
+    );
+    const db = new Database(":memory:");
+
+    try {
+      db.exec("CREATE TABLE captured (text TEXT NOT NULL)");
+      db.query("INSERT INTO captured (text) VALUES (?)").run(event.text);
+      const stored = db
+        .query<{ text: string }, []>("SELECT text FROM captured")
+        .get();
+
+      expect(stored?.text).toBe(event.text);
+      expect(computeContentHash({ ...event, text: stored?.text ?? "" })).toBe(
+        computeContentHash(event),
+      );
+    } finally {
+      db.close();
+    }
   });
 
   test("transcription occurred_at adds start_time", () => {

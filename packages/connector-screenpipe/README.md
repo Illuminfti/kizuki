@@ -131,6 +131,15 @@ screenpipe schema older than supported: migration 20260613130000 not applied (ma
   take at most 400 of the 500 places while transcriptions are still behind the
   checkpoint, so a machine in continuous use cannot leave its audio unread;
   when the audio table is caught up, frames take the whole batch.
+- The rows one call reads are therefore not bounded by a constant. A stretch
+  the walk emits nothing for — frames without text, rows the cutoff excludes,
+  rows with an unusable timestamp — is walked out inside the call that meets
+  it, so the worst case is every row behind the checkpoint in both tables: on
+  the order of a second per 400,000 rows. The bound is deliberate. An empty
+  batch is the only signal a host reads to know the source is caught up, so a
+  call that stopped on a row count would report "nothing new" with rows still
+  behind the checkpoint. Once a run has been walked out, the checkpoint is past
+  it and later calls do not see it again.
 - A column this connector only carries into metadata or a subject degrades
   rather than failing the batch: `offset_index` and `audio_chunk_id` read as
   `0`, and a capture device, audio device or engine name that is not stored as
