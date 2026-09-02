@@ -180,14 +180,17 @@ function monthCandidates(
   month: number,
 ): LocalDateTime[] {
   const total = daysInMonth(year, month);
-  const days = new Set<number>();
+  let byMonthDay: Set<number> | null = null;
   if (rule.bymonthday !== undefined) {
+    byMonthDay = new Set<number>();
     for (const day of rule.bymonthday) {
       const resolved = day > 0 ? day : total + day + 1;
-      if (resolved >= 1 && resolved <= total) days.add(resolved);
+      if (resolved >= 1 && resolved <= total) byMonthDay.add(resolved);
     }
   }
+  let byDay: Set<number> | null = null;
   if (rule.byday !== undefined) {
+    byDay = new Set<number>();
     for (const entry of rule.byday) {
       const matching: number[] = [];
       for (let day = 1; day <= total; day += 1) {
@@ -196,21 +199,29 @@ function monthCandidates(
         }
       }
       if (entry.ordinal === null) {
-        for (const day of matching) days.add(day);
+        for (const day of matching) byDay.add(day);
         continue;
       }
       const index =
         entry.ordinal > 0 ? entry.ordinal - 1 : matching.length + entry.ordinal;
       const day = matching[index];
-      if (day !== undefined) days.add(day);
+      if (day !== undefined) byDay.add(day);
     }
   }
-  // RFC 5545 §3.3.10: an instance whose civil date does not exist is skipped,
-  // never clamped onto a neighbouring day. With an explicit BY* constraint the
-  // empty set is the answer; without one the anchor day has to exist.
-  const constrained =
-    rule.bymonthday !== undefined || rule.byday !== undefined;
-  if (days.size === 0 && !constrained && base.day <= total) days.add(base.day);
+  // RFC 5545 §3.3.10: BYDAY expands on its own but narrows an explicit
+  // BYMONTHDAY, which is what makes "every Friday the 13th" one day a month.
+  const days = new Set<number>();
+  if (byMonthDay !== null && byDay !== null) {
+    for (const day of byMonthDay) if (byDay.has(day)) days.add(day);
+  } else if (byMonthDay !== null) {
+    for (const day of byMonthDay) days.add(day);
+  } else if (byDay !== null) {
+    for (const day of byDay) days.add(day);
+  } else if (base.day <= total) {
+    // An instance whose civil date does not exist is skipped, never clamped
+    // onto a neighbouring day; with a BY* rule the empty set is the answer.
+    days.add(base.day);
+  }
   return [...days]
     .sort((a, b) => a - b)
     .map((day) => withDay(base, year, month, day));

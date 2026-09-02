@@ -247,6 +247,19 @@ describe("exdates, rdates and bounds", () => {
     ]);
   });
 
+  test("BYDAY narrows BYMONTHDAY rather than adding to it", () => {
+    // RFC 5545 3.8.5.3: "Every Friday the 13th, forever".
+    expect(
+      starts("FREQ=MONTHLY;BYDAY=FR;BYMONTHDAY=13;COUNT=3", "20260213T090000", {
+        windowEnd: "20301231T000000",
+      }),
+    ).toEqual([
+      "20260213T090000",
+      "20260313T090000",
+      "20261113T090000",
+    ]);
+  });
+
   test("a leap-day anchor recurs only in leap years", () => {
     const window = { windowEnd: "20331231T000000" };
     expect(starts("FREQ=YEARLY;COUNT=3", "20240229T090000", window)).toEqual([
