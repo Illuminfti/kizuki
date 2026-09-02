@@ -463,6 +463,31 @@ describe("the report keeps page prose out", () => {
     expect(serialized).not.toMatch(/"\/[A-Za-z]/);
   });
 
+  test("a raw vocabulary value is capped in every rendering", () => {
+    const value = `VOCAB${"z".repeat(5000)}`;
+    const scan: ScanResult = {
+      files: [
+        {
+          relpath: "a.md",
+          content: `---\ntype: "${value}"\nvisibility: "${value}"\n---\nbody\n`,
+          mtimeMs: 1,
+          size: 10,
+        },
+      ],
+      skipped: [],
+      truncated: false,
+    };
+    const { report } = plan(scan);
+    const entry = page(report, "a.md");
+    expect(entry.type.legacy).toBe(value.slice(0, 64));
+    expect(entry.sensitivity.legacy).toBe(value.slice(0, 64));
+    // report-file.ts stringifies the document verbatim, so the cap has to hold
+    // in the document itself and not only in the Markdown renderer.
+    const serialized = JSON.stringify(report);
+    expect(serialized).not.toContain("z".repeat(65));
+    expect(renderLegacyWikiReport(report)).not.toContain("z".repeat(65));
+  });
+
   test("the rendered Markdown escapes cell separators and control characters", () => {
     const scan: ScanResult = {
       files: [

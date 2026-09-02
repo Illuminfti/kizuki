@@ -143,7 +143,16 @@ function planPage(
     target: null,
     kind: null,
     frontmatter: { status: parsed.status, problems: parsed.problems },
-    type: { legacy: legacyType, mapped: type, decision: typeDecision },
+    type: {
+      // Vocabulary, capped like the sensitivity value below it: the raw string
+      // is a page's own frontmatter, and the JSON report is written verbatim.
+      legacy:
+        legacyType === null
+          ? null
+          : sanitizeLine(legacyType, MAX_VOCABULARY),
+      mapped: type,
+      decision: typeDecision,
+    },
     title: { source: title.source },
     sensitivity: {
       legacy:
