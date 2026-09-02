@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { basename, extname, join } from "node:path";
+import type { Sensitivity } from "../agents/types";
 import {
   getClaim,
   markClaimReverted,
@@ -8,14 +9,17 @@ import {
   supersessionsForReceipt,
 } from "../claims/store";
 import type { RetrievalDoc } from "../contracts/retrieval";
+import type { ClaimTaint } from "../contracts/proposal";
 import { parseFrontmatter } from "../vault/frontmatter";
 import type { VaultPage } from "../vault/frontmatter";
+import { PAGE_SENSITIVITIES } from "../vault/schema";
 import { ABSENT_PAGE_HASH, hashBytes, hashFile } from "../vault/write";
 import { applyRevertWrite } from "./apply";
 import { UndoError } from "./errors";
 import {
   getCanonReceipt,
   laterReceiptsForPage,
+  listCanonReceipts,
 } from "./receipts";
 import type { CanonReceipt, PageAction, RetrievalOpRef } from "./receipts";
 import {
@@ -66,26 +70,70 @@ function subjectOf(page: VaultPage | null): string | null {
   return typeof raw === "string" && raw.length > 0 ? raw : null;
 }
 
+function isSensitivity(value: unknown): value is Sensitivity {
+  return typeof value === "string" && (PAGE_SENSITIVITIES as readonly string[]).includes(value);
+}
+
+function taintOf(page: VaultPage, fallback: ClaimTaint): ClaimTaint {
+  return page.data["taint"] === "quoted" ? "quoted" : page.data["taint"] === "clean" ? "clean" : fallback;
+}
+
+function provenanceOf(page: VaultPage, fallback: readonly string[]): string[] {
+  const sources = page.data["sources"];
+  if (Array.isArray(sources) && sources.every((item) => typeof item === "string")) {
+    return sources;
+  }
+  return [...fallback];
+}
+
+function metaReceiptForRestore(io: CanonIo, original: CanonReceipt): CanonReceipt {
+  if (original.before_hash === null) return original;
+  const prior = listCanonReceipts(io.db, {
+    page_path: original.page_path,
+    newest_first: true,
+    limit: 10_000,
+  }).find(
+    (row) => row.receipt_id !== original.receipt_id && row.after_hash === original.before_hash,
+  );
+  return prior ?? original;
+}
+
 function pageDoc(
   pageId: string,
   page: VaultPage,
-  receipt: CanonReceipt,
+  meta: CanonReceipt,
   at: string,
 ): RetrievalDoc {
   const title = page.data["title"];
+  const subject = subjectOf(page);
   return {
     doc_id: `page:${pageId}`,
     kind: "page",
-    title: typeof title === "string" ? title : receipt.page_path,
+    title: typeof title === "string" ? title : meta.page_path,
     text: page.body,
-    sensitivity: receipt.sensitivity,
-    taint: receipt.taint,
-    authority: receipt.authority,
-    subjects: [],
-    provenance: receipt.provenance,
+    sensitivity: isSensitivity(page.data["sensitivity"]) ? page.data["sensitivity"] : meta.sensitivity,
+    taint: taintOf(page, meta.taint),
+    authority: meta.authority,
+    subjects: subject === null ? [] : [subject],
+    provenance: provenanceOf(page, meta.provenance),
     occurred_at: null,
     updated_at: at,
   };
+}
+
+function recoverArchiveForHash(io: CanonIo, relPath: string, wantHash: string): string | null {
+  const dir = join(io.vault_path, "archive");
+  if (!existsSync(dir)) return null;
+  const stem = basename(relPath, extname(relPath));
+  const prefix = `${stem}.prev-`;
+  let found: string | null = null;
+  for (const name of readdirSync(dir)) {
+    if (!name.startsWith(prefix) || !name.endsWith(".md")) continue;
+    const rel = `archive/${name}`;
+    if (hashFile(join(io.vault_path, rel)) !== wantHash) continue;
+    if (found === null || name > basename(found)) found = rel;
+  }
+  return found;
 }
 
 async function reverseRetrieval(
@@ -112,7 +160,7 @@ async function reverseRetrieval(
 
   const pageId = pageIdOf(restored, pageIndexByPath(io.db, original.page_path)?.page_id ?? null);
   if (pageId === null) return [];
-  await port.upsert([pageDoc(pageId, restored, original, at)]);
+  await port.upsert([pageDoc(pageId, restored, metaReceiptForRestore(io, original), at)]);
   return docs.map((doc) => ({ store: port.descriptor.id, op: "upsert" as const, doc }));
 }
 
@@ -166,7 +214,10 @@ function restoreBytes(
   if (original.page_action === "create" && original.kind !== "revert") {
     if (current === ABSENT_PAGE_HASH) {
       return {
-        outcome: { archive_path: null, after_hash: ABSENT_PAGE_HASH },
+        outcome: {
+          archive_path: recoverArchiveForHash(io, original.page_path, original.after_hash),
+          after_hash: ABSENT_PAGE_HASH,
+        },
         page: null,
         action: "archive",
       };

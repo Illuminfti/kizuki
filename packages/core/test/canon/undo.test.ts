@@ -307,6 +307,10 @@ describe("undoReceipt", () => {
     expect(revert.retrieval_ops).toEqual([
       { store: retrieval.descriptor.id, op: "upsert", doc: docId },
     ]);
+    expect(retrieval.docs.get(docId)?.sensitivity).toBe(created.sensitivity);
+    expect(retrieval.docs.get(docId)?.taint).toBe(created.taint);
+    expect(retrieval.docs.get(docId)?.authority).toBe(created.authority);
+    expect(retrieval.docs.get(docId)?.provenance).toEqual(created.provenance);
   });
 
   test("a retrieval failure after bytes restore can be retried", async () => {
@@ -353,8 +357,13 @@ describe("undoReceipt", () => {
 
     const revert = await undoReceipt(io, receipt.receipt_id);
     expect(revert.kind).toBe("revert");
+    expect(revert.archive_path).not.toBeNull();
     expect(getCanonReceipt(db, receipt.receipt_id)?.reverted_by).toBe(revert.receipt_id);
     expect(retrieval.docs.has(docId)).toBe(false);
+
+    const restored = await undoReceipt(io, revert.receipt_id);
+    expect(existsSync(join(vault, receipt.page_path))).toBe(true);
+    expect(restored.reverts).toBe(revert.receipt_id);
   });
 
   test("concurrent undo of the same receipt writes one revert", async () => {

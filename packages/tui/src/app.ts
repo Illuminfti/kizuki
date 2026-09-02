@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { laterReceiptsForPage, listAuditReceipts, undoReceipt } from "@kizuki/core";
+import { listAuditReceipts, listCanonReceipts, undoReceipt } from "@kizuki/core";
 import type { AuditReceipt, CanonIo } from "@kizuki/core";
 import { parseFrontmatter } from "@kizuki/core";
 import { colorsEnabled, paint, sanitize, truncate } from "./ansi";
@@ -68,11 +68,14 @@ function afterBody(
     return readBody(vaultPath, receipt.page_path);
   }
   if (db === undefined) return null;
-  const later = laterReceiptsForPage(db, receipt.page_path, {
-    at: receipt.at,
-    receipt_id: receipt.receipt_id,
-  });
-  const next = later[later.length - 1];
+  const next = listCanonReceipts(db, {
+    page_path: receipt.page_path,
+    newest_first: false,
+    limit: 10_000,
+  }).find(
+    (row) =>
+      row.at > receipt.at || (row.at === receipt.at && row.receipt_id > receipt.receipt_id),
+  );
   if (next === undefined || next.archive_path === null) return null;
   return readBody(vaultPath, next.archive_path);
 }

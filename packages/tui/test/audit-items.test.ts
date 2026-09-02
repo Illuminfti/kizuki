@@ -11,6 +11,7 @@ import {
   listAuditReceipts,
   openLedger,
   resolveTarget,
+  undoReceipt,
 } from "@kizuki/core";
 import type { CaptureEventInput, Claim, InsertClaimInput } from "@kizuki/core";
 import { toAuditItem } from "../src/app";
@@ -110,6 +111,54 @@ describe("toAuditItem", () => {
     expect(item.currentBody).toContain("runs partnerships");
     expect(item.currentBody).not.toContain("leads partnerships");
     expect(item.priorBody).toBeNull();
+    db.close();
+  });
+
+  test("a reverted later write is still used to recover this receipt's after-bytes", async () => {
+    const vault = mkdtempSync(join(tmpdir(), "kizuki-audit-reverted-"));
+    temporary.push(vault);
+    initVault(vault);
+    const db = openLedger(":memory:");
+    const accepted = accept(db, fixtureEvent());
+    if (accepted.status !== "stored") throw new Error("event");
+    const eventId = accepted.event.event_id;
+    const createdClaim = await storeClaim(db, eventId);
+    const io = { db, vault_path: vault };
+    const created = applyCanonWrite(io, createdClaim, resolveTarget(io, createdClaim), {
+      writer: "loop",
+      budget: createBudgetTracker({ canon_writes_per_run: 8 }),
+    });
+    const editedClaim = await storeClaim(db, eventId, {
+      kind: "edit",
+      predicate: null,
+      object: null,
+      body: "Grace leads partnerships at Acme.",
+      frontmatter: { title: "Grace (Acme)" },
+    });
+    const edited = applyCanonWrite(io, editedClaim, resolveTarget(io, editedClaim), {
+      writer: "loop",
+      budget: createBudgetTracker({ canon_writes_per_run: 8 }),
+    });
+    await undoReceipt(io, edited.receipt_id);
+    const againClaim = await storeClaim(db, eventId, {
+      kind: "edit",
+      predicate: null,
+      object: null,
+      body: "Grace left Acme for Initech.",
+      frontmatter: { title: "Grace" },
+    });
+    applyCanonWrite(io, againClaim, resolveTarget(io, againClaim), {
+      writer: "loop",
+      budget: createBudgetTracker({ canon_writes_per_run: 8 }),
+    });
+
+    const listed = listAuditReceipts(db);
+    const createdRow = listed.find((row) => row.receipt_id === created.receipt_id);
+    if (createdRow === undefined) throw new Error("missing create receipt");
+    const item = toAuditItem(vault, createdRow, db);
+    expect(item.currentBody).toContain("runs partnerships");
+    expect(item.currentBody).not.toContain("leads partnerships");
+    expect(item.currentBody).not.toContain("Initech");
     db.close();
   });
 });
