@@ -35,6 +35,13 @@ The mapping is hashed (canonical JSON, keys sorted at every depth) and the
 hash travels with each event. Reformatting the file changes nothing;
 changing a mapped value re-runs the affected pages.
 
+A page the changed mapping no longer imports — an excluded type, or a path the
+`ignore` list now matches — is withdrawn on the next run: the wiki importer
+emits a tombstone carrying `excluded_by_mapping`, which retracts the proposal
+the earlier run filed. The file itself is untouched, and the record does not
+claim a deletion that never happened. A page the walk could not read is
+neither imported nor withdrawn — it stays in the cursor until a run can tell.
+
 ## Wiki mapping
 
 Schema tag: `kizuki.legacy-wiki-mapping/v1`.

@@ -73,8 +73,9 @@ interface SnapshotEntry {
 interface LegacyWikiCursor {
   schema: typeof LEGACY_WIKI_CURSOR_SCHEMA;
   mapping_hash: string;
-  /** Only pages this import actually emitted: a page the mapping excludes has
-   * no ledger record to retract later. */
+  /** Every page the ledger still holds a record for: the ones this run
+   * emitted, plus the ones it could not read and therefore could not decide
+   * anything about. A page dropped from here can never be withdrawn again. */
   files: Record<string, SnapshotEntry>;
 }
 
@@ -93,11 +94,14 @@ function encodeCursor(
   scan: ScanResult,
   events: CaptureEventInput[],
   mappingHash: string,
+  carried: Record<string, SnapshotEntry>,
 ): Cursor {
   const hashes = new Map(
     scan.files.map((file) => [file.relpath, contentHash(file.content)]),
   );
-  const files: Record<string, SnapshotEntry> = {};
+  // The unseen pages first: a page this walk could not read keeps the entry
+  // the last run left, so a later run that does see it gone can still say so.
+  const files: Record<string, SnapshotEntry> = { ...carried };
   for (const event of events) {
     const hash = hashes.get(event.source_record_id);
     const target = targetOf(event);
@@ -112,33 +116,87 @@ function encodeCursor(
   return JSON.stringify(cursor);
 }
 
+export type Withdrawal = { relpath: string; reason: "absent" | "excluded" };
+
+export interface SnapshotReconciliation {
+  /** Snapshot pages the ledger must be told about, and what happened to them. */
+  withdrawn: Withdrawal[];
+  /** Snapshot pages this run decided nothing about; they stay in the cursor. */
+  carried: string[];
+}
+
 /**
- * The snapshot entries this scan proves are gone. A page the scan could not
- * read — unreadable, not UTF-8, oversized, ignored, past the depth limit — is
- * missing information, not a deletion, and a truncated walk never saw the rest
- * of the wiki at all. A directory the walk never entered is the same gap one
- * level up: every page beneath it is unseen, not removed. Absence has to be
- * conclusive before the ledger is told a source record was removed.
+ * What this run proved about the pages the last one left behind.
+ *
+ * A page is withdrawn only when its absence from the import is conclusive: it
+ * is gone from the disk, or it is still there and the mapping no longer
+ * imports it — an excluded type, or a path the `ignore` list now matches.
+ * Either way the proposal it filed has nothing behind it any more.
+ *
+ * A page the scan could not read — unreadable, not UTF-8, oversized, past the
+ * depth limit, behind a directory the walk never entered — is missing
+ * information, not a decision, and a truncated walk never saw the rest of the
+ * wiki at all. Those are carried: dropping them would silently make the page
+ * unwithdrawable, because a snapshot is the only record that it was ever
+ * imported.
  */
-export function goneFromSnapshot(
+export function reconcileSnapshot(
   previous: Record<string, SnapshotEntry>,
   scan: ScanResult,
-): string[] {
-  if (scan.truncated) return [];
-  const seen = new Set<string>();
-  for (const file of scan.files) seen.add(file.relpath);
+  emitted: ReadonlySet<string>,
+): SnapshotReconciliation {
+  // On disk and read this run, or on disk and deliberately passed over.
+  const present = new Set<string>();
+  const unreadable = new Set<string>();
   const unentered: string[] = [];
+  const excludedTrees: string[] = [];
+  for (const file of scan.files) present.add(file.relpath);
   for (const entry of scan.skipped) {
-    seen.add(entry.relpath);
+    if (entry.reason === "ignored") {
+      if (entry.kind === "directory") excludedTrees.push(`${entry.relpath}/`);
+      else present.add(entry.relpath);
+      continue;
+    }
     if (entry.kind === "directory") unentered.push(`${entry.relpath}/`);
+    else unreadable.add(entry.relpath);
   }
-  return Object.keys(previous)
-    .filter(
-      (relpath) =>
-        !seen.has(relpath) &&
-        !unentered.some((prefix) => relpath.startsWith(prefix)),
-    )
-    .sort(compareStrings);
+  const beneath = (relpath: string, prefixes: string[]): boolean =>
+    prefixes.some((prefix) => relpath.startsWith(prefix));
+
+  const withdrawn: Withdrawal[] = [];
+  const carried: string[] = [];
+  for (const relpath of Object.keys(previous).sort(compareStrings)) {
+    if (emitted.has(relpath)) continue;
+    if (
+      scan.truncated ||
+      unreadable.has(relpath) ||
+      beneath(relpath, unentered)
+    ) {
+      carried.push(relpath);
+      continue;
+    }
+    withdrawn.push({
+      relpath,
+      reason:
+        present.has(relpath) || beneath(relpath, excludedTrees)
+          ? "excluded"
+          : "absent",
+    });
+  }
+  return { withdrawn, carried };
+}
+
+/** The entries a run keeps without deciding anything about them. */
+function carriedEntries(
+  previous: Record<string, SnapshotEntry>,
+  carried: string[],
+): Record<string, SnapshotEntry> {
+  const kept: Record<string, SnapshotEntry> = {};
+  for (const relpath of carried) {
+    const entry = previous[relpath];
+    if (entry !== undefined) kept[relpath] = entry;
+  }
+  return kept;
 }
 
 function isSnapshotEntry(raw: unknown): raw is SnapshotEntry {
@@ -190,11 +248,19 @@ function pinnedTargets(
   return pinned;
 }
 
-function tombstone(relpath: string, observedAt: string): CaptureEventInput {
+/**
+ * The record that this page is no longer part of the import. `excluded` says
+ * the file is still on the owner's disk and the mapping stopped importing it,
+ * so the ledger never claims a deletion that did not happen.
+ */
+function tombstone(
+  withdrawal: Withdrawal,
+  observedAt: string,
+): CaptureEventInput {
   return {
     schema: "kizuki.event/v1",
     connector_id: LEGACY_WIKI_CONNECTOR_ID,
-    source_record_id: relpath,
+    source_record_id: withdrawal.relpath,
     kind: "page",
     occurred_at: observedAt,
     observed_at: observedAt,
@@ -202,7 +268,12 @@ function tombstone(relpath: string, observedAt: string): CaptureEventInput {
     subjects: [],
     deleted: true,
     attachments: [],
-    metadata: { relpath },
+    metadata: {
+      relpath: withdrawal.relpath,
+      ...(withdrawal.reason === "excluded"
+        ? { excluded_by_mapping: true }
+        : {}),
+    },
   };
 }
 
@@ -248,11 +319,11 @@ export class LegacyWikiConnector implements Connector {
   async connect(_resolve: SecretResolver): Promise<void> {}
 
   async backfill(cursor: Cursor | null): Promise<SyncBatch> {
-    if (cursor !== null) decodeCursor(cursor);
-    // A backfill is always a full walk; the snapshot is still returned so a
-    // later sync knows what the wiki held.
+    const previous = cursor === null ? null : decodeCursor(cursor);
+    // A backfill is always a full walk, so it re-emits every page — and a full
+    // walk is the most conclusive evidence there is about the ones it did not.
     const { scan, events } = await this.#run([], {});
-    return { events, cursor: encodeCursor(scan, events, this.mappingHash) };
+    return this.#batch(previous, scan, events, events);
   }
 
   async sync(cursor: Cursor | null): Promise<SyncBatch> {
@@ -270,8 +341,8 @@ export class LegacyWikiConnector implements Connector {
     const hashes = new Map(
       scan.files.map((file) => [file.relpath, contentHash(file.content)]),
     );
-    // A copy: the snapshot below is built from what the walk found, and the
-    // tombstones about to be pushed are not part of that.
+    // A copy: the snapshot is built from every page the walk planned, and the
+    // filtering and the tombstones below are not part of that.
     const kept = changed
       ? [...events]
       : events.filter(
@@ -279,16 +350,7 @@ export class LegacyWikiConnector implements Connector {
             hashes.get(event.source_record_id) !==
             previous.files[event.source_record_id]?.hash,
         );
-
-    const observedAt = new Date().toISOString();
-    for (const relpath of goneFromSnapshot(previous.files, scan)) {
-      kept.push(tombstone(relpath, observedAt));
-    }
-    kept.sort((a, b) => compareStrings(a.source_record_id, b.source_record_id));
-    return {
-      events: kept,
-      cursor: encodeCursor(scan, events, this.mappingHash),
-    };
+    return this.#batch(previous, scan, events, kept);
   }
 
   async revoke(): Promise<void> {}
@@ -312,6 +374,48 @@ export class LegacyWikiConnector implements Connector {
   /** The report from the most recent run on this instance. */
   lastReport(): LegacyWikiReport | null {
     return this.#report;
+  }
+
+  /**
+   * One batch: the events this run reports, plus a tombstone for every page
+   * the snapshot held that the import no longer covers, and a cursor that
+   * keeps whatever this walk could not decide about.
+   */
+  #batch(
+    previous: LegacyWikiCursor | null,
+    scan: ScanResult,
+    planned: CaptureEventInput[],
+    reported: CaptureEventInput[],
+  ): SyncBatch {
+    if (previous === null) {
+      return {
+        events: reported,
+        cursor: encodeCursor(scan, planned, this.mappingHash, {}),
+      };
+    }
+    const emitted = new Set(planned.map((event) => event.source_record_id));
+    const { withdrawn, carried } = reconcileSnapshot(
+      previous.files,
+      scan,
+      emitted,
+    );
+    const observedAt = new Date().toISOString();
+    const events = [...reported];
+    for (const withdrawal of withdrawn) {
+      events.push(tombstone(withdrawal, observedAt));
+    }
+    events.sort((a, b) =>
+      compareStrings(a.source_record_id, b.source_record_id),
+    );
+    return {
+      events,
+      cursor: encodeCursor(
+        scan,
+        planned,
+        this.mappingHash,
+        carriedEntries(previous.files, carried),
+      ),
+    };
   }
 
   async #run(

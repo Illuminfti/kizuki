@@ -13,14 +13,15 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { initVault, isPlainObject } from "@kizuki/core";
+import { initVault, isPlainObject, openLedger, runBatch } from "@kizuki/core";
+import { initStaging, listProposals } from "@kizuki/core/staging";
 import type { CaptureEventInput } from "@kizuki/core";
 import { KizukiError } from "../src/errors";
 import { InMemoryLedger } from "../src/ledger";
 import {
   LEGACY_WIKI_CONNECTOR_ID,
   createLegacyWikiConnector,
-  goneFromSnapshot,
+  reconcileSnapshot,
 } from "../src/import-legacy-wiki";
 import { LEGACY_WIKI_FIXTURE } from "../src/import-legacy-wiki/fixture";
 import type { LegacyWikiReport } from "../src/import-legacy-wiki/report";
@@ -31,6 +32,9 @@ import {
 import type { ScanResult } from "../src/import-legacy-wiki/scan";
 
 const SENTINEL = "a-secret-outside-the-wiki";
+
+/** What this connector's manifest grants: it stages typed pages, not quotes. */
+const GRANTED = { page_candidates: true };
 
 function target(event: CaptureEventInput | undefined): string | undefined {
   const candidate = event?.metadata["page_candidate"];
@@ -244,7 +248,7 @@ describe("backfill and sync", () => {
     ).toMatchObject({ outcome: "skipped", skip_reason: "not_utf8" });
   });
 
-  test("a page the mapping excludes is never tombstoned", async () => {
+  test("a page the mapping never imported has nothing to withdraw", async () => {
     seed();
     const connector = createLegacyWikiConnector({ path: wiki });
     const first = await connector.backfill(null);
@@ -254,6 +258,96 @@ describe("backfill and sync", () => {
     expect(Object.keys(snapshot.files)).not.toContain("templates/person.md");
     rmSync(join(wiki, "templates/person.md"));
     expect((await connector.sync(first.cursor)).events).toEqual([]);
+  });
+
+  test("a page the mapping stops importing is withdrawn, not left staged", async () => {
+    seed();
+    const first = await createLegacyWikiConnector({ path: wiki }).backfill(
+      null,
+    );
+    const db = openLedger(":memory:");
+    initStaging(db);
+    runBatch(db, first, GRANTED);
+    expect(
+      listProposals(db, { status: "pending" }).map((row) => row.target),
+    ).toContain("entities/ada");
+
+    // The owner decides the estate's people are not pages after all.
+    writeMapping({
+      type: {
+        field: "type",
+        values: { Person: null, Template: null },
+        default: "topic",
+      },
+    });
+    const connector = createLegacyWikiConnector({ path: wiki });
+    const second = await connector.sync(first.cursor);
+    const withdrawn = second.events.filter((event) => event.deleted);
+    // linus carries no type at all, so it keeps the mapping default.
+    expect(withdrawn.map((event) => event.source_record_id)).toEqual([
+      "people/ada.md",
+      "people/grace.md",
+    ]);
+    // Still on the owner's disk: the record says it left the import, and does
+    // not claim a deletion that never happened.
+    expect(withdrawn[0]?.metadata).toEqual({
+      relpath: "people/ada.md",
+      excluded_by_mapping: true,
+    });
+
+    runBatch(db, second, GRANTED);
+    expect(
+      listProposals(db, { status: "pending" }).map((row) => row.target),
+    ).not.toContain("entities/ada");
+    expect(listProposals(db, { status: "withdrawn" }).length).toBeGreaterThan(
+      0,
+    );
+
+    // Once: the snapshot no longer carries a page it has already withdrawn.
+    const third = await connector.sync(second.cursor);
+    expect(third.events.filter((event) => event.deleted)).toEqual([]);
+    db.close();
+  });
+
+  test("a page the ignore list starts matching is withdrawn too", async () => {
+    seed();
+    const first = await createLegacyWikiConnector({ path: wiki }).backfill(
+      null,
+    );
+    writeMapping({ ignore: ["drafts/**", "notes/**"] });
+    const connector = createLegacyWikiConnector({ path: wiki });
+    const second = await connector.sync(first.cursor);
+    expect(
+      second.events
+        .filter((event) => event.deleted)
+        .map((event) => event.source_record_id),
+    ).toEqual([
+      "notes/broken.md",
+      "notes/no-frontmatter.md",
+      "notes/plan.md",
+    ]);
+  });
+
+  test("a page unreadable on one run can still be withdrawn on the next", async () => {
+    seed();
+    const connector = createLegacyWikiConnector({ path: wiki });
+    const first = await connector.backfill(null);
+    // The run learns nothing about this page, so the snapshot has to keep it:
+    // dropping it here is what makes the deletion below unreportable.
+    writeFileSync(join(wiki, "notes/plan.md"), Buffer.from([0xff, 0xfe, 0x00]));
+    const second = await connector.sync(first.cursor);
+    expect(second.events).toEqual([]);
+    const snapshot = JSON.parse(second.cursor ?? "{}") as {
+      files: Record<string, unknown>;
+    };
+    expect(Object.keys(snapshot.files)).toContain("notes/plan.md");
+
+    rmSync(join(wiki, "notes/plan.md"));
+    const third = await connector.sync(second.cursor);
+    expect(third.events.map((event) => event.source_record_id)).toEqual([
+      "notes/plan.md",
+    ]);
+    expect(third.events[0]?.metadata).toEqual({ relpath: "notes/plan.md" });
   });
 
   test("a page added later cannot take a target already emitted", async () => {
@@ -636,7 +730,7 @@ describe("the report file", () => {
   });
 });
 
-describe("what counts as gone from a snapshot", () => {
+describe("reconciling a snapshot with what a run saw", () => {
   const snapshot = { "a.md": { hash: "h", target: "entities/a" } };
   const scanned = (over: Partial<ScanResult> = {}): ScanResult => ({
     files: [],
@@ -644,63 +738,112 @@ describe("what counts as gone from a snapshot", () => {
     truncated: false,
     ...over,
   });
+  const nothing = new Set<string>();
 
-  test("a relpath this walk never saw is gone", () => {
-    expect(goneFromSnapshot(snapshot, scanned())).toEqual(["a.md"]);
+  test("a relpath this walk never saw is gone from the source", () => {
+    expect(reconcileSnapshot(snapshot, scanned(), nothing)).toEqual({
+      withdrawn: [{ relpath: "a.md", reason: "absent" }],
+      carried: [],
+    });
   });
 
-  test("a relpath this walk read is still here", () => {
+  test("a relpath this run emitted needs no decision at all", () => {
     const files = [{ relpath: "a.md", content: "x", mtimeMs: 1, size: 1 }];
-    expect(goneFromSnapshot(snapshot, scanned({ files }))).toEqual([]);
+    expect(
+      reconcileSnapshot(snapshot, scanned({ files }), new Set(["a.md"])),
+    ).toEqual({ withdrawn: [], carried: [] });
   });
 
-  test("a relpath this walk skipped proves nothing either way", () => {
-    const reasons = [
+  test("a page still on disk that this run did not import is excluded", () => {
+    // The mapping stopped importing it — an excluded type, say. The file is
+    // there, so the ledger is told it left the import, not that it was
+    // deleted.
+    const files = [{ relpath: "a.md", content: "x", mtimeMs: 1, size: 1 }];
+    expect(reconcileSnapshot(snapshot, scanned({ files }), nothing)).toEqual({
+      withdrawn: [{ relpath: "a.md", reason: "excluded" }],
+      carried: [],
+    });
+  });
+
+  test("a relpath the ignore list now matches is excluded too", () => {
+    const skipped = [
+      { relpath: "a.md", reason: "ignored" as const, kind: "file" as const },
+    ];
+    expect(reconcileSnapshot(snapshot, scanned({ skipped }), nothing)).toEqual({
+      withdrawn: [{ relpath: "a.md", reason: "excluded" }],
+      carried: [],
+    });
+  });
+
+  test("a relpath this walk could not read proves nothing either way", () => {
+    for (const reason of [
       "symlink",
       "not_utf8",
       "too_large",
       "unreadable",
-      "ignored",
       "depth",
-    ] as const;
-    for (const reason of reasons) {
+    ] as const) {
       const skipped = [{ relpath: "a.md", reason, kind: "file" as const }];
-      expect(goneFromSnapshot(snapshot, scanned({ skipped }))).toEqual([]);
+      expect(
+        reconcileSnapshot(snapshot, scanned({ skipped }), nothing),
+      ).toEqual({ withdrawn: [], carried: ["a.md"] });
     }
   });
 
   test("a truncated walk never saw the rest of the wiki", () => {
-    expect(goneFromSnapshot(snapshot, scanned({ truncated: true }))).toEqual(
-      [],
-    );
+    expect(
+      reconcileSnapshot(snapshot, scanned({ truncated: true }), nothing),
+    ).toEqual({ withdrawn: [], carried: ["a.md"] });
   });
 
-  test("a directory the walk never entered hides everything beneath it", () => {
+  test("a directory the walk could not enter hides everything beneath it", () => {
     const beneath = {
       "private/a.md": { hash: "h", target: "entities/a" },
       "private-notes/b.md": { hash: "h", target: "entities/b" },
     };
-    for (const reason of ["ignored", "depth", "unreadable"] as const) {
+    for (const reason of ["depth", "unreadable"] as const) {
       const skipped = [
         { relpath: "private", reason, kind: "directory" as const },
       ];
       // The sibling whose name merely starts with the same characters is
       // outside the subtree and really is gone.
-      expect(goneFromSnapshot(beneath, scanned({ skipped }))).toEqual([
-        "private-notes/b.md",
-      ]);
+      expect(reconcileSnapshot(beneath, scanned({ skipped }), nothing)).toEqual(
+        {
+          withdrawn: [{ relpath: "private-notes/b.md", reason: "absent" }],
+          carried: ["private/a.md"],
+        },
+      );
     }
   });
 
-  test("a skipped file hides only itself", () => {
+  test("a directory the ignore list now matches withdraws its whole subtree", () => {
+    const beneath = { "private/a.md": { hash: "h", target: "entities/a" } };
+    const skipped = [
+      {
+        relpath: "private",
+        reason: "ignored" as const,
+        kind: "directory" as const,
+      },
+    ];
+    expect(reconcileSnapshot(beneath, scanned({ skipped }), nothing)).toEqual({
+      withdrawn: [{ relpath: "private/a.md", reason: "excluded" }],
+      carried: [],
+    });
+  });
+
+  test("an unreadable file hides only itself", () => {
     const skipped = [
       { relpath: "a.md", reason: "not_utf8" as const, kind: "file" as const },
     ];
     expect(
-      goneFromSnapshot(
+      reconcileSnapshot(
         { ...snapshot, "a.md/b.md": { hash: "h", target: "entities/b" } },
         scanned({ skipped }),
+        nothing,
       ),
-    ).toEqual(["a.md/b.md"]);
+    ).toEqual({
+      withdrawn: [{ relpath: "a.md/b.md", reason: "absent" }],
+      carried: ["a.md"],
+    });
   });
 });
