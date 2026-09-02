@@ -187,6 +187,49 @@ describe("servePropose files a claim for the receipted writer", () => {
     ).toBe("invalid_arguments");
   });
 
+  test("a refusal never echoes what the caller supplied", () => {
+    const live = newFixture();
+    const ctx = live.agent("reader-private");
+    const marker = "kettlecode4711";
+    const messages = [
+      refusal(() =>
+        servePropose(ctx, {
+          ...candidate(live, "A candidate naming an unknown record."),
+          provenance: [`01J${marker.toUpperCase()}0000000`],
+        }),
+      ),
+      refusal(() =>
+        servePropose(ctx, {
+          ...candidate(live, "A candidate with an unusable key."),
+          frontmatter: { [`the ${marker} key`]: "x" },
+        }),
+      ),
+      refusal(() =>
+        servePropose(ctx, {
+          ...candidate(live, "A candidate with an oversized value."),
+          frontmatter: { "x-note": marker.repeat(1_000) },
+        }),
+      ),
+      refusal(() =>
+        servePropose(ctx, {
+          ...candidate(live, "A candidate claiming a reserved key."),
+          frontmatter: { sensitivity: "public" },
+        }),
+      ),
+    ].map((error) => error.message);
+
+    for (const message of messages) {
+      expect(message.startsWith("invalid arguments: ")).toBe(true);
+      expect(message.toLowerCase()).not.toContain(marker);
+    }
+    expect(messages).toEqual([
+      "invalid arguments: provenance: must name live events this principal can read",
+      "invalid arguments: frontmatter: a key is not usable",
+      "invalid arguments: frontmatter: a string value is too long",
+      "invalid arguments: frontmatter: a key is set by the writer, not by a producer",
+    ]);
+  });
+
   test("a scoped grant pins both the subjects and the page type", () => {
     const live = newFixture();
     expect(

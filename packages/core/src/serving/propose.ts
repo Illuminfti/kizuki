@@ -114,13 +114,13 @@ function validateFrontmatter(
   }
   for (const key of keys) {
     if (!FRONTMATTER_KEY.test(key)) {
-      throw refuse("frontmatter", `key ${JSON.stringify(key)} is not usable`);
+      throw refuse("frontmatter", "a key is not usable");
     }
-    // Promotion sets these; refusing now beats a proposal that can never land.
+    // The writer sets these; refusing now beats a proposal that can never land.
     if (RESERVED_KEYS.includes(key)) {
       throw refuse(
         "frontmatter",
-        `${key} is set by promotion, not by a producer`,
+        "a key is set by the writer, not by a producer",
       );
     }
     frontmatterValue(frontmatter[key]);
@@ -142,14 +142,19 @@ function validateFrontmatter(
 /**
  * An agent cannot cite what it cannot read: every provenance id has to be a
  * live event this principal is allowed to quote, so a proposal can never
- * launder a withheld record into the review queue.
+ * launder a withheld record into the claim store. The offending id stays out
+ * of the message and reaches the owner through the audit row instead.
  */
 function validateProvenance(ctx: ServeContext, provenance: string[]): void {
   const facts = readEventFacts(ctx.db, provenance);
   for (const id of provenance) {
     const event = facts.get(id);
-    if (event === undefined)
-      throw refuse("provenance", `${id} is not a live event`);
+    if (event === undefined) {
+      throw refuse(
+        "provenance",
+        "must name live events this principal can read",
+      );
+    }
     const decision = eventDecision(ctx.principal.grant, event);
     if (!decision.allow) {
       throw new ServeError(decision.reason, "provenance outside the grant");
