@@ -26,7 +26,9 @@ export interface OAuthProvider {
 export interface TokenSet {
   access_token: string;
   refresh_token: string | null;
+  /** RFC3339, computed from the provider's expires_in when the response parsed. */
   expires_at: string;
+  /** The scope the owner granted, not the scope the provider was asked for. */
   scope: string;
   token_type: "Bearer";
 }
@@ -158,6 +160,12 @@ function bodyError(body: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+/**
+ * `previous` is the token set being refreshed. An omitted `refresh_token` or
+ * `scope` keeps what it holds, so only a first exchange falls back to the
+ * scopes the provider was asked for: a refresh must never record a wider
+ * grant than the owner made on the consent screen.
+ */
 export function parseTokenResponse(
   provider: OAuthProvider,
   status: number,
