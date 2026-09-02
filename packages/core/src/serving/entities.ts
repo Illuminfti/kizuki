@@ -9,7 +9,7 @@ import {
   loadCanon,
   pageDecision,
 } from "./canon";
-import { auditArguments, gate } from "./gate";
+import { auditArguments, compareText, gate } from "./gate";
 import type { Served } from "./gate";
 import type { CanonChunk, Envelope, ServeContext } from "./types";
 
@@ -42,10 +42,6 @@ function matchesName(page: CanonPage, needle: string): boolean {
     stringField(page, "title").toLowerCase().includes(needle) ||
     stringField(page, "x-handle").toLowerCase().includes(needle)
   );
-}
-
-function compareText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 export function serveEntities(ctx: ServeContext, args: EntitiesArgs): Envelope {
@@ -86,12 +82,14 @@ export function serveEntities(ctx: ServeContext, args: EntitiesArgs): Envelope {
       const canon: CanonChunk[] = [];
       const withheld: AuditDenial[] = [];
       for (const page of candidates) {
-        if (canon.length === rows) break;
         const decision = pageDecision(index, ctx.principal.grant, page);
         if (!decision.allow) {
           withheld.push({ id: page.id, reason: decision.reason });
           continue;
         }
+        // The scan runs past the limit so a match withheld further down the
+        // order is still counted; only the served rows stop at the limit.
+        if (canon.length === rows) continue;
         const { excerpt, truncated } = excerptOf(
           collapseWhitespace(page.body),
           EXCERPT_CHARS,

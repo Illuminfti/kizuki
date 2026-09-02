@@ -43,6 +43,17 @@ describe("serveEntities", () => {
     expect(titles(envelope)).toEqual(["Acme"]);
   });
 
+  test("a withheld match past the limit is still counted", () => {
+    const envelope = serveEntities(fixture.agent("reader-public"), {
+      limit: 1,
+    });
+    // Acme fills the limit, Ada is servable but past it, and Grace sorts last
+    // and is withheld: the count has to survive the limit being reached.
+    expect(titles(envelope)).toEqual(["Acme"]);
+    expect(envelope.denied).toEqual([{ reason: "above_ceiling", count: 1 }]);
+    expect(JSON.stringify(envelope)).not.toContain("Grace");
+  });
+
   test("a match above the ceiling is counted, never named", () => {
     const envelope = serveEntities(fixture.agent("reader-public"), {
       type: "person",
