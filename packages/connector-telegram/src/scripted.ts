@@ -182,6 +182,7 @@ export class ScriptedTelegramApi implements TelegramApi {
   #authorized: boolean;
   #reachable = true;
   #messageCalls = 0;
+  readonly #hidden: TelegramDialog[] = [];
   #floodFired = false;
   #signInFloods = 0;
 
@@ -312,6 +313,24 @@ export class ScriptedTelegramApi implements TelegramApi {
   addDialog(dialog: TelegramDialog, messages: TelegramMessage[] = []): void {
     this.#account.dialogs.push(dialog);
     this.#account.messages[dialog.peer_id] = messages;
+  }
+
+  /**
+   * Drops a dialog from the listing while its history stays readable: what a
+   * chat past the listing ceiling, or one the owner archived, looks like.
+   */
+  hideDialog(peer_id: string): void {
+    this.#hidden.push(
+      ...this.#account.dialogs.filter((dialog) => dialog.peer_id === peer_id),
+    );
+    this.#account.dialogs = this.#account.dialogs.filter(
+      (dialog) => dialog.peer_id !== peer_id,
+    );
+  }
+
+  /** Puts back everything `hideDialog` took out, in its original order. */
+  showDialogs(): void {
+    this.#account.dialogs.push(...this.#hidden.splice(0));
   }
 
   /** Arms one wait report `calls` further `messages()` calls from now. */

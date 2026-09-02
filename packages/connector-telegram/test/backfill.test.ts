@@ -115,3 +115,59 @@ test("the walk never surrenders its cursor", async () => {
   expect(drained.cursor).not.toBeNull();
   expect(drained.events).toHaveLength(NON_SERVICE);
 });
+
+function crowd(peer_id: string, count: number): TelegramMessage[] {
+  const messages: TelegramMessage[] = [];
+  for (let index = 1; index <= count; index += 1) {
+    messages.push({
+      peer_id,
+      id: index,
+      date: Math.floor(Date.UTC(2026, 0, 2, 0, 0, 0) / 1000) + index,
+      text: `${peer_id} note ${index}`,
+      out: false,
+      service: false,
+    });
+  }
+  return messages;
+}
+
+function pair(count: number) {
+  const account = fixtureAccount();
+  account.dialogs = ["1002", "1003"].map((peer_id) => ({
+    peer_id,
+    peer_type: "user" as const,
+    title: "grace",
+    public: false,
+    top_message_id: count,
+  }));
+  account.messages = { "1002": crowd("1002", count), "1003": crowd("1003", count) };
+  return account;
+}
+
+test("a dialog the account stopped listing does not finish the backfill", async () => {
+  const built = await connected({ account: pair(400) });
+  const first = await built.connector.backfill(null);
+  expect(first.events).toHaveLength(BATCH_LIMIT);
+  expect(parseCursor(first.cursor as string).dialogs["1003"]?.last_id).toBe(100);
+
+  built.api.hideDialog("1003");
+  const second = await built.connector.backfill(first.cursor);
+  const stalled = parseCursor(second.cursor as string);
+  expect(second.events).toEqual([]);
+  expect(stalled.dialogs["1003"]).toEqual({
+    peer_type: "user",
+    last_id: 100,
+    exhausted: false,
+  });
+  expect(stalled.phase).toBe("backfill");
+
+  const report = await built.connector.health();
+  expect(report.state).toBe("degraded");
+  expect(report.detail).toContain("1003");
+
+  built.api.showDialogs();
+  const rest = await drain(built.connector, "backfill", second.cursor);
+  expect(rest.events).toHaveLength(300);
+  expect(parseCursor(rest.cursor).phase).toBe("synced");
+  expect((await built.connector.health()).state).toBe("ok");
+});

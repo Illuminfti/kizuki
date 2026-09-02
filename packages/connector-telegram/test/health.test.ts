@@ -3,7 +3,7 @@ import { HealthReport } from "@kizuki/core";
 import { MAX_DIALOGS } from "../src/cursor";
 import { fixtureAccount } from "../src/scripted";
 import type { TelegramDialog } from "../src/api";
-import { connected, harness, stateResolver } from "./helpers";
+import { connected, drain, harness, stateResolver } from "./helpers";
 
 test("health tracks the connection from unsigned to revoked", async () => {
   const unsigned = harness({ config: {} });
@@ -90,4 +90,21 @@ test("hitting the dialog listing bound degrades health", async () => {
   expect(report.detail).toBe(
     `dialog limit reached (${MAX_DIALOGS}); newest dialogs only`,
   );
+});
+
+test("health names the dialogs the account stopped listing", async () => {
+  const built = await connected();
+  const drained = await drain(built.connector, "backfill");
+  expect((await built.connector.health()).state).toBe("ok");
+
+  built.api.hideDialog("-42");
+  await built.connector.sync(drained.cursor);
+
+  const report = await built.connector.health();
+  expect(report.state).toBe("degraded");
+  expect(report.detail).toBe("dialogs the account no longer lists (1): -42");
+
+  built.api.showDialogs();
+  await built.connector.sync(drained.cursor);
+  expect((await built.connector.health()).state).toBe("ok");
 });

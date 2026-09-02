@@ -25,6 +25,8 @@ export interface WalkDeps {
 /** What one dialog listing showed; absent when the pass needed no listing. */
 export interface DialogListing {
   limitReached: boolean;
+  /** Peers the cursor still has history for that the account no longer lists. */
+  unreadable: string[];
 }
 
 export interface WalkResult {
@@ -113,6 +115,18 @@ export async function walk(
     watermark: cursor.edit_watermark,
     mode,
   };
+  const byPeer = new Map(
+    listing.dialogs.map((dialog) => [dialog.peer_id, dialog] as const),
+  );
+  // What this pass would have read had the account still listed it: a finished
+  // dialog is only a loss once sync is watching it for new messages.
+  const unreadable = Object.keys(cursor.dialogs)
+    .filter(
+      (peer) =>
+        !byPeer.has(peer) &&
+        (mode === "sync" || cursor.dialogs[peer]?.exhausted !== true),
+    )
+    .sort();
   const keys = Object.keys(cursor.dialogs).sort();
   const resume = mode === "sync" ? cursor.pass?.next_peer ?? null : null;
   let index = resume === null ? 0 : Math.max(0, keys.indexOf(resume));
@@ -128,14 +142,10 @@ export async function walk(
       break;
     }
     if (mode === "backfill" && dialogCursor.exhausted) continue;
-    const dialog = listing.dialogs.find(
-      (candidate) => candidate.peer_id === peer,
-    );
-    if (dialog === undefined) {
-      // Listed on an earlier run and gone now: nothing more to read from it.
-      dialogCursor.exhausted = true;
-      continue;
-    }
+    const dialog = byPeer.get(peer);
+    // Absent from this listing is not the same as read to the end. Leaving the
+    // entry alone keeps the backfill honestly unfinished, and health names it.
+    if (dialog === undefined) continue;
     try {
       await readDialog(deps, dialog, dialogCursor, batch);
     } catch (error) {
@@ -166,7 +176,7 @@ export async function walk(
   return {
     batch: { events: batch.events, cursor: encodeCursor(cursor) },
     floodUntil,
-    listing: { limitReached: listing.limitReached },
+    listing: { limitReached: listing.limitReached, unreadable },
   };
 }
 

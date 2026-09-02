@@ -27,6 +27,7 @@ import { FIXTURE_ACCOUNT, FIXTURE_OBSERVED_AT } from "./scripted";
 import { PHONE_FORMAT, runSignIn } from "./sign-in";
 import { TELEGRAM_STATE_SCHEMA, encodeState, parseState } from "./state";
 import { walk } from "./walk";
+import type { DialogListing } from "./walk";
 
 export { TELEGRAM_CONNECTOR_ID };
 
@@ -72,7 +73,7 @@ export class TelegramConnector implements Connector {
   #api: TelegramApi | null = null;
   #self: TelegramUser | null = null;
   #floodUntil = 0;
-  #dialogLimitReached = false;
+  #listing: DialogListing | null = null;
   #revoked = false;
   #lastSuccessAt: string | undefined;
 
@@ -233,11 +234,12 @@ export class TelegramConnector implements Connector {
         ...success,
       });
     }
-    if (this.#dialogLimitReached) {
+    const degraded = degradedDetail(this.#listing);
+    if (degraded !== null) {
       return new HealthReport({
         state: "degraded",
         checked_at,
-        detail: `dialog limit reached (${MAX_DIALOGS}); newest dialogs only`,
+        detail: degraded,
         ...success,
       });
     }
@@ -315,9 +317,7 @@ export class TelegramConnector implements Connector {
       plan: this.#plan,
     });
     // A pass that listed nothing says nothing about the account's dialogs.
-    if (result.listing !== null) {
-      this.#dialogLimitReached = result.listing.limitReached;
-    }
+    if (result.listing !== null) this.#listing = result.listing;
     if (result.floodUntil !== null) this.#floodUntil = result.floodUntil;
     this.#lastSuccessAt = this.#nowIso();
     return result.batch;
@@ -359,6 +359,29 @@ function parseStateRef(config: TelegramConnectorConfig): string | null {
     );
   }
   return ref;
+}
+
+/** Peer ids named in health so a truncated view is actionable, not just visible. */
+const NAMED_DIALOGS = 5;
+
+function degradedDetail(listing: DialogListing | null): string | null {
+  if (listing === null) return null;
+  const parts: string[] = [];
+  if (listing.limitReached) {
+    parts.push(`dialog limit reached (${MAX_DIALOGS}); newest dialogs only`);
+  }
+  const missing = listing.unreadable;
+  if (missing.length > 0) {
+    const named = missing.slice(0, NAMED_DIALOGS).join(", ");
+    const rest =
+      missing.length > NAMED_DIALOGS
+        ? `, and ${missing.length - NAMED_DIALOGS} more`
+        : "";
+    parts.push(
+      `dialogs the account no longer lists (${missing.length}): ${named}${rest}`,
+    );
+  }
+  return parts.length === 0 ? null : parts.join("; ");
 }
 
 function notSignedIn(): TelegramConnectorError {
