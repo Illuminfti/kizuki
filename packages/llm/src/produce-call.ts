@@ -42,8 +42,8 @@ const ANSWER_ENVELOPE_CHARS = 256;
  * endpoint refuses a `max_tokens` larger than the model it serves can
  * produce, so the derived room is capped at a figure one will take.
  */
-export const MAX_OUTPUT_TOKENS_PER_CALL = 8_192;
-export const CALL_DEADLINE_MS = 60_000;
+const MAX_OUTPUT_TOKENS_PER_CALL = 8_192;
+const CALL_DEADLINE_MS = 60_000;
 const MAX_REASON_CHARS = 200;
 
 
@@ -77,7 +77,7 @@ export interface Tally {
 }
 
 /** A call's answer, or the stop it ended at. */
-export type BatchStep =
+type BatchStep =
   | { stop: ProduceStop }
   | { prompt: ExtractPrompt; outcome: ExtractOutcome };
 
@@ -87,7 +87,7 @@ export type BatchStep =
  * refused as malformed - so the same batch was refused the same way on every
  * later pass and the records behind it were never extractable.
  */
-export function outputCeiling(blocks: number): number {
+function outputCeiling(blocks: number): number {
   const drafts = Math.min(MAX_CLAIMS, Math.max(1, blocks) * CLAIMS_PER_EVENT);
   return Math.min(
     MAX_OUTPUT_TOKENS_PER_CALL,
