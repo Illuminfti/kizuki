@@ -4,8 +4,8 @@
  * outside, so each element is checked here rather than at the point where a
  * missing field would raise a TypeError.
  */
-import { isPlainObject } from "@kizuki/core";
-import type { ProduceInput, QuotedEvent } from "@kizuki/core";
+import { SUBJECT_ROLES, isPlainObject } from "@kizuki/core";
+import type { ProduceInput, QuotedEvent, SubjectRef } from "@kizuki/core";
 import { configError } from "./errors";
 
 const MAX_EVENTS = 256;
@@ -13,7 +13,7 @@ const MAX_SUBJECTS = 256;
 const MAX_KNOWN_CLAIMS = 256;
 const MAX_PREDICATES = 512;
 const MAX_SUBJECT_ID_CHARS = 200;
-const MAX_ROLE_CHARS = 40;
+const MAX_SUBJECTS_PER_EVENT = 64;
 const MAX_PREDICATE_CHARS = 100;
 const MAX_OBJECT_CHARS = 400;
 /** A spine-generated event id. It names a fence, so it may not reshape one. */
@@ -25,21 +25,34 @@ function requireWholeNumber(value: unknown, name: string): void {
   }
 }
 
-function quotedEvent(value: unknown): QuotedEvent {
-  if (
-    !isPlainObject(value) ||
-    typeof value["event_id"] !== "string" ||
-    !EVENT_ID.test(value["event_id"]) ||
-    typeof value["connector_id"] !== "string" ||
-    typeof value["occurred_at"] !== "string" ||
-    typeof value["observed_at"] !== "string" ||
-    typeof value["text"] !== "string" ||
-    !Array.isArray(value["subjects"]) ||
-    (value["taint"] !== "untrusted" && value["taint"] !== "owner")
-  ) {
-    configError("producer input carries an invalid quoted event");
-  }
-  return value as unknown as QuotedEvent;
+/**
+ * A subject named by a record. The role is checked against the closed set the
+ * contract declares rather than as any short string, so the value that comes
+ * out of here is the type it claims to be without a cast.
+ */
+function isSubjectRef(value: unknown): value is SubjectRef {
+  return (
+    isPlainObject(value) &&
+    shortString(value["subject_id"], MAX_SUBJECT_ID_CHARS) &&
+    typeof value["role"] === "string" &&
+    (SUBJECT_ROLES as readonly string[]).includes(value["role"])
+  );
+}
+
+function isQuotedEvent(value: unknown): value is QuotedEvent {
+  return (
+    isPlainObject(value) &&
+    typeof value["event_id"] === "string" &&
+    EVENT_ID.test(value["event_id"]) &&
+    typeof value["connector_id"] === "string" &&
+    typeof value["occurred_at"] === "string" &&
+    typeof value["observed_at"] === "string" &&
+    typeof value["text"] === "string" &&
+    Array.isArray(value["subjects"]) &&
+    value["subjects"].length <= MAX_SUBJECTS_PER_EVENT &&
+    value["subjects"].every(isSubjectRef) &&
+    (value["taint"] === "untrusted" || value["taint"] === "owner")
+  );
 }
 
 function shortString(
@@ -59,11 +72,7 @@ function shortString(
  */
 function validateContext(context: ProduceInput["context"]): void {
   for (const subject of context.subjects) {
-    if (
-      !isPlainObject(subject) ||
-      !shortString(subject["subject_id"], MAX_SUBJECT_ID_CHARS) ||
-      !shortString(subject["role"], MAX_ROLE_CHARS)
-    ) {
+    if (!isSubjectRef(subject)) {
       configError("producer input context carries an invalid subject");
     }
   }
@@ -88,7 +97,11 @@ export function validateInput(input: ProduceInput): void {
   if (!Array.isArray(input.events) || input.events.length > MAX_EVENTS) {
     configError(`producer input must carry at most ${MAX_EVENTS} events`);
   }
-  for (const event of input.events) quotedEvent(event);
+  for (const event of input.events) {
+    if (!isQuotedEvent(event)) {
+      configError("producer input carries an invalid quoted event");
+    }
+  }
 
   const context = input.context;
   if (

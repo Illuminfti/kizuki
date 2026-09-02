@@ -84,6 +84,32 @@ describe("input validation", () => {
     expect(built.llm.calls).toHaveLength(0);
   });
 
+  test("a quoted event with a malformed subject is refused", async () => {
+    const built = producer(['{"claims":[]}']);
+    const input = produceInput([event("ev-1", "hi")]);
+    // Regression: only `Array.isArray` was checked on an event's subjects, and
+    // the event was then cast to its type, so a subject that is not one
+    // travelled on as if the shape had been proved.
+    const broken: unknown[] = [
+      null,
+      "person:ada",
+      { subject_id: "person:ada" },
+      { subject_id: "", role: "about" },
+      { subject_id: "person:ada", role: "author" },
+    ];
+    for (const subject of broken) {
+      await expect(
+        built.port.produce({
+          ...input,
+          events: [
+            { ...event("ev-1", "hi"), subjects: [subject] as never },
+          ],
+        }),
+      ).rejects.toBeInstanceOf(PortError);
+    }
+    expect(built.llm.calls).toHaveLength(0);
+  });
+
   test("an event id that could reshape the prompt is refused", async () => {
     const built = producer(['{"claims":[]}']);
     const input = produceInput([event("ev-1", "hi")]);

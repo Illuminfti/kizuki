@@ -39,7 +39,7 @@ describe("transport", () => {
     const result = await fetchTransport(request, options(endpoint.url));
     expect(result).toMatchObject({ ok: true, status: 200 });
     expect(endpoint.requests).toHaveLength(1);
-    expect(endpoint.requests[0]?.body).toEqual(request as unknown as object);
+    expect(endpoint.requests[0]?.body).toEqual(JSON.parse(JSON.stringify(request)));
   });
 
   test("sends a bearer header only when a key was resolved", async () => {
