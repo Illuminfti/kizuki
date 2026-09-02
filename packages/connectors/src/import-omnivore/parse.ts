@@ -1,7 +1,6 @@
 import { join } from "node:path";
 import { lstat, readdir } from "node:fs/promises";
 import type { Dirent } from "node:fs";
-import { isPlainObject } from "@kizuki/core";
 import type { CaptureEventInput } from "@kizuki/core";
 import { KizukiError } from "../errors";
 import {
@@ -10,13 +9,13 @@ import {
   MAX_RECORD_BYTES,
   compareStrings,
   errorMessage,
-  isoToRfc3339,
-  parseJsonArray,
   readBoundedUtf8File,
-  resolveSensitivity,
   statRegularFile,
 } from "../util";
-import type { SensitivityPolicy } from "../util";
+import { bounded, parseOmnivoreMetadata } from "./metadata";
+import type { OmnivoreItem } from "./metadata";
+import { resolveSensitivity } from "../sensitivity";
+import type { SensitivityPolicy } from "../sensitivity";
 
 export const OMNIVORE_IMPORT_CONNECTOR_ID = "kizuki.import-omnivore" as const;
 
@@ -26,18 +25,8 @@ export const OMNIVORE_SENSITIVITY: SensitivityPolicy = {
   sensitivity_floor: "public",
 };
 
-export interface OmnivoreItem {
-  id: string;
-  slug: string;
-  title: string;
-  description: string;
-  author: string;
-  url: string;
-  state: string;
-  labels: string[];
-  saved_at: string;
-  published_at: string | null;
-}
+export { parseOmnivoreMetadata } from "./metadata";
+export type { OmnivoreItem } from "./metadata";
 
 /** What the parser needs, so it runs from memory or from disk unchanged. */
 export interface OmnivoreFiles {
@@ -48,6 +37,9 @@ export interface OmnivoreFiles {
 
 const METADATA_FILE = /^metadata_\d+_to_\d+\.json$/;
 
+/** One item's notes are one record's worth of text, and no more. */
+const MAX_HIGHLIGHTS_BYTES = MAX_RECORD_BYTES;
+
 // A slug is captured text. Unless it is this shape it never reaches the
 // filesystem, so no export can name a path outside its own folders.
 const SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/;
@@ -57,96 +49,6 @@ function misconfigured(detail: string): KizukiError {
     "misconfigured",
     `${OMNIVORE_IMPORT_CONNECTOR_ID}: ${detail}`,
   );
-}
-
-/**
- * Every captured field is bounded on its own: an export is hostile input, and
- * a title alone must not be able to spend the whole record budget. The
- * position is named, never the value.
- */
-function bounded(text: string, where: string): string {
-  if (Buffer.byteLength(text, "utf8") > MAX_RECORD_BYTES) {
-    throw new KizukiError(
-      "parse_error",
-      `${where}: exceeds ${MAX_RECORD_BYTES} bytes`,
-    );
-  }
-  return text;
-}
-
-function stringOr(value: unknown, fallback: string, where: string): string {
-  return bounded(typeof value === "string" ? value : fallback, where);
-}
-
-function labelsOf(value: unknown, where: string): string[] {
-  if (!Array.isArray(value)) return [];
-  const labels: string[] = [];
-  value.forEach((label, index) => {
-    const at = `${where}[${index}]`;
-    if (typeof label === "string" && label.length > 0) {
-      labels.push(bounded(label, at));
-      return;
-    }
-    if (isPlainObject(label) && typeof label["name"] === "string") {
-      const name = label["name"];
-      if (name.length > 0) labels.push(bounded(name, `${at}.name`));
-    }
-  });
-  return labels;
-}
-
-function optionalTimestamp(value: unknown, where: string): string | null {
-  if (value === undefined || value === null) return null;
-  try {
-    return isoToRfc3339(value, where);
-  } catch {
-    // A publication date the source could not state is absent, not fatal.
-    return null;
-  }
-}
-
-export function parseOmnivoreMetadata(
-  text: string,
-  where: string,
-): OmnivoreItem[] {
-  const raw = parseJsonArray(text, where);
-  if (raw.length > MAX_RECORDS) {
-    throw new KizukiError(
-      "parse_error",
-      `${where}: more than ${MAX_RECORDS} items`,
-    );
-  }
-  const items: OmnivoreItem[] = [];
-  raw.forEach((element, index) => {
-    if (!isPlainObject(element)) return;
-    const at = `${where}[${index}]`;
-    const id = element["id"];
-    const slug = element["slug"];
-    if (
-      typeof id !== "string" ||
-      id.length === 0 ||
-      typeof slug !== "string" ||
-      slug.length === 0
-    ) {
-      throw new KizukiError("parse_error", `${at}: id and slug are required`);
-    }
-    items.push({
-      id: bounded(id, `${at}.id`),
-      slug: bounded(slug, `${at}.slug`),
-      title: stringOr(element["title"], "", `${at}.title`),
-      description: stringOr(element["description"], "", `${at}.description`),
-      author: stringOr(element["author"], "", `${at}.author`),
-      url: stringOr(element["url"], "", `${at}.url`),
-      state: stringOr(element["state"], "", `${at}.state`),
-      labels: labelsOf(element["labels"], `${at}.labels`),
-      saved_at: isoToRfc3339(element["savedAt"], `${at}.savedAt`),
-      published_at: optionalTimestamp(
-        element["publishedAt"],
-        `${at}.publishedAt`,
-      ),
-    });
-  });
-  return items;
 }
 
 /**
@@ -363,7 +265,7 @@ export async function fsOmnivoreFiles(
       }
       // Highlights come out of the same export as the metadata and are
       // charged to the same budget, so no number of items can spend it twice.
-      const limit = Math.min(MAX_RECORD_BYTES, bytesLeft);
+      const limit = Math.min(MAX_HIGHLIGHTS_BYTES, bytesLeft);
       if (found.byte_size > limit) {
         throw new KizukiError(
           "misconfigured",

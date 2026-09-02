@@ -10,12 +10,12 @@ import {
   readBoundedUtf8File,
   readFirstLine,
   requireKnownKeys,
-  resolveSensitivity,
   safeFilename,
   statRegularFile,
   subjectSlug,
   unixSecondsToIso,
 } from "../src/util";
+import { resolveSensitivity } from "../src/sensitivity";
 
 async function withTempRoot<T>(body: (root: string) => Promise<T>): Promise<T> {
   const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-util-"));

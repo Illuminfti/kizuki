@@ -1,6 +1,7 @@
 import type { AttachmentRef, CaptureEventInput } from "@kizuki/core";
-import { mediaTypeFor, resolveSensitivity, subjectSlug } from "../util";
-import type { SensitivityPolicy } from "../util";
+import { resolveSensitivity } from "../sensitivity";
+import type { SensitivityPolicy } from "../sensitivity";
+import { mediaTypeFor, subjectSlug } from "../util";
 import { localToUtc } from "./dates";
 import type { DateOrder } from "./dates";
 import { splitWhatsAppMessages } from "./grammar";
