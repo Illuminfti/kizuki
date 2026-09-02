@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { Connector, SignInIo } from "../contracts/connector";
-import { ConnectionStateStore } from "./connection-state";
+import type { ConnectionStateStore } from "./connection-state";
 import { LedgerError, type Connection } from "./connections";
 
 /** Runs an interactive sign-in and persists only host-minted opaque state. */

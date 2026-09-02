@@ -21,8 +21,8 @@ import {
   isCoreUlid,
   restoreStateFile,
   stateRefFor,
-  sweepAbandonedStaging,
   swapStateFile,
+  sweepAbandonedStaging,
   writeDurableFile,
 } from "./connection-state-files";
 import { repairSwap, type SwapJournal } from "./connection-state-journal";
