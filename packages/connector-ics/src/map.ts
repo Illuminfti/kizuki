@@ -305,6 +305,14 @@ export function emit(input: EmitInput): CaptureEventInput {
     MAX_METADATA_VALUE_CHARS,
   );
   const sequence = Number(firstValue(input.event, "SEQUENCE")?.value ?? "0");
+  // The spine's content hash leaves `sensitivity_hint` out on purpose, so a
+  // CLASS the producer changed would be invisible to change detection and the
+  // ledger would go on serving the entry under the label it first arrived
+  // with. Recording the property makes the change an edit like any other.
+  const declaredClass = sanitize(
+    firstValue(input.event, "CLASS")?.value ?? "",
+    MAX_METADATA_VALUE_CHARS,
+  ).toUpperCase();
   const calendarName = sanitize(
     input.calendarName ?? "",
     MAX_METADATA_VALUE_CHARS,
@@ -328,6 +336,7 @@ export function emit(input: EmitInput): CaptureEventInput {
       status:
         (firstValue(input.event, "STATUS")?.value ?? "").trim().toUpperCase() ||
         null,
+      ...(declaredClass.length > 0 ? { class: declaredClass } : {}),
       location:
         sanitize(
           unescapeText(firstValue(input.event, "LOCATION")?.value ?? ""),

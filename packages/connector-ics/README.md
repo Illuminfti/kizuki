@@ -50,6 +50,12 @@ attachment refs; `CLASS` as the sensitivity hint (`PUBLIC` → public,
 `PRIVATE`/`CONFIDENTIAL` → private, otherwise personal); `STATUS`, `SEQUENCE`,
 `CREATED`, `LAST-MODIFIED` and `URL` in metadata.
 
+`CLASS` also goes into `metadata.class` when the entry declares one. The
+ledger's content hash leaves the sensitivity hint out so that re-labelling
+does not fork history, which would make an entry that went from `PUBLIC` to
+`PRIVATE` and changed nothing else look unchanged; recording the property
+makes that an edit like any other.
+
 Every event also gets an `about` subject naming the calendar, taken from
 `X-WR-CALNAME` when the file has one, and from the file's base name or the
 URL host when it does not.

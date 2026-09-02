@@ -187,6 +187,33 @@ describe("file mode", () => {
     expect(third.events[0]?.deleted).toBe(true);
   });
 
+  test("a sensitivity change on its own is emitted", async () => {
+    const publicText = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      "UID:one@acme.example",
+      "DTSTART:20260302T090000Z",
+      "SUMMARY:One",
+      "CLASS:PUBLIC",
+      "END:VEVENT",
+      "END:VCALENDAR",
+      "",
+    ].join("\r\n");
+    const path = await writeCalendar(publicText);
+    const connector = createIcsConnector({ path }, { now: NOW });
+    const first = await connector.backfill(null);
+    expect(first.events[0]?.sensitivity_hint).toBe("public");
+
+    await Bun.write(path, publicText.replace("CLASS:PUBLIC", "CLASS:PRIVATE"));
+    const second = await connector.sync(first.cursor);
+    // Nothing else about the entry moved, so without the class in the version
+    // identity this emitted nothing and the evidence stayed labelled public.
+    expect(second.events).toHaveLength(1);
+    expect(second.events[0]?.sensitivity_hint).toBe("private");
+    expect(second.events[0]?.metadata["class"]).toBe("PRIVATE");
+  });
+
   test("a series past the instance cap does not tombstone its own tail", async () => {
     const path = await writeCalendar(
       [
