@@ -155,7 +155,9 @@ a truncated plan still removes everything Kizuki holds.
 
 Everything runs against a scripted in-memory account with no network. The
 module that talks to Telegram is driven against a stand-in for the library, so
-its error handling and its record mapping are covered cold. The one test that
+its error handling, its record mapping and its whole client lifecycle —
+opening, closing, signing out, and saving the session sign-in persists — are
+covered cold. The one test that
 reaches Telegram itself is skipped by default and never runs in CI. To run it
 by hand:
 
