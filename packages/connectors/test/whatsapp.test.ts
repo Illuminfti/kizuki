@@ -96,14 +96,39 @@ test("the fixture export maps to eight events", async () => {
 
 test("the subjects of a message are its sender and its chat", async () => {
   const events = await fixtureEvents();
+  // The digest is of the display name alone, so the same participant keeps
+  // one id across exports and across machines.
   expect(events[0]?.subjects).toEqual([
-    { subject_id: "whatsapp:ada", role: "from", display_name: "Ada" },
     {
-      subject_id: "whatsapp:chat:acme-planning",
+      subject_id: "whatsapp:ada-99a563ab",
+      role: "from",
+      display_name: "Ada",
+    },
+    {
+      subject_id: "whatsapp:chat:acme-planning-717e5439",
       role: "about",
       display_name: "Acme Planning",
     },
   ]);
+});
+
+test("participants a slug cannot tell apart stay separate subjects", async () => {
+  // Punctuation and letterless names are exactly what a readable slug throws
+  // away, and a purge reaches everything filed under one subject id.
+  const chat = [
+    "1/4/26, 09:00 - A B: one",
+    "1/4/26, 09:01 - A-B: two",
+    "1/4/26, 09:02 - \u{1f642}: three",
+    "1/4/26, 09:03 - \u{1f44d}: four",
+  ].join("\n");
+  const events = await parse(chat, { date_order: "mdy" });
+  const ids = events.map((event) => event.subjects[0]?.subject_id ?? "");
+  expect(new Set(ids).size).toBe(4);
+  expect(ids[0]?.startsWith("whatsapp:a-b-")).toBe(true);
+  expect(ids[1]?.startsWith("whatsapp:a-b-")).toBe(true);
+  for (const id of ids.slice(2)) {
+    expect(id.startsWith("whatsapp:unknown-")).toBe(true);
+  }
 });
 
 test("two identical messages in one minute are numbered, not merged", async () => {
@@ -254,8 +279,10 @@ test("the configured owner name becomes the self subject", async () => {
   const events = await parse(FIXTURE_CHAT, { self: "Ada", chat: "Launch" });
   expect(events[0]?.subjects[0]?.subject_id).toBe("whatsapp:self");
   expect(events[0]?.subjects[0]?.display_name).toBe("Ada");
-  expect(events[0]?.subjects[1]?.subject_id).toBe("whatsapp:chat:launch");
-  expect(events[1]?.subjects[0]?.subject_id).toBe("whatsapp:grace");
+  expect(events[0]?.subjects[1]?.subject_id).toBe(
+    "whatsapp:chat:launch-ccf56ef5",
+  );
+  expect(events[1]?.subjects[0]?.subject_id).toBe("whatsapp:grace-f2465f78");
 });
 
 test("a participant cannot claim the owner's subject by their name", async () => {
@@ -271,7 +298,7 @@ test("a participant cannot claim the owner's subject by their name", async () =>
   for (const id of ids.slice(0, 2)) {
     expect(id.startsWith("whatsapp:self-")).toBe(true);
   }
-  expect(ids[2]).toBe("whatsapp:ada");
+  expect(ids[2]).toBe("whatsapp:ada-99a563ab");
 
   // The reserved id is still the configured owner's, and only theirs.
   const owned = await parse(chat, { date_order: "mdy", self: "Self" });

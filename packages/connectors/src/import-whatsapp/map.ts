@@ -1,5 +1,5 @@
 import type { AttachmentRef, CaptureEventInput } from "@kizuki/core";
-import { mediaTypeFor, subjectSlug } from "../util";
+import { mediaTypeFor, subjectName, subjectSlug } from "../util";
 import { localToUtc } from "./dates";
 import type { DateOrder } from "./dates";
 import { splitWhatsAppMessages } from "./grammar";
@@ -33,18 +33,25 @@ function digest(value: string, length: number): string {
 }
 
 /**
- * `whatsapp:self` is the owner. A participant whose display name happens to
- * slug to the same word — and in a group chat that name is whatever the other
- * person set on their own profile — would otherwise have their messages
- * stored, and proposed downstream, as the owner's. The reserved id is handed
- * out only to the configured owner; anyone else keeps a name of their own.
+ * A slug is lossy on purpose — it has to read as a handle — so two names that
+ * differ only in punctuation, and any two names with no letters or digits at
+ * all, slug to one word. A subject id is what a purge reaches and what a
+ * person page is filed under, so the readable slug carries a digest of the
+ * name it was made from and two participants stay two people.
+ */
+function subjectIdFor(namespace: string, name: string): string {
+  const comparable = subjectName(name);
+  return `${namespace}:${subjectSlug(name)}-${digest(comparable, 8)}`;
+}
+
+/**
+ * `whatsapp:self` is the owner, and only the owner: in a group chat every
+ * other name is whatever that person set on their own profile, so the reserved
+ * id is handed out from configuration rather than from what an export says.
  */
 function senderSubjectId(sender: string, self: string | undefined): string {
   if (self !== undefined && sender === self) return "whatsapp:self";
-  const slug = subjectSlug(sender);
-  return slug === "self"
-    ? `whatsapp:self-${digest(sender, 8)}`
-    : `whatsapp:${slug}`;
+  return subjectIdFor("whatsapp", sender);
 }
 
 /**
@@ -111,7 +118,7 @@ export async function parseWhatsAppExport(
           display_name: message.sender,
         },
         {
-          subject_id: `whatsapp:chat:${subjectSlug(opts.chat)}`,
+          subject_id: subjectIdFor("whatsapp:chat", opts.chat),
           role: "about",
           display_name: opts.chat,
         },

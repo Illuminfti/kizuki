@@ -116,6 +116,12 @@ Known limits:
   Re-exporting the same chat under a different file name re-stores each message
   as a new version. A program building the connector can pin `chat`; from the
   command line, keep the export file's name the same between exports.
+- A participant is whoever the export calls them. Two contacts sharing one
+  display name are one subject, and one contact renamed between exports is
+  two; an export carries nothing else to tell them apart, so the importer does
+  not pretend otherwise. It does keep names apart that only look alike after
+  they are shortened into a readable handle, so a purge aimed at one person
+  reaches nobody else.
 
 ## Pocket CSV export
 

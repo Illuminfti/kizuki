@@ -220,6 +220,41 @@ test("no refusal quotes a sender name or captured text", async () => {
   }
 });
 
+test("purging one participant does not reach another's messages", async () => {
+  await withTempRoot(async (root) => {
+    const source = path.join(root, "export");
+    await mkdir(source);
+    await writeFile(
+      path.join(source, CHAT_FILE),
+      [
+        "1/4/26, 09:00 - A B: one",
+        "1/4/26, 09:01 - A-B: two",
+        "1/4/26, 09:02 - \u{1f642}: three",
+        "1/4/26, 09:03 - \u{1f44d}: four",
+        "",
+      ].join("\n"),
+    );
+    const connector = createWhatsAppImportConnector({
+      path: source,
+      timezone: WHATSAPP_FIXTURE_TIMEZONE,
+      date_order: "mdy",
+    });
+    const { events } = await connector.backfill(null);
+    const senders = events.map((event) => event.subjects[0]);
+    expect(new Set(senders.map((s) => s?.subject_id)).size).toBe(4);
+
+    for (const [index, sender] of senders.entries()) {
+      const plan = await connector.purgeSource(sender?.subject_id ?? "");
+      // A plan that reached a second record would delete a message the owner
+      // never named, because two people would be one subject.
+      expect(plan.unreachable_source_record_ids).toEqual([
+        events[index]?.source_record_id ?? "",
+      ]);
+      expect(plan.source_record_ids).toEqual([]);
+    }
+  });
+});
+
 test("a refusal never names the chat file found inside an export", async () => {
   const canary = "canary-quartz-heron";
   await withTempRoot(async (root) => {

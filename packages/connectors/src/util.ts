@@ -154,13 +154,19 @@ export function safeFilename(name: string): string | null {
 // it stores; a subject id has to be what it looks like.
 const BIDI_CONTROLS = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
 
+/**
+ * A display name with only what a reader cannot see taken out: composition
+ * differences and direction marks. Two names that render the same are one
+ * subject; anything a reader can tell apart stays apart, because merging two
+ * participants is worse than filing one person twice.
+ */
+export function subjectName(name: string): string {
+  return name.normalize("NFC").replace(BIDI_CONTROLS, "").trim();
+}
+
 export function subjectSlug(name: string): string {
-  const cleaned = name
-    .normalize("NFC")
-    .replace(BIDI_CONTROLS, "")
-    .trim()
-    .toLowerCase();
-  const slug = cleaned
+  const slug = subjectName(name)
+    .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 128);
