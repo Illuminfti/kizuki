@@ -23,15 +23,17 @@ describe("cursor", () => {
     expect(decodeCursor(encodeCursor(emptyCursor()))).toEqual(emptyCursor());
   });
 
-  test("a cursor written before retries existed decodes with no holes", () => {
-    const { pending: _dropped, ...older } = CURSOR.folders["INBOX"] ?? {
+  test("refuses a folder entry with no retry list", () => {
+    const { pending: _dropped, ...incomplete } = CURSOR.folders["INBOX"] ?? {
       pending: "",
     };
     const raw = JSON.stringify({
       schema: "kizuki.imap-cursor/v1",
-      folders: { INBOX: older },
+      folders: { INBOX: incomplete },
     });
-    expect(decodeCursor(raw).folders["INBOX"]?.pending).toBe("");
+    // Every field of a cursor this connector minted is present; a missing one
+    // means the cursor came from somewhere else, and it fails closed.
+    expect(() => decodeCursor(raw)).toThrow(KizukiError);
   });
 
   test("rejects any deviation", () => {

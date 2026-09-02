@@ -16,7 +16,6 @@ export interface ContentLine {
 export interface ZoneInfo {
   tzid: string;
   standardOffsetMinutes: number | null;
-  daylightOffsetMinutes: number | null;
 }
 
 export interface RawVEvent {
@@ -27,7 +26,6 @@ export interface ParsedCalendar {
   calendar: {
     name: string | null;
     prodid: string | null;
-    method: string | null;
   };
   zones: Map<string, ZoneInfo>;
   events: RawVEvent[];
@@ -174,7 +172,6 @@ export function parseIcs(text: string): ParsedCalendar {
   const calendar: ParsedCalendar["calendar"] = {
     name: null,
     prodid: null,
-    method: null,
   };
   let components = 0;
   let sawCalendar = false;
@@ -217,11 +214,7 @@ export function parseIcs(text: string): ParsedCalendar {
       }
       if (component === "VCALENDAR") sawCalendar = true;
       if (component === "VTIMEZONE") {
-        zone = {
-          tzid: "",
-          standardOffsetMinutes: null,
-          daylightOffsetMinutes: null,
-        };
+        zone = { tzid: "", standardOffsetMinutes: null };
       }
       if (component === "STANDARD" || component === "DAYLIGHT") {
         zoneSection = component;
@@ -258,18 +251,17 @@ export function parseIcs(text: string): ParsedCalendar {
       if (line.name === "X-WR-CALNAME")
         calendar.name = unescapeText(line.value);
       if (line.name === "PRODID") calendar.prodid = unescapeText(line.value);
-      if (line.name === "METHOD")
-        calendar.method = line.value.trim().toUpperCase();
       continue;
     }
     if (zone !== null) {
       if (line.name === "TZID" && frame.name === "VTIMEZONE") {
         zone.tzid = line.value.trim();
       }
-      if (line.name === "TZOFFSETTO" && zoneSection !== null) {
-        const minutes = offsetMinutes(line.value);
-        if (zoneSection === "STANDARD") zone.standardOffsetMinutes = minutes;
-        else zone.daylightOffsetMinutes = minutes;
+      // Only the standard offset is read: the resolver falls back to a fixed
+      // offset for a zone the platform does not know, and a fixed offset that
+      // changed twice a year would not be one.
+      if (line.name === "TZOFFSETTO" && zoneSection === "STANDARD") {
+        zone.standardOffsetMinutes = offsetMinutes(line.value);
       }
       continue;
     }

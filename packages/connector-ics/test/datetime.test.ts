@@ -15,7 +15,7 @@ const fileZone = (
   standardOffsetMinutes: number | null,
 ): Map<string, ZoneInfo> =>
   new Map([
-    [tzid, { tzid, standardOffsetMinutes, daylightOffsetMinutes: null }],
+    [tzid, { tzid, standardOffsetMinutes }],
   ]);
 
 describe("date-time parsing", () => {

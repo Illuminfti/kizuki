@@ -76,15 +76,13 @@ export function decodeCursor(raw: Cursor): ImapCursor {
     }
     if (typeof value["done"] !== "boolean") invalid("done");
     if (typeof value["known"] !== "string") invalid("known");
-    // A cursor written before retries existed simply has no holes recorded.
-    const pending = value["pending"] ?? "";
-    if (typeof pending !== "string") invalid("pending");
+    if (typeof value["pending"] !== "string") invalid("pending");
     decoded[folder] = {
       uidvalidity: positiveInteger(value["uidvalidity"], "uidvalidity"),
       scan_from: positiveInteger(value["scan_from"], "scan_from"),
       uidnext: positiveInteger(value["uidnext"], "uidnext"),
       known: formatSet(parseSet(value["known"])),
-      pending: formatSet(parseSet(pending)),
+      pending: formatSet(parseSet(value["pending"])),
       done: value["done"],
     };
   }

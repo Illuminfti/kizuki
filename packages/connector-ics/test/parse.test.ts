@@ -106,12 +106,10 @@ describe("component walk", () => {
     expect(parsed.calendar).toEqual({
       name: "Acme team",
       prodid: "-//Acme//test//EN",
-      method: "PUBLISH",
     });
     expect(parsed.zones.get("Acme Standard Time")).toEqual({
       tzid: "Acme Standard Time",
       standardOffsetMinutes: -300,
-      daylightOffsetMinutes: -240,
     });
     expect(parsed.events).toHaveLength(1);
     const event = parsed.events[0];
