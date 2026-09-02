@@ -73,6 +73,11 @@ class CoreSafetyTests(unittest.TestCase):
         _, task=self.campaign_task(); token=self.store.acquire(task,"scope/test","worker",limits=Limits(max_attempts=1))
         with self.assertRaises(TypeError): self.store.receipt(task,SHA,["test"])
         with self.assertRaises(FencedError): self.store.receipt(task,SHA,["test"],"scope/test","bad",token)
+        with self.assertRaisesRegex(GuardError,"submitted verification state"): self.store.receipt(task,SHA,["test"],"scope/test","worker",token)
+        version=self.store.snapshot()["tasks"][0]["version"]
+        version=self.store.task_state(task,"RUNNING",version,"scope/test","worker",token)
+        version=self.store.task_state(task,"SUBMITTED",version,"scope/test","worker",token)
+        self.store.receipt(task,SHA,["test"],"scope/test","worker",token)
         self.store.release("scope/test","worker",token,task_id=task)
         # A released task remains LEASED; controller must explicitly recover it.
         version=self.store.snapshot()["tasks"][0]["version"]
@@ -82,6 +87,8 @@ class CoreSafetyTests(unittest.TestCase):
         _, task=self.campaign_task(); first=self.store.acquire(task,"scope/test","worker")
         second=self.store.acquire(task,"scope/second","worker")
         task_row=self.store.snapshot()["tasks"][0]; self.assertEqual(task_row["attempts"],1)
+        version=self.store.task_state(task,"RUNNING",task_row["version"],"scope/second","worker",second)
+        self.store.task_state(task,"SUBMITTED",version,"scope/second","worker",second)
         rid=self.store.receipt(task,SHA,["test"],"scope/second","worker",second)
         receipt=next(x for x in self.store.snapshot()["receipts"] if x["id"]==rid)
         self.assertEqual((receipt["scope"],receipt["holder"],receipt["token"],receipt["epoch"]),("scope/second","worker",second,self.store.claimed_epoch))
@@ -114,6 +121,28 @@ class CoreSafetyTests(unittest.TestCase):
         self.store._write(lambda:None,"task.state",{"id":task,"state":"READY"})
         with self.assertRaises(ConflictError):
             self.store.acquire(task,"scope/new","new")
+    def test_worker_cannot_self_recover_or_reuse_attempt(self):
+        _,task=self.campaign_task(); token=self.store.acquire(task,"scope/test","worker")
+        version=self.store.snapshot()["tasks"][0]["version"]
+        with self.assertRaisesRegex(GuardError,"controller authority"):
+            self.store.task_state(task,"RECOVERING",version,"scope/test","worker",token)
+        version=self.store.task_state(task,"RUNNING",version,"scope/test","worker",token)
+        version=self.store.task_state(task,"SUBMITTED",version,"scope/test","worker",token)
+        version=self.store.task_state(task,"CHANGES_REQUESTED",version,"scope/test","worker",token)
+        self.assertEqual(self.store.snapshot()["leases"],[])
+        with self.assertRaises(FencedError): self.store.receipt(task,SHA,["test"],"scope/test","worker",token)
+    def test_controller_cannot_advance_success_edges_without_live_worker(self):
+        _,task=self.campaign_task(); token=self.store.acquire(task,"scope/test","worker",ttl=.05)
+        time.sleep(.06); version=self.store.snapshot()["tasks"][0]["version"]
+        with self.assertRaisesRegex(GuardError,"live worker lease"):
+            self.store.task_state(task,"RUNNING",version)
+        self.assertEqual(self.store.snapshot()["tasks"][0]["state"],"LEASED")
+        # Recovery is the only path out; it retires the expired lease.
+        version=self.store.task_state(task,"RECOVERING",version)
+        version=self.store.task_state(task,"READY",version)
+        with self.assertRaisesRegex(GuardError,"live worker lease"):
+            self.store.task_state(task,"LEASED",version)
+        self.assertGreater(token,0)
     def test_adapter_reason_code_must_match_state(self):
         self.store.claim_controller()
         with self.assertRaisesRegex(GuardError,"contradicts"):

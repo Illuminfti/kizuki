@@ -52,6 +52,27 @@ TASK_TRANSITIONS = {
     "RECOVERING": {"READY", "FAILED", "SUPERSEDED"},
     "FAILED": {"READY", "SUPERSEDED"}, "SUPERSEDED": set(), "DONE": set(),
 }
+WORKER_TASK_TRANSITIONS = {
+    ("LEASED","RUNNING"), ("RUNNING","SUBMITTED"),
+    ("SUBMITTED","VERIFYING"), ("SUBMITTED","CHANGES_REQUESTED"),
+    ("VERIFYING","REVIEWING"), ("VERIFYING","CHANGES_REQUESTED"),
+    ("REVIEWING","INTEGRATING"), ("REVIEWING","CHANGES_REQUESTED"),
+    ("INTEGRATING","MERGED"), ("MERGED","POST_MERGE_VERIFYING"),
+    ("POST_MERGE_VERIFYING","DONE"),
+}
+CONTROLLER_TASK_TRANSITIONS = {
+    ("DISCOVERED","READY"), ("DISCOVERED","FAILED"), ("DISCOVERED","SUPERSEDED"),
+    ("LEASED","RECOVERING"), ("LEASED","FAILED"),
+    ("RUNNING","RECOVERING"), ("RUNNING","FAILED"),
+    ("SUBMITTED","CHANGES_REQUESTED"), ("SUBMITTED","FAILED"),
+    ("VERIFYING","CHANGES_REQUESTED"), ("VERIFYING","FAILED"),
+    ("REVIEWING","CHANGES_REQUESTED"), ("REVIEWING","FAILED"),
+    ("INTEGRATING","FAILED"), ("MERGED","FAILED"),
+    ("POST_MERGE_VERIFYING","FAILED"),
+    ("CHANGES_REQUESTED","READY"), ("CHANGES_REQUESTED","FAILED"), ("CHANGES_REQUESTED","SUPERSEDED"),
+    ("RECOVERING","READY"), ("RECOVERING","FAILED"), ("RECOVERING","SUPERSEDED"),
+    ("FAILED","READY"), ("FAILED","SUPERSEDED"),
+}
 class GuardError(RuntimeError): pass
 class ConflictError(RuntimeError): pass
 class FencedError(RuntimeError): pass
@@ -305,12 +326,19 @@ class Store:
             # recovery/admin transitions, but is fenced by its claimed epoch.
             if holder is None and token is None and scope is None:
                 self._require_controller()
+                if (row[0],state) not in CONTROLLER_TASK_TRANSITIONS: raise GuardError("progress transition requires a live worker lease")
                 live=self.db.execute("SELECT 1 FROM leases WHERE task_id=? AND epoch=? AND expires_at>? LIMIT 1",(tid,self.claimed_epoch,time.time())).fetchone()
                 if live and state not in {"RECOVERING","FAILED","SUPERSEDED"}: raise GuardError("controller must recover or fail a live leased task before transition")
                 # Administrative transitions revoke every task lease. Fence
                 # counters remain, so a retired token can never be reused.
                 payload["retire_leases"]=True
-            else: self._assert_lease(scope or row[3],holder,token,tid)
+            else:
+                if (row[0],state) not in WORKER_TASK_TRANSITIONS: raise GuardError("worker transition requires controller authority")
+                self._assert_lease(scope or row[3],holder,token,tid)
+                if row[0] in {"SUBMITTED","VERIFYING","REVIEWING","INTEGRATING","MERGED","POST_MERGE_VERIFYING"} and state not in {"CHANGES_REQUESTED","FAILED"}:
+                    evidence=self.db.execute("SELECT 1 FROM receipts WHERE task_id=? AND epoch=? LIMIT 1",(tid,self._current_epoch())).fetchone()
+                    if not evidence: raise GuardError("progress transition requires a fenced receipt")
+                if state in {"CHANGES_REQUESTED","DONE"}: payload["retire_leases"]=True
         self._write(validate,"task.state",payload); return version+1
     def _assert_lease(self,scope,holder,token,task_id=None):
         row=self.db.execute("SELECT task_id,holder,token,expires_at,epoch FROM leases WHERE scope=?",(scope,)).fetchone(); epoch=self._current_epoch()
@@ -350,7 +378,11 @@ class Store:
         if len(sha)!=40 or any(c not in "0123456789abcdef" for c in sha): raise GuardError("receipt requires exact 40-char lowercase SHA")
         if not isinstance(tests,list) or not tests: raise GuardError("receipt requires nonempty test evidence")
         payload={"id":str(uuid.uuid4()),"task_id":task_id,"sha":sha,"tests":tests,"scope":scope,"holder":holder,"token":token,"epoch":self._current_epoch(),"artifact":artifact}
-        self._write(lambda: self._assert_lease(scope,holder,token,task_id),"receipt.recorded",payload); return payload["id"]
+        def validate():
+            self._assert_lease(scope,holder,token,task_id)
+            row=self.db.execute("SELECT state FROM tasks WHERE id=?",(task_id,)).fetchone()
+            if not row or row[0] not in {"SUBMITTED","VERIFYING","REVIEWING","INTEGRATING"}: raise GuardError("receipt requires submitted verification state")
+        self._write(validate,"receipt.recorded",payload); return payload["id"]
     def record_adapter_receipt(self,name,version,auth_status,route_status,evidence_sha256,executable_sha256,reason_code,ttl_seconds=21600):
         self._require_controller(); auth_status=auth_status.upper(); route_status=route_status.upper()
         if name not in ADAPTER_NAMES: raise GuardError("unknown adapter")
@@ -364,7 +396,7 @@ class Store:
             "ISOLATED_ROUTE_PROBE": {("READY","READY")},
             "PROVIDER_QUOTA_BLOCKED": {("READY","QUOTA_BLOCKED")},
             "AUTH_CHECK": {("READY","UNKNOWN"),("FAILED","UNKNOWN"),("UNKNOWN","UNKNOWN")},
-            "PROBE_FAILED": {("FAILED","FAILED"),("UNKNOWN","FAILED")},
+            "PROBE_FAILED": {("READY","FAILED"),("FAILED","FAILED"),("UNKNOWN","FAILED")},
         }
         if (auth_status,route_status) not in allowed[reason_code]: raise GuardError("adapter state contradicts receipt reason code")
         if not isinstance(ttl_seconds,int) or not 60<=ttl_seconds<=86400: raise GuardError("adapter receipt TTL must be 60..86400 seconds")

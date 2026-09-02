@@ -101,6 +101,9 @@ class CoreTests(unittest.TestCase):
 
     def test_receipt(self):
         token = self.store.acquire(self.task, "task/receipt", "worker")
+        version=self.store.snapshot()["tasks"][0]["version"]
+        version=self.store.task_state(self.task,"RUNNING",version,"task/receipt","worker",token)
+        self.store.task_state(self.task,"SUBMITTED",version,"task/receipt","worker",token)
         self.store.receipt(
             self.task,
             SHA,

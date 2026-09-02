@@ -13,9 +13,9 @@
    no-follow evidence file. The controller computes both evidence and executable
    SHA-256 values itself and expires the attestation. Never put credentials,
    account identity, prompts, or raw logs in the evidence. `QUOTA_BLOCKED` is a
-   truthful route state. The observer re-hashes each receipted executable once
-   at controller startup and reports readiness false if that identity no longer
-   matches; request handlers never touch harness files.
+   truthful route state. The observer re-hashes each receipted executable at
+   startup and every 30 minutes outside request handling; identity evidence
+   older than one hour fails closed. Request handlers never touch harness files.
 5. Run `reconcile /path/to/kizuki` for a local Git inventory. It is offline:
    fetch or GitHub PR inspection is intentionally excluded.
 6. Start `serve` only behind local host protections. It is an observer surface,

@@ -12,6 +12,7 @@ from .safe_io import SafeIOError, sha256_regular_nofollow
 
 _PROBES = {"codex": ("--version",), "claude": ("--version",), "cursor": ("--version",), "grok": ("--version",)}
 _SECRET_MARKERS = ("token", "secret", "password", "authorization", "bearer", "api_key", "apikey")
+IDENTITY_MAX_AGE_SECONDS = 3600
 
 
 def _bounded_version(argv, timeout, env, limit=4096):
@@ -182,7 +183,7 @@ def statuses(_adapters=(), receipts=(), now=None, identities=None):
             "ISOLATED_ROUTE_PROBE": {("READY","READY")},
             "PROVIDER_QUOTA_BLOCKED": {("READY","QUOTA_BLOCKED")},
             "AUTH_CHECK": {("READY","UNKNOWN"),("FAILED","UNKNOWN"),("UNKNOWN","UNKNOWN")},
-            "PROBE_FAILED": {("FAILED","FAILED"),("UNKNOWN","FAILED")},
+            "PROBE_FAILED": {("READY","FAILED"),("FAILED","FAILED"),("UNKNOWN","FAILED")},
         }
         if not isinstance(version, str) or not isinstance(evidence, str) or len(evidence) != 64:
             continue
@@ -195,7 +196,9 @@ def statuses(_adapters=(), receipts=(), now=None, identities=None):
         if not isinstance(checked_at, (int, float)) or not isinstance(expires_at, (int, float)):
             continue
         identity=identities.get(name,{})
-        identity_current=identity.get("current") is True
+        identity_checked_at=identity.get("checked_at")
+        identity_fresh=isinstance(identity_checked_at,(int,float)) and not isinstance(identity_checked_at,bool) and 0<=now-identity_checked_at<=IDENTITY_MAX_AGE_SECONDS
+        identity_current=identity.get("current") is True and identity_fresh
         fresh = expires_at > now
         effective=fresh and identity_current
         by_name[name] = {
@@ -212,7 +215,7 @@ def statuses(_adapters=(), receipts=(), now=None, identities=None):
             "attestation": "operator-attested",
             "fresh": fresh,
             "identity_current": identity_current,
-            "identity_checked_at": identity.get("checked_at"),
+            "identity_checked_at": identity_checked_at if identity_fresh else None,
             "auth_ready": bool(effective and auth_status == "READY"),
             "route_ready": bool(effective and route_status == "READY"),
             "ready": bool(effective and auth_status == "READY" and route_status == "READY"),

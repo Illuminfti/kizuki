@@ -83,7 +83,7 @@ def main(argv=None):
    executable_sha256=sha256_regular_nofollow(executable,1024**3)
    st.claim_controller(); st.record_adapter_receipt(a.name,a.version,a.auth_status,a.route_status,evidence_sha256,executable_sha256,a.reason_code,a.ttl_seconds); print(json.dumps({"ok":True,"adapter":a.name,"auth_status":a.auth_status,"route_status":a.route_status,"method":"operator-attested-isolated-probe-v1","expires_in_seconds":a.ttl_seconds})); st.release_controller()
   elif a.cmd=="serve":
-   st.claim_controller(); st.verify_integrity(); Guard(limits).check(st); identity=validate_identities(adapters,st.snapshot()["adapter_receipts"]); port=a.port or cfg["observer"]["port"]; srv=serve(st,adapters,host=cfg["observer"]["host"],port=port,guard=Guard(limits),adapter_identities=identity); print(json.dumps({"host":"127.0.0.1","port":port,"observer_only":True,"controller_epoch":st.claimed_epoch}));
+   st.claim_controller(); st.verify_integrity(); Guard(limits).check(st); refresh_identity=lambda:validate_identities(adapters,st.snapshot()["adapter_receipts"]); identity=refresh_identity(); port=a.port or cfg["observer"]["port"]; srv=serve(st,adapters,host=cfg["observer"]["host"],port=port,guard=Guard(limits),adapter_identities=identity,adapter_identity_refresh=refresh_identity); print(json.dumps({"host":"127.0.0.1","port":port,"observer_only":True,"controller_epoch":st.claimed_epoch}));
    try: srv.serve_forever()
    finally: srv.server_close(); st.release_controller()
   return 0

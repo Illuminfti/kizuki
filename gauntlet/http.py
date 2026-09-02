@@ -5,6 +5,8 @@ It never exposes an opaque persisted object: runtime state can contain worker
 prompts, paths, lease credentials, test output, and forensic details.
 """
 import json
+import re
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -45,22 +47,40 @@ def _reconciliation(row):
         evidence = json.loads(row.get("evidence", "{}"))
     except (TypeError, ValueError):
         evidence = {}
+    def bounded_number(value):
+        return value if isinstance(value,(int,float)) and not isinstance(value,bool) and 0<=value<=10**12 else None
+    def bounded_count(value):
+        return value if isinstance(value,int) and not isinstance(value,bool) and 0<=value<=10**7 else None
+    def exact_sha(value):
+        return value if isinstance(value,str) and re.fullmatch(r"[0-9a-f]{40}",value) else None
+    freshness={
+        "unknown; cached local ref; no fetch performed":"CACHED_UNVERIFIED",
+        "cached origin/main absent; no fetch performed":"ABSENT_UNVERIFIED",
+    }.get(evidence.get("remote_ref_freshness"),"UNKNOWN")
+    raw_dispositions=evidence.get("disposition_counts",{})
+    dispositions={}
+    if isinstance(raw_dispositions,dict):
+        for name in ("EXTERNAL_UNRECONCILED","GAUNTLET_OWNED"):
+            count=bounded_count(raw_dispositions.get(name))
+            if count is not None: dispositions[name]=count
+    campaign_id=row.get("campaign_id")
+    if not isinstance(campaign_id,str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}",campaign_id): campaign_id=None
     return {
-        "campaign_id": row.get("campaign_id"),
-        "recorded_at": row.get("created_at"),
-        "inventory_at": evidence.get("inventory_at"),
+        "campaign_id": campaign_id,
+        "recorded_at": bounded_number(row.get("created_at")),
+        "inventory_at": bounded_number(evidence.get("inventory_at")),
         "safe_to_promote": evidence.get("safe_to_promote") is True,
-        "worktree_count": evidence.get("worktree_count"),
-        "dirty_worktree_count": evidence.get("dirty_worktree_count"),
-        "disposition_counts": evidence.get("disposition_counts", {}),
-        "local_main_ahead": evidence.get("local_main_ahead"),
-        "local_main_behind": evidence.get("local_main_behind"),
-        "cached_origin_main": evidence.get("cached_origin_main"),
-        "remote_ref_freshness": evidence.get("remote_ref_freshness"),
+        "worktree_count": bounded_count(evidence.get("worktree_count")),
+        "dirty_worktree_count": bounded_count(evidence.get("dirty_worktree_count")),
+        "disposition_counts": dispositions,
+        "local_main_ahead": bounded_count(evidence.get("local_main_ahead")),
+        "local_main_behind": bounded_count(evidence.get("local_main_behind")),
+        "cached_origin_main": exact_sha(evidence.get("cached_origin_main")),
+        "remote_ref_freshness": freshness,
     }
 
 
-def serve(store, adapters, host="127.0.0.1", port=8765, guard=None, adapter_identities=None):
+def serve(store, adapters, host="127.0.0.1", port=8765, guard=None, adapter_identities=None, adapter_identity_refresh=None, identity_refresh_seconds=1800):
     if host != "127.0.0.1":
         raise ValueError("observer may bind only to 127.0.0.1")
     guard = guard or Guard()
@@ -73,6 +93,16 @@ def serve(store, adapters, host="127.0.0.1", port=8765, guard=None, adapter_iden
             request, address = super().get_request()
             request.settimeout(5.0)
             return request, address
+
+        def service_actions(self):
+            # Runs from serve_forever's main loop, never from a request handler.
+            if self.adapter_identity_refresh is None or time.monotonic()<self.next_identity_refresh: return
+            try:
+                refreshed=self.adapter_identity_refresh()
+                self.adapter_identities=refreshed if isinstance(refreshed,dict) else {}
+            except Exception:
+                self.adapter_identities={}
+            self.next_identity_refresh=time.monotonic()+self.identity_refresh_seconds
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -122,7 +152,7 @@ def serve(store, adapters, host="127.0.0.1", port=8765, guard=None, adapter_iden
             if path == "/v1/adapters":
                 # Never invoke supplied adapters here.  These are solely
                 # persisted operator attestations, not live probes.
-                return self._send(200, statuses(adapters, data["adapter_receipts"], identities=adapter_identities))
+                return self._send(200, statuses(adapters, data["adapter_receipts"], identities=self.server.adapter_identities))
             if path == "/v1/reconciliation":
                 rows=sorted(data["reconciliation"],key=lambda row:row.get("created_at",0),reverse=True)
                 return self._send(200,_reconciliation(rows[0])) if rows else self._send(200,None)
@@ -151,4 +181,9 @@ def serve(store, adapters, host="127.0.0.1", port=8765, guard=None, adapter_iden
         def log_message(self, *_):
             pass
 
-    return ObserverServer(("127.0.0.1", port), Handler)
+    server=ObserverServer(("127.0.0.1", port), Handler)
+    server.adapter_identities=dict(adapter_identities or {})
+    server.adapter_identity_refresh=adapter_identity_refresh
+    server.identity_refresh_seconds=max(60,min(int(identity_refresh_seconds),3600))
+    server.next_identity_refresh=time.monotonic()+server.identity_refresh_seconds
+    return server

@@ -37,8 +37,9 @@ adapter wiring is merged.
 - Persisted adapter receipts capture the exact live `--version` output and
   executable hash at recording time. They expire automatically; any harness
   upgrade requires a new receipt before the attestation can be refreshed. The
-  observer also verifies the executable hash once at controller startup; it
-  never touches a harness during a request.
+  observer verifies executable hashes at controller startup and refreshes that
+  bounded identity cache every 30 minutes outside request handling. Identity
+  evidence fails closed after one hour; a request never touches a harness.
 
 ## Quick start
 

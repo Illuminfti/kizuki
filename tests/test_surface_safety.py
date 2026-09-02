@@ -94,6 +94,22 @@ class SurfaceSafetyTests(unittest.TestCase):
         self.assertFalse(result["ready"])
         self.assertFalse(result["auth_ready"])
         self.assertFalse(result["route_ready"])
+        checked=identity["codex"]["checked_at"]
+        aged=statuses([],self.store.snapshot()["adapter_receipts"],now=checked+3601,identities=identity)[0]
+        self.assertFalse(aged["ready"]); self.assertFalse(aged["identity_current"])
+
+    def test_adapter_identity_refresh_happens_outside_request(self):
+        self.store.record_adapter_receipt("codex","v","READY","READY","a"*64,"b"*64,"ISOLATED_ROUTE_PROBE",600)
+        refreshed={"calls":0}
+        def refresh():
+            refreshed["calls"]+=1
+            return {"codex":{"current":False,"checked_at":time.time()}}
+        server=serve(self.store,[],port=0,adapter_identities={"codex":{"current":True,"checked_at":time.time()}},adapter_identity_refresh=refresh,identity_refresh_seconds=60)
+        try:
+            server.next_identity_refresh=0; server.service_actions(); self.assertEqual(refreshed["calls"],1)
+            status,body,_=self.request(server,"GET","/v1/adapters")
+            self.assertEqual(status,200); self.assertFalse(json.loads(body)[0]["ready"]); self.assertEqual(refreshed["calls"],1)
+        finally: server.server_close()
 
     def test_cli_exit_propagates(self):
         self.assertEqual(main(["--config", str(Path(self.tmp.name) / "missing.json"), "--state-dir", self.tmp.name, "doctor"]), 2)
@@ -159,7 +175,17 @@ class SurfaceSafetyTests(unittest.TestCase):
         try:
             status,body,_=self.request(server,"GET","/v1/reconciliation"); result=json.loads(body)
             self.assertEqual(status,200); self.assertEqual(result["worktree_count"],17); self.assertEqual(result["local_main_behind"],3)
-            self.assertNotIn(b"/home/private",body); self.assertFalse(result["safe_to_promote"])
+            self.assertNotIn(b"/home/private",body); self.assertFalse(result["safe_to_promote"]); self.assertEqual(result["remote_ref_freshness"],"CACHED_UNVERIFIED")
+        finally: server.server_close()
+
+    def test_reconciliation_summary_rejects_strings_in_typed_fields(self):
+        secret="SENSITIVE-RECONCILIATION-STRING"
+        self.store.record_reconciliation(self.campaign,{"inventory_at":secret,"safe_to_promote":False,"worktree_count":secret,"dirty_worktree_count":secret,"disposition_counts":{secret:1,"EXTERNAL_UNRECONCILED":secret},"local_main_ahead":secret,"local_main_behind":secret,"cached_origin_main":secret,"remote_ref_freshness":secret})
+        server=serve(self.store,[],port=0)
+        try:
+            status,body,_=self.request(server,"GET","/v1/reconciliation"); result=json.loads(body)
+            self.assertEqual(status,200); self.assertNotIn(secret.encode(),body)
+            self.assertIsNone(result["cached_origin_main"]); self.assertEqual(result["remote_ref_freshness"],"UNKNOWN"); self.assertEqual(result["disposition_counts"],{})
         finally: server.server_close()
 
     def test_observer_dtos_exclude_sensitive_stored_payloads(self):
