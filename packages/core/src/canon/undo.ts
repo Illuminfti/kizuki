@@ -211,17 +211,30 @@ function restoreBytes(
   revertId: string,
   current: string,
 ): { outcome: { archive_path: string | null; after_hash: string }; page: VaultPage | null; action: PageAction } {
-  if (original.page_action === "create" && original.kind !== "revert") {
-    if (current === ABSENT_PAGE_HASH) {
+  const undoTarget = original.before_hash ?? ABSENT_PAGE_HASH;
+  if (current === undoTarget && current !== original.after_hash) {
+    const archive = recoverArchiveForHash(io, original.page_path, original.after_hash);
+    if (original.page_action === "create" && original.kind !== "revert") {
       return {
-        outcome: {
-          archive_path: recoverArchiveForHash(io, original.page_path, original.after_hash),
-          after_hash: ABSENT_PAGE_HASH,
-        },
+        outcome: { archive_path: archive, after_hash: ABSENT_PAGE_HASH },
         page: null,
         action: "archive",
       };
     }
+    if (original.archive_path === null) {
+      throw new UndoError(
+        "not_undoable",
+        `undo: no archive copy exists; this write is not undoable`,
+      );
+    }
+    return {
+      outcome: { archive_path: archive, after_hash: current },
+      page: loadArchivePage(io, original.archive_path),
+      action: original.after_hash === ABSENT_PAGE_HASH ? "create" : "edit",
+    };
+  }
+
+  if (original.page_action === "create" && original.kind !== "revert") {
     const outcome = applyRevertWrite(io, {
       receipt_id: revertId,
       rel_path: original.page_path,

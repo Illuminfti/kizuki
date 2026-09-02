@@ -366,6 +366,68 @@ describe("undoReceipt", () => {
     expect(restored.reverts).toBe(revert.receipt_id);
   });
 
+  test("retried edit undo keeps the archive of the undone write", async () => {
+    let blows = 0;
+    const retrieval = new FixtureVectorPort();
+    const originalUpsert = retrieval.upsert.bind(retrieval);
+    retrieval.upsert = async (docs) => {
+      if (blows > 0) {
+        blows -= 1;
+        throw new Error("retrieval down");
+      }
+      return originalUpsert(docs);
+    };
+
+    const { db, io, vault } = fixture({
+      retrieval_store: retrieval.descriptor.id,
+      retrieval,
+    });
+    const eventId = putEvent(db);
+    const created = write(io, await storeClaim(db, eventId));
+    const prior = readBytes(vault, created.page_path);
+    const edited = write(
+      io,
+      await storeClaim(db, eventId, {
+        kind: "edit",
+        predicate: null,
+        object: null,
+        body: "Grace leads partnerships at Acme.",
+        frontmatter: { title: "Grace (Acme)" },
+      }),
+    );
+    const editedBytes = readBytes(vault, edited.page_path);
+    const docId = edited.retrieval_ops[0]?.doc as string;
+    await retrieval.upsert([
+      {
+        doc_id: docId,
+        kind: "page",
+        title: "Grace (Acme)",
+        text: Buffer.from(editedBytes).toString("utf8"),
+        sensitivity: "personal",
+        taint: "clean",
+        authority: "connector_evidence",
+        subjects: [],
+        provenance: edited.provenance,
+        occurred_at: null,
+        updated_at: edited.at,
+      },
+    ]);
+    blows = 1;
+
+    const first = await attempt(() => undoReceipt(io, edited.receipt_id));
+    expect(String(first)).toContain("retrieval down");
+    expect(sha256(readBytes(vault, edited.page_path))).toBe(sha256(prior));
+
+    const revert = await undoReceipt(io, edited.receipt_id);
+    expect(revert.archive_path).not.toBeNull();
+    expect(sha256(readBytes(vault, revert.archive_path as string))).toBe(edited.after_hash);
+    expect(sha256(readBytes(vault, edited.page_path))).toBe(sha256(prior));
+
+    await undoReceipt(io, revert.receipt_id);
+    expect(sha256(readBytes(vault, edited.page_path))).toBe(edited.after_hash);
+    expect(readFileSync(join(vault, edited.page_path), "utf8")).toContain("leads partnerships");
+  });
+
   test("concurrent undo of the same receipt writes one revert", async () => {
     const { db, io } = fixture();
     const created = write(io, await storeClaim(db, putEvent(db)));
