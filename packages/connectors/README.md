@@ -76,9 +76,12 @@ kizuki import import-whatsapp --vault VAULT --source EXPORT_DIR
 ```
 
 Each message becomes one `message` event, labeled `private` by the importer's
-own policy rather than by you. Its subjects are the sender and the chat. The
-importer references media without opening or copying it: a file present beside
-the chat is recorded by name, type and size.
+own policy rather than by you. Its subjects are the sender and the chat, filed
+under the name shortened into a readable handle: `whatsapp:ada` for a
+participant called Ada, `whatsapp:chat:acme-planning` for a chat called Acme
+Planning. Those are the ids `kizuki purge --subject` takes. The importer
+references media without opening or copying it: a file present beside the chat
+is recorded by name, type and size.
 
 Known limits:
 
@@ -123,9 +126,11 @@ Known limits:
 - A participant is whoever the export calls them. Two contacts sharing one
   display name are one subject, and one contact renamed between exports is
   two; an export carries nothing else to tell them apart, so the importer does
-  not pretend otherwise. It does keep names apart that only look alike after
-  they are shortened into a readable handle, so a purge aimed at one person
-  reaches nobody else.
+  not pretend otherwise. Shortening a name into a handle loses more: two names
+  that differ only in punctuation, and any two names with no letters or digits
+  at all, become one handle and therefore one subject, which a purge aimed at
+  that handle reaches together. The display names are kept whole on every
+  event, so the evidence still says who wrote what.
 
 ## Pocket CSV export
 

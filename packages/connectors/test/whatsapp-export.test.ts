@@ -237,17 +237,17 @@ test("no refusal quotes a sender name or captured text", async () => {
   }
 });
 
-test("purging one participant does not reach another's messages", async () => {
+test("a purge plan reaches the messages filed under one handle", async () => {
   await withTempRoot(async (root) => {
     const source = path.join(root, "export");
     await mkdir(source);
     await writeFile(
       path.join(source, CHAT_FILE),
       [
-        "1/4/26, 09:00 - A B: one",
-        "1/4/26, 09:01 - A-B: two",
-        "1/4/26, 09:02 - \u{1f642}: three",
-        "1/4/26, 09:03 - \u{1f44d}: four",
+        "1/4/26, 09:00 - Ada: one",
+        "1/4/26, 09:01 - Grace: two",
+        "1/4/26, 09:02 - A B: three",
+        "1/4/26, 09:03 - A-B: four",
         "",
       ].join("\n"),
     );
@@ -257,18 +257,25 @@ test("purging one participant does not reach another's messages", async () => {
       date_order: "mdy",
     });
     const { events } = await connector.backfill(null);
-    const senders = events.map((event) => event.subjects[0]);
-    expect(new Set(senders.map((s) => s?.subject_id)).size).toBe(4);
+    const id = (at: number): string => events[at]?.source_record_id ?? "";
 
-    for (const [index, sender] of senders.entries()) {
-      const plan = await connector.purgeSource(sender?.subject_id ?? "");
-      // A plan that reached a second record would delete a message the owner
-      // never named, because two people would be one subject.
-      expect(plan.unreachable_source_record_ids).toEqual([
-        events[index]?.source_record_id ?? "",
-      ]);
-      expect(plan.source_record_ids).toEqual([]);
-    }
+    // The id an owner can read off a person page is the id that plans the
+    // purge, and it reaches that participant's messages and no others.
+    const plan = await connector.purgeSource("whatsapp:ada");
+    expect(plan.unreachable_source_record_ids).toEqual([id(0)]);
+    expect(plan.source_record_ids).toEqual([]);
+
+    // Two names that shorten to one handle are one subject, so a plan aimed
+    // at that handle reaches both. The README says so, and the plan is what
+    // shows it before anything is deleted.
+    const shared = await connector.purgeSource("whatsapp:a-b");
+    expect(shared.unreachable_source_record_ids).toEqual(
+      [id(2), id(3)].sort(),
+    );
+
+    // The chat is a subject of every message in it.
+    const chat = await connector.purgeSource("whatsapp:chat:acme-planning");
+    expect(chat.unreachable_source_record_ids.length).toBe(4);
   });
 });
 
