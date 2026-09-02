@@ -248,13 +248,18 @@ function seriesEvents(
   }
 
   const dtstartLocal = localOf(start);
+  // A series that begins past the window would expand to nothing and vanish
+  // with no error, while an identical one-off event at the same date is kept.
+  // The window always reaches at least the series' own first instance.
+  const seriesWindowEnd =
+    localToMs(dtstartLocal) > localToMs(windowEnd) ? dtstartLocal : windowEnd;
   const expansion =
     parsedRule === null
       ? // RFC 5545 §3.8.5.2: RDATE adds to the recurrence set, which always
         // contains DTSTART.
         { instances: withStart(dtstartLocal, rdates, exdateKeys(master)), truncated: false }
       : expand(parsedRule.rule, dtstartLocal, {
-          windowEnd,
+          windowEnd: seriesWindowEnd,
           maxInstances: MAX_INSTANCES,
           exdates: exdateKeys(master),
           rdates,

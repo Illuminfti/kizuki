@@ -631,6 +631,31 @@ describe("the calendar subject always names something", () => {
   });
 });
 
+describe("a series that starts past the window is still captured", () => {
+  test("the first instance of a future series reaches the ledger", () => {
+    const result = mapAll([
+      "BEGIN:VEVENT",
+      "UID:future-series@acme.example",
+      "DTSTART:20280601T090000Z",
+      "RRULE:FREQ=WEEKLY;COUNT=10",
+      "SUMMARY:Conference",
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      "UID:future-single@acme.example",
+      "DTSTART:20280601T090000Z",
+      "SUMMARY:Single",
+      "END:VEVENT",
+    ]);
+    // The one-off event at the same date was always captured; the series
+    // used to expand to nothing and disappear with skipped still at zero.
+    expect(result.skipped).toBe(0);
+    expect(result.events.map((event) => event.source_record_id)).toEqual([
+      "future-series@acme.example#20280601T090000",
+      "future-single@acme.example",
+    ]);
+  });
+});
+
 describe("truncation marks every instance of the series", () => {
   test("an override outside the kept window says the series was truncated", () => {
     const events = mapped([
