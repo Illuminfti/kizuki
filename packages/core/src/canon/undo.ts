@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { basename, extname, join } from "node:path";
+import type { Sensitivity } from "../agents/types";
 import {
   getClaim,
   markClaimReverted,
@@ -8,14 +9,17 @@ import {
   supersessionsForReceipt,
 } from "../claims/store";
 import type { RetrievalDoc } from "../contracts/retrieval";
+import type { ClaimTaint } from "../contracts/proposal";
 import { parseFrontmatter } from "../vault/frontmatter";
 import type { VaultPage } from "../vault/frontmatter";
+import { PAGE_SENSITIVITIES } from "../vault/schema";
 import { ABSENT_PAGE_HASH, hashBytes, hashFile } from "../vault/write";
 import { applyRevertWrite } from "./apply";
 import { UndoError } from "./errors";
 import {
   getCanonReceipt,
   laterReceiptsForPage,
+  listCanonReceipts,
 } from "./receipts";
 import type { CanonReceipt, PageAction, RetrievalOpRef } from "./receipts";
 import {
@@ -66,26 +70,70 @@ function subjectOf(page: VaultPage | null): string | null {
   return typeof raw === "string" && raw.length > 0 ? raw : null;
 }
 
+function isSensitivity(value: unknown): value is Sensitivity {
+  return typeof value === "string" && (PAGE_SENSITIVITIES as readonly string[]).includes(value);
+}
+
+function taintOf(page: VaultPage, fallback: ClaimTaint): ClaimTaint {
+  return page.data["taint"] === "quoted" ? "quoted" : page.data["taint"] === "clean" ? "clean" : fallback;
+}
+
+function provenanceOf(page: VaultPage, fallback: readonly string[]): string[] {
+  const sources = page.data["sources"];
+  if (Array.isArray(sources) && sources.every((item) => typeof item === "string")) {
+    return sources;
+  }
+  return [...fallback];
+}
+
+function metaReceiptForRestore(io: CanonIo, original: CanonReceipt): CanonReceipt {
+  if (original.before_hash === null) return original;
+  const prior = listCanonReceipts(io.db, {
+    page_path: original.page_path,
+    newest_first: true,
+    limit: 10_000,
+  }).find(
+    (row) => row.receipt_id !== original.receipt_id && row.after_hash === original.before_hash,
+  );
+  return prior ?? original;
+}
+
 function pageDoc(
   pageId: string,
   page: VaultPage,
-  receipt: CanonReceipt,
+  meta: CanonReceipt,
   at: string,
 ): RetrievalDoc {
   const title = page.data["title"];
+  const subject = subjectOf(page);
   return {
     doc_id: `page:${pageId}`,
     kind: "page",
-    title: typeof title === "string" ? title : receipt.page_path,
+    title: typeof title === "string" ? title : meta.page_path,
     text: page.body,
-    sensitivity: receipt.sensitivity,
-    taint: receipt.taint,
-    authority: receipt.authority,
-    subjects: [],
-    provenance: receipt.provenance,
+    sensitivity: isSensitivity(page.data["sensitivity"]) ? page.data["sensitivity"] : meta.sensitivity,
+    taint: taintOf(page, meta.taint),
+    authority: meta.authority,
+    subjects: subject === null ? [] : [subject],
+    provenance: provenanceOf(page, meta.provenance),
     occurred_at: null,
     updated_at: at,
   };
+}
+
+function recoverArchiveForHash(io: CanonIo, relPath: string, wantHash: string): string | null {
+  const dir = join(io.vault_path, "archive");
+  if (!existsSync(dir)) return null;
+  const stem = basename(relPath, extname(relPath));
+  const prefix = `${stem}.prev-`;
+  let found: string | null = null;
+  for (const name of readdirSync(dir)) {
+    if (!name.startsWith(prefix) || !name.endsWith(".md")) continue;
+    const rel = `archive/${name}`;
+    if (hashFile(join(io.vault_path, rel)) !== wantHash) continue;
+    if (found === null || name > basename(found)) found = rel;
+  }
+  return found;
 }
 
 async function reverseRetrieval(
@@ -97,35 +145,29 @@ async function reverseRetrieval(
   const port = io.retrieval;
   if (port === undefined || original.retrieval_ops.length === 0) return [];
 
-  const added = original.retrieval_ops.filter((op) => op.op === "upsert").map((op) => op.doc);
-  const removed = original.retrieval_ops.filter((op) => op.op === "remove");
-  const reversed: RetrievalOpRef[] = [];
-
-  if (added.length > 0) {
-    await port.remove(added);
-    const proof = await port.verifyAbsent(added);
+  const docs = original.retrieval_ops.map((op) => op.doc);
+  if (restored === null) {
+    await port.remove(docs);
+    const proof = await port.verifyAbsent(docs);
     if (proof.found.length > 0) {
       throw new UndoError(
         "not_undoable",
         `undo: retrieval still holds ${proof.found.length} document(s)`,
       );
     }
-    for (const doc of added) {
-      reversed.push({ store: port.descriptor.id, op: "remove", doc });
-    }
+    return docs.map((doc) => ({ store: port.descriptor.id, op: "remove" as const, doc }));
   }
 
-  if (removed.length > 0 && restored !== null) {
-    const pageId = pageIdOf(restored, pageIndexByPath(io.db, original.page_path)?.page_id ?? null);
-    if (pageId !== null) {
-      await port.upsert([pageDoc(pageId, restored, original, at)]);
-      for (const op of removed) {
-        reversed.push({ store: port.descriptor.id, op: "upsert", doc: op.doc });
-      }
-    }
-  }
+  const pageId = pageIdOf(restored, pageIndexByPath(io.db, original.page_path)?.page_id ?? null);
+  if (pageId === null) return [];
+  await port.upsert([pageDoc(pageId, restored, metaReceiptForRestore(io, original), at)]);
+  return docs.map((doc) => ({ store: port.descriptor.id, op: "upsert" as const, doc }));
+}
 
-  return reversed;
+function earlierTimestamp(left: string | null, right: string | null): string | null {
+  if (left === null || left === "") return right;
+  if (right === null || right === "") return left;
+  return left < right ? left : right;
 }
 
 function restoreClaims(io: CanonIo, original: CanonReceipt, at: string): void {
@@ -135,10 +177,20 @@ function restoreClaims(io: CanonIo, original: CanonReceipt, at: string): void {
       if (claim === null) continue;
       reinstateClaim(io.db, claim.claim_id, claim.valid_to);
     }
-    const winner = original.claim_ids[0];
+    const winnerId = original.claim_ids[0];
+    const writeId = original.reverts;
+    const rows = writeId === null ? [] : supersessionsForReceipt(io.db, writeId);
+    const priorByLoser = new Map(rows.map((row) => [row.loser, row.prior_valid_to]));
+    const winner = winnerId === undefined ? null : getClaim(io.db, winnerId);
     for (const ref of original.superseded) {
-      if (winner === undefined) break;
-      resupersedeClaim(io.db, ref.claim_id, winner, at, at);
+      if (winnerId === undefined) break;
+      resupersedeClaim(
+        io.db,
+        ref.claim_id,
+        winnerId,
+        at,
+        earlierTimestamp(priorByLoser.get(ref.claim_id) ?? null, winner?.valid_from ?? null),
+      );
     }
     return;
   }
@@ -159,11 +211,34 @@ function restoreBytes(
   revertId: string,
   current: string,
 ): { outcome: { archive_path: string | null; after_hash: string }; page: VaultPage | null; action: PageAction } {
+  const undoTarget = original.before_hash ?? ABSENT_PAGE_HASH;
+  if (current === undoTarget && current !== original.after_hash) {
+    const archive = recoverArchiveForHash(io, original.page_path, original.after_hash);
+    if (original.page_action === "create" && original.kind !== "revert") {
+      return {
+        outcome: { archive_path: archive, after_hash: ABSENT_PAGE_HASH },
+        page: null,
+        action: "archive",
+      };
+    }
+    if (original.archive_path === null) {
+      throw new UndoError(
+        "not_undoable",
+        `undo: no archive copy exists; this write is not undoable`,
+      );
+    }
+    return {
+      outcome: { archive_path: archive, after_hash: current },
+      page: loadArchivePage(io, original.archive_path),
+      action: original.after_hash === ABSENT_PAGE_HASH ? "create" : "edit",
+    };
+  }
+
   if (original.page_action === "create" && original.kind !== "revert") {
     const outcome = applyRevertWrite(io, {
       receipt_id: revertId,
       rel_path: original.page_path,
-      expected_hash: current === ABSENT_PAGE_HASH ? null : current,
+      expected_hash: current,
       page: null,
     });
     return { outcome, page: null, action: "archive" };
@@ -209,6 +284,8 @@ function updateIndex(
   });
 }
 
+const reversing = new Set<string>();
+
 /**
  * RFC 0002 §7.2. Restores bytes from the receipt's archive; does not re-run
  * a producer. The revert is itself a receipted write.
@@ -231,6 +308,7 @@ export async function undoReceipt(
 
   const current = currentHash(io, original.page_path);
   const later = laterIds(io, original);
+  const undoTarget = original.before_hash ?? ABSENT_PAGE_HASH;
   if (current !== original.after_hash) {
     if (opts.cascade === true && later.length > 0) {
       for (const id of later) {
@@ -238,12 +316,30 @@ export async function undoReceipt(
       }
       return undoReceipt(io, receiptId, { cascade: false });
     }
-    throw new UndoError(
-      "page_changed",
-      `undo: page changed since receipt ${receiptId}; later receipts: ${later.join(", ")}`,
-    );
+    if (current !== undoTarget) {
+      throw new UndoError(
+        "page_changed",
+        `undo: page changed since receipt ${receiptId}; later receipts: ${later.join(", ")}`,
+      );
+    }
   }
 
+  if (reversing.has(receiptId)) {
+    throw new UndoError("already_reverted", `undo: already reverting ${receiptId}`);
+  }
+  reversing.add(receiptId);
+  try {
+    return await applyUndo(io, original, current);
+  } finally {
+    reversing.delete(receiptId);
+  }
+}
+
+async function applyUndo(
+  io: CanonIo,
+  original: CanonReceipt,
+  current: string,
+): Promise<CanonReceipt> {
   const revertId = mintId(io);
   const at = nowOf(io);
   const restored = restoreBytes(io, original, revertId, current);
