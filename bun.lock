@@ -11,12 +11,14 @@
     },
     "packages/cli": {
       "name": "@kizuki/cli",
+      "version": "0.1.0",
       "bin": {
         "kizuki": "src/main.ts",
       },
       "dependencies": {
         "@kizuki/connectors": "workspace:*",
         "@kizuki/core": "workspace:*",
+        "@kizuki/tui": "workspace:*",
       },
     },
     "packages/connector-screenpipe": {
