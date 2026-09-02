@@ -24,13 +24,25 @@ const MAX_PREDICATE_CHARS = 100;
 const MAX_OBJECT_CHARS = 400;
 const MAX_BODY_CHARS = 1200;
 const MAX_EVENT_IDS = 32;
+const MAX_UNKNOWN_PREDICATES = 16;
+
+/**
+ * A candidate for the registry is an identifier in the shape of RFC 0002
+ * §5.6, never prose. Anything else the model put in `predicate` is dropped
+ * without being retained: only a name that could become a registry entry is
+ * worth carrying back, and provider free text must not travel on a result.
+ */
+const PREDICATE_ID = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/;
 
 /** C0 and C1 controls, newline excepted, plus the delete character. */
 const CONTROL = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g;
 
 export interface ExtractOutcome {
   claims: ClaimDraft[];
-  /** Predicates the model invented, so the registry can grow deliberately. */
+  /**
+   * Identifier-shaped predicates the model named that the registry does not
+   * hold, so the registry can grow deliberately.
+   */
   unknown_predicates: string[];
 }
 
@@ -173,7 +185,9 @@ export function parseExtractResponse(
     const predicate = text(entry, "predicate", MAX_PREDICATE_CHARS, false);
     const eventIds = citations(entry, allowedEventIds);
     if (!allowedPredicates.has(predicate)) {
-      unknown.add(predicate);
+      if (PREDICATE_ID.test(predicate) && unknown.size < MAX_UNKNOWN_PREDICATES) {
+        unknown.add(predicate);
+      }
       continue;
     }
 

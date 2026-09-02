@@ -17,11 +17,11 @@ import type {
   ProduceResult,
   ProducerPort,
   QuotedEvent,
+  RejectReason,
 } from "@kizuki/core";
 import { configError, rejectionOf } from "./errors";
 import { parseExtractResponse } from "./extract";
 import type { ExtractOutcome } from "./extract";
-import { estimateTokens } from "./llm-port";
 import {
   batchEvents,
   buildExtractPrompt,
@@ -52,6 +52,37 @@ const MAX_OBJECT_CHARS = 400;
 const MAX_OUTPUT_TOKENS_PER_CALL = 2_048;
 const CALL_DEADLINE_MS = 60_000;
 const MAX_REASON_CHARS = 200;
+
+/**
+ * A failure the model port raises about itself rather than about an answer.
+ * Reporting one of these as `unavailable` would tell the caller to hold its
+ * checkpoint and try the identical batch again forever, so they leave as the
+ * `PortError` they are.
+ */
+const PERMANENT: ReadonlySet<string> = new Set([
+  "config_invalid",
+  "contract_mismatch",
+  "not_supported",
+  "lease_required",
+  "space_mismatch",
+]);
+
+/** Why a run stopped before it had worked through every batch. */
+type Stop =
+  | { status: "unavailable"; reason: string }
+  | { status: "rejected"; reason: RejectReason };
+
+function stopFor(error: unknown): Stop {
+  const reason = rejectionOf(error);
+  if (reason !== null) return { status: "rejected", reason };
+  if (error instanceof PortError) {
+    if (error.code === "budget_exhausted") {
+      return { status: "rejected", reason: "budget_exhausted" };
+    }
+    if (PERMANENT.has(error.code)) throw error;
+  }
+  return { status: "unavailable", reason: scrubReason(error) };
+}
 
 /**
  * The reason travels into a run receipt, and a replaceable port wrote it.
@@ -220,39 +251,32 @@ export class ModelProducer implements ProducerPort {
     validateInput(input);
 
     const usage: Tally = { calls: 0, input_tokens: 0, output_tokens: 0 };
-    if (input.events.length === 0) {
-      return { status: "ok", claims: [], usage: { ...usage } };
-    }
-
     const predicates = new Set(input.context.predicates);
     const claims: ClaimDraft[] = [];
+    const covered: string[] = [];
     const unknownPredicates = new Set<string>();
+    let stop: Stop | null = null;
 
     for (const batch of batchEvents(input.events)) {
       const prompt = buildExtractPrompt(batch, input.context, quoteNonce());
-      const inputTokens = estimateTokens(
-        prompt.system.length + prompt.user.length,
-      );
+      // No tokenizer emits a token shorter than one character, so the length
+      // of the messages is the one reservation that holds for every endpoint.
+      const reserved = prompt.system.length + prompt.user.length;
       const outputAllowance = Math.min(
         MAX_OUTPUT_TOKENS_PER_CALL,
         input.budget.max_output_tokens - usage.output_tokens,
       );
       if (
-        usage.calls + 1 > input.budget.max_calls ||
-        usage.input_tokens + inputTokens > input.budget.max_input_tokens ||
+        usage.calls >= input.budget.max_calls ||
+        usage.input_tokens + reserved > input.budget.max_input_tokens ||
         outputAllowance < 1
       ) {
-        return {
-          status: "rejected",
-          reason: "budget_exhausted",
-          usage: { ...usage },
-        };
+        stop = { status: "rejected", reason: "budget_exhausted" };
+        break;
       }
 
       let answer: LlmResponse;
       try {
-        usage.calls += 1;
-        usage.input_tokens += inputTokens;
         answer = await this.llm.complete({
           messages: [
             { role: "system", content: prompt.system },
@@ -260,31 +284,33 @@ export class ModelProducer implements ProducerPort {
           ],
           max_output_tokens: outputAllowance,
           deadline_ms: CALL_DEADLINE_MS,
+          // Retries are requests too: the budget counts what goes on the wire.
+          max_attempts: input.budget.max_calls - usage.calls,
         });
       } catch (error) {
-        const reason = rejectionOf(error);
-        if (reason !== null) {
-          return { status: "rejected", reason, usage: { ...usage } };
-        }
-        // A model that did not answer is not a model that answered nothing:
-        // the caller must leave its checkpoint where it was.
-        return { status: "unavailable", reason: scrubReason(error) };
+        // A call the endpoint never answered still reached it at least once.
+        usage.calls += 1;
+        stop = stopFor(error);
+        break;
       }
 
-      // Never under-charge: the estimate paid for the gate above, and an
-      // endpoint that counted more than we did is charged the difference.
-      usage.input_tokens += Math.max(
-        0,
-        answer.usage.input_tokens - inputTokens,
-      );
-      usage.output_tokens += answer.usage.output_tokens;
+      // Never under-charge: what the endpoint says it counted wins over what
+      // this port reserved, and a run that overran its budget stops here.
+      usage.calls += Math.max(1, answer.attempts);
+      usage.input_tokens += Math.max(0, answer.usage.input_tokens);
+      usage.output_tokens += Math.max(0, answer.usage.output_tokens);
+      if (
+        usage.calls > input.budget.max_calls ||
+        usage.input_tokens > input.budget.max_input_tokens ||
+        usage.output_tokens > input.budget.max_output_tokens
+      ) {
+        stop = { status: "rejected", reason: "budget_exhausted" };
+        break;
+      }
 
       if (leaksFence(answer.text, prompt.nonce)) {
-        return {
-          status: "rejected",
-          reason: "fence_leak",
-          usage: { ...usage },
-        };
+        stop = { status: "rejected", reason: "fence_leak" };
+        break;
       }
 
       let outcome: ExtractOutcome;
@@ -295,26 +321,50 @@ export class ModelProducer implements ProducerPort {
           predicates,
         );
       } catch (error) {
-        const reason = rejectionOf(error);
-        if (reason !== null) {
-          return { status: "rejected", reason, usage: { ...usage } };
-        }
-        throw error;
+        stop = stopFor(error);
+        break;
       }
       for (const predicate of outcome.unknown_predicates) {
         unknownPredicates.add(predicate);
       }
       claims.push(...outcome.claims);
+      covered.push(...prompt.event_ids);
     }
 
+    // A rejection is scoped to one call (RFC 0002 §4.2). Batches that already
+    // answered are handed back with the events they cover, so the caller
+    // advances exactly that far and re-reads the rest on its next pass.
+    if (stop !== null && covered.length === 0) {
+      return stop.status === "unavailable"
+        ? { status: "unavailable", reason: stop.reason }
+        : { status: "rejected", reason: stop.reason, usage: { ...usage } };
+    }
+    if (stop !== null) {
+      this.context.logger({
+        level: "warn",
+        message: "the run stopped before the last batch",
+        detail: {
+          status: stop.status,
+          covered_events: covered.length,
+          ...(stop.status === "rejected" ? { reason: stop.reason } : {}),
+        },
+      });
+    }
     if (unknownPredicates.size > 0) {
+      // The names themselves came out of the model; only the count is logged.
       this.context.logger({
         level: "warn",
         message: "dropped claims naming predicates outside the registry",
-        detail: { predicates: [...unknownPredicates].sort() },
+        detail: { count: unknownPredicates.size },
       });
     }
-    return { status: "ok", claims, usage: { ...usage } };
+    return {
+      status: "ok",
+      claims,
+      usage: { ...usage },
+      covered_event_ids: covered,
+      dropped_predicates: [...unknownPredicates].sort(),
+    };
   }
 }
 

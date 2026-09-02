@@ -3,7 +3,7 @@ import type { SubjectRef } from "./event";
 import type { Port } from "./ports";
 
 export const PRODUCER_CONTRACT = "kizuki.producer/v1" as const;
-export const PRODUCER_CONTRACT_MINOR = 0;
+export const PRODUCER_CONTRACT_MINOR = 1;
 export const PRODUCER_CAPABILITIES = ["deterministic", "model"] as const;
 export type ProducerCapability =
   (typeof PRODUCER_CAPABILITIES)[number];
@@ -88,6 +88,19 @@ export type ProduceResult =
       status: "ok";
       claims: ClaimDraft[];
       usage: ModelUsage;
+      /**
+       * The input events this result accounts for. A run that stopped early —
+       * a spent budget, a refused answer, a model that did not reply — covers
+       * a prefix of the input, and a caller advances its checkpoint over
+       * these events and no further. `contract_minor >= 1`.
+       */
+      covered_event_ids: string[];
+      /**
+       * Registry-shaped predicates a draft named that the registry does not
+       * hold, so the registry can grow deliberately rather than drift
+       * (RFC 0002 §4.2). `contract_minor >= 1`.
+       */
+      dropped_predicates: string[];
     }
   | { status: "unavailable"; reason: string }
   | {

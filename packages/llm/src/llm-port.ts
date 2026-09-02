@@ -143,6 +143,12 @@ export class OpenAiCompatibleLlm implements LlmPort {
       throw new PortError("unavailable", "port is closed", false);
     }
     const messages = this.validate(request);
+    // The caller's allowance never widens this port's own retry bound; it
+    // only narrows it, so a spend budget above cannot be outrun from here.
+    const allowance = Math.min(
+      request.max_attempts ?? Number.MAX_SAFE_INTEGER,
+      1 + this.config.max_retries,
+    );
     // One deadline for the whole call. A retry that cannot finish inside it is
     // not a retry, it is an overrun no scheduler above this port can plan for.
     const deadline = this.clock.now() + request.deadline_ms;
@@ -156,10 +162,11 @@ export class OpenAiCompatibleLlm implements LlmPort {
         : {}),
     };
 
-    let attempt = 0;
+    let used = 0;
     for (;;) {
       if (this.clock.now() >= deadline) throw this.deadlineError();
       const result = await this.send(chat, deadline);
+      used += 1;
       if (result.ok) {
         const answer = readChatAnswer(result.body);
         const inputChars = messages.reduce(
@@ -174,11 +181,12 @@ export class OpenAiCompatibleLlm implements LlmPort {
             output_tokens:
               answer.output_tokens ?? estimateTokens(answer.text.length),
           },
+          attempts: used,
         };
       }
       const retryable =
         "retry_after_ms" in result && RETRY_STATUSES.has(result.status);
-      if (!retryable || attempt >= this.config.max_retries) {
+      if (!retryable || used >= allowance) {
         throw this.transportError(result);
       }
       const wait = Math.min(
@@ -186,7 +194,6 @@ export class OpenAiCompatibleLlm implements LlmPort {
         MAX_RETRY_MS,
       );
       if (this.clock.now() + wait >= deadline) throw this.transportError(result);
-      attempt += 1;
       await this.clock.sleep(wait);
     }
   }
@@ -223,6 +230,12 @@ export class OpenAiCompatibleLlm implements LlmPort {
       request.max_output_tokens > MAX_OUTPUT_TOKENS
     ) {
       configError("llm request max_output_tokens is out of range");
+    }
+    if (
+      request.max_attempts !== undefined &&
+      (!Number.isInteger(request.max_attempts) || request.max_attempts < 1)
+    ) {
+      configError("llm request max_attempts must be a whole number above zero");
     }
     if (
       !Number.isInteger(request.deadline_ms) ||

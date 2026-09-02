@@ -134,6 +134,7 @@ describe("the model port", () => {
       text: '{"claims":[]}',
       model: "m",
       usage: { input_tokens: 11, output_tokens: 7 },
+      attempts: 1,
     });
     expect(llm.attempts).toBe(1);
   });

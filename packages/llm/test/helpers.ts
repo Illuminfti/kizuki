@@ -134,6 +134,11 @@ export interface ScriptedLlm extends LlmPort {
 export function scriptedLlm(
   script: (string | Error)[],
   health: PortHealth = { status: "ready", detail: {} },
+  usage: { input_tokens: number; output_tokens: number; attempts: number } = {
+    input_tokens: 10,
+    output_tokens: 5,
+    attempts: 1,
+  },
 ): ScriptedLlm {
   const calls: LlmRequest[] = [];
   let index = 0;
@@ -152,7 +157,11 @@ export function scriptedLlm(
       return {
         text: next,
         model: "m",
-        usage: { input_tokens: 10, output_tokens: 5 },
+        usage: {
+          input_tokens: usage.input_tokens,
+          output_tokens: usage.output_tokens,
+        },
+        attempts: usage.attempts,
       };
     },
     async health(): Promise<PortHealth> {
