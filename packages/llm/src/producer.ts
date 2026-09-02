@@ -55,11 +55,10 @@ interface Tally {
   output_tokens: number;
 }
 
-function positiveInteger(value: unknown, name: string): number {
-  if (!Number.isInteger(value) || (value as number) < 0) {
+function requireWholeNumber(value: unknown, name: string): void {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
     configError(`producer input ${name} must be a whole number`);
   }
-  return value as number;
 }
 
 function quotedEvent(value: unknown): QuotedEvent {
@@ -106,9 +105,9 @@ function validateInput(input: ProduceInput): void {
 
   const budget = input.budget;
   if (!isPlainObject(budget)) configError("producer input budget is invalid");
-  positiveInteger(budget.max_calls, "budget.max_calls");
-  positiveInteger(budget.max_input_tokens, "budget.max_input_tokens");
-  positiveInteger(budget.max_output_tokens, "budget.max_output_tokens");
+  requireWholeNumber(budget.max_calls, "budget.max_calls");
+  requireWholeNumber(budget.max_input_tokens, "budget.max_input_tokens");
+  requireWholeNumber(budget.max_output_tokens, "budget.max_output_tokens");
 }
 
 /**
@@ -219,6 +218,8 @@ export class ModelProducer implements ProducerPort {
         };
       }
 
+      // Never under-charge: the estimate paid for the gate above, and an
+      // endpoint that counted more than we did is charged the difference.
       usage.input_tokens += Math.max(
         0,
         answer.usage.input_tokens - inputTokens,

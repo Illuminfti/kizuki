@@ -416,9 +416,11 @@ export class OpenAiCompatibleLlm implements LlmPort {
       await this.clock.sleep(Math.max(0, Math.min(wait, RATE_WINDOW_MS)));
       this.prune();
     }
+    // Resolve the credential first: a request that fails closed here never
+    // happened, so it must not consume a slot in the rate window either.
+    const key = await this.apiKey();
     this.window.push(this.clock.now());
     this.physicalAttempts += 1;
-    const key = await this.apiKey();
     return await this.transport(request, {
       url: this.url,
       api_key: key,
