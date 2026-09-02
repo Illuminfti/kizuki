@@ -1,8 +1,9 @@
 # `@kizuki/connectors`
 
 Adapters that turn a source the owner authorized into `kizuki.event/v1`
-evidence. Nothing here writes canon: events land in the append-only ledger and
-become proposals the owner reviews.
+evidence. Nothing here writes canon: events land in the append-only ledger,
+where the receipted writer picks them up. The owner's leverage over what is
+written is correction and undo.
 
 Two kinds of adapter live in this package:
 
@@ -65,8 +66,8 @@ copying it: a file present beside the chat is recorded by name, type and size.
 Known limits:
 
 - System notices, the lines with a timestamp but no sender, are skipped. They
-  have no author, so they would only add noise to the review queue. They are
-  not counted anywhere.
+  have no author and make no claim worth writing, so a capture note for each
+  would be noise rather than evidence. They are not counted anywhere.
 - A message continues onto the following lines until the next timestamped
   line. A continuation line that itself starts with something shaped like a
   timestamp splits the message. Every parser of this format shares that limit.

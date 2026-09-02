@@ -87,8 +87,8 @@ function parseTimestamp(
 /**
  * Splits an export into messages and reports the date order it resolved.
  * System notices — lines with a timestamp but no sender — are dropped: they
- * have no author, so a capture note for each would only add noise to the
- * owner's review queue.
+ * have no author and make no claim worth writing, so a capture note for each
+ * would be noise rather than evidence.
  */
 export function splitWhatsAppMessages(
   text: string,
