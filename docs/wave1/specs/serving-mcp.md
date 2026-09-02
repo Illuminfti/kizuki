@@ -5,6 +5,33 @@
 
 # Lane: serving-mcp — the serving engine and the stdio MCP server
 
+## Decision-log deltas (2026-09-02)
+
+- "`propose` files a claim for the owner's review queue" and any equivalent
+  framing are superseded. Serving exposes two write tools, `propose` and
+  `correct`; `propose` files a claim the receipted writer acts on
+  autonomously, and `correct` is the human path (D14, D9;
+  RFC 0002 §6.1). There is no queue behind either tool.
+- The envelope comment `canon: CanonChunk[]; // owner-reviewed prose` is
+  superseded. Canon prose is loop-written and receipted; the split that
+  matters is canon versus quoted capture, with `taint` on every chunk and
+  instructions inside captured text never executed (RFC 0002 §2.1
+  invariant 12, §10.6).
+- `kind` excluding `purge_review` is superseded by two-phase purge
+  (RFC 0002 §13); there is no `purge_review` kind to exclude.
+- Context packets carry `valid_until` and a `claims_epoch`; a correction
+  bumps the vault's epoch, and a stale packet is answered with
+  `status: "superseded"` plus a fresh packet in the same response
+  (RFC 0002 §6.5). Mid-session invalidation without a call is out of scope
+  (RFC 0002 §17).
+- Sensitivity is auto-assigned and enforced in the store, fail-closed, with
+  no fall-back widening; unlabeled is outside the lattice and is never served
+  to any principal, the owner included (D11, RFC 0002 §8.1, §9.2).
+- Serving reads through `kizuki.retrieval/v1`, not through a concrete engine
+  or another component's storage (D13, D16; RFC 0002 §3.2, §9.2). The MCP
+  surface holds one engine connection for the process lifetime
+  (RFC 0002 §9.7 rule 10).
+
 Packages: `packages/core` (NEW directory `src/serving/`, one additive edit
 to `src/agents/types.ts`, exports in `src/index.ts`, the public-surface
 test) and NEW `packages/mcp`. Read CONVENTIONS.md first, then

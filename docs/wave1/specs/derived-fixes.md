@@ -1,5 +1,27 @@
 # Lane: derived-fixes — confirmed review findings on search, graph, timeline, pages
 
+## Decision-log deltas (2026-09-02)
+
+- §Objective, "Make the deterministic floor (invariant 5) correct and
+  rebuild-equivalent (invariant 2)". Invariant 5 is replaced
+  (RFC 0002 §2.1). The model-free floor is capture, dedup, the ledger,
+  lexical search, timeline, context packets, audit and undo; canon writing
+  requires a configured model (D12). Everything this lane fixes is inside the
+  surviving floor, so the work stands — the invariant it cites does not.
+- The `staging/promote.ts` call site is leftover implementation superseded by
+  the receipted writer in `packages/core/src/canon/` (D9, RFC 0002 §4.5).
+  Fix it where it is; do not extend promotion, and do not add a second canon
+  write path.
+- `purge_review` proposals and canon holds are superseded by two-phase purge
+  with `purge_ops`, `verifyAbsent` and `kizuki purge --verify`
+  (RFC 0002 §13, §2.1 invariant 14).
+- Search, graph and timeline become implementations behind
+  `kizuki.retrieval/v1`, whose store may live under
+  `<vault>/.kizuki/retrieval/` and must be rebuildable from ledger plus canon
+  with one command (D13, D16; RFC 0002 §9.2, §9.6). Ceiling enforcement stays
+  in the store and fails closed, with no fall-back widening
+  (RFC 0002 §9.2); unlabeled stays outside the lattice.
+
 Package: `packages/core` only — `src/search/`, `src/graph/`, `src/query/`,
 `src/vault/pages.ts`, `src/vault/doctor.ts`, `src/derived.ts`,
 `src/ledger/purge.ts`, one call-site line in `src/staging/promote.ts` (it

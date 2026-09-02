@@ -2,6 +2,53 @@
 
 # Lane: llm-producer — optional OpenAI-compatible staging producer (summary, entities, claims)
 
+## Decision-log deltas (2026-09-02)
+
+VOID as written per `docs/CURRENT.md`; RFC 0002 §18 lanes replace this spec.
+Two lanes carry the work: `llm-port` (`@kizuki/llm`, transport, tri-state,
+tool-call rejection, network allowlist) against `kizuki.llm/v1`, and
+`producer-model` (model producer, fenced prompts, schema validation,
+predicate enforcement) against `kizuki.producer/v1` (RFC 0002 §3.7, §18.4).
+
+Superseded sentences, and the semantics an implementer must follow instead:
+
+- §Objective, "files `kizuki.proposal/v1` drafts stamped `producer: "llm"`
+  for the owner's review queue". There is no owner review queue and there
+  never will be one (D10). The producer emits `kizuki.claim/v1` claims; the
+  receipted writer turns them into canon autonomously, inside a per-run and
+  per-day write budget, with every write reversible by receipt (D9,
+  RFC 0002 §4.3–§4.5).
+- §Objective, "Invariant 5 says the LLM is strictly additive". Invariant 5 is
+  replaced (RFC 0002 §2.1). Capture, ledger, search, timeline, context, audit
+  and undo run with no model. Canon writing requires a configured model, and
+  `kizuki doctor` reports `canon writing: off (no model configured)` when
+  there is none (D12).
+- §Decision, "Enrichment is a separate, owner-invoked pass (`kizuki enrich`),
+  never a side effect of `import`/`backfill`/`sync`". Extraction is a stage of
+  the loop that the installed daemon runs on a schedule (D15, RFC 0002 §4.2,
+  §11.2). There is no owner-invoked enrichment pass and no verb named
+  `enrich` in the accepted verb set.
+- The `packages/tui` note that "LLM drafts are never batch-promotable", and
+  every other reference to promotion or batch eligibility. The TUI has no
+  accept, reject or batch path; it is audit and undo only (D10,
+  RFC 0002 §7.3).
+- Every composition against `staging/proposals.ts` rejection suppression.
+  That table is dropped in migration v3 and replaced by owner correction,
+  which is scoped, supersedable, reversible and positive (D14,
+  RFC 0002 §18.2).
+- The model is configured as a port, not as a package-private client:
+  `[ports.llm]` in `<vault>/.kizuki/config.toml`, selected through the
+  registry, health-reported by `doctor` (D16, RFC 0002 §3.4, §12.1).
+
+What survives: the package boundary (`@kizuki/llm`, zero runtime
+dependencies, core cannot import it, asserted by a test); plain `fetch` with
+no provider SDK and a single allowlisted egress file; the
+`base_url` + `model` + `secret_ref` configuration shape (C6); budgets;
+confidence caps that keep a model below connector evidence and far below
+owner correction (RFC 0002 §5.1); the fenced-input injection tests; and the
+tri-state return in which "unavailable" is not "nothing found" and never
+advances a checkpoint (RFC 0002 §1.1 E11).
+
 Packages: NEW `packages/llm` (`@kizuki/llm`, zero runtime dependencies,
 depends on `@kizuki/core` only); `scripts/verify-network.ts` plus NEW
 `scripts/network-allowlist.txt`; one existence-guarded statement in

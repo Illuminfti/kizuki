@@ -4,6 +4,22 @@
 
 # Lane: importers-exports — WhatsApp chat export, Pocket CSV, Omnivore export folder as three `auth_modes: ["none"]` importers
 
+## Decision-log deltas (2026-09-02)
+
+- "it has no author and would only add a capture note per notice to the
+  review queue" is superseded. There is no review queue (D10). The reason to
+  skip a system notice is that it carries no author and no claim worth
+  writing; the cost it avoids is canon write budget and index volume, not a
+  person's attention (D9, RFC 0002 §4.3).
+- Importers emit evidence into the append-only ledger. Extraction, claims and
+  the receipted writer sit downstream and run on the daemon's schedule
+  (D9, D15; RFC 0002 §4).
+- Every importer manifest must declare `default_sensitivity` and
+  `sensitivity_floor`; a `sensitivity_hint` is honored only upward, and
+  unknown resolves to `private` (D11, RFC 0002 §8.2).
+- An export importer is never described as live sync, and its honest limits
+  stay in public documentation. That rule is unchanged.
+
 Reconciled against `main` @ `76930db` (2026-09-02; `bun test` = 515 pass /
 41 files; bun 1.3.14 locally, CI pins 1.3.10). Every path, symbol, table and
 flag below was grepped on that revision; anything not on main is marked NEW

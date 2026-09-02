@@ -5,6 +5,27 @@
 
 # Lane: cli-wave2 — serving verbs, agent verbs, `mcp`, and the interactive sign-in path on the CLI
 
+## Decision-log deltas (2026-09-02)
+
+- Every wiring of `review`, `promote` and `reject` as the owner path is
+  superseded (D9, D10). Do not add them to a help list presented as the
+  product's daily surface, and do not add a verb that files anything for a
+  person to approve. The accepted verbs are `audit`, `tell`, `undo`,
+  `context`, `timeline`, `rebuild`, `models` and `serve` (RFC 0002 §2.5).
+- `indexPromotedPage(...)` and the "after `ownerPromote` returns" hook are
+  superseded by retrieval refresh on the receipted writer's own write path,
+  behind `kizuki.retrieval/v1` (D13, RFC 0002 §4.6, §9.2). Do not index by
+  reaching into another component's storage (D16, RFC 0002 §3.2 rule 1).
+- "the TUI promotes in-process" is superseded: the TUI's only effect is
+  `undo` (D10, RFC 0002 §7.3).
+- The frozen-contract list "`kizuki.event/v1`, `kizuki.proposal/v1`" is
+  narrowed: `kizuki.event/v1` stays frozen; `kizuki.proposal/v1` becomes
+  `kizuki.claim/v1` under migration v3 (RFC 0002 §18.1).
+- The MCP surface exposes two write tools, `propose` and `correct` (D14).
+- `kizuki init` installs `kizuki serve` as a user service; the CLI must still
+  run with the daemon down and declare `degraded` rather than failing
+  (D15, RFC 0002 §2.1).
+
 Package: `packages/cli` (plus `README.md`) and two small additive seams in
 `packages/core` named in §1.3 and §1.4. Read CONVENTIONS.md first, then
 `AGENTS.md`, `packages/cli/AGENTS.md`, `.agents/skills/cli-terminal-ux/SKILL.md`,

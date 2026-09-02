@@ -4,6 +4,33 @@
 
 # Lane: cli-verbs — Wave 1 verb set, config, command modules, opaque connections
 
+## Decision-log deltas (2026-09-02)
+
+This lane shipped; the deltas below govern anything that reads it as a
+statement of the product's write path.
+
+- "§5 (review and promotion)" in the read-first list, and every use of
+  `review`, `promote` and `reject` as the owner path, are superseded.
+  `review` / `promote` / `reject` are leftover implemented verbs, retained as
+  a transitional state a named lane removes; they are not the product gate
+  (D9, D10). There is no owner review queue and no owner approval step.
+- `ownerPromote` and `PromotionReceipt` are superseded by the receipted
+  writer and `CanonReceipt` in `packages/core/src/canon/`, with
+  `promotions` renamed to `canon_receipts` and archive copies making every
+  write undoable (RFC 0002 §18.1 v4, §4.5). A pre-RFC promotion receipt
+  migrates with `writer='import'` and is not undoable; `kizuki undo` must say
+  so precisely.
+- `runReview({ db, vaultPath, batch? }) → { promoted, rejected }` is
+  superseded. The TUI has no accept, reject or batch path; its only effect is
+  `undo` (D10, RFC 0002 §7.3).
+- "search is the deterministic floor for `query`" holds for search but must
+  not be generalized: the model-free floor is capture, ledger, search,
+  timeline, context, audit and undo, and canon writing requires a configured
+  model (D12).
+- The accepted verb list drops `review`, `promote` and `reject` and adds
+  `audit`, `tell`, `undo`, `context`, `timeline`, `rebuild`, `models` and
+  `serve` (RFC 0002 §2.5). `kizuki init` installs the daemon (D15).
+
 Package: `packages/cli` (plus `packages/cli/package.json` and the README
 "Status" section). Read CONVENTIONS.md first, then `packages/cli/AGENTS.md`,
 `docs/architecture.md` (invariants; "Sign-in, not setup"), workspace plan

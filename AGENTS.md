@@ -292,6 +292,13 @@ A merge recommendation requires two explicit review axes on the exact head:
    concurrency, partial failure, migration, malformed input, and integration
    with existing callers?
 
+Fail any change that reintroduces a superseded policy, in code, tests,
+documentation, specs, skills or pull-request text: owner-invoked promotion or
+an owner review queue or approval step (`docs/decision-log.md` D9, D10), owner
+labeling of sensitivity (D11), a zero-model floor that writes canon (D12), a
+SQLite-only rule for derived retrieval (D13), an owner-started daemon (D15),
+or the review gate as the product's moat (C8).
+
 Report findings before summaries. Use severity, file and line, concrete failure,
 and a reproducible example. Do not approve because CI is green, and do not
 reuse approval after the head moves.
@@ -339,6 +346,8 @@ Open the matching canonical playbook before performing the task:
 
 Use the smallest set that covers the task. `orient-repository` comes first for
 all non-trivial work; `handoff-work` comes last when work continues elsewhere.
+Every skill is subordinate to `docs/CURRENT.md`, `docs/decision-log.md` and
+`rfcs/0002-autonomous-canon.md`; see `.agents/skills/README.md`.
 
 ## Definition of done
 
