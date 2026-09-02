@@ -158,11 +158,21 @@ function isErrno(error: unknown, code: string): boolean {
  * `O_NONBLOCK` keeps a pipe planted in an export folder from hanging the
  * import before its file type is even known.
  */
-export async function readBoundedUtf8(
+export interface BoundedFile {
+  text: string;
+  /**
+   * What the file cost to read, before a BOM was dropped and CRLF collapsed.
+   * A budget spent across several files must charge the bytes that left the
+   * disk, or a CRLF export would buy twice the bound it declares.
+   */
+  byte_size: number;
+}
+
+export async function readBoundedUtf8File(
   path: string,
   connectorId: string,
   maxBytes = MAX_EXPORT_BYTES,
-): Promise<string> {
+): Promise<BoundedFile> {
   let handle: FileHandle;
   try {
     handle = await open(
@@ -203,7 +213,18 @@ export async function readBoundedUtf8(
     );
   }
   const withoutBom = text.startsWith("\uFEFF") ? text.slice(1) : text;
-  return withoutBom.replace(/\r\n?/g, "\n");
+  return {
+    text: withoutBom.replace(/\r\n?/g, "\n"),
+    byte_size: bytes.byteLength,
+  };
+}
+
+export async function readBoundedUtf8(
+  path: string,
+  connectorId: string,
+  maxBytes = MAX_EXPORT_BYTES,
+): Promise<string> {
+  return (await readBoundedUtf8File(path, connectorId, maxBytes)).text;
 }
 
 /** Enough for any header line an export could honestly carry. */

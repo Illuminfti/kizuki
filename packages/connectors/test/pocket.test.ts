@@ -217,6 +217,27 @@ test("the byte and row budgets are spent across the whole export", async () => {
   });
 });
 
+test("the export budget is charged the bytes read, not the bytes kept", async () => {
+  await withTempRoot(async (root) => {
+    const first = path.join(root, "part_000000.csv");
+    const second = path.join(root, "part_000001.csv");
+    const body = (name: string, at: string): string =>
+      `${HEADER}\r\n${name},https://example.com/${name},${at},,unread\r\n`;
+    const raw = Buffer.byteLength(body("alpha", "1767225600"), "utf8");
+    await writeFile(first, body("alpha", "1767225600"));
+    await writeFile(second, body("omega", "1767312000"));
+
+    // A budget one byte short of both files must not stretch to cover them
+    // because normalizing CRLF made the kept text smaller than the file.
+    const error = await rejected(() =>
+      readPocketRows([first, second], { maxBytes: raw * 2 - 1 }),
+    );
+    expect(error.code).toBe("misconfigured");
+    expect(error.message).toContain("import limit");
+    expect((await readPocketRows([first, second], { maxBytes: raw * 2 })).length).toBe(2);
+  });
+});
+
 test("a zip path is refused with an actionable message", async () => {
   await withTempRoot(async (root) => {
     const zip = path.join(root, "pocket.zip");

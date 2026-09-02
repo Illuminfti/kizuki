@@ -12,6 +12,7 @@ import {
   isoToRfc3339,
   parseJsonArray,
   readBoundedUtf8,
+  readBoundedUtf8File,
   statRegularFile,
 } from "../util";
 
@@ -254,13 +255,13 @@ export async function fsOmnivoreFiles(
   // maximal metadata files spend it once per file.
   let bytesLeft = maxBytes;
   for (const name of names) {
-    const text = await readBoundedUtf8(
+    const file = await readBoundedUtf8File(
       join(dir, name),
       OMNIVORE_IMPORT_CONNECTOR_ID,
       bytesLeft,
     );
-    bytesLeft -= Buffer.byteLength(text, "utf8");
-    metadata.push({ name, text });
+    bytesLeft -= file.byte_size;
+    metadata.push({ name, text: file.text });
   }
   return {
     metadata,

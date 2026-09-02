@@ -262,6 +262,24 @@ test("the byte budget is spent across the whole export, not per file", async () 
   });
 });
 
+test("the export budget is charged the bytes read, not the bytes kept", async () => {
+  await withTempRoot(async (root) => {
+    const pretty = (id: string): string =>
+      JSON.stringify([{ id, slug: id, savedAt: "2026-01-01T09:00:00Z" }], null, 2)
+        .replace(/\n/g, "\r\n");
+    await writeExport(root, {
+      "metadata_0_to_9.json": pretty("one"),
+      "metadata_10_to_19.json": pretty("two"),
+    });
+    const raw = Buffer.byteLength(pretty("one"), "utf8");
+
+    const error = await rejected(() => fsOmnivoreFiles(root, raw * 2 - 1));
+    expect(error.code).toBe("misconfigured");
+    expect(error.message).toContain("import limit");
+    expect((await fsOmnivoreFiles(root, raw * 2)).metadata.length).toBe(2);
+  });
+});
+
 test("a slug that is not a bare name reaches no file at all", async () => {
   await withTempRoot(async (root) => {
     const canary = "canary-quartz-heron";

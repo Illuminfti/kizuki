@@ -7,6 +7,7 @@ import {
   isoToRfc3339,
   mediaTypeFor,
   readBoundedUtf8,
+  readBoundedUtf8File,
   readFirstLine,
   requireKnownKeys,
   safeFilename,
@@ -205,4 +206,18 @@ test("mediaTypeFor declares a type from the extension alone", () => {
   expect(mediaTypeFor("card.vcf")).toBe("text/vcard");
   expect(mediaTypeFor("notes")).toBe("application/octet-stream");
   expect(mediaTypeFor("archive.tar.zst")).toBe("application/octet-stream");
+});
+
+test("a bounded read reports the bytes it cost, not the bytes it kept", async () => {
+  await withTempRoot(async (root) => {
+    const file = path.join(root, "crlf.csv");
+    const raw = "\ufeffa,b\r\nc,d\r\n";
+    await writeFile(file, raw);
+    const read = await readBoundedUtf8File(file, "kizuki.test");
+    expect(read.text).toBe("a,b\nc,d\n");
+    expect(read.byte_size).toBe(Buffer.byteLength(raw, "utf8"));
+    expect(read.byte_size).toBeGreaterThan(
+      Buffer.byteLength(read.text, "utf8"),
+    );
+  });
 });

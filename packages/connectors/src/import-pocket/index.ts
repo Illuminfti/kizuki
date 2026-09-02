@@ -17,7 +17,7 @@ import {
   MAX_RECORDS,
   compareStrings,
   errorMessage,
-  readBoundedUtf8,
+  readBoundedUtf8File,
   readFirstLine,
   requireKnownKeys,
   requirePathConfig,
@@ -219,16 +219,16 @@ export async function readPocketRows(
   const maxRows = limits.maxRows ?? MAX_RECORDS;
   const rows: PocketRow[] = [];
   for (const source of sources) {
-    const text = await readBoundedUtf8(
+    const file = await readBoundedUtf8File(
       source,
       POCKET_IMPORT_CONNECTOR_ID,
       bytesLeft,
     );
-    bytesLeft -= Buffer.byteLength(text, "utf8");
+    bytesLeft -= file.byte_size;
     // The header counts as a row to the reader, so one file may hold every
     // record the export is allowed plus its own header line.
     rows.push(
-      ...parsePocketCsv(text, basename(source), { maxRows: maxRows + 1 }),
+      ...parsePocketCsv(file.text, basename(source), { maxRows: maxRows + 1 }),
     );
     if (rows.length > maxRows) {
       throw new KizukiError(
