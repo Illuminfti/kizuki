@@ -36,8 +36,8 @@ when nothing more is readable: a run of frames without text is walked out inside
 the call rather than ending it, so the event count is the whole drain signal.
 `sync` then continues from the same checkpoint.
 
-The `connect`, `backfill`, and `sync` verbs are wired by the CLI lanes; until
-they merge, the connector is reachable through `@kizuki/connectors` via
+`connect`, `backfill`, and `sync` are wired to this connector today. A host that
+drives the loop itself reaches it through `@kizuki/connectors` via
 `getConnector("kizuki.screenpipe", { path })`.
 
 screenpipe can keep recording throughout. It runs the database in WAL mode
