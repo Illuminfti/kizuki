@@ -4,6 +4,7 @@ import type {
   SubjectRef,
 } from "@kizuki/core";
 import {
+  mappedValue,
   parseLegacyTimestamp,
   sanitizeLine,
   subjectId,
@@ -81,7 +82,7 @@ function rowKind(
   if ("const" in mapping.kind) return mapping.kind.const;
   const raw = scalarText(values[mapping.kind.column]);
   if (raw === null) return mapping.kind.default;
-  return mapping.kind.values[raw] ?? mapping.kind.default;
+  return mappedValue(mapping.kind.values, raw) ?? mapping.kind.default;
 }
 
 function rowText(
@@ -156,7 +157,7 @@ function rowHint(
     return mapping.sensitivity_hint.const;
   const raw = scalarText(values[mapping.sensitivity_hint.column]);
   if (raw === null) return null;
-  return mapping.sensitivity_hint.values[raw] ?? null;
+  return mappedValue(mapping.sensitivity_hint.values, raw) ?? null;
 }
 
 function isDeleted(

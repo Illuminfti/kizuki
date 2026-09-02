@@ -6,7 +6,7 @@ import {
 } from "@kizuki/core";
 import type { PageSensitivity, PageType, SubjectRole } from "@kizuki/core";
 import { KizukiError } from "../errors";
-import { TIMESTAMP_FORMATS } from "../legacy/coerce";
+import { TIMESTAMP_FORMATS, vocabularyMap } from "../legacy/coerce";
 import type { TimestampFormat } from "../legacy/coerce";
 
 export const LEGACY_WIKI_CONNECTOR_ID = "kizuki.import-legacy-wiki" as const;
@@ -127,7 +127,7 @@ function parseType(raw: unknown): LegacyWikiMapping["type"] {
     "values",
     "default",
   ]);
-  const values: Record<string, PageType | null> = {};
+  const values = vocabularyMap<PageType | null>();
   for (const [legacy, mapped] of Object.entries(
     stringMap(source["values"], "mapping.type.values"),
   )) {
@@ -148,7 +148,7 @@ function parseSensitivity(raw: unknown): LegacyWikiMapping["sensitivity"] {
     "field",
     "values",
   ]);
-  const values: Record<string, PageSensitivity> = {};
+  const values = vocabularyMap<PageSensitivity>();
   for (const [legacy, mapped] of Object.entries(
     stringMap(source["values"], "mapping.sensitivity.values"),
   )) {
@@ -202,7 +202,7 @@ function parseFields(
   raw: unknown,
   consumed: Map<string, string>,
 ): Record<string, string | null> {
-  const fields: Record<string, string | null> = {};
+  const fields = vocabularyMap<string | null>();
   const taken = new Set<string>();
   for (const [legacy, mapped] of Object.entries(
     stringMap(raw, "mapping.fields"),

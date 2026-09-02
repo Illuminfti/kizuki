@@ -1,7 +1,7 @@
 import { PAGE_SENSITIVITIES, SUBJECT_ROLES, isPlainObject } from "@kizuki/core";
 import type { PageSensitivity, SubjectRole } from "@kizuki/core";
 import { KizukiError } from "../errors";
-import { TIMESTAMP_FORMATS } from "../legacy/coerce";
+import { TIMESTAMP_FORMATS, vocabularyMap } from "../legacy/coerce";
 import type { TimestampFormat } from "../legacy/coerce";
 
 export const LEGACY_EVENTS_CONNECTOR_ID =
@@ -117,7 +117,7 @@ function parseKind(raw: unknown): KindRule {
     return { const: kindName(raw["const"], "mapping.kind.const") };
   }
   objectAt(raw, "mapping.kind", ["column", "values", "default"]);
-  const values: Record<string, string> = {};
+  const values = vocabularyMap<string>();
   const rawValues = raw["values"];
   if (rawValues !== undefined) {
     if (!isPlainObject(rawValues))
@@ -217,7 +217,7 @@ function parseSensitivity(raw: unknown): SensitivityRule | null {
     };
   }
   objectAt(raw, "mapping.sensitivity_hint", ["column", "values"]);
-  const values: Record<string, PageSensitivity> = {};
+  const values = vocabularyMap<PageSensitivity>();
   const rawValues = raw["values"];
   if (rawValues !== undefined) {
     if (!isPlainObject(rawValues)) {

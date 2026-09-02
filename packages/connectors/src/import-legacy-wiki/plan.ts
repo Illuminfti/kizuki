@@ -5,7 +5,11 @@ import {
 } from "@kizuki/core";
 import type { CaptureEventInput, PageSensitivity, PageType } from "@kizuki/core";
 import type { FrontmatterValue } from "@kizuki/core/staging";
-import { parseLegacyTimestamp, sanitizeLine } from "../legacy/coerce";
+import {
+  mappedValue,
+  parseLegacyTimestamp,
+  sanitizeLine,
+} from "../legacy/coerce";
 import {
   MAX_EXTENSIONS,
   jsonSafeFrontmatter,
@@ -93,7 +97,7 @@ function planPage(
     "unlabeled";
   if (legacySensitivity !== null) {
     label =
-      mapping.sensitivity.values[legacySensitivity] ??
+      mappedValue(mapping.sensitivity.values, legacySensitivity) ??
       ((IDENTITY_SENSITIVITIES as readonly string[]).includes(legacySensitivity)
         ? (legacySensitivity as PageSensitivity)
         : null);

@@ -7,7 +7,11 @@ import {
   fixtureMappingHash,
   fixtureRows,
 } from "../src/import-legacy-events/fixture";
-import { LEGACY_EVENTS_CONNECTOR_ID } from "../src/import-legacy-events/mapping";
+import {
+  LEGACY_EVENTS_CONNECTOR_ID,
+  LEGACY_EVENTS_MAPPING_SCHEMA,
+  parseLegacyEventsMapping,
+} from "../src/import-legacy-events/mapping";
 import type { LegacyEventsMapping } from "../src/import-legacy-events/mapping";
 import { MAX_TEXT_LENGTH, rowToEvent } from "../src/import-legacy-events/rows";
 import type { RowSkip } from "../src/import-legacy-events/rows";
@@ -290,5 +294,68 @@ describe("bounds and shapes", () => {
         mapping,
       ).skipped,
     ).toEqual([{ position: 3, reason: "observed_at_invalid" }]);
+  });
+});
+
+describe("a source value named after an Object member", () => {
+  const MEMBERS = [
+    "toString",
+    "valueOf",
+    "constructor",
+    "hasOwnProperty",
+    "__proto__",
+  ];
+
+  test("never reaches a kind through the prototype chain", () => {
+    for (const member of MEMBERS) {
+      const result = rowToEvent(
+        {
+          position: 1,
+          values: { id: "r1", type: member, ts: 1_700_000_000, body: "hi" },
+        },
+        LEGACY_EVENTS_FIXTURE.mapping,
+        OPTIONS,
+      );
+      expect(result).toEqual({
+        skipped: { position: 1, reason: "kind_unmapped" },
+      });
+    }
+  });
+
+  test("never reaches a sensitivity hint through the prototype chain", () => {
+    for (const member of MEMBERS) {
+      const event = one({
+        id: "r1",
+        type: "msg",
+        ts: 1_700_000_000,
+        body: "hi",
+        visibility: member,
+      });
+      expect(event.sensitivity_hint).toBeUndefined();
+      expect(validateEventInput(event).ok).toBe(true);
+    }
+  });
+
+  test("a mapping file that really maps __proto__ still applies it", () => {
+    // JSON.parse, not a literal: a literal would set the prototype instead.
+    const mapping = parseLegacyEventsMapping(
+      JSON.parse(`{
+        "schema": "${LEGACY_EVENTS_MAPPING_SCHEMA}",
+        "source_record_id": { "column": "id" },
+        "kind": { "column": "type", "values": { "__proto__": "note" }, "default": null },
+        "occurred_at": { "column": "ts", "format": "unix_seconds" },
+        "text": { "column": "body" }
+      }`) as unknown,
+      "jsonl",
+    );
+    const result = rowToEvent(
+      {
+        position: 1,
+        values: { id: "r1", type: "__proto__", ts: 1_700_000_000, body: "hi" },
+      },
+      mapping,
+      OPTIONS,
+    );
+    expect("event" in result && result.event.kind).toBe("note");
   });
 });

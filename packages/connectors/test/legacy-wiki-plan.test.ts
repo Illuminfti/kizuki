@@ -488,3 +488,64 @@ describe("the report keeps page prose out", () => {
     }
   });
 });
+
+describe("a legacy value named after an Object member", () => {
+  const MEMBERS = [
+    "toString",
+    "valueOf",
+    "constructor",
+    "hasOwnProperty",
+    "__proto__",
+  ];
+
+  function pageWith(value: string): ScanResult {
+    return {
+      files: [
+        {
+          relpath: "a.md",
+          content: `---\ntitle: A\ntype: ${value}\nvisibility: ${value}\n---\nbody\n`,
+          mtimeMs: 1,
+          size: 20,
+        },
+      ],
+      skipped: [],
+      truncated: false,
+    };
+  }
+
+  test("is never mapped through the prototype chain", () => {
+    for (const member of MEMBERS) {
+      const { events, report } = plan(pageWith(member));
+      const entry = page(report, "a.md");
+      expect(entry.sensitivity).toEqual({
+        legacy: member,
+        label: null,
+        decision: "unmapped_value",
+      });
+      expect(entry.type.mapped).toBe("topic");
+      expect(entry.type.decision).toBe("unmapped_value");
+      expect(events[0]?.sensitivity_hint).toBeUndefined();
+      expect(validateEventInput(events[0] as CaptureEventInput).ok).toBe(true);
+    }
+  });
+
+  test("counts the page as unlabeled, not as labeled", () => {
+    const { report } = plan(pageWith("toString"));
+    expect(report.counts.labeled).toBe(0);
+    expect(report.counts.unmapped_sensitivity).toBe(1);
+  });
+
+  test("a mapping file that really maps __proto__ still applies it", () => {
+    // JSON.parse, not a literal: a literal would set the prototype instead.
+    const mapping = parseLegacyWikiMapping(
+      JSON.parse(`{
+        "schema": "kizuki.legacy-wiki-mapping/v1",
+        "type": { "values": { "__proto__": "person" }, "default": "topic" },
+        "sensitivity": { "field": "visibility", "values": { "__proto__": "private" } }
+      }`) as unknown,
+    );
+    const { events, report } = plan(pageWith("__proto__"), mapping);
+    expect(page(report, "a.md").type.mapped).toBe("person");
+    expect(events[0]?.sensitivity_hint).toBe("private");
+  });
+});

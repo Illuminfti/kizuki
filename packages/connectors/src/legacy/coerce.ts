@@ -24,6 +24,26 @@ export function sanitizeLine(value: string, max: number): string {
   return [...collapsed].slice(0, max).join("");
 }
 
+/**
+ * A vocabulary map with no prototype behind it. Legacy values are attacker
+ * controlled, so a map built from JSON must not answer `toString` with a
+ * function, and a mapping file that really does hold a `__proto__` key must
+ * store it rather than silently rewriting the map's own prototype.
+ */
+export function vocabularyMap<T>(): Record<string, T> {
+  return Object.create(null) as Record<string, T>;
+}
+
+/** The mapped value for a source value, or undefined when nothing maps it. */
+export function mappedValue<T>(
+  values: Record<string, T>,
+  key: string,
+): T | undefined {
+  return Object.prototype.hasOwnProperty.call(values, key)
+    ? values[key]
+    : undefined;
+}
+
 /** A path segment `targetProblem` accepts, for any input at all. */
 export function slug(value: string, max = 64): string {
   const flattened = value
