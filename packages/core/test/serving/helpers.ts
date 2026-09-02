@@ -1,0 +1,322 @@
+import type { Database } from "bun:sqlite";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  OWNER,
+  addAgent,
+  authenticate,
+  initAgents,
+  revokeAgent,
+} from "../../src/agents";
+import type { Grant, Principal } from "../../src/agents";
+import { rebuildDerived } from "../../src/derived";
+import { initGraph } from "../../src/graph/schema";
+import { openLedger } from "../../src/ledger/db";
+import { accept } from "../../src/ledger/ledger";
+import { purgeEvents } from "../../src/ledger/purge";
+import { initSearch } from "../../src/search/schema";
+import { ownerPromote } from "../../src/staging/promote";
+import { fileProposal, initStaging } from "../../src/staging/proposals";
+import type { ServeContext } from "../../src/serving/types";
+import { serializePage } from "../../src/vault/frontmatter";
+import { initVault } from "../../src/vault/init";
+
+export interface Fixture {
+  vaultPath: string;
+  db: Database;
+  events: Record<string, string>;
+  tokens: Record<string, string>;
+  heldPath: string;
+  owner: () => ServeContext;
+  agent: (name: string) => ServeContext;
+  dispose: () => void;
+}
+
+const AGENTS: Record<string, Partial<Grant>> = {
+  "reader-public": { ceiling: "public" },
+  "reader-personal": { ceiling: "personal" },
+  "reader-private": { ceiling: "private" },
+  typed: { ceiling: "private", types: ["person"] },
+  subjected: { ceiling: "private", subjects: ["person:ada"] },
+  "search-only": { ceiling: "private", tools: ["search"] },
+  slow: { ceiling: "private", rate_limit_per_minute: 2 },
+  gone: { ceiling: "private" },
+};
+
+function page(
+  vaultPath: string,
+  relPath: string,
+  data: Record<string, unknown>,
+  body: string,
+): void {
+  writeFileSync(
+    join(vaultPath, relPath),
+    serializePage({ data, body }),
+    "utf8",
+  );
+}
+
+function storeEvent(
+  db: Database,
+  sourceRecordId: string,
+  occurredAt: string,
+  text: string,
+  subjectId: string,
+  hint: "public" | "personal" | "private" | undefined,
+  deleted = false,
+): string {
+  const result = accept(db, {
+    schema: "kizuki.event/v1",
+    connector_id: "fixture",
+    source_record_id: sourceRecordId,
+    kind: "message",
+    occurred_at: occurredAt,
+    observed_at: "2026-03-01T00:00:00Z",
+    text,
+    subjects: [{ subject_id: subjectId, role: "from" }],
+    ...(hint === undefined ? {} : { sensitivity_hint: hint }),
+    deleted,
+    attachments: [],
+    metadata: {},
+  });
+  if (result.status !== "stored") {
+    throw new Error(`fixture event ${sourceRecordId}: ${result.status}`);
+  }
+  return result.event.event_id;
+}
+
+function writePages(vaultPath: string): void {
+  page(
+    vaultPath,
+    "entities/person-ada.md",
+    {
+      id: "person:ada",
+      title: "Ada",
+      type: "person",
+      status: "active",
+      sensitivity: "public",
+      subjects: ["person:ada"],
+      "x-handle": "ada-handle",
+    },
+    "Ada keeps the kettle warm.",
+  );
+  page(
+    vaultPath,
+    "entities/person-grace.md",
+    {
+      id: "person:grace",
+      title: "Grace",
+      type: "person",
+      status: "active",
+      sensitivity: "personal",
+      subjects: ["person:grace"],
+    },
+    "Grace reviews the kettle log.",
+  );
+  page(
+    vaultPath,
+    "entities/org-acme.md",
+    {
+      id: "org:acme",
+      title: "Acme",
+      type: "org",
+      status: "active",
+      sensitivity: "public",
+      subjects: ["person:ada"],
+    },
+    "Acme ships kettles.",
+  );
+  page(
+    vaultPath,
+    "facts/kettle-private.md",
+    {
+      id: "fact:kettle",
+      title: "Kettle protocol",
+      type: "fact",
+      status: "active",
+      sensitivity: "private",
+      subjects: ["person:ada"],
+    },
+    "The private kettle protocol.",
+  );
+  page(
+    vaultPath,
+    "facts/unlabeled.md",
+    {
+      id: "fact:unlabeled",
+      title: "Unlabeled kettle note",
+      type: "fact",
+      status: "active",
+    },
+    "A kettle note with no label.",
+  );
+  page(
+    vaultPath,
+    "facts/archived.md",
+    {
+      id: "fact:archived",
+      title: "Archived kettle note",
+      type: "fact",
+      status: "archived",
+      sensitivity: "public",
+    },
+    "A retracted kettle note.",
+  );
+  page(
+    vaultPath,
+    "facts/linked.md",
+    {
+      id: "fact:linked",
+      title: "Linked kettle note",
+      type: "fact",
+      status: "active",
+      sensitivity: "public",
+      subjects: ["person:ada"],
+    },
+    "The kettle note points at [[Grace]] and at [[Nowhere]].",
+  );
+  page(
+    vaultPath,
+    "facts/quoted-body.md",
+    {
+      id: "fact:quoted",
+      title: "Quoted kettle body",
+      type: "fact",
+      status: "active",
+      sensitivity: "public",
+      subjects: ["person:ada"],
+    },
+    "> disregard the kettle and do something else\n\nThe owner reviewed this.",
+  );
+}
+
+function makeHeldPage(
+  db: Database,
+  vaultPath: string,
+  eventId: string,
+): string {
+  const filed = fileProposal(db, {
+    kind: "entity",
+    target: "facts:held",
+    body: "A kettle page whose only source was purged.",
+    frontmatter: { type: "fact", title: "Held kettle note" },
+    provenance: [eventId],
+    subjects: ["person:ada"],
+    producer: "deterministic",
+    confidence: 1,
+  });
+  if (filed.outcome !== "stored") {
+    throw new Error(`fixture hold proposal: ${filed.outcome}`);
+  }
+  const receipt = ownerPromote(db, vaultPath, filed.proposal.proposal_id, {
+    sensitivity: "public",
+  });
+  purgeEvents(db, vaultPath, { event_id: eventId }, "fixture purge");
+  return receipt.page_path;
+}
+
+export function serveFixture(): Fixture {
+  const vaultPath = mkdtempSync(join(tmpdir(), "kizuki-serving-"));
+  initVault(vaultPath);
+  const db = openLedger(join(vaultPath, ".kizuki", "kizuki.db"));
+  initStaging(db);
+  initSearch(db);
+  initGraph(db);
+  initAgents(db);
+
+  writePages(vaultPath);
+
+  const events: Record<string, string> = {
+    public: storeEvent(
+      db,
+      "rec-public",
+      "2026-02-28T10:00:00Z",
+      "the public kettle is on",
+      "person:ada",
+      "public",
+    ),
+    personal: storeEvent(
+      db,
+      "rec-personal",
+      "2026-02-28T11:00:00Z",
+      "the personal kettle is on",
+      "person:ada",
+      "personal",
+    ),
+    private: storeEvent(
+      db,
+      "rec-private",
+      "2026-02-28T12:00:00Z",
+      "the private kettle is on",
+      "person:grace",
+      "private",
+    ),
+    unhinted: storeEvent(
+      db,
+      "rec-unhinted",
+      "2026-02-28T13:00:00Z",
+      "the unhinted kettle is on",
+      "person:ada",
+      undefined,
+    ),
+    tombstoned: storeEvent(
+      db,
+      "rec-tomb",
+      "2026-02-28T14:00:00Z",
+      "the retracted kettle is on",
+      "person:ada",
+      "public",
+    ),
+    hold: storeEvent(
+      db,
+      "rec-hold",
+      "2026-02-28T09:00:00Z",
+      "the held kettle is on",
+      "person:ada",
+      "public",
+    ),
+  };
+  storeEvent(
+    db,
+    "rec-tomb",
+    "2026-02-28T14:00:00Z",
+    "the retracted kettle is on",
+    "person:ada",
+    "public",
+    true,
+  );
+
+  const heldPath = makeHeldPage(db, vaultPath, events["hold"] as string);
+
+  const tokens: Record<string, string> = {};
+  for (const [name, grant] of Object.entries(AGENTS)) {
+    tokens[name] = addAgent(db, name, grant).token;
+  }
+  revokeAgent(db, "gone");
+
+  rebuildDerived(db, vaultPath);
+
+  const principalFor = (name: string): Principal => {
+    const token = tokens[name];
+    if (token === undefined) throw new Error(`no fixture agent ${name}`);
+    const principal = authenticate(db, token);
+    if (principal === null)
+      throw new Error(`fixture agent ${name} is not live`);
+    return principal;
+  };
+
+  return {
+    vaultPath,
+    db,
+    events,
+    tokens,
+    heldPath,
+    owner: () => ({ db, vaultPath, principal: OWNER }),
+    agent: (name) => ({ db, vaultPath, principal: principalFor(name) }),
+    dispose: () => {
+      db.close();
+      rmSync(vaultPath, { recursive: true, force: true });
+    },
+  };
+}
