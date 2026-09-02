@@ -1,6 +1,8 @@
 import type { Database } from "bun:sqlite";
 import type { CaptureEvent, SubjectRef } from "../contracts/event";
 import { tableExists } from "../ledger/schema";
+import { validatePageCandidate } from "../contracts/page-candidate";
+import { pageCandidateProposal } from "./page-candidate";
 import { fileProposal } from "./proposals";
 import type { ProposalInput } from "./proposals";
 
@@ -80,8 +82,9 @@ function captureNoteProposal(event: CaptureEvent): ProposalInput {
 }
 
 /**
- * Entity candidates for every distinct subject, plus one source-faithful
- * capture note that quotes the event text. A tombstone produces nothing: it
+ * Entity candidates for every distinct subject, plus either the typed page an
+ * event proposes through its metadata or, failing that, one source-faithful
+ * capture note quoting the event text. A tombstone produces nothing: it
  * withdraws proposals rather than making them.
  */
 export function proposalsForEvent(event: CaptureEvent): ProposalInput[] {
@@ -94,7 +97,15 @@ export function proposalsForEvent(event: CaptureEvent): ProposalInput[] {
     seen.add(subject.subject_id);
     proposals.push(entityProposal(event, subject));
   }
-  proposals.push(captureNoteProposal(event));
+
+  const candidate = validatePageCandidate(event.metadata);
+  if (candidate !== null && candidate.ok) {
+    proposals.push(pageCandidateProposal(event, candidate.value));
+  } else {
+    // Fail closed: metadata that claims to be a page but does not validate
+    // becomes the blockquoted capture note, never a typed page.
+    proposals.push(captureNoteProposal(event));
+  }
   return proposals;
 }
 

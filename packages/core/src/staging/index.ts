@@ -20,6 +20,8 @@ export type {
   StagingStatus,
 } from "./proposals";
 
+export { pageCandidateProposal } from "./page-candidate";
+
 export {
   cascadeTombstone,
   proposalsForEvent,

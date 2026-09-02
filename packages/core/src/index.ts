@@ -18,6 +18,15 @@ export {
   CLAIM_KINDS,
   CLAIM_SCHEMA,
   CLAIM_STATUSES,
+  ENTITY_PAGE_TYPES,
+  PAGE_CANDIDATE_KEY,
+  PAGE_CANDIDATE_SCHEMA,
+  targetProblem,
+  validatePageCandidate,
+} from "./contracts/page-candidate";
+export type { PageCandidate } from "./contracts/page-candidate";
+
+export {
   PROPOSAL_KINDS,
   PROPOSAL_SCHEMA,
   PROPOSAL_STATUSES,
