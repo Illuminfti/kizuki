@@ -113,7 +113,9 @@ disable a bound. A pasted key is refused without being echoed.
   that fails. The calls that already answered come back as `ok` with
   `covered_event_ids`, which names exactly the events this result accounts
   for; a caller advances its checkpoint that far and re-reads the rest on its
-  next pass. `stopped` says why it went no further, or is `null` when it
+  next pass. Every claim on the result cites only covered events: a draft from
+  the first half of a record whose later call never went out is dropped, so no
+  claim rests on evidence the run did not finish sending. `stopped` says why it went no further, or is `null` when it
   worked through everything, so an outage can still be counted and the rail
   still reported degraded. When the first call is the one that failed, nothing
   is covered and the failure is what is returned.

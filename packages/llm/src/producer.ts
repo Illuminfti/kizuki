@@ -287,6 +287,15 @@ export class ModelProducer implements ProducerPort {
         ? { status: "unavailable", reason: stop.reason, usage: { ...usage } }
         : { status: "rejected", reason: stop.reason, usage: { ...usage } };
     }
+    // A record split across calls is cited by a claim from its first call,
+    // and the call that would have carried its last piece may never have gone
+    // out. Such a claim rests on evidence the run never finished sending, and
+    // its record stays uncovered, so the next pass re-reads it and produces
+    // the claim again: it must not reach a writer from here.
+    const coveredIds = new Set(covered);
+    const carried = claims.filter((claim) =>
+      claim.event_ids.every((id) => coveredIds.has(id)),
+    );
     if (stop !== null) {
       this.context.logger({
         level: "warn",
@@ -294,6 +303,7 @@ export class ModelProducer implements ProducerPort {
         detail: {
           status: stop.status,
           covered_events: covered.length,
+          dropped_claims: claims.length - carried.length,
           ...(stop.status === "rejected" ? { reason: stop.reason } : {}),
         },
       });
@@ -315,7 +325,7 @@ export class ModelProducer implements ProducerPort {
     }
     return {
       status: "ok",
-      claims,
+      claims: carried,
       usage: { ...usage },
       covered_event_ids: covered,
       dropped_predicates: [...unknownPredicates].sort(),

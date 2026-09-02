@@ -247,6 +247,27 @@ describe("budgets", () => {
     );
   });
 
+  test("a stopped run returns no claim resting on an unread record", async () => {
+    const events = [
+      event("ev-short", "short"),
+      event("ev-long", "z".repeat(EXTRACT_INPUT_CHARS + 100)),
+    ];
+    const built = producer([
+      claimsPayload({}, ["ev-short"]),
+      claimsPayload({}, ["ev-long"]),
+      new PortError("unavailable", "connection refused", true),
+    ]);
+    const result = ok(await built.port.produce(produceInput(events)));
+    // Regression: a claim from the first half of a split record shipped while
+    // the record stayed uncovered, so a writer could turn evidence the run
+    // never finished sending into canon, and the next pass would re-read the
+    // record and produce the same claim again.
+    expect(result.covered_event_ids).toEqual(["ev-short"]);
+    expect(result.claims.map((claim) => claim.event_ids)).toEqual([
+      ["ev-short"],
+    ]);
+  });
+
   test("a run that worked through every record stopped at nothing", async () => {
     const built = producer(['{"claims":[]}']);
     const result = ok(
