@@ -334,7 +334,7 @@ describe("planLegacyWiki over the fixture wiki", () => {
       imported: 8,
       skipped: 2,
       labeled: 3,
-      unlabeled: 6,
+      unlabeled: 4,
       unmapped_sensitivity: 1,
       type_defaulted: 4,
       type_unmapped: 1,
@@ -342,6 +342,16 @@ describe("planLegacyWiki over the fixture wiki", () => {
       scan_truncated: false,
     });
     expect(report.counts.types).toMatchObject({ person: 2, org: 1, topic: 5 });
+  });
+
+  test("the label counts size the import, not the whole directory", () => {
+    const { counts } = plan().report;
+    // A page the walk skipped and a page the mapping excluded have no label to
+    // decide, so counting them as unlabeled would overstate the job.
+    expect(counts.labeled + counts.unlabeled + counts.unmapped_sensitivity).toBe(
+      counts.imported,
+    );
+    expect(counts.imported + counts.skipped).toBe(counts.files);
   });
 });
 

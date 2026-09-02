@@ -281,14 +281,20 @@ function emptyCounts(): LegacyWikiCounts {
   };
 }
 
+/**
+ * Every count except `files` and `skipped` describes the import. A page the
+ * walk never read has no decisions to report — `skippedPage` fills its row
+ * with placeholders — and counting those placeholders told the owner they had
+ * more pages to label than the import actually produced.
+ */
 function tally(counts: LegacyWikiCounts, page: LegacyWikiPageReport): void {
   counts.files += 1;
   if (page.outcome === "skipped") {
     counts.skipped += 1;
-  } else {
-    counts.imported += 1;
-    if (page.type.mapped !== null) counts.types[page.type.mapped] += 1;
+    return;
   }
+  counts.imported += 1;
+  if (page.type.mapped !== null) counts.types[page.type.mapped] += 1;
   if (page.sensitivity.decision === "labeled") counts.labeled += 1;
   if (page.sensitivity.decision === "unlabeled") counts.unlabeled += 1;
   if (page.sensitivity.decision === "unmapped_value") {
