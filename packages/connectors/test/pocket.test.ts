@@ -241,6 +241,29 @@ test("a directory without a CSV is refused and health says so", async () => {
   });
 });
 
+test("health opens a CSV rather than trusting the extension", async () => {
+  await withTempRoot(async (root) => {
+    const file = path.join(root, "part_000000.csv");
+    const title = "Quartz heron field notes";
+
+    await writeFile(file, `title,tags,status\n${title},b,unread\n`);
+    const foreign = await createPocketImportConnector({ path: root }).health();
+    expect(foreign.state).toBe("misconfigured");
+    expect(foreign.detail).toContain("not a Pocket CSV export");
+    expect(foreign.detail).not.toContain("heron");
+
+    await writeFile(file, Buffer.from([0x41, 0xff, 0x42, 0x0a]));
+    const invalid = await createPocketImportConnector({ path: root }).health();
+    expect(invalid.state).toBe("misconfigured");
+    expect(invalid.detail).toContain("not valid UTF-8");
+
+    await writeFile(file, POCKET_FIXTURE_EXPORT);
+    expect(
+      (await createPocketImportConnector({ path: root }).health()).state,
+    ).toBe("ok");
+  });
+});
+
 test("a malformed config fails construction", () => {
   const construct = (config: unknown): void => {
     createPocketImportConnector(config as PocketImportConfig);

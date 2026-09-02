@@ -7,6 +7,7 @@ import {
   isoToRfc3339,
   mediaTypeFor,
   readBoundedUtf8,
+  readFirstLine,
   requireKnownKeys,
   safeFilename,
   statRegularFile,
@@ -118,6 +119,29 @@ test("readBoundedUtf8 rejects invalid UTF-8 without quoting the bytes", async ()
     const error = await rejected(() => readBoundedUtf8(file, "kizuki.test"));
     expect(error.code).toBe("parse_error");
     expect(error.message).toBe("kizuki.test: export.txt is not valid UTF-8");
+  });
+});
+
+test("readFirstLine reads one line without paying for the file", async () => {
+  await withTempRoot(async (root) => {
+    const file = path.join(root, "part_000000.csv");
+    await writeFile(file, "\ufefftitle,url\r\nrow,two\n");
+    expect(await readFirstLine(file, "kizuki.test")).toBe("title,url");
+
+    await writeFile(file, "no line break here");
+    expect(await readFirstLine(file, "kizuki.test")).toBe("no line break here");
+    const unbroken = await rejected(() =>
+      readFirstLine(file, "kizuki.test", 4),
+    );
+    expect(unbroken.code).toBe("parse_error");
+    expect(unbroken.message).toContain("no line break");
+
+    await symlink(file, path.join(root, "link.csv"));
+    const linked = await rejected(() =>
+      readFirstLine(path.join(root, "link.csv"), "kizuki.test"),
+    );
+    expect(linked.code).toBe("misconfigured");
+    expect(linked.message).toContain("not a regular file");
   });
 });
 

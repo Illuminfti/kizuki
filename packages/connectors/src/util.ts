@@ -206,6 +206,71 @@ export async function readBoundedUtf8(
   return withoutBom.replace(/\r\n?/g, "\n");
 }
 
+/** Enough for any header line an export could honestly carry. */
+export const MAX_HEADER_BYTES = 64 * 1024;
+
+/**
+ * The first line of a file, for a health check that has to prove the file
+ * opens and says what it claims to be without paying for the whole export.
+ */
+export async function readFirstLine(
+  path: string,
+  connectorId: string,
+  windowBytes = MAX_HEADER_BYTES,
+): Promise<string> {
+  let handle: FileHandle;
+  try {
+    handle = await open(
+      path,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+  } catch (error) {
+    if (isErrno(error, "ELOOP")) throw notARegularFile(path, connectorId);
+    throw new KizukiError(
+      "misconfigured",
+      `${connectorId}: cannot read ${path}: ${errorMessage(error)}`,
+      { cause: error },
+    );
+  }
+  let window: Buffer;
+  let complete: boolean;
+  try {
+    const info = await handle.stat();
+    if (!info.isFile()) throw notARegularFile(path, connectorId);
+    const wanted = Math.min(info.size, windowBytes);
+    const buffer = Buffer.alloc(wanted);
+    const { bytesRead } = await handle.read(buffer, 0, wanted, 0);
+    window = buffer.subarray(0, bytesRead);
+    complete = info.size <= windowBytes;
+  } finally {
+    await handle.close();
+  }
+  // A line feed can never be part of a multi-byte sequence, so cutting at one
+  // leaves whole characters; without one the window is only decodable when it
+  // is the entire file.
+  const cut = window.indexOf(0x0a);
+  if (cut === -1 && !complete) {
+    throw new KizukiError(
+      "parse_error",
+      `${connectorId}: ${basename(path)} has no line break in its first ${windowBytes} bytes`,
+    );
+  }
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(
+      cut === -1 ? window : window.subarray(0, cut),
+    );
+  } catch (error) {
+    throw new KizukiError(
+      "parse_error",
+      `${connectorId}: ${basename(path)} is not valid UTF-8`,
+      { cause: error },
+    );
+  }
+  const withoutBom = text.startsWith("\uFEFF") ? text.slice(1) : text;
+  return withoutBom.replace(/\r$/, "");
+}
+
 /**
  * Size of a media file without opening it. Anything that is not a plain file —
  * missing, a symlink, a directory, an unreadable device — is simply absent, so

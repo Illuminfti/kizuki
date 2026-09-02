@@ -18,6 +18,7 @@ import {
   compareStrings,
   errorMessage,
   readBoundedUtf8,
+  readFirstLine,
   requireKnownKeys,
   requirePathConfig,
   unixSecondsToIso,
@@ -98,15 +99,11 @@ function notPocketExport(where: string, cause?: unknown): KizukiError {
   );
 }
 
-export function parsePocketCsv(
-  text: string,
-  where: string,
-  opts: CsvOptions = {},
-): PocketRow[] {
-  const firstLine = text.split("\n", 1)[0] ?? "";
+/** The header line's columns, or a refusal naming the file but never a cell. */
+export function pocketColumns(headerLine: string, where: string): string[] {
   let columns: string[];
   try {
-    columns = (parseCsv(firstLine, where)[0] ?? []).map((name) =>
+    columns = (parseCsv(headerLine, where)[0] ?? []).map((name) =>
       name.trim().toLowerCase(),
     );
   } catch (error) {
@@ -115,6 +112,15 @@ export function parsePocketCsv(
   if (!REQUIRED_COLUMNS.every((name) => columns.includes(name))) {
     throw notPocketExport(where);
   }
+  return columns;
+}
+
+export function parsePocketCsv(
+  text: string,
+  where: string,
+  opts: CsvOptions = {},
+): PocketRow[] {
+  const columns = pocketColumns(text.split("\n", 1)[0] ?? "", where);
 
   const rows = parseCsv(text, where, opts);
   const cellOf = (cells: string[], name: string): string => {
@@ -283,7 +289,15 @@ export class PocketImportConnector implements Connector {
   async health(): Promise<HealthReport> {
     const checked_at = new Date().toISOString();
     try {
-      await resolveSources(this.path);
+      const sources = await resolveSources(this.path);
+      // A path that resolves is not yet an export. The first file is opened
+      // and its header read, so an unreadable file or a CSV that is not a
+      // Pocket export is reported now rather than at ingest.
+      const first = sources[0];
+      if (first !== undefined) {
+        const header = await readFirstLine(first, POCKET_IMPORT_CONNECTOR_ID);
+        pocketColumns(header, basename(first));
+      }
       return new HealthReport({ state: "ok", checked_at });
     } catch (error) {
       return new HealthReport({
