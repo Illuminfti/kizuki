@@ -2,10 +2,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { listAudit } from "../../src/agents";
+import { rebuildDerived } from "../../src/derived";
 import { serveContextPacket } from "../../src/serving/packet";
 import { serveSearch } from "../../src/serving/search";
+import { serveTimeline } from "../../src/serving/timeline";
 import { ServeError } from "../../src/serving/types";
-import { serveFixture } from "./helpers";
+import { page, serveFixture, storeEvent } from "./helpers";
 import type { Fixture } from "./helpers";
 
 let fixture: Fixture | null = null;
@@ -146,7 +148,74 @@ describe("serveContextPacket", () => {
   });
 });
 
-describe("the packet header", () => {
+describe("the packet is scoped by the grant, not by the request", () => {
+  test("a time-scoped agent keeps its in-window records when a wider window is asked for", () => {
+    const live = newFixture();
+    for (let index = 0; index < 25; index += 1) {
+      storeEvent(
+        live.db,
+        `rec-early-${index}`,
+        `2026-02-2${index % 3}T0${index % 8}:00:00Z`,
+        `an early kettle record ${index}`,
+        "person:ada",
+        "public",
+      );
+    }
+    rebuildDerived(live.db, live.vaultPath);
+    const ctx = live.agent("windowed");
+    const args = {
+      since: "2000-01-01T00:00:00Z",
+      until: "2030-01-01T00:00:00Z",
+      budget_tokens: 2_000,
+      include: ["timeline" as const],
+    };
+
+    const packet = serveContextPacket(ctx, args);
+    const direct = serveTimeline(ctx, {
+      since: args.since,
+      until: args.until,
+    });
+
+    expect(direct.quoted.map((chunk) => chunk.occurred_at)).toEqual([
+      "2026-02-28T11:00:00Z",
+      "2026-02-28T12:00:00Z",
+    ]);
+    expect(packet.quoted.map((chunk) => chunk.occurred_at)).toEqual(
+      direct.quoted.map((chunk) => chunk.occurred_at),
+    );
+    expect(packet.data?.sections.timeline).toBe(2);
+  });
+
+  test("a type-scoped agent is not starved by candidates it may not read", () => {
+    const live = newFixture();
+    for (let index = 0; index < 25; index += 1) {
+      page(
+        live.vaultPath,
+        `facts/filler-${index}.md`,
+        {
+          id: `fact:filler-${index}`,
+          title: `Filler kettle note ${index}`,
+          type: "fact",
+          status: "active",
+          sensitivity: "public",
+        },
+        `Filler kettle prose number ${index}.`,
+      );
+    }
+    rebuildDerived(live.db, live.vaultPath);
+    const ctx = live.agent("typed");
+
+    const packet = serveContextPacket(ctx, {
+      query: "kettle",
+      budget_tokens: 2_000,
+      include: ["canon"],
+    });
+
+    expect(packet.canon.length).toBeGreaterThan(0);
+    expect(packet.canon.every((chunk) => chunk.type === "person")).toBe(true);
+    expect(packet.data?.packet_md).toContain("[page:person:ada]");
+  });
+
   test("the rendered header carries the envelope instant", () => {
     // Repeated because a second clock read only strays across a millisecond
     // boundary: one call would agree by luck, a hundred will not.

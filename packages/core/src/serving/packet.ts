@@ -10,6 +10,8 @@ import {
   range,
   rfc3339,
   scopedSubjects,
+  scopedTypes,
+  scopedWindow,
   text,
 } from "./arguments";
 import {
@@ -132,6 +134,22 @@ export function serveContextPacket(
         args.since === undefined ? undefined : rfc3339("since", args.since);
       const requestedUntil =
         args.until === undefined ? undefined : rfc3339("until", args.until);
+      // The default window is a request like any other: it is narrowed by the
+      // grant, never substituted for it, so a time-scoped agent still spends
+      // its candidate budget on rows it is allowed to read.
+      const defaultSince = new Date(
+        Date.parse(at) - DEFAULT_WINDOW_MS,
+      ).toISOString();
+      const scoped = scopedWindow(
+        grant,
+        requestedSince ?? defaultSince,
+        requestedUntil ?? at,
+      );
+      const window = {
+        since: scoped.since ?? defaultSince,
+        until: scoped.until ?? at,
+      };
+      const types = scopedTypes(grant, undefined);
 
       const header = `# kizuki context (principal: ${principalName(ctx.principal)}, at: ${at})\n`;
       const empty = (): Served<ContextPacketData> => ({
@@ -152,11 +170,8 @@ export function serveContextPacket(
           include,
           ...(query === undefined ? {} : { query }),
           ...(subjects === undefined ? {} : { subjects }),
-          since:
-            requestedSince ??
-            grant.since ??
-            new Date(Date.parse(at) - DEFAULT_WINDOW_MS).toISOString(),
-          until: requestedUntil ?? grant.until ?? at,
+          ...(types === undefined ? {} : { types }),
+          ...window,
         });
       } catch {
         // The cause stays inside core; the packet degrades instead of failing.
@@ -204,6 +219,7 @@ interface PieceRequest {
   include: (typeof PACKET_SECTIONS)[number][];
   query?: string;
   subjects?: string[];
+  types?: string[];
   since: string;
   until: string;
 }
@@ -225,6 +241,7 @@ function collectPieces(ctx: ServeContext, request: PieceRequest): Piece[] {
         ...(request.subjects === undefined
           ? {}
           : { subjects: request.subjects }),
+        ...(request.types === undefined ? {} : { types: request.types }),
       };
       for (const hit of search(ctx.db, request.query, opts)) {
         const page = index.byId.get(hit.doc_id);

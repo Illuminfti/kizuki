@@ -52,7 +52,7 @@ const AGENTS: Record<string, Partial<Grant>> = {
   gone: { ceiling: "private" },
 };
 
-function page(
+export function page(
   vaultPath: string,
   relPath: string,
   data: Record<string, unknown>,
@@ -65,7 +65,7 @@ function page(
   );
 }
 
-function storeEvent(
+export function storeEvent(
   db: Database,
   sourceRecordId: string,
   occurredAt: string,
