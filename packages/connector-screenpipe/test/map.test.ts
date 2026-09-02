@@ -122,6 +122,27 @@ describe("screenpipe mapping", () => {
     expect(event.metadata["text_truncated"]).toBe(true);
   });
 
+  test("truncation cuts on a code point boundary", () => {
+    const utf8RoundTrip = (text: string): string =>
+      new TextDecoder().decode(new TextEncoder().encode(text));
+    const screen = mapFrame(
+      frame({ full_text: `${"a".repeat(MAX_TEXT_CHARS - 1)}\u{1f600}tail` }),
+      OBSERVED_AT,
+    );
+    const spoken = mapTranscription(
+      transcription({
+        transcription: `${"b".repeat(MAX_TEXT_CHARS - 1)}\u{1f3a4}tail`,
+      }),
+      OBSERVED_AT,
+    );
+
+    expect(screen.text).toHaveLength(MAX_TEXT_CHARS - 1);
+    expect(utf8RoundTrip(screen.text)).toBe(screen.text);
+    expect(screen.metadata["text_truncated"]).toBe(true);
+    expect(spoken.text).toHaveLength(MAX_TEXT_CHARS - 1);
+    expect(utf8RoundTrip(spoken.text)).toBe(spoken.text);
+  });
+
   test("transcription occurred_at adds start_time", () => {
     const event = mapTranscription(transcription(), OBSERVED_AT);
     expect(event.occurred_at).toBe("2026-01-06T10:00:12.500Z");
