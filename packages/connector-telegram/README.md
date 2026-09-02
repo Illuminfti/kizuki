@@ -98,6 +98,12 @@ the state file and marking the row are the host's part.
 
 ## What it does not do
 
+It cannot yet declare its own sensitivity floor. The connector manifest in
+`@kizuki/core` carries no `default_sensitivity` or `sensitivity_floor` field,
+so the per-event hint is the only label anything downstream can read. Until
+that contract lands, this connector labels everything `private`, which is what
+the policy for a messaging source resolves to anyway.
+
 Deletions are invisible to it. Telegram publishes them on the update stream,
 which this connector does not consume, so the manifest declares
 `tombstones: false` and a message you delete in Telegram stays in your ledger
