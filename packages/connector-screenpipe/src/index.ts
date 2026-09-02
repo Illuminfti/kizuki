@@ -36,6 +36,7 @@ export {
 } from "./fixture";
 export type { SeedOptions } from "./fixture";
 export {
+  hostSlug,
   mapFrame,
   mapTranscription,
   siteHost,

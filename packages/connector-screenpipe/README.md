@@ -139,11 +139,16 @@ kizuki purge --subject screenpipe:audio-device:<slug> --reason "..."
 kizuki purge --connector screenpipe --reason "..."
 ```
 
-A site subject carries its host in the same slug form the app and device
-subjects use, which for an ordinary hostname is the hostname itself. A name
-longer than 64 characters is cut and given a short fingerprint of the whole
-name, so two long names that share a prefix stay separate subjects. Only the
-first 1,024 characters of a name reach its subject ID.
+An app or device subject carries its name reduced to lowercase letters, digits,
+`.`, `_` and `-`. Two kinds of name keep a short fingerprint of the whole name
+so that names reducing the same way stay separate subjects: one longer than 64
+characters, and one that loses a letter or digit to the reduction, such as a
+name written in Chinese, Japanese, Cyrillic, Greek, or Arabic. A name that
+reduces to nothing is that fingerprint alone rather than no subject at all. A
+site subject carries an ordinary hostname verbatim; an address literal, whose
+colons a subject ID cannot carry, is reduced and fingerprinted the same way, so
+two addresses never share a subject. Only the first 1,024 characters of a name
+reach its subject ID.
 
 `purgeSource()` returns matching source record IDs under
 `unreachable_source_record_ids`, capped at 10,000. It is an informational,

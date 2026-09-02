@@ -6,6 +6,7 @@ import {
 import {
   MAX_TEXT_CHARS,
   createScreenpipeConnector,
+  hostSlug,
   mapFrame,
   mapTranscription,
   siteHost,
@@ -72,10 +73,33 @@ describe("screenpipe mapping", () => {
     expect(slug(" ＡＣＭＥ / Mail ")).toBe("acme-mail");
   });
 
-  test("an app_name that slugs to nothing yields no app subject", () => {
+  test("an app_name outside the ASCII subset still gets a subject", () => {
+    const subjects = mapFrame(
+      frame({ app_name: "日本語", browser_url: null }),
+      OBSERVED_AT,
+    ).subjects;
+
+    // Reducing the name to the slug alphabet leaves nothing, so the id is a
+    // fingerprint of the name. Emitting no subject at all would hide every app
+    // named outside the Latin alphabet from the staging floor.
+    expect(subjects).toEqual([
+      {
+        subject_id: "screenpipe:app:x-0nbamha",
+        role: "about",
+        display_name: "日本語",
+      },
+    ]);
+    expect(slug("微信")).not.toBe(slug("メモ帳"));
+    // A name that keeps a letter keeps it, and stays apart from the name it
+    // would otherwise collapse onto.
+    expect(slug("café")).not.toBe(slug("cafe"));
+    expect(slug("café").startsWith("caf-")).toBe(true);
+  });
+
+  test("an app_name with no name in it yields no app subject", () => {
     expect(
       mapFrame(
-        frame({ app_name: "日本語", browser_url: null }),
+        frame({ app_name: "   ", browser_url: null }),
         OBSERVED_AT,
       ).subjects,
     ).toEqual([]);
@@ -118,7 +142,7 @@ describe("screenpipe mapping", () => {
 
     expect(subjects).toEqual([
       {
-        subject_id: "screenpipe:site:2001-db8-1",
+        subject_id: "screenpipe:site:2001-db8-1-1pgckq5",
         role: "about",
         display_name: "[2001:db8::1]",
       },
@@ -126,8 +150,12 @@ describe("screenpipe mapping", () => {
     // Staging derives an entity handle from the segment after the last colon.
     const subjectId = subjects[0]?.subject_id ?? "";
     expect(subjectId.slice(subjectId.lastIndexOf(":") + 1)).toBe(
-      "2001-db8-1",
+      "2001-db8-1-1pgckq5",
     );
+    // Collapsing the structure of an address would put two unrelated hosts on
+    // one subject, and a purge plan for either would list the other's frames.
+    expect(hostSlug("[::1]")).not.toBe(hostSlug("[1::]"));
+    expect(hostSlug("mail.acme.example")).toBe("mail.acme.example");
   });
 
   test("snapshot becomes a jpeg attachment reference with basename only", () => {

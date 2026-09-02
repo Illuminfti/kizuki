@@ -12,25 +12,64 @@ import { normalizeTimestamp, offsetSeconds } from "./time";
 
 const SLUG_CHARS = 64;
 
+/**
+ * Characters that carry a name's identity. Separators and punctuation do not:
+ * two names that differ only in spacing are the same app. A letter, digit or
+ * mark does, so a name the ASCII reduction drops one of needs a fingerprint or
+ * two unrelated names collapse into one subject.
+ */
+const IDENTIFYING = /[\p{L}\p{N}\p{M}]/u;
+
 export function slug(name: string): string {
-  const normalized = name
-    .slice(0, MAX_SUBJECT_CHARS)
-    .normalize("NFKC")
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  if (normalized.length <= SLUG_CHARS) return normalized;
+  const folded = fold(name);
+  const reduced = reduce(folded);
+  // A name written outside the ASCII subset — Chinese, Japanese, Cyrillic,
+  // Greek, Arabic — reduces to separators and would emit no subject at all,
+  // and one written partly outside it would share a subject with every other
+  // name that reduces the same way.
+  if (IDENTIFYING.test(folded.replace(/[a-z0-9._-]+/g, ""))) {
+    return withFingerprint(reduced, folded);
+  }
   // Cutting alone would collapse two long names that share a prefix into one
   // subject id: unrelated sites would become one entity and a purge plan for
   // either would list the other's frames. The fingerprint keeps them apart.
-  const digest = fingerprint(normalized);
-  const head = normalized
-    .slice(0, SLUG_CHARS - digest.length - 1)
-    .replace(/[-._]+$/g, "");
-  return `${head}-${digest}`;
+  return reduced.length <= SLUG_CHARS
+    ? reduced
+    : withFingerprint(reduced, reduced);
 }
 
-/** FNV-1a over the normalized name; a short, stable tail, not a checksum. */
+/**
+ * The segment a site subject id carries. A host is a machine identifier, so any
+ * character the reduction changes is identity: an address literal's colons and
+ * brackets cannot reach a subject id, and slugging alone maps `[::1]` and
+ * `[1::]` onto the same digit. An ordinary hostname passes through unchanged.
+ */
+export function hostSlug(host: string): string {
+  const reduced = reduce(host);
+  return reduced === host && reduced.length <= SLUG_CHARS
+    ? reduced
+    : withFingerprint(reduced, host);
+}
+
+function fold(name: string): string {
+  return name.slice(0, MAX_SUBJECT_CHARS).normalize("NFKC").toLowerCase();
+}
+
+function reduce(folded: string): string {
+  return folded.replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function withFingerprint(head: string, source: string): string {
+  const digest = fingerprint(source);
+  const cut = head
+    .slice(0, SLUG_CHARS - digest.length - 1)
+    .replace(/[-._]+$/g, "");
+  // Nothing of the name survives the reduction, so the fingerprint is the whole
+  // segment and carries a prefix rather than starting on a digit.
+  return cut.length > 0 ? `${cut}-${digest}` : `x-${digest}`;
+}
+
+/** FNV-1a over the folded name; a short, stable tail, not a checksum. */
 function fingerprint(value: string): string {
   let hash = 0x811c9dc5;
   for (let index = 0; index < value.length; index += 1) {
@@ -75,10 +114,10 @@ export function mapFrame(
   if (host !== null) {
     // Staging reads an entity handle from the segment after the last colon, so
     // an address host has to reach the subject id without colons of its own.
-    const hostSlug = slug(host);
-    if (hostSlug.length > 0) {
+    const segment = hostSlug(host);
+    if (segment.length > 0) {
       subjects.push({
-        subject_id: `screenpipe:site:${hostSlug}`,
+        subject_id: `screenpipe:site:${segment}`,
         role: "about",
         display_name: host,
       });

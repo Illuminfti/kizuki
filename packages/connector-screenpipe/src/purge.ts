@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { MAX_PLAN_IDS, MAX_SUBJECT_CHARS, PLAN_PAGE } from "./cursor";
 import { ScreenpipeConnectorError } from "./errors";
-import { siteHost, slug } from "./map";
+import { hostSlug, siteHost, slug } from "./map";
 import { toSafeNumber } from "./read";
 import { normalizeTimestamp } from "./time";
 
@@ -53,7 +53,7 @@ export function planSourceRecords(
       since,
       (value) => {
         const host = siteHost(value);
-        return host !== null && slug(host) === site;
+        return host !== null && hostSlug(host) === site;
       },
     );
   }

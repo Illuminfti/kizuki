@@ -248,8 +248,10 @@ describe("ScreenpipeConnector purge planning", () => {
       fixtureDeps("2026-01-09T00:00:00.000Z"),
     );
 
-    expect(await connector.purgeSource("screenpipe:site:2001-db8-1")).toEqual({
-      subject_id: "screenpipe:site:2001-db8-1",
+    expect(
+      await connector.purgeSource("screenpipe:site:2001-db8-1-1pgckq5"),
+    ).toEqual({
+      subject_id: "screenpipe:site:2001-db8-1-1pgckq5",
       source_record_ids: [],
       unreachable_source_record_ids: ["frame:9"],
     });
