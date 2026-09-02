@@ -175,12 +175,15 @@ export async function walkMailboxes(
         folderEvents,
       );
 
+      // `alreadyEmitted` counts everything that is NOT in `into`: the callee
+      // adds its own array's length. Counting the target array here too would
+      // charge a retried message twice and stop the scan before it started.
       if (mode === "sync" && wasDone && !renumbered) {
         await detectExpunges(
           session,
           plan,
           observedAt,
-          events.length + folderTombstones.length + folderEvents.length,
+          events.length + folderEvents.length,
           folderTombstones,
         );
       } else {
@@ -189,7 +192,7 @@ export async function walkMailboxes(
           plan,
           deps.state.max_message_bytes,
           observedAt,
-          events.length + folderTombstones.length + folderEvents.length,
+          events.length + folderTombstones.length,
           folderEvents,
         );
       }

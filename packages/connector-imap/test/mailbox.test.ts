@@ -254,6 +254,26 @@ describe("sync", () => {
     expect(uidsOf(second.batch.events)).toContain(3);
   });
 
+  test("a page that retries holes still scans the rest of its budget", async () => {
+    const holes = 100;
+    const server = new FakeImapServer([folder("INBOX", 4 * BATCH)]);
+    const walkDeps = deps(server, state(["INBOX"]));
+    for (let uid = 1; uid <= holes; uid += 1) server.withholdBody("INBOX", uid);
+
+    const first = await walkMailboxes(walkDeps, null, "backfill");
+    expect(first.batch.events).toHaveLength(BATCH - holes);
+    const held = decodeCursor(first.batch.cursor ?? "").folders["INBOX"];
+    expect(held?.scan_from).toBe(BATCH + 1);
+
+    for (let uid = 1; uid <= holes; uid += 1) server.restoreBody("INBOX", uid);
+    const second = await walkMailboxes(walkDeps, first.batch.cursor, "sync");
+    // The retried events are charged once, not twice: a walk that retried a
+    // hole used to make no scan progress at all on that call.
+    expect(second.batch.events).toHaveLength(BATCH);
+    const advanced = decodeCursor(second.batch.cursor ?? "").folders["INBOX"];
+    expect(advanced?.scan_from).toBe(BATCH + holes + 1);
+  });
+
   test("a message expunged before its body arrived leaves the retry list", async () => {
     const server = new FakeImapServer([folder("INBOX", 3)]);
     const walkDeps = deps(server, state(["INBOX"]));
