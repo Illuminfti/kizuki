@@ -3,9 +3,19 @@
 You are implementing one lane of Kizuki, a local-first TypeScript/Bun CLI+MCP
 product: "your life, queryable as a CLI and MCP". Read these first, in order:
 
-1. `docs/architecture.md` (the build target; invariants at the top are law)
-2. `rfcs/0000-constraints.md`
-3. The package you are changing: every file under `packages/<pkg>/src` and
+1. `docs/CURRENT.md`, `docs/decision-log.md` and
+   `rfcs/0002-autonomous-canon.md`. They are binding and override every
+   document below, this file and your lane spec wherever they conflict.
+   Never restate or reintroduce a superseded policy: owner-invoked promotion
+   or an owner review queue or approval step (D9, D10; corrections go through
+   MCP `correct` and `kizuki tell`, D14), owner labeling of sensitivity (D11),
+   a zero-model floor that writes canon (D12), a SQLite-only rule for derived
+   retrieval (D13), or an owner-started daemon (D15).
+2. `docs/architecture.md` (the build target; invariants at the top are law,
+   as amended by RFC 0002 §2.1)
+3. `rfcs/0000-constraints.md` (as amended by RFC 0002 §2.3)
+4. Your lane spec's "Decision-log deltas" section, where it has one.
+5. The package you are changing: every file under `packages/<pkg>/src` and
    `packages/<pkg>/test`. Match the existing style exactly (naming, error
    classes, `STRICT` tables, transaction usage, test shape).
 
@@ -21,12 +31,15 @@ product: "your life, queryable as a CLI and MCP". Read these first, in order:
 - **No network calls anywhere** in product code. Nothing may `fetch`,
   open sockets, or read remote URLs. (Invariant 6: zero phone-home.)
 - **Canon is written by the receipted writer** (architecture invariant 3,
-  RFC 0002). Do not add a client, CLI verb, TUI key, or scheduled path that
-  writes `.md` files into the vault outside the single receipted writer.
-  Today that writer is still `packages/core/src/staging/promote.ts` plus
+  RFC 0002 §2.1; `docs/decision-log.md` D9). Do not add a client, CLI verb,
+  TUI key, or scheduled path that writes `.md` files into the vault outside
+  the single receipted writer. A scheduled path writing canon is now the
+  design, not a violation; a second door is the violation. Today that writer
+  is still `packages/core/src/staging/promote.ts` plus
   `packages/core/src/vault/write.ts`. The accepted design moves it to
   `packages/core/src/canon/`. There is no owner review queue and no owner
-  approval step. The invariants test in
+  approval step, and there never will be one (D10); corrections arrive
+  through MCP `correct` and `kizuki tell` (D14). The invariants test in
   `packages/core/test/staging/invariants.test.ts` still scans the public
   write seam; keep it green and do not add a second door.
 - **Fail closed**: missing sensitivity label → not served; unknown agent → no
@@ -34,9 +47,15 @@ product: "your life, queryable as a CLI and MCP". Read these first, in order:
 - **No fake surfaces**: no CLI verb, registry entry, README claim or doc line
   without a working implementation behind it. If you cannot finish a verb,
   do not wire it.
-- **Banned identifiers are the CI denylist in scripts/verify.sh. Never write them, not even in comments or fixtures.
-  comments, tests, fixtures or commit messages. Use neutral fixture names
-  (ada, grace, linus, "acme").
+- **Banned identifiers are the CI denylist in `scripts/verify.sh`.** Never
+  write one, in product code, comments, tests, fixtures, documentation,
+  tracked paths or commit messages: the scan covers every tracked file and
+  every reachable commit message. Use neutral fixture names (ada, grace,
+  linus, "acme"). Name no person and no host. The retrieval engine's product
+  name may appear only in `README.md` and `docs/upstream-policy.md`, with the
+  exact spelling and canonical URL `scripts/verify-attribution.ts` enforces;
+  everywhere else write "the retrieval engine (see
+  `docs/upstream-policy.md`)".
 - Tests use synthetic fixtures only. Never read from paths outside the
   worktree in tests; use `mkdtempSync` temp dirs and clean up.
 - Comments explain WHY, never restate the identifier. No banner comments,

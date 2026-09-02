@@ -16,7 +16,7 @@ waits for both (decision 13).
 
 | Estate asset                                               | Destination              | Mechanism                                                                                                                                                                                                                                                       |
 | ---------------------------------------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| the owner-wiki canon (~2258 pages, `LifeOS/apps/the owner-wiki`) | Kizuki vault             | `kizuki import estate-wiki`: type mapping to the closed enum, unknown fields → `x-*`, per-page sensitivity REQUIRED (the estate's ~40% coverage gap is closed during import via owner review batches in the TUI — unlabeled pages land as proposals, not canon) |
+| the owner-wiki canon (~2258 pages, `LifeOS/apps/the owner-wiki`) | Kizuki vault             | `kizuki import estate-wiki`: type mapping to the closed enum, unknown fields → `x-*`, per-page sensitivity REQUIRED (the estate's ~40% coverage gap is closed during import via owner review batches in the TUI — unlabeled pages land as proposals, not canon). Superseded 2026-09-02, see `docs/decision-log.md` D10, D11: there are no owner review batches and no owner labeling. Sensitivity resolves automatically from the connector default and model refinement, upward only, defaulting to `private`; unlabeled is outside the lattice and is never served |
 | tg-ingest / capture databases                              | Kizuki ledger            | Backfill importers emitting `kizuki.event/v1`; ledger dedupe makes re-runs safe                                                                                                                                                                                 |
 | the attributed fork/retrieval indexes                                   | dropped                  | Derived layers rebuild from vault + ledger (invariant 2)                                                                                                                                                                                                        |
 | lifeos-kernel context packets                              | `kizuki context`         | the personal harness/CC hooks re-point; 450-token bound and fail-closed-to-empty semantics carried                                                                                                                                                                            |
@@ -25,6 +25,9 @@ waits for both (decision 13).
 
 **Proof artifact:** the importer emits a lossy-mapping report — every page,
 every dropped/renamed field, every sensitivity decision — reviewed by the owner
+(Superseded 2026-09-02, see `docs/decision-log.md` D10, D11: the mapping
+report stays, as evidence to read, not as a queue to approve; sensitivity is
+auto-assigned)
 before cutover.
 
 ## The airlock (public-repo protection, carried floor)
@@ -44,6 +47,10 @@ paths; importer development uses synthetic estate-shaped fixtures.
    during final import.
 2. **Import:** wiki + event backfills into a private Kizuki vault; review the
    unlabeled/ambiguous batches in the TUI; lossy-mapping report signed off.
+   Superseded 2026-09-02, see `docs/decision-log.md` D10, D11: there is no
+   batch review step. Import lands evidence, the loop writes canon under
+   receipts, sensitivity is auto-assigned, and anything wrong is corrected
+   with `kizuki tell` and reversed with `kizuki undo`.
 3. **Parallel run (14 days):** Kizuki `serve` rails run alongside estate
    rails. Parity checks: daily brief content, context-packet responses
    (the personal harness asks both, diff logged), receipt liveness, query spot-checks.

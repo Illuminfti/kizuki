@@ -1,8 +1,19 @@
 # RFC 0001 — deep-model review: arbitration
 
-Status: DRAFT (binds only when merged). Owner-gate items below are
-superseded by BINDING RFC 0002. Arbitrates the external deep-model
-review received 2026-09-01 (ten risks, ten proposed deltas, a schema
+Status: DRAFT (binds only when merged). Superseded by BINDING RFC 0002
+wherever the two disagree, and not only on the owner gate: the owner-gate
+items below (`purge_review` promoted by the owner, promotion receipts as an
+owner decision, `canon` as owner-reviewed prose) are dead per
+`docs/decision-log.md` D9 and D10; the "deterministic floor for reduction"
+framing is narrowed by D12, since canon writing now requires a configured
+model; and the constraint "SQLite only" for a future `wm_*` RFC is narrowed
+by D13 and D16, since derived retrieval sits behind a versioned port whose
+implementation may own its own rebuildable store under
+`<vault>/.kizuki/retrieval/`. The ledger, claims, receipts and canon stay
+SQLite plus Markdown. RFC 0002 §14 records what survives of the deferred
+`wm_*` items under autonomy.
+
+Arbitrates the external deep-model review received 2026-09-01 (ten risks, ten proposed deltas, a schema
 skeleton for an evidence-to-world-model layer) against
 docs/architecture.md and RFC 0000. Each item is accepted, adapted, or
 deferred; accepted items name where they now live in the tree.

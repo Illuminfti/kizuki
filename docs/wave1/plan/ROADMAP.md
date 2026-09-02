@@ -28,12 +28,18 @@ Contracts (`kizuki.event/v1`, `kizuki.proposal/v1`), ledger + queue semantics
   connector + ChatGPT/Claude export importers.
   **Exit proof:** scripted e2e in CI — init → import → review → promote → query,
   zero LLM key, on a fresh machine; lessons-as-tests all green.
+  Superseded 2026-09-02, see `docs/decision-log.md` D9, D10, D12: the exit
+  proof drives the loop writing canon under a receipt, then `tell` and `undo`;
+  `review` / `promote` are leftover verbs, not the gate, and the zero-model
+  arm of the proof covers capture, ledger, search, timeline, context, audit
+  and undo, with canon writing reported off when no model is configured.
 
 ## Wave 2 — serving (agents become first-class)
 
 MCP server (stdio) with read tools + `propose`, agent identity/grants/audit,
 FTS query surface, `context` packets, response envelope with provenance
-separation.
+separation. Superseded in part 2026-09-02, see `docs/decision-log.md` D14:
+the write surface is two tools, `propose` and `correct`.
 **Exit proof:** Claude Code and the personal harness both wired to a test vault via MCP;
 grant-ceiling test (private page never served to a `personal`-ceiling agent);
 audit log renders. the owner starts daily-driving a personal vault here.
@@ -52,7 +58,10 @@ audit log renders. the owner starts daily-driving a personal vault here.
 
 `kizuki serve` daemon: scheduler + run receipts, connector sync loops, daily
 brief artifact, Telegram/email/webhook notifiers, doctor staleness reporting,
-standing loopback MCP with per-agent tokens.
+standing loopback MCP with per-agent tokens. Superseded in part 2026-09-02,
+see `docs/decision-log.md` D15: `kizuki init` installs the daemon as an
+always-on user service, and a unit that is absent, disabled or masked is a
+`doctor` failure rather than a neutral state.
 **Exit proof:** 7 consecutive days of receipts on a live vault with zero
 missed rails; brief lands each morning; kill-and-restart resumes cleanly.
 
@@ -63,7 +72,10 @@ reduction / review packets — as merged RFCs only), embeddings option, export
 command, packaging polish (brew tap, install script, compiled targets).
 **Exit proof (first public link):** demo loop recorded end-to-end; a
 non-author on a fresh machine reaches promoted canon + agent query in ≤ 15
-minutes with zero help. This is the earliest any announcement happens.
+minutes with zero help. Superseded in part 2026-09-02, see
+`docs/decision-log.md` D9, D10: "promoted canon" becomes loop-written canon
+with a visible receipt and a working `kizuki undo`; the 15-minute,
+zero-help bar is unchanged. This is the earliest any announcement happens.
 
 ## Wave 6 — estate migration ([MIGRATION.md](MIGRATION.md))
 

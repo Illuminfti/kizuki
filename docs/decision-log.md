@@ -84,7 +84,13 @@ the owner overrides it here.
 ## Text that still carries the old policy (to annotate, never to follow)
 
 `docs/wave1/plan/*` and `docs/wave1/plan/oracle-review.md` are historical
-records under a supersession banner. `docs/CURRENT.md` names the Wave 1
-specs that are void as written. Skills under `.agents/skills` and scoped
-`AGENTS.md` files are being aligned by a follow-up; until then the rules
-above govern.
+records under a supersession banner, with inline notes on the rows and
+headings that state a superseded policy as current. `docs/CURRENT.md` names
+the Wave 1 specs that are void as written; each of those, and every other
+spec that carried a superseded policy, opens with a "Decision-log deltas
+(2026-09-02)" section. Skills under `.agents/skills`, their `.claude/skills`
+adapters, the scoped `AGENTS.md` files, `packages/connector-screenpipe/README.md`,
+`docs/lifeos-capability-gap.md`, `docs/upstream-policy.md` and
+`.maestro/tasks/tasks.jsonl` were aligned on 2026-09-02. Where any of them
+still quotes the old policy, it is quoted under a banner or an inline
+supersession note; the rules above govern regardless.

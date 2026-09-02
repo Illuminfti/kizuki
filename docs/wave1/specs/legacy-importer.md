@@ -2,11 +2,33 @@
 > not the owner gate. Reissue import-to-canon text against
 > `rfcs/0002-autonomous-canon.md`.
 
-> **Superseded owner-gate framing, 2026-09-02.** `kizuki review --batch` is
-> not the owner gate. Reissue import-to-canon text against
-> `rfcs/0002-autonomous-canon.md`.
-
 # Lane: legacy-importer — migrate a previous personal-knowledge estate through mapping files, on synthetic fixtures only
+
+## Decision-log deltas (2026-09-02)
+
+- "`kizuki review --batch` (main's TUI)" as the way an owner labels a group
+  of pages is superseded. There is no owner review queue, no batch
+  acceptance, and no owner labeling of sensitivity (D10, D11). The TUI is
+  audit and undo only (RFC 0002 §7.3).
+- "sensitivity … from `opts.sensitivity` — an owner keystroke" and "a label
+  is a per-page owner decision" are superseded. Sensitivity resolves as
+  `max(connector_floor, connector_default_or_model_label, owner_label)` over
+  `public < personal < private`, with unknown or unparseable resolving to
+  `private` and refinement only ever moving upward (D11, RFC 0002 §8.1).
+  The legacy-wiki mapping supplies the connector default; it does not leave
+  a page unlabeled for a person to decide.
+- "an unlabeled proposal: never served" stays true and is strengthened:
+  anything unlabeled is outside the lattice and is never served to any
+  principal, the owner included, and a claim can no longer be written without
+  a label (RFC 0002 §8.1).
+- The `page-candidate` staging path feeds claims and the receipted writer;
+  import-to-canon is autonomous, budgeted and reversible by receipt (D9,
+  RFC 0002 §4.5).
+- Every reference to "the deterministic floor" staging typed pages is
+  narrowed by D12: the model-free path covers capture, the ledger, search,
+  timeline, context, audit and undo, and it still produces source-faithful
+  page candidates, but canon writing itself requires a configured model and
+  `doctor` reports it as off when there is none.
 
 Packages: `packages/connectors` (two NEW in-tree connectors under
 `src/import-legacy-wiki/` and `src/import-legacy-events/`, one NEW shared
