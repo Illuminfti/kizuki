@@ -10,6 +10,7 @@ import {
   sanitizeLine,
   subjectId,
 } from "../legacy/coerce";
+import { isCredentialName } from "../legacy/credentials";
 import {
   LEGACY_DEFAULT_SENSITIVITY,
   atLegacyFloor,
@@ -210,6 +211,7 @@ const RESERVED_METADATA: ReadonlySet<string> = new Set([
   "text_truncated",
   "__blobs",
   "__truncated",
+  "__credential_columns",
   "__reserved_columns",
   "__source_record_id_hashed",
   // Assigning it by name on a plain object moves the prototype instead of
@@ -222,6 +224,7 @@ interface SourceMetadata {
   columns: Record<string, unknown>;
   blobs: string[];
   truncated: string[];
+  credentials: string[];
   reserved: string[];
 }
 
@@ -235,6 +238,7 @@ function rowMetadata(
   >;
   const blobs: string[] = [];
   const truncated: string[] = [];
+  const credentials: string[] = [];
   const reserved: string[] = [];
   const consumed = consumedColumns(mapping);
   const wanted =
@@ -245,6 +249,12 @@ function rowMetadata(
   for (const column of wanted) {
     if (RESERVED_METADATA.has(column)) {
       if (!reserved.includes(column)) reserved.push(column);
+      continue;
+    }
+    // The ledger is append-only, so a token carried into it cannot be edited
+    // away afterwards. The name is evidence enough that the column was there.
+    if (isCredentialName(column)) {
+      if (!credentials.includes(column)) credentials.push(column);
       continue;
     }
     if (!Object.prototype.hasOwnProperty.call(values, column)) continue;
@@ -265,7 +275,7 @@ function rowMetadata(
     }
     columns[column] = value;
   }
-  return { columns, blobs, truncated, reserved };
+  return { columns, blobs, truncated, credentials, reserved };
 }
 
 export function rowToEvent(
@@ -360,6 +370,9 @@ export function rowToEvent(
         ...(source.blobs.length > 0 ? { __blobs: source.blobs } : {}),
         ...(source.truncated.length > 0
           ? { __truncated: source.truncated }
+          : {}),
+        ...(source.credentials.length > 0
+          ? { __credential_columns: source.credentials }
           : {}),
         ...(source.reserved.length > 0
           ? { __reserved_columns: source.reserved }

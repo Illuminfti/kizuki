@@ -356,6 +356,16 @@ so a defaulted page never looks like a decision the previous system made.
 
 ## Honest limits
 
+- **A credential-shaped field is dropped, not carried.** A frontmatter field
+  or an export column whose *name* reads as a credential — `password`,
+  `api_key`, `access_token`, `client_secret`, `cookie` and the like — never
+  reaches an event, a page, a target or the report. The ledger is append-only:
+  a token copied into it can be purged with a receipt, never edited away. The
+  name survives as the record that the field was there: the wiki report lists
+  it as `dropped` with note `credential`, and an event from the events
+  importer carries the column under `__credential_columns`. The test is the
+  name alone, so a field merely called `api_key` is dropped whether or not it
+  held one.
 - **An in-place edit at the source is invisible.** The events importer pages
   forward through an export; a row rewritten after it was imported is not
   re-read. Re-import from scratch (a fresh source, or a changed mapping) to

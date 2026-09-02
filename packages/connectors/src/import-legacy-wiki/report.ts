@@ -18,6 +18,8 @@ export type FieldOutcome =
 
 export type FieldNote =
   | "array_stringified"
+  /** The field's NAME reads as a credential; the value never left the file. */
+  | "credential"
   | "json_stringified"
   | "truncated"
   | "by_mapping"

@@ -13,6 +13,7 @@ import {
   rfc3339From,
   sanitizeLine,
 } from "../legacy/coerce";
+import { withoutCredentials } from "../legacy/credentials";
 import { atLegacyFloor } from "../legacy/sensitivity";
 import { compareStrings } from "../util";
 import {
@@ -74,7 +75,10 @@ function planPage(
   const pinned = opts.pinned?.[file.relpath];
   const relpath = sanitizeLine(file.relpath, 200);
   const parsed = parseLegacyFrontmatter(file.content);
-  const data = parsed.data;
+  // Before any other decision reads it: a credential-shaped field must not
+  // reach a title, a target, an extension, the report or the ledger, and the
+  // ledger is append-only, so there is no undoing it one layer down.
+  const { data, redacted } = withoutCredentials(parsed.data);
   const notes: string[] = [];
 
   const slots = new Map<string, string>([
@@ -161,6 +165,13 @@ function planPage(
 
   const subjects = planSubjects(data, mapping);
   const fields = planFields(data, mapping, slots);
+  for (const key of redacted) {
+    fields.reports.push({
+      key: sanitizeLine(key, 120),
+      outcome: "dropped",
+      note: "credential",
+    });
+  }
   if (unusableType) {
     fields.reports.push({
       key: sanitizeLine(mapping.type.field, 120),
