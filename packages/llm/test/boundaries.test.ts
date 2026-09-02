@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { PortRegistry } from "@kizuki/core";
+import {
+  LLM_CONTRACT_MINOR,
+  PRODUCER_CONTRACT_MINOR,
+  PortRegistry,
+} from "@kizuki/core";
 import type { LlmPort } from "@kizuki/core";
 import * as llm from "../src/index";
 import {
@@ -55,6 +59,24 @@ describe("the package boundary", () => {
       "readLlmPortConfig",
       "rejectionOf",
     ]);
+  });
+
+  test("each descriptor pins the minor its implementation provides", () => {
+    // Regression: both descriptors re-exported the contract's current minor,
+    // so the next additive field would have inflated them into promising a
+    // feature nothing here implements (RFC 0002 3.3).
+    expect(OPENAI_COMPATIBLE_LLM.contract_minor).toBe(1);
+    expect(MODEL_PRODUCER.contract_minor).toBe(1);
+    expect(OPENAI_COMPATIBLE_LLM.contract_minor).toBeLessThanOrEqual(
+      LLM_CONTRACT_MINOR,
+    );
+    expect(MODEL_PRODUCER.contract_minor).toBeLessThanOrEqual(
+      PRODUCER_CONTRACT_MINOR,
+    );
+    // Both live in a workspace package a distribution can leave out, which is
+    // what this field is for; core cannot construct either one.
+    expect(OPENAI_COMPATIBLE_LLM.optional_package).toBe("@kizuki/llm");
+    expect(MODEL_PRODUCER.optional_package).toBe("@kizuki/llm");
   });
 
   test("the package takes no dependency beyond the core contracts", () => {

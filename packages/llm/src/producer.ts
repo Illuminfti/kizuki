@@ -1,6 +1,5 @@
 import {
   PRODUCER_CONTRACT,
-  PRODUCER_CONTRACT_MINOR,
   PortError,
   validatePortDescriptor,
 } from "@kizuki/core";
@@ -34,11 +33,25 @@ export const MODEL_PRODUCER: PortDescriptor = validatePortDescriptor({
   id: MODEL_PRODUCER_ID,
   kind: "producer",
   contract: PRODUCER_CONTRACT,
-  contract_minor: PRODUCER_CONTRACT_MINOR,
+  // The minor this implementation provides, written out rather than read
+  // from the contract: the next additive field must be a deliberate edit
+  // here, or the descriptor would promise a feature nothing implements.
+  contract_minor: 1,
   supports: ["model"],
-  requires_lease: false,
+  // The implementation lives in a workspace package a distribution can leave
+  // out, and core cannot import it, so a host is told which package to have.
   optional_package: "@kizuki/llm",
+  requires_lease: false,
 });
+
+/**
+ * The minor at which a model port reports what a call put on the wire
+ * (RFC 0002 §3.3). Below it a retried call cannot be told from a single
+ * request, so one is charged and `health` says the rail is degraded.
+ */
+const LLM_ATTEMPTS_MINOR = 1;
+const LLM_LAGS =
+  "the model port reports no attempts, so a retried call is charged as one request";
 
 const MAX_OUTPUT_TOKENS_PER_CALL = 2_048;
 const MAX_DROPPED_PREDICATES = 32;
@@ -128,16 +141,21 @@ export class ModelProducer implements ProducerPort {
       return { status: "unavailable", reason: "port is closed" };
     }
     const upstream = await this.llm.health();
+    const lagging =
+      this.llm.descriptor.contract_minor < LLM_ATTEMPTS_MINOR ? [LLM_LAGS] : [];
     if (upstream.status === "ready") {
-      return {
-        status: "ready",
-        detail: { llm: this.llm.descriptor.id, model_ref: this.llm.model_ref },
+      const detail = {
+        llm: this.llm.descriptor.id,
+        model_ref: this.llm.model_ref,
       };
+      return lagging.length === 0
+        ? { status: "ready", detail }
+        : { status: "degraded", degraded: lagging, detail };
     }
     if (upstream.status === "degraded") {
       return {
         status: "degraded",
-        degraded: upstream.degraded,
+        degraded: [...upstream.degraded, ...lagging],
         detail: { llm: this.llm.descriptor.id },
       };
     }

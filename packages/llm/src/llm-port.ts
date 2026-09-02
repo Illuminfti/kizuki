@@ -1,7 +1,6 @@
 import {
   LLM_CAPABILITIES,
   LLM_CONTRACT,
-  LLM_CONTRACT_MINOR,
   PortError,
   isPlainObject,
   validatePortDescriptor,
@@ -33,10 +32,14 @@ export const OPENAI_COMPATIBLE_LLM: PortDescriptor = validatePortDescriptor({
   id: OPENAI_COMPATIBLE_LLM_ID,
   kind: "llm",
   contract: LLM_CONTRACT,
-  contract_minor: LLM_CONTRACT_MINOR,
+  // The minor this implementation provides, written out rather than read
+  // from the contract, so a later additive field cannot inflate it.
+  contract_minor: 1,
   supports: [...LLM_CAPABILITIES],
-  requires_lease: false,
+  // The implementation lives in a workspace package a distribution can leave
+  // out, and core cannot import it, so a host is told which package to have.
   optional_package: "@kizuki/llm",
+  requires_lease: false,
 });
 
 export interface Clock {

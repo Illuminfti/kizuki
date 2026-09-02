@@ -197,6 +197,7 @@ export type {
   LlmPort,
   LlmRequest,
   LlmResponse,
+  LlmSpend,
   LlmUsage,
 } from "./contracts/llm";
 export {

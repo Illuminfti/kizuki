@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { PortError } from "@kizuki/core";
-import { MODEL_PRODUCER, modelProducer } from "../src/producer";
+import { MODEL_PRODUCER, ModelProducer, modelProducer } from "../src/producer";
 import {
   claimsPayload,
   event,
+  minorZeroLlm,
   modelProducerFor,
   ok,
   portContext,
@@ -128,6 +129,31 @@ describe("input validation", () => {
     await expect(
       built.port.produce(produceInput([event("ev-1", "hi")])),
     ).rejects.toBeInstanceOf(PortError);
+  });
+
+  test("a model port below the minor is used, charged one call, and declared", async () => {
+    const context = portContext(MODEL_PRODUCER);
+    cleanups.push(context.cleanup);
+    const llm = minorZeroLlm(claimsPayload());
+    const port = new ModelProducer(context.ctx, llm);
+    // RFC 0002 §3.3: below the minor that added `attempts` the producer takes
+    // the documented fallback rather than refusing the port or inventing a
+    // count, and says through health that the rail is degraded.
+    expect(await port.health()).toEqual({
+      status: "degraded",
+      degraded: [
+        "the model port reports no attempts, so a retried call is charged as one request",
+      ],
+      detail: {
+        llm: "kizuki.llm.minor-zero",
+        model_ref: "kizuki.llm.minor-zero:m@127.0.0.1",
+      },
+    });
+    const result = ok(
+      await port.produce(produceInput([event("ev-1", "Ada joined acme.")])),
+    );
+    expect(result.claims).toHaveLength(1);
+    expect(result.usage.calls).toBe(1);
   });
 
   test("health follows the model port it was given", async () => {

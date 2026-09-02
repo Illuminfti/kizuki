@@ -92,15 +92,18 @@ export type ProduceResult =
        * The input events this result accounts for. A run that stopped early —
        * a spent budget, a refused answer, a model that did not reply — covers
        * a prefix of the input, and a caller advances its checkpoint over
-       * these events and no further. `contract_minor >= 1`.
+       * these events and no further. Optional because an implementation
+       * written to minor 0 does not report it; a caller that reads it checks
+       * `descriptor.contract_minor >= 1` and otherwise advances over the
+       * whole input it submitted. `contract_minor >= 1`.
        */
-      covered_event_ids: string[];
+      covered_event_ids?: string[];
       /**
        * Registry-shaped predicates a draft named that the registry does not
        * hold, so the registry can grow deliberately rather than drift
-       * (RFC 0002 §4.2). `contract_minor >= 1`.
+       * (RFC 0002 §4.2). Absent below minor 1. `contract_minor >= 1`.
        */
-      dropped_predicates: string[];
+      dropped_predicates?: string[];
     }
   | { status: "unavailable"; reason: string }
   | {

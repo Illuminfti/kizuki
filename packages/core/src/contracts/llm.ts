@@ -30,9 +30,27 @@ export interface LlmRequest {
 export interface LlmResponse {
   readonly text: string;
   readonly model: string;
+  /** What the whole call spent, retries included. */
   readonly usage: LlmUsage;
-  /** Requests this call actually put on the wire. `contract_minor >= 1`. */
+  /**
+   * Requests this call actually put on the wire, retries included. Optional
+   * because an implementation written to minor 0 cannot report it; a caller
+   * that needs it checks `descriptor.contract_minor >= 1` and otherwise
+   * charges one request per call. `contract_minor >= 1`.
+   */
+  readonly attempts?: number;
+}
+
+/**
+ * What a call had already spent when it failed. An implementation that has
+ * put requests on the wire attaches this to the error it throws, so a caller
+ * with a budget charges a failed call for what it really cost rather than for
+ * the one request it can infer. Absent below minor 1. `contract_minor >= 1`.
+ */
+export interface LlmSpend {
   readonly attempts: number;
+  readonly input_tokens: number;
+  readonly output_tokens: number;
 }
 
 export interface LlmPort extends Port {

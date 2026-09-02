@@ -1,7 +1,12 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PortError, predicateIds } from "@kizuki/core";
+import {
+  LLM_CONTRACT,
+  PortError,
+  predicateIds,
+  validatePortDescriptor,
+} from "@kizuki/core";
 import type {
   LlmPort,
   LlmRequest,
@@ -205,4 +210,40 @@ export function ok(
     throw new Error(`expected ok, got ${result.status}`);
   }
   return result;
+}
+
+/** A model port written to `kizuki.llm/v1` before `attempts` existed. */
+export const MINOR_ZERO_LLM: PortDescriptor = validatePortDescriptor({
+  id: "kizuki.llm.minor-zero",
+  kind: "llm",
+  contract: LLM_CONTRACT,
+  contract_minor: 0,
+  supports: ["chat"],
+  requires_lease: false,
+  optional_package: null,
+});
+
+/**
+ * An implementation at minor 0: it answers, and it cannot say how many
+ * requests the answer took, which is what the producer has to fall back from.
+ */
+export function minorZeroLlm(text: string): ScriptedLlm {
+  const calls: LlmRequest[] = [];
+  return {
+    descriptor: MINOR_ZERO_LLM,
+    model_ref: "kizuki.llm.minor-zero:m@127.0.0.1",
+    calls,
+    async complete(request: LlmRequest): Promise<LlmResponse> {
+      calls.push(request);
+      return {
+        text,
+        model: "m",
+        usage: { input_tokens: 10, output_tokens: 5 },
+      };
+    },
+    async health(): Promise<PortHealth> {
+      return { status: "ready", detail: {} };
+    },
+    async close(): Promise<void> {},
+  };
 }
