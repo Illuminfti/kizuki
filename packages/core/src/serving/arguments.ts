@@ -39,9 +39,10 @@ export function text(field: string, value: unknown, max: number): string {
   return value;
 }
 
-export function limit(
+export function range(
   field: string,
   value: unknown,
+  min: number,
   max: number,
   fallback: number,
 ): number {
@@ -49,10 +50,19 @@ export function limit(
   if (typeof value !== "number" || !Number.isInteger(value)) {
     throw refuse(field, "must be an integer");
   }
-  if (value < 1 || value > max) {
-    throw refuse(field, `must be between 1 and ${max}`);
+  if (value < min || value > max) {
+    throw refuse(field, `must be between ${min} and ${max}`);
   }
   return value;
+}
+
+export function limit(
+  field: string,
+  value: unknown,
+  max: number,
+  fallback: number,
+): number {
+  return range(field, value, 1, max, fallback);
 }
 
 export function idList(field: string, value: unknown, max: number): string[] {
