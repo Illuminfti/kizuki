@@ -68,6 +68,43 @@ describe("screenpipe row readers", () => {
     }
   });
 
+  test("an unusable offset or chunk link degrades to a default", () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    // INTEGER affinity keeps a non-numeric string as text, and NOT NULL is
+    // still satisfied, so a corrupt row reaches the reader intact.
+    fixture.writer
+      .query(
+        `INSERT INTO frames
+           (id, video_chunk_id, offset_index, timestamp, app_name, window_name,
+            browser_url, device_name, focused, full_text, text_source,
+            capture_trigger, snapshot_path, document_path)
+         VALUES (1, NULL, 'not an offset', '2026-01-05T09:00:00Z', 'Acme Mail',
+                 NULL, NULL, 'Fixture Display', 1, 'text', 'accessibility',
+                 'fixture', NULL, NULL)`,
+      )
+      .run();
+    fixture.writer
+      .query(
+        `INSERT INTO audio_transcriptions
+           (id, audio_chunk_id, offset_index, timestamp, transcription, device,
+            is_input_device, speaker_id, transcription_engine, start_time, end_time)
+         VALUES (1, 'not a chunk', -3, '2026-01-06T10:00:00Z', 'spoken',
+                 'Fixture Microphone', 1, NULL, 'fixture-engine', 0, 1)`,
+      )
+      .run();
+    fixture.writer.close();
+
+    const db: Database = openReadOnly(fixture.path);
+    try {
+      expect(readFrames(db, 0, 1)[0]?.offset_index).toBe(0);
+      const spoken = readTranscriptions(db, 0, 1)[0];
+      expect(spoken?.audio_chunk_id).toBe(0);
+      expect(spoken?.offset_index).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+
   test("a blob in a text column stays unusable", () => {
     const fixture = createFixtureDatabase({ rows: false });
     fixture.writer

@@ -92,6 +92,39 @@ describe("openReadOnly", () => {
     }
   });
 
+  test("a corrupt offset does not wedge every later batch", async () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    fixture.writer
+      .query(
+        `INSERT INTO frames
+           (id, video_chunk_id, offset_index, timestamp, app_name, window_name,
+            browser_url, device_name, focused, full_text, text_source,
+            capture_trigger, snapshot_path, document_path)
+         VALUES (1, NULL, 'not an offset', '2026-01-05T09:00:00Z', 'Acme Mail',
+                 NULL, NULL, 'Fixture Display', 1, 'first', 'accessibility',
+                 'fixture', NULL, NULL)`,
+      )
+      .run();
+    insertFrame(fixture.writer, {
+      id: 2,
+      timestamp: "2026-01-05T09:01:00Z",
+      fullText: "second",
+    });
+    const connector = new ScreenpipeConnector(
+      { path: fixture.path, settle_seconds: 0 },
+      fixtureDeps("2026-01-09T00:00:00.000Z"),
+    );
+
+    const batch = await connector.backfill(null);
+
+    expect(batch.events.map(({ source_record_id }) => source_record_id)).toEqual([
+      "frame:1",
+      "frame:2",
+    ]);
+    expect(batch.events[0]?.metadata["offset_index"]).toBe(0);
+    await connector.revoke();
+  });
+
   test("a negative source reference becomes no subject, not a failed batch", async () => {
     const fixture = createFixtureDatabase({ rows: false });
     insertTranscription(fixture.writer, {

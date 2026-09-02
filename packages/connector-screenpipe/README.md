@@ -100,6 +100,10 @@ screenpipe schema older than supported: migration 20260613130000 not applied (ma
   long run of frames without text costs extra reads instead of cutting the
   import short. A run longer than the bound ends the call with no events and an
   advanced checkpoint, and the next call resumes behind it.
+- A row whose `offset_index` or `audio_chunk_id` holds something that is not a
+  usable number is read with that field as `0` rather than failing the batch.
+  Those columns position a row inside its capture; the identity columns still
+  fail closed.
 - Restoring or replacing the source database can rewind IDs. The connector does
   not detect that replacement, so build a new source enrollment instead of
   reusing its checkpoint.

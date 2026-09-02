@@ -202,10 +202,7 @@ function mapFrameRow(row: RawFrameRow): FrameRow {
     snapshot_path: nullableText(row.snapshot_path),
     document_path: nullableText(row.document_path),
     video_chunk_id: nullablePositiveId(row.video_chunk_id),
-    offset_index: requiredNonNegativeInteger(
-      row.offset_index,
-      "frames.offset_index",
-    ),
+    offset_index: degradedOffset(row.offset_index),
   };
 }
 
@@ -215,14 +212,8 @@ function mapTranscriptionRow(
   const speakerName = nullableText(row.speaker_name);
   return {
     id: requiredRowId(row.id),
-    audio_chunk_id: requiredPositiveInteger(
-      row.audio_chunk_id,
-      "audio_transcriptions.audio_chunk_id",
-    ),
-    offset_index: requiredNonNegativeInteger(
-      row.offset_index,
-      "audio_transcriptions.offset_index",
-    ),
+    audio_chunk_id: degradedOffset(row.audio_chunk_id),
+    offset_index: degradedOffset(row.offset_index),
     timestamp: requiredText(
       row.timestamp,
       "audio_transcriptions.timestamp",
@@ -308,19 +299,16 @@ function requiredCursorId(value: unknown): number {
   return converted;
 }
 
-function requiredPositiveInteger(value: unknown, column: string): number {
+/**
+ * `offset_index` and `audio_chunk_id` position a row inside its capture; they
+ * are not part of the identity this connector reads by, and the spec's
+ * fail-closed set does not include them. Failing on one would abandon every
+ * batch behind the row for good, so an unusable value reads as 0 and travels
+ * to the event's metadata as such.
+ */
+function degradedOffset(value: unknown): number {
   const converted = toSafeNumber(value);
-  if (converted === null || converted <= 0) invalidColumn(column);
-  return converted;
-}
-
-function requiredNonNegativeInteger(
-  value: unknown,
-  column: string,
-): number {
-  const converted = toSafeNumber(value);
-  if (converted === null || converted < 0) invalidColumn(column);
-  return converted;
+  return converted !== null && converted > 0 ? converted : 0;
 }
 
 // `frames.video_chunk_id` and `audio_transcriptions.speaker_id` are optional
