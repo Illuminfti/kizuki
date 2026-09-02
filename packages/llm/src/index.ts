@@ -26,3 +26,12 @@ export type {
   TransportOptions,
   TransportResult,
 } from "./transport";
+
+export { ChatClient } from "./client";
+export type {
+  ChatClientOptions,
+  ChatOutcome,
+  ChatUsage,
+  ClientCounters,
+  Clock,
+} from "./client";
