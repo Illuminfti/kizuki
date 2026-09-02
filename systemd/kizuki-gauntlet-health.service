@@ -1,0 +1,23 @@
+[Unit]
+Description=Kizuki Gauntlet observer health check
+After=kizuki-gauntlet.service
+
+[Service]
+Type=oneshot
+UMask=0077
+WorkingDirectory=/home/ubuntu/LifeOS/operations/kizuki-gauntlet
+ExecStart=/usr/bin/python3 /home/ubuntu/LifeOS/operations/kizuki-gauntlet/gauntlet.py --config /home/ubuntu/LifeOS/operations/kizuki-gauntlet/config.json --state-dir /home/ubuntu/.local/state/kizuki-gauntlet doctor
+ExecStart=/usr/bin/curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8765/v1/health
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/.local/state/kizuki-gauntlet
+ReadOnlyPaths=/home/ubuntu/LifeOS/operations/kizuki-gauntlet
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
+MemoryDenyWriteExecute=yes

@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+CURL=/usr/bin/curl
+BASE=http://127.0.0.1:8765
+
+"$CURL" --fail --silent --show-error --max-time 5 "$BASE/v1/health"
+printf '\n'
+"$CURL" --fail --silent --show-error --max-time 5 "$BASE/v1/controller"
+printf '\n'
+"$CURL" --fail --silent --show-error --max-time 5 "$BASE/v1/campaign"
+printf '\n'
+"$CURL" --fail --silent --show-error --max-time 15 "$BASE/v1/adapters"
+printf '\n'

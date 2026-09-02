@@ -1,0 +1,10 @@
+[Unit]
+Description=Kizuki Gauntlet observer health check
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+Unit=kizuki-gauntlet-health.service
+
+[Install]
+WantedBy=timers.target

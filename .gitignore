@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+config.json
+.coverage
+htmlcov/
+state/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+events.jsonl

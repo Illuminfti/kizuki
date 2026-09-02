@@ -1,0 +1,11 @@
+{
+  "state_dir": "/home/ubuntu/.local/state/kizuki-gauntlet",
+  "observer": {"host": "127.0.0.1", "port": 8765},
+  "limits": {"min_free_bytes": 37580963840, "max_running": 4, "max_attempts": 3, "max_crashes": 3},
+  "adapters": {
+    "codex": {"path": "/home/ubuntu/.local/bin/codex", "execute_enabled": false, "timeout_seconds": 5},
+    "claude": {"path": "/home/ubuntu/.local/bin/claude", "execute_enabled": false, "timeout_seconds": 5},
+    "cursor": {"path": "/home/ubuntu/.local/bin/cursor-agent", "execute_enabled": false, "timeout_seconds": 5},
+    "grok": {"path": "/home/ubuntu/.grok/bin/grok", "execute_enabled": false, "timeout_seconds": 5}
+  }
+}

@@ -1,0 +1,28 @@
+[Unit]
+Description=Kizuki Gauntlet fail-closed local observer
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ubuntu/LifeOS/operations/kizuki-gauntlet
+UMask=0077
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 /home/ubuntu/LifeOS/operations/kizuki-gauntlet/gauntlet.py --config /home/ubuntu/LifeOS/operations/kizuki-gauntlet/config.json --state-dir /home/ubuntu/.local/state/kizuki-gauntlet serve --port 8765
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/.local/state/kizuki-gauntlet
+ReadOnlyPaths=/home/ubuntu/LifeOS/operations/kizuki-gauntlet
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=default.target
