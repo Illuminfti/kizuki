@@ -32,9 +32,19 @@ serving function and translates the result back. It holds no policy of its own.
 
 The SDK validates arguments against the advertised input schema before the
 handler runs, and returns its own error result when they do not match. That
-rejection never reaches the engine, so it is not audited. The engine
-re-validates everything that does reach it: the advertised bounds are a
-convenience for the client, not the enforcement point.
+rejection never reaches the engine, so it is neither audited nor counted
+toward the rate limit. This is the deliberate trade for advertising real
+bounds in `tools/list`, and it is why every bound here mirrors the engine's
+own rather than sitting below it: the engine re-validates everything that
+does reach it, and the advertised bounds are a convenience for the client,
+not the enforcement point.
+
+## Authority
+
+The context this package builds at startup is a starting point, not a
+capability. The engine re-reads the agent row and its grant on every call, so
+revoking an agent or narrowing its grant takes effect on the next tool call
+of an already connected session. Never cache a grant in this package.
 
 ## Tests
 

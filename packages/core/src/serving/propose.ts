@@ -168,8 +168,8 @@ export function servePropose(
 ): Envelope<ProposeData> {
   return gate(ctx, "propose", auditArguments(args), ({ ctx }): Served<ProposeData> => {
     const principal = ctx.principal;
-    // A proposal has to carry a distinct identity in `producer`: the owner
-    // reviews and promotes, agents propose.
+    // A proposal has to carry a distinct identity in `producer`: agents
+    // propose claims, and the owner speaks as the owner elsewhere.
     if (principal.kind === "owner") {
       throw new ServeError(
         "tool_not_granted",

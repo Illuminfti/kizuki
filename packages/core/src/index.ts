@@ -406,11 +406,7 @@ export type {
 } from "./canon";
 export { writePage } from "./vault/write";
 export type { WritePageOptions } from "./vault/write";
-export {
-  findPageById,
-  listCanonPages,
-  listCanonPagesReport,
-} from "./vault/pages";
+export { findPageById, listCanonPages, listCanonPagesReport } from "./vault/pages";
 export type { CanonPage, CanonPageReport, SkippedPage } from "./vault/pages";
 export { readDerivedMeta } from "./derived-meta";
 export type { DerivedLayer, DerivedMeta } from "./derived-meta";
@@ -446,11 +442,7 @@ export {
   listConnections,
   saveCheckpoint,
 } from "./ledger/connections";
-export type {
-  Checkpoint,
-  Connection,
-  ConnectionConfig,
-} from "./ledger/connections";
+export type { Checkpoint, Connection, ConnectionConfig } from "./ledger/connections";
 export {
   ConnectionStateStore,
   enrollConnection,
