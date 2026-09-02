@@ -51,7 +51,12 @@ attachment refs; `CLASS` as the sensitivity hint (`PUBLIC` → public,
 `CREATED`, `LAST-MODIFIED` and `URL` in metadata.
 
 Every event also gets an `about` subject naming the calendar, taken from
-`X-WR-CALNAME` when the file has one.
+`X-WR-CALNAME` when the file has one, and from the file's base name or the
+URL host when it does not.
+
+A `VEVENT` whose own dates are unreadable is skipped rather than allowed to
+cost the rest of the calendar, and the next `health()` reports `degraded`
+with how many entries were dropped.
 
 ## Times
 
