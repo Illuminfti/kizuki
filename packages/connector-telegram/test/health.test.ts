@@ -1,11 +1,23 @@
 import { expect, test } from "bun:test";
 import { HealthReport } from "@kizuki/core";
 import { MAX_DIALOGS } from "../src/cursor";
+import { TelegramConnector } from "../src/connector";
 import {
+  FIXTURE_CREDENTIALS,
+  FIXTURE_OBSERVED_AT,
+  FIXTURE_SESSION,
   fixtureAccount,
 } from "../src/fixture";
+import { ScriptedTelegramApi } from "../src/scripted";
 import type { TelegramDialog } from "../src/api";
-import { connected, drain, harness, rejection, stateResolver } from "./helpers";
+import {
+  STATE_REF,
+  connected,
+  drain,
+  harness,
+  rejection,
+  stateResolver,
+} from "./helpers";
 
 test("health tracks the connection from unsigned to revoked", async () => {
   const unsigned = harness({ config: {} });
@@ -203,4 +215,36 @@ test("a revoked connector reads nothing further", async () => {
   const report = await built.connector.health();
   expect(report.state).toBe("unauthenticated");
   expect(report.detail).toBe("access was revoked");
+});
+
+/** A client whose teardown faults the way a library one can. */
+class BrittleTeardown extends ScriptedTelegramApi {
+  override async disconnect(): Promise<void> {
+    throw new TypeError("cannot read properties of undefined");
+  }
+}
+
+test("a client that will not close still leaves the connection ended", async () => {
+  const api = new BrittleTeardown(fixtureAccount(), FIXTURE_SESSION);
+  const connector = new TelegramConnector(
+    { state_ref: STATE_REF },
+    {
+      api: () => api,
+      credentials: () => FIXTURE_CREDENTIALS,
+      now: () => Date.parse(FIXTURE_OBSERVED_AT),
+      sleep: async () => {},
+    },
+  );
+  await connector.connect(stateResolver());
+
+  // Telegram accepted the sign-out, so access really did end. Handing the host
+  // the teardown fault instead would have it record a revocation that failed,
+  // and a retry would find the instance still holding the client.
+  await connector.revoke();
+  const report = await connector.health();
+  expect(report.state).toBe("unauthenticated");
+  expect(report.detail).toBe("access was revoked");
+  expect((await rejection(() => connector.backfill(null))).code).toBe(
+    "unauthenticated",
+  );
 });

@@ -87,8 +87,9 @@ so checkpoints survive. Connecting with a session that belongs to a different
 account is refused rather than quietly re-pointed.
 
 Revoking ends the session at Telegram itself, and it is final for the
-connector that did it: the client closes and every later read, sync or
-reconnect on that instance is refused. A connector with nothing live to end
+connector that did it: the client is let go and every later read, sync or
+reconnect on that instance is refused, whether or not the socket closed
+cleanly. A connector with nothing live to end
 refuses to revoke rather than report an access that never stopped. Removing
 the state file and marking the row are the host's part.
 

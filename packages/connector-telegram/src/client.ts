@@ -50,8 +50,10 @@ class RealTelegramApi implements TelegramApi {
   }
 
   async disconnect(): Promise<void> {
-    if (this.#runtime === null) return;
-    await this.#runtime.client.disconnect();
+    const runtime = this.#runtime;
+    // Nothing was ever started, so there is nothing to close.
+    if (runtime === null) return;
+    await this.#guard(() => runtime.client.disconnect(), runtime);
   }
 
   async isAuthorized(): Promise<boolean> {

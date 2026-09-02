@@ -129,7 +129,9 @@ export class TelegramConnector implements Connector {
       await this.#disconnectQuietly(api);
       throw error;
     }
-    await api.disconnect();
+    // The session is written and the account is signed in; a socket that will
+    // not close is no reason to fail a sign-in the host would then discard.
+    await this.#disconnectQuietly(api);
     // The label is printed, so it is sanitised; the same name reaches the
     // ledger through the mapper untouched, where it is evidence.
     const label = terminalSafe(userDisplay(me));
@@ -315,13 +317,15 @@ export class TelegramConnector implements Connector {
         throw error;
       }
     }
-    this.#revoked = true;
-    await api.disconnect();
     // The data path goes with the access: leaving the client in place would
-    // let a later batch keep reading from a connection the owner ended.
+    // let a later batch keep reading from a connection the owner ended, and a
+    // teardown that faults must not leave the instance holding a client it
+    // has already told the host is gone.
+    this.#revoked = true;
     this.#api = null;
     this.#self = null;
     this.#listing = null;
+    await this.#disconnectQuietly(api);
   }
 
   async purgeSource(subject_id: string): Promise<PurgePlan> {

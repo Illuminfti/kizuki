@@ -42,6 +42,8 @@ const pages: {
   signInErrors: unknown[];
   /** What the provider answers `getMe` with. */
   me: unknown;
+  /** Raised by the transport rather than by a request, when set. */
+  transport: { connect: unknown; disconnect: unknown };
 } = {
   dialogs: async function* () {},
   messages: async function* () {},
@@ -50,6 +52,7 @@ const pages: {
   signUpRequired: false,
   signInErrors: [],
   me: { id: { toString: () => "1001" } },
+  transport: { connect: null, disconnect: null },
 };
 
 interface StartParams {
@@ -61,6 +64,16 @@ interface StartParams {
 }
 
 class FakeClient {
+  async connect(): Promise<void> {
+    if (pages.transport.connect !== null) throw pages.transport.connect;
+    pages.invoked.push("connect");
+  }
+
+  async disconnect(): Promise<void> {
+    if (pages.transport.disconnect !== null) throw pages.transport.disconnect;
+    pages.invoked.push("disconnect");
+  }
+
   /**
    * The library's own sign-in loops, transcribed from `client/auth.js`. Every
    * failure raised inside them — waits and transport faults included — is
@@ -472,4 +485,16 @@ test.skipIf(!OFFLINE)("the signed-in account arrives as a plain record", async (
     last_name: "helper",
     bot: true,
   } satisfies TelegramUser);
+});
+
+test.skipIf(!OFFLINE)("a teardown the library faults on stays in this vocabulary", async () => {
+  pages.transport.disconnect = new TypeError("cannot read properties of undefined");
+  const live = api();
+  await live.connect();
+  const caught = await thrown(() => live.disconnect());
+  pages.transport.disconnect = null;
+  // A caller that only handles this package's errors would otherwise meet a
+  // raw library fault on the one path it takes while cleaning up.
+  expect(caught).toBeInstanceOf(TelegramConnectorError);
+  expect((caught as TelegramConnectorError).code).toBe("unreachable");
 });
