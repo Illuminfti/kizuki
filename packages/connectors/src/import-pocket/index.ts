@@ -22,7 +22,6 @@ import {
   requireKnownKeys,
   requirePathConfig,
 } from "../util";
-import type { CsvOptions } from "./csv";
 import { parsePocketCsv, pocketHeaderLine } from "./rows";
 import type { PocketRow } from "./rows";
 

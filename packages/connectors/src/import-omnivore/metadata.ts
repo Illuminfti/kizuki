@@ -1,6 +1,11 @@
 import { isPlainObject } from "@kizuki/core";
 import { KizukiError } from "../errors";
-import { MAX_RECORDS, MAX_RECORD_BYTES, isoToRfc3339, parseJsonArray } from "../util";
+import {
+  MAX_RECORDS,
+  MAX_RECORD_BYTES,
+  isoToRfc3339,
+  parseJsonArray,
+} from "../util";
 
 export interface OmnivoreItem {
   id: string;

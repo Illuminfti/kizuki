@@ -11,7 +11,6 @@ import os from "node:os";
 import path from "node:path";
 import type { CaptureEventInput } from "@kizuki/core";
 import { KizukiError } from "../src/errors";
-import { readBoundedUtf8 } from "../src/read";
 import { FIXTURE_OBSERVED_AT, MAX_RECORD_BYTES } from "../src/util";
 import {
   WHATSAPP_FIXTURE_FILES,
