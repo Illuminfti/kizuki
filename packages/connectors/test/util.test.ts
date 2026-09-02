@@ -12,6 +12,7 @@ import {
 import {
   isoToRfc3339,
   mediaTypeFor,
+  numberRepeats,
   requireKnownKeys,
   safeFilename,
   subjectSlug,
@@ -242,4 +243,35 @@ test("a bounded read reports the bytes it cost, not the bytes it kept", async ()
       Buffer.byteLength(read.text, "utf8"),
     );
   });
+});
+
+test("a repeated id takes the first number the export left free", () => {
+  expect(numberRepeats(["a", "a", "a"])).toEqual(["a", "a#2", "a#3"]);
+  // A record already named `a#2` keeps that name, so the repeat moves past it.
+  expect(numberRepeats(["a", "a#2", "a", "a"])).toEqual([
+    "a",
+    "a#2",
+    "a#3",
+    "a#4",
+  ]);
+});
+
+test("a dense run of numbered ids costs one pass, not one per repeat", () => {
+  // An export that saved one url beside its whole `#n` run, and then saved it
+  // once more per run entry. Resuming the search where the last repeat left
+  // off keeps this linear; restarting it walks the run again per repeat,
+  // which at this size is seconds rather than milliseconds.
+  const run = 8000;
+  const ids = ["u"];
+  for (let n = 2; n <= run; n += 1) ids.push(`u#${n}`);
+  for (let n = 0; n < run; n += 1) ids.push("u");
+
+  const started = performance.now();
+  const numbered = numberRepeats(ids);
+  const elapsed = performance.now() - started;
+
+  expect(numbered).toHaveLength(ids.length);
+  expect(new Set(numbered).size).toBe(ids.length);
+  expect(numbered[run]).toBe(`u#${run + 1}`);
+  expect(elapsed).toBeLessThan(1500);
 });

@@ -183,13 +183,19 @@ export function subjectSlug(name: string): string {
 export function numberRepeats(ids: readonly string[]): string[] {
   const taken = new Set(ids);
   const seen = new Map<string, number>();
+  // Where the next repeat of an id starts looking. Nothing ever leaves
+  // `taken`, so a suffix proven taken stays taken and the search resumes
+  // instead of walking the same run again: an export of one id and its own
+  // numbered run would otherwise cost a pass per repeat.
+  const resume = new Map<string, number>();
   return ids.map((id) => {
     const count = (seen.get(id) ?? 0) + 1;
     seen.set(id, count);
     if (count === 1) return id;
-    let suffix = count;
+    let suffix = Math.max(count, resume.get(id) ?? 0);
     while (taken.has(`${id}#${suffix}`)) suffix += 1;
     const numbered = `${id}#${suffix}`;
+    resume.set(id, suffix + 1);
     taken.add(numbered);
     return numbered;
   });
