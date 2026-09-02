@@ -137,18 +137,19 @@ export async function omnivoreEvents(
     );
   }
 
-  const seen = new Map<string, number>();
   const events: CaptureEventInput[] = [];
   for (const item of items) {
-    const occurrence = (seen.get(item.id) ?? 0) + 1;
-    seen.set(item.id, occurrence);
     const highlights = (await files.highlight(item.slug))?.trimEnd() ?? "";
     const content = await files.content(item.slug);
     events.push({
       schema: "kizuki.event/v1",
       connector_id: OMNIVORE_IMPORT_CONNECTOR_ID,
-      // A doubled export must not collapse two records into one.
-      source_record_id: occurrence === 1 ? item.id : `${item.id}#${occurrence}`,
+      // The provider's own id, and nothing about where the item sat in the
+      // export. Numbering a repeated id by its position would rename the
+      // record whenever a shorter export dropped the earlier occurrence; two
+      // entries the provider calls one item are one record's history, which
+      // the ledger already stores as versions.
+      source_record_id: item.id,
       kind: "bookmark",
       occurred_at: item.saved_at,
       observed_at,

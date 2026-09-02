@@ -94,8 +94,9 @@ Unzip it and point the importer at the folder or at a single `.csv`.
 kizuki import import-pocket --vault VAULT --source EXPORT.csv
 ```
 
-Each row becomes one `bookmark` event, hinted `personal`, with the saved url as
-its identity and the tags and status kept as metadata.
+Each row becomes one `bookmark` event, hinted `personal`, identified by the
+saved url together with the moment it was saved, with the tags and status kept
+as metadata.
 
 Known limits:
 
@@ -104,7 +105,9 @@ Known limits:
   export.
 - Columns are found by header name, so their order does not matter, and any
   other column is ignored rather than stored.
-- The same url saved twice in one export stays two records, numbered.
+- The same url saved twice is two records, one per save. Nothing about a
+  record's identity depends on where its row sat in the file, so a shorter
+  export brings the same records back rather than new ones.
 
 ## Omnivore export
 
@@ -127,6 +130,8 @@ Known limits:
   read it, convert it to text, or copy it into the vault.
 - `updatedAt` and `readingProgress` are deliberately not stored: they change on
   every export and would fork the history of an item that did not change.
+- An item is identified by the id Omnivore gave it. Two entries carrying one
+  id are that item's history, not two bookmarks.
 
 ## Not here, deliberately
 

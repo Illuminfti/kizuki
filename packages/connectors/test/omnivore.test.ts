@@ -157,22 +157,26 @@ test("metadata files are read in name order", async () => {
   ]);
 });
 
-test("a duplicated id across files becomes a second record", async () => {
-  const events = await omnivoreEvents(
+test("a duplicated id stays one record, whichever export carries it", async () => {
+  const first = { id: "same", slug: "one", savedAt: "2026-01-01T09:00:00Z" };
+  const second = { id: "same", slug: "two", savedAt: "2026-01-02T09:00:00Z" };
+  const both = await omnivoreEvents(
     mapOmnivoreFiles({
-      "metadata_0_to_9.json": JSON.stringify([
-        { id: "same", slug: "one", savedAt: "2026-01-01T09:00:00Z" },
-      ]),
-      "metadata_10_to_19.json": JSON.stringify([
-        { id: "same", slug: "two", savedAt: "2026-01-02T09:00:00Z" },
-      ]),
+      "metadata_0_to_9.json": JSON.stringify([first]),
+      "metadata_10_to_19.json": JSON.stringify([second]),
     }),
     FIXTURE_OBSERVED_AT,
   );
-  expect(events.map((event) => event.source_record_id)).toEqual([
+  expect(both.map((event) => event.source_record_id)).toEqual([
     "same",
-    "same#2",
+    "same",
   ]);
+  // A shorter export holding only the later entry must not rename it.
+  const later = await omnivoreEvents(
+    mapOmnivoreFiles({ "metadata_0_to_9.json": JSON.stringify([second]) }),
+    FIXTURE_OBSERVED_AT,
+  );
+  expect(later[0]?.source_record_id).toBe(both[1]?.source_record_id);
 });
 
 test("a malformed item names its file and index, never its title", () => {

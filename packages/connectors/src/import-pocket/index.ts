@@ -34,7 +34,13 @@ export interface PocketImportConfig {
 export interface PocketRow {
   title: string;
   url: string;
+  /** Unix seconds, exactly as the export wrote them. */
   time_added: string;
+  /**
+   * The instant `time_added` names, resolved once where the file and the row
+   * number are known, so one record carries one position through both seams.
+   */
+  occurred_at: string;
   tags: string[];
   status: string;
 }
@@ -129,12 +135,12 @@ export function parsePocketCsv(text: string, where: string): PocketRow[] {
       );
     }
     const time_added = cellOf(cells, "time_added").trim();
-    // Validated here, where the file name and row number exist to name.
-    unixSecondsToIso(time_added, at);
     return {
       title: cellOf(cells, "title").trim(),
       url,
       time_added,
+      // Resolved here, where the file name and the row number exist to name.
+      occurred_at: unixSecondsToIso(time_added, at),
       tags: cellOf(cells, "tags")
         .split("|")
         .map((tag) => tag.trim())
@@ -144,21 +150,29 @@ export function parsePocketCsv(text: string, where: string): PocketRow[] {
   });
 }
 
+/**
+ * A record is one save: the same url saved twice is two of them. Identity is
+ * therefore the url and the moment it was saved, never a position in the
+ * file — a partial export would renumber that, and the same bookmark would
+ * come back as a new record. `time_added` is a run of digits, so the colon
+ * after it can only be the delimiter, and no url ending in `#2` can collide
+ * with another record.
+ */
+function pocketRecordId(row: PocketRow): string {
+  return `${row.time_added}:${row.url}`;
+}
+
 export function pocketEvents(
   rows: readonly PocketRow[],
   observed_at: string,
 ): CaptureEventInput[] {
-  const seen = new Map<string, number>();
-  return rows.map((row, index) => {
-    const occurrence = (seen.get(row.url) ?? 0) + 1;
-    seen.set(row.url, occurrence);
+  return rows.map((row) => {
     return {
       schema: "kizuki.event/v1",
       connector_id: POCKET_IMPORT_CONNECTOR_ID,
-      // A repeated url in one export is a second record, never a collapse.
-      source_record_id: occurrence === 1 ? row.url : `${row.url}#${occurrence}`,
+      source_record_id: pocketRecordId(row),
       kind: "bookmark",
-      occurred_at: unixSecondsToIso(row.time_added, `pocket row ${index + 1}`),
+      occurred_at: row.occurred_at,
       observed_at,
       text: row.title.length > 0 ? `${row.title}\n${row.url}` : row.url,
       subjects: [{ subject_id: "pocket:self", role: "from" }],

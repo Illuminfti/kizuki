@@ -74,8 +74,11 @@ async function pocketScenario(root: string): Promise<Scenario> {
     fullCount: 4,
     subsetCount: 2,
     full: () => writeFile(file, POCKET_FIXTURE_EXPORT),
+    // Includes the fixture's repeated url in its LATER position: a record
+    // numbered by position would be renamed by a subset that drops the
+    // earlier save, and the smaller import would store it again.
     subset: () =>
-      writeFile(file, `${[lines[0], lines[2], lines[3]].join("\n")}\n`),
+      writeFile(file, `${[lines[0], lines[3], lines[4]].join("\n")}\n`),
   };
 }
 
