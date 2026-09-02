@@ -1,3 +1,4 @@
+import { targetProblem } from "../contracts/page-candidate";
 import type { Claim, ClaimKind } from "../contracts/proposal";
 import { AUTHORITY_TIERS } from "../contracts/proposal";
 import { tableExists } from "../ledger/schema";
@@ -6,11 +7,7 @@ import { CanonWriteError } from "./errors";
 import type { PageCandidate } from "./receipts";
 import { latestReceiptForPage, listCanonReceipts } from "./receipts";
 import { initCanon } from "./schema";
-import {
-  pageIndexById,
-  pagesForSubject,
-  readPage,
-} from "./store";
+import { pageIndexById, pagesForSubject, readPage } from "./store";
 import type { CanonIo, PageIndexEntry } from "./store";
 
 export type EditReason = "bound" | "explicit" | "subject";
@@ -38,28 +35,31 @@ const MAX_SEGMENT_LENGTH = 64;
 /** Kinds that mint a page; the rest require one (§4.4, structural refusals). */
 const CREATE_KINDS: ReadonlySet<ClaimKind> = new Set(["entity", "claim"]);
 /** Kinds whose write would replace or extend prose; §4.4 rule 7 protects it. */
-const PROSE_KINDS: ReadonlySet<ClaimKind> = new Set(["entity", "claim", "edit", "merge"]);
+const PROSE_KINDS: ReadonlySet<ClaimKind> = new Set([
+  "entity",
+  "claim",
+  "edit",
+  "merge",
+]);
 
 /**
  * Path derivation is unchanged from the pre-RFC promote: `target` split on
  * `[:/]`, at most 8 segments of at most 64 chars, `captures/<claim_id>.md`
- * when the target is null.
+ * when the target is null. The grammar itself lives with the contract, so a
+ * producer can check a target it is about to mint against the same rule the
+ * writer will apply rather than against a copy of it.
  */
-export function pageRelPath(claim: { claim_id: string; target: string | null }): string {
+export function pageRelPath(claim: {
+  claim_id: string;
+  target: string | null;
+}): string {
   const target = claim.target;
   if (target === null || target.length === 0) {
     return `captures/${claim.claim_id}.md`;
   }
-  const segments = target.split(/[:/]/);
-  if (segments.length > MAX_SEGMENTS) {
-    throw new CanonWriteError("target_invalid", `target: more than ${MAX_SEGMENTS} path segments`);
-  }
-  for (const segment of segments) {
-    if (segment.length > MAX_SEGMENT_LENGTH || !PATH_SEGMENT.test(segment)) {
-      throw new CanonWriteError("target_invalid", "target: unusable path segment");
-    }
-  }
-  return `${segments.join("/")}.md`;
+  const problem = targetProblem(target);
+  if (problem !== null) throw new CanonWriteError("target_invalid", problem);
+  return `${target.split(/[:/]/).join("/")}.md`;
 }
 
 /**
@@ -78,12 +78,21 @@ export function assertPageRelPath(relPath: string): void {
     segments[0] === "archive" ||
     (segments.length === 1 && (last === "CANON.md" || last === "SCHEMA.md"))
   ) {
-    throw new CanonWriteError("target_invalid", "decision names an unusable page path");
+    throw new CanonWriteError(
+      "target_invalid",
+      "decision names an unusable page path",
+    );
   }
   for (const [index, segment] of segments.entries()) {
-    const limit = index === segments.length - 1 ? MAX_SEGMENT_LENGTH + 3 : MAX_SEGMENT_LENGTH;
+    const limit =
+      index === segments.length - 1
+        ? MAX_SEGMENT_LENGTH + 3
+        : MAX_SEGMENT_LENGTH;
     if (segment.length > limit || !PATH_SEGMENT.test(segment)) {
-      throw new CanonWriteError("target_invalid", "decision names an unusable page path");
+      throw new CanonWriteError(
+        "target_invalid",
+        "decision names an unusable page path",
+      );
     }
   }
 }
@@ -108,12 +117,17 @@ function resolvePageById(io: CanonIo, pageId: string): ResolvedPage | null {
     if (onDisk !== null && onDisk.page_id === pageId) return onDisk;
   }
   const scanned = findPageById(io.vault_path, pageId);
-  return scanned === null ? null : { page_id: scanned.id, rel_path: scanned.relPath };
+  return scanned === null
+    ? null
+    : { page_id: scanned.id, rel_path: scanned.relPath };
 }
 
 function candidateFor(io: CanonIo, entry: PageIndexEntry): PageCandidate {
   const latest = latestReceiptForPage(io.db, entry.rel_path);
-  const first = listCanonReceipts(io.db, { page_path: entry.rel_path, limit: 1 })[0];
+  const first = listCanonReceipts(io.db, {
+    page_path: entry.rel_path,
+    limit: 1,
+  })[0];
   return {
     page_id: entry.page_id,
     rel_path: entry.rel_path,
@@ -123,18 +137,28 @@ function candidateFor(io: CanonIo, entry: PageIndexEntry): PageCandidate {
 }
 
 /** Highest authority of the most recent write, then oldest, then smallest id. */
-export function chooseCandidate(candidates: readonly PageCandidate[]): PageCandidate {
+export function chooseCandidate(
+  candidates: readonly PageCandidate[],
+): PageCandidate {
   const sorted = [...candidates].sort((left, right) => {
-    const tier = AUTHORITY_TIERS[right.authority] - AUTHORITY_TIERS[left.authority];
+    const tier =
+      AUTHORITY_TIERS[right.authority] - AUTHORITY_TIERS[left.authority];
     if (tier !== 0) return tier;
     if (left.created_at !== right.created_at) {
       return left.created_at < right.created_at ? -1 : 1;
     }
-    return left.page_id < right.page_id ? -1 : left.page_id > right.page_id ? 1 : 0;
+    return left.page_id < right.page_id
+      ? -1
+      : left.page_id > right.page_id
+        ? 1
+        : 0;
   });
   const chosen = sorted[0];
   if (chosen === undefined) {
-    throw new CanonWriteError("page_missing", "conflict resolution needs at least one candidate");
+    throw new CanonWriteError(
+      "page_missing",
+      "conflict resolution needs at least one candidate",
+    );
   }
   return chosen;
 }
@@ -151,7 +175,12 @@ export function ownerEdited(io: CanonIo, relPath: string): boolean {
   return latest === null || latest.after_hash !== existing.hash;
 }
 
-function guardProse(io: CanonIo, claim: Claim, relPath: string, decision: TargetDecision): TargetDecision {
+function guardProse(
+  io: CanonIo,
+  claim: Claim,
+  relPath: string,
+  decision: TargetDecision,
+): TargetDecision {
   if (PROSE_KINDS.has(claim.kind) && ownerEdited(io, relPath)) {
     return { action: "skip", reason: "owner_edited_body" };
   }
@@ -159,7 +188,8 @@ function guardProse(io: CanonIo, claim: Claim, relPath: string, decision: Target
 }
 
 function boundPage(io: CanonIo, claim: Claim): ResolvedPage | null {
-  if (claim.claim_key === null || !tableExists(io.db, "claim_bindings")) return null;
+  if (claim.claim_key === null || !tableExists(io.db, "claim_bindings"))
+    return null;
   const rows = io.db
     .query<{ page_id: string }, [string]>(
       "SELECT page_id FROM claim_bindings WHERE claim_key = ? ORDER BY bound_at DESC, page_id LIMIT 16",
@@ -192,7 +222,8 @@ interface Supersession {
  * else names the loser's page.
  */
 function supersessionOf(io: CanonIo, claim: Claim): Supersession {
-  if (!tableExists(io.db, "claim_supersessions")) return { losers: [], page: null };
+  if (!tableExists(io.db, "claim_supersessions"))
+    return { losers: [], page: null };
   const rows = io.db
     .query<{ loser: string; receipt_id: string | null }, [string]>(
       `SELECT s.loser AS loser, c.receipt_id AS receipt_id
@@ -237,8 +268,15 @@ function onPage(
 export function resolveTarget(io: CanonIo, claim: Claim): TargetDecision {
   initCanon(io.db);
 
-  if (claim.status === "superseded" || claim.status === "purged" || claim.status === "reverted") {
-    throw new CanonWriteError("claim_not_live", `claim ${claim.claim_id} is ${claim.status}`);
+  if (
+    claim.status === "superseded" ||
+    claim.status === "purged" ||
+    claim.status === "reverted"
+  ) {
+    throw new CanonWriteError(
+      "claim_not_live",
+      `claim ${claim.claim_id} is ${claim.status}`,
+    );
   }
   if (claim.receipt_id !== null) return { action: "skip", reason: "duplicate" };
   if (claim.status === "skipped" || claim.confidence <= 0) {
@@ -251,7 +289,8 @@ export function resolveTarget(io: CanonIo, claim: Claim): TargetDecision {
   if (bound !== null) return onPage(io, claim, bound, "bound", supersession);
 
   const explicit = explicitPage(io, claim);
-  if (explicit !== null) return onPage(io, claim, explicit, "explicit", supersession);
+  if (explicit !== null)
+    return onPage(io, claim, explicit, "explicit", supersession);
 
   if (supersession.page !== null) {
     return onPage(io, claim, supersession.page, "bound", supersession);
@@ -274,7 +313,11 @@ export function resolveTarget(io: CanonIo, claim: Claim): TargetDecision {
     if (pages.length > 1) {
       const candidates = pages.map((entry) => candidateFor(io, entry));
       const chosen = chooseCandidate(candidates);
-      return guardProse(io, claim, chosen.rel_path, { action: "conflict", candidates, chosen });
+      return guardProse(io, claim, chosen.rel_path, {
+        action: "conflict",
+        candidates,
+        chosen,
+      });
     }
   }
 

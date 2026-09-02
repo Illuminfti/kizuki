@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { chooseCandidate, pageRelPath, resolveTarget } from "../../src/canon/arbiter";
+import {
+  chooseCandidate,
+  pageRelPath,
+  resolveTarget,
+} from "../../src/canon/arbiter";
 import { CanonWriteError } from "../../src/canon/errors";
+import { targetProblem } from "../../src/contracts/page-candidate";
 import { rebuildPageIndex } from "../../src/canon/store";
 import { getClaim } from "../../src/claims/store";
 import type { Claim } from "../../src/contracts/proposal";
@@ -24,7 +29,10 @@ afterEach(() => {
 });
 
 /** Two connectors corroborate, so claims-core does not clamp the tier. */
-function twoSources(db: CanonFixture["db"]): { ids: string[]; events: ReturnType<typeof corroboratedFacts> } {
+function twoSources(db: CanonFixture["db"]): {
+  ids: string[];
+  events: ReturnType<typeof corroboratedFacts>;
+} {
   const first = putEvent(db, { connector_id: "fixture" });
   const second = putEvent(db, { connector_id: "other-fixture" });
   return { ids: [first, second], events: corroboratedFacts(first, second) };
@@ -32,16 +40,53 @@ function twoSources(db: CanonFixture["db"]): { ids: string[]; events: ReturnType
 
 describe("pageRelPath", () => {
   test("derives the path from the target and falls back to captures", () => {
-    expect(pageRelPath({ claim_id: "01A", target: "people:grace" })).toBe("people/grace.md");
-    expect(pageRelPath({ claim_id: "01A", target: "people/grace" })).toBe("people/grace.md");
-    expect(pageRelPath({ claim_id: "01A", target: null })).toBe("captures/01A.md");
-    expect(() => pageRelPath({ claim_id: "01A", target: "a/../b" })).toThrow(CanonWriteError);
-    expect(() => pageRelPath({ claim_id: "01A", target: "a/b/c/d/e/f/g/h/i" })).toThrow(
-      /segments/,
+    expect(pageRelPath({ claim_id: "01A", target: "people:grace" })).toBe(
+      "people/grace.md",
     );
-    expect(() => pageRelPath({ claim_id: "01A", target: `x/${"y".repeat(65)}` })).toThrow(
+    expect(pageRelPath({ claim_id: "01A", target: "people/grace" })).toBe(
+      "people/grace.md",
+    );
+    expect(pageRelPath({ claim_id: "01A", target: null })).toBe(
+      "captures/01A.md",
+    );
+    expect(() => pageRelPath({ claim_id: "01A", target: "a/../b" })).toThrow(
       CanonWriteError,
     );
+    expect(() =>
+      pageRelPath({ claim_id: "01A", target: "a/b/c/d/e/f/g/h/i" }),
+    ).toThrow(/segments/);
+    expect(() =>
+      pageRelPath({ claim_id: "01A", target: `x/${"y".repeat(65)}` }),
+    ).toThrow(CanonWriteError);
+  });
+
+  // A producer that mints a target checks it with `targetProblem` before it
+  // files anything. If the two rules ever drift, the producer promises a page
+  // the writer will refuse, so pin them to each other rather than to a copy.
+  test("accepts exactly the targets targetProblem calls usable", () => {
+    const targets = [
+      "people/grace",
+      "people:grace",
+      "a/b/c/d/e/f/g/h",
+      "a/b/c/d/e/f/g/h/i",
+      "a/../b",
+      "a//b",
+      "a/ b",
+      `x/${"y".repeat(64)}`,
+      `x/${"y".repeat(65)}`,
+      "-leading",
+      ".hidden",
+    ];
+    for (const target of targets) {
+      const problem = targetProblem(target);
+      if (problem === null) {
+        expect(pageRelPath({ claim_id: "01A", target })).toBe(
+          `${target.split(/[:/]/).join("/")}.md`,
+        );
+        continue;
+      }
+      expect(() => pageRelPath({ claim_id: "01A", target })).toThrow(problem);
+    }
   });
 });
 
@@ -49,7 +94,10 @@ describe("resolveTarget", () => {
   test("rule 5: no candidate creates at the derived path", async () => {
     const { db, io } = fixture();
     const claim = await storeClaim(db, putEvent(db));
-    expect(resolveTarget(io, claim)).toEqual({ action: "create", rel_path: "people/grace.md" });
+    expect(resolveTarget(io, claim)).toEqual({
+      action: "create",
+      rel_path: "people/grace.md",
+    });
   });
 
   test("rule 1: a bound conflict key edits the bound page before anything else", async () => {
@@ -111,7 +159,10 @@ describe("resolveTarget", () => {
       reason: "explicit",
     });
 
-    const byId = readFileSync(join(io.vault_path, "people", "grace.md"), "utf8");
+    const byId = readFileSync(
+      join(io.vault_path, "people", "grace.md"),
+      "utf8",
+    );
     const id = /id: "([^"]+)"/.exec(byId)?.[1] as string;
     const byPageId = await storeClaim(db, eventId, {
       kind: "merge",
@@ -196,7 +247,10 @@ describe("resolveTarget", () => {
   test("rule 6: several subject pages resolve deterministically and never open a queue", async () => {
     const { db, io } = fixture();
     const eventId = putEvent(db);
-    const first = write(io, await storeClaim(db, eventId, { target: "people/grace-a" }));
+    const first = write(
+      io,
+      await storeClaim(db, eventId, { target: "people/grace-a" }),
+    );
     // A second page starts under another subject key, then a write with an
     // explicit page id re-keys it to grace: two pages now share one subject.
     const second = write(
@@ -230,33 +284,67 @@ describe("resolveTarget", () => {
     const decision = resolveTarget(io, third);
     expect(decision.action).toBe("conflict");
     if (decision.action !== "conflict") throw new Error("unreachable");
-    expect(decision.candidates.map((candidate) => candidate.rel_path).sort()).toEqual([
-      first.page_path,
-      second.page_path,
-    ]);
+    expect(
+      decision.candidates.map((candidate) => candidate.rel_path).sort(),
+    ).toEqual([first.page_path, second.page_path]);
     expect(decision.chosen.rel_path).toBe(first.page_path);
 
     const receipt = write(io, third, { decision });
     expect(receipt.candidates).toEqual(decision.candidates);
     expect(receipt.page_path).toBe(first.page_path);
-    expect(readFileSync(join(io.vault_path, receipt.page_path), "utf8")).toContain(
-      "x-ambiguous: true",
-    );
+    expect(
+      readFileSync(join(io.vault_path, receipt.page_path), "utf8"),
+    ).toContain("x-ambiguous: true");
   });
 
   test("chooseCandidate orders by authority, then age, then page id", () => {
     const chosen = chooseCandidate([
-      { page_id: "b", rel_path: "b.md", authority: "connector_evidence", created_at: "2026-01-02" },
-      { page_id: "a", rel_path: "a.md", authority: "connector_evidence", created_at: "2026-01-02" },
-      { page_id: "c", rel_path: "c.md", authority: "owner_authored", created_at: "2026-01-09" },
-      { page_id: "d", rel_path: "d.md", authority: "connector_evidence", created_at: "2026-01-01" },
+      {
+        page_id: "b",
+        rel_path: "b.md",
+        authority: "connector_evidence",
+        created_at: "2026-01-02",
+      },
+      {
+        page_id: "a",
+        rel_path: "a.md",
+        authority: "connector_evidence",
+        created_at: "2026-01-02",
+      },
+      {
+        page_id: "c",
+        rel_path: "c.md",
+        authority: "owner_authored",
+        created_at: "2026-01-09",
+      },
+      {
+        page_id: "d",
+        rel_path: "d.md",
+        authority: "connector_evidence",
+        created_at: "2026-01-01",
+      },
     ]);
     expect(chosen.page_id).toBe("c");
     expect(
       chooseCandidate([
-        { page_id: "b", rel_path: "b.md", authority: "model_inference", created_at: "2026-01-02" },
-        { page_id: "a", rel_path: "a.md", authority: "model_inference", created_at: "2026-01-02" },
-        { page_id: "d", rel_path: "d.md", authority: "model_inference", created_at: "2026-01-03" },
+        {
+          page_id: "b",
+          rel_path: "b.md",
+          authority: "model_inference",
+          created_at: "2026-01-02",
+        },
+        {
+          page_id: "a",
+          rel_path: "a.md",
+          authority: "model_inference",
+          created_at: "2026-01-02",
+        },
+        {
+          page_id: "d",
+          rel_path: "d.md",
+          authority: "model_inference",
+          created_at: "2026-01-03",
+        },
       ]).page_id,
     ).toBe("a");
   });
@@ -267,14 +355,20 @@ describe("resolveTarget", () => {
     const created = write(io, await storeClaim(db, eventId));
     const path = join(vault, created.page_path);
     const page = readFileSync(path, "utf8");
-    writeFileSync(path, page.replace("Grace runs partnerships at Acme.", "The owner wrote this."));
+    writeFileSync(
+      path,
+      page.replace("Grace runs partnerships at Acme.", "The owner wrote this."),
+    );
 
     const prose = await storeClaim(db, eventId, {
       predicate: "location.based_in",
       object: "lisbon",
       body: "Grace is based in Lisbon.",
     });
-    expect(resolveTarget(io, prose)).toEqual({ action: "skip", reason: "owner_edited_body" });
+    expect(resolveTarget(io, prose)).toEqual({
+      action: "skip",
+      reason: "owner_edited_body",
+    });
 
     const deletion = await storeClaim(db, eventId, {
       kind: "deletion",
@@ -283,7 +377,10 @@ describe("resolveTarget", () => {
       body: "Archive it.",
       frontmatter: {},
     });
-    expect(resolveTarget(io, deletion)).toMatchObject({ action: "edit", reason: "explicit" });
+    expect(resolveTarget(io, deletion)).toMatchObject({
+      action: "edit",
+      reason: "explicit",
+    });
     expect(readFileSync(path, "utf8")).toContain("The owner wrote this.");
   });
 
@@ -307,7 +404,10 @@ describe("resolveTarget", () => {
     );
     rebuildPageIndex(io);
     const claim = await storeClaim(db, eventId);
-    expect(resolveTarget(io, claim)).toEqual({ action: "skip", reason: "owner_edited_body" });
+    expect(resolveTarget(io, claim)).toEqual({
+      action: "skip",
+      reason: "owner_edited_body",
+    });
   });
 
   test("skips and refusals: written, skipped, non-live and page-requiring claims", async () => {
@@ -320,12 +420,33 @@ describe("resolveTarget", () => {
       reason: "duplicate",
     });
 
-    const skipped: Claim = { ...claim, claim_id: "skipped", receipt_id: null, status: "skipped" };
-    expect(resolveTarget(io, skipped)).toEqual({ action: "skip", reason: "below_floor" });
-    const zero: Claim = { ...claim, claim_id: "zero", receipt_id: null, confidence: 0 };
-    expect(resolveTarget(io, zero)).toEqual({ action: "skip", reason: "below_floor" });
+    const skipped: Claim = {
+      ...claim,
+      claim_id: "skipped",
+      receipt_id: null,
+      status: "skipped",
+    };
+    expect(resolveTarget(io, skipped)).toEqual({
+      action: "skip",
+      reason: "below_floor",
+    });
+    const zero: Claim = {
+      ...claim,
+      claim_id: "zero",
+      receipt_id: null,
+      confidence: 0,
+    };
+    expect(resolveTarget(io, zero)).toEqual({
+      action: "skip",
+      reason: "below_floor",
+    });
 
-    const superseded: Claim = { ...claim, claim_id: "gone", receipt_id: null, status: "superseded" };
+    const superseded: Claim = {
+      ...claim,
+      claim_id: "gone",
+      receipt_id: null,
+      status: "superseded",
+    };
     expect(() => resolveTarget(io, superseded)).toThrow(/superseded/);
 
     const orphanEdit = await storeClaim(db, eventId, {
