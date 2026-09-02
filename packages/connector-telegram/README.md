@@ -55,6 +55,11 @@ short wait passes quietly and sign-in continues. A longer one is reported to
 you with the number of seconds, because a silent multi-minute pause looks like
 a hang.
 
+A number no Telegram account exists for is refused. The library this package
+uses would otherwise register one under a placeholder name and accept
+Telegram's terms of service on your behalf; both are outbound actions, and
+this connector takes none.
+
 The terminal verb that drives this flow is not part of this package. On this
 revision `kizuki connect` enrolls `none`-mode sources only, so
 `kizuki connect telegram --source …` answers
@@ -82,12 +87,14 @@ which this connector does not consume, so the manifest declares
 `tombstones: false` and a message you delete in Telegram stays in your ledger
 until you purge it.
 
-Edits are caught within a window. Each pass re-reads the last 200 messages per
-dialog and re-emits anything edited since the previous completed pass. The
-whole window is read even when the batch is nearly full: a dialog whose work
-does not fit stops the pass on itself and the next batch resumes there, so the
-pass only completes, and the watermark only moves, once every dialog in it has
-been read to the end. An edit to something older than 200 messages is missed.
+Edits are caught within a window. Each pass re-reads the last 200 messages of
+a dialog before it reads anything newer, and re-emits whatever changed since
+the previous completed pass. Reading the window first is what makes it whole:
+a dialog whose work does not fit stops the pass on itself, and because nothing
+has moved on yet, the next batch re-reads the same window rather than one
+shifted past it. The pass completes, and the watermark moves, only once every
+dialog in it has been read to the end. An edit to something older than 200
+messages is missed.
 
 Service messages are skipped: joins, pins and title changes carry no content
 worth keeping. So is a message whose timestamp is not a date the ledger
