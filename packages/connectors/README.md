@@ -129,6 +129,9 @@ Known limits:
 
 - Highlights travel inside the item's text and have no ids of their own, so a
   single highlight cannot be cited or purged on its own.
+- A highlights file that is present but unreadable, because it is not UTF-8 or
+  is past the per-record size limit, refuses the import. An item stored
+  without your notes would look like an item that never had any.
 - The saved article HTML is referenced by name and size only. Kizuki does not
   read it, convert it to text, or copy it into the vault. Whether it was found
   is part of the item, so an export that gains its `content/` folder later
