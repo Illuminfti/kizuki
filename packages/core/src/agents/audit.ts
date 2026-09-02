@@ -113,7 +113,9 @@ export function checkRate(
 
 /**
  * `at` is a parameter, like `checkRate`'s `now`, so one served call can stamp
- * its row, its envelope and anything it renders with the same instant.
+ * its row, its envelope and anything it renders with the same instant. It is
+ * normalized on the way in: `checkRate` compares the column as a raw string,
+ * so an offset timestamp would leave the rolling window counting nothing.
  */
 export function recordAudit(
   db: Database,
@@ -125,6 +127,7 @@ export function recordAudit(
   at: string = new Date().toISOString(),
 ): string {
   assertTool(tool);
+  const stamped = new Date(rfc3339Millis(at, "at")).toISOString();
   const auditId = ulid();
   const agentId = principal.kind === "owner" ? "owner" : principal.agent.agent_id;
   db.query<never, [string, string, string, string, string, string, string]>(
@@ -138,7 +141,7 @@ export function recordAudit(
     JSON.stringify(shapeArguments(args)),
     JSON.stringify(served),
     JSON.stringify(denied),
-    at,
+    stamped,
   );
   return auditId;
 }
