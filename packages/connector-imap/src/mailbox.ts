@@ -164,7 +164,7 @@ export async function walkMailboxes(
           session,
           plan,
           observedAt,
-          events.length + folderTombstones.length,
+          events.length + folderTombstones.length + folderEvents.length,
           folderTombstones,
         );
       } else {

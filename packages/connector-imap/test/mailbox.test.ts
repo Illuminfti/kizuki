@@ -237,6 +237,23 @@ describe("sync", () => {
     expect(healed?.pending).toBe("");
   });
 
+  test("a retried message counts against the page's event budget", async () => {
+    const server = new FakeImapServer([folder("INBOX", BATCH + 60)]);
+    const walkDeps = deps(server, state(["INBOX"]));
+    server.withholdBody("INBOX", 3);
+
+    const first = await walkMailboxes(walkDeps, null, "backfill");
+    // One short of a full page: the withheld message produced no event.
+    expect(first.batch.events).toHaveLength(BATCH - 1);
+
+    server.restoreBody("INBOX", 3);
+    const second = await walkMailboxes(walkDeps, first.batch.cursor, "sync");
+    // The retried hole comes out of the same budget as the new page, or a
+    // walk could hand the runner more than one batch's worth of events.
+    expect(second.batch.events.length).toBeLessThanOrEqual(BATCH);
+    expect(uidsOf(second.batch.events)).toContain(3);
+  });
+
   test("a message expunged before its body arrived leaves the retry list", async () => {
     const server = new FakeImapServer([folder("INBOX", 3)]);
     const walkDeps = deps(server, state(["INBOX"]));
