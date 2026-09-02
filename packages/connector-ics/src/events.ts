@@ -214,7 +214,15 @@ function seriesEvents(
   if (isCancelled(master) && entry.overrides.length === 0) return events;
   const startLine = firstValue(master, "DTSTART");
   const start = instantOf(startLine);
-  if (start === null) return events;
+  // An entry with no DTSTART has no time to record, but the calendar still
+  // carries it. Returning nothing made it look removed, and the next sync
+  // tombstoned a row the owner never deleted.
+  if (start === null) {
+    throw new KizukiError(
+      "parse_error",
+      "kizuki.ics: calendar entry has no start",
+    );
+  }
   const synthesized =
     firstValue(master, "UID") === undefined ||
     (firstValue(master, "UID")?.value ?? "").trim().length === 0;
@@ -373,7 +381,12 @@ function pushOverride(
 ): void {
   if (isCancelled(override)) return;
   const start = instantOf(firstValue(override, "DTSTART"));
-  if (start === null) return;
+  if (start === null) {
+    throw new KizukiError(
+      "parse_error",
+      "kizuki.ics: calendar entry has no start",
+    );
+  }
   const recurrenceId = instantOf(firstValue(override, "RECURRENCE-ID"));
   events.push(
     emit({

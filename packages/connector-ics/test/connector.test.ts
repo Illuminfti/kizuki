@@ -187,6 +187,20 @@ describe("file mode", () => {
     expect(third.events[0]?.deleted).toBe(true);
   });
 
+  test("an entry that loses its start is not read as a deletion", async () => {
+    const path = await writeCalendar(SMALL);
+    const connector = createIcsConnector({ path }, { now: NOW });
+    const first = await connector.backfill(null);
+    expect(first.events).toHaveLength(2);
+
+    await Bun.write(path, SMALL.replace("DTSTART:20260303T090000Z\r\n", ""));
+    const second = await connector.sync(first.cursor);
+    // The entry is still in the file; only its start is missing. A tombstone
+    // here would delete evidence the owner never removed.
+    expect(second.events).toEqual([]);
+    expect((await connector.health()).state).toBe("degraded");
+  });
+
   test("a sensitivity change on its own is emitted", async () => {
     const publicText = [
       "BEGIN:VCALENDAR",
