@@ -3,6 +3,7 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { initClaims } from "../src/claims/schema";
 import { openLedger } from "../src/ledger/db";
 import { accept, count } from "../src/ledger/ledger";
 import { validEvent } from "./fixtures";
@@ -17,7 +18,7 @@ function schemaVersion(db: Database): number {
 describe("openLedger migrations", () => {
   test("applies the current migrations and enables foreign keys", () => {
     const db = openLedger(":memory:");
-    expect(schemaVersion(db)).toBeGreaterThanOrEqual(2);
+    expect(schemaVersion(db)).toBeGreaterThanOrEqual(3);
     expect(
       db.query<{ foreign_keys: number }, []>("PRAGMA foreign_keys").get(),
     ).toEqual({ foreign_keys: 1 });
@@ -31,9 +32,13 @@ describe("openLedger migrations", () => {
     ).toEqual(expect.arrayContaining([
       "canon_holds",
       "checkpoints",
+      "claim_bindings",
+      "claim_supersessions",
+      "claims",
       "connections",
       "event_purges",
       "events",
+      "proposals",
       "schema_version",
     ]));
     db.close();
@@ -183,10 +188,204 @@ describe("openLedger migrations", () => {
     }
   });
 
+  test("upgrades v2 proposals and rejections into RFC 0002 claims", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-ledger-v2-"));
+    const path = join(directory, "ledger.sqlite");
+    try {
+      const legacy = new Database(path);
+      legacy.exec(`
+        CREATE TABLE schema_version (version INTEGER NOT NULL);
+        INSERT INTO schema_version VALUES (2);
+        CREATE TABLE events (
+          event_id TEXT PRIMARY KEY,
+          connector_id TEXT NOT NULL,
+          source_record_id TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          occurred_at TEXT NOT NULL,
+          observed_at TEXT NOT NULL,
+          text TEXT NOT NULL,
+          subjects TEXT NOT NULL,
+          sensitivity_hint TEXT,
+          deleted INTEGER NOT NULL,
+          attachments TEXT NOT NULL,
+          metadata TEXT NOT NULL,
+          content_hash TEXT NOT NULL,
+          accepted_at TEXT NOT NULL,
+          UNIQUE(connector_id, source_record_id, content_hash)
+        );
+        CREATE TABLE event_purges (
+          receipt_id TEXT PRIMARY KEY,
+          event_id TEXT NOT NULL,
+          connector_id TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          purged_at TEXT NOT NULL
+        );
+        CREATE TABLE connections (
+          connector_id TEXT NOT NULL,
+          source_key TEXT NOT NULL,
+          config TEXT NOT NULL,
+          secret_refs TEXT NOT NULL,
+          connected_at TEXT NOT NULL,
+          disconnected_at TEXT,
+          PRIMARY KEY (connector_id, source_key)
+        ) STRICT;
+        CREATE TABLE checkpoints (
+          connector_id TEXT NOT NULL,
+          source_key TEXT NOT NULL,
+          cursor TEXT,
+          mode TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          last_run_at TEXT NOT NULL,
+          last_result TEXT NOT NULL,
+          PRIMARY KEY (connector_id, source_key)
+        ) STRICT;
+        CREATE TABLE canon_holds (
+          page_path TEXT NOT NULL,
+          proposal_id TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          held_at TEXT NOT NULL,
+          PRIMARY KEY (page_path, proposal_id)
+        ) STRICT;
+        CREATE TABLE promotions (
+          receipt_id TEXT PRIMARY KEY,
+          proposal_id TEXT NOT NULL UNIQUE,
+          provenance TEXT NOT NULL,
+          sensitivity TEXT NOT NULL,
+          page_path TEXT NOT NULL,
+          kind TEXT NOT NULL DEFAULT 'claim',
+          before_hash TEXT,
+          after_hash TEXT NOT NULL,
+          at TEXT NOT NULL
+        ) STRICT;
+        CREATE TABLE proposals (
+          proposal_id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL,
+          target TEXT,
+          body TEXT NOT NULL,
+          frontmatter TEXT NOT NULL,
+          provenance TEXT NOT NULL,
+          subjects TEXT NOT NULL,
+          producer TEXT NOT NULL,
+          confidence REAL NOT NULL,
+          status TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          body_hash TEXT NOT NULL
+        ) STRICT;
+        CREATE TABLE rejections (
+          body_hash TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          proposal_id TEXT NOT NULL,
+          at TEXT NOT NULL,
+          PRIMARY KEY (body_hash, proposal_id)
+        ) STRICT;
+        INSERT INTO events VALUES (
+          '01ARZ3NDEKTSV4RRFFQ69G5FAV', 'fixture', 'legacy', 'message',
+          '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'kept', '[]',
+          NULL, 0, '[]', '{}', '${"a".repeat(64)}', '2026-01-01T00:00:00Z'
+        );
+        INSERT INTO proposals VALUES (
+          'proposal-live', 'claim', NULL, 'Ada works at Acme.', '{}',
+          '["01ARZ3NDEKTSV4RRFFQ69G5FAV"]', '["person:ada"]', 'deterministic',
+          0.8, 'pending', '2026-01-02T00:00:00Z', '${"c".repeat(64)}'
+        );
+        INSERT INTO proposals VALUES (
+          'proposal-promoted', 'entity', 'person:ada', 'Ada page.', '{}',
+          '["01ARZ3NDEKTSV4RRFFQ69G5FAV"]', '["person:ada"]', 'deterministic',
+          0.5, 'promoted', '2026-01-02T00:00:00Z', '${"d".repeat(64)}'
+        );
+        INSERT INTO rejections VALUES (
+          '${"c".repeat(64)}', 'not true', 'proposal-live', '2026-01-03T00:00:00Z'
+        );
+      `);
+      legacy.close();
+
+      const upgraded = openLedger(path);
+      expect(schemaVersion(upgraded)).toBe(3);
+      const tables = upgraded
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type = 'table'",
+        )
+        .all()
+        .map(({ name }) => name);
+      expect(tables).toEqual(expect.arrayContaining([
+        "claims",
+        "claim_supersessions",
+        "claim_bindings",
+        "proposals",
+      ]));
+      expect(tables).not.toContain("rejections");
+
+      const statuses = upgraded
+        .query<{ claim_id: string; status: string; valid_from: string }, []>(
+          "SELECT claim_id, status, valid_from FROM claims ORDER BY claim_id",
+        )
+        .all();
+      expect(statuses).toEqual(
+        expect.arrayContaining([
+          {
+            claim_id: "proposal-live",
+            status: "skipped",
+            valid_from: "2026-01-02T00:00:00Z",
+          },
+          {
+            claim_id: "proposal-promoted",
+            status: "live",
+            valid_from: "2026-01-02T00:00:00Z",
+          },
+        ]),
+      );
+      expect(
+        upgraded
+          .query<{ name: string }, [string]>("SELECT name FROM pragma_table_info(?)")
+          .all("claims")
+          .map(({ name }) => name),
+      ).toEqual(expect.arrayContaining([
+        "subject",
+        "predicate",
+        "object",
+        "polarity",
+        "claim_key",
+        "authority",
+        "sensitivity",
+        "taint",
+        "valid_from",
+        "corroboration",
+      ]));
+      expect(
+        upgraded
+          .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM claims WHERE authority = 'owner_correction'")
+          .get()?.n,
+      ).toBeGreaterThanOrEqual(1);
+      expect(
+        upgraded
+          .query<{ status: string }, []>(
+            "SELECT status FROM proposals WHERE proposal_id = 'proposal-live'",
+          )
+          .get()?.status,
+      ).toBe("pending");
+      upgraded.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("initClaims is a no-op once the v3 surface exists", () => {
+    const db = openLedger(":memory:");
+    db.exec("DELETE FROM proposals");
+    initClaims(db);
+    expect(
+      db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM proposals").get()?.n,
+    ).toBe(0);
+    expect(
+      db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM claims").get()?.n,
+    ).toBe(0);
+    db.close();
+  });
+
   test.todo(
-    "claims-core and canon-writer lanes: v2 proposals and legacy receipts migrate to RFC 0002 storage",
+    "canon-writer lane: v3 claims and legacy receipts migrate to RFC 0002 receipt storage",
     () => {
-      throw new Error("pending claims-core and canon-writer lanes");
+      throw new Error("pending canon-writer lane");
     },
   );
 });
