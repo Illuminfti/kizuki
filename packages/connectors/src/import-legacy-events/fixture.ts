@@ -249,7 +249,7 @@ export function fixtureMappingHash(): string {
 /** The fixture rows as the readers would hand them over, positions 1..n. */
 export function fixtureRows(): LegacyRow[] {
   return LEGACY_EVENTS_FIXTURE.rows.map((values, index) => ({
-    position: index + 1,
+    position: BigInt(index + 1),
     values,
   }));
 }

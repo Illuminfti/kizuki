@@ -18,8 +18,14 @@ const CHUNK_BYTES = 1024 * 1024;
 export type RowProblem = "malformed_json" | "not_an_object" | "line_too_long";
 
 export interface LegacyRow {
-  /** sqlite: the rowid. jsonl: the byte offset just past the line's newline. */
-  position: number;
+  /**
+   * sqlite: the rowid. jsonl: the byte offset just past the line's newline.
+   * Exact rather than a double: a table keyed by a snowflake-scale integer
+   * has rowids past 2^53, and a position rounded to the nearest double can
+   * land beyond real rows, which `rowid > ?` would then page straight over
+   * while the run reported itself done.
+   */
+  position: bigint;
   values: Record<string, unknown> | null;
   problem?: RowProblem;
 }
@@ -28,8 +34,8 @@ export interface LegacyRowSource {
   kind: "sqlite" | "jsonl";
   /** sqlite: the declared columns. jsonl: unknowable before reading. */
   columns: string[] | null;
-  read(after: number, limit: number): LegacyRow[];
-  size(): number;
+  read(after: bigint, limit: number): LegacyRow[];
+  size(): bigint;
   close(): void;
 }
 
@@ -108,20 +114,23 @@ export function openSqliteSource(path: string, table: string): LegacyRowSource {
     );
     requestSafeIntegers(read);
     const max = db.query(`SELECT max(rowid) AS top FROM ${name}`);
+    // The extent has to be read in the same width as the positions it is
+    // compared against, or a large table looks like one that shrank.
+    requestSafeIntegers(max);
     return {
       kind: "sqlite",
       columns: names,
-      read(after: number, limit: number): LegacyRow[] {
+      read(after: bigint, limit: number): LegacyRow[] {
         const rows = read.all(after, limit) as Record<string, unknown>[];
         return rows.map((row) => {
           const values: Record<string, unknown> = {};
           for (const column of names) values[column] = cellValue(row[column]);
-          return { position: Number(row[ROWID_ALIAS]), values };
+          return { position: BigInt(row[ROWID_ALIAS] as bigint | number), values };
         });
       },
-      size(): number {
-        const top = (max.get() as { top: number | null } | null)?.top ?? 0;
-        return top ?? 0;
+      size(): bigint {
+        const top = (max.get() as { top: bigint | number | null } | null)?.top;
+        return top === null || top === undefined ? 0n : BigInt(top);
       },
       close(): void {
         db.close();
@@ -137,7 +146,7 @@ export function openSqliteSource(path: string, table: string): LegacyRowSource {
 /** Replacement characters rather than a throw: an export may hold stray bytes. */
 const utf8 = new TextDecoder("utf-8", { fatal: false });
 
-function decodeLine(line: Uint8Array, position: number): LegacyRow {
+function decodeLine(line: Uint8Array, position: bigint): LegacyRow {
   const text = utf8.decode(line).replace(/\r$/, "");
   if (text.trim().length === 0)
     return { position, values: null, problem: "not_an_object" };
@@ -165,10 +174,12 @@ export function openJsonlSource(path: string): LegacyRowSource {
   return {
     kind: "jsonl",
     columns: null,
-    read(after: number, limit: number): LegacyRow[] {
+    read(after: bigint, limit: number): LegacyRow[] {
       const rows: LegacyRow[] = [];
       const buffer = Buffer.alloc(CHUNK_BYTES);
-      let offset = after;
+      // A byte offset is bounded by the file size, so the reader works in
+      // numbers and only the position it hands back is exact.
+      let offset = Number(after);
       let pending: Uint8Array = new Uint8Array(0);
       // A line past the cap is reported by position and the reader resumes at
       // the next newline rather than buffering the rest of it.
@@ -200,7 +211,7 @@ export function openJsonlSource(path: string): LegacyRowSource {
             break;
           }
           append(chunk.subarray(cursor, newline));
-          const position = offset + newline + 1;
+          const position = BigInt(offset + newline + 1);
           rows.push(
             overlong
               ? { position, values: null, problem: "line_too_long" }
@@ -217,16 +228,17 @@ export function openJsonlSource(path: string): LegacyRowSource {
       // A final line with no newline is still a record; its position is the
       // end of the file, so a later run resumes past it.
       if (rows.length < limit && (pending.byteLength > 0 || overlong)) {
+        const position = BigInt(total);
         rows.push(
           overlong
-            ? { position: total, values: null, problem: "line_too_long" }
-            : decodeLine(pending, total),
+            ? { position, values: null, problem: "line_too_long" }
+            : decodeLine(pending, position),
         );
       }
       return rows;
     },
-    size(): number {
-      return total;
+    size(): bigint {
+      return BigInt(total);
     },
     close(): void {
       closeSync(handle);

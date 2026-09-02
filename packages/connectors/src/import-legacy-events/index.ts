@@ -53,11 +53,104 @@ import type { LegacyRowSource } from "./source";
 export const LEGACY_EVENTS_CURSOR_SCHEMA =
   "kizuki.legacy-events-cursor/v1" as const;
 
+/**
+ * What the run has read since it started, carried across pages. A migration
+ * pages through an export one call at a time, often one process per call, so
+ * a report built from the last page alone would describe a run that read
+ * nothing and erase the record of every row the earlier pages dropped.
+ */
+interface RunTotals {
+  from_position: string;
+  counts: LegacyEventsReport["counts"];
+  skipped: RowSkip[];
+}
+
 interface LegacyEventsCursor {
   schema: typeof LEGACY_EVENTS_CURSOR_SCHEMA;
   mapping_hash: string;
-  position: number;
+  /** Decimal: a rowid past 2^53 must survive the round trip exactly. */
+  position: string;
   done: boolean;
+  run: RunTotals;
+}
+
+const POSITION = /^(?:0|[1-9]\d{0,29})$/;
+
+function emptyTotals(from: bigint): RunTotals {
+  return {
+    from_position: from.toString(),
+    counts: {
+      rows: 0,
+      events: 0,
+      tombstones: 0,
+      skipped: 0,
+      blobs_dropped: 0,
+      kinds: {},
+    },
+    skipped: [],
+  };
+}
+
+function decodeTotals(raw: unknown, from: bigint): RunTotals {
+  if (!isPlainObject(raw)) return emptyTotals(from);
+  const counts = raw["counts"];
+  const skipped = raw["skipped"];
+  if (
+    typeof raw["from_position"] !== "string" ||
+    !POSITION.test(raw["from_position"]) ||
+    !isPlainObject(counts) ||
+    !Array.isArray(skipped)
+  ) {
+    throw new KizukiError(
+      "parse_error",
+      `${LEGACY_EVENTS_CONNECTOR_ID}: malformed cursor`,
+    );
+  }
+  const totals = emptyTotals(BigInt(raw["from_position"]));
+  for (const key of ["rows", "events", "tombstones", "skipped", "blobs_dropped"] as const) {
+    const value = counts[key];
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+      throw new KizukiError(
+        "parse_error",
+        `${LEGACY_EVENTS_CONNECTOR_ID}: malformed cursor`,
+      );
+    }
+    totals.counts[key] = value;
+  }
+  const kinds = counts["kinds"];
+  if (!isPlainObject(kinds)) {
+    throw new KizukiError(
+      "parse_error",
+      `${LEGACY_EVENTS_CONNECTOR_ID}: malformed cursor`,
+    );
+  }
+  for (const [kind, count] of Object.entries(kinds)) {
+    if (typeof count !== "number") {
+      throw new KizukiError(
+        "parse_error",
+        `${LEGACY_EVENTS_CONNECTOR_ID}: malformed cursor`,
+      );
+    }
+    totals.counts.kinds[kind] = count;
+  }
+  for (const skip of skipped.slice(0, MAX_REPORTED_SKIPS)) {
+    if (
+      !isPlainObject(skip) ||
+      typeof skip["position"] !== "string" ||
+      !POSITION.test(skip["position"]) ||
+      typeof skip["reason"] !== "string"
+    ) {
+      throw new KizukiError(
+        "parse_error",
+        `${LEGACY_EVENTS_CONNECTOR_ID}: malformed cursor`,
+      );
+    }
+    totals.skipped.push({
+      position: skip["position"],
+      reason: skip["reason"] as RowSkip["reason"],
+    });
+  }
+  return totals;
 }
 
 function detectFormat(path: string, declared?: SourceFormat): SourceFormat {
@@ -85,9 +178,8 @@ function decodeCursor(cursor: Cursor): LegacyEventsCursor {
     !isPlainObject(parsed) ||
     parsed["schema"] !== LEGACY_EVENTS_CURSOR_SCHEMA ||
     typeof parsed["mapping_hash"] !== "string" ||
-    typeof parsed["position"] !== "number" ||
-    !Number.isFinite(parsed["position"]) ||
-    parsed["position"] < 0 ||
+    typeof parsed["position"] !== "string" ||
+    !POSITION.test(parsed["position"]) ||
     typeof parsed["done"] !== "boolean"
   ) {
     throw new KizukiError(
@@ -95,11 +187,13 @@ function decodeCursor(cursor: Cursor): LegacyEventsCursor {
       `${LEGACY_EVENTS_CONNECTOR_ID}: malformed cursor`,
     );
   }
+  const position = BigInt(parsed["position"]);
   return {
     schema: LEGACY_EVENTS_CURSOR_SCHEMA,
     mapping_hash: parsed["mapping_hash"],
     position: parsed["position"],
     done: parsed["done"],
+    run: decodeTotals(parsed["run"], position),
   };
 }
 
@@ -222,38 +316,45 @@ export class LegacyEventsConnector implements Connector {
   ): SyncBatch {
     this.#assertColumns(source);
     let restarted: LegacyEventsReport["run"]["restarted"] = null;
-    let from = previous?.position ?? 0;
+    let from = previous === null ? 0n : BigInt(previous.position);
     if (previous !== null) {
       if (previous.mapping_hash !== this.mappingHash) {
         restarted = "mapping_changed";
-        from = 0;
-      } else if (previous.position > source.size()) {
+        from = 0n;
+      } else if (from > source.size()) {
         // A rewritten export is a different export; resume would skip rows.
         restarted = "source_shrank";
-        from = 0;
+        from = 0n;
       }
     }
 
     const rows = source.read(from, BATCH_ROWS);
     const events: CaptureEventInput[] = [];
-    const skipped: RowSkip[] = [];
-    const kinds: Record<string, number> = {};
-    let tombstones = 0;
-    let blobs = 0;
+    // A restart abandons what the previous pages counted; it is a new run.
+    const totals =
+      previous === null || restarted !== null
+        ? emptyTotals(from)
+        : previous.run;
     for (const row of rows) {
       const result = rowToEvent(row, this.mapping, {
         observedAt: new Date().toISOString(),
         mappingHash: this.mappingHash,
       });
+      totals.counts.rows += 1;
       if ("skipped" in result) {
-        skipped.push(result.skipped);
+        totals.counts.skipped += 1;
+        if (totals.skipped.length < MAX_REPORTED_SKIPS) {
+          totals.skipped.push(result.skipped);
+        }
         continue;
       }
       events.push(result.event);
-      kinds[result.event.kind] = (kinds[result.event.kind] ?? 0) + 1;
-      if (result.event.deleted) tombstones += 1;
+      totals.counts.events += 1;
+      const kind = result.event.kind;
+      totals.counts.kinds[kind] = (totals.counts.kinds[kind] ?? 0) + 1;
+      if (result.event.deleted) totals.counts.tombstones += 1;
       const dropped = result.event.metadata["__blobs"];
-      if (Array.isArray(dropped)) blobs += dropped.length;
+      if (Array.isArray(dropped)) totals.counts.blobs_dropped += dropped.length;
     }
 
     const done = rows.length < BATCH_ROWS;
@@ -261,26 +362,25 @@ export class LegacyEventsConnector implements Connector {
     const cursor: LegacyEventsCursor = {
       schema: LEGACY_EVENTS_CURSOR_SCHEMA,
       mapping_hash: this.mappingHash,
-      position: to,
+      position: to.toString(),
       done,
+      run: totals,
     };
 
-    this.#skipped = skipped.length;
+    this.#skipped = totals.counts.skipped;
     this.#report = {
       schema: LEGACY_EVENTS_REPORT_SCHEMA,
       generated_at: new Date().toISOString(),
       mapping_hash: this.mappingHash,
       format: this.format,
-      run: { from_position: from, to_position: to, done, restarted },
-      counts: {
-        rows: rows.length,
-        events: events.length,
-        tombstones,
-        skipped: skipped.length,
-        blobs_dropped: blobs,
-        kinds,
+      run: {
+        from_position: totals.from_position,
+        to_position: to.toString(),
+        done,
+        restarted,
       },
-      skipped: skipped.slice(0, MAX_REPORTED_SKIPS),
+      counts: totals.counts,
+      skipped: totals.skipped,
       columns: {
         consumed: [...consumedColumns(this.mapping)].sort(),
         metadata: this.mapping.metadata.columns,

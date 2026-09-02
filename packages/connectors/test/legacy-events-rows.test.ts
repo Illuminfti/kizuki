@@ -39,7 +39,7 @@ function convert(
 
 function one(values: Record<string, unknown>): CaptureEventInput {
   const result = rowToEvent(
-    { position: 1, values },
+    { position: 1n, values },
     LEGACY_EVENTS_FIXTURE.mapping,
     OPTIONS,
   );
@@ -53,9 +53,9 @@ describe("the fixture rows", () => {
     const { events, skipped } = convert(fixtureRows());
     expect(events).toHaveLength(9);
     expect(skipped).toEqual([
-      { position: 4, reason: "kind_unmapped" },
-      { position: 5, reason: "occurred_at_invalid" },
-      { position: 6, reason: "source_record_id_missing" },
+      { position: "4", reason: "kind_unmapped" },
+      { position: "5", reason: "occurred_at_invalid" },
+      { position: "6", reason: "source_record_id_missing" },
     ]);
   });
 
@@ -138,7 +138,7 @@ describe("the fixture rows", () => {
     };
     const result = rowToEvent(
       {
-        position: 1,
+        position: 1n,
         values: { id: "r1", type: "msg", ts: 1_700_000_000, body: "hi" },
       },
       mapping,
@@ -241,7 +241,7 @@ describe("bounds and shapes", () => {
     const { events } = convert(
       [
         {
-          position: 1,
+          position: 1n,
           values: {
             id: "r",
             type: "msg",
@@ -277,14 +277,14 @@ describe("bounds and shapes", () => {
   test("a malformed line is skipped with the reader's own reason", () => {
     expect(
       convert([
-        { position: 12, values: null, problem: "malformed_json" },
-        { position: 20, values: null, problem: "line_too_long" },
-        { position: 30, values: null },
+        { position: 12n, values: null, problem: "malformed_json" },
+        { position: 20n, values: null, problem: "line_too_long" },
+        { position: 30n, values: null },
       ]).skipped,
     ).toEqual([
-      { position: 12, reason: "malformed_json" },
-      { position: 20, reason: "line_too_long" },
-      { position: 30, reason: "not_an_object" },
+      { position: "12", reason: "malformed_json" },
+      { position: "20", reason: "line_too_long" },
+      { position: "30", reason: "not_an_object" },
     ]);
   });
 
@@ -298,7 +298,7 @@ describe("bounds and shapes", () => {
       convert(
         [
           {
-            position: 3,
+            position: 3n,
             values: {
               id: "r",
               type: "msg",
@@ -315,7 +315,7 @@ describe("bounds and shapes", () => {
         ],
         mapping,
       ).skipped,
-    ).toEqual([{ position: 3, reason: "observed_at_invalid" }]);
+    ).toEqual([{ position: "3", reason: "observed_at_invalid" }]);
   });
 });
 
@@ -332,14 +332,14 @@ describe("a source value named after an Object member", () => {
     for (const member of MEMBERS) {
       const result = rowToEvent(
         {
-          position: 1,
+          position: 1n,
           values: { id: "r1", type: member, ts: 1_700_000_000, body: "hi" },
         },
         LEGACY_EVENTS_FIXTURE.mapping,
         OPTIONS,
       );
       expect(result).toEqual({
-        skipped: { position: 1, reason: "kind_unmapped" },
+        skipped: { position: "1", reason: "kind_unmapped" },
       });
     }
   });
@@ -373,7 +373,7 @@ describe("a source value named after an Object member", () => {
     );
     const result = rowToEvent(
       {
-        position: 1,
+        position: 1n,
         values: { id: "r1", type: "__proto__", ts: 1_700_000_000, body: "hi" },
       },
       mapping,

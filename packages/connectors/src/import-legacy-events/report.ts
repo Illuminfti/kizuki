@@ -18,9 +18,10 @@ export interface LegacyEventsReport {
   generated_at: string;
   mapping_hash: string;
   format: SourceFormat;
+  /** Where the whole run started, not just the page that wrote the file. */
   run: {
-    from_position: number;
-    to_position: number;
+    from_position: string;
+    to_position: string;
     done: boolean;
     restarted: "mapping_changed" | "source_shrank" | null;
   };

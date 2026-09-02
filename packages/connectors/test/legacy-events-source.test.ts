@@ -28,9 +28,9 @@ function jsonlAt(name: string, content: string): string {
   return path;
 }
 
-function drain(source: LegacyRowSource, limit: number): number[] {
-  const positions: number[] = [];
-  let after = 0;
+function drain(source: LegacyRowSource, limit: number): bigint[] {
+  const positions: bigint[] = [];
+  let after = 0n;
   for (;;) {
     const rows = source.read(after, limit);
     if (rows.length === 0) break;
@@ -104,11 +104,38 @@ describe("the sqlite reader", () => {
       expect(positions).toHaveLength(2500);
       expect(new Set(positions).size).toBe(2500);
       for (let i = 1; i < positions.length; i += 1) {
-        expect(positions[i] as number).toBeGreaterThan(
-          positions[i - 1] as number,
+        expect(positions[i] as bigint).toBeGreaterThan(
+          positions[i - 1] as bigint,
         );
       }
-      expect(source.size()).toBe(2500);
+      expect(source.size()).toBe(2500n);
+    } finally {
+      source.close();
+    }
+  });
+
+  test("a rowid past 2^53 pages exactly, losing no row to rounding", () => {
+    const path = join(root, "snowflake.db");
+    const db = new Database(path);
+    db.exec("CREATE TABLE events (id INTEGER PRIMARY KEY, body TEXT)");
+    const insert = db.query("INSERT INTO events (id, body) VALUES (?, ?)");
+    const base = 1_300_000_000_000_000_001n;
+    const count = 1200n;
+    db.transaction(() => {
+      for (let i = 0n; i < count; i += 1n) insert.run(base + i, "b");
+    })();
+    db.close();
+
+    const source = openSqliteSource(path, "events");
+    try {
+      // A double cannot hold these: rounding the position of the last row of
+      // a page moves the keyset past real rows, and `rowid > ?` skips them.
+      const positions = drain(source, 1000);
+      expect(positions).toHaveLength(Number(count));
+      expect(new Set(positions).size).toBe(Number(count));
+      expect(positions[0]).toBe(base);
+      expect(positions[positions.length - 1]).toBe(base + count - 1n);
+      expect(source.size()).toBe(base + count - 1n);
     } finally {
       source.close();
     }
@@ -122,7 +149,7 @@ describe("the sqlite reader", () => {
     );
     const source = openSqliteSource(path, "events");
     try {
-      const [row] = source.read(0, 10);
+      const [row] = source.read(0n, 10);
       // Past 2^53 the decimal string is the only lossless JSON shape.
       expect(row?.values?.["big"]).toBe("9007199254740993");
       expect(row?.values?.["payload"]).toBeInstanceOf(Uint8Array);
@@ -145,8 +172,8 @@ describe("the sqlite reader", () => {
     const path = dbAt("none.db", "CREATE TABLE events (id TEXT);");
     const source = openSqliteSource(path, "events");
     try {
-      expect(source.size()).toBe(0);
-      expect(source.read(0, 10)).toEqual([]);
+      expect(source.size()).toBe(0n);
+      expect(source.read(0n, 10)).toEqual([]);
     } finally {
       source.close();
     }
@@ -158,12 +185,12 @@ describe("the jsonl reader", () => {
     const path = jsonlAt("two.jsonl", '{"a":1}\n{"a":2}\n');
     const source = openJsonlSource(path);
     try {
-      expect(source.read(0, 10)).toEqual([
-        { position: 8, values: { a: 1 } },
-        { position: 16, values: { a: 2 } },
+      expect(source.read(0n, 10)).toEqual([
+        { position: 8n, values: { a: 1 } },
+        { position: 16n, values: { a: 2 } },
       ]);
-      expect(source.read(8, 10)).toEqual([{ position: 16, values: { a: 2 } }]);
-      expect(source.size()).toBe(16);
+      expect(source.read(8n, 10)).toEqual([{ position: 16n, values: { a: 2 } }]);
+      expect(source.size()).toBe(16n);
     } finally {
       source.close();
     }
@@ -178,7 +205,7 @@ describe("the jsonl reader", () => {
     );
     const source = openJsonlSource(path);
     try {
-      const rows = source.read(0, 10);
+      const rows = source.read(0n, 10);
       expect(rows).toHaveLength(2);
       expect((rows[0]?.values as Record<string, unknown>)["a"]).toBe(first);
       expect((rows[1]?.values as Record<string, unknown>)["a"]).toBe(second);
@@ -191,7 +218,7 @@ describe("the jsonl reader", () => {
     const path = jsonlAt("crlf.jsonl", '{"a":1}\r\n{"a":2}');
     const source = openJsonlSource(path);
     try {
-      const rows = source.read(0, 10);
+      const rows = source.read(0n, 10);
       expect(rows.map((row) => row.values)).toEqual([{ a: 1 }, { a: 2 }]);
       expect(rows[1]?.position).toBe(source.size());
     } finally {
@@ -207,7 +234,7 @@ describe("the jsonl reader", () => {
     );
     const source = openJsonlSource(path);
     try {
-      const rows = source.read(0, 10);
+      const rows = source.read(0n, 10);
       expect(rows).toHaveLength(2);
       expect(rows[0]).toMatchObject({ values: null, problem: "line_too_long" });
       expect(rows[1]?.values).toEqual({ b: 2 });
@@ -220,12 +247,12 @@ describe("the jsonl reader", () => {
     const path = jsonlAt("bad.jsonl", '{"a":1}\nnot json\n[1,2]\n\n{"b":2}\n');
     const source = openJsonlSource(path);
     try {
-      expect(source.read(0, 10)).toEqual([
-        { position: 8, values: { a: 1 } },
-        { position: 17, values: null, problem: "malformed_json" },
-        { position: 23, values: null, problem: "not_an_object" },
-        { position: 24, values: null, problem: "not_an_object" },
-        { position: 32, values: { b: 2 } },
+      expect(source.read(0n, 10)).toEqual([
+        { position: 8n, values: { a: 1 } },
+        { position: 17n, values: null, problem: "malformed_json" },
+        { position: 23n, values: null, problem: "not_an_object" },
+        { position: 24n, values: null, problem: "not_an_object" },
+        { position: 32n, values: { b: 2 } },
       ]);
     } finally {
       source.close();
@@ -251,8 +278,8 @@ describe("the jsonl reader", () => {
     const path = jsonlAt("empty.jsonl", "");
     const source = openJsonlSource(path);
     try {
-      expect(source.read(0, 10)).toEqual([]);
-      expect(source.size()).toBe(0);
+      expect(source.read(0n, 10)).toEqual([]);
+      expect(source.size()).toBe(0n);
     } finally {
       source.close();
     }

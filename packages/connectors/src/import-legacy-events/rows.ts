@@ -43,7 +43,8 @@ export type RowSkipReason =
   | "kind_unmapped";
 
 export interface RowSkip {
-  position: number;
+  /** The source position in decimal: exact, and safe to serialize. */
+  position: string;
   reason: RowSkipReason;
 }
 
@@ -242,7 +243,7 @@ export function rowToEvent(
   if (row.values === null) {
     return {
       skipped: {
-        position: row.position,
+        position: row.position.toString(),
         reason: row.problem ?? "not_an_object",
       },
     };
@@ -252,12 +253,12 @@ export function rowToEvent(
   const id = recordId(values[mapping.source_record_id.column]);
   if (id === null) {
     return {
-      skipped: { position: row.position, reason: "source_record_id_missing" },
+      skipped: { position: row.position.toString(), reason: "source_record_id_missing" },
     };
   }
   const kind = rowKind(values, mapping);
   if (kind === null) {
-    return { skipped: { position: row.position, reason: "kind_unmapped" } };
+    return { skipped: { position: row.position.toString(), reason: "kind_unmapped" } };
   }
   const occurredAt = parseLegacyTimestamp(
     values[mapping.occurred_at.column],
@@ -265,7 +266,7 @@ export function rowToEvent(
   );
   if (occurredAt === null) {
     return {
-      skipped: { position: row.position, reason: "occurred_at_invalid" },
+      skipped: { position: row.position.toString(), reason: "occurred_at_invalid" },
     };
   }
   let observedAt = opts.observedAt;
@@ -276,7 +277,7 @@ export function rowToEvent(
     );
     if (mapped === null) {
       return {
-        skipped: { position: row.position, reason: "observed_at_invalid" },
+        skipped: { position: row.position.toString(), reason: "observed_at_invalid" },
       };
     }
     observedAt = mapped;

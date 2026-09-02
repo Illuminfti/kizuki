@@ -195,7 +195,7 @@ describe("paging and resume", () => {
     const remapped = createLegacyEventsConnector({ path: jsonlPath });
     await remapped.backfill(first.cursor);
     expect(remapped.lastReport()?.run).toMatchObject({
-      from_position: 0,
+      from_position: "0",
       restarted: "mapping_changed",
     });
 
@@ -204,7 +204,7 @@ describe("paging and resume", () => {
     const shrunk = createLegacyEventsConnector({ path: jsonlPath });
     await shrunk.backfill(first.cursor);
     expect(shrunk.lastReport()?.run).toMatchObject({
-      from_position: 0,
+      from_position: "0",
       restarted: "source_shrank",
     });
   });
@@ -216,6 +216,12 @@ describe("paging and resume", () => {
       "{",
       '{"schema":"other"}',
       '{"schema":"kizuki.legacy-events-cursor/v1","mapping_hash":"a","position":-1,"done":false}',
+      // A position that is not an exact decimal string: a number cannot carry
+      // a rowid past 2^53, so the cursor grammar refuses one.
+      '{"schema":"kizuki.legacy-events-cursor/v1","mapping_hash":"a","position":12,"done":false}',
+      '{"schema":"kizuki.legacy-events-cursor/v1","mapping_hash":"a","position":"12.5","done":false}',
+      // A run tally that is present but not a tally.
+      '{"schema":"kizuki.legacy-events-cursor/v1","mapping_hash":"a","position":"12","done":false,"run":{"from_position":"0","counts":{"rows":"many"},"skipped":[]}}',
     ]) {
       let code = "";
       try {
@@ -333,7 +339,7 @@ describe("a row the ledger would refuse", () => {
       expect(run.errors).toEqual([]);
       expect(run.stored).toBe(2);
       expect(connector.lastReport()?.skipped).toEqual([
-        { position: 120, reason: "occurred_at_invalid" },
+        { position: "120", reason: "occurred_at_invalid" },
       ]);
       expect(
         getCheckpoint(db, LEGACY_EVENTS_CONNECTOR_ID, jsonlPath)?.cursor,
@@ -373,6 +379,87 @@ describe("the report file", () => {
       expect(markdown).not.toContain(secret);
     }
     expect(JSON.stringify(report)).not.toContain("kettle");
+  });
+
+  test("an exhausted page keeps the record of what the run dropped", async () => {
+    seedSqlite();
+    const reportPath = join(root, "events-report.json");
+    const first = createLegacyEventsConnector({
+      path: dbPath,
+      report: reportPath,
+    });
+    const batch = await first.backfill(null);
+
+    // The documented recipe is to sync until nothing is stored. That last
+    // call reads no rows, and it must not overwrite the migration record
+    // with an all-zero one.
+    const second = createLegacyEventsConnector({
+      path: dbPath,
+      report: reportPath,
+    });
+    const exhausted = await second.sync(batch.cursor);
+    expect(exhausted.events).toEqual([]);
+
+    const report = second.lastReport();
+    expect(report?.counts).toMatchObject({ rows: 12, events: 9, skipped: 3 });
+    expect(report?.skipped).toHaveLength(3);
+    expect((await second.health()).state).toBe("degraded");
+    const onDisk = JSON.parse(readFileSync(reportPath, "utf8")) as {
+      counts: { rows: number; skipped: number };
+      skipped: unknown[];
+      run: { from_position: string; done: boolean };
+    };
+    expect(onDisk.counts).toMatchObject({ rows: 12, skipped: 3 });
+    expect(onDisk.skipped).toHaveLength(3);
+    expect(onDisk.run).toMatchObject({ from_position: "0", done: true });
+  });
+
+  test("a run that pages twice reports both pages, not the last one", async () => {
+    const path = join(root, "paged.db");
+    const db = new Database(path);
+    db.exec("CREATE TABLE events (id TEXT, ts INTEGER, body TEXT)");
+    const insert = db.query(
+      "INSERT INTO events (id, ts, body) VALUES (?, ?, ?)",
+    );
+    db.transaction(() => {
+      for (let i = 0; i < 1400; i += 1) {
+        // Every tenth row carries an unreadable timestamp, so both pages drop
+        // rows the report has to keep naming.
+        insert.run(`r${i}`, i % 10 === 0 ? null : 1_767_225_600 + i, "b");
+      }
+    })();
+    db.close();
+    writeFileSync(
+      `${path}.kizuki-mapping.json`,
+      JSON.stringify({
+        schema: "kizuki.legacy-events-mapping/v1",
+        table: "events",
+        source_record_id: { column: "id" },
+        kind: { const: "message" },
+        occurred_at: { column: "ts", format: "unix_seconds" },
+        text: { column: "body" },
+      }),
+    );
+
+    const reportPath = join(root, "paged-report.json");
+    let cursor: string | null = null;
+    let pages = 0;
+    for (;;) {
+      const connector = createLegacyEventsConnector({ path, report: reportPath });
+      const batch = await connector.backfill(cursor);
+      cursor = batch.cursor;
+      pages += 1;
+      const decoded = JSON.parse(cursor as string) as { done: boolean };
+      if (decoded.done) break;
+      if (pages > 4) throw new Error("paging did not finish");
+    }
+    expect(pages).toBe(2);
+    const onDisk = JSON.parse(readFileSync(reportPath, "utf8")) as {
+      counts: { rows: number; events: number; skipped: number };
+      skipped: unknown[];
+    };
+    expect(onDisk.counts).toMatchObject({ rows: 1400, events: 1260, skipped: 140 });
+    expect(onDisk.skipped).toHaveLength(140);
   });
 
   test("health degrades after a run that skipped rows", async () => {
