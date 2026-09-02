@@ -18,7 +18,10 @@ function notARegularFile(label: string, connectorId: string): KizukiError {
  * back into the refusal.
  */
 function readReason(error: unknown): string {
-  const code = (error as { code?: unknown }).code;
+  const code =
+    typeof error === "object" && error !== null
+      ? (error as { code?: unknown }).code
+      : undefined;
   return typeof code === "string" ? code : errorMessage(error);
 }
 
