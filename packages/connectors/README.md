@@ -32,6 +32,15 @@ Two kinds of adapter live in this package:
 In the examples below, `kizuki` stands for `bun packages/cli/src/main.ts` run
 from the tree, as in the repository README.
 
+## What the command line can pass an importer
+
+One thing: the path to the export. Everything else an importer accepts —
+`date_order`, `timezone`, `self` and `chat` below — is settable only by a
+program that builds the connector itself, because a stored connection holds
+nothing but a path. Where a refusal below asks for one of those keys, that is
+today an ask the command line cannot satisfy; the flag for it is not built
+yet, and this page will say so until it is.
+
 ## What a snapshot importer will not do
 
 None of the three importers below is a live sync, and none should be described
@@ -80,10 +89,15 @@ Known limits:
 - The export has no time zone: the timestamps are the exporting device's local
   clock. The host's zone is assumed and recorded in the event metadata. Two
   machines in different zones therefore import the same file to different
-  instants. Pass `timezone` in the connector config for a portable result.
-- The date order is settled by evidence, or by the fact that a chat runs
-  forwards in time. When neither settles it, the import is refused with a
-  message asking for `date_order` rather than guessing.
+  instants. A program that builds the connector can pin `timezone` for a
+  portable result; from the command line the host's zone is what you get.
+- The date order is settled by evidence — a day past the twelfth — or by the
+  fact that a chat runs forwards in time. A chat covering a single day, or a
+  short one whose dates never pass the twelfth, settles neither, and the
+  import is refused rather than guessing which half of `1/4` is the month.
+  The refusal asks for `date_order`, which today only a program building the
+  connector can supply: from the command line such an export cannot be
+  imported at all.
 - An export with media and one without name the same photo differently, so the
   two exports store that message twice.
 - A message is what it says, not what sits beside it. Whether the media file
@@ -93,7 +107,8 @@ Known limits:
   the references stay missing until you purge those events and import again.
 - The chat name comes from the export file name and is part of every event.
   Re-exporting the same chat under a different file name re-stores each message
-  as a new version. Pass `chat` to pin the name.
+  as a new version. A program building the connector can pin `chat`; from the
+  command line, keep the export file's name the same between exports.
 
 ## Pocket CSV export
 
