@@ -108,12 +108,12 @@ bind only when their status says they do. RFC 0002 is BINDING.
 - **Free local forever.** The local product is MIT. Recall is never metered.
 - **Zero phone-home.** No telemetry, no crash reports, no update checks. The
   only network calls are the owner's configured connectors and the owner's
-  configured model endpoint. Network
-  egress exists only in files listed in `scripts/network-allowlist.txt`,
-  each with a reason: the connectors the owner configured and the model
-  endpoint the owner configured. CI fails on any other network surface, and
-  on a stale allowlist entry. On this branch there is still no runtime
-  network and no allowlist file; the llm-port lane adds both.
+  configured model endpoint. Direct network egress exists only in files
+  listed in `scripts/network-allowlist.txt`, each with a reason. CI fails on
+  any other network surface, and on a stale allowlist entry. Core has zero
+  runtime dependencies; the one package that opens a socket to a provider is
+  the Telegram connector, through the `telegram` (GramJS) library, and only
+  after you sign in.
 - **Your files.** Canon is Markdown on the owner's disk. Deleting Kizuki
   leaves a readable vault.
 - **Nothing writes canon without a receipt.** Every write names its evidence, its

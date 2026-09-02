@@ -1,0 +1,137 @@
+# `@kizuki/connector-telegram`
+
+## What it reads
+
+This package signs in as you and reads your own Telegram dialogs: private
+chats, groups, and the channels you follow. It is not a bot. It never posts,
+and it never removes anything at the source.
+
+Every non-service message becomes one `message` event. The sensitivity hint
+follows the chat rather than the words in it: a private chat is `private`, a
+group is `personal`, and a channel is `public` only when it has a public
+handle. Subjects are the sender, the other party, and the chat itself, so a
+later purge can be aimed at one correspondent.
+
+This is the only package in the repository with a runtime dependency. It uses
+`telegram` (GramJS) to speak MTProto, and the library is loaded lazily inside
+the client factory, so nothing in the registry, the offline fixture or the
+conformance suite pulls transport code into the process.
+
+## App credentials
+
+Telegram issues an app id and hash once per project, not once per person. You
+are never asked to paste one. The two values are inlined when the binary is
+built:
+
+```sh
+KIZUKI_TELEGRAM_API_ID=… KIZUKI_TELEGRAM_API_HASH=… \
+  bun build packages/cli/src/main.ts --compile --env 'KIZUKI_TELEGRAM_*' \
+  --outfile kizuki
+```
+
+A build without them refuses to sign in, with this message and nothing else:
+
+```
+kizuki.telegram: app credentials are not compiled in; build with KIZUKI_TELEGRAM_API_ID and KIZUKI_TELEGRAM_API_HASH set (see packages/connector-telegram/README.md)
+```
+
+There is no fallback and no prompt. During development, export the same two
+variables in your shell before running from source. Keep the registered pair
+out of the repository: Telegram penalises published credentials with
+`API_ID_PUBLISHED_FLOOD` for everyone using that build.
+
+## Signing in
+
+Sign-in asks for three things at most, in this order:
+
+1. your phone number in international format, for example `+15551234567`;
+2. the code Telegram sends you;
+3. your two-step verification password, if the account has one. The prompt is
+   masked, and any hint Telegram supplies is shown once and never stored.
+
+You get two more tries after a wrong code or password. The third rejection
+abandons sign-in and writes nothing. If Telegram asks the client to wait, a
+short wait passes quietly and sign-in continues. A longer one is reported to
+you with the number of seconds, because a silent multi-minute pause looks like
+a hang.
+
+The terminal verb that drives this flow is not part of this package. On this
+revision `kizuki connect` enrolls `none`-mode sources only, so
+`kizuki connect telegram --source …` answers
+`sign-in for kizuki.telegram is not wired yet`. Until that lands, the sign-in
+above is reachable from library callers through `enrollConnection` in
+`@kizuki/core`.
+
+## Where the session lives
+
+Sign-in produces one opaque blob holding your account id and the session
+string. Core, not this connector, chooses the filename and writes it to
+`<vault>/.kizuki/connections/<source key>.state` with mode `0600` inside a
+`0700` directory. The database records only the reference
+`file:connections/<source key>.state`. The session bytes never reach SQLite, a
+log line, an error message, a cursor, or event metadata.
+
+Re-authenticating replaces that file in place and keeps the same source key,
+so checkpoints survive. Connecting with a session that belongs to a different
+account is refused rather than quietly re-pointed.
+
+## What it does not do
+
+Deletions are invisible to it. Telegram publishes them on the update stream,
+which this connector does not consume, so the manifest declares
+`tombstones: false` and a message you delete in Telegram stays in your ledger
+until you purge it.
+
+Edits are caught within a window. Each pass re-reads the last 200 messages per
+dialog and re-emits anything edited since the previous completed pass. An edit
+to something older than that is missed.
+
+Service messages are skipped: joins, pins and title changes carry no content
+worth keeping.
+
+Attachments are recorded by id, media type, filename and size. No file is ever
+downloaded.
+
+A run lists at most 5000 dialogs. Reaching that bound sets health to degraded
+and names the limit, so a truncated view is visible rather than silent.
+
+Waits are obeyed. When Telegram asks for a pause, the batch ends early with a
+cursor describing exactly the events it returned, and health reports how many
+seconds are left.
+
+Secret chats cannot be read. They are end-to-end encrypted per device, and
+the library this connector uses implements no part of that protocol: the
+`telegram` package ships no secret-chat client at all.
+
+## Purge
+
+`purgeSource` returns a plan, not a deletion. Telegram keeps its own copy and
+this connector performs no outbound actions, so every record it can name for a
+subject is listed under `unreachable_source_record_ids` and
+`source_record_ids` is empty. The plan covers what this process emitted, up to
+10 000 records per subject; the ledger's own purge is keyed on the subject, so
+a truncated plan still removes everything Kizuki holds.
+
+## Tests
+
+Everything except the client module runs against a scripted in-memory account
+with no network. The one test that reaches Telegram is skipped by default and
+never runs in CI. To run it by hand:
+
+```sh
+KIZUKI_TELEGRAM_SMOKE=1 KIZUKI_TELEGRAM_API_ID=… KIZUKI_TELEGRAM_API_HASH=… \
+  KIZUKI_TELEGRAM_SMOKE_PHONE=+15551234567 \
+  bun test packages/connector-telegram/test/client.smoke.test.ts
+```
+
+It signs in interactively and lists one dialog.
+
+## Provider facts
+
+Checked 2026-09-02 against `core.telegram.org/api/auth` and
+`core.telegram.org/api/obtaining_api_id`. A person signs in with
+`auth.sendCode`, then `auth.signIn` with the code, and `auth.checkPassword`
+when two-step verification returns `SESSION_PASSWORD_NEEDED`. The app id and
+hash are registered once per application and belong to whoever ships the
+build. Authentication rules and quotas change; re-check before relying on any
+of this.
