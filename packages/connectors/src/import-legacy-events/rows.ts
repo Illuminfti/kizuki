@@ -192,14 +192,50 @@ function isDeleted(
   );
 }
 
+/**
+ * Names the importer stamps itself. A column of the same name is a source
+ * value, and a source value that overwrote a stamp would let an export claim
+ * the connector's own mapping hash, invent a blob it never dropped, or mark a
+ * live row deleted. Evidence and trusted stamps stay separate: the column is
+ * refused, and the report says which ones were.
+ */
+const RESERVED_METADATA: ReadonlySet<string> = new Set([
+  ROWID_ALIAS,
+  // The floor stages `metadata[PAGE_CANDIDATE_KEY]` as a typed page. This
+  // connector emits capture notes and is never entitled to one, so a column
+  // that happens to carry the key must not become an instruction.
+  PAGE_CANDIDATE_KEY,
+  "mapping_hash",
+  "legacy_deleted",
+  "text_truncated",
+  "__blobs",
+  "__truncated",
+  "__reserved_columns",
+  "__source_record_id_hashed",
+  // Assigning it by name on a plain object moves the prototype instead of
+  // storing a value, so it is never a key this importer carries.
+  "__proto__",
+]);
+
+interface SourceMetadata {
+  /** Null-prototype: a column named after an Object member is still data. */
+  columns: Record<string, unknown>;
+  blobs: string[];
+  truncated: string[];
+  reserved: string[];
+}
+
 function rowMetadata(
   values: Record<string, unknown>,
   mapping: LegacyEventsMapping,
-  mappingHash: string,
-): Record<string, unknown> {
-  const metadata: Record<string, unknown> = { mapping_hash: mappingHash };
+): SourceMetadata {
+  const columns: Record<string, unknown> = Object.create(null) as Record<
+    string,
+    unknown
+  >;
   const blobs: string[] = [];
   const truncated: string[] = [];
+  const reserved: string[] = [];
   const consumed = consumedColumns(mapping);
   const wanted =
     mapping.metadata.columns === "rest"
@@ -207,11 +243,10 @@ function rowMetadata(
       : mapping.metadata.columns;
 
   for (const column of wanted) {
-    if (column === ROWID_ALIAS) continue;
-    // The floor stages `metadata[PAGE_CANDIDATE_KEY]` as a typed page. This
-    // connector emits capture notes and is never entitled to one, so a column
-    // that happens to carry the key must not become an instruction.
-    if (column === PAGE_CANDIDATE_KEY) continue;
+    if (RESERVED_METADATA.has(column)) {
+      if (!reserved.includes(column)) reserved.push(column);
+      continue;
+    }
     if (!Object.prototype.hasOwnProperty.call(values, column)) continue;
     const value = values[column];
     // An empty cell is not evidence, and carrying it would put a null in
@@ -224,15 +259,13 @@ function rowMetadata(
       continue;
     }
     if (typeof value === "string" && value.length > MAX_METADATA_STRING) {
-      metadata[column] = value.slice(0, MAX_METADATA_STRING);
+      columns[column] = value.slice(0, MAX_METADATA_STRING);
       truncated.push(column);
       continue;
     }
-    metadata[column] = value;
+    columns[column] = value;
   }
-  if (blobs.length > 0) metadata["__blobs"] = blobs;
-  if (truncated.length > 0) metadata["__truncated"] = truncated;
-  return metadata;
+  return { columns, blobs, truncated, reserved };
 }
 
 export function rowToEvent(
@@ -310,6 +343,7 @@ export function rowToEvent(
   }
 
   const text = truncate(rowText(values, mapping), MAX_TEXT_LENGTH);
+  const source = rowMetadata(values, mapping);
   return {
     event: {
       ...base,
@@ -318,8 +352,18 @@ export function rowToEvent(
       sensitivity_hint: rowHint(values, mapping),
       deleted: false,
       attachments: [],
+      // The source bag first, the importer's own stamps last: what the export
+      // said cannot overwrite what the importer knows.
       metadata: {
-        ...rowMetadata(values, mapping, opts.mappingHash),
+        ...source.columns,
+        mapping_hash: opts.mappingHash,
+        ...(source.blobs.length > 0 ? { __blobs: source.blobs } : {}),
+        ...(source.truncated.length > 0
+          ? { __truncated: source.truncated }
+          : {}),
+        ...(source.reserved.length > 0
+          ? { __reserved_columns: source.reserved }
+          : {}),
         ...(text.cut ? { text_truncated: true } : {}),
         ...(id.hashed ? { __source_record_id_hashed: true } : {}),
       },

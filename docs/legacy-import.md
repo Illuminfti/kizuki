@@ -162,6 +162,13 @@ SQL identifiers.
 | `deleted` | `null` | `{ column, true_values }`; a matching row becomes a tombstone |
 | `metadata.columns` | `"rest"` | `"rest"` keeps every column the mapping did not consume; a list keeps exactly those |
 
+A column named after a stamp the importer owns — `mapping_hash`,
+`legacy_deleted`, `text_truncated`, `__blobs`, `__truncated`,
+`__source_record_id_hashed`, `__reserved_columns`, `__rowid`,
+`page_candidate`, `__proto__` — is refused rather than copied, and its name is
+listed in the event's `__reserved_columns`. An export cannot claim the
+connector's own mapping hash or mark a live row deleted.
+
 One column may fill only one role, so a mapping cannot quietly double-count
 it. A column the source does not have is a refusal before any row is read.
 

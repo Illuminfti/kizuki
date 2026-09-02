@@ -158,6 +158,69 @@ describe("the fixture rows", () => {
     });
   });
 
+  test("a column cannot forge a stamp the importer owns", () => {
+    const forged = {
+      id: "r1",
+      type: "msg",
+      ts: 1_700_000_000,
+      body: "hi",
+      mapping_hash: "forged-by-the-export",
+      legacy_deleted: true,
+      text_truncated: true,
+      __blobs: ["a blob that was never dropped"],
+      __truncated: ["body"],
+      __source_record_id_hashed: true,
+      __reserved_columns: ["nothing"],
+      extra: "kept",
+    };
+    const result = rowToEvent(
+      { position: 1n, values: forged },
+      { ...LEGACY_EVENTS_FIXTURE.mapping, table: null },
+      OPTIONS,
+    );
+    if (!("event" in result)) throw new Error("expected an event");
+    expect(result.event.metadata).toEqual({
+      extra: "kept",
+      mapping_hash: OPTIONS.mappingHash,
+      __reserved_columns: [
+        "mapping_hash",
+        "legacy_deleted",
+        "text_truncated",
+        "__blobs",
+        "__truncated",
+        "__source_record_id_hashed",
+        "__reserved_columns",
+      ],
+    });
+    expect(result.event.deleted).toBe(false);
+  });
+
+  test("a listed reserved column is refused as loudly as a rest one", () => {
+    const result = rowToEvent(
+      {
+        position: 1n,
+        values: {
+          id: "r1",
+          type: "msg",
+          ts: 1_700_000_000,
+          body: "hi",
+          mapping_hash: "forged",
+        },
+      },
+      {
+        ...LEGACY_EVENTS_FIXTURE.mapping,
+        table: null,
+        metadata: { columns: ["mapping_hash"] },
+      },
+      OPTIONS,
+    );
+    if (!("event" in result)) throw new Error("expected an event");
+    expect(result.event.metadata["mapping_hash"]).toBe(OPTIONS.mappingHash);
+    expect(result.event.metadata["__reserved_columns"]).toEqual([
+      "mapping_hash",
+    ]);
+  });
+
   test("an over-long metadata cell is truncated and named", () => {
     const long = convert(fixtureRows()).events.find(
       (event) => event.source_record_id === "r9",
