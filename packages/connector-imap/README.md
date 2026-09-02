@@ -24,6 +24,12 @@ Per configured folder, in configured order:
 A message larger than `max_message_bytes` (2 MiB by default) is captured
 header-only, with `metadata.body_omitted: "size"`.
 
+A body whose declared transfer encoding does not decode cleanly keeps what
+could be read (or the raw bytes when nothing could) and carries
+`metadata.transfer_fallback`, so an odd-looking message is explained rather
+than silently empty. A charset this platform has no decoder for is recorded
+the same way in `metadata.charset_fallback`.
+
 IMAP flags are captured nowhere. A `\Seen` toggle is not a change to the
 message, and recording it would fork a ledger row every time the mailbox was
 re-observed.

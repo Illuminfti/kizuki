@@ -26,6 +26,8 @@ export interface MimePart {
   disposition: ContentDisposition | null;
   /** Transfer-decoded bytes; empty for a multipart container. */
   body: Uint8Array;
+  /** Set when the declared transfer encoding did not decode cleanly. */
+  transferFallback?: string;
   children: MimePart[];
 }
 
@@ -253,10 +255,12 @@ function buildPart(
 
   // `message/rfc822` is captured as an attachment ref, never recursed into:
   // the enclosed message is not a record the owner's mailbox indexed.
-  part.body = decodeTransfer(
+  const decoded = decodeTransfer(
     headerValue(parsed.fields, "content-transfer-encoding"),
     rawBody,
   );
+  part.body = decoded.bytes;
+  if (decoded.fallback !== undefined) part.transferFallback = decoded.fallback;
   return part;
 }
 

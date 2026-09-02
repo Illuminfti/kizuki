@@ -346,6 +346,14 @@ export function messageEvent(input: MessageEventInput): CaptureEventInput {
   // it rather than be snapshotted a moment too early.
   const subjects = collectSubjects(fields, fallbacks);
 
+  const transferFallbacks = [
+    ...new Set(
+      walkParts(parsed.root)
+        .map((part) => part.transferFallback)
+        .filter((label): label is string => label !== undefined),
+    ),
+  ].sort();
+
   const metadata: Record<string, unknown> = {
     folder: input.folderDisplay,
     uid: input.uid,
@@ -362,6 +370,9 @@ export function messageEvent(input: MessageEventInput): CaptureEventInput {
     ...(truncated ? { text_truncated: true } : {}),
     ...(fallbacks.length > 0
       ? { charset_fallback: [...fallbacks].sort() }
+      : {}),
+    ...(transferFallbacks.length > 0
+      ? { transfer_fallback: transferFallbacks }
       : {}),
     ...(parsed.headersTruncated ? { header_truncated: true } : {}),
   };

@@ -81,14 +81,46 @@ function latin1(bytes: Uint8Array): string {
   return text;
 }
 
+/**
+ * RFC 2045 section 6.8 tells a decoder to ignore characters outside the
+ * alphabet, which is how a body with one stray character stays readable.
+ */
+function decodeBase64Lenient(text: string): Uint8Array {
+  let kept = "";
+  for (const character of text) {
+    if (BASE64_ALPHABET.includes(character)) kept += character;
+  }
+  return decodeBase64Text(kept) ?? new Uint8Array();
+}
+
+export interface DecodedBody {
+  bytes: Uint8Array;
+  /** The encoding whose decode failed, so an odd body is explained. */
+  fallback?: string;
+}
+
 export function decodeTransfer(
   encoding: string | undefined,
   body: Uint8Array,
-): Uint8Array {
+): DecodedBody {
   const name = (encoding ?? "7bit").trim().toLowerCase();
-  if (name === "base64") return decodeBase64Text(latin1(body)) ?? new Uint8Array();
-  if (name === "quoted-printable") {
-    return decodeQuotedPrintableText(latin1(body)) ?? body;
+  if (name === "base64") {
+    const text = latin1(body);
+    const strict = decodeBase64Text(text);
+    if (strict !== null) return { bytes: strict };
+    // An empty result means the body was never base64; the raw bytes at least
+    // show the owner what arrived instead of an unexplained blank message.
+    const lenient = decodeBase64Lenient(text);
+    return {
+      bytes: lenient.byteLength > 0 ? lenient : body,
+      fallback: "base64",
+    };
   }
-  return body;
+  if (name === "quoted-printable") {
+    const decoded = decodeQuotedPrintableText(latin1(body));
+    return decoded === null
+      ? { bytes: body, fallback: "quoted-printable" }
+      : { bytes: decoded };
+  }
+  return { bytes: body };
 }

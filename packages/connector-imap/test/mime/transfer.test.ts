@@ -28,10 +28,35 @@ describe("transfer encodings", () => {
   });
 
   test("routes by encoding name and passes identity encodings through", () => {
-    expect(utf8(decodeTransfer("BASE64", encode("aGk=")))).toBe("hi");
-    expect(utf8(decodeTransfer("Quoted-Printable", encode("=41")))).toBe("A");
-    expect(utf8(decodeTransfer("8bit", encode("plain")))).toBe("plain");
-    expect(utf8(decodeTransfer(undefined, encode("plain")))).toBe("plain");
+    expect(utf8(decodeTransfer("BASE64", encode("aGk=")).bytes)).toBe("hi");
+    expect(utf8(decodeTransfer("Quoted-Printable", encode("=41")).bytes)).toBe(
+      "A",
+    );
+    expect(utf8(decodeTransfer("8bit", encode("plain")).bytes)).toBe("plain");
+    expect(utf8(decodeTransfer(undefined, encode("plain")).bytes)).toBe(
+      "plain",
+    );
+    expect(decodeTransfer("BASE64", encode("aGk=")).fallback).toBeUndefined();
+  });
+
+  test("a stray character in a base64 body keeps the text and says so", () => {
+    const decoded = decodeTransfer(
+      "base64",
+      encode("UXVhcnRlcmx5IG51bWJlcnM=\r\n*\r\n"),
+    );
+    expect(utf8(decoded.bytes)).toBe("Quarterly numbers");
+    expect(decoded.fallback).toBe("base64");
+  });
+
+  test("a body that is not base64 at all keeps its raw bytes", () => {
+    const decoded = decodeTransfer("base64", encode("!!! ??? ***"));
+    expect(utf8(decoded.bytes)).toBe("!!! ??? ***");
+    expect(decoded.fallback).toBe("base64");
+  });
+
+  test("a malformed quoted-printable body keeps its raw bytes", () => {
+    const decoded = decodeTransfer("quoted-printable", encode("Hello =ZZ"));
+    expect(utf8(decoded.bytes)).toBe("Hello =ZZ");
   });
 });
 

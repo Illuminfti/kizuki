@@ -235,6 +235,37 @@ describe("the fixture messages map to exact events", () => {
     expect(validateEventInput(event).ok).toBe(true);
   });
 
+  test("an undecodable base64 body is explained, never silently empty", () => {
+    const event = build(
+      [
+        "From: ada@acme.example",
+        "Subject: Report",
+        "Content-Type: text/plain; charset=utf-8",
+        "Content-Transfer-Encoding: base64",
+        "",
+        "SGVsbG8gdGhlcmU=",
+        "*",
+        "",
+      ].join("\r\n"),
+    );
+    expect(event.text).toBe("Report\n\nHello there");
+    expect(event.metadata["transfer_fallback"]).toEqual(["base64"]);
+  });
+
+  test("a clean body records no transfer fallback", () => {
+    const event = build(
+      [
+        "From: ada@acme.example",
+        "Subject: Report",
+        "Content-Transfer-Encoding: base64",
+        "",
+        "SGVsbG8=",
+        "",
+      ].join("\r\n"),
+    );
+    expect(event.metadata).not.toHaveProperty("transfer_fallback");
+  });
+
   test("no event carries IMAP flags in any field", () => {
     for (const event of fixtureEvents()) {
       expect(Object.keys(event.metadata)).not.toContain("flags");
