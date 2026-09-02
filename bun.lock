@@ -19,9 +19,16 @@
         "@kizuki/core": "workspace:*",
       },
     },
+    "packages/connector-screenpipe": {
+      "name": "@kizuki/connector-screenpipe",
+      "dependencies": {
+        "@kizuki/core": "workspace:*",
+      },
+    },
     "packages/connectors": {
       "name": "@kizuki/connectors",
       "dependencies": {
+        "@kizuki/connector-screenpipe": "workspace:*",
         "@kizuki/core": "workspace:*",
       },
     },
@@ -37,6 +44,8 @@
   },
   "packages": {
     "@kizuki/cli": ["@kizuki/cli@workspace:packages/cli"],
+
+    "@kizuki/connector-screenpipe": ["@kizuki/connector-screenpipe@workspace:packages/connector-screenpipe"],
 
     "@kizuki/connectors": ["@kizuki/connectors@workspace:packages/connectors"],
 
