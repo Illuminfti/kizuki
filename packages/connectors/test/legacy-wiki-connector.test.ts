@@ -208,10 +208,14 @@ describe("backfill and sync", () => {
     write("journal/ada.md", "---\ntitle: Ada\n---\nSecond.\n");
     const second = await connector.sync(first.cursor);
     expect(
-      second.events.map((event) => `${event.source_record_id}=${target(event)}`),
+      second.events.map(
+        (event) => `${event.source_record_id}=${target(event)}`,
+      ),
     ).toEqual(["journal/ada.md=entities/ada-2"]);
     expect(
-      connector.lastReport()?.pages.map((page) => `${page.relpath}=${page.target}`),
+      connector
+        .lastReport()
+        ?.pages.map((page) => `${page.relpath}=${page.target}`),
     ).toEqual(["journal/ada.md=entities/ada-2", "notes/ada.md=entities/ada"]);
   });
 
@@ -354,6 +358,33 @@ describe("hostile files", () => {
     const read = await readWikiFile(join(wiki, "big.md"));
     expect("file" in read && read.file.content).toBe(big);
     expect("file" in read && read.file.size).toBe(big.length);
+  });
+
+  test("a file name that is not UTF-8 is reported, never guessed at", async () => {
+    writeMapping();
+    write("ok.md", "---\ntitle: Fine\n---\nfine\n");
+    // A POSIX name is bytes; the listing decodes it lossily, so the name the
+    // walk holds does not open the file it came from. Importing under the
+    // mangled name would mint a source_record_id that changes between runs.
+    writeFileSync(
+      Buffer.concat([
+        Buffer.from(join(wiki, "bad")),
+        Buffer.from([0xff, 0xfe]),
+        Buffer.from("name.md"),
+      ]),
+      "---\ntitle: Bad\n---\nbody\n",
+    );
+    const connector = createLegacyWikiConnector({ path: wiki });
+    const batch = await connector.backfill(null);
+    expect(batch.events.map((event) => event.source_record_id)).toEqual([
+      "ok.md",
+    ]);
+    const skipped = connector
+      .lastReport()
+      ?.pages.filter((page) => page.outcome === "skipped");
+    expect(skipped).toHaveLength(1);
+    expect(skipped?.[0]?.skip_reason).toBe("unreadable");
+    expect(skipped?.[0]?.relpath).toContain("�");
   });
 
   // chmod is only a bound for a process that is not root.
