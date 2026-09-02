@@ -1,4 +1,9 @@
-import { HealthReport, isPlainObject } from "@kizuki/core";
+import {
+  HealthReport,
+  PAGE_CANDIDATE_KEY,
+  isPlainObject,
+  targetProblem,
+} from "@kizuki/core";
 import type {
   CaptureEventInput,
   Connector,
@@ -52,17 +57,30 @@ const MANIFEST: Manifest = {
   auth_modes: ["none"],
 };
 
+interface SnapshotEntry {
+  /** So an edited page is re-emitted and a copied wiki with fresh mtimes is not. */
+  hash: string;
+  /** So a page added later cannot take a target this page is already staged at. */
+  target: string;
+}
+
 interface LegacyWikiCursor {
   schema: typeof LEGACY_WIKI_CURSOR_SCHEMA;
   mapping_hash: string;
-  /** Relpath to a content hash, so an edited page is re-emitted and a copied
-   * wiki with fresh mtimes is not. Only pages this import actually emitted:
-   * a page the mapping excludes has no ledger record to retract later. */
-  files: Record<string, string>;
+  /** Only pages this import actually emitted: a page the mapping excludes has
+   * no ledger record to retract later. */
+  files: Record<string, SnapshotEntry>;
 }
 
 function contentHash(content: string): string {
   return new Bun.CryptoHasher("sha256").update(content).digest("hex");
+}
+
+function targetOf(event: CaptureEventInput): string | null {
+  const candidate = event.metadata[PAGE_CANDIDATE_KEY];
+  if (!isPlainObject(candidate)) return null;
+  const target = candidate["target"];
+  return typeof target === "string" ? target : null;
 }
 
 function encodeCursor(
@@ -73,10 +91,12 @@ function encodeCursor(
   const hashes = new Map(
     scan.files.map((file) => [file.relpath, contentHash(file.content)]),
   );
-  const files: Record<string, string> = {};
+  const files: Record<string, SnapshotEntry> = {};
   for (const event of events) {
     const hash = hashes.get(event.source_record_id);
-    if (hash !== undefined) files[event.source_record_id] = hash;
+    const target = targetOf(event);
+    if (hash === undefined || target === null) continue;
+    files[event.source_record_id] = { hash, target };
   }
   const cursor: LegacyWikiCursor = {
     schema: LEGACY_WIKI_CURSOR_SCHEMA,
@@ -94,7 +114,7 @@ function encodeCursor(
  * source record was removed.
  */
 export function goneFromSnapshot(
-  previous: Record<string, string>,
+  previous: Record<string, SnapshotEntry>,
   scan: ScanResult,
 ): string[] {
   if (scan.truncated) return [];
@@ -104,6 +124,15 @@ export function goneFromSnapshot(
   return Object.keys(previous)
     .filter((relpath) => !seen.has(relpath))
     .sort(compareStrings);
+}
+
+function isSnapshotEntry(raw: unknown): raw is SnapshotEntry {
+  return (
+    isPlainObject(raw) &&
+    typeof raw["hash"] === "string" &&
+    typeof raw["target"] === "string" &&
+    targetProblem(raw["target"]) === null
+  );
 }
 
 function decodeCursor(cursor: Cursor): LegacyWikiCursor {
@@ -122,7 +151,7 @@ function decodeCursor(cursor: Cursor): LegacyWikiCursor {
     parsed["schema"] !== LEGACY_WIKI_CURSOR_SCHEMA ||
     typeof parsed["mapping_hash"] !== "string" ||
     !isPlainObject(parsed["files"]) ||
-    !Object.values(parsed["files"]).every((hash) => typeof hash === "string")
+    !Object.values(parsed["files"]).every(isSnapshotEntry)
   ) {
     throw new KizukiError(
       "parse_error",
@@ -132,8 +161,18 @@ function decodeCursor(cursor: Cursor): LegacyWikiCursor {
   return {
     schema: LEGACY_WIKI_CURSOR_SCHEMA,
     mapping_hash: parsed["mapping_hash"],
-    files: parsed["files"] as Record<string, string>,
+    files: parsed["files"] as Record<string, SnapshotEntry>,
   };
+}
+
+function pinnedTargets(
+  files: Record<string, SnapshotEntry>,
+): Record<string, string> {
+  const pinned: Record<string, string> = {};
+  for (const [relpath, entry] of Object.entries(files)) {
+    pinned[relpath] = entry.target;
+  }
+  return pinned;
 }
 
 function tombstone(relpath: string, observedAt: string): CaptureEventInput {
@@ -197,7 +236,7 @@ export class LegacyWikiConnector implements Connector {
     if (cursor !== null) decodeCursor(cursor);
     // A backfill is always a full walk; the snapshot is still returned so a
     // later sync knows what the wiki held.
-    const { scan, events } = await this.#run([]);
+    const { scan, events } = await this.#run([], {});
     return { events, cursor: encodeCursor(scan, events, this.mappingHash) };
   }
 
@@ -206,7 +245,12 @@ export class LegacyWikiConnector implements Connector {
     const previous = decodeCursor(cursor);
     const changed = previous.mapping_hash !== this.mappingHash;
     const notes = changed ? ["mapping_changed"] : [];
-    const { scan, events } = await this.#run(notes);
+    // A mapping change replans the whole wiki, so the old targets no longer
+    // describe it; every page is re-emitted anyway, consistently.
+    const { scan, events } = await this.#run(
+      notes,
+      changed ? {} : pinnedTargets(previous.files),
+    );
 
     const hashes = new Map(
       scan.files.map((file) => [file.relpath, contentHash(file.content)]),
@@ -218,7 +262,7 @@ export class LegacyWikiConnector implements Connector {
       : events.filter(
           (event) =>
             hashes.get(event.source_record_id) !==
-            previous.files[event.source_record_id],
+            previous.files[event.source_record_id]?.hash,
         );
 
     const observedAt = new Date().toISOString();
@@ -257,11 +301,13 @@ export class LegacyWikiConnector implements Connector {
 
   async #run(
     notes: string[],
+    pinned: Record<string, string>,
   ): Promise<{ scan: ScanResult; events: CaptureEventInput[] }> {
     const scan = await scanLegacyWiki(this.path, this.mapping.ignore);
     const { events, report } = planLegacyWiki(scan, this.mapping, {
       observedAt: new Date().toISOString(),
       mappingHash: this.mappingHash,
+      pinned,
     });
     report.notes.push(...notes);
     this.#report = report;

@@ -45,6 +45,15 @@ const IDENTITY_SENSITIVITIES = ["public", "personal", "private"] as const;
 export interface PlanOptions {
   observedAt: string;
   mappingHash: string;
+  /**
+   * Relpath to the target a previous run already emitted for it. Collision
+   * suffixes are decided over the whole wiki, but a sync only emits what
+   * changed, so a page added later would otherwise be handed the unsuffixed
+   * target an earlier page is already staged at. A page keeps the target it
+   * was emitted with; only pages the ledger has never seen are placed around
+   * those.
+   */
+  pinned?: Record<string, string>;
 }
 
 interface PageDraft {
@@ -58,6 +67,7 @@ function planPage(
   opts: PlanOptions,
   taken: Set<string>,
 ): PageDraft {
+  const pinned = opts.pinned?.[file.relpath];
   const relpath = sanitizeLine(file.relpath, 200);
   const parsed = parseLegacyFrontmatter(file.content);
   const data = parsed.data;
@@ -182,7 +192,8 @@ function planPage(
     };
   }
 
-  const target = planTarget(relpath, type, mapping, taken, notes);
+  const target =
+    pinned ?? planTarget(relpath, type, mapping, taken, notes);
   const points = [...parsed.body];
   const truncated = points.length > MAX_TEXT_LENGTH;
   if (truncated) notes.push("text_truncated");
@@ -342,7 +353,7 @@ export function planLegacyWiki(
 ): { events: CaptureEventInput[]; report: LegacyWikiReport } {
   const events: CaptureEventInput[] = [];
   const pages: LegacyWikiPageReport[] = [];
-  const taken = new Set<string>();
+  const taken = new Set(Object.values(opts.pinned ?? {}));
 
   // Relpath order, whatever the caller handed over: collision suffixes and
   // therefore page paths would otherwise depend on directory read order.

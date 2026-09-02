@@ -12,6 +12,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { isPlainObject } from "@kizuki/core";
+import type { CaptureEventInput } from "@kizuki/core";
 import { KizukiError } from "../src/errors";
 import { InMemoryLedger } from "../src/ledger";
 import {
@@ -25,6 +27,13 @@ import { readWikiFile } from "../src/import-legacy-wiki/scan";
 import type { ScanResult } from "../src/import-legacy-wiki/scan";
 
 const SENTINEL = "a-secret-outside-the-wiki";
+
+function target(event: CaptureEventInput | undefined): string | undefined {
+  const candidate = event?.metadata["page_candidate"];
+  if (!isPlainObject(candidate)) return undefined;
+  const value = candidate["target"];
+  return typeof value === "string" ? value : undefined;
+}
 
 let root: string;
 let wiki: string;
@@ -180,11 +189,30 @@ describe("backfill and sync", () => {
     const connector = createLegacyWikiConnector({ path: wiki });
     const first = await connector.backfill(null);
     const snapshot = JSON.parse(first.cursor ?? "{}") as {
-      files: Record<string, string>;
+      files: Record<string, { hash: string; target: string }>;
     };
     expect(Object.keys(snapshot.files)).not.toContain("templates/person.md");
     rmSync(join(wiki, "templates/person.md"));
     expect((await connector.sync(first.cursor)).events).toEqual([]);
+  });
+
+  test("a page added later cannot take a target already emitted", async () => {
+    write("notes/ada.md", "---\ntitle: Ada\n---\nFirst.\n");
+    writeMapping();
+    const connector = createLegacyWikiConnector({ path: wiki });
+    const first = await connector.backfill(null);
+    expect(target(first.events[0])).toBe("entities/ada");
+
+    // Sorts ahead of notes/ada.md, so a fresh plan would hand it the
+    // unsuffixed target the earlier page was already emitted with.
+    write("journal/ada.md", "---\ntitle: Ada\n---\nSecond.\n");
+    const second = await connector.sync(first.cursor);
+    expect(
+      second.events.map((event) => `${event.source_record_id}=${target(event)}`),
+    ).toEqual(["journal/ada.md=entities/ada-2"]);
+    expect(
+      connector.lastReport()?.pages.map((page) => `${page.relpath}=${page.target}`),
+    ).toEqual(["journal/ada.md=entities/ada-2", "notes/ada.md=entities/ada"]);
   });
 
   test("a changed mapping re-emits every page and the report says why", async () => {
@@ -406,7 +434,7 @@ describe("the report file", () => {
 });
 
 describe("what counts as gone from a snapshot", () => {
-  const snapshot = { "a.md": "hash" };
+  const snapshot = { "a.md": { hash: "h", target: "entities/a" } };
   const scanned = (over: Partial<ScanResult> = {}): ScanResult => ({
     files: [],
     skipped: [],
