@@ -307,6 +307,22 @@ describe("mapping edges", () => {
     ]);
   });
 
+  test("an address carrying a control character yields no subject", () => {
+    const event = build(
+      [
+        "From: A <a\u0001b@acme.example>",
+        "To: ok@acme.example",
+        "Subject: hostile address",
+        "",
+        "body",
+        "",
+      ].join("\r\n"),
+    );
+    expect(event.subjects).toEqual([
+      { subject_id: "email:ok@acme.example", role: "to" },
+    ]);
+  });
+
   test("a message/rfc822 part is an attachment, not a nested walk", () => {
     const event = build(
       [

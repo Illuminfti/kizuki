@@ -100,11 +100,26 @@ function decodeSegment(segment: string): string {
   }
 }
 
+/**
+ * A control character is stripped out of a display name but must never be
+ * carried into a subject id: two identities that render alike in a terminal
+ * would become two rows the owner cannot tell apart.
+ */
+function hasControlCharacter(value: string): boolean {
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
 function mailtoAddress(value: string): string | null {
   const match = /^mailto:(.+)$/i.exec(value.trim());
   if (match === null) return null;
   const address = (match[1] ?? "").trim();
-  return address.split("@").length === 2 && !/\s/.test(address)
+  return address.split("@").length === 2 &&
+    !/\s/.test(address) &&
+    !hasControlCharacter(address)
     ? address
     : null;
 }

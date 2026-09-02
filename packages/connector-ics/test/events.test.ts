@@ -666,6 +666,22 @@ describe("subjects are deduplicated per event", () => {
     ]);
   });
 
+  test("a mailto address carrying a control character yields no subject", () => {
+    const events = mapped([
+      "BEGIN:VEVENT",
+      "UID:one@acme.example",
+      "DTSTART:20260301T100000Z",
+      "SUMMARY:One",
+      "ORGANIZER;CN=Grace:mailto:gr\u0001ace@acme.example",
+      "ATTENDEE:mailto:linus@example.org",
+      "END:VEVENT",
+    ]);
+    expect(events[0]?.subjects).toEqual([
+      { subject_id: "email:linus@example.org", role: "to" },
+      { subject_id: "calendar:acme-team", role: "about" },
+    ]);
+  });
+
   test("the first usable display name wins over a blank earlier one", () => {
     const events = mapped([
       "BEGIN:VEVENT",
