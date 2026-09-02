@@ -81,37 +81,52 @@ describe("planLegacyWiki over the fixture wiki", () => {
     ]);
   });
 
-  test("sensitivity is a hint only where the mapping produced a label", () => {
+  test("every page carries a label; an unread one is the connector default", () => {
     const { events } = plan();
     expect(
       events.map(
-        (event) =>
-          `${event.source_record_id}:${event.sensitivity_hint ?? "unlabeled"}`,
+        (event) => `${event.source_record_id}:${event.sensitivity_hint}`,
       ),
     ).toEqual([
-      "journal/2026-01-01.md:unlabeled",
-      "notes/broken.md:unlabeled",
-      "notes/no-frontmatter.md:unlabeled",
-      "notes/plan.md:unlabeled",
+      "journal/2026-01-01.md:private",
+      "notes/broken.md:private",
+      "notes/no-frontmatter.md:private",
+      "notes/plan.md:private",
       "orgs/acme.md:public",
       "people/ada.md:personal",
       "people/grace.md:private",
-      "people/linus.md:unlabeled",
+      "people/linus.md:private",
     ]);
   });
 
-  test("an unmapped sensitivity value is reported, never guessed", () => {
-    const { report } = plan();
+  test("a defaulted label says so, and never claims the estate wrote it", () => {
+    const { report, events } = plan();
     expect(page(report, "journal/2026-01-01.md").sensitivity).toEqual({
       legacy: "nope",
-      label: null,
+      label: "private",
       decision: "unmapped_value",
     });
     expect(page(report, "people/linus.md").sensitivity).toEqual({
       legacy: null,
-      label: null,
+      label: "private",
       decision: "unlabeled",
     });
+    const linus = events.find((e) => e.source_record_id === "people/linus.md");
+    expect(
+      candidate(linus as CaptureEventInput)["x-legacy-sensitivity"],
+    ).toBeUndefined();
+  });
+
+  test("a mapping may widen the default it applies", () => {
+    const { events } = plan(fixtureScan(), {
+      ...LEGACY_WIKI_FIXTURE.mapping,
+      sensitivity: {
+        ...LEGACY_WIKI_FIXTURE.mapping.sensitivity,
+        default: "personal",
+      },
+    });
+    const linus = events.find((e) => e.source_record_id === "people/linus.md");
+    expect(linus?.sensitivity_hint).toBe("personal");
   });
 
   test("the whole decision record for a mapped page", () => {
@@ -154,7 +169,7 @@ describe("planLegacyWiki over the fixture wiki", () => {
       frontmatter: { status: "parsed", problems: [] },
       type: { legacy: "Plan", mapped: "topic", decision: "unmapped_value" },
       title: { source: "field" },
-      sensitivity: { legacy: null, label: null, decision: "unlabeled" },
+      sensitivity: { legacy: null, label: "private", decision: "unlabeled" },
       occurred_at: "mtime",
       subjects: 2,
       fields: [
@@ -181,7 +196,7 @@ describe("planLegacyWiki over the fixture wiki", () => {
       },
       type: { legacy: null, mapped: "topic", decision: "defaulted" },
       title: { source: "heading" },
-      sensitivity: { legacy: null, label: null, decision: "unlabeled" },
+      sensitivity: { legacy: null, label: "private", decision: "unlabeled" },
       occurred_at: "mtime",
       subjects: 0,
       fields: [],
@@ -202,7 +217,7 @@ describe("planLegacyWiki over the fixture wiki", () => {
       frontmatter: { status: "parsed", problems: [] },
       type: { legacy: "Template", mapped: null, decision: "excluded" },
       title: { source: "field" },
-      sensitivity: { legacy: null, label: null, decision: "unlabeled" },
+      sensitivity: { legacy: null, label: "private", decision: "unlabeled" },
       occurred_at: "mtime",
       subjects: 0,
       fields: [
@@ -557,12 +572,12 @@ describe("a legacy value named after an Object member", () => {
       const entry = page(report, "a.md");
       expect(entry.sensitivity).toEqual({
         legacy: member,
-        label: null,
+        label: "private",
         decision: "unmapped_value",
       });
       expect(entry.type.mapped).toBe("topic");
       expect(entry.type.decision).toBe("unmapped_value");
-      expect(events[0]?.sensitivity_hint).toBeUndefined();
+      expect(events[0]?.sensitivity_hint).toBe("private");
       expect(validateEventInput(events[0] as CaptureEventInput).ok).toBe(true);
     }
   });

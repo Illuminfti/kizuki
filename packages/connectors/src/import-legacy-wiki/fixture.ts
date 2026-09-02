@@ -33,6 +33,7 @@ const MAPPING: LegacyWikiMapping = {
   sensitivity: {
     field: "visibility",
     values: { friends: "personal", secret: "private", public: "public" },
+    default: "private",
   },
   occurred_at: { field: "created", format: "date" },
   fields: { updated: "x-updated", draft: null },

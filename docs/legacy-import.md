@@ -47,6 +47,7 @@ Schema tag: `kizuki.legacy-wiki-mapping/v1`.
 | `type.default` | **required** | page type for a page whose type is absent or unmapped |
 | `sensitivity.field` | `"sensitivity"` | frontmatter key holding the legacy label |
 | `sensitivity.values` | `{}` | legacy value to `public` / `personal` / `private`; those three names also map to themselves |
+| `sensitivity.default` | `"private"` | the label for a page whose own label is absent or unmapped |
 | `occurred_at` | `null` | `{ field, format }`; `null` means the file's mtime is used |
 | `fields` | `{}` | legacy key to an `x-*` frontmatter name, or `null` to drop it |
 | `subjects` | `null` | `{ field, role, namespace }`; the field may hold one name or a list |
@@ -54,10 +55,11 @@ Schema tag: `kizuki.legacy-wiki-mapping/v1`.
 | `target.directories` | see below | page type to the directory its pages land in, 1..7 path segments |
 | `ignore` | `[]` | globs over the relative path; `*` stays inside a segment, `**` spans segments, `?` is one character |
 
-There is deliberately **no default sensitivity**. The mapping is where the
-connector says what a legacy label means; a page whose label it could not read
-stays unlabeled, and an unlabeled page is never served to anyone, the owner
-included. Nothing downstream reads an unlabeled page as public.
+Sensitivity resolves bottom-up: a label the mapping could not read becomes
+`sensitivity.default`, which is `private` unless you widen it. Nothing is left
+unlabeled, because an unlabeled page is outside the lattice and is served to
+nobody at all, the owner included. Refinement only ever moves a page up the
+lattice, never down.
 
 Default `target.directories`: `person`, `org`, `project`, `place` and
 `topic` go to `entities`; `fact` to `facts`; `event` to `events`;
@@ -91,7 +93,8 @@ This is the mapping the built-in fixture uses, verbatim.
       "friends": "personal",
       "secret": "private",
       "public": "public"
-    }
+    },
+    "default": "private"
   },
   "occurred_at": {
     "field": "created",
@@ -306,17 +309,24 @@ relpaths, field names, the raw type and sensitivity vocabulary, positions and
 counts. The report may live outside the vault, so it holds only what you need
 to fix the mapping.
 
-## Unlabeled pages
+## Labels the mapping could not read
 
-A wiki page whose mapping produced no label carries no sensitivity hint, and
-an unlabeled page is never served to any principal, the owner included. That
-is the safe end of the lattice, not a resting place: the mapping is where this
-importer says what the estate's own vocabulary meant, so widen
-`sensitivity.values` until the report shows no `unmapped_value` rows and no
-more `unlabeled` than the estate really left unmarked.
+Every imported page carries a label. A page whose own label the mapping could
+not read carries `sensitivity.default` instead, and the report says which of
+the three happened:
 
-Every migrated page also carries `x-legacy-sensitivity` when the mapping did
-read a label, so what the estate said about a page travels with the page.
+| decision | meaning |
+| --- | --- |
+| `labeled` | the estate's own value mapped to a Kizuki label |
+| `unlabeled` | the page carried no label at all; the default applied |
+| `unmapped_value` | the page carried a label `sensitivity.values` does not know; the default applied |
+
+A blanket `private` is safe, not useful, so widen `sensitivity.values` until
+the report shows no `unmapped_value` rows and no more `unlabeled` than the
+estate really left unmarked, then re-import.
+
+`x-legacy-sensitivity` appears only where the mapping really did read a label,
+so a defaulted page never looks like a decision the previous system made.
 
 ## Honest limits
 

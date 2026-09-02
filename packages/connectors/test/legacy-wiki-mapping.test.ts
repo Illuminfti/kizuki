@@ -38,7 +38,7 @@ describe("parseLegacyWikiMapping", () => {
       schema: LEGACY_WIKI_MAPPING_SCHEMA,
       title: { field: "title" },
       type: { field: "type", values: {}, default: "topic" },
-      sensitivity: { field: "sensitivity", values: {} },
+      sensitivity: { field: "sensitivity", values: {}, default: "private" },
       occurred_at: null,
       fields: {},
       subjects: null,

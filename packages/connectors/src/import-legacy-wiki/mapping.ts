@@ -40,12 +40,15 @@ export interface LegacyWikiMapping {
   };
   sensitivity: {
     field: string;
-    /**
-     * No default by design: a page whose label cannot be read stays
-     * unlabeled, which is the safe end of the lattice. A guess here would be
-     * indistinguishable from a label the estate really carried.
-     */
     values: Record<string, PageSensitivity>;
+    /**
+     * The connector default. RFC 0002 section 8.1 resolves an absent or
+     * unreadable label to the bottom of the lattice rather than leaving the
+     * page outside it, because an unlabeled page is served to nobody at all.
+     * The report still says the label was defaulted, so the owner can widen
+     * `values` and re-import rather than live with a blanket `private`.
+     */
+    default: PageSensitivity;
   };
   occurred_at: { field: string; format: TimestampFormat } | null;
   /** Legacy key to an `x-*` name, or null to drop it. */
@@ -123,6 +126,7 @@ function parseSensitivity(raw: unknown): LegacyWikiMapping["sensitivity"] {
   const source = objectAt(raw ?? {}, "mapping.sensitivity", [
     "field",
     "values",
+    "default",
   ]);
   const values = vocabularyMap<PageSensitivity>();
   for (const [legacy, mapped] of Object.entries(
@@ -140,6 +144,11 @@ function parseSensitivity(raw: unknown): LegacyWikiMapping["sensitivity"] {
       "mapping.sensitivity.field",
     ),
     values,
+    default: enumValue(
+      source["default"] ?? "private",
+      "mapping.sensitivity.default",
+      PAGE_SENSITIVITIES,
+    ),
   };
 }
 

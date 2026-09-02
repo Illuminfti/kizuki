@@ -95,17 +95,25 @@ function planPage(
   const rawSensitivity = vocabulary(data[mapping.sensitivity.field]);
   const unusableSensitivity = rawSensitivity === "unusable";
   const legacySensitivity = unusableSensitivity ? null : rawSensitivity;
-  let label: PageSensitivity | null = null;
-  let sensitivityDecision: LegacyWikiPageReport["sensitivity"]["decision"] =
-    "unlabeled";
-  if (legacySensitivity !== null) {
-    label =
-      mappedValue(mapping.sensitivity.values, legacySensitivity) ??
-      ((IDENTITY_SENSITIVITIES as readonly string[]).includes(legacySensitivity)
-        ? (legacySensitivity as PageSensitivity)
-        : null);
-    sensitivityDecision = label === null ? "unmapped_value" : "labeled";
-  }
+  const read =
+    legacySensitivity === null
+      ? null
+      : (mappedValue(mapping.sensitivity.values, legacySensitivity) ??
+        ((IDENTITY_SENSITIVITIES as readonly string[]).includes(
+          legacySensitivity,
+        )
+          ? (legacySensitivity as PageSensitivity)
+          : null));
+  // Nothing leaves this planner unlabeled: an absent or unreadable label
+  // resolves to the connector default (RFC 0002 section 8.1). The decision
+  // says which of the three happened so the report stays honest about it.
+  const label: PageSensitivity = read ?? mapping.sensitivity.default;
+  const sensitivityDecision: LegacyWikiPageReport["sensitivity"]["decision"] =
+    read !== null
+      ? "labeled"
+      : legacySensitivity === null
+        ? "unlabeled"
+        : "unmapped_value";
 
   let occurredAt: string | null = null;
   if (mapping.occurred_at !== null) {
@@ -119,7 +127,8 @@ function planPage(
   const occurred = occurredAt ?? new Date(file.mtimeMs).toISOString();
 
   const subjects = planSubjects(data, mapping);
-  const reserved = 2 + (legacyType === null ? 0 : 1) + (label === null ? 0 : 1);
+  const reserved =
+    2 + (legacyType === null ? 0 : 1) + (read === null ? 0 : 1);
   const fields = planFields(data, mapping, slots, reserved);
   if (unusableType) {
     fields.reports.push({
@@ -192,7 +201,9 @@ function planPage(
   if (legacyType !== null) {
     extensions["x-legacy-type"] = sanitizeLine(legacyType, MAX_VOCABULARY);
   }
-  if (label !== null) extensions["x-legacy-sensitivity"] = label;
+  // Only a label the estate really carried: a defaulted one would read as
+  // evidence of a decision the previous system never made.
+  if (read !== null) extensions["x-legacy-sensitivity"] = read;
 
   const candidate = {
     schema: PAGE_CANDIDATE_SCHEMA,
@@ -236,7 +247,7 @@ function planPage(
       observed_at: opts.observedAt,
       text,
       subjects,
-      ...(label !== null ? { sensitivity_hint: label } : {}),
+      sensitivity_hint: label,
       deleted: false,
       attachments: [],
       metadata: {
