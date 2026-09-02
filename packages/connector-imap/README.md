@@ -31,9 +31,10 @@ re-observed.
 ## Sign-in
 
 Sign-in is interactive: the connector asks four questions through the host's
-terminal, then offers a folder picker. The CLI verb that drives it is owned by
-a CLI lane and is not on `main` yet; today the walk-through is exercised by
-`enrollConnection` from `@kizuki/core` and by this package's tests.
+terminal, then offers a folder picker. No CLI verb drives it yet: `kizuki
+connect` enrolls a none-mode source from a path. Today the walk-through runs
+through `enrollConnection` from `@kizuki/core`, which is what this package's
+tests exercise.
 
 The prompts, in order:
 
