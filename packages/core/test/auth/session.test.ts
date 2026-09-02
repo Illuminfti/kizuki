@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { OAuthTransport } from "../../src/auth/oauth";
 import { OAuthSession } from "../../src/auth/session";
 import { parseOAuthState } from "../../src/auth/state";
 import {
@@ -159,5 +160,68 @@ describe("oauth session", () => {
       code: "unauthenticated",
     });
     expect(() => session.tokens()).toThrow("unauthenticated");
+  });
+
+  test("refuses state minted for a different provider", () => {
+    expect(
+      () =>
+        new OAuthSession({
+          provider: provider({ name: "other" }),
+          state: FRESH,
+          transport: new FakeTransport(),
+          persist: recorder().persist,
+          now: () => NOW,
+        }),
+    ).toThrow("invalid_state");
+  });
+
+  test("forgetting during a refresh in flight stays forgotten", async () => {
+    let release: (response: { status: number; body: unknown }) => void = () =>
+      undefined;
+    const held = new Promise<{ status: number; body: unknown }>((resolve) => {
+      release = resolve;
+    });
+    let posts = 0;
+    const transport: OAuthTransport = {
+      listen: () => Promise.reject(new Error("a session never listens")),
+      postForm: () => {
+        posts += 1;
+        return held;
+      },
+    };
+    const sink = recorder();
+    const session = new OAuthSession({
+      provider: provider(),
+      state: NEARLY_EXPIRED,
+      transport,
+      persist: sink.persist,
+      now: () => NOW,
+    });
+
+    const waiting = session.accessToken().then(
+      (token) => `resolved ${token}`,
+      (error: unknown) => (error as Error).message,
+    );
+    await Promise.resolve();
+    expect(posts).toBe(1);
+
+    session.forget();
+    release({
+      status: 200,
+      body: tokenResponse({
+        access_token: "SENTINEL-SECOND",
+        refresh_token: "SENTINEL-ROTATED",
+      }),
+    });
+
+    expect(await waiting).toContain("unauthenticated");
+    await expect(session.accessToken()).rejects.toMatchObject({
+      code: "unauthenticated",
+    });
+    expect(() => session.tokens()).toThrow("unauthenticated");
+    // The provider already rotated the token: dropping it without writing it
+    // back would strand the next process on a refresh token that is gone.
+    const persisted = parseOAuthState(sink.written[0] ?? new Uint8Array(), "fixture");
+    expect(persisted.tokens.refresh_token).toBe("SENTINEL-ROTATED");
   });
 });

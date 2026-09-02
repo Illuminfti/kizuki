@@ -39,8 +39,14 @@ export class OAuthSession {
   private readonly skewMs: number;
   private state: OAuthState | null;
   private inFlight: Promise<void> | null = null;
+  private forgotten = false;
 
   constructor(init: OAuthSessionInit) {
+    // Two identities that disagree would post one provider's refresh token to
+    // the other's token endpoint.
+    if (init.state.provider !== init.provider.name) {
+      throw new OAuthError("invalid_state", init.provider.name);
+    }
     this.definition = init.provider;
     this.transport = init.transport;
     this.persist = init.persist;
@@ -94,6 +100,13 @@ export class OAuthSession {
       tokens,
       written_at: this.now().toISOString(),
     };
+    if (this.forgotten) {
+      // The provider rotated while this was in flight. Durable state must
+      // record that or the next process holds a refresh token that is gone,
+      // but nothing here may hand the caller a live token again.
+      await this.persist(encodeOAuthState(next));
+      throw new OAuthError("unauthenticated", this.provider);
+    }
     // Memory advances first: a persist failure must not leave this process
     // holding a refresh token the provider has already rotated away.
     this.state = next;
@@ -104,7 +117,9 @@ export class OAuthSession {
     return { ...this.require().tokens };
   }
 
+  /** Terminal: a refresh already in flight can never re-authenticate this. */
   forget(): void {
+    this.forgotten = true;
     this.state = null;
   }
 }
