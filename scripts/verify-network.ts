@@ -152,6 +152,80 @@ export function scanSourceText(file: string, source: string): NetworkFinding[] {
   return findings;
 }
 
+export interface AllowlistEntry {
+  path: string;
+  reason: string;
+}
+
+export interface Partition {
+  violations: NetworkFinding[];
+  allowed: NetworkFinding[];
+  stale: string[];
+}
+
+export const ALLOWLIST_PATH = "scripts/network-allowlist.txt";
+
+/**
+ * One `<repo-relative path>:<reason>` per line. The reason is what a reviewer
+ * reads to decide whether the egress is still justified, so it may not be
+ * empty; a path may appear once so two reasons can never disagree.
+ */
+export function parseAllowlist(text: string): AllowlistEntry[] {
+  const entries: AllowlistEntry[] = [];
+  const seen = new Set<string>();
+  const lines = text.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = (lines[index] ?? "").trim();
+    if (line.length === 0 || line.startsWith("#")) continue;
+    const cut = line.indexOf(":");
+    if (cut === -1) {
+      throw new Error(`allowlist line ${index + 1}: expected <path>:<reason>`);
+    }
+    const path = line.slice(0, cut).trim();
+    const reason = line.slice(cut + 1).trim();
+    if (path.length === 0) {
+      throw new Error(`allowlist line ${index + 1}: empty path`);
+    }
+    if (reason.length === 0) {
+      throw new Error(`allowlist line ${index + 1}: empty reason for ${path}`);
+    }
+    if (seen.has(path)) {
+      throw new Error(`allowlist line ${index + 1}: duplicate path ${path}`);
+    }
+    seen.add(path);
+    entries.push({ path, reason });
+  }
+  return entries;
+}
+
+/**
+ * A stale entry is an exception nothing uses any more: the path is untracked
+ * or has no network finding. Stale entries fail the gate so the list never
+ * grows past what actually leaves the machine.
+ */
+export function partitionFindings(
+  findings: NetworkFinding[],
+  allowlist: AllowlistEntry[],
+  tracked: ReadonlySet<string>,
+): Partition {
+  const allowedPaths = new Set(allowlist.map((entry) => entry.path));
+  const violations: NetworkFinding[] = [];
+  const allowed: NetworkFinding[] = [];
+  const hit = new Set<string>();
+  for (const finding of findings) {
+    if (allowedPaths.has(finding.file)) {
+      allowed.push(finding);
+      hit.add(finding.file);
+    } else {
+      violations.push(finding);
+    }
+  }
+  const stale = allowlist
+    .map((entry) => entry.path)
+    .filter((path) => !tracked.has(path) || !hit.has(path));
+  return { violations, allowed, stale };
+}
+
 async function trackedSourceFiles(): Promise<string[]> {
   const result = Bun.spawnSync({
     cmd: ["git", "ls-files", "-z", "--", "packages"],
@@ -169,21 +243,42 @@ async function trackedSourceFiles(): Promise<string[]> {
     .filter((file) => /\.(?:[cm]?js|jsx|ts|tsx)$/.test(file));
 }
 
+async function readAllowlist(): Promise<AllowlistEntry[]> {
+  const file = Bun.file(ALLOWLIST_PATH);
+  return (await file.exists()) ? parseAllowlist(await file.text()) : [];
+}
+
+function location(finding: NetworkFinding): string {
+  return `${finding.file}:${finding.line}:${finding.column}: ${finding.reason}`;
+}
+
 async function main(): Promise<void> {
+  const tracked = await trackedSourceFiles();
   const findings: NetworkFinding[] = [];
-  for (const file of await trackedSourceFiles()) {
+  for (const file of tracked) {
     findings.push(...scanSourceText(file, await Bun.file(file).text()));
   }
-  if (findings.length > 0) {
-    for (const finding of findings) {
-      console.error(
-        `${finding.file}:${finding.line}:${finding.column}: ${finding.reason}`,
-      );
-    }
+  const allowlist = await readAllowlist();
+  const reasons = new Map(allowlist.map((entry) => [entry.path, entry.reason]));
+  const partition = partitionFindings(findings, allowlist, new Set(tracked));
+
+  for (const finding of partition.allowed) {
+    console.error(
+      `allowed: ${location(finding)} (${reasons.get(finding.file) ?? ""})`,
+    );
+  }
+  for (const finding of partition.violations) console.error(location(finding));
+  for (const path of partition.stale) {
+    console.error(`stale allowlist entry: ${path}`);
+  }
+  if (partition.violations.length > 0 || partition.stale.length > 0) {
     process.exitCode = 1;
     return;
   }
-  console.log("network source verification passed");
+  const files = new Set(partition.allowed.map((finding) => finding.file)).size;
+  console.log(
+    `network source verification passed (${partition.allowed.length} allowlisted findings in ${files} files)`,
+  );
 }
 
 if (import.meta.main) {
