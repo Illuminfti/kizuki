@@ -172,25 +172,35 @@ describe("bounds", () => {
   });
 
   test("a long context or registry cannot widen the prompt", () => {
+    // Every axis at its maximum at once: a full batch of long ids whose text
+    // exactly fills the quoted budget, and a context and registry of entries
+    // whose every character costs six once it is serialized.
+    const wide = String.fromCharCode(0x0001);
     const prompt = buildExtractPrompt(
-      [event("ev-1", "short")],
+      Array.from({ length: EXTRACT_BATCH * 4 }, (_, index) =>
+        event(
+          `${"e".repeat(190)}${index}`,
+          "z".repeat(EXTRACT_INPUT_CHARS / EXTRACT_BATCH),
+        ),
+      ),
       {
         subjects: Array.from({ length: 64 }, (_, index) => ({
-          subject_id: `${"s".repeat(5_000)}${index}`,
+          subject_id: `${wide.repeat(5_000)}${index}`,
           role: "about" as const,
         })),
         known_claims: Array.from({ length: 64 }, (_, index) => ({
           claim_id: `c-${index}`,
-          subject: "x".repeat(5_000),
-          predicate: "y".repeat(5_000),
-          object: "z".repeat(5_000),
+          subject: wide.repeat(5_000),
+          predicate: wide.repeat(5_000),
+          object: wide.repeat(5_000),
           polarity: "positive" as const,
           confidence: 0.5,
         })),
-        predicates: Array.from({ length: 256 }, () => "p".repeat(5_000)),
+        predicates: Array.from({ length: 256 }, () => wide.repeat(5_000)),
       },
       quoteNonce(),
     );
+    expect(prompt.event_ids).toHaveLength(EXTRACT_BATCH);
     expect(prompt.user.length).toBeLessThanOrEqual(
       EXTRACT_INPUT_CHARS + EXTRACT_PROMPT_OVERHEAD_CHARS,
     );

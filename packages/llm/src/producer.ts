@@ -226,7 +226,11 @@ export class ModelProducer implements ProducerPort {
           predicates,
         );
       } catch (error) {
-        stop = stopFor(error);
+        // The reader raises rejections and nothing else; anything else here
+        // is a defect in this package and must not read as a model outage.
+        const reason = rejectionOf(error);
+        if (reason === null) throw error;
+        stop = { status: "rejected", reason };
         break;
       }
       for (const predicate of outcome.unknown_predicates) {

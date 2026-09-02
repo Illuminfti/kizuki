@@ -180,7 +180,9 @@ export function buildExtractPrompt(
   let remaining = EXTRACT_INPUT_CHARS;
   const blocks: string[] = [];
   const eventIds: string[] = [];
-  for (const event of events) {
+  // One prompt is one batch. Slicing here is what makes the declared overhead
+  // a bound rather than a description of how the producer happens to call in.
+  for (const event of events.slice(0, EXTRACT_BATCH)) {
     if (remaining <= 0) break;
     const escaped = clipText(
       escapeFence(clipText(event.text, remaining).text),
