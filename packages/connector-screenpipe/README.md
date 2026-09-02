@@ -128,8 +128,7 @@ These limits and provider facts were checked on 2026-09-02.
 
 ## Purge
 
-Once the CLI purge lane is present, owner-invoked Kizuki purge can target the
-subject IDs emitted here:
+Owner-invoked Kizuki purge targets the subject IDs emitted here:
 
 ```sh
 kizuki purge --subject screenpipe:app:<slug> --reason "..."
