@@ -8,17 +8,31 @@ import {
   CHATGPT_IMPORT_CONNECTOR_ID,
   CLAUDE_FIXTURE_EXPORT,
   CLAUDE_IMPORT_CONNECTOR_ID,
+  ICS_CONNECTOR_ID,
+  IMAP_CONNECTOR_ID,
   MARKDOWN_FOLDER_CONNECTOR_ID,
   SCREENPIPE_CONNECTOR_ID,
   TELEGRAM_CONNECTOR_ID,
   TelegramConnector,
+  createIcsConnector,
+  createImapConnector,
   getConnector,
   runConformance,
   scriptedDeps,
   seedFixtureDatabase,
+  REGISTRY,
 } from "../src";
 import { encodeState } from "@kizuki/connector-telegram";
 import type { Connector } from "@kizuki/core";
+import {
+  FakeImapServer,
+  fixtureMailbox,
+  fixtureState,
+  memoryDialer,
+} from "@kizuki/connector-imap/testing";
+import { FIXTURE_ICS, memoryFetcher, okResult } from "@kizuki/connector-ics/testing";
+
+const REGISTRY_IDS = Object.keys(REGISTRY);
 
 const TELEGRAM_STATE_REF = "file:connections/01JJ0000000000000000000000.state";
 
@@ -44,6 +58,46 @@ test("all registry connectors pass conformance", async () => {
     const screenpipeFixture = new Database(screenpipePath);
     seedFixtureDatabase(screenpipeFixture);
     screenpipeFixture.close();
+
+    const icsPath = path.join(root, "team.ics");
+    const icsWithout = FIXTURE_ICS.replace(
+      [
+        "BEGIN:VEVENT",
+        "UID:attach-1@acme.example",
+        "DTSTAMP:20260201T000000Z",
+        "DTSTART:20260306T090000Z",
+        "DTEND:20260306T093000Z",
+        "ATTACH;FMTTYPE=application/pdf:https://files.acme.example/agenda.pdf",
+        "SUMMARY:Board prep",
+        "END:VEVENT",
+        "",
+      ].join("\r\n"),
+      "",
+    );
+    await writeFile(icsPath, FIXTURE_ICS);
+
+    const imapServer = new FakeImapServer(fixtureMailbox(), {
+      username: fixtureState().username,
+      password: fixtureState().password,
+    });
+    const imap = createImapConnector(
+      { secret_ref: "file:connections/01ABCDEFGHJKMNPQRSTVWXYZ00.state" },
+      { dial: memoryDialer(imapServer) },
+    );
+    await imap.connect(async () => JSON.stringify(fixtureState()));
+
+    const icsFile = createIcsConnector({ path: icsPath });
+    const icsUrl = "https://calendar.acme.example/private/abc123.ics";
+    let icsRoute = FIXTURE_ICS;
+    const icsRemote = createIcsConnector(
+      { secret_ref: "file:connections/01ABCDEFGHJKMNPQRSTVWXYZ01.state" },
+      {
+        fetch: memoryFetcher({ [icsUrl]: () => okResult(icsRoute) }),
+      },
+    );
+    await icsRemote.connect(async () =>
+      JSON.stringify({ schema: "kizuki.ics-state/v1", url: icsUrl }),
+    );
 
     const markdown = getConnector(MARKDOWN_FOLDER_CONNECTOR_ID, {
       path: markdownRoot,
@@ -82,6 +136,30 @@ test("all registry connectors pass conformance", async () => {
         }),
       ),
       runConformance(telegram),
+      runConformance(imap, {
+        tombstone: {
+          prepare: async () => (await imap.backfill(null)).cursor,
+          mutate: async () => {
+            imapServer.expunge("INBOX", 1);
+          },
+        },
+      }),
+      runConformance(icsFile, {
+        tombstone: {
+          prepare: async () => (await icsFile.backfill(null)).cursor,
+          mutate: async () => {
+            await writeFile(icsPath, icsWithout);
+          },
+        },
+      }),
+      runConformance(icsRemote, {
+        tombstone: {
+          prepare: async () => (await icsRemote.backfill(null)).cursor,
+          mutate: async () => {
+            icsRoute = icsWithout;
+          },
+        },
+      }),
     ]);
 
     expect(results).toEqual([
@@ -90,7 +168,11 @@ test("all registry connectors pass conformance", async () => {
       { pass: true, failures: [] },
       { pass: true, failures: [] },
       { pass: true, failures: [] },
+      { pass: true, failures: [] },
+      { pass: true, failures: [] },
     ]);
+    expect(REGISTRY_IDS).toContain(IMAP_CONNECTOR_ID);
+    expect(REGISTRY_IDS).toContain(ICS_CONNECTOR_ID);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -111,9 +111,10 @@ bind only when their status says they do. RFC 0002 is BINDING.
   configured model endpoint. Direct network egress exists only in files
   listed in `scripts/network-allowlist.txt`, each with a reason. CI fails on
   any other network surface, and on a stale allowlist entry. Core has zero
-  runtime dependencies; the one package that opens a socket to a provider is
-  the Telegram connector, through the `telegram` (GramJS) library, and only
-  after you sign in.
+  runtime dependencies. The packages that open a socket to a provider are
+  the Telegram connector, through the `telegram` (GramJS) library, and the
+  IMAP and ICS connectors over TLS, each only after you sign in or point it
+  at a calendar you configured.
 - **Your files.** Canon is Markdown on the owner's disk. Deleting Kizuki
   leaves a readable vault.
 - **Nothing writes canon without a receipt.** Every write names its evidence, its

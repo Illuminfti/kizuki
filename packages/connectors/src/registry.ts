@@ -1,5 +1,15 @@
 import type { Connector } from "@kizuki/core";
 import {
+  ICS_CONNECTOR_ID,
+  createIcsConnector,
+} from "@kizuki/connector-ics";
+import type { IcsConnectorConfig } from "@kizuki/connector-ics";
+import {
+  IMAP_CONNECTOR_ID,
+  createImapConnector,
+} from "@kizuki/connector-imap";
+import type { ImapConnectorConfig } from "@kizuki/connector-imap";
+import {
   SCREENPIPE_CONNECTOR_ID,
   createScreenpipeConnector,
 } from "@kizuki/connector-screenpipe";
@@ -32,6 +42,8 @@ export const REGISTRY = Object.freeze({
   [MARKDOWN_FOLDER_CONNECTOR_ID]: createMarkdownFolderConnector,
   [CHATGPT_IMPORT_CONNECTOR_ID]: createChatGptImportConnector,
   [CLAUDE_IMPORT_CONNECTOR_ID]: createClaudeImportConnector,
+  [IMAP_CONNECTOR_ID]: createImapConnector,
+  [ICS_CONNECTOR_ID]: createIcsConnector,
 });
 
 export type ConnectorId = keyof typeof REGISTRY;
@@ -56,6 +68,14 @@ export function getConnector(
   id: typeof CLAUDE_IMPORT_CONNECTOR_ID,
   config: ClaudeImportConfig,
 ): Connector;
+export function getConnector(
+  id: typeof IMAP_CONNECTOR_ID,
+  config: ImapConnectorConfig,
+): Connector;
+export function getConnector(
+  id: typeof ICS_CONNECTOR_ID,
+  config: IcsConnectorConfig,
+): Connector;
 export function getConnector(id: string, config?: unknown): Connector;
 export function getConnector(id: string, config?: unknown): Connector {
   switch (id) {
@@ -69,6 +89,10 @@ export function getConnector(id: string, config?: unknown): Connector {
       return createChatGptImportConnector(config as ChatGptImportConfig);
     case CLAUDE_IMPORT_CONNECTOR_ID:
       return createClaudeImportConnector(config as ClaudeImportConfig);
+    case IMAP_CONNECTOR_ID:
+      return createImapConnector(config as ImapConnectorConfig);
+    case ICS_CONNECTOR_ID:
+      return createIcsConnector(config as IcsConnectorConfig);
     default:
       throw new KizukiError(
         "unknown_connector",
