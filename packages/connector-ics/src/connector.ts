@@ -84,6 +84,8 @@ function configField(
 
 interface Snapshot {
   events: CaptureEventInput[];
+  /** Entries the calendar carried that could not be read this run. */
+  skipped: number;
   etag: string | null;
   lastModified: string | null;
   unchanged: boolean;
@@ -96,6 +98,8 @@ export class IcsConnector implements Connector {
   private readonly secretRef: string | null;
   private state: IcsState | null = null;
   private lastSuccessAt: string | undefined;
+  /** Facts a run found that the next health report has to surface once. */
+  private pendingNotes: string[] = [];
 
   constructor(config: IcsConnectorConfig, deps: IcsConnectorDeps = {}) {
     this.fetcher = deps.fetch ?? fetchIcs;
@@ -140,11 +144,12 @@ export class IcsConnector implements Connector {
     if (this.path !== null) {
       try {
         const info = await stat(this.path);
-        return this.report(
-          info.isFile() ? "ok" : "misconfigured",
-          checkedAt,
-          info.isFile() ? {} : { detail: "path is not a file" },
-        );
+        if (!info.isFile()) {
+          return this.report("misconfigured", checkedAt, {
+            detail: "path is not a file",
+          });
+        }
+        return this.reportRun(checkedAt);
       } catch {
         return this.report("misconfigured", checkedAt, {
           detail: "calendar file cannot be read",
@@ -157,7 +162,7 @@ export class IcsConnector implements Connector {
     try {
       const response = await this.fetcher(this.state.url, {});
       parseIcs(response.text);
-      return this.report("ok", checkedAt, {});
+      return this.reportRun(checkedAt);
     } catch (error) {
       // Only a typed message is safe to surface: an untyped failure carries
       // the request URL, and a private calendar URL is the credential.
@@ -170,6 +175,22 @@ export class IcsConnector implements Connector {
         detail: error.message,
       });
     }
+  }
+
+  /** A run that dropped entries must not read as healthy afterwards. */
+  private noteSkipped(skipped: number): void {
+    if (skipped === 0) return;
+    this.pendingNotes.push(
+      `${skipped} calendar ${skipped === 1 ? "entry" : "entries"} could not be read`,
+    );
+  }
+
+  /** `ok`, unless the last run had something the owner needs to hear. */
+  private reportRun(checkedAt: string): HealthReport {
+    const notes = this.pendingNotes.splice(0);
+    return notes.length > 0
+      ? this.report("degraded", checkedAt, { detail: notes.join("; ") })
+      : this.report("ok", checkedAt, {});
   }
 
   private report(
@@ -201,12 +222,15 @@ export class IcsConnector implements Connector {
           { cause: error },
         );
       }
+      const mapping = calendarEvents(parseIcs(text), {
+        slugSource: basename(this.path, extname(this.path)),
+        observedAt,
+        now: this.now(),
+      });
+      this.noteSkipped(mapping.skipped);
       return {
-        events: calendarEvents(parseIcs(text), {
-          slugSource: basename(this.path, extname(this.path)),
-          observedAt,
-          now: this.now(),
-        }),
+        events: mapping.events,
+        skipped: mapping.skipped,
         etag: null,
         lastModified: null,
         unchanged: false,
@@ -227,17 +251,21 @@ export class IcsConnector implements Connector {
     if (response.status === 304) {
       return {
         events: [],
+        skipped: 0,
         etag: response.etag,
         lastModified: response.last_modified,
         unchanged: true,
       };
     }
+    const mapping = calendarEvents(parseIcs(response.text), {
+      slugSource: urlLabel(this.state.url),
+      observedAt,
+      now: this.now(),
+    });
+    this.noteSkipped(mapping.skipped);
     return {
-      events: calendarEvents(parseIcs(response.text), {
-        slugSource: urlLabel(this.state.url),
-        observedAt,
-        now: this.now(),
-      }),
+      events: mapping.events,
+      skipped: mapping.skipped,
       etag: response.etag,
       lastModified: response.last_modified,
       unchanged: false,

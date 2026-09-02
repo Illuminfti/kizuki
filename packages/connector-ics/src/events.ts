@@ -1,3 +1,4 @@
+import { KizukiError } from "@kizuki/core";
 import type { CaptureEventInput } from "@kizuki/core";
 import {
   formatLocal,
@@ -99,11 +100,26 @@ function seriesByUid(
   return series;
 }
 
+export interface CalendarMapping {
+  events: CaptureEventInput[];
+  /** Entries whose own date values were unreadable and could not be mapped. */
+  skipped: number;
+}
+
+interface SeriesContext {
+  parsed: ParsedCalendar;
+  opts: MapOptions;
+  calendarSlug: string;
+  calendarName: string | null;
+  windowEnd: LocalDateTime;
+  duplicates: Set<string>;
+}
+
 /** Turns a parsed calendar into the events the ledger stores. */
 export function calendarEvents(
   parsed: ParsedCalendar,
   opts: MapOptions,
-): CaptureEventInput[] {
+): CalendarMapping {
   const duplicates = new Set<string>();
   const series = seriesByUid(parsed, duplicates);
   const calendarName = parsed.calendar.name;
@@ -112,139 +128,27 @@ export function calendarEvents(
       ? calendarName
       : opts.slugSource,
   );
-  const windowEnd = msToLocal(opts.now.getTime() + WINDOW_DAYS * 86_400_000);
+  const context: SeriesContext = {
+    parsed,
+    opts,
+    calendarSlug,
+    calendarName,
+    windowEnd: msToLocal(opts.now.getTime() + WINDOW_DAYS * 86_400_000),
+    duplicates,
+  };
   const events: CaptureEventInput[] = [];
+  let skipped = 0;
 
   for (const [uid, entry] of series) {
-    const master = entry.master;
-    if (isCancelled(master) && entry.overrides.length === 0) continue;
-    const startLine = firstValue(master, "DTSTART");
-    const start = instantOf(startLine);
-    if (start === null) continue;
-    const synthesized =
-      firstValue(master, "UID") === undefined ||
-      (firstValue(master, "UID")?.value ?? "").trim().length === 0;
-    const duplicate = duplicates.has(uid);
-
-    const durationLine = firstValue(master, "DURATION");
-    const dtend = instantOf(firstValue(master, "DTEND"));
-    const zones = opts.zones ?? intlZones;
-    const duration =
-      durationLine !== undefined
-        ? parseDuration(durationLine.value)
-        : dtend !== null
-          ? Math.round(
-              (Date.parse(toUtc(dtend, zones, parsed.zones).iso) -
-                Date.parse(toUtc(start, zones, parsed.zones).iso)) /
-                1_000,
-            )
-          : null;
-
-    const rruleLine = firstValue(master, "RRULE");
-    const rdates = rdateLocals(master);
-    const common = {
-      uid,
-      parsed,
-      opts,
-      calendarSlug,
-      calendarName,
-      duration,
-      synthesized,
-      duplicate,
-    };
-
-    if (rruleLine === undefined && rdates.length === 0) {
-      if (!isCancelled(master)) events.push(emit({ ...common, event: master, start }));
-      for (const override of entry.overrides) {
-        pushOverride(events, override, common);
+    try {
+      events.push(...seriesEvents(uid, entry, context));
+    } catch (error) {
+      // One entry with an unreadable date must not cost the calendar: the
+      // producer is a third party, and the rest of the file is still good.
+      if (!(error instanceof KizukiError) || error.code !== "parse_error") {
+        throw error;
       }
-      continue;
-    }
-
-    const parsedRule =
-      rruleLine === undefined ? null : parseRrule(rruleLine.value);
-    if (parsedRule !== null && "unsupported" in parsedRule) {
-      events.push(
-        emit({
-          ...common,
-          event: master,
-          start,
-          recurrence: {
-            rrule: rruleLine?.value ?? null,
-            instance_of: uid,
-            expanded: false,
-          },
-        }),
-      );
-      continue;
-    }
-
-    const dtstartLocal = localOf(start);
-    const expansion =
-      parsedRule === null
-        ? // RFC 5545 §3.8.5.2: RDATE adds to the recurrence set, which always
-          // contains DTSTART.
-          { instances: withStart(dtstartLocal, rdates, exdateKeys(master)), truncated: false }
-        : expand(parsedRule.rule, dtstartLocal, {
-            windowEnd,
-            maxInstances: MAX_INSTANCES,
-            exdates: exdateKeys(master),
-            rdates,
-            maxSteps: MAX_STEPS,
-          });
-
-    const overrideByStart = new Map<string, RawVEvent>();
-    for (const override of entry.overrides) {
-      const recurrenceId = instantOf(firstValue(override, "RECURRENCE-ID"));
-      if (recurrenceId === null) continue;
-      overrideByStart.set(formatLocal(localOf(recurrenceId)), override);
-    }
-
-    const emittedKeys = new Set<string>();
-    for (const instance of expansion.instances) {
-      const key = formatLocal(instance);
-      emittedKeys.add(key);
-      const override = overrideByStart.get(key);
-      const source = override ?? master;
-      if (isCancelled(source)) continue;
-      // A rescheduled instance keeps the identity of the slot it replaces, so
-      // the ledger records a move rather than a deletion plus a new event.
-      const overrideStart =
-        override === undefined
-          ? null
-          : instantOf(firstValue(override, "DTSTART"));
-      events.push(
-        emit({
-          ...common,
-          event: source,
-          start: overrideStart ?? instanceStart(start, instance),
-          ...(override !== undefined ? { suffixKey: key } : {}),
-          recurrence: {
-            rrule: rruleLine?.value ?? null,
-            instance_of: uid,
-            ...(override !== undefined ? { recurrence_id: key } : {}),
-            expanded: true,
-            ...(expansion.truncated ? { truncated: true } : {}),
-          },
-        }),
-      );
-    }
-    for (const [key, override] of overrideByStart) {
-      if (emittedKeys.has(key) || isCancelled(override)) continue;
-      const overrideStart = instantOf(firstValue(override, "DTSTART")) ?? start;
-      events.push(
-        emit({
-          ...common,
-          event: override,
-          start: overrideStart,
-          recurrence: {
-            rrule: rruleLine?.value ?? null,
-            instance_of: uid,
-            recurrence_id: key,
-            expanded: true,
-          },
-        }),
-      );
+      skipped += 1;
     }
   }
 
@@ -255,6 +159,147 @@ export function calendarEvents(
         ? 1
         : 0,
   );
+  return { events, skipped };
+}
+
+function seriesEvents(
+  uid: string,
+  entry: Series,
+  context: SeriesContext,
+): CaptureEventInput[] {
+  const { parsed, opts, calendarSlug, calendarName, windowEnd, duplicates } =
+    context;
+  const events: CaptureEventInput[] = [];
+  const master = entry.master;
+  if (isCancelled(master) && entry.overrides.length === 0) return events;
+  const startLine = firstValue(master, "DTSTART");
+  const start = instantOf(startLine);
+  if (start === null) return events;
+  const synthesized =
+    firstValue(master, "UID") === undefined ||
+    (firstValue(master, "UID")?.value ?? "").trim().length === 0;
+  const duplicate = duplicates.has(uid);
+
+  const durationLine = firstValue(master, "DURATION");
+  const dtend = instantOf(firstValue(master, "DTEND"));
+  const zones = opts.zones ?? intlZones;
+  const duration =
+    durationLine !== undefined
+      ? parseDuration(durationLine.value)
+      : dtend !== null
+        ? Math.round(
+            (Date.parse(toUtc(dtend, zones, parsed.zones).iso) -
+              Date.parse(toUtc(start, zones, parsed.zones).iso)) /
+              1_000,
+          )
+        : null;
+
+  const rruleLine = firstValue(master, "RRULE");
+  const rdates = rdateLocals(master);
+  const common = {
+    uid,
+    parsed,
+    opts,
+    calendarSlug,
+    calendarName,
+    duration,
+    synthesized,
+    duplicate,
+  };
+
+  if (rruleLine === undefined && rdates.length === 0) {
+    if (!isCancelled(master)) events.push(emit({ ...common, event: master, start }));
+    for (const override of entry.overrides) {
+      pushOverride(events, override, common);
+    }
+    return events;
+  }
+
+  const parsedRule =
+    rruleLine === undefined ? null : parseRrule(rruleLine.value);
+  if (parsedRule !== null && "unsupported" in parsedRule) {
+    events.push(
+      emit({
+        ...common,
+        event: master,
+        start,
+        recurrence: {
+          rrule: rruleLine?.value ?? null,
+          instance_of: uid,
+          expanded: false,
+        },
+      }),
+    );
+    return events;
+  }
+
+  const dtstartLocal = localOf(start);
+  const expansion =
+    parsedRule === null
+      ? // RFC 5545 §3.8.5.2: RDATE adds to the recurrence set, which always
+        // contains DTSTART.
+        { instances: withStart(dtstartLocal, rdates, exdateKeys(master)), truncated: false }
+      : expand(parsedRule.rule, dtstartLocal, {
+          windowEnd,
+          maxInstances: MAX_INSTANCES,
+          exdates: exdateKeys(master),
+          rdates,
+          maxSteps: MAX_STEPS,
+        });
+
+  const overrideByStart = new Map<string, RawVEvent>();
+  for (const override of entry.overrides) {
+    const recurrenceId = instantOf(firstValue(override, "RECURRENCE-ID"));
+    if (recurrenceId === null) continue;
+    overrideByStart.set(formatLocal(localOf(recurrenceId)), override);
+  }
+
+  const emittedKeys = new Set<string>();
+  for (const instance of expansion.instances) {
+    const key = formatLocal(instance);
+    emittedKeys.add(key);
+    const override = overrideByStart.get(key);
+    const source = override ?? master;
+    if (isCancelled(source)) continue;
+    // A rescheduled instance keeps the identity of the slot it replaces, so
+    // the ledger records a move rather than a deletion plus a new event.
+    const overrideStart =
+      override === undefined
+        ? null
+        : instantOf(firstValue(override, "DTSTART"));
+    events.push(
+      emit({
+        ...common,
+        event: source,
+        start: overrideStart ?? instanceStart(start, instance),
+        ...(override !== undefined ? { suffixKey: key } : {}),
+        recurrence: {
+          rrule: rruleLine?.value ?? null,
+          instance_of: uid,
+          ...(override !== undefined ? { recurrence_id: key } : {}),
+          expanded: true,
+          ...(expansion.truncated ? { truncated: true } : {}),
+        },
+      }),
+    );
+  }
+  for (const [key, override] of overrideByStart) {
+    if (emittedKeys.has(key) || isCancelled(override)) continue;
+    const overrideStart = instantOf(firstValue(override, "DTSTART")) ?? start;
+    events.push(
+      emit({
+        ...common,
+        event: override,
+        start: overrideStart,
+        recurrence: {
+          rrule: rruleLine?.value ?? null,
+          instance_of: uid,
+          recurrence_id: key,
+          expanded: true,
+        },
+      }),
+    );
+  }
   return events;
 }
 

@@ -120,5 +120,5 @@ export function fixtureIcsEvents(): CaptureEventInput[] {
     slugSource: FIXTURE_SLUG_SOURCE,
     observedAt: FIXTURE_OBSERVED_AT,
     now: FIXTURE_NOW,
-  });
+  }).events;
 }

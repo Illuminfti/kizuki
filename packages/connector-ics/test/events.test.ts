@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { validateEventInput } from "@kizuki/core";
 import type { CaptureEventInput } from "@kizuki/core";
 import { calendarEvents } from "../src/events";
+import type { CalendarMapping } from "../src/events";
 import { parseDuration, slugify, synthesizeUid } from "../src/map";
 import { parseIcs } from "../src/parse";
 import { FIXTURE_NOW, fixtureIcsEvents } from "../src/fixture";
@@ -12,7 +13,7 @@ function byId(): Map<string, CaptureEventInput> {
   );
 }
 
-function mapped(body: string[], slugSource = "acme-team"): CaptureEventInput[] {
+function mapAll(body: string[], slugSource = "acme-team"): CalendarMapping {
   return calendarEvents(
     parseIcs(
       ["BEGIN:VCALENDAR", "VERSION:2.0", ...body, "END:VCALENDAR", ""].join(
@@ -25,6 +26,10 @@ function mapped(body: string[], slugSource = "acme-team"): CaptureEventInput[] {
       now: FIXTURE_NOW,
     },
   );
+}
+
+function mapped(body: string[], slugSource = "acme-team"): CaptureEventInput[] {
+  return mapAll(body, slugSource).events;
 }
 
 describe("the fixture calendar maps to exact events", () => {
@@ -383,5 +388,92 @@ describe("small helpers", () => {
     expect(parseDuration("nonsense")).toBeNull();
     expect(parseDuration("P99999999999W")).toBeNull();
     expect(parseDuration("-P4000D")).toBeNull();
+  });
+});
+
+describe("one unreadable entry costs only itself", () => {
+  const bad = [
+    "BEGIN:VEVENT",
+    "UID:one@acme.example",
+    "DTSTART:20260301T100000Z",
+    "SUMMARY:One",
+    "END:VEVENT",
+    "BEGIN:VEVENT",
+    "UID:two@acme.example",
+    "DTSTART;VALUE=DATE:20260305T000000",
+    "SUMMARY:Two",
+    "END:VEVENT",
+    "BEGIN:VEVENT",
+    "UID:three@acme.example",
+    "DTSTART:20260307T100000Z",
+    "SUMMARY:Three",
+    "END:VEVENT",
+  ];
+
+  test("the neighbours of a malformed date still reach the ledger", () => {
+    const result = mapAll(bad);
+    expect(result.events.map((event) => event.source_record_id)).toEqual([
+      "one@acme.example",
+      "three@acme.example",
+    ]);
+    expect(result.skipped).toBe(1);
+  });
+
+  test.each([
+    ["an unparsable DTSTART", ["DTSTART:not-a-date", "SUMMARY:Broken"]],
+    [
+      "a date-only value that carries a time",
+      ["DTSTART;VALUE=DATE:20260305T000000", "SUMMARY:Broken"],
+    ],
+    [
+      "a malformed DTEND",
+      ["DTSTART:20260302T100000Z", "DTEND:20260302T9900Z", "SUMMARY:Broken"],
+    ],
+    [
+      "one bad value inside EXDATE",
+      [
+        "DTSTART:20260302T100000Z",
+        "RRULE:FREQ=DAILY;COUNT=3",
+        "EXDATE:20260303T100000Z,nonsense",
+        "SUMMARY:Broken",
+      ],
+    ],
+    [
+      "a malformed RECURRENCE-ID",
+      [
+        "DTSTART:20260302T100000Z",
+        "SUMMARY:Broken",
+        "END:VEVENT",
+        "BEGIN:VEVENT",
+        "UID:broken@acme.example",
+        "RECURRENCE-ID:20260232T100000Z",
+        "DTSTART:20260304T100000Z",
+        "SUMMARY:Moved",
+      ],
+    ],
+    [
+      "an impossible clock time",
+      ["DTSTART:20260301T100061Z", "SUMMARY:Broken"],
+    ],
+  ])("%s skips its own entry only", (_label, body) => {
+    const result = mapAll([
+      "BEGIN:VEVENT",
+      "UID:keeper@acme.example",
+      "DTSTART:20260301T100000Z",
+      "SUMMARY:Keeper",
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      "UID:broken@acme.example",
+      ...body,
+      "END:VEVENT",
+    ]);
+    expect(result.events.map((event) => event.source_record_id)).toEqual([
+      "keeper@acme.example",
+    ]);
+    expect(result.skipped).toBe(1);
+  });
+
+  test("a readable calendar reports nothing skipped", () => {
+    expect(mapAll(bad.slice(0, 6)).skipped).toBe(0);
   });
 });

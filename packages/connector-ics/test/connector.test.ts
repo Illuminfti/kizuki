@@ -169,6 +169,35 @@ describe("file mode", () => {
     await expect(connector.backfill(null)).rejects.toThrow(KizukiError);
   });
 
+  test("an unreadable entry is skipped and the run reads degraded", async () => {
+    const path = await writeCalendar(
+      SMALL.replace(
+        "END:VCALENDAR",
+        [
+          "BEGIN:VEVENT",
+          "UID:three@acme.example",
+          "DTSTART;VALUE=DATE:20260305T000000",
+          "SUMMARY:Three",
+          "END:VEVENT",
+          "END:VCALENDAR",
+        ].join("\r\n"),
+      ),
+    );
+    const connector = createIcsConnector({ path }, { now: NOW });
+
+    const batch = await connector.backfill(null);
+    expect(batch.events.map((event) => event.source_record_id)).toEqual([
+      "one@acme.example",
+      "two@acme.example",
+    ]);
+
+    const report = await connector.health();
+    expect(report.state).toBe("degraded");
+    expect(report.detail).toBe("1 calendar entry could not be read");
+    // The note is reported once, not for the rest of the connection's life.
+    expect((await connector.health()).state).toBe("ok");
+  });
+
   test("a directory is misconfigured", async () => {
     const connector = createIcsConnector({ path: temporary() }, { now: NOW });
     const report = await connector.health();
