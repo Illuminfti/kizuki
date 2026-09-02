@@ -84,8 +84,6 @@ function configField(
 
 interface Snapshot {
   events: CaptureEventInput[];
-  /** Entries the calendar carried that could not be read this run. */
-  skipped: number;
   etag: string | null;
   lastModified: string | null;
   unchanged: boolean;
@@ -230,7 +228,6 @@ export class IcsConnector implements Connector {
       this.noteSkipped(mapping.skipped);
       return {
         events: mapping.events,
-        skipped: mapping.skipped,
         etag: null,
         lastModified: null,
         unchanged: false,
@@ -251,7 +248,6 @@ export class IcsConnector implements Connector {
     if (response.status === 304) {
       return {
         events: [],
-        skipped: 0,
         etag: response.etag,
         lastModified: response.last_modified,
         unchanged: true,
@@ -265,7 +261,6 @@ export class IcsConnector implements Connector {
     this.noteSkipped(mapping.skipped);
     return {
       events: mapping.events,
-      skipped: mapping.skipped,
       etag: response.etag,
       lastModified: response.last_modified,
       unchanged: false,
