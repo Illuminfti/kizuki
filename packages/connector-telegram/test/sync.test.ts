@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { computeContentHash } from "@kizuki/core";
 import type { CaptureEventInput } from "@kizuki/core";
-import { parseCursor } from "../src/cursor";
+import { MAX_DIALOGS, parseCursor } from "../src/cursor";
 import { fixtureAccount } from "../src/scripted";
 import type { TelegramMessage } from "../src/api";
 import { connected, drain } from "./helpers";
@@ -195,4 +195,52 @@ test("a dialog that fills the batch keeps the pass on itself", async () => {
   expect(sizes).toEqual([500, 500, 200, 0]);
   expect(parseCursor(current).pass).toBeNull();
   expect(parseCursor(current).dialogs["1"]?.last_id).toBe(1201);
+});
+
+function crowded(count: number) {
+  const account = fixtureAccount();
+  account.dialogs = [];
+  account.messages = {};
+  for (let index = 0; index < count; index += 1) {
+    account.dialogs.push({
+      peer_id: String(9_000_000 + index),
+      peer_type: "user",
+      title: "grace",
+      public: false,
+      top_message_id: 0,
+    });
+  }
+  return account;
+}
+
+test("the cursor never tracks more dialogs than a listing may return", async () => {
+  const built = await connected({ account: crowded(MAX_DIALOGS), now: FEBRUARY });
+  const drained = await drain(built.connector, "backfill");
+  expect(Object.keys(parseCursor(drained.cursor).dialogs)).toHaveLength(
+    MAX_DIALOGS,
+  );
+
+  // One conversation leaves the listing page, one arrives: ordinary churn at
+  // the ceiling, which used to push the cursor one entry past its own parser.
+  built.api.hideDialog("9000000");
+  built.api.addDialog(
+    {
+      peer_id: "9999999",
+      peer_type: "user",
+      title: "linus",
+      public: false,
+      top_message_id: 1,
+    },
+    [{ peer_id: "9999999", id: 1, date: LATER, text: "hello", out: false, service: false }],
+  );
+
+  const batch = await built.connector.sync(drained.cursor);
+  const cursor = parseCursor(batch.cursor as string);
+  expect(Object.keys(cursor.dialogs)).toHaveLength(MAX_DIALOGS);
+  expect(cursor.dialogs["9999999"]).toBeDefined();
+  expect(cursor.dialogs["9000000"]).toBeUndefined();
+  expect(ids(batch.events)).toEqual(["9999999:1"]);
+
+  // And it keeps working: the checkpoint it just wrote is still walkable.
+  expect((await built.connector.sync(batch.cursor)).events).toEqual([]);
 });

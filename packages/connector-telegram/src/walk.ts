@@ -95,6 +95,9 @@ export async function walk(
   }
   const listing = await listDialogs(deps.api);
   const cursor = stored ?? seedCursor(listing.dialogs);
+  const byPeer = new Map(
+    listing.dialogs.map((dialog) => [dialog.peer_id, dialog] as const),
+  );
   if (mode === "sync" && cursor.pass === null) {
     for (const dialog of listing.dialogs) {
       cursor.dialogs[dialog.peer_id] ??= {
@@ -103,6 +106,7 @@ export async function walk(
         exhausted: false,
       };
     }
+    boundDialogs(cursor, byPeer);
     cursor.pass = {
       started_at: Math.floor(deps.now() / 1000),
       next_peer: null,
@@ -115,9 +119,6 @@ export async function walk(
     watermark: cursor.edit_watermark,
     mode,
   };
-  const byPeer = new Map(
-    listing.dialogs.map((dialog) => [dialog.peer_id, dialog] as const),
-  );
   // What this pass would have read had the account still listed it: a finished
   // dialog is only a loss once sync is watching it for new messages.
   const unreadable = Object.keys(cursor.dialogs)
@@ -181,6 +182,31 @@ export async function walk(
     floodUntil,
     listing: { limitReached: listing.limitReached, unreadable },
   };
+}
+
+/**
+ * A cursor may never carry more dialogs than one listing can return. It is
+ * validated on the way out, so an entry over the bound would end every later
+ * batch in a parse error instead of a checkpoint, with no way back. Only peers
+ * the account has stopped listing are dropped, finished ones first: they are
+ * the entries this connector can no longer read anything from.
+ */
+function boundDialogs(
+  cursor: TelegramCursor,
+  listed: ReadonlyMap<string, TelegramDialog>,
+): void {
+  let overflow = Object.keys(cursor.dialogs).length - MAX_DIALOGS;
+  if (overflow <= 0) return;
+  const rank = (peer: string): number =>
+    cursor.dialogs[peer]?.exhausted === true ? 0 : 1;
+  const evictable = Object.keys(cursor.dialogs)
+    .filter((peer) => !listed.has(peer))
+    .sort((left, right) => rank(left) - rank(right) || left.localeCompare(right));
+  for (const peer of evictable) {
+    if (overflow <= 0) return;
+    delete cursor.dialogs[peer];
+    overflow -= 1;
+  }
 }
 
 /** `partial` means the batch filled before this dialog was done with. */
