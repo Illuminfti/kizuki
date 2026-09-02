@@ -1,0 +1,3 @@
+# Permitted network call sites. Format: <tracked path>:<reason>
+# An entry is stale (and fails the gate) when the path is untracked, outside
+# packages/, or produces zero findings. Do not add a path until the call exists.
