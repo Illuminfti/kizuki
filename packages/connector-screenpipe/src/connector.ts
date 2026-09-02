@@ -159,6 +159,7 @@ export class ScreenpipeConnector implements Connector {
         unreachable_source_record_ids: planSourceRecords(
           db,
           subject_id,
+          this.#config.since,
         ),
       };
     });

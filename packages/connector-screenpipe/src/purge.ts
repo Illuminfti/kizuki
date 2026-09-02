@@ -19,10 +19,19 @@ export const TRIMMED_CODE_POINTS: readonly number[] = [
 
 const BLANK = TRIMMED_CODE_POINTS.map((point) => `char(${point})`).join(" || ");
 
-/** Frames without text are skipped by the walk, so they were never ingested. */
-const FRAME_EMITTED = `full_text IS NOT NULL AND trim(full_text, ${BLANK}) != ''`;
+/**
+ * Frames without text are skipped by the walk, so they were never ingested. The
+ * type test matches the reader, which takes anything but TEXT as no text at
+ * all; SQLite's own `trim` would accept a blob and name a row the walk skipped.
+ */
+const FRAME_EMITTED =
+  `typeof(full_text) = 'text' AND trim(full_text, ${BLANK}) != ''`;
 
-export function planSourceRecords(db: Database, subjectId: string): string[] {
+export function planSourceRecords(
+  db: Database,
+  subjectId: string,
+  since: string | null,
+): string[] {
   const app = prefixedValue(subjectId, "screenpipe:app:");
   if (app !== null) {
     return pagePlan(
@@ -30,15 +39,23 @@ export function planSourceRecords(db: Database, subjectId: string): string[] {
       framesBy("app_name"),
       [],
       "frame",
+      since,
       (value) => value !== null && slug(value) === app,
     );
   }
   const site = prefixedValue(subjectId, "screenpipe:site:");
   if (site !== null) {
-    return pagePlan(db, framesBy("browser_url"), [], "frame", (value) => {
-      const host = siteHost(value);
-      return host !== null && slug(host) === site;
-    });
+    return pagePlan(
+      db,
+      framesBy("browser_url"),
+      [],
+      "frame",
+      since,
+      (value) => {
+        const host = siteHost(value);
+        return host !== null && slug(host) === site;
+      },
+    );
   }
   const speaker = prefixedValue(subjectId, "screenpipe:speaker:");
   if (speaker !== null && /^[1-9]\d*$/.test(speaker)) {
@@ -49,6 +66,7 @@ export function planSourceRecords(db: Database, subjectId: string): string[] {
         transcriptionsBySpeaker(),
         [id],
         "transcription",
+        since,
         () => true,
       );
     }
@@ -60,6 +78,7 @@ export function planSourceRecords(db: Database, subjectId: string): string[] {
       transcriptionsBy("device"),
       [],
       "transcription",
+      since,
       (value) => value !== null && slug(value) === device,
     );
   }
@@ -117,6 +136,7 @@ function pagePlan(
   sql: string,
   bindings: number[],
   prefix: "frame" | "transcription",
+  since: string | null,
   matches: (value: string | null) => boolean,
 ): string[] {
   const ids: string[] = [];
@@ -130,8 +150,11 @@ function pagePlan(
       const id = planId(row.id);
       afterId = id;
       // A row the walk would skip never reached the ledger, so naming it here
-      // would overstate what Kizuki holds for this subject.
-      if (normalizeTimestamp(row.timestamp) === null) continue;
+      // would overstate what Kizuki holds for this subject. The cutoff drops
+      // rows the same way the walk does, on the row's own timestamp.
+      const timestamp = normalizeTimestamp(row.timestamp);
+      if (timestamp === null) continue;
+      if (since !== null && timestamp < since) continue;
       const value = typeof row.value === "string" ? row.value : null;
       if (!matches(value)) continue;
       ids.push(`${prefix}:${id}`);

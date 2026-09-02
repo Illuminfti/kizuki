@@ -61,6 +61,77 @@ describe("ScreenpipeConnector purge planning", () => {
     await connector.revoke();
   });
 
+  test("a frame the cutoff excludes is absent from the plan", async () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    insertFrame(fixture.writer, {
+      id: 1,
+      timestamp: "2026-01-05T09:00:00Z",
+      appName: "Acme Mail",
+      fullText: "before the cutoff",
+    });
+    insertFrame(fixture.writer, {
+      id: 2,
+      timestamp: "2026-02-05T09:00:00Z",
+      appName: "Acme Mail",
+      fullText: "after the cutoff",
+    });
+    const connector = new ScreenpipeConnector(
+      {
+        path: fixture.path,
+        settle_seconds: 0,
+        since: "2026-02-01T00:00:00Z",
+      },
+      fixtureDeps("2026-03-01T00:00:00.000Z"),
+    );
+
+    const batch = await connector.backfill(null);
+    const plan = await connector.purgeSource("screenpipe:app:acme-mail");
+
+    expect(batch.events.map(({ source_record_id }) => source_record_id)).toEqual([
+      "frame:2",
+    ]);
+    // The cutoff kept frame 1 out of the ledger, so naming it in a plan would
+    // tell the owner Kizuki holds evidence it never held.
+    expect(plan.unreachable_source_record_ids).toEqual(["frame:2"]);
+    await connector.revoke();
+  });
+
+  test("a frame whose text column holds a blob is absent from the plan", async () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    // TEXT affinity keeps a blob a blob, and the reader takes anything but
+    // text as no text at all, so the walk skips this row.
+    fixture.writer
+      .query(
+        `INSERT INTO frames
+           (id, video_chunk_id, offset_index, timestamp, app_name, window_name,
+            browser_url, device_name, focused, full_text, text_source,
+            capture_trigger, snapshot_path, document_path)
+         VALUES (1, NULL, 0, '2026-01-05T09:00:00Z', 'Acme Mail', NULL, NULL,
+                 'Fixture Display', 1, X'6162', 'accessibility', 'fixture',
+                 NULL, NULL)`,
+      )
+      .run();
+    insertFrame(fixture.writer, {
+      id: 2,
+      timestamp: "2026-01-05T09:01:00Z",
+      appName: "Acme Mail",
+      fullText: "real text",
+    });
+    const connector = new ScreenpipeConnector(
+      { path: fixture.path, settle_seconds: 0 },
+      fixtureDeps("2026-01-09T00:00:00.000Z"),
+    );
+
+    const batch = await connector.backfill(null);
+    const plan = await connector.purgeSource("screenpipe:app:acme-mail");
+
+    expect(batch.events.map(({ source_record_id }) => source_record_id)).toEqual([
+      "frame:2",
+    ]);
+    expect(plan.unreachable_source_record_ids).toEqual(["frame:2"]);
+    await connector.revoke();
+  });
+
   test("the plan's blank set is the runtime's own trim set", () => {
     const runtime: number[] = [];
     for (let point = 0; point <= 0x10ffff; point += 1) {

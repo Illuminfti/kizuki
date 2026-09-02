@@ -148,8 +148,10 @@ first 1,024 characters of a name reach its subject ID.
 `purgeSource()` returns matching source record IDs under
 `unreachable_source_record_ids`, capped at 10,000. It is an informational,
 read-only plan: screenpipe's database is never changed. A plan lists only rows
-this connector would emit, so frames without text and rows with an unusable
-timestamp are absent from it, as they are from the ledger. Every plan walks
+this connector emits, so frames without text, rows with an unusable timestamp,
+and rows excluded by `since` are absent from it, as they are from the ledger. A
+row still inside the settle window is listed, because the next call will read
+it. Every plan walks
 frame or transcription IDs in pages and matches one row at a time, so it takes
 seconds on a large database and allocates nothing that the number of distinct
 app or device names could grow. Ledger purge by subject or connector is not
