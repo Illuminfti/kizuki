@@ -110,6 +110,10 @@ reported spend has already crossed one stops rather than answering `ok`.
 attaches what a failed call had already put on the wire to the error it
 throws, and an outage carries the usage the run accrued before it.
 
+`requests_per_minute` bounds the port, not one call: concurrent calls queue
+for a slot in the same sliding window, and a call that fails closed before its
+request leaves gives its slot back.
+
 `LlmRequest.deadline_ms` bounds the whole call. Every attempt, every retry
 backoff and every wait for the rate window comes out of it, and the call ends
 as `PortError("timeout")` once it is spent. The producer gives each batch

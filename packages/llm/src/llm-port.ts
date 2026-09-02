@@ -98,6 +98,7 @@ export class OpenAiCompatibleLlm implements LlmPort {
   private readonly transport: ChatTransport;
   private readonly clock: Clock;
   private readonly window: number[] = [];
+  private gate: Promise<unknown> = Promise.resolve();
   private physicalAttempts = 0;
   private closed = false;
 
@@ -325,11 +326,6 @@ export class OpenAiCompatibleLlm implements LlmPort {
     return value;
   }
 
-  /**
-   * Sliding window over the configured rate. The wait is clamped to the
-   * window so a backward clock step (an NTP correction, a resume from
-   * suspend) cannot park a run for the size of the step.
-   */
   private async send(
     request: ChatRequest,
     deadline: number,
@@ -337,6 +333,55 @@ export class OpenAiCompatibleLlm implements LlmPort {
     inputChars: number,
   ): Promise<TransportResult> {
     const spend = this.unanswered(used, inputChars);
+    const slot = await this.takeSlot(deadline, spend);
+    let key: string | null;
+    try {
+      key = await this.apiKey(spend);
+    } catch (error) {
+      // A request that fails closed here never happened, so it must not keep
+      // a slot in the rate window either.
+      this.release(slot);
+      throw error;
+    }
+    const remaining = deadline - this.clock.now();
+    if (remaining <= 0) {
+      this.release(slot);
+      throw this.deadlineError(spend);
+    }
+    this.physicalAttempts += 1;
+    return await this.transport(request, {
+      url: this.url,
+      api_key: key,
+      timeout_ms: Math.min(remaining, this.config.timeout_ms),
+      max_response_bytes: this.config.max_response_bytes,
+    });
+  }
+
+  /**
+   * One caller at a time reads the window and takes a slot in it. This port
+   * is a host-bound singleton and nothing in `kizuki.llm/v1` says a call is
+   * single-flight, so without the queue every concurrent call passed the same
+   * check before any of them had recorded a request.
+   */
+  private async takeSlot(deadline: number, spend: LlmSpend): Promise<number> {
+    const taken = this.gate.then(
+      () => this.waitForSlot(deadline, spend),
+      () => this.waitForSlot(deadline, spend),
+    );
+    // The queue outlives a failed call: a rejection here is the caller's.
+    this.gate = taken.then(
+      () => undefined,
+      () => undefined,
+    );
+    return await taken;
+  }
+
+  /**
+   * Sliding window over the configured rate. The wait is clamped to the
+   * window so a backward clock step (an NTP correction, a resume from
+   * suspend) cannot park a run for the size of the step.
+   */
+  private async waitForSlot(deadline: number, spend: LlmSpend): Promise<number> {
     this.prune();
     const oldest = this.window[0];
     if (
@@ -353,19 +398,16 @@ export class OpenAiCompatibleLlm implements LlmPort {
       await this.clock.sleep(wait);
       this.prune();
     }
-    // Resolve the credential first: a request that fails closed here never
-    // happened, so it must not consume a slot in the rate window either.
-    const key = await this.apiKey(spend);
-    const remaining = deadline - this.clock.now();
-    if (remaining <= 0) throw this.deadlineError(spend);
-    this.window.push(this.clock.now());
-    this.physicalAttempts += 1;
-    return await this.transport(request, {
-      url: this.url,
-      api_key: key,
-      timeout_ms: Math.min(remaining, this.config.timeout_ms),
-      max_response_bytes: this.config.max_response_bytes,
-    });
+    // Taken here, with no await between the check above and this line.
+    const at = this.clock.now();
+    this.window.push(at);
+    return at;
+  }
+
+  /** Give back a slot whose request never left. */
+  private release(at: number): void {
+    const index = this.window.lastIndexOf(at);
+    if (index >= 0) this.window.splice(index, 1);
   }
 
   private deadlineError(spend: LlmSpend): PortError {

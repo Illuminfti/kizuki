@@ -355,6 +355,74 @@ describe("bounds on a call", () => {
     expect(Math.max(...slept)).toBeLessThanOrEqual(60_000);
   });
 
+  test("concurrent calls cannot outrun the configured rate", async () => {
+    let now = 0;
+    // A real tick before the clock moves, so a call already past the gate
+    // reaches the transport at the time its slot was granted rather than at
+    // whatever a later call has since advanced the clock to.
+    const advancing: Clock = {
+      now: () => now,
+      sleep: async (ms) => {
+        await Bun.sleep(1);
+        now += ms;
+      },
+    };
+    const served: number[] = [];
+    const transport: ChatTransport = async () => {
+      served.push(now);
+      return { ok: true, status: 200, body: chatCompletion("{}") };
+    };
+    const llm = port(
+      {
+        base_url: "https://host.test/v1",
+        model: "m",
+        requests_per_minute: 1,
+      },
+      { transport, clock: advancing },
+    );
+    await Promise.all(
+      Array.from({ length: 5 }, () =>
+        llm.complete({ ...request, deadline_ms: 600_000 }),
+      ),
+    );
+    // Regression: the window check and the slot it takes straddled two
+    // awaits, so five concurrent calls on one bound port all passed the same
+    // check before any of them had recorded a request, and the configured
+    // rate bounded nothing.
+    expect(served).toHaveLength(5);
+    for (let index = 1; index < served.length; index += 1) {
+      expect((served[index] ?? 0) - (served[index - 1] ?? 0)).toBeGreaterThanOrEqual(
+        60_000,
+      );
+    }
+  });
+
+  test("a slot is given back when the credential cannot be resolved", async () => {
+    const scripted = counting([
+      { ok: true, status: 200, body: chatCompletion("{}") },
+    ]);
+    let resolvable = false;
+    const llm = port(
+      {
+        base_url: "https://host.test/v1",
+        model: "m",
+        requests_per_minute: 1,
+        secret_ref: "env:KIZUKI_TEST_KEY",
+      },
+      { transport: scripted.transport, clock },
+      async () => {
+        if (!resolvable) throw new Error("not set");
+        return "resolved-key";
+      },
+    );
+    await expect(llm.complete(request)).rejects.toBeInstanceOf(PortError);
+    resolvable = true;
+    // A request that failed closed never happened, so the call after it must
+    // not be made to wait out a window for a slot nobody used.
+    await llm.complete(request);
+    expect(scripted.calls()).toBe(1);
+  });
+
   test("a request outside its bounds is refused before the wire", async () => {
     const scripted = counting([
       { ok: true, status: 200, body: chatCompletion("{}") },
