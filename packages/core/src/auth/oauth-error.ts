@@ -35,7 +35,6 @@ export class OAuthError extends Error {
   }
 }
 
-
 const MAX_DETAIL_CHARS = 64;
 const PRINTABLE_ASCII = /^[\x20-\x7e]+$/;
 
