@@ -91,10 +91,15 @@ test("a tombstones:true connector without hooks supplied fails, not skips", asyn
 });
 
 test("required_secrets rejects malformed references", async () => {
-  const base = getConnector(CHATGPT_IMPORT_CONNECTOR_ID, { path: "fixture.json" });
+  const base = getConnector(CHATGPT_IMPORT_CONNECTOR_ID, {
+    path: "fixture.json",
+  });
   const malformed: Connector = {
     ...base,
-    manifest: () => ({ ...base.manifest(), required_secrets: ["ordinary-plaintext-token"] }),
+    manifest: () => ({
+      ...base.manifest(),
+      required_secrets: ["ordinary-plaintext-token"],
+    }),
   };
   const result = await runConformance(malformed);
   expect(result.pass).toBe(false);
@@ -103,25 +108,24 @@ test("required_secrets rejects malformed references", async () => {
   );
 });
 
-test("a manifest without sensitivity defaults fails closed", async () => {
-  const base = getConnector(CHATGPT_IMPORT_CONNECTOR_ID, {
-    path: "fixture.json",
-  });
-  const {
-    default_sensitivity: _default,
-    sensitivity_floor: _floor,
-    ...withoutSensitivity
-  } = base.manifest();
-  const undeclared: Connector = {
-    ...base,
-    manifest: () => withoutSensitivity as ReturnType<Connector["manifest"]>,
-  };
-  const result = await runConformance(undeclared);
-  expect(result.pass).toBe(false);
-  expect(result.failures).toEqual([
-    "manifest.default_sensitivity: must be one of public | personal | private",
-    "manifest.sensitivity_floor: must be one of public | personal | private",
-  ]);
+test("a manifest that declares no sensitivity class stays conformant", async () => {
+  // `kizuki.connector/v1` shipped without the pair. A connector written
+  // against the schema as published must keep passing, or the port changed
+  // under connectors that never saw the change.
+  const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-conformance-"));
+  try {
+    const exportPath = path.join(root, "chatgpt.json");
+    await writeFile(exportPath, JSON.stringify(CHATGPT_FIXTURE_EXPORT));
+    const base = getConnector(CHATGPT_IMPORT_CONNECTOR_ID, {
+      path: exportPath,
+    });
+
+    expect(base.manifest().default_sensitivity).toBeUndefined();
+    expect(base.manifest().sensitivity_floor).toBeUndefined();
+    expect(await runConformance(base)).toEqual({ pass: true, failures: [] });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("a manifest with an unknown sensitivity level fails closed", async () => {

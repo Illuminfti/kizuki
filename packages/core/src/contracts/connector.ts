@@ -63,14 +63,17 @@ export interface Manifest {
    * resolved from the source class, never by asking the owner to label
    * (RFC 0002 §8.2).
    *
-   * Declared and validated only, so far: the conformance suite requires both
-   * fields, and nothing else reads them. Serving reads the event's own
-   * `sensitivity_hint`, which the ledger stores verbatim. A lane implementing
-   * class-based resolution is adding the first consumer, not joining one.
+   * Optional, so that carrying it does not retire `kizuki.connector/v1`: a
+   * connector written against the schema as published stays conformant, while
+   * one that does declare a class has to declare a real one. Declared and
+   * validated only, so far — serving reads the event's own
+   * `sensitivity_hint`, which the ledger stores verbatim. The lane that
+   * implements class-based resolution adds the first consumer and can require
+   * the pair once every connector carries it.
    */
-  default_sensitivity: Sensitivity;
+  default_sensitivity?: Sensitivity;
   /** The lowest label anything from this source may carry. */
-  sensitivity_floor: Sensitivity;
+  sensitivity_floor?: Sensitivity;
 }
 
 /** Terminal-facing prompts the CLI lends a connector during `signIn`. */

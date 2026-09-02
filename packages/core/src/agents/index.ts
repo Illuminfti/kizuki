@@ -3,7 +3,6 @@ export {
   OWNER,
   SENSITIVITY_ORDER,
   TOOLS,
-  isSensitivity,
 } from "./types";
 export type {
   Agent,

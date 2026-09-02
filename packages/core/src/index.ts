@@ -419,7 +419,6 @@ export {
   filterServable,
   getAgent,
   initAgents,
-  isSensitivity,
   listAudit,
   listAgents,
   recordAudit,

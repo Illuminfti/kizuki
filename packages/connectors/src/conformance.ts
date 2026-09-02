@@ -5,7 +5,6 @@ import {
   isAuthMode,
   isSecretRef,
   isPlainObject,
-  isSensitivity,
   validateEventInput,
 } from "@kizuki/core";
 import type {
@@ -301,16 +300,23 @@ function parseManifest(raw: unknown, failures: string[]): Manifest | undefined {
     );
   }
   // Sensitivity is resolved from the source class rather than from an owner
-  // label, so a manifest that cannot state its class is not usable.
+  // label. The port carries the pair as optional, so a connector written
+  // against the schema as published is still conformant; one that states a
+  // class has to state a real one.
   const levels = Object.keys(SENSITIVITY_ORDER).join(" | ");
   for (const field of ["default_sensitivity", "sensitivity_floor"] as const) {
-    if (!isSensitivity(raw[field])) {
+    const declared = raw[field];
+    if (declared !== undefined && !isSensitivityLevel(declared)) {
       failures.push(`manifest.${field}: must be one of ${levels}`);
     }
   }
 
   if (failures.length > 0) return undefined;
   return raw as unknown as Manifest;
+}
+
+function isSensitivityLevel(value: unknown): boolean {
+  return typeof value === "string" && Object.hasOwn(SENSITIVITY_ORDER, value);
 }
 
 function inspectBatch(

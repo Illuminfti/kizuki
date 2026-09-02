@@ -15,10 +15,12 @@ when that information is present.
 Screen text and audio transcription are a local-capture source class, so the
 manifest declares `default_sensitivity: private` and `sensitivity_floor:
 personal`, and every event this connector emits carries
-`sensitivity_hint: private`. Nobody is asked to label anything. The shared
-conformance suite validates the declaration and the ledger stores the hint;
-resolving a label from the source class is accepted design (RFC 0002 §8.2) and
-has no consumer on this branch.
+`sensitivity_hint: private`. Nobody is asked to label anything. The port
+carries both fields as optional, so `kizuki.connector/v1` still reads for a
+connector written before them; the shared conformance suite rejects a class
+that is declared and is not one of the known levels, and the ledger stores the
+hint. Resolving a label from the source class is accepted design
+(RFC 0002 §8.2) and has no consumer on this branch.
 
 screenpipe stores the database at `~/.screenpipe/db.sqlite` by default and keeps
 media separately under `~/.screenpipe/data/`.
@@ -181,14 +183,14 @@ Checked 2026-09-02 against screenpipe's
 database crate and migrations at
 [`c758770e`](https://github.com/screenpipe/screenpipe/tree/c758770e225324c22778cb949ba7e80fa024d2d2/crates/screenpipe-db).
 
-| Topic | Finding |
-| --- | --- |
-| Sanctioned access and scopes | screenpipe publishes its schema and documents inspecting the database file directly. This package reads that file and nothing else. There is no API scope and no remote service. |
-| Concurrency | The database runs in WAL mode behind screenpipe's write queue, so a reader can run while screenpipe records. This package reads without a transaction and never checkpoints or vacuums the file. |
-| Owner steps | Point the connector at `db.sqlite`, backfill until a call reports no new events, then sync on whatever schedule the owner wants. |
-| Secret custody | No token or client secret exists for this connector, and nothing is persisted through a secret reference. |
-| History and backfill | Every physically retained row of a compatible schema is visible. Kizuki pages them in 500-event batches; an optional `since` excludes every row dated before it. |
-| Incremental behavior | Each sweep resumes from the checkpointed frame and transcription IDs. There is no webhook and no network cursor; later row updates, hard deletions, and database ID rewinds are not detected. |
-| Edits and deletions | Late OCR is covered by the settle window. Redaction overwrites the text columns in place and stamps `*_redacted_at`; those rows are not re-read. Media eviction empties `file_path` and keeps the row. Retention and range deletion leave no deletion log suitable for tombstones. |
+| Topic                         | Finding                                                                                                                                                                                                                                                                                                                    |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Sanctioned access and scopes  | screenpipe publishes its schema and documents inspecting the database file directly. This package reads that file and nothing else. There is no API scope and no remote service.                                                                                                                                           |
+| Concurrency                   | The database runs in WAL mode behind screenpipe's write queue, so a reader can run while screenpipe records. This package reads without a transaction and never checkpoints or vacuums the file.                                                                                                                           |
+| Owner steps                   | Point the connector at `db.sqlite`, backfill until a call reports no new events, then sync on whatever schedule the owner wants.                                                                                                                                                                                           |
+| Secret custody                | No token or client secret exists for this connector, and nothing is persisted through a secret reference.                                                                                                                                                                                                                  |
+| History and backfill          | Every physically retained row of a compatible schema is visible. Kizuki pages them in 500-event batches; an optional `since` excludes every row dated before it.                                                                                                                                                           |
+| Incremental behavior          | Each sweep resumes from the checkpointed frame and transcription IDs. There is no webhook and no network cursor; later row updates, hard deletions, and database ID rewinds are not detected.                                                                                                                              |
+| Edits and deletions           | Late OCR is covered by the settle window. Redaction overwrites the text columns in place and stamps `*_redacted_at`; those rows are not re-read. Media eviction empties `file_path` and keeps the row. Retention and range deletion leave no deletion log suitable for tombstones.                                         |
 | Approval, billing, and review | The connector itself has no provider approval or billing gate. Screenpipe's own plan can govern supported history and query-time privacy features; direct file access does not reproduce those gates. These are provider-side gates only; Kizuki itself has no owner review or approval gate (`docs/decision-log.md` D10). |
-| Honest fallback | Update screenpipe when the schema sits below the floor, and use owner-invoked Kizuki ledger purge when imported evidence must be removed. |
+| Honest fallback               | Update screenpipe when the schema sits below the floor, and use owner-invoked Kizuki ledger purge when imported evidence must be removed.                                                                                                                                                                                  |
