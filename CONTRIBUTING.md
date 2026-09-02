@@ -99,12 +99,12 @@ that reads a path outside the worktree is a bug.
 Every capability table in the README, and any table anywhere with a `Proof`
 column, must fill that column with backticked proof tokens:
 
-- `` `path/to/file.ts` `` — a tracked file.
-- `` `path/to/file.test.ts::exact test title` `` — a tracked file that contains
+- `` `path/to/file.ts` ``: a tracked file.
+- `` `path/to/file.test.ts::exact test title` ``: a tracked file that contains
   that literal string. Use the real `test()` or `describe()` title.
-- `` `run: bun run <script>` `` — a script in the root `package.json`.
+- `` `run: bun run <script>` ``: a script in the root `package.json`.
 - `` `run: bash scripts/<file>` ``, `` `run: bun scripts/<file>` ``, or
-  `` `run: bun packages/<pkg>/src/<file>` `` — a tracked file to execute.
+  `` `run: bun packages/<pkg>/src/<file>` ``: a tracked file to execute.
 
 A row that asserts one behavior names the test title. A row that summarizes a
 module may name the whole test file. A claim with no proof token is not a claim
@@ -138,7 +138,7 @@ Follow the `connector-work` skill under `.agents/skills/`. In short:
 5. Emit tombstones, or document precisely why the provider makes that
    impossible, and plan what a subject purge removes.
 6. Keep credentials behind secret references, redact what you log, and add the
-   registry entry last — after the implementation and the docs row.
+   registry entry last, after the implementation and the docs row.
 
 Name the source honestly: live sync, local loopback, folder snapshot, or export
 import. An export importer is never called sync.

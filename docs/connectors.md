@@ -14,10 +14,10 @@ checks that it told the truth.
 
 **`auth_modes`** says how a source is connected, never how it is configured:
 
-- `none` — a path the owner points at. No credential exists.
-- `sign_in` — a phone code or an app password, typed in the terminal.
-- `oauth` — browser consent through PKCE against a loopback listener.
-- `secret_ref` — an existing token the owner already holds, named by an `env:`
+- `none`: a path the owner points at. No credential exists.
+- `sign_in`: a phone code or an app password, typed in the terminal.
+- `oauth`: browser consent through PKCE against a loopback listener.
+- `secret_ref`: an existing token the owner already holds, named by an `env:`
   or `file:` reference.
 
 Sign-in, not setup: nothing user-facing ever asks for a client id. Project
@@ -26,12 +26,12 @@ than pretending.
 
 **`capabilities`** are promises:
 
-- `backfill` — can read history from the beginning.
-- `sync` — can resume from a cursor and read what is new.
-- `tombstones` — a deletion at the source becomes a `deleted: true` event, so
+- `backfill`: can read history from the beginning.
+- `sync`: can resume from a cursor and read what is new.
+- `tombstones`: a deletion at the source becomes a `deleted: true` event, so
   Kizuki learns that a record is gone rather than keeping it forever.
-- `purge` — the connector can plan what a subject purge removes at the source.
-- `fixture` — ships an offline synthetic sample, so its tests never touch a
+- `purge`: the connector can plan what a subject purge removes at the source.
+- `fixture`: ships an offline synthetic sample, so its tests never touch a
   network.
 
 **`emits_sensitivity_hint`** says whether captured events arrive with a
@@ -131,7 +131,7 @@ written is not read early.
 **Deletions and edits.** No tombstones: the local database offers no reliable
 deletion signal to observe.
 
-**Purge.** `purge: true` — it can plan what a subject purge removes.
+**Purge.** `purge: true`, so it can plan what a subject purge removes.
 
 **Never captured.** Screen or audio media. It reads text rows only, never the
 files under the media directory, and it never calls screenpipe's HTTP API.
