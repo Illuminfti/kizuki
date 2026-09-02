@@ -64,6 +64,26 @@ describe("the package boundary", () => {
     expect(manifest.dependencies ?? {}).toEqual({});
   });
 
+  test("no other package depends on this one", () => {
+    // Regression: the CLI used to import the package on every invocation, so
+    // the file holding the only fetch was evaluated even by `kizuki version`.
+    const result = Bun.spawnSync({
+      cmd: [
+        "git",
+        "grep",
+        "-l",
+        "@kizuki/llm",
+        "--",
+        "packages/cli",
+        "packages/tui",
+        "packages/connectors",
+      ],
+      cwd: repoRoot,
+      stdout: "pipe",
+    });
+    expect(result.stdout.toString().trim()).toBe("");
+  });
+
   test("producing over an in-process model port never calls fetch", async () => {
     const built = portContext(MODEL_PRODUCER);
     cleanups.push(built.cleanup);
