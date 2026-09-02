@@ -6,9 +6,9 @@ import type { ProposalInput } from "./proposals";
 /**
  * A migration's typed page. The body is the owner's own prose carried over
  * verbatim rather than blockquoted: unlike a third-party capture, this text
- * was written by the owner, and the review step is the trust boundary exactly
- * as it is for `editBody`. A `---` line inside it stays inert because the page
- * writer closes the frontmatter fence first.
+ * came from the owner's own estate, exactly as it does for `editBody`. A
+ * `---` line inside it stays inert because the page writer closes the
+ * frontmatter fence first.
  */
 export function pageCandidateProposal(
   event: CaptureEvent,

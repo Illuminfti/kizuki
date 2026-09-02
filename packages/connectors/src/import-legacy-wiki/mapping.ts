@@ -41,8 +41,9 @@ export interface LegacyWikiMapping {
   sensitivity: {
     field: string;
     /**
-     * No default by design: a page whose label cannot be read is unlabeled,
-     * and labelling it is the owner's keystroke, not the mapping's guess.
+     * No default by design: a page whose label cannot be read stays
+     * unlabeled, which is the safe end of the lattice. A guess here would be
+     * indistinguishable from a label the estate really carried.
      */
     values: Record<string, PageSensitivity>;
   };

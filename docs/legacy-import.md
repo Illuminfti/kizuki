@@ -3,8 +3,10 @@
 Kizuki ships two importers for an estate you already have on disk: a markdown
 wiki and an event table. Both are **export importers, not live sync**. They
 read files you exported or copied yourself, they never reach the network, and
-every page or event they produce lands in staging for review. Nothing they do
-writes canon: only an owner-invoked promote does that.
+every page or event they produce is evidence in the append-only ledger.
+Neither importer writes a page into your vault, and neither one decides what
+your canon ends up saying: an importer's whole job is to carry the estate over
+as evidence, with a record of every decision the mapping made on the way.
 
 - `kizuki.import-legacy-wiki` reads a directory of markdown pages with
   arbitrary frontmatter and stages one typed page per file.
@@ -52,10 +54,10 @@ Schema tag: `kizuki.legacy-wiki-mapping/v1`.
 | `target.directories` | see below | page type to the directory its pages land in, 1..7 path segments |
 | `ignore` | `[]` | globs over the relative path; `*` stays inside a segment, `**` spans segments, `?` is one character |
 
-There is deliberately **no default sensitivity**. A page whose label the
-mapping could not read is unlabeled, and an unlabeled page is never served to
-anyone, the owner included. Labelling it is a keystroke you make at review
-time, not something a mapping file may decide for you.
+There is deliberately **no default sensitivity**. The mapping is where the
+connector says what a legacy label means; a page whose label it could not read
+stays unlabeled, and an unlabeled page is never served to anyone, the owner
+included. Nothing downstream reads an unlabeled page as public.
 
 Default `target.directories`: `person`, `org`, `project`, `place` and
 `topic` go to `entities`; `fact` to `facts`; `event` to `events`;
@@ -304,19 +306,17 @@ relpaths, field names, the raw type and sensitivity vocabulary, positions and
 counts. The report may live outside the vault, so it holds only what you need
 to fix the mapping.
 
-## Unlabeled pages, and how to label them
+## Unlabeled pages
 
-A wiki page whose mapping produced no label is staged unlabeled. Promote
-refuses to write it to canon without an explicit sensitivity, and the serving
-layer never returns an unlabeled page to any principal.
-
-For a large migration, labelling one page at a time is the wrong shape.
-`kizuki review --batch` applies one label to every deterministic new-page
-proposal in view, which is exactly what a migration produces: two keystrokes
-for a whole group.
+A wiki page whose mapping produced no label carries no sensitivity hint, and
+an unlabeled page is never served to any principal, the owner included. That
+is the safe end of the lattice, not a resting place: the mapping is where this
+importer says what the estate's own vocabulary meant, so widen
+`sensitivity.values` until the report shows no `unmapped_value` rows and no
+more `unlabeled` than the estate really left unmarked.
 
 Every migrated page also carries `x-legacy-sensitivity` when the mapping did
-read a label, so a mixed import can be reviewed in groups.
+read a label, so what the estate said about a page travels with the page.
 
 ## Honest limits
 
@@ -343,16 +343,16 @@ read a label, so a mixed import can be reviewed in groups.
 ```sh
 kizuki init ./vault
 kizuki import import-legacy-wiki --source ./wiki --vault ./vault
-kizuki review --list --vault ./vault
-kizuki promote <proposal-id> --sensitivity personal --vault ./vault
 kizuki sync import-legacy-wiki --vault ./vault
+kizuki doctor --vault ./vault
 ```
 
 `import` enrolls the source and backfills it in one step; `sync` runs the
 incremental sweep afterwards, so a page deleted from the wiki arrives as a
-tombstone and withdraws its pending proposal. The events importer reads one
-bounded page of rows per run, so call `sync` repeatedly until it stops
-storing events.
+tombstone. The events importer reads one bounded page of rows per run, so call
+`sync` repeatedly until it stops storing events. Read the migration report
+before and after: it is the record of what the mapping could and could not
+carry over.
 
 Both connector ids also answer to their short form: `import-legacy-wiki` and
 `import-legacy-events`.

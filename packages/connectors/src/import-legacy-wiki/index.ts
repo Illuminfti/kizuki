@@ -28,8 +28,8 @@ import type { ScanResult } from "./scan";
 
 /**
  * An importer for a previous markdown estate, not a live connector: it reads
- * an export the owner already has on disk, and every page it produces lands
- * in staging for review. It never writes canon and never leaves the machine.
+ * an export the owner already has on disk, and every page it produces is
+ * evidence. It never writes canon and never leaves the machine.
  */
 
 export const LEGACY_WIKI_CURSOR_SCHEMA =
