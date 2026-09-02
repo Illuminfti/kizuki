@@ -1,15 +1,12 @@
 import type { Database } from "bun:sqlite";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { toolAllowed } from "../agents/authorization";
 import { applyCanonWrite } from "../canon/apply";
 import { resolveTarget } from "../canon/arbiter";
 import { createBudgetTracker } from "../canon/budget";
+import type { CanonIo } from "../canon";
 import { getCanonReceipt } from "../canon/receipts";
-import {
-  pageIndexById,
-  pagesForSubject,
-  readPage,
-} from "../canon/store";
-import type { CanonIo } from "../canon/store";
 import { getClaim, insertClaim, listClaims, supersedeLiveGroup } from "../claims/store";
 import type { Claim, FrontmatterValue, Producer } from "../contracts/proposal";
 import { accept } from "../ledger/ledger";
@@ -17,6 +14,7 @@ import type { CaptureEventInput, SubjectRef } from "../contracts/event";
 import { tableExists } from "../ledger/schema";
 import { isRfc3339 } from "../util/time";
 import { ulid } from "../util/ulid";
+import { parseFrontmatter } from "../vault/frontmatter";
 import { unifiedDiff } from "./diff";
 import { bumpClaimsEpoch, initClaimsEpoch } from "./epoch";
 import { CorrectError } from "./errors";
@@ -48,6 +46,48 @@ function canonIo(io: CorrectIo): CanonIo {
     ...(io.retrieval === undefined ? {} : { retrieval: io.retrieval }),
     ...(io.retrieval_store === undefined ? {} : { retrieval_store: io.retrieval_store }),
   };
+}
+
+interface VaultPageBytes {
+  content: string;
+  hash: string;
+  data: Record<string, unknown>;
+}
+
+function readVaultPage(vaultPath: string, relPath: string): VaultPageBytes | null {
+  const path = join(vaultPath, relPath);
+  if (!existsSync(path)) return null;
+  const content = readFileSync(path, "utf8");
+  return {
+    content,
+    hash: new Bun.CryptoHasher("sha256").update(content).digest("hex"),
+    data: parseFrontmatter(content).data,
+  };
+}
+
+interface PageIndexRow {
+  page_id: string;
+  rel_path: string;
+}
+
+function pageIndexById(db: Database, pageId: string): PageIndexRow | null {
+  if (!tableExists(db, "page_index")) return null;
+  return (
+    db
+      .query<PageIndexRow, [string]>(
+        "SELECT page_id, rel_path FROM page_index WHERE page_id = ?",
+      )
+      .get(pageId) ?? null
+  );
+}
+
+function pagesForSubject(db: Database, subjectKey: string): PageIndexRow[] {
+  if (!tableExists(db, "page_index")) return [];
+  return db
+    .query<PageIndexRow, [string]>(
+      "SELECT page_id, rel_path FROM page_index WHERE subject_key = ? ORDER BY page_id LIMIT 64",
+    )
+    .all(subjectKey);
 }
 
 function assertStatement(statement: string): void {
@@ -204,7 +244,7 @@ function reconstruct(
     (row) => row !== null,
   );
   const rewritten = receipts.map((receipt) => {
-    const page = readPage(canonIo(io), receipt.page_path);
+    const page = readVaultPage(io.vault_path, receipt.page_path);
     return {
       page_path: receipt.page_path,
       before_hash: receipt.before_hash ?? "",
@@ -356,7 +396,6 @@ interface AffectedPage {
 }
 
 function affectedPages(io: CorrectIo, group: Claim[], winner: Claim): AffectedPage[] {
-  const canon = canonIo(io);
   const seen = new Map<string, AffectedPage>();
   const add = (pageId: string, relPath: string, relevance: number): void => {
     const current = seen.get(relPath);
@@ -371,8 +410,8 @@ function affectedPages(io: CorrectIo, group: Claim[], winner: Claim): AffectedPa
     if (claim.claim_key !== null) keys.add(claim.claim_key);
     const path = pagePathForClaim(io.db, claim);
     if (path !== null) {
-      const page = readPage(canon, path);
-      const id = page?.page.data["id"];
+      const page = readVaultPage(io.vault_path, path);
+      const id = page?.data["id"];
       if (typeof id === "string") add(id, path, 1);
     }
   }
@@ -409,8 +448,8 @@ function affectedPages(io: CorrectIo, group: Claim[], winner: Claim): AffectedPa
       if (!Array.isArray(sources) || !sources.some((id) => typeof id === "string" && provenance.has(id))) {
         continue;
       }
-      const page = readPage(canon, row.page_path);
-      const id = page?.page.data["id"];
+      const page = readVaultPage(io.vault_path, row.page_path);
+      const id = page?.data["id"];
       if (typeof id === "string") add(id, row.page_path, 0.8);
     }
   }
@@ -490,7 +529,7 @@ export async function correct(io: CorrectIo, input: CorrectInput): Promise<Corre
     }));
     const previewPages = affectedPages(io, group, seed).slice(0, CORRECTION_MAX_PAGES);
     const rewritten = previewPages.flatMap((page) => {
-      const existing = readPage(canonIo(io), page.rel_path);
+      const existing = readVaultPage(io.vault_path, page.rel_path);
       if (existing === null) return [];
       const after = existing.content.replace(seed.body, input.statement);
       return [
@@ -549,7 +588,7 @@ export async function correct(io: CorrectIo, input: CorrectInput): Promise<Corre
   let receiptId: string | null = null;
 
   for (const [index, page] of chosen.entries()) {
-    const existing = readPage(canon, page.rel_path);
+    const existing = readVaultPage(io.vault_path, page.rel_path);
     if (existing === null) continue;
     const before = existing.content;
     let claim = winner;
@@ -607,7 +646,7 @@ export async function correct(io: CorrectIo, input: CorrectInput): Promise<Corre
       budget,
     });
     if (receiptId === null) receiptId = receipt.receipt_id;
-    const after = readPage(canon, receipt.page_path);
+    const after = readVaultPage(io.vault_path, receipt.page_path);
     rewritten.push({
       page_path: receipt.page_path,
       before_hash: receipt.before_hash ?? "",
