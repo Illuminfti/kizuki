@@ -1,0 +1,345 @@
+import { HealthReport, isPlainObject } from "@kizuki/core";
+import type {
+  CaptureEventInput,
+  Connector,
+  Cursor,
+  Manifest,
+  PurgePlan,
+  SecretResolver,
+  SyncBatch,
+} from "@kizuki/core";
+import { KizukiError } from "../errors";
+import { defaultMappingPath, loadMapping } from "../legacy/mapping-file";
+import { resolveReportPath, writeReport } from "../legacy/report-file";
+import { pathHealth, requirePathConfig } from "../util";
+import {
+  LEGACY_EVENTS_FIXTURE,
+  LEGACY_EVENTS_FIXTURE_OBSERVED_AT,
+  fixtureMappingHash,
+  fixtureRows,
+} from "./fixture";
+import {
+  LEGACY_EVENTS_CONNECTOR_ID,
+  consumedColumns,
+  kindsOf,
+  parseLegacyEventsMapping,
+} from "./mapping";
+import type {
+  LegacyEventsConfig,
+  LegacyEventsMapping,
+  SourceFormat,
+} from "./mapping";
+import {
+  LEGACY_EVENTS_REPORT_SCHEMA,
+  MAX_REPORTED_SKIPS,
+  renderLegacyEventsReport,
+} from "./report";
+import type { LegacyEventsReport } from "./report";
+import { rowToEvent } from "./rows";
+import type { RowSkip } from "./rows";
+import { BATCH_ROWS, openJsonlSource, openSqliteSource } from "./source";
+import type { LegacyRowSource } from "./source";
+
+/**
+ * An importer for a previous event table, not live sync: it pages once through
+ * an export the owner already has. A row edited in place after it was imported
+ * stays invisible until the owner re-imports from scratch, and the docs say so.
+ */
+
+export const LEGACY_EVENTS_CURSOR_SCHEMA =
+  "kizuki.legacy-events-cursor/v1" as const;
+
+interface LegacyEventsCursor {
+  schema: typeof LEGACY_EVENTS_CURSOR_SCHEMA;
+  mapping_hash: string;
+  position: number;
+  done: boolean;
+}
+
+function detectFormat(path: string, declared?: SourceFormat): SourceFormat {
+  if (declared !== undefined) return declared;
+  if (/\.(?:db|sqlite|sqlite3)$/i.test(path)) return "sqlite";
+  if (/\.(?:jsonl|ndjson)$/i.test(path)) return "jsonl";
+  throw new KizukiError(
+    "misconfigured",
+    `${LEGACY_EVENTS_CONNECTOR_ID}: config.format is required for ${path}`,
+  );
+}
+
+function decodeCursor(cursor: Cursor): LegacyEventsCursor {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cursor) as unknown;
+  } catch (error) {
+    throw new KizukiError(
+      "parse_error",
+      `${LEGACY_EVENTS_CONNECTOR_ID}: malformed cursor`,
+      { cause: error },
+    );
+  }
+  if (
+    !isPlainObject(parsed) ||
+    parsed["schema"] !== LEGACY_EVENTS_CURSOR_SCHEMA ||
+    typeof parsed["mapping_hash"] !== "string" ||
+    typeof parsed["position"] !== "number" ||
+    !Number.isFinite(parsed["position"]) ||
+    parsed["position"] < 0 ||
+    typeof parsed["done"] !== "boolean"
+  ) {
+    throw new KizukiError(
+      "parse_error",
+      `${LEGACY_EVENTS_CONNECTOR_ID}: malformed cursor`,
+    );
+  }
+  return {
+    schema: LEGACY_EVENTS_CURSOR_SCHEMA,
+    mapping_hash: parsed["mapping_hash"],
+    position: parsed["position"],
+    done: parsed["done"],
+  };
+}
+
+export class LegacyEventsConnector implements Connector {
+  readonly path: string;
+  readonly format: SourceFormat;
+  readonly mapping: LegacyEventsMapping;
+  readonly mappingHash: string;
+  readonly reportPath: string | null;
+  #report: LegacyEventsReport | null = null;
+  #skipped = 0;
+
+  constructor(config: LegacyEventsConfig) {
+    this.path = requirePathConfig(config, LEGACY_EVENTS_CONNECTOR_ID);
+    this.format = detectFormat(this.path, config.format);
+    const loaded = loadMapping(
+      config.mapping,
+      defaultMappingPath(this.path, "file"),
+      LEGACY_EVENTS_CONNECTOR_ID,
+    );
+    this.mapping = parseLegacyEventsMapping(loaded.raw, this.format);
+    this.mappingHash = loaded.hash;
+    this.reportPath = resolveReportPath(
+      config.report,
+      this.path,
+      LEGACY_EVENTS_CONNECTOR_ID,
+    );
+  }
+
+  manifest(): Manifest {
+    // Instance-derived: this connector emits exactly the kinds the owner's
+    // mapping can produce, plus the fixture's, and nothing else.
+    const kinds = new Set([
+      ...kindsOf(this.mapping),
+      ...kindsOf(LEGACY_EVENTS_FIXTURE.mapping),
+    ]);
+    return {
+      schema: "kizuki.connector/v1",
+      connector_id: LEGACY_EVENTS_CONNECTOR_ID,
+      version: "0.1.0",
+      kinds: [...kinds].sort(),
+      capabilities: {
+        backfill: true,
+        sync: true,
+        tombstones: this.mapping.deleted !== null,
+        purge: false,
+        fixture: true,
+      },
+      required_secrets: [],
+      emits_sensitivity_hint: this.mapping.sensitivity_hint !== null,
+      auth_modes: ["none"],
+    };
+  }
+
+  async health(): Promise<HealthReport> {
+    const base = await pathHealth(this.path, "file");
+    if (base.state !== "ok" || this.#skipped === 0) return base;
+    return new HealthReport({
+      state: "degraded",
+      checked_at: base.checked_at,
+      detail: `${this.#skipped} row(s) skipped; see the report`,
+    });
+  }
+
+  async connect(_resolve: SecretResolver): Promise<void> {}
+
+  async backfill(cursor: Cursor | null): Promise<SyncBatch> {
+    const previous = cursor === null ? null : decodeCursor(cursor);
+    const source = this.#open();
+    try {
+      return this.#page(source, previous);
+    } finally {
+      source.close();
+    }
+  }
+
+  /** Rows appended since the last position are new evidence; nothing else is. */
+  sync(cursor: Cursor | null): Promise<SyncBatch> {
+    return this.backfill(cursor);
+  }
+
+  async revoke(): Promise<void> {}
+
+  async purgeSource(subject_id: string): Promise<PurgePlan> {
+    return {
+      subject_id,
+      source_record_ids: [],
+      unreachable_source_record_ids: [],
+    };
+  }
+
+  async fixture(): Promise<CaptureEventInput[]> {
+    const events: CaptureEventInput[] = [];
+    for (const row of fixtureRows()) {
+      const result = rowToEvent(row, LEGACY_EVENTS_FIXTURE.mapping, {
+        observedAt: LEGACY_EVENTS_FIXTURE_OBSERVED_AT,
+        mappingHash: fixtureMappingHash(),
+      });
+      if ("event" in result) events.push(result.event);
+    }
+    return events;
+  }
+
+  lastReport(): LegacyEventsReport | null {
+    return this.#report;
+  }
+
+  #open(): LegacyRowSource {
+    return this.format === "sqlite"
+      ? openSqliteSource(this.path, this.mapping.table as string)
+      : openJsonlSource(this.path);
+  }
+
+  #page(
+    source: LegacyRowSource,
+    previous: LegacyEventsCursor | null,
+  ): SyncBatch {
+    this.#assertColumns(source);
+    let restarted: LegacyEventsReport["run"]["restarted"] = null;
+    let from = previous?.position ?? 0;
+    if (previous !== null) {
+      if (previous.mapping_hash !== this.mappingHash) {
+        restarted = "mapping_changed";
+        from = 0;
+      } else if (previous.position > source.size()) {
+        // A rewritten export is a different export; resume would skip rows.
+        restarted = "source_shrank";
+        from = 0;
+      }
+    }
+
+    const rows = source.read(from, BATCH_ROWS);
+    const events: CaptureEventInput[] = [];
+    const skipped: RowSkip[] = [];
+    const kinds: Record<string, number> = {};
+    let tombstones = 0;
+    let blobs = 0;
+    for (const row of rows) {
+      const result = rowToEvent(row, this.mapping, {
+        observedAt: new Date().toISOString(),
+        mappingHash: this.mappingHash,
+      });
+      if ("skipped" in result) {
+        skipped.push(result.skipped);
+        continue;
+      }
+      events.push(result.event);
+      kinds[result.event.kind] = (kinds[result.event.kind] ?? 0) + 1;
+      if (result.event.deleted) tombstones += 1;
+      const dropped = result.event.metadata["__blobs"];
+      if (Array.isArray(dropped)) blobs += dropped.length;
+    }
+
+    const done = rows.length < BATCH_ROWS;
+    const to = rows[rows.length - 1]?.position ?? from;
+    const cursor: LegacyEventsCursor = {
+      schema: LEGACY_EVENTS_CURSOR_SCHEMA,
+      mapping_hash: this.mappingHash,
+      position: to,
+      done,
+    };
+
+    this.#skipped = skipped.length;
+    this.#report = {
+      schema: LEGACY_EVENTS_REPORT_SCHEMA,
+      generated_at: new Date().toISOString(),
+      mapping_hash: this.mappingHash,
+      format: this.format,
+      run: { from_position: from, to_position: to, done, restarted },
+      counts: {
+        rows: rows.length,
+        events: events.length,
+        tombstones,
+        skipped: skipped.length,
+        blobs_dropped: blobs,
+        kinds,
+      },
+      skipped: skipped.slice(0, MAX_REPORTED_SKIPS),
+      columns: {
+        consumed: [...consumedColumns(this.mapping)].sort(),
+        metadata: this.mapping.metadata.columns,
+        unknown_in_mapping: this.#unknownColumns(source),
+      },
+    };
+    if (this.reportPath !== null) {
+      const report = this.#report;
+      writeReport(this.reportPath, report, () =>
+        renderLegacyEventsReport(report),
+      );
+    }
+    return { events, cursor: JSON.stringify(cursor) };
+  }
+
+  #unknownColumns(source: LegacyRowSource): string[] {
+    if (source.columns === null) return [];
+    const present = new Set(source.columns);
+    const named = new Set([...consumedColumns(this.mapping)]);
+    if (this.mapping.metadata.columns !== "rest") {
+      for (const column of this.mapping.metadata.columns) named.add(column);
+    }
+    return [...named].filter((column) => !present.has(column)).sort();
+  }
+
+  /** A mapping that names a column the table does not have is a refusal, not
+   * a run that quietly imports empty fields. */
+  #assertColumns(source: LegacyRowSource): void {
+    const missing = this.#unknownColumns(source);
+    if (missing.length > 0) {
+      throw new KizukiError(
+        "misconfigured",
+        `${LEGACY_EVENTS_CONNECTOR_ID}: mapping names columns the source does not have: ${missing.join(", ")}`,
+      );
+    }
+  }
+}
+
+export function createLegacyEventsConnector(
+  config: LegacyEventsConfig,
+): LegacyEventsConnector {
+  return new LegacyEventsConnector(config);
+}
+
+
+export {
+  IDENTIFIER,
+  KIND,
+  LEGACY_EVENTS_CONNECTOR_ID,
+  LEGACY_EVENTS_MAPPING_SCHEMA,
+  consumedColumns,
+  kindsOf,
+  parseLegacyEventsMapping,
+} from "./mapping";
+export type {
+  LegacyEventsConfig,
+  LegacyEventsMapping,
+  SourceFormat,
+} from "./mapping";
+export { LEGACY_EVENTS_FIXTURE, fixtureRows } from "./fixture";
+export {
+  LEGACY_EVENTS_REPORT_SCHEMA,
+  renderLegacyEventsReport,
+} from "./report";
+export type { LegacyEventsReport } from "./report";
+export { rowToEvent } from "./rows";
+export type { RowSkip, RowSkipReason } from "./rows";
+export { BATCH_ROWS, openJsonlSource, openSqliteSource } from "./source";
+export type { LegacyRow, LegacyRowSource } from "./source";
