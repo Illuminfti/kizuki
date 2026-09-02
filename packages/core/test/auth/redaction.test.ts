@@ -205,4 +205,50 @@ describe("secrets never reach an error", () => {
       expectRedacted,
     );
   });
+  test("an unparsable authorization_url never echoes what it carried", async () => {
+    const transport = new FakeTransport();
+    await signInWithBrowser(
+      provider({
+        client_secret: "SENTINEL-SECRET",
+        authorization_url: "http://[SENTINEL-SECRET",
+      }),
+      fakeIo(),
+      transport,
+      { randomBytes: countingRandom(), now: () => NOW, timeoutMs: 10 },
+    ).then(() => {
+      throw new Error("sign-in was expected to fail");
+    }, expectRedacted);
+    expect(transport.listeners).toEqual([]);
+  });
+
+  test("an unparsable token_url never echoes what it carried", async () => {
+    const transport = new FakeTransport();
+    await refreshTokens(
+      provider({
+        client_secret: "SENTINEL-SECRET",
+        token_url: "http://[SENTINEL-SECRET",
+      }),
+      tokenSet(),
+      transport,
+      () => NOW,
+    ).then(() => {
+      throw new Error("refresh was expected to fail");
+    }, expectRedacted);
+    expect(transport.posts).toEqual([]);
+  });
+
+  test("an unparsable revocation_url never echoes what it carried", async () => {
+    const transport = new FakeTransport();
+    await revokeToken(
+      provider({
+        client_secret: "SENTINEL-SECRET",
+        revocation_url: "http://[SENTINEL-SECRET",
+      }),
+      "SENTINEL-ACCESS",
+      transport,
+    ).then(() => {
+      throw new Error("revocation was expected to fail");
+    }, expectRedacted);
+    expect(transport.posts).toEqual([]);
+  });
 });

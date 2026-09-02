@@ -92,6 +92,19 @@ function refuseSecret(
 }
 
 /**
+ * The URL parser reports failure by quoting its whole input, which may carry
+ * the installed-app secret or a path the owner never meant to log. Only the
+ * name of the field may reach the message.
+ */
+function parseEndpoint(endpoint: string, where: string, base?: string): URL {
+  try {
+    return new URL(endpoint, base);
+  } catch {
+    throw new TypeError(`${where} is not a URL`);
+  }
+}
+
+/**
  * `http` is safe only where the response cannot leave the machine, which is
  * also what lets a test drive a real authorization server on a spare port.
  */
@@ -105,7 +118,7 @@ const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
  * at all, so the refusal comes before any of it is built.
  */
 function assertTransportScheme(endpoint: string, where: string): void {
-  const url = new URL(endpoint);
+  const url = parseEndpoint(endpoint, where);
   if (url.protocol === "https:") return;
   if (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname)) return;
   throw new TypeError(`${where} must use https, or http on a loopback host`);
@@ -117,7 +130,7 @@ function assertTransportScheme(endpoint: string, where: string): void {
  * to another host and would hand the owner's authorization code to it.
  */
 export function assertRedirectPath(path: string): void {
-  const probe = new URL(path, "http://127.0.0.1:1/");
+  const probe = parseEndpoint(path, "redirect_path", "http://127.0.0.1:1/");
   if (
     probe.origin !== "http://127.0.0.1:1" ||
     probe.pathname !== path ||
@@ -145,7 +158,7 @@ function assertProviderEndpoints(provider: OAuthProvider): void {
 /** Everything a browser URL can be judged on before the listener exists. */
 function assertBrowserSafeProvider(provider: OAuthProvider): void {
   assertProviderEndpoints(provider);
-  const url = new URL(provider.authorization_url);
+  const url = parseEndpoint(provider.authorization_url, "authorization_url");
   // A query already on the endpoint is a parameter nobody reviewed.
   if (url.search.length > 0 || url.hash.length > 0) {
     throw new TypeError(
@@ -186,7 +199,7 @@ export function buildAuthorizationUrl(
   params: { redirect_uri: string; state: string; code_challenge: string },
 ): string {
   assertBrowserSafeProvider(provider);
-  const url = new URL(provider.authorization_url);
+  const url = parseEndpoint(provider.authorization_url, "authorization_url");
   url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", provider.client_id);
   url.searchParams.set("redirect_uri", params.redirect_uri);
@@ -437,7 +450,7 @@ export async function refreshTokens(
   transport: OAuthTransport,
   now: () => Date = () => new Date(),
 ): Promise<TokenSet> {
-  assertProviderEndpoints(provider);
+  assertTransportScheme(provider.token_url, "token_url");
   if (tokens.refresh_token === null) {
     throw new OAuthError("refresh_rejected", provider.name);
   }
@@ -476,11 +489,11 @@ export async function revokeToken(
   token: string,
   transport: OAuthTransport,
 ): Promise<void> {
-  assertProviderEndpoints(provider);
   const revocationUrl = provider.revocation_url;
   if (revocationUrl === undefined) {
     throw new OAuthError("not_supported", provider.name);
   }
+  assertTransportScheme(revocationUrl, "revocation_url");
   const secrets = operationSecrets(provider, token);
   try {
     const response = await postForm(provider, transport, revocationUrl, {
