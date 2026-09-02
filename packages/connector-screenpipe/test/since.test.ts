@@ -70,6 +70,47 @@ describe("ScreenpipeConnector since", () => {
     await connector.revoke();
   });
 
+  test("a row dated past the clock does not drag the seed to the head", async () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    const seedRows = (firstTimestamp: string): void => {
+      fixture.writer.query("DELETE FROM frames").run();
+      for (const [id, timestamp] of [
+        [1, firstTimestamp],
+        [2, "2026-05-02T00:00:00Z"],
+        [3, "2026-05-03T00:00:00Z"],
+        [4, "2026-06-02T00:00:00Z"],
+        [5, "2026-06-03T00:00:00Z"],
+      ] as const) {
+        insertFrame(fixture.writer, { id, timestamp, fullText: `frame ${id}` });
+      }
+    };
+    const emitted = async (): Promise<string[]> => {
+      const connector = new ScreenpipeConnector(
+        {
+          path: fixture.path,
+          since: "2026-06-01T00:00:00Z",
+          settle_seconds: 0,
+        },
+        fixtureDeps("2026-08-01T00:00:00.000Z"),
+      );
+      const batch = await connector.backfill(null);
+      await connector.revoke();
+      return batch.events.map(({ source_record_id }) => source_record_id);
+    };
+
+    seedRows("2026-05-01T00:00:00Z");
+    expect(await emitted()).toEqual(["frame:4", "frame:5"]);
+
+    // A clock step or a corrupt row can date an early row years ahead. Such a
+    // row sorts after the cutoff under both encodings, and seeding from it
+    // would import the whole table the owner asked to skip.
+    seedRows("2035-01-01T00:00:00Z");
+    expect(await emitted()).toEqual(["frame:4", "frame:5"]);
+
+    seedRows("yesterday");
+    expect(await emitted()).toEqual(["frame:4", "frame:5"]);
+  });
+
   test("a since the runtime cannot represent is refused up front", async () => {
     const fixture = createFixtureDatabase();
 

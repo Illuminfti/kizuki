@@ -91,7 +91,10 @@ screenpipe schema older than supported: migration 20260613130000 not applied (ma
   string read from the database is cut at the same length.
 - The optional `since` setting is approximate at its boundary second. It must be
   a timestamp the runtime can represent, which excludes the leap second RFC3339
-  otherwise allows.
+  otherwise allows. Seeding looks only at rows dated between `since` and your
+  clock's settle horizon, so one row carrying a corrupt or clock-skewed date
+  cannot pull the whole history back in; a row dated beyond that horizon is
+  skipped by `since` rather than seeding from it.
 - A call emits at most 500 events. Within one call the connector reads as many
   row pages as it needs to produce an event, so a long run of frames without
   text costs extra reads instead of cutting the import short.

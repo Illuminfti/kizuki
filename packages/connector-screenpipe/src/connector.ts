@@ -193,15 +193,6 @@ export class ScreenpipeConnector implements Connector {
   async #advance(cursor: Cursor | null): Promise<SyncBatch> {
     return this.#withDatabase((db) => {
       assertSchema(db);
-      const current =
-        cursor === null
-          ? initialCursor(
-              this.#config.since === null
-                ? undefined
-                : seedAfterIds(db, this.#config.since),
-            )
-          : parseCursor(cursor);
-      const before = { ...current.skipped };
       const now = this.#deps.now();
       const observedAt = new Date(now).toISOString();
       const settleMs = this.#config.settle_seconds * 1_000;
@@ -211,6 +202,15 @@ export class ScreenpipeConnector implements Connector {
       // for the OCR update the settle window exists for, and holding it would
       // park this walk on its id for as long as the date says.
       const horizon = new Date(now + settleMs).toISOString();
+      const current =
+        cursor === null
+          ? initialCursor(
+              this.#config.since === null
+                ? undefined
+                : seedAfterIds(db, this.#config.since, horizon),
+            )
+          : parseCursor(cursor);
+      const before = { ...current.skipped };
       const walk: Walk = {
         observedAt,
         settling: (timestamp) => timestamp > boundary && timestamp <= horizon,
