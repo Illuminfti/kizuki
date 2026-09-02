@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { MAX_TEXT_CHARS } from "./cursor";
 import { ScreenpipeConnectorError } from "./errors";
+import { cutText } from "./text";
 
 export interface FrameRow {
   id: number;
@@ -71,7 +72,8 @@ interface RawTranscriptionRow {
  * the value is cut in SQLite rather than read whole and cut afterwards. One
  * character past the event limit is kept so truncation is still detectable,
  * and a column holding something other than text is passed through unchanged
- * so it still fails its own validation.
+ * so it still fails its own validation. SQLite counts code points here, so the
+ * readers cut again in code units — the unit every bound downstream counts.
  */
 function bounded(column: string, alias = column): string {
   return `CASE WHEN typeof(${column}) = 'text'
@@ -314,11 +316,11 @@ function nullablePositiveId(value: unknown): number | null {
 
 function requiredText(value: unknown, column: string): string {
   if (typeof value !== "string") invalidColumn(column);
-  return value;
+  return cutText(value, MAX_TEXT_CHARS + 1);
 }
 
 function nullableText(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
+  return typeof value === "string" ? cutText(value, MAX_TEXT_CHARS + 1) : null;
 }
 
 function requiredBoolean(value: unknown, column: string): boolean {

@@ -7,6 +7,7 @@ import { SCREENPIPE_CONNECTOR_ID } from "./config";
 import { MAX_SUBJECT_CHARS, MAX_TEXT_CHARS } from "./cursor";
 import { ScreenpipeConnectorError } from "./errors";
 import type { FrameRow, TranscriptionRow } from "./read";
+import { cutText } from "./text";
 import { normalizeTimestamp, offsetSeconds } from "./time";
 
 const SLUG_CHARS = 64;
@@ -91,7 +92,7 @@ export function mapFrame(
     kind: "screen_text",
     occurred_at: occurredAt,
     observed_at: observedAt,
-    text: truncated ? cutText(text) : text,
+    text: truncated ? cutText(text, MAX_TEXT_CHARS) : text,
     subjects,
     sensitivity_hint: "private",
     deleted: false,
@@ -147,7 +148,9 @@ export function mapTranscription(
     kind: "audio_transcription",
     occurred_at: offsetSeconds(base, row.start_time),
     observed_at: observedAt,
-    text: truncated ? cutText(row.transcription) : row.transcription,
+    text: truncated
+      ? cutText(row.transcription, MAX_TEXT_CHARS)
+      : row.transcription,
     subjects,
     sensitivity_hint: "private",
     deleted: false,
@@ -184,15 +187,6 @@ function snapshotAttachments(snapshotPath: string | null): AttachmentRef[] {
       ...(filename.length > 0 ? { filename } : {}),
     },
   ];
-}
-
-function cutText(text: string): string {
-  const cut = text.slice(0, MAX_TEXT_CHARS);
-  const last = cut.charCodeAt(cut.length - 1);
-  // A cut between the halves of a surrogate pair leaves a lone surrogate,
-  // which SQLite and a file write both replace on the way back out. The stored
-  // text would then no longer match the content hash taken from this event.
-  return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
 }
 
 function requiredTimestamp(raw: string, rowKind: string): string {

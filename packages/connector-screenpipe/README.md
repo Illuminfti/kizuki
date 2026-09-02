@@ -91,9 +91,10 @@ screenpipe schema older than supported: migration 20260613130000 not applied (ma
 - A row whose timestamp cannot be parsed, or whose instant falls outside the
   years RFC3339 covers, is skipped and counted in the checkpoint rather than
   emitted with a fabricated time.
-- Screen text and transcripts longer than 65,536 code units are cut on a code
-  point boundary and marked with `metadata.text_truncated: true`. Every other
-  string read from the database is cut at the same length.
+- Screen text and transcripts longer than 65,536 UTF-16 code units are cut on a
+  code point boundary and marked with `metadata.text_truncated: true`. Every
+  other string read from the database is held to the same length, counted the
+  same way, including the display names that reach subjects.
 - The optional `since` setting excludes every row dated before it. The cutoff is
   compared against each row's own timestamp, so it holds even where ID order and
   timestamp order disagree, which is ordinary for `audio_transcriptions`. It
