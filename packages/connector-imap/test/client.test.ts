@@ -102,6 +102,49 @@ describe("argument encoding", () => {
     expect(conn.sent[2]).toBe("\r\n");
   });
 
+  test("accepts an untagged response before the continuation request", async () => {
+    const conn = scripted((_text, index) =>
+      index === 0
+        ? ["* OK [ALERT] scheduled maintenance tonight\r\n", "+ go ahead\r\n"]
+        : index === 2
+          ? ["A0001 OK LOGIN completed\r\n"]
+          : [],
+    );
+    const result = await new ImapClient(conn).send(
+      "LOGIN",
+      [str("ada@acme.example"), str("pw-with-ünïcode")],
+      { login: true },
+    );
+    expect(result.tagged.text).toBe("OK LOGIN completed");
+    expect(result.untagged.map((response) => response.text)).toEqual([
+      "OK [ALERT] scheduled maintenance tonight",
+    ]);
+  });
+
+  test("a tagged reply instead of a continuation is still a refusal", async () => {
+    const conn = scripted((_text, index) =>
+      index === 0 ? ["A0001 NO [AUTHENTICATIONFAILED] nope\r\n"] : [],
+    );
+    const error = await new ImapClient(conn)
+      .send("LOGIN", [str("ada"), str("pw-with-ünïcode")], { login: true })
+      .catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(KizukiError);
+    expect((error as KizukiError).code).toBe("unauthenticated");
+  });
+
+  test("an endless untagged stream before a continuation is refused", async () => {
+    const conn = scripted((_text, index) =>
+      index === 0
+        ? Array.from({ length: MAX_UNTAGGED + 1 }, () => "* OK chatter\r\n")
+        : [],
+    );
+    const error = await new ImapClient(conn)
+      .send("LOGIN", [str("ada"), str("pw-with-ünïcode")])
+      .catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(KizukiError);
+    expect((error as KizukiError).message).toBe("too many untagged responses");
+  });
+
   test("sends a value containing CRLF as a literal", async () => {
     const conn = scripted((_text, index) =>
       index === 0

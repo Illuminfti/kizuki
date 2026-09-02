@@ -51,6 +51,17 @@ function asciiBytes(text: string): Uint8Array {
   return bytes;
 }
 
+/** Drops the leading status word so the response code is the head of the text. */
+function refusal(
+  response: ImapResponse,
+  options: { login?: boolean },
+): KizukiError {
+  const status = response.text.split(/\s+/)[0] ?? "";
+  return failureFor(response.text.slice(status.length).trim(), {
+    login: options.login === true,
+  });
+}
+
 /**
  * One command at a time over one connection. Nothing here logs: a trace of a
  * command line would carry the owner's app password.
@@ -139,6 +150,31 @@ export class ImapClient {
     return pieces;
   }
 
+  /**
+   * RFC 3501 section 7 lets a server send an untagged response at any point, so
+   * a status line arriving before the `+` is chatter to collect, not a refusal.
+   */
+  private async awaitContinuation(
+    deadline: number,
+    untagged: ImapResponse[],
+    options: { login?: boolean },
+  ): Promise<void> {
+    for (;;) {
+      const response = await this.read(deadline);
+      if (response.tag === "+") return;
+      if (response.tag !== "*") throw refusal(response, options);
+      this.collect(untagged, response);
+    }
+  }
+
+  private collect(untagged: ImapResponse[], response: ImapResponse): void {
+    if (untagged.length >= MAX_UNTAGGED) {
+      this.close();
+      throw new KizukiError("protocol", "too many untagged responses");
+    }
+    untagged.push(response);
+  }
+
   async send(
     command: string,
     args: CommandArg[] = [],
@@ -148,6 +184,7 @@ export class ImapClient {
     const tag = `A${String(this.counter).padStart(4, "0")}`;
     const pieces = this.buildPieces(command, args, tag);
     const deadline = Date.now() + this.timeoutMs;
+    const untagged: ImapResponse[] = [];
 
     for (let index = 0; index < pieces.length; index += 1) {
       const piece = pieces[index];
@@ -158,28 +195,18 @@ export class ImapClient {
       }
       await this.conn.send(asciiBytes(`${piece.text}\r\n`));
       if (index + 1 < pieces.length) {
-        const continuation = await this.read(deadline);
-        if (continuation.tag !== "+") {
-          throw failureFor(continuation.text, { login: options.login === true });
-        }
+        await this.awaitContinuation(deadline, untagged, options);
       }
     }
 
-    const untagged: ImapResponse[] = [];
     for (;;) {
       const response = await this.read(deadline);
       if (response.tag !== tag) {
-        if (untagged.length >= MAX_UNTAGGED) {
-          this.close();
-          throw new KizukiError("protocol", "too many untagged responses");
-        }
-        untagged.push(response);
+        this.collect(untagged, response);
         continue;
       }
-      const status = (response.text.split(/\s+/)[0] ?? "").toUpperCase();
-      if (status === "OK") return { untagged, tagged: response };
-      const rest = response.text.slice(status.length).trim();
-      throw failureFor(rest, { login: options.login === true });
+      if (/^OK\b/i.test(response.text)) return { untagged, tagged: response };
+      throw refusal(response, options);
     }
   }
 }
