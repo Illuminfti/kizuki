@@ -50,7 +50,7 @@ describe("bounded argument validators", () => {
     expect(refusal(() => text("query", "ab", 1)).code).toBe(
       "invalid_arguments",
     );
-    expect(refusal(() => text("query", "ab", 8)).code).toBe(
+    expect(refusal(() => text("query", "a\u0007b", 8)).code).toBe(
       "invalid_arguments",
     );
     expect(refusal(() => text("query", 4, 8)).code).toBe("invalid_arguments");
