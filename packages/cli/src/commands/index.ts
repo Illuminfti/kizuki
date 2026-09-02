@@ -1,9 +1,11 @@
 import { backfillCommand } from "./backfill";
 import { connectCommand } from "./connect";
 import { doctorCommand } from "./doctor";
+import { enrichCommand } from "./enrich";
 import { exportCommand } from "./export";
 import { importCommand } from "./import";
 import { initCommand } from "./init";
+import { llmCommand } from "./llm";
 import { promoteCommand } from "./promote";
 import { purgeCommand } from "./purge";
 import { queryCommand } from "./query";
@@ -42,4 +44,6 @@ export const COMMANDS: readonly Command[] = [
   purgeCommand,
   exportCommand,
   versionCommand,
+  llmCommand,
+  enrichCommand,
 ];

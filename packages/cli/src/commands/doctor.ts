@@ -11,6 +11,7 @@ import {
   readPromotion,
   readReceiptsLog,
 } from "@kizuki/core/staging";
+import { LlmError, endpointHost, lastRun, readLlmConfig } from "@kizuki/llm";
 import { UsageError, parseArguments } from "../args";
 import { listHostConnections, loadConnector } from "../connections";
 import { withVault } from "../context";
@@ -30,6 +31,10 @@ interface DoctorConnection {
   problem: string | null;
 }
 
+export type DoctorLlm =
+  | { host: string; model: string; last_run: string; stopped: string }
+  | { problem: string };
+
 interface DoctorReport {
   config: string;
   vault: string;
@@ -41,6 +46,7 @@ interface DoctorReport {
     withdrawn: number;
   };
   connections: DoctorConnection[];
+  llm: DoctorLlm | null;
   receipts: number;
   orphans: string[];
   holds: { page_path: string; proposal_id: string }[];
@@ -129,6 +135,8 @@ async function collect(
     }
   }
 
+  const llm = collectLlm(vaultPath, ctx);
+
   const log = readReceiptsLog(vaultPath);
   const orphans: string[] = [];
   for (const receipt of log) {
@@ -171,7 +179,11 @@ async function collect(
   );
 
   const unhealthy = connections.some((item) => item.health !== "ok");
-  const ok = vault.counts.invalid === 0 && orphans.length === 0 && !unhealthy;
+  const ok =
+    vault.counts.invalid === 0 &&
+    orphans.length === 0 &&
+    !unhealthy &&
+    (llm === null || !("problem" in llm));
 
   return {
     config,
@@ -179,6 +191,7 @@ async function collect(
     events: count(ctx.db),
     proposals,
     connections,
+    llm,
     receipts: log.length,
     orphans,
     holds,
@@ -188,6 +201,34 @@ async function collect(
   };
 }
 
+/**
+ * An optional package owns the endpoint config and the run receipts, so a
+ * config the CLI cannot read is a problem doctor must name rather than a
+ * reason to fail the whole report.
+ */
+function collectLlm(vaultPath: string, ctx: VaultContext): DoctorLlm | null {
+  try {
+    const config = readLlmConfig(vaultPath);
+    if (config === null) return null;
+    const run = lastRun(ctx.db);
+    return {
+      host: endpointHost(config.base_url),
+      model: config.model,
+      last_run: run?.finished_at ?? "never",
+      stopped: run?.stopped ?? "-",
+    };
+  } catch (error) {
+    if (!(error instanceof LlmError)) throw error;
+    return { problem: error.code };
+  }
+}
+
+function llmLine(llm: DoctorLlm | null): string {
+  if (llm === null) return "llm unconfigured";
+  if ("problem" in llm) return `llm problem: ${llm.problem}`;
+  return `llm host=${llm.host} model=${llm.model} last_run=${llm.last_run} stopped=${llm.stopped}`;
+}
+
 function printHuman(io: CliIo, report: DoctorReport): void {
   io.out(`config=${report.config}`);
   io.out(`vault=${report.vault}`);
@@ -195,6 +236,7 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   io.out(
     `proposals pending=${report.proposals.pending} promoted=${report.proposals.promoted} rejected=${report.proposals.rejected} withdrawn=${report.proposals.withdrawn}`,
   );
+  io.out(llmLine(report.llm));
   for (const item of report.connections) {
     const line = `connection ${item.connector_id} source=${item.source_key} path=${item.path} state=${item.state} health=${item.health} checkpoint=${item.checkpoint} stored=${item.stored} errors=${item.errors}`;
     io.out(item.problem === null ? line : `${line} ${item.problem}`);

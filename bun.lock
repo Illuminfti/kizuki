@@ -18,6 +18,7 @@
       "dependencies": {
         "@kizuki/connectors": "workspace:*",
         "@kizuki/core": "workspace:*",
+        "@kizuki/llm": "workspace:*",
         "@kizuki/tui": "workspace:*",
       },
     },

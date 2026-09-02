@@ -43,7 +43,7 @@ graph are disposable. They rebuild from the ledger plus canon.
 
 ## Packages
 
-One Bun workspace. Four packages. There is no MCP package.
+One Bun workspace. Five packages. There is no MCP package.
 
 - **`@kizuki/core`** owns the durable contracts and policy boundary: event
   ingest, the append-only ledger, connection state, staging, owner promote,
@@ -52,11 +52,15 @@ One Bun workspace. Four packages. There is no MCP package.
 - **`@kizuki/cli`** is a thin command-line composition over public core and
   connector APIs. Verbs on this branch: `init`, `connect`, `backfill`,
   `sync`, `import`, `review`, `promote`, `reject`, `query`, `doctor`,
-  `purge`, `export`, `version`.
+  `purge`, `export`, `version`, `llm`, `enrich`.
 - **`@kizuki/connectors`** owns the connector interface, the in-tree
   registry, and the shared conformance suite. Registry today:
   `kizuki.markdown-folder`, `kizuki.import-chatgpt`, `kizuki.import-claude`.
   All three read local files. No sign-in or OAuth connector is built.
+- **`@kizuki/llm`** is the optional model producer: an owner-configured,
+  budgeted, receipted pass that drafts a summary, entity candidates and
+  atomic claims into the review queue. It is the only package that may reach
+  the network, and it does nothing until the owner configures an endpoint.
 - **`@kizuki/tui`** is the owner review interface: pure state transitions and
   rendering, with terminal I/O at the edge. The CLI `review` verb opens it
   when stdin and stdout are a terminal.
@@ -89,9 +93,12 @@ bind only when their status says they do.
 - **Free local forever.** The local product is MIT. Recall is never metered.
 - **Zero phone-home.** No telemetry, no crash reports, no update checks. The
   only network calls are the owner's configured connectors and the owner's
-  configured model endpoint. Today there are zero runtime dependencies and
-  zero network calls anywhere in the tree. CI greps both the dependency
-  manifests and the source for network surface.
+  configured model endpoint. Today there are zero runtime dependencies, and
+  the only network call in the tree is the model transport, allowlisted with
+  its reason in `scripts/network-allowlist.txt`; it runs only when you
+  configure an endpoint. CI greps the dependency manifests and scans every
+  tracked source file for network surface, failing on anything the allowlist
+  does not name.
 - **Your files.** Canon is Markdown on the owner's disk. Deleting Kizuki
   leaves a readable vault.
 - **Nothing writes canon but you.** Agents and automation can only propose.
@@ -122,6 +129,8 @@ Wave 1 verbs:
 - `purge` — physically delete matching events, with a receipt
 - `export` — dump vault files and ledger tables to a directory
 - `version` — print the CLI package version
+- `llm` — configure and check the optional model endpoint
+- `enrich` — ask that endpoint for review-queue drafts
 
 Unlabeled capture is never served by `query`. Sign-in connectors are not
 wired yet.
@@ -135,6 +144,33 @@ kizuki query acme
 kizuki doctor
 kizuki export --out ./export
 ```
+
+### Optional: a model producer
+
+Kizuki is useful with no model at all: the deterministic staging producers
+fill the review queue on their own. If you want model drafts as well, point
+the vault at an OpenAI-compatible chat-completions endpoint you control.
+
+```
+kizuki llm set --base-url http://127.0.0.1:11434/v1 --model YOUR-MODEL
+kizuki llm test
+kizuki enrich --dry-run
+kizuki enrich
+```
+
+The configuration lives in `<vault>/.kizuki/llm.toml`, mode 0600. There is
+one `fetch` in the tree, in one allowlisted file, and it goes only to the URL
+you typed; with no `llm.toml` nothing loads a network-capable path. Events
+with no sensitivity hint are not sent unless you ask (`--unlabeled send`),
+events hinted above the ceiling are never sent, a non-loopback endpoint needs
+`--allow-cloud-inference` and `https`, and an API key is given as `env:VAR`
+or `file:/absolute/path`, never pasted.
+
+Drafts arrive in `review` with `producer=llm`, below the deterministic
+floor's confidence, and are excluded from batch promotion; they reach canon
+only through `promote` like everything else. `kizuki llm show` and
+`kizuki doctor` print what is configured and when enrichment last ran. See
+[packages/llm/README.md](packages/llm/README.md) for every key.
 
 Designed, not built (see [docs/architecture.md](docs/architecture.md)):
 

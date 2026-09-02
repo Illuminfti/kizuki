@@ -19,6 +19,8 @@ const VERBS = [
   "purge",
   "export",
   "version",
+  "llm",
+  "enrich",
 ] as const;
 
 describe("help", () => {
