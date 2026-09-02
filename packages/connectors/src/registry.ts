@@ -30,6 +30,21 @@ import {
 } from "./import-claude";
 import type { ClaudeImportConfig } from "./import-claude";
 import {
+  WHATSAPP_IMPORT_CONNECTOR_ID,
+  createWhatsAppImportConnector,
+} from "./import-whatsapp";
+import type { WhatsAppImportConfig } from "./import-whatsapp";
+import {
+  POCKET_IMPORT_CONNECTOR_ID,
+  createPocketImportConnector,
+} from "./import-pocket";
+import type { PocketImportConfig } from "./import-pocket";
+import {
+  OMNIVORE_IMPORT_CONNECTOR_ID,
+  createOmnivoreImportConnector,
+} from "./import-omnivore";
+import type { OmnivoreImportConfig } from "./import-omnivore";
+import {
   MARKDOWN_FOLDER_CONNECTOR_ID,
   createMarkdownFolderConnector,
 } from "./markdown-folder";
@@ -44,6 +59,9 @@ export const REGISTRY = Object.freeze({
   [CLAUDE_IMPORT_CONNECTOR_ID]: createClaudeImportConnector,
   [IMAP_CONNECTOR_ID]: createImapConnector,
   [ICS_CONNECTOR_ID]: createIcsConnector,
+  [WHATSAPP_IMPORT_CONNECTOR_ID]: createWhatsAppImportConnector,
+  [POCKET_IMPORT_CONNECTOR_ID]: createPocketImportConnector,
+  [OMNIVORE_IMPORT_CONNECTOR_ID]: createOmnivoreImportConnector,
 });
 
 export type ConnectorId = keyof typeof REGISTRY;
@@ -75,6 +93,16 @@ export function getConnector(
 export function getConnector(
   id: typeof ICS_CONNECTOR_ID,
   config: IcsConnectorConfig,
+  id: typeof WHATSAPP_IMPORT_CONNECTOR_ID,
+  config: WhatsAppImportConfig,
+): Connector;
+export function getConnector(
+  id: typeof POCKET_IMPORT_CONNECTOR_ID,
+  config: PocketImportConfig,
+): Connector;
+export function getConnector(
+  id: typeof OMNIVORE_IMPORT_CONNECTOR_ID,
+  config: OmnivoreImportConfig,
 ): Connector;
 export function getConnector(id: string, config?: unknown): Connector;
 export function getConnector(id: string, config?: unknown): Connector {
@@ -93,6 +121,12 @@ export function getConnector(id: string, config?: unknown): Connector {
       return createImapConnector(config as ImapConnectorConfig);
     case ICS_CONNECTOR_ID:
       return createIcsConnector(config as IcsConnectorConfig);
+    case WHATSAPP_IMPORT_CONNECTOR_ID:
+      return createWhatsAppImportConnector(config as WhatsAppImportConfig);
+    case POCKET_IMPORT_CONNECTOR_ID:
+      return createPocketImportConnector(config as PocketImportConfig);
+    case OMNIVORE_IMPORT_CONNECTOR_ID:
+      return createOmnivoreImportConnector(config as OmnivoreImportConfig);
     default:
       throw new KizukiError(
         "unknown_connector",

@@ -11,11 +11,19 @@ import {
   ICS_CONNECTOR_ID,
   IMAP_CONNECTOR_ID,
   MARKDOWN_FOLDER_CONNECTOR_ID,
+  OMNIVORE_FIXTURE_FILES,
+  OMNIVORE_IMPORT_CONNECTOR_ID,
+  POCKET_FIXTURE_EXPORT,
+  POCKET_IMPORT_CONNECTOR_ID,
+  REGISTRY,
   SCREENPIPE_CONNECTOR_ID,
   TELEGRAM_CONNECTOR_ID,
   TelegramConnector,
   createIcsConnector,
   createImapConnector,
+  WHATSAPP_FIXTURE_FILES,
+  WHATSAPP_FIXTURE_TIMEZONE,
+  WHATSAPP_IMPORT_CONNECTOR_ID,
   getConnector,
   runConformance,
   scriptedDeps,
@@ -23,6 +31,7 @@ import {
   REGISTRY,
 } from "../src";
 import { encodeState } from "@kizuki/connector-telegram";
+import type { ConformanceResult } from "../src";
 import type { Connector } from "@kizuki/core";
 import {
   FakeImapServer,
@@ -35,6 +44,101 @@ import { FIXTURE_ICS, memoryFetcher, okResult } from "@kizuki/connector-ics/test
 const REGISTRY_IDS = Object.keys(REGISTRY);
 
 const TELEGRAM_STATE_REF = "file:connections/01JJ0000000000000000000000.state";
+
+interface Layout {
+  markdown: string;
+  chatGpt: string;
+  claude: string;
+  screenpipe: string;
+  whatsapp: string;
+  pocket: string;
+  omnivore: string;
+  deletedMarkdown: string;
+}
+
+function layoutFor(root: string): Layout {
+  return {
+    markdown: path.join(root, "markdown"),
+    chatGpt: path.join(root, "chatgpt.json"),
+    claude: path.join(root, "claude.json"),
+    screenpipe: path.join(root, "screenpipe.sqlite"),
+    whatsapp: path.join(root, "whatsapp"),
+    pocket: path.join(root, "pocket.csv"),
+    omnivore: path.join(root, "omnivore"),
+    deletedMarkdown: path.join(root, "markdown", "delete-me.md"),
+  };
+}
+
+/**
+ * One entry per registry id, so the coverage test below proves the suite
+ * exercises the whole registry rather than a hand-counted subset of it.
+ */
+function batteryFor(
+  layout: Layout,
+): Record<string, () => Promise<ConformanceResult>> {
+  const markdown = getConnector(MARKDOWN_FOLDER_CONNECTOR_ID, {
+    path: layout.markdown,
+  });
+  const plain = (connector: Connector) => () => runConformance(connector);
+  return {
+    [MARKDOWN_FOLDER_CONNECTOR_ID]: () =>
+      runConformance(markdown, {
+        tombstone: {
+          prepare: async () => (await markdown.backfill(null)).cursor,
+          mutate: async () => unlink(layout.deletedMarkdown),
+        },
+      }),
+    [CHATGPT_IMPORT_CONNECTOR_ID]: plain(
+      getConnector(CHATGPT_IMPORT_CONNECTOR_ID, { path: layout.chatGpt }),
+    ),
+    [CLAUDE_IMPORT_CONNECTOR_ID]: plain(
+      getConnector(CLAUDE_IMPORT_CONNECTOR_ID, { path: layout.claude }),
+    ),
+    [SCREENPIPE_CONNECTOR_ID]: plain(
+      getConnector(SCREENPIPE_CONNECTOR_ID, {
+        path: layout.screenpipe,
+        settle_seconds: 0,
+      }),
+    ),
+    [WHATSAPP_IMPORT_CONNECTOR_ID]: plain(
+      getConnector(WHATSAPP_IMPORT_CONNECTOR_ID, {
+        path: layout.whatsapp,
+        // Pinned so the double backfill is identical on any host.
+        timezone: WHATSAPP_FIXTURE_TIMEZONE,
+      }),
+    ),
+    [POCKET_IMPORT_CONNECTOR_ID]: plain(
+      getConnector(POCKET_IMPORT_CONNECTOR_ID, { path: layout.pocket }),
+    ),
+    [OMNIVORE_IMPORT_CONNECTOR_ID]: plain(
+      getConnector(OMNIVORE_IMPORT_CONNECTOR_ID, { path: layout.omnivore }),
+    ),
+  };
+}
+
+async function seedExports(layout: Layout): Promise<void> {
+  await mkdir(path.join(layout.markdown, "nested"), { recursive: true });
+  await mkdir(layout.whatsapp, { recursive: true });
+  await Promise.all([
+    writeFile(path.join(layout.markdown, "one.md"), "# One\n"),
+    writeFile(path.join(layout.markdown, "nested", "two.md"), "# Two\n"),
+    writeFile(layout.deletedMarkdown, "# Delete me\n"),
+    writeFile(layout.chatGpt, JSON.stringify(CHATGPT_FIXTURE_EXPORT)),
+    writeFile(layout.claude, JSON.stringify(CLAUDE_FIXTURE_EXPORT)),
+    writeFile(layout.pocket, POCKET_FIXTURE_EXPORT),
+  ]);
+  const screenpipeFixture = new Database(layout.screenpipe);
+  seedFixtureDatabase(screenpipeFixture);
+  screenpipeFixture.close();
+  for (const [name, content] of Object.entries(WHATSAPP_FIXTURE_FILES)) {
+    await writeFile(path.join(layout.whatsapp, name), content);
+  }
+  for (const [name, content] of Object.entries(OMNIVORE_FIXTURE_FILES)) {
+    const target = path.join(layout.omnivore, name);
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, content);
+  }
+}
 
 test("all registry connectors pass conformance", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-conformance-"));
@@ -174,9 +278,20 @@ test("all registry connectors pass conformance", async () => {
     ]);
     expect(REGISTRY_IDS).toContain(IMAP_CONNECTOR_ID);
     expect(REGISTRY_IDS).toContain(ICS_CONNECTOR_ID);
+    const layout = layoutFor(root);
+    await seedExports(layout);
+    const battery = batteryFor(layout);
+    const ids = Object.keys(battery);
+    const results = await Promise.all(ids.map((id) => battery[id]?.()));
+    expect(results).toEqual(ids.map(() => ({ pass: true, failures: [] })));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("the conformance battery covers every registry entry", () => {
+  const battery = batteryFor(layoutFor("/nonexistent"));
+  expect(Object.keys(battery).sort()).toEqual(Object.keys(REGISTRY).sort());
 });
 
 test("a tombstones:true connector without hooks supplied fails, not skips", async () => {
@@ -196,10 +311,15 @@ test("a tombstones:true connector without hooks supplied fails, not skips", asyn
 });
 
 test("required_secrets rejects malformed references", async () => {
-  const base = getConnector(CHATGPT_IMPORT_CONNECTOR_ID, { path: "fixture.json" });
+  const base = getConnector(CHATGPT_IMPORT_CONNECTOR_ID, {
+    path: "fixture.json",
+  });
   const malformed: Connector = {
     ...base,
-    manifest: () => ({ ...base.manifest(), required_secrets: ["ordinary-plaintext-token"] }),
+    manifest: () => ({
+      ...base.manifest(),
+      required_secrets: ["ordinary-plaintext-token"],
+    }),
   };
   const result = await runConformance(malformed);
   expect(result.pass).toBe(false);
