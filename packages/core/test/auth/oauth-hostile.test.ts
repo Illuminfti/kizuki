@@ -102,6 +102,46 @@ describe("a hostile authorization URL", () => {
     ).toThrow(TypeError);
   });
 
+  test("refuses an endpoint that hides the secret behind percent-encoding", () => {
+    // A plain substring test passes here, yet the browser, the referrer header
+    // and the provider's access log all read the path decoded.
+    expect(() =>
+      buildAuthorizationUrl(
+        provider({
+          client_secret: "SENTINEL-SECRET",
+          authorization_url:
+            "https://provider.invalid/SENTINEL%2DSECRET/authorize",
+        }),
+        urlParams,
+      ),
+    ).toThrow(TypeError);
+  });
+
+  test("refuses an extra that hides the secret behind double encoding", () => {
+    expect(() =>
+      buildAuthorizationUrl(
+        provider({
+          client_secret: "SENTINEL-SECRET",
+          extra_authorization_params: { login_hint: "SENTINEL%252DSECRET" },
+        }),
+        urlParams,
+      ),
+    ).toThrow(TypeError);
+  });
+
+  test("a secret too short to tell from an accident does not abort sign-in", () => {
+    // "read" is one of the requested scopes, so the assembled URL contains it
+    // whatever the provider's credentials are. Refusing here would fail a
+    // sign-in for a collision, and a collision with the random nonce would
+    // fail it only on some runs.
+    const url = buildAuthorizationUrl(
+      provider({ client_secret: "read" }),
+      urlParams,
+    );
+    expect(url).toContain("scope=read+profile");
+    expect(url).not.toContain("client_secret");
+  });
+
   test("a sign-in refuses such an endpoint before it opens a listener", async () => {
     const transport = new FakeTransport();
     await expect(

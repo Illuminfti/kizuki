@@ -76,18 +76,56 @@ function operationSecrets(
 }
 
 /**
+ * Below this length a match is far likelier to be an accident — a word in the
+ * provider's own path, or a run inside the 43-character random nonce — than
+ * the credential, and refusing on an accident fails a sign-in for a collision
+ * the owner cannot see and cannot reproduce. Installed-app secrets are much
+ * longer than this.
+ */
+const MIN_GUARDED_SECRET_LENGTH = 8;
+
+/**
+ * A value that becomes a query parameter is percent-encoded once on the way
+ * into the URL, so a secret already encoded in the provider definition needs
+ * two rounds before it reads as itself again.
+ */
+const SECRET_DECODE_ROUNDS = 2;
+
+const PERCENT_ESCAPE = /%[0-9A-Fa-f]{2}/g;
+
+/**
+ * Escapes are decoded one at a time rather than through decodeURIComponent: a
+ * malformed sequence elsewhere in the text must not stop the well-formed ones
+ * from being read, and a legal value that merely contains a bare `%` must not
+ * be refused.
+ */
+function percentDecoded(text: string): string {
+  return text.replace(PERCENT_ESCAPE, (escape) =>
+    String.fromCharCode(Number.parseInt(escape.slice(1), 16)),
+  );
+}
+
+/**
  * Refusing a parameter name is not enough: a secret carried as somebody else's
  * value, or in the endpoint's own userinfo or path, reaches the same browser
- * history, referrer headers and provider access log.
+ * history, referrer headers and provider access log — and percent-encoding
+ * hides it from a plain substring test while every one of those readers still
+ * sees it decoded.
  */
 function refuseSecret(
   secret: string | undefined,
   text: string,
   where: string,
 ): void {
-  if (secret === undefined || secret.length === 0) return;
-  if (text.includes(secret)) {
-    throw new TypeError(`${where} may not carry the client secret`);
+  if (secret === undefined || secret.length < MIN_GUARDED_SECRET_LENGTH) return;
+  let form = text;
+  for (let round = 0; round <= SECRET_DECODE_ROUNDS; round += 1) {
+    if (form.includes(secret)) {
+      throw new TypeError(`${where} may not carry the client secret`);
+    }
+    const decoded = percentDecoded(form);
+    if (decoded === form) return;
+    form = decoded;
   }
 }
 
