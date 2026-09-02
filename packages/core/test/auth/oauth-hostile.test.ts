@@ -4,6 +4,7 @@ import {
   buildAuthorizationUrl,
   parseTokenResponse,
   refreshTokens,
+  revokeToken,
   signInWithBrowser,
 } from "../../src/auth/oauth";
 import { OAuthSession } from "../../src/auth/session";
@@ -115,6 +116,92 @@ describe("a hostile authorization URL", () => {
       ),
     ).rejects.toThrow(TypeError);
     expect(transport.listeners).toEqual([]);
+  });
+});
+
+describe("a provider endpoint on a scheme core will not speak", () => {
+  test.each([
+    ["javascript", "javascript:fetch('https://exfil.invalid')"],
+    ["file", "file:///etc/hostname"],
+    ["data", "data:text/html,<p>consent</p>"],
+    ["ftp", "ftp://provider.invalid/authorize"],
+    ["plain http off the loopback", "http://provider.invalid/authorize"],
+  ])("refuses %s as the authorization endpoint", (_label, authorization_url) => {
+    expect(() =>
+      buildAuthorizationUrl(provider({ authorization_url }), urlParams),
+    ).toThrow(TypeError);
+  });
+
+  test("never opens the browser at a javascript: authorization endpoint", async () => {
+    const io = fakeIo();
+    const transport = new FakeTransport();
+    await expect(
+      signInWithBrowser(
+        provider({ authorization_url: "javascript:fetch('https://exfil.invalid')" }),
+        io,
+        transport,
+        { ...deterministic(), timeoutMs: 10 },
+      ),
+    ).rejects.toThrow(TypeError);
+    expect(io.opened).toEqual([]);
+    expect(transport.listeners).toEqual([]);
+  });
+
+  test.each([
+    ["plain http", "http://provider.invalid/token"],
+    ["file", "file:///etc/hostname"],
+  ])("refuses %s as the token endpoint before the code is sent", async (_label, token_url) => {
+    const io = fakeIo();
+    const transport = new FakeTransport({ status: 200, body: tokenResponse() });
+    await expect(
+      signInWithBrowser(provider({ token_url }), io, transport, {
+        ...deterministic(),
+        timeoutMs: 10,
+      }),
+    ).rejects.toThrow(TypeError);
+    expect(transport.posts).toEqual([]);
+    expect(transport.listeners).toEqual([]);
+  });
+
+  test("refuses a cleartext token endpoint on refresh", async () => {
+    const transport = new FakeTransport({ status: 200, body: tokenResponse() });
+    await expect(
+      refreshTokens(
+        provider({ token_url: "http://provider.invalid/token" }),
+        tokenSet(),
+        transport,
+        () => NOW,
+      ),
+    ).rejects.toThrow(TypeError);
+    expect(transport.posts).toEqual([]);
+  });
+
+  test("refuses a cleartext revocation endpoint", async () => {
+    const transport = new FakeTransport({ status: 200, body: null });
+    await expect(
+      revokeToken(
+        provider({ revocation_url: "http://provider.invalid/revoke" }),
+        "SENTINEL-ACCESS",
+        transport,
+      ),
+    ).rejects.toThrow(TypeError);
+    expect(transport.posts).toEqual([]);
+  });
+
+  test.each([
+    ["127.0.0.1", "http://127.0.0.1:8080/token"],
+    ["localhost", "http://localhost:8080/token"],
+    ["::1", "http://[::1]:8080/token"],
+  ])("accepts a fake authorization server on %s", async (_label, token_url) => {
+    const transport = new FakeTransport({ status: 200, body: tokenResponse() });
+    const tokens = await refreshTokens(
+      provider({ token_url }),
+      tokenSet(),
+      transport,
+      () => NOW,
+    );
+    expect(tokens.access_token).toBe("SENTINEL-ACCESS");
+    expect(transport.posts).toHaveLength(1);
   });
 });
 

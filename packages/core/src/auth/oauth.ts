@@ -91,8 +91,38 @@ function refuseSecret(
   }
 }
 
+/**
+ * `http` is safe only where the response cannot leave the machine, which is
+ * also what lets a test drive a real authorization server on a spare port.
+ */
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
+/**
+ * An endpoint core speaks to carries the authorization code, the PKCE verifier
+ * and the installed-app secret, and the authorization endpoint is handed
+ * straight to the owner's browser. A scheme other than TLS either puts that on
+ * the wire in the clear or hands the browser something that is not a request
+ * at all, so the refusal comes before any of it is built.
+ */
+function assertTransportScheme(endpoint: string, where: string): void {
+  const url = new URL(endpoint);
+  if (url.protocol === "https:") return;
+  if (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname)) return;
+  throw new TypeError(`${where} must use https, or http on a loopback host`);
+}
+
+/** Every endpoint of the provider, judged before any of them is used. */
+function assertProviderEndpoints(provider: OAuthProvider): void {
+  assertTransportScheme(provider.authorization_url, "authorization_url");
+  assertTransportScheme(provider.token_url, "token_url");
+  if (provider.revocation_url !== undefined) {
+    assertTransportScheme(provider.revocation_url, "revocation_url");
+  }
+}
+
 /** Everything a browser URL can be judged on before the listener exists. */
 function assertBrowserSafeProvider(provider: OAuthProvider): void {
+  assertProviderEndpoints(provider);
   const url = new URL(provider.authorization_url);
   // A query already on the endpoint is a parameter nobody reviewed.
   if (url.search.length > 0 || url.hash.length > 0) {
@@ -385,6 +415,7 @@ export async function refreshTokens(
   transport: OAuthTransport,
   now: () => Date = () => new Date(),
 ): Promise<TokenSet> {
+  assertProviderEndpoints(provider);
   if (tokens.refresh_token === null) {
     throw new OAuthError("refresh_rejected", provider.name);
   }
@@ -423,6 +454,7 @@ export async function revokeToken(
   token: string,
   transport: OAuthTransport,
 ): Promise<void> {
+  assertProviderEndpoints(provider);
   const revocationUrl = provider.revocation_url;
   if (revocationUrl === undefined) {
     throw new OAuthError("not_supported", provider.name);
