@@ -75,14 +75,25 @@ on both sides of a daylight-saving transition.
 ## Recurrence
 
 Supported: `FREQ=DAILY|WEEKLY|MONTHLY|YEARLY`, `INTERVAL`, `COUNT`, `UNTIL`,
-`BYDAY` (including ordinals like `2MO` and `-1FR`), `BYMONTHDAY` (positive and
-negative), `BYMONTH`, `WKST`, `EXDATE`, `RDATE`, and a `RECURRENCE-ID`
-override that replaces one instance.
+`WKST`, `EXDATE`, `RDATE`, and a `RECURRENCE-ID` override that replaces one
+instance. The `BY*` parts are supported where the frequency gives them a
+meaning:
+
+| part          | with                                                                    |
+| ------------- | ----------------------------------------------------------------------- |
+| `BYDAY`       | `WEEKLY` as a plain weekday list; `MONTHLY`/`YEARLY` with or without an ordinal (`2MO`, `-1FR`) |
+| `BYMONTHDAY`  | `MONTHLY` and `YEARLY`, positive and negative                            |
+| `BYMONTH`     | `YEARLY`                                                                |
+
+A yearly rule without `BYMONTH` is scoped to the whole year, so
+`BYDAY=20MO` is the twentieth Monday of the year.
 
 Anything else — `BYSETPOS`, `BYYEARDAY`, `BYWEEKNO`, `BYHOUR`/`BYMINUTE`/
-`BYSECOND`, sub-daily frequencies — is not expanded. The series is emitted once
-as its master with `metadata.recurrence.expanded: false`, rather than expanded
-into a wrong set of dates.
+`BYSECOND`, sub-daily frequencies, a `BY*` part the frequency does not use
+(`FREQ=DAILY;BYDAY=MO`), and a `RANGE=THISANDFUTURE` override — is not
+expanded. The series is emitted once as its master with
+`metadata.recurrence.expanded: false`, rather than expanded into a wrong set
+of dates.
 
 Expansion runs from `DTSTART` to one year from now, capped at 1000 instances.
 When the cap bites, the most recent 1000 are kept and every emitted instance

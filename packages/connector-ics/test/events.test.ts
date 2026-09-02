@@ -216,6 +216,30 @@ describe("mapping edges", () => {
     });
   });
 
+  test("a THISANDFUTURE override emits the master once, unexpanded", () => {
+    const events = mapped([
+      "BEGIN:VEVENT",
+      "UID:series@acme.example",
+      "DTSTART:20260302T090000Z",
+      "RRULE:FREQ=WEEKLY;COUNT=6",
+      "SUMMARY:Standup",
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      "UID:series@acme.example",
+      "RECURRENCE-ID;RANGE=THISANDFUTURE:20260316T090000Z",
+      "DTSTART:20260316T100000Z",
+      "SUMMARY:Standup, moved from here on",
+      "END:VEVENT",
+    ]);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.source_record_id).toBe("series@acme.example");
+    expect(events[0]?.metadata["recurrence"]).toEqual({
+      rrule: "FREQ=WEEKLY;COUNT=6",
+      instance_of: "series@acme.example",
+      expanded: false,
+    });
+  });
+
   test("a non-mailto organizer is skipped", () => {
     const events = mapped([
       "BEGIN:VEVENT",

@@ -45,7 +45,11 @@ describe("rule parsing", () => {
       count: 3,
       wkst: 0,
     });
-    expect(rule("FREQ=WEEKLY;BYDAY=MO,-1FR").byday).toEqual([
+    expect(rule("FREQ=WEEKLY;BYDAY=MO,FR").byday).toEqual([
+      { ordinal: null, weekday: 1 },
+      { ordinal: null, weekday: 5 },
+    ]);
+    expect(rule("FREQ=MONTHLY;BYDAY=MO,-1FR").byday).toEqual([
       { ordinal: null, weekday: 1 },
       { ordinal: -1, weekday: 5 },
     ]);
@@ -78,6 +82,18 @@ describe("rule parsing", () => {
     "FREQ=DAILY;INTERVAL=0",
   ])("reports %s as unsupported", (value) => {
     expect(parseRrule(value)).toHaveProperty("unsupported");
+  });
+
+  test.each([
+    // Each of these names a part the expansion for that frequency ignores.
+    // Accepting them would expand a narrower rule as a wider one.
+    ["FREQ=WEEKLY;BYDAY=MO,-1FR", "BYDAY"],
+    ["FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR", "BYDAY"],
+    ["FREQ=DAILY;BYMONTHDAY=1", "BYMONTHDAY"],
+    ["FREQ=WEEKLY;BYMONTH=6", "BYMONTH"],
+    ["FREQ=MONTHLY;BYMONTH=6", "BYMONTH"],
+  ])("reports %s as unsupported rather than ignoring the part", (value, part) => {
+    expect(parseRrule(value)).toEqual({ unsupported: part });
   });
 });
 
@@ -155,6 +171,29 @@ describe("RFC 5545 expansion vectors", () => {
     expect(
       starts("FREQ=MONTHLY;COUNT=3;BYDAY=-2MO", "19970922T090000"),
     ).toEqual(["19970922T090000", "19971020T090000", "19971117T090000"]);
+  });
+
+  test("every 20th Monday of the year", () => {
+    // RFC 5545 section 3.8.5.3: the ordinal counts from January, not from
+    // the month DTSTART happens to fall in.
+    expect(
+      starts("FREQ=YEARLY;BYDAY=20MO;COUNT=3", "19970519T090000", {
+        windowEnd: "20100101T000000",
+      }),
+    ).toEqual(["19970519T090000", "19980518T090000", "19990517T090000"]);
+  });
+
+  test("yearly on the last day of every month", () => {
+    expect(
+      starts("FREQ=YEARLY;BYMONTHDAY=-1;COUNT=4", "19970131T090000", {
+        windowEnd: "20100101T000000",
+      }),
+    ).toEqual([
+      "19970131T090000",
+      "19970228T090000",
+      "19970331T090000",
+      "19970430T090000",
+    ]);
   });
 
   test("monthly on the last day of the month", () => {

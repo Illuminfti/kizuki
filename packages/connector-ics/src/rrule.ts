@@ -155,7 +155,34 @@ export function parseRrule(
     if (weekday === null) return { unsupported: "WKST" };
     rule.wkst = weekday;
   }
+  const ignored = ignoredForFrequency(rule);
+  if (ignored !== null) return { unsupported: ignored };
   return { rule };
+}
+
+/**
+ * RFC 5545 gives each BY* part a meaning only for some frequencies, and the
+ * expansion below implements exactly the combinations the connector claims.
+ * A part this frequency does not use has to be reported: expanding as though
+ * it were absent turns "every weekday" into "every day".
+ */
+function ignoredForFrequency(rule: RecurrenceRule): string | null {
+  if (rule.freq === "DAILY") {
+    if (rule.byday !== undefined) return "BYDAY";
+    if (rule.bymonthday !== undefined) return "BYMONTHDAY";
+    if (rule.bymonth !== undefined) return "BYMONTH";
+    return null;
+  }
+  if (rule.freq === "WEEKLY") {
+    if (rule.byday?.some((entry) => entry.ordinal !== null) === true) {
+      return "BYDAY";
+    }
+    if (rule.bymonthday !== undefined) return "BYMONTHDAY";
+    if (rule.bymonth !== undefined) return "BYMONTH";
+    return null;
+  }
+  if (rule.freq === "MONTHLY" && rule.bymonth !== undefined) return "BYMONTH";
+  return null;
 }
 
 const DAY_MS = 86_400_000;
@@ -227,6 +254,65 @@ function monthCandidates(
     .map((day) => withDay(base, year, month, day));
 }
 
+/**
+ * Without BYMONTH a yearly BY* rule is scoped to the whole year, not to
+ * DTSTART's month: `BYDAY=20MO` is the twentieth Monday of the year.
+ */
+function yearCandidates(
+  rule: RecurrenceRule,
+  base: LocalDateTime,
+  year: number,
+): LocalDateTime[] {
+  const everyDay: LocalDateTime[] = [];
+  for (let month = 1; month <= 12; month += 1) {
+    const total = daysInMonth(year, month);
+    for (let day = 1; day <= total; day += 1) {
+      everyDay.push(withDay(base, year, month, day));
+    }
+  }
+
+  let byDay: Set<string> | null = null;
+  if (rule.byday !== undefined) {
+    byDay = new Set<string>();
+    for (const entry of rule.byday) {
+      const matching = everyDay.filter((day) => weekdayAt(day) === entry.weekday);
+      if (entry.ordinal === null) {
+        for (const day of matching) byDay.add(formatLocal(day));
+        continue;
+      }
+      const index =
+        entry.ordinal > 0 ? entry.ordinal - 1 : matching.length + entry.ordinal;
+      const day = matching[index];
+      if (day !== undefined) byDay.add(formatLocal(day));
+    }
+  }
+
+  let byMonthDay: Set<string> | null = null;
+  if (rule.bymonthday !== undefined) {
+    byMonthDay = new Set<string>();
+    for (let month = 1; month <= 12; month += 1) {
+      const total = daysInMonth(year, month);
+      for (const day of rule.bymonthday) {
+        const resolved = day > 0 ? day : total + day + 1;
+        if (resolved >= 1 && resolved <= total) {
+          byMonthDay.add(formatLocal(withDay(base, year, month, resolved)));
+        }
+      }
+    }
+  }
+
+  // BYDAY expands on its own but narrows an explicit BYMONTHDAY, the same
+  // rule that makes "every Friday the 13th" one day a month.
+  return everyDay.filter((day) => {
+    const key = formatLocal(day);
+    if (byDay !== null && byMonthDay !== null) {
+      return byDay.has(key) && byMonthDay.has(key);
+    }
+    if (byDay !== null) return byDay.has(key);
+    return byMonthDay !== null && byMonthDay.has(key);
+  });
+}
+
 function untilMs(rule: RecurrenceRule): number | null {
   if (rule.until === undefined) return null;
   if (rule.until.kind === "utc") return Date.parse(rule.until.iso);
@@ -293,18 +379,23 @@ export function expand(
         }));
     } else if (rule.freq === "MONTHLY") {
       candidates = monthCandidates(rule, dtstart, cursor.year, cursor.month);
+    } else if (rule.bymonth !== undefined) {
+      candidates = [...rule.bymonth]
+        .sort((a, b) => a - b)
+        .flatMap((month) =>
+          rule.byday !== undefined || rule.bymonthday !== undefined
+            ? monthCandidates(rule, dtstart, cursor.year, month)
+            : dtstart.day <= daysInMonth(cursor.year, month)
+              ? [withDay(dtstart, cursor.year, month, dtstart.day)]
+              : [],
+        );
+    } else if (rule.byday !== undefined || rule.bymonthday !== undefined) {
+      candidates = yearCandidates(rule, dtstart, cursor.year);
     } else {
-      const months =
-        rule.bymonth !== undefined
-          ? [...rule.bymonth].sort((a, b) => a - b)
-          : [dtstart.month];
-      candidates = months.flatMap((month) =>
-        rule.byday !== undefined || rule.bymonthday !== undefined
-          ? monthCandidates(rule, dtstart, cursor.year, month)
-          : dtstart.day <= daysInMonth(cursor.year, month)
-            ? [withDay(dtstart, cursor.year, month, dtstart.day)]
-            : [],
-      );
+      candidates =
+        dtstart.day <= daysInMonth(cursor.year, dtstart.month)
+          ? [withDay(dtstart, cursor.year, dtstart.month, dtstart.day)]
+          : [];
     }
 
     for (const candidate of candidates) {

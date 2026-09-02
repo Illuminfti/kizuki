@@ -223,7 +223,15 @@ function seriesEvents(
 
   const parsedRule =
     rruleLine === undefined ? null : parseRrule(rruleLine.value);
-  if (parsedRule !== null && "unsupported" in parsedRule) {
+  // RANGE=THISANDFUTURE rewrites the tail of the series, which this expansion
+  // does not model; the master goes out once rather than as a wrong series.
+  const rewritesTheTail = entry.overrides.some(
+    (override) =>
+      (firstValue(override, "RECURRENCE-ID")?.params["RANGE"]?.[0] ?? "")
+        .trim()
+        .toUpperCase() === "THISANDFUTURE",
+  );
+  if ((parsedRule !== null && "unsupported" in parsedRule) || rewritesTheTail) {
     events.push(
       emit({
         ...common,
