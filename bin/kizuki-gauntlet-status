@@ -10,5 +10,7 @@ printf '\n'
 printf '\n'
 "$CURL" --fail --silent --show-error --max-time 5 "$BASE/v1/campaign"
 printf '\n'
+"$CURL" --fail --silent --show-error --max-time 5 "$BASE/v1/reconciliation"
+printf '\n'
 "$CURL" --fail --silent --show-error --max-time 15 "$BASE/v1/adapters"
 printf '\n'

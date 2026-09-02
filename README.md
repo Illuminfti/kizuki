@@ -36,7 +36,9 @@ adapter wiring is merged.
   not contact GitHub and marks remote PR inventory unavailable.
 - Persisted adapter receipts capture the exact live `--version` output and
   executable hash at recording time. They expire automatically; any harness
-  upgrade requires a new receipt before the attestation can be refreshed.
+  upgrade requires a new receipt before the attestation can be refreshed. The
+  observer also verifies the executable hash once at controller startup; it
+  never touches a harness during a request.
 
 ## Quick start
 
@@ -55,8 +57,10 @@ python3 -m unittest discover -s tests -v
 ```
 
 Observer endpoints are `/v1/health`, `/v1/campaign`, `/v1/campaigns`,
-`/v1/tasks`, `/v1/tasks/<id>`, `/v1/adapters`, `/v1/incidents`,
+`/v1/tasks`, `/v1/tasks/<id>`, `/v1/adapters`, `/v1/reconciliation`, `/v1/incidents`,
 `/v1/receipts`, and `/v1/events?after=N`. POST/PUT/PATCH/DELETE return 405.
+Event pages are oldest-first with a maximum of 100; continue from the last
+returned sequence number until the page is empty.
 
 Deploy by copying `config.example.json` to `config.json`, then install the user
 units in `systemd/`. This is a fail-closed observer/bootstrap, not an autonomous

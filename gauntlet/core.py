@@ -192,7 +192,9 @@ class Store:
         elif typ=="campaign.created": db.execute("INSERT OR IGNORE INTO campaigns VALUES(?,?,?,?,?,?)",(p["id"],"RECONCILING",p["epoch"],1,now,now))
         elif typ=="campaign.state": db.execute("UPDATE campaigns SET state=?,version=version+1,updated_at=? WHERE id=?",(p["state"],now,p["id"]))
         elif typ=="task.created": db.execute("INSERT OR IGNORE INTO tasks VALUES(?,?,?,?,?,?,?)",(p["id"],p["campaign_id"],p["scope"],"DISCOVERED",0,1,now))
-        elif typ=="task.state": db.execute("UPDATE tasks SET state=?,version=version+1,updated_at=? WHERE id=?",(p["state"],now,p["id"]))
+        elif typ=="task.state":
+            db.execute("UPDATE tasks SET state=?,version=version+1,updated_at=? WHERE id=?",(p["state"],now,p["id"]))
+            if p.get("retire_leases",False): db.execute("DELETE FROM leases WHERE task_id=?",(p["id"],))
         elif typ=="lease.acquired":
             db.execute("INSERT INTO fences VALUES(?,?) ON CONFLICT(scope) DO UPDATE SET token=MAX(token,excluded.token)",(p["scope"],p["token"]))
             db.execute("INSERT OR REPLACE INTO leases VALUES(?,?,?,?,?,?,?)",(p["scope"],p["task_id"],p["holder"],p["token"],p["expires_at"],p["heartbeat_at"],p["epoch"]))
@@ -293,6 +295,7 @@ class Store:
         self._write(validate,"reconciliation",{"id":str(uuid.uuid4()),"campaign_id":campaign_id,"evidence":evidence})
     def task_state(self,tid,state,version,scope=None,holder=None,token=None):
         state=state.upper()
+        payload={"id":tid,"state":state}
         def validate():
             row=self.db.execute("SELECT t.state,t.version,t.campaign_id,t.scope,c.epoch FROM tasks t JOIN campaigns c ON c.id=t.campaign_id WHERE t.id=?",(tid,)).fetchone()
             if not row or row[1]!=version: raise ConflictError("task CAS failed")
@@ -300,9 +303,15 @@ class Store:
             if state not in TASK_TRANSITIONS.get(row[0],set()): raise GuardError("invalid task transition")
             # Workers must present their live lease.  A controller may perform
             # recovery/admin transitions, but is fenced by its claimed epoch.
-            if holder is None and token is None and scope is None: self._require_controller()
+            if holder is None and token is None and scope is None:
+                self._require_controller()
+                live=self.db.execute("SELECT 1 FROM leases WHERE task_id=? AND epoch=? AND expires_at>? LIMIT 1",(tid,self.claimed_epoch,time.time())).fetchone()
+                if live and state not in {"RECOVERING","FAILED","SUPERSEDED"}: raise GuardError("controller must recover or fail a live leased task before transition")
+                # Administrative transitions revoke every task lease. Fence
+                # counters remain, so a retired token can never be reused.
+                payload["retire_leases"]=True
             else: self._assert_lease(scope or row[3],holder,token,tid)
-        self._write(validate,"task.state",{"id":tid,"state":state}); return version+1
+        self._write(validate,"task.state",payload); return version+1
     def _assert_lease(self,scope,holder,token,task_id=None):
         row=self.db.execute("SELECT task_id,holder,token,expires_at,epoch FROM leases WHERE scope=?",(scope,)).fetchone(); epoch=self._current_epoch()
         if not row or row[0]!=(task_id or row[0]) or row[1]!=holder or row[2]!=token or row[3]<=time.time() or row[4]!=epoch: raise FencedError("stale, expired, or foreign lease")
@@ -316,9 +325,11 @@ class Store:
             if not task or task[1] not in ("READY","LEASED","RUNNING"): raise GuardError("task not leaseable")
             camp=self._campaign(task[0])
             if camp[0]!="ACTIVE": raise GuardError("campaign not active")
-            existing=self.db.execute("SELECT holder,epoch FROM leases WHERE task_id=? AND epoch=? LIMIT 1",(task_id,self.claimed_epoch)).fetchone()
+            check_time=time.time()
+            existing=self.db.execute("SELECT holder,epoch FROM leases WHERE task_id=? AND epoch=? AND expires_at>? LIMIT 1",(task_id,self.claimed_epoch,check_time)).fetchone()
             if task[1]=="READY":
                 if task[2]>=limits.max_attempts: raise GuardError("attempt circuit breaker")
+                if existing: raise ConflictError("ready task still has a live owner")
                 payload["starts_attempt"]=True
             else:
                 if not existing or existing[0]!=holder: raise FencedError("foreign holder cannot add task scope")
@@ -349,6 +360,13 @@ class Store:
         if len(evidence_sha256)!=64 or any(c not in "0123456789abcdef" for c in evidence_sha256): raise GuardError("adapter receipt requires a lowercase SHA-256")
         if len(executable_sha256)!=64 or any(c not in "0123456789abcdef" for c in executable_sha256): raise GuardError("adapter receipt requires executable SHA-256")
         if reason_code not in ADAPTER_REASON_CODES: raise GuardError("invalid adapter receipt reason code")
+        allowed={
+            "ISOLATED_ROUTE_PROBE": {("READY","READY")},
+            "PROVIDER_QUOTA_BLOCKED": {("READY","QUOTA_BLOCKED")},
+            "AUTH_CHECK": {("READY","UNKNOWN"),("FAILED","UNKNOWN"),("UNKNOWN","UNKNOWN")},
+            "PROBE_FAILED": {("FAILED","FAILED"),("UNKNOWN","FAILED")},
+        }
+        if (auth_status,route_status) not in allowed[reason_code]: raise GuardError("adapter state contradicts receipt reason code")
         if not isinstance(ttl_seconds,int) or not 60<=ttl_seconds<=86400: raise GuardError("adapter receipt TTL must be 60..86400 seconds")
         checked_at=time.time()
         payload={"name":name,"version":version.strip(),"auth_status":auth_status,"route_status":route_status,"evidence_sha256":evidence_sha256,"executable_sha256":executable_sha256,"method":"operator-attested-isolated-probe-v1","reason_code":reason_code,"checked_at":checked_at,"expires_at":checked_at+ttl_seconds}
@@ -360,6 +378,10 @@ class Store:
             for name in ("campaigns","tasks","leases","receipts","incidents","reconciliation","adapter_receipts"): out[name]=[dict(x) for x in self.db.execute("SELECT * FROM "+name).fetchall()]
             out["events"]=[dict(x) for x in self.db.execute("SELECT * FROM events ORDER BY seq DESC LIMIT 100").fetchall()]
             return out
+    def events_after(self,after,limit=100):
+        if not isinstance(after,int) or after<0 or not isinstance(limit,int) or not 1<=limit<=100: raise GuardError("invalid event cursor")
+        with self._thread_lock:
+            return [dict(row) for row in self.db.execute("SELECT * FROM events WHERE seq>? ORDER BY seq LIMIT ?",(after,limit)).fetchall()]
 
 class Guard:
     def __init__(self,limits=Limits()): self.limits=limits
@@ -370,10 +392,14 @@ class Guard:
 
 def readonly_reconcile(repo):
     repo=str(repo)
-    def run(args):
-        try: p=subprocess.run(["/usr/bin/git","-C",repo,*args],text=True,capture_output=True,timeout=10)
+    git_prefix=["/usr/bin/git","-c","core.fsmonitor=false","-c","core.untrackedCache=false","-c","gc.auto=0","-C",repo]
+    git_env={"PATH":"/usr/bin:/bin","HOME":"/nonexistent","LANG":"C","LC_ALL":"C","GIT_OPTIONAL_LOCKS":"0"}
+    def run(args,required=True):
+        try: p=subprocess.run([*git_prefix,*args],text=True,capture_output=True,timeout=10,env=git_env,stdin=subprocess.DEVNULL)
         except (OSError,subprocess.TimeoutExpired) as e: raise GuardError("git reconciliation failed: "+str(e))
-        if p.returncode: raise GuardError("git reconciliation failed: "+p.stderr.strip())
+        if p.returncode:
+            if not required: return None
+            raise GuardError("git reconciliation failed: "+p.stderr.strip())
         return p.stdout.strip()
     raw=run(["worktree","list","--porcelain"]); worktrees=[]; item={}
     for line in raw.splitlines()+[""]:
@@ -385,7 +411,15 @@ def readonly_reconcile(repo):
                 worktrees.append(item); item={}
             continue
         key,_,value=line.partition(" "); item[key]=value or True
-    return {"repo":repo,"head":run(["rev-parse","HEAD"]),"main":run(["rev-parse","main"]),"worktrees":worktrees,"branches":run(["for-each-ref","--format=%(refname:short) %(objectname)","refs/heads"]),"safe_to_promote":False,"state":"RECONCILING","github":"not queried: reconciliation is read-only and offline"}
+    cached_origin=run(["rev-parse","--verify","refs/remotes/origin/main^{commit}"],required=False)
+    divergence=run(["rev-list","--left-right","--count","main...refs/remotes/origin/main"],required=False) if cached_origin else None
+    ahead=behind=None
+    if divergence:
+        try: ahead,behind=(int(value) for value in divergence.split())
+        except (TypeError,ValueError): ahead=behind=None
+    dispositions={}
+    for tree in worktrees: dispositions[tree["disposition"]]=dispositions.get(tree["disposition"],0)+1
+    return {"repo":repo,"head":run(["rev-parse","HEAD"]),"main":run(["rev-parse","main"]),"cached_origin_main":cached_origin,"local_main_ahead":ahead,"local_main_behind":behind,"remote_ref_freshness":"unknown; cached local ref; no fetch performed" if cached_origin else "cached origin/main absent; no fetch performed","inventory_at":time.time(),"worktrees":worktrees,"worktree_count":len(worktrees),"dirty_worktree_count":sum(1 for tree in worktrees if tree["dirty"]),"disposition_counts":dispositions,"branches":run(["for-each-ref","--format=%(refname:short) %(objectname)","refs/heads"]),"safe_to_promote":False,"state":"RECONCILING","github":"not queried: reconciliation is read-only and offline"}
 def validate_scope(scope):
     if not scope or any(x in scope for x in ("..",".git","events.jsonl","state.sqlite","AGENTS.md")): raise GuardError("forbidden task scope")
 def validate_change_plan(paths,commands=()):

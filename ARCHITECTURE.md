@@ -18,7 +18,9 @@ exact version string matched the fixed live version probe at recording time and
 its bounded TTL has not expired. The controller hashes the no-follow evidence
 file and resolved executable rather than trusting caller-supplied digests. A
 harness upgrade requires a newly recorded attestation. Without a fresh receipt
-the adapter remains not ready. The deployment paths are explicit:
+the adapter remains not ready. The controller also hashes each receipted
+executable once before binding the observer; requests read only that in-memory
+identity result and the persisted receipt. The deployment paths are explicit:
 Codex `/home/ubuntu/.local/bin/codex`, Claude `/home/ubuntu/.local/bin/claude`,
 Cursor `/home/ubuntu/.local/bin/cursor-agent`, and Grok `/home/ubuntu/.grok/bin/grok`.
 No adapter receives a token, prompt, worktree, or arbitrary child command.

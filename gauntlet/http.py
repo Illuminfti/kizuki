@@ -40,7 +40,27 @@ def _event(row):
     return _pick(row, "seq", "type", "created_at")
 
 
-def serve(store, adapters, host="127.0.0.1", port=8765, guard=None):
+def _reconciliation(row):
+    try:
+        evidence = json.loads(row.get("evidence", "{}"))
+    except (TypeError, ValueError):
+        evidence = {}
+    return {
+        "campaign_id": row.get("campaign_id"),
+        "recorded_at": row.get("created_at"),
+        "inventory_at": evidence.get("inventory_at"),
+        "safe_to_promote": evidence.get("safe_to_promote") is True,
+        "worktree_count": evidence.get("worktree_count"),
+        "dirty_worktree_count": evidence.get("dirty_worktree_count"),
+        "disposition_counts": evidence.get("disposition_counts", {}),
+        "local_main_ahead": evidence.get("local_main_ahead"),
+        "local_main_behind": evidence.get("local_main_behind"),
+        "cached_origin_main": evidence.get("cached_origin_main"),
+        "remote_ref_freshness": evidence.get("remote_ref_freshness"),
+    }
+
+
+def serve(store, adapters, host="127.0.0.1", port=8765, guard=None, adapter_identities=None):
     if host != "127.0.0.1":
         raise ValueError("observer may bind only to 127.0.0.1")
     guard = guard or Guard()
@@ -83,10 +103,9 @@ def serve(store, adapters, host="127.0.0.1", port=8765, guard=None):
             if path in ("/v1/health", "/health"):
                 try:
                     guard.check(store)
-                    return self._send(200, {"ok": True, "observer_only": True, "integrity": "verified"})
+                    return self._send(200, {"ok": True, "observer_only": True, "integrity": "verified", "guards": "healthy"})
                 except Exception:
-                    # Do not turn operational error strings into a disclosure channel.
-                    return self._send(503, {"ok": False, "observer_only": True, "integrity": "unhealthy"})
+                    return self._send(503, {"ok": False, "observer_only": True, "integrity": "verified", "guards": "unhealthy"})
             if path == "/v1/controller":
                 return self._send(200, {"observer_only": True, "execution_enabled": False})
 
@@ -103,7 +122,10 @@ def serve(store, adapters, host="127.0.0.1", port=8765, guard=None):
             if path == "/v1/adapters":
                 # Never invoke supplied adapters here.  These are solely
                 # persisted operator attestations, not live probes.
-                return self._send(200, statuses(adapters, data["adapter_receipts"]))
+                return self._send(200, statuses(adapters, data["adapter_receipts"], identities=adapter_identities))
+            if path == "/v1/reconciliation":
+                rows=sorted(data["reconciliation"],key=lambda row:row.get("created_at",0),reverse=True)
+                return self._send(200,_reconciliation(rows[0])) if rows else self._send(200,None)
             if path == "/v1/incidents":
                 return self._send(200, [_incident(row) for row in data["incidents"]])
             if path == "/v1/receipts":
@@ -113,8 +135,8 @@ def serve(store, adapters, host="127.0.0.1", port=8765, guard=None):
                     after = max(0, int(query.get("after", ["0"])[0]))
                 except ValueError:
                     return self._send(400, {"error": "after must be a non-negative integer"})
-                events = [_event(row) for row in data["events"] if row["seq"] > after]
-                return self._send(200, sorted(events, key=lambda event: event["seq"]))
+                events = [_event(row) for row in store.events_after(after,100)]
+                return self._send(200,events)
             return self._send(404, {"error": "not found"})
 
         def _method_not_allowed(self):

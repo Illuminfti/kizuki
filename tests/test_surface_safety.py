@@ -4,10 +4,11 @@ import os
 import tempfile
 import threading
 import hashlib
+import time
 import unittest
 from pathlib import Path
 
-from gauntlet.adapters import Adapter, statuses
+from gauntlet.adapters import Adapter, statuses, validate_identities
 from gauntlet.cli import main
 from gauntlet.core import Guard, Limits, Store
 from gauntlet.http import serve
@@ -46,6 +47,23 @@ class SurfaceSafetyTests(unittest.TestCase):
         self.assertEqual(result["auth_ready"], "unknown")
         self.assertFalse(result["route_ready"])
         self.assertFalse(result["ready"])
+        pathy = Path(self.tmp.name) / "pathy"
+        pathy.write_text("#!/bin/sh\nprintf '/home/private/tool 1.0\\n'\n", encoding="utf-8")
+        pathy.chmod(0o700)
+        self.assertNotIn("/home/private", Adapter("codex", str(pathy)).probe()["version"])
+
+    def test_adapter_timeout_kills_process_group_and_bounds_output(self):
+        pidfile=Path(self.tmp.name)/"child.pid"; script=Path(self.tmp.name)/"forking"
+        script.write_text("#!/bin/sh\nyes X &\necho $! > '%s'\nsleep 30\n"%pidfile,encoding="utf-8"); script.chmod(0o700)
+        result=Adapter("codex",str(script),timeout_seconds=.1).probe()
+        self.assertEqual(result["error"],"version probe timed out")
+        if pidfile.exists():
+            child=int(pidfile.read_text().strip())
+            for _ in range(20):
+                try: os.kill(child,0)
+                except ProcessLookupError: break
+                time.sleep(.01)
+            else: self.fail("probe descendant survived timeout")
 
     def test_adapter_observer_uses_only_operator_attested_receipts(self):
         script = Path(self.tmp.name) / "fake-adapter"
@@ -53,10 +71,11 @@ class SurfaceSafetyTests(unittest.TestCase):
         script.write_text("#!/bin/sh\ntouch %s\nprintf 'fake 1.0\\n'\n" % marker, encoding="utf-8")
         script.chmod(0o700)
         self.store.record_adapter_receipt(
-            "codex", "fake 1.0", "READY", "READY", "f" * 64, "e" * 64,
+            "codex", "fake 1.0", "READY", "READY", "f" * 64, hashlib.sha256(script.read_bytes()).hexdigest(),
             "ISOLATED_ROUTE_PROBE", 600,
         )
-        server = serve(self.store, [Adapter("codex", str(script))], port=0)
+        adapter=Adapter("codex",str(script))
+        server = serve(self.store, [adapter], port=0)
         try:
             status, body, _ = self.request(server, "GET", "/v1/adapters")
             self.assertEqual(status, 200)
@@ -64,11 +83,14 @@ class SurfaceSafetyTests(unittest.TestCase):
             result = json.loads(body)[0]
         finally:
             server.server_close()
+        self.assertFalse(result["ready"])
+        identity=validate_identities([adapter],self.store.snapshot()["adapter_receipts"])
+        result=statuses([],self.store.snapshot()["adapter_receipts"],identities=identity)[0]
         self.assertTrue(result["ready"])
         self.assertEqual(result["attestation"], "operator-attested")
         self.assertNotIn("note", result)
         stale = dict(self.store.snapshot()["adapter_receipts"][0], expires_at=0)
-        result = statuses([], [stale], now=1)[0]
+        result = statuses([], [stale], now=1, identities={"codex":{"current":True,"checked_at":1}})[0]
         self.assertFalse(result["ready"])
         self.assertFalse(result["auth_ready"])
         self.assertFalse(result["route_ready"])
@@ -118,6 +140,27 @@ class SurfaceSafetyTests(unittest.TestCase):
             self.assertEqual(status, 400)
         finally:
             server.server_close()
+
+    def test_event_cursor_pages_forward_without_history_gap(self):
+        for number in range(110): self.store.incident("test",str(number))
+        server=serve(self.store,[],port=0)
+        try:
+            status,body,_=self.request(server,"GET","/v1/events?after=0")
+            first=json.loads(body); self.assertEqual(status,200); self.assertEqual(len(first),100)
+            self.assertEqual([row["seq"] for row in first],sorted(row["seq"] for row in first))
+            status,body,_=self.request(server,"GET","/v1/events?after=%d"%first[-1]["seq"])
+            second=json.loads(body); self.assertEqual(status,200); self.assertTrue(second)
+            self.assertEqual(second[0]["seq"],first[-1]["seq"]+1)
+        finally: server.server_close()
+
+    def test_reconciliation_observer_is_path_free_summary(self):
+        self.store.record_reconciliation(self.campaign,{"inventory_at":1.0,"safe_to_promote":False,"worktree_count":17,"dirty_worktree_count":3,"disposition_counts":{"EXTERNAL_UNRECONCILED":17},"local_main_ahead":0,"local_main_behind":3,"cached_origin_main":"a"*40,"remote_ref_freshness":"unknown; cached local ref; no fetch performed","repo":"/home/private/kizuki"})
+        server=serve(self.store,[],port=0)
+        try:
+            status,body,_=self.request(server,"GET","/v1/reconciliation"); result=json.loads(body)
+            self.assertEqual(status,200); self.assertEqual(result["worktree_count"],17); self.assertEqual(result["local_main_behind"],3)
+            self.assertNotIn(b"/home/private",body); self.assertFalse(result["safe_to_promote"])
+        finally: server.server_close()
 
     def test_observer_dtos_exclude_sensitive_stored_payloads(self):
         secret = "SENSITIVE-UNPUBLISHABLE-STRING"

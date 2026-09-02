@@ -2,6 +2,7 @@ import os
 import stat
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -95,11 +96,38 @@ class CoreSafetyTests(unittest.TestCase):
         version += 1; next_controller.task_state(task,"READY",version)
         self.assertGreater(next_controller.acquire(task,"scope/test","new"),token)
         next_controller.close()
+    def test_recovery_retires_all_leases_and_expired_owner_cannot_add_scope(self):
+        _,task=self.campaign_task(); token=self.store.acquire(task,"scope/test","old",ttl=.05)
+        time.sleep(.06)
+        with self.assertRaises(FencedError): self.store.acquire(task,"scope/extra","old")
+        version=self.store.snapshot()["tasks"][0]["version"]
+        self.store.task_state(task,"RECOVERING",version)
+        self.assertEqual(self.store.snapshot()["leases"],[])
+        version+=1; self.store.task_state(task,"READY",version)
+        new_token=self.store.acquire(task,"scope/new","new")
+        current_version=self.store.snapshot()["tasks"][0]["version"]
+        with self.assertRaises(FencedError): self.store.task_state(task,"RUNNING",current_version,"scope/test","old",token)
+        self.assertGreater(new_token,0)
+    def test_ready_task_rejects_lingering_live_owner(self):
+        _,task=self.campaign_task(); self.store.acquire(task,"scope/test","old")
+        # Simulate a valid legacy ledger event that changed state without lease retirement.
+        self.store._write(lambda:None,"task.state",{"id":task,"state":"READY"})
+        with self.assertRaises(ConflictError):
+            self.store.acquire(task,"scope/new","new")
+    def test_adapter_reason_code_must_match_state(self):
+        self.store.claim_controller()
+        with self.assertRaisesRegex(GuardError,"contradicts"):
+            self.store.record_adapter_receipt("codex","v1","READY","READY","a"*64,"b"*64,"AUTH_CHECK",600)
     def test_reconcile_marks_external_and_permissions_private(self):
         repo=Path(self.tmp.name)/"repo"; subprocess.run(["git","init","-q","-b","main",str(repo)],check=True)
         subprocess.run(["git","-C",str(repo),"config","user.email","x@y.invalid"],check=True); subprocess.run(["git","-C",str(repo),"config","user.name","x"],check=True)
         (repo/"a").write_text("a"); subprocess.run(["git","-C",str(repo),"add","a"],check=True); subprocess.run(["git","-C",str(repo),"commit","-qm","a"],check=True); (repo/"dirty").write_text("x")
+        first=subprocess.check_output(["/usr/bin/git","-C",str(repo),"rev-parse","HEAD"],text=True).strip()
+        subprocess.run(["/usr/bin/git","-C",str(repo),"update-ref","refs/remotes/origin/main",first],check=True)
+        (repo/"b").write_text("b"); subprocess.run(["/usr/bin/git","-C",str(repo),"add","b"],check=True); subprocess.run(["/usr/bin/git","-C",str(repo),"commit","-qm","b"],check=True)
         evidence=readonly_reconcile(str(repo)); self.assertFalse(evidence["safe_to_promote"]); self.assertEqual(evidence["worktrees"][0]["disposition"],"EXTERNAL_UNRECONCILED")
+        self.assertEqual(evidence["cached_origin_main"],first); self.assertEqual((evidence["local_main_ahead"],evidence["local_main_behind"]),(1,0))
+        self.assertEqual(evidence["worktree_count"],1); self.assertEqual(evidence["dirty_worktree_count"],1)
         for path in (self.store.root,self.store.lock_path,self.store.controller_path,self.store.db_path): self.assertEqual(stat.S_IMODE(path.stat().st_mode)&0o077,0)
     def test_state_symlinks_are_rejected(self):
         self.store.close()

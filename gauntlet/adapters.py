@@ -1,13 +1,61 @@
 """Fail-closed, probe-only harness adapters."""
 import os
+import re
+import signal
 import subprocess
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from .safe_io import SafeIOError, sha256_regular_nofollow
 
 _PROBES = {"codex": ("--version",), "claude": ("--version",), "cursor": ("--version",), "grok": ("--version",)}
 _SECRET_MARKERS = ("token", "secret", "password", "authorization", "bearer", "api_key", "apikey")
+
+
+def _bounded_version(argv, timeout, env, limit=4096):
+    """Run one fixed version argv with bounded memory and process-group cleanup."""
+    proc=subprocess.Popen(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,env=env,start_new_session=True)
+    output=bytearray(); truncated=[False]
+    def drain():
+        try:
+            while True:
+                chunk=proc.stdout.read(65536)
+                if not chunk: return
+                remaining=limit-len(output)
+                if remaining>0: output.extend(chunk[:remaining])
+                if len(chunk)>remaining: truncated[0]=True
+        except (OSError,ValueError):
+            return
+    reader=threading.Thread(target=drain,daemon=True); reader.start(); timed_out=False
+    try:
+        try: proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out=True
+            try: os.killpg(proc.pid,signal.SIGTERM)
+            except ProcessLookupError: pass
+            try: proc.wait(timeout=.25)
+            except subprocess.TimeoutExpired:
+                try: os.killpg(proc.pid,signal.SIGKILL)
+                except ProcessLookupError: pass
+                proc.wait(timeout=1)
+    finally:
+        # A launcher may exit after leaving descendants holding the output pipe.
+        try: os.killpg(proc.pid,signal.SIGKILL)
+        except ProcessLookupError: pass
+        if proc.poll() is None:
+            try: proc.wait(timeout=1)
+            except subprocess.TimeoutExpired: pass
+        reader.join(timeout=1)
+        if reader.is_alive():
+            try: proc.stdout.close()
+            except (OSError,AttributeError): pass
+            reader.join(timeout=1)
+        else:
+            try: proc.stdout.close()
+            except (OSError,AttributeError): pass
+    return proc.returncode,bytes(output),timed_out,truncated[0]
 
 
 def _safe_text(value, limit=300):
@@ -15,6 +63,7 @@ def _safe_text(value, limit=300):
     value = " ".join((value or "").replace("\x00", "").split())
     if any(marker in value.lower() for marker in _SECRET_MARKERS):
         return "[redacted]"
+    value = re.sub(r"file:///\S+|(?<![A-Za-z0-9._-])/(?:[^\s]+)", "[path]", value)
     return value[:limit]
 
 
@@ -52,19 +101,23 @@ class Adapter:
             # Version discovery gets an empty disposable HOME. It is never an
             # authentication or route check and cannot inherit harness config.
             with tempfile.TemporaryDirectory(prefix="kizuki-gauntlet-probe-") as probe_home:
-                completed = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                           stderr=subprocess.STDOUT, text=True,
-                                           timeout=max(0.1, min(float(self.timeout_seconds), 15.0)),
-                                           env={"PATH": "/usr/bin:/bin", "HOME": probe_home, "LANG": "C", "LC_ALL": "C"}, check=False)
+                code,output,timed_out,truncated = _bounded_version(
+                    argv,max(0.1,min(float(self.timeout_seconds),15.0)),
+                    {"PATH":"/usr/bin:/bin","HOME":probe_home,"LANG":"C","LC_ALL":"C"},
+                )
         except subprocess.TimeoutExpired:
             result["error"] = "version probe timed out"
             return result
         except OSError:
             result["error"] = "version probe could not start"
             return result
-        result["exit_code"] = completed.returncode
-        result["version"] = _safe_text(completed.stdout)
-        result["version_probe_ok"] = completed.returncode == 0
+        if timed_out:
+            result["error"] = "version probe timed out"
+            return result
+        result["exit_code"] = code
+        result["version"] = _safe_text(output.decode("utf-8","replace"))
+        result["version_output_truncated"] = truncated
+        result["version_probe_ok"] = code == 0
         # A version command is not authentication or a real route receipt.
         # Keep readiness false until a separately persisted, approved route test exists.
         if not result["version_probe_ok"]:
@@ -83,7 +136,21 @@ def defaults(config_adapters=None):
                     float(configured.get(name, {}).get("timeout_seconds", 5))) for name, path in paths.items()]
 
 
-def statuses(_adapters=(), receipts=(), now=None):
+def validate_identities(adapters, receipts):
+    """Hash configured executables once, outside observer request handling."""
+    checked_at=time.time(); configured={adapter.name:adapter for adapter in adapters}; result={}
+    for receipt in receipts:
+        name=receipt.get("name"); adapter=configured.get(name); current=False
+        if adapter is not None:
+            executable=adapter._resolved()
+            if executable is not None:
+                try: current=sha256_regular_nofollow(executable,1024**3)==receipt.get("executable_sha256")
+                except SafeIOError: current=False
+        result[name]={"current":current,"checked_at":checked_at}
+    return result
+
+
+def statuses(_adapters=(), receipts=(), now=None, identities=None):
     """Project persisted operator attestations without touching an executable.
 
     ``_adapters`` is retained for compatibility with existing callers, but is
@@ -93,7 +160,7 @@ def statuses(_adapters=(), receipts=(), now=None):
     now = time.time() if now is None else now
     allowed_auth = {"READY", "FAILED", "UNKNOWN"}
     allowed_route = {"READY", "QUOTA_BLOCKED", "FAILED", "UNKNOWN"}
-    by_name = {}
+    by_name = {}; identities=identities or {}
     for receipt in receipts:
         if not isinstance(receipt, dict):
             continue
@@ -111,15 +178,26 @@ def statuses(_adapters=(), receipts=(), now=None):
         expires_at = receipt.get("expires_at")
         if auth_status not in allowed_auth or route_status not in allowed_route:
             continue
+        valid_pairs={
+            "ISOLATED_ROUTE_PROBE": {("READY","READY")},
+            "PROVIDER_QUOTA_BLOCKED": {("READY","QUOTA_BLOCKED")},
+            "AUTH_CHECK": {("READY","UNKNOWN"),("FAILED","UNKNOWN"),("UNKNOWN","UNKNOWN")},
+            "PROBE_FAILED": {("FAILED","FAILED"),("UNKNOWN","FAILED")},
+        }
         if not isinstance(version, str) or not isinstance(evidence, str) or len(evidence) != 64:
             continue
         if not isinstance(executable, str) or len(executable) != 64:
             continue
         if method != "operator-attested-isolated-probe-v1" or reason_code not in {"ISOLATED_ROUTE_PROBE", "PROVIDER_QUOTA_BLOCKED", "AUTH_CHECK", "PROBE_FAILED"}:
             continue
+        if (auth_status,route_status) not in valid_pairs[reason_code]:
+            continue
         if not isinstance(checked_at, (int, float)) or not isinstance(expires_at, (int, float)):
             continue
+        identity=identities.get(name,{})
+        identity_current=identity.get("current") is True
         fresh = expires_at > now
+        effective=fresh and identity_current
         by_name[name] = {
             "name": name,
             "version": version,
@@ -133,14 +211,16 @@ def statuses(_adapters=(), receipts=(), now=None):
             "expires_at": expires_at,
             "attestation": "operator-attested",
             "fresh": fresh,
-            "auth_ready": bool(fresh and auth_status == "READY"),
-            "route_ready": bool(fresh and route_status == "READY"),
-            "ready": bool(fresh and auth_status == "READY" and route_status == "READY"),
+            "identity_current": identity_current,
+            "identity_checked_at": identity.get("checked_at"),
+            "auth_ready": bool(effective and auth_status == "READY"),
+            "route_ready": bool(effective and route_status == "READY"),
+            "ready": bool(effective and auth_status == "READY" and route_status == "READY"),
             "execution_enabled": False,
         }
     missing = lambda name: {
         "name": name, "auth_status": "UNKNOWN", "route_status": "UNKNOWN",
         "attestation": "missing", "fresh": False, "auth_ready": False,
-        "route_ready": False, "ready": False, "execution_enabled": False,
+        "identity_current": False, "route_ready": False, "ready": False, "execution_enabled": False,
     }
     return [by_name.get(name, missing(name)) for name in _PROBES]

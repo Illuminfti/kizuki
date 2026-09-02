@@ -12,8 +12,15 @@ Restart=on-failure
 RestartSec=5
 NoNewPrivileges=yes
 PrivateTmp=yes
+PrivateDevices=yes
 ProtectSystem=strict
 ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
 ReadWritePaths=/home/ubuntu/.local/state/kizuki-gauntlet
 ReadOnlyPaths=/home/ubuntu/LifeOS/operations/kizuki-gauntlet
 CapabilityBoundingSet=
@@ -22,6 +29,8 @@ RestrictSUIDSGID=yes
 LockPersonality=yes
 RestrictRealtime=yes
 RestrictAddressFamilies=AF_UNIX AF_INET
+RestrictNamespaces=yes
+SystemCallArchitectures=native
 MemoryDenyWriteExecute=yes
 
 [Install]
