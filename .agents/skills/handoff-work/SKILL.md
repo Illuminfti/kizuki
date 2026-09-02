@@ -5,6 +5,22 @@ description: Preserve and transfer Kizuki work safely at a session boundary with
 
 # Handoff work
 
+## Binding context (read first)
+
+Read `docs/CURRENT.md`, `docs/decision-log.md` and
+`rfcs/0002-autonomous-canon.md` before anything else in this playbook. They
+are binding and override every other document in the tree, including this
+one. Never write, restate or re-derive a superseded policy as current:
+owner-invoked promotion as the canon write path, or any owner review queue
+or approval step (D9, D10; corrections go through MCP `correct` and
+`kizuki tell`, D14); owner labeling of sensitivity (D11; auto-labeled,
+private by default); a zero-model floor that writes canon (D12; capture,
+ledger, search, timeline, context, audit and undo stay model-free); a
+SQLite-only rule for derived retrieval (D13; retrieval sits behind a
+versioned port with its own rebuildable store under the vault); an
+owner-started daemon (D15; `kizuki init` installs it); or the review gate as
+the product's moat (C8).
+
 ## Preserve
 
 1. Re-run repository status and identify every modified, staged, untracked, and

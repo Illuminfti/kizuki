@@ -1,21 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync, rmSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseFrontmatter } from "@kizuki/core";
-import type { SearchHit } from "@kizuki/core";
+import {
+  indexPage,
+  initSearch,
+  openLedger,
+  serializePage,
+} from "@kizuki/core";
+import type { CanonPage, SearchHit } from "@kizuki/core";
 import { createHelpers } from "./helpers";
 
 const { cleanup, runCli, tempVault } = createHelpers();
 afterEach(cleanup);
-
-function pendingIds(stdout: string): string[] {
-  return stdout
-    .trimEnd()
-    .split("\n")
-    .filter((line) => /^01[A-Z0-9]{24}\s/.test(line))
-    .map((line) => line.split(/\s+/)[0] ?? "")
-    .filter((id) => id.length > 0);
-}
 
 function importNotes(setup: ReturnType<typeof tempVault>) {
   const imported = runCli(
@@ -27,6 +23,51 @@ function importNotes(setup: ReturnType<typeof tempVault>) {
   );
   expect(imported.exitCode).toBe(0);
   return imported;
+}
+
+function seedCanonPage(
+  setup: ReturnType<typeof tempVault>,
+  {
+    id,
+    relPath,
+    body,
+    status = "active",
+  }: {
+    id: string;
+    relPath: string;
+    body: string;
+    status?: "active" | "archived";
+  },
+): string {
+  const data = {
+    id,
+    title: id,
+    type: "fact",
+    status,
+    sensitivity: "personal",
+    sources: ["event:fixture"],
+  };
+  const page: CanonPage = {
+    id,
+    path: relPath,
+    relPath,
+    data,
+    body,
+  };
+  writeFileSync(
+    join(setup.vault, relPath),
+    serializePage({ data, body }),
+    "utf8",
+  );
+
+  const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+  try {
+    initSearch(db);
+    indexPage(db, page);
+  } finally {
+    db.close();
+  }
+  return relPath;
 }
 
 describe("query", () => {
@@ -42,16 +83,11 @@ describe("query", () => {
   test("--scope canon and --scope ledger split labeled pages from unlabeled events", () => {
     const setup = tempVault();
     importNotes(setup);
-    const listed = runCli(setup.env, "review", "--list");
-    const ada = listed.stdout
-      .split("\n")
-      .find((line) => line.includes("acme"));
-    const id = ada?.split(/\s+/)[0];
-    expect(id).toBeDefined();
-    expect(
-      runCli(setup.env, "promote", id ?? "", "--sensitivity", "personal")
-        .exitCode,
-    ).toBe(0);
+    seedCanonPage(setup, {
+      id: "fact:acme",
+      relPath: "facts/acme.md",
+      body: "acme canonical fact",
+    });
 
     const canon = runCli(setup.env, "query", "acme", "--scope", "canon");
     expect(canon.exitCode).toBe(0);
@@ -66,69 +102,35 @@ describe("query", () => {
 
   test("held and archived pages are never returned", () => {
     const setup = tempVault();
-    importNotes(setup);
-    const listed = runCli(setup.env, "review", "--list");
-    const ada = listed.stdout
-      .split("\n")
-      .find((line) => line.includes("acme"));
-    const id = ada?.split(/\s+/)[0];
-    expect(id).toBeDefined();
-    const promoted = runCli(
-      setup.env,
-      "promote",
-      id ?? "",
-      "--sensitivity",
-      "personal",
-    );
-    expect(promoted.exitCode).toBe(0);
-    const pagePath = promoted.stdout.match(/^page_path=(.+)$/m)?.[1];
-    expect(pagePath).toBeDefined();
-    const sources = parseFrontmatter(readFileSync(pagePath ?? "", "utf8")).data[
-      "sources"
-    ];
-    const source =
-      Array.isArray(sources) && typeof sources[0] === "string"
-        ? sources[0]
-        : undefined;
-    expect(source).toBeDefined();
+    const heldPath = seedCanonPage(setup, {
+      id: "fact:held",
+      relPath: "facts/held.md",
+      body: "heldword",
+    });
+    seedCanonPage(setup, {
+      id: "fact:archived",
+      relPath: "facts/archived.md",
+      body: "archivedword",
+      status: "archived",
+    });
 
-    const purged = runCli(
-      setup.env,
-      "purge",
-      "--event",
-      source ?? "",
-      "--reason",
-      "test",
-    );
-    expect(purged.exitCode).toBe(0);
-    expect(purged.stdout).toContain("holds=1");
-    const held = runCli(setup.env, "query", "acme");
-    expect(held.stdout).toBe("");
+    const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+    try {
+      db.query(
+        `INSERT INTO canon_holds (page_path, proposal_id, reason, held_at)
+         VALUES (?, ?, ?, ?)`,
+      ).run(
+        heldPath,
+        "fixture-hold",
+        "source purge",
+        "2026-09-01T00:00:00Z",
+      );
+    } finally {
+      db.close();
+    }
 
-    const other = listed.stdout
-      .split("\n")
-      .find((line) => line.includes("river-stone"));
-    const otherId = other?.split(/\s+/)[0];
-    expect(otherId).toBeDefined();
-    expect(
-      runCli(setup.env, "promote", otherId ?? "", "--sensitivity", "personal")
-        .exitCode,
-    ).toBe(0);
-    rmSync(join(setup.notes, "grace.md"));
-    const synced = runCli(setup.env, "sync", "markdown-folder");
-    expect(synced.stdout).toContain("retractions_filed=1");
-    const deletion = runCli(
-      setup.env,
-      "review",
-      "--list",
-      "--kind",
-      "deletion",
-    );
-    const deletionId = pendingIds(deletion.stdout)[0];
-    expect(deletionId).toBeDefined();
-    expect(runCli(setup.env, "promote", deletionId ?? "").exitCode).toBe(0);
-    const archived = runCli(setup.env, "query", "river-stone");
-    expect(archived.stdout).toBe("");
+    expect(runCli(setup.env, "query", "heldword").stdout).toBe("");
+    expect(runCli(setup.env, "query", "archivedword").stdout).toBe("");
   });
 
   test("tombstoned records never return their events", () => {
@@ -142,16 +144,11 @@ describe("query", () => {
 
   test("--json lines parse as SearchHit", () => {
     const setup = tempVault();
-    importNotes(setup);
-    const listed = runCli(setup.env, "review", "--list");
-    const ada = listed.stdout
-      .split("\n")
-      .find((line) => line.includes("acme"));
-    const id = ada?.split(/\s+/)[0];
-    expect(
-      runCli(setup.env, "promote", id ?? "", "--sensitivity", "personal")
-        .exitCode,
-    ).toBe(0);
+    seedCanonPage(setup, {
+      id: "fact:acme",
+      relPath: "facts/acme.md",
+      body: "acme canonical fact",
+    });
 
     const result = runCli(setup.env, "query", "acme", "--json");
     expect(result.exitCode).toBe(0);

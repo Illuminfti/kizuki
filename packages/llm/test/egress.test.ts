@@ -39,14 +39,17 @@ describe("egress surface of the llm package", () => {
     });
   });
 
-  test("the allowlist names exactly those two files with a reason", () => {
+  test("the allowlist names those two files with a reason", () => {
     const entries = parseAllowlist(
       readFileSync(join(repoRoot, "scripts/network-allowlist.txt"), "utf8"),
     );
-    expect(entries.map((entry) => entry.path)).toEqual([
+    const own = entries.filter((entry) =>
+      entry.path.startsWith("packages/llm/"),
+    );
+    expect(own.map((entry) => entry.path)).toEqual([
       "packages/llm/src/transport.ts",
       "packages/llm/test/fake-endpoint.ts",
     ]);
-    for (const entry of entries) expect(entry.reason.length).toBeGreaterThan(0);
+    for (const entry of own) expect(entry.reason.length).toBeGreaterThan(0);
   });
 });

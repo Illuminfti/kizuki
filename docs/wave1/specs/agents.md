@@ -1,4 +1,30 @@
+> **Superseded owner-gate framing, 2026-09-02.** Propose-only writes are
+> incomplete. RFC 0002 adds MCP `correct`. Reissue `TOOLS` against
+> `rfcs/0002-autonomous-canon.md`.
+
 # Lane: agents — identity, grants, audit, enforcement
+
+## Decision-log deltas (2026-09-02)
+
+- The read-first framing "read grants with a sensitivity ceiling,
+  propose-only writes, rate limits and audit" is superseded. Serving exposes
+  two write tools, `propose` and `correct` (D14, RFC 0002 §6.1). `TOOLS` in
+  this spec already lists both; the surrounding prose must not describe the
+  write authority as proposal-only.
+- `correct` is owner-tier by default, because a harness relaying the owner's
+  sentence is the owner speaking. Three protections make that safe and are
+  part of this lane: a tool call is never reachable from captured text, the
+  receipt records `relayed_by`, and `Grant.tools` may exclude `correct` or
+  set `relay_owner_corrections: false` to downgrade the tier to
+  `owner_authored` (RFC 0002 §6.4).
+- `DEFAULT_GRANT.ceiling` stays `personal`. Add the `OWNER_AGENT_GRANT`
+  preset with `ceiling: "private"`, created by
+  `kizuki agent add <name> --owner-agent` (RFC 0002 §8.4).
+- Sensitivity is never owner-labeled (D11). Enforcement order is unchanged
+  and stays below the prompt layer: `held`, then `missing_sensitivity`, then
+  `above_ceiling`, then type, subject and time. A ceiling filter fails
+  closed: a scope that yields nothing returns nothing, and widening it
+  because the narrow scope was empty is a security bug (RFC 0002 §8.4, §9.2).
 
 Package: `packages/core` only, new directory `src/agents/`. Read
 CONVENTIONS.md first. Do NOT edit `ledger/`, `staging/`, `vault/`,
@@ -46,7 +72,7 @@ CREATE INDEX IF NOT EXISTS agent_audit_by_agent ON agent_audit(agent_id, at);
 ## 2. API (`src/agents/`)
 
 ```ts
-export const TOOLS = ['search','get_page','query_entities','timeline','context_packet','graph_neighbors','system_health','propose'] as const
+export const TOOLS = ['search','get_page','query_entities','timeline','context_packet','graph_neighbors','system_health','propose','correct'] as const
 export type Tool = typeof TOOLS[number]
 export const SENSITIVITY_ORDER = { public: 0, personal: 1, private: 2 } as const
 export interface Grant { ceiling: Sensitivity; types: string[] | null; subjects: string[] | null; since: string | null; until: string | null; tools: Tool[]; rate_limit_per_minute: number }

@@ -1,4 +1,7 @@
-# The only tracked files under packages/ that may touch the network (invariant 6).
-# Format: <repo-relative path>:<reason>. A stale line fails verification.
+# Permitted network call sites. Format: <tracked path>:<reason>
+# An entry is stale (and fails the gate) when the path is untracked, outside
+# packages/, or produces zero findings. Do not add a path until the call exists.
+packages/core/src/contracts/remote.ts:loopback port adapter; TCP is restricted to loopback and Unix sockets stay local
+packages/core/test/contracts/remote-child.ts:loopback child server for remote adapter parity tests
 packages/llm/src/transport.ts:user-configured model endpoint; the single fetch call of @kizuki/llm
 packages/llm/test/fake-endpoint.ts:loopback fake model endpoint for tests (127.0.0.1, ephemeral port)

@@ -8,7 +8,6 @@ import {
   fileProposal,
   initStaging,
   listProposals,
-  setProposalStatus,
 } from "@kizuki/core/staging";
 import { writeLlmConfig } from "../src/config";
 import type { LlmConfig } from "../src/config";
@@ -342,20 +341,6 @@ describe("idempotency", () => {
     expect(listProposals(built.db, { limit: 100 })).toHaveLength(filed);
   });
 
-  test("a draft the owner rejected stays rejected", async () => {
-    const built = harness();
-    built.add({ sensitivity_hint: "public" });
-    built.config();
-    await enrich(built, { producers: ["summary"] });
-    const proposal = listProposals(built.db, { limit: 10 })[0];
-    if (proposal === undefined) throw new Error("no proposal was filed");
-    setProposalStatus(built.db, proposal.proposal_id, "rejected", "not useful");
-    built.db.query("DELETE FROM llm_enrichments").run();
-
-    const receipt = await enrich(built, { producers: ["summary"] });
-    expect(receipt.counts.suppressed).toBe(1);
-    expect(receipt.counts.proposals_filed).toBe(0);
-  });
 });
 
 describe("stopping", () => {

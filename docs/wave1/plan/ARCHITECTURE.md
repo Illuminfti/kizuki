@@ -1,5 +1,12 @@
 # Kizuki — architecture
 
+> **Superseded in part on 2026-09-02.** `docs/CURRENT.md`, `docs/decision-log.md`
+> and `rfcs/0002-autonomous-canon.md` are binding: autonomous canon with no
+> owner review gate, auto-labeled sensitivity, a configured model required for
+> the world model, retrieval behind a port, an MCP `correct` tool, an always-on
+> daemon installed at init, and a modular monolith with pluggable ports. This
+> document is a historical record; where it conflicts, the binding documents win.
+
 Your life, queryable as a CLI and MCP. Not a harness; hosts no agents. This
 document is the build target for Wave 1–5 and the constraint set for GPT Pro's
 deep-model RFCs. Fable's design calls are marked as such; everything traceable
@@ -14,11 +21,19 @@ to a settled decision cites the decision log in
    canon with one command.
 3. Nothing writes canon except an owner-invoked promote. No scheduled path may
    write canon — enforced by a test, not a docstring. (Estate auto-promotion
-   lesson.)
+   lesson.) Superseded 2026-09-02, see `docs/decision-log.md` D9 and D10, and
+   RFC 0002 §2.1: the loop writes canon; every write carries provenance,
+   confidence, sensitivity, a writer stamp and before/after hashes, and is
+   reversible by receipt; there is no owner review queue and no owner
+   approval step.
 4. Append-only event ledger; purge is physical deletion plus a receipt, never
    an in-place rewrite. (mem0 ADD-only retreat; honest-deletion doctrine.)
 5. Deterministic floor: capture, dedup, staging, search, review, promote all
    work with zero LLM configured. LLM is strictly additive enrichment.
+   Superseded 2026-09-02, see `docs/decision-log.md` D12: capture, dedup, the
+   ledger, search, timeline, context packets, audit and undo run with zero
+   models; canon writing requires a configured model and `doctor` reports it
+   as off when there is none.
 6. Zero phone-home: no network call except user-configured connectors and the
    user-configured model endpoint. CI asserts no telemetry SDK in the
    dependency tree and runs a network-denylist test.
@@ -100,11 +115,19 @@ Repairs baked in from the lifeos-oss autopsy: spine-computed `content_hash`
   ledger, never inline from connector output.
 - Tombstones (`deleted: true`) propagate: staging proposals citing a dead
   event are withdrawn automatically; canon pages citing it enter the owner's
-  review queue (invariant 3 — no silent canon edit).
+  review queue (invariant 3 — no silent canon edit). Superseded 2026-09-02,
+  see `docs/decision-log.md` D9, D10: an affected page is rewritten by the
+  receipted writer under a receipt and is reversible by `kizuki undo`; no
+  page waits in a queue.
 - **Purge** (`kizuki purge --event|--subject|--connector`): physical DELETE of
   events + blobs + derived rows, cascade to open proposals, receipt appended
   to `event_purges` (event_id, reason, purged_at). Canon pages citing purged
-  events go to the review queue as a purge packet. Subject-keyed purge works
+  events go to the review queue as a purge packet. Superseded 2026-09-02, see
+  `docs/decision-log.md` D9, D10 and RFC 0002 §13: purge is two-phase and
+  verifiable across every store, including the retrieval engine;
+  `kizuki purge --verify <receipt>` prints an absence proof per store, an
+  unresolved purge operation is a `doctor` failure, and redaction is written
+  by the receipted writer rather than queued. Subject-keyed purge works
   day one (decision 4).
 
 ## 3. Connectors
@@ -182,7 +205,9 @@ interface Proposal {
 }
 ```
 
-- **Deterministic floor producers** (no LLM): sender/thread/date entity
+- **Deterministic floor producers** (no LLM; the model-free producer survives
+  under `docs/decision-log.md` D12, but it does not write canon on its own —
+  canon writing requires a configured model): sender/thread/date entity
   candidates, calendar events → typed pages, health samples → daily rollups,
   file imports → source-faithful pages, contact aggregation. Every event
   yields at least a mechanical staging trace.
@@ -241,6 +266,11 @@ reviewed, next_review`; `x-*` namespace free for private extensions
 ## 7. Derived layers (all rebuildable, `kizuki rebuild`)
 
 - **Search:** SQLite FTS5 over canon + ledger text — the deterministic floor
+  (Superseded in part 2026-09-02, see `docs/decision-log.md` D13 and D16:
+  derived retrieval sits behind the versioned port `kizuki.retrieval/v1`;
+  FTS5 is the default in-tree implementation, and another implementation may
+  own a non-SQLite store under `<vault>/.kizuki/retrieval/` provided it
+  rebuilds from ledger plus canon with one command)
   for `kizuki query` and MCP search.
 - **Embeddings (optional):** local model via node-native ONNX (fastembed
   class) or the configured endpoint; stored in `embeddings`; off by default;

@@ -13,17 +13,21 @@ const DIRECTORIES = [
 
 const CANON_DOCTRINE = `# Canon
 
-Canon is reviewed Markdown on the owner's disk.
-Staging lives only in the database under \`.kizuki/\`.
-Only an owner-invoked promotion may write canon.
-Every canon page requires a \`sensitivity\` label.
+Canon is Markdown you own. A loop writes it for you from evidence it can
+name, and records a receipt for every write. Nothing here is a secret from
+you: \`kizuki audit\` shows every write with its evidence and its diff, and
+\`kizuki undo <receipt>\` reverses any of them. If a page is wrong, say so —
+\`kizuki tell "..."\` — and the page changes in the same breath. Edit these
+files by hand whenever you like; the loop treats your edits as your word
+and will not overwrite them.
 `;
 
 const SCHEMA_DOCTRINE = `# Page schema
 
 Every page requires \`id\`, \`title\`, \`type\`, \`status\`, and \`sensitivity\` frontmatter.
 Canon is reviewed Markdown; staging belongs in the database.
-Only owner promotion writes canon.
+Every page carries \`sensitivity\` and \`taint\`; a page with
+neither is never served to anyone, including you.
 Unknown frontmatter keys must use the \`x-*\` extension namespace.
 `;
 

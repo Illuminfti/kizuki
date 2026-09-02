@@ -2,6 +2,20 @@
 
 Skills are task-specific playbooks. Keep standing repository policy in `AGENTS.md`; use these files only when the task calls for their deeper workflow. Canonical skills live here. Harness-specific adapters delegate here instead of copying policy.
 
+## Binding context (read before any skill)
+
+Every skill here is subordinate to `docs/CURRENT.md`, `docs/decision-log.md`
+and `rfcs/0002-autonomous-canon.md`. Read those three first and treat them as
+overriding this catalog and each playbook. No skill, and no work performed
+under one, may restate or reintroduce a superseded policy: owner-invoked
+promotion as the canon write path, or any owner review queue or approval step
+(D9, D10; corrections go through MCP `correct` and `kizuki tell`, D14); owner
+labeling of sensitivity (D11); a zero-model floor that writes canon (D12);
+a SQLite-only rule for derived retrieval (D13); an owner-started daemon
+(D15); or the review gate as the product's moat (C8). Reviewers using
+`review-change`, `documentation-accuracy`, `security-privacy-review` or
+`release-readiness` must fail any change that reintroduces one.
+
 ## Operating skills
 
 | Skill | Use when |

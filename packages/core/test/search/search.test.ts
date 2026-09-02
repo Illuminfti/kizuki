@@ -340,9 +340,14 @@ describe("search policy and filters", () => {
     ).toEqual(["fact:public"]);
   });
 
-  test("owner search without a ceiling includes unlabeled documents", () => {
-    expect(search(policyDb(), "shared")).toHaveLength(4);
-  });
+  test.todo(
+    "retrieval-fts5 lane: owner search excludes documents without sensitivity",
+    () => {
+      expect(
+        search(policyDb(), "shared").map(({ doc_id }) => doc_id),
+      ).not.toContain("fact:unlabeled");
+    },
+  );
 
   test("scope, type, and excluded-path filters compose", () => {
     const db = searchDb();

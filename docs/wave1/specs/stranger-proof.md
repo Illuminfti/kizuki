@@ -1,4 +1,44 @@
+> **VOID as written, 2026-09-02.** The proof path treats `review` / `promote`
+> as the owner gate. Reissue against `rfcs/0002-autonomous-canon.md`.
+
 # Lane: stranger-proof — the Wave 5 exit proof as code: fresh-machine run, recorded demo, GO/NO-GO
+
+## Decision-log deltas (2026-09-02)
+
+VOID as written per `docs/CURRENT.md`; RFC 0002 §18 lanes replace this spec.
+The proof itself is not cancelled: C1 keeps the stranger proof and the estate
+cutover as the 1.0 finish line, and RFC 0002 §1.3 restates it. What is void is
+the path the proof drives.
+
+Superseded sentences, and the semantics an implementer must follow instead:
+
+- §1, "drives `init → import → review --list → promote → query`", and the
+  step list `review-list`, `promote-refused`, `promote`, `promote-private`.
+  `review` / `promote` / `reject` are leftover implemented verbs, not the
+  owner path (D10). The stranger loop is `init → connect → capture → the loop
+  writes canon → query → tell → audit → undo`, with the accepted verb set
+  `audit`, `tell`, `undo`, `context`, `timeline`, `rebuild`, `models`,
+  `serve` (RFC 0002 §2.5).
+- §1, "Nothing here writes canon (invariant 3: `promote` is invoked by the
+  script exactly as the owner would type it)". Invariant 3 is replaced
+  (RFC 0002 §2.1). The proof must show canon being written autonomously, and
+  must show the receipt and the undo that make that safe (D9).
+- §1, "Recording the TUI (`kizuki review` needs a TTY)". The TUI is the audit
+  and undo surface; what the recording shows is a receipt list, a diff, and
+  `u` to undo (D10, RFC 0002 §7.3).
+- Any GO gate that asserts a zero-model end-to-end run through canon. The
+  model-free floor covers capture, ledger, search, timeline, context, audit
+  and undo; canon writing requires a configured model, and the gate must
+  assert `doctor` says so when none is present (D12).
+- `init` in the proof now installs the daemon, so the fresh-machine script
+  must account for a user service being created and must still pass with the
+  daemon stopped (D15, RFC 0002 §2.1).
+
+What survives: scripts-only scope with zero new runtime dependencies; the
+fresh-machine sandbox with no network and no bun; the recorded demo; the
+`GO`/`NO-GO` script printing every 1.0 gate with its evidence; the
+under-15-minutes bar for a non-author with zero help; and the rule that the
+release is never green-over-red.
 
 Scope: `scripts/` only, plus `docs/`, one job appended to
 `.github/workflows/ci.yml`, four root `package.json` scripts and one README

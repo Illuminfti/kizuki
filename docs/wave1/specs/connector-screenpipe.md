@@ -1,5 +1,23 @@
 # Lane: connector-screenpipe — a read-only adapter over the screenpipe local database
 
+## Decision-log deltas (2026-09-02)
+
+- §README outline item 6, "Review-queue volume — one capture note per frame
+  is the deterministic floor … or expect a long queue". There is no review
+  queue (D10). The volume that matters is claims and canon write budget, and
+  the model-free producer's capture notes are bounded by the loop's per-run
+  and per-day budget, with every write receipted and reversible (D9,
+  RFC 0002 §4.5). The README section in this package is titled "Capture
+  volume" for that reason.
+- The connector manifest must declare `default_sensitivity` and
+  `sensitivity_floor`. Screen text and audio transcription are a local-capture
+  source class: default `private`, floor `personal`; nothing here is labeled
+  by the owner (D11, RFC 0002 §8.2).
+- Owner-invoked purge stays owner-invoked; that is unchanged. Purge is now
+  two-phase and verifiable across every store, including the retrieval
+  engine, and an unresolved purge operation is a `doctor` failure
+  (RFC 0002 §13, §2.1 invariant 14).
+
 Reconciled against `main` @ `76930db` (2026-09-02). Every path, symbol and
 flag below was grepped on that revision; anything not on main is marked NEW
 with its intended location.

@@ -1,7 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type {
   Connector,
   HealthReport,
@@ -14,9 +11,7 @@ import type { CaptureEventInput } from "../src/contracts/event";
 import { getCheckpoint } from "../src/ledger/connections";
 import { openLedger } from "../src/ledger/db";
 import { runBackfill, runBatch, runSync } from "../src/ingest/run";
-import { ownerPromote } from "../src/staging/promote";
 import { listProposals, initStaging } from "../src/staging/proposals";
-import { initVault } from "../src/vault/init";
 import { validEvent } from "./fixtures";
 
 class FixtureConnector implements Connector {
@@ -129,32 +124,6 @@ describe("runBatch", () => {
     expect(listProposals(db, { status: "withdrawn" })).toHaveLength(2);
     expect(listProposals(db, { status: "pending" })).toEqual([]);
     db.close();
-  });
-
-  test("a tombstone files a retraction for canon promoted from that record", () => {
-    const db = database();
-    const vaultPath = mkdtempSync(join(tmpdir(), "kizuki-ingest-vault-"));
-    try {
-      initVault(vaultPath);
-      runBatch(db, { events: [validEvent()], cursor: "one" });
-      const claim = listProposals(db, { kind: "claim" })[0];
-      if (claim === undefined) throw new Error("expected claim proposal");
-      ownerPromote(db, vaultPath, claim.proposal_id, {
-        sensitivity: "personal",
-      });
-
-      const result = runBatch(db, {
-        events: [{ ...validEvent(), deleted: true, text: "" }],
-        cursor: null,
-      });
-
-      expect(result.withdrawn).toBe(1);
-      expect(result.retractions_filed).toBe(1);
-      expect(listProposals(db, { kind: "deletion", status: "pending" })).toHaveLength(1);
-    } finally {
-      db.close();
-      rmSync(vaultPath, { recursive: true, force: true });
-    }
   });
 
   test("rolls back a tombstone when its cascade fails so retry can finish", () => {

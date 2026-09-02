@@ -1,5 +1,25 @@
 # Lane: ci-hardening — stranger-loop script, compiled binary, CI matrix, build-time app credentials
 
+## Decision-log deltas (2026-09-02)
+
+- The dependency on the verb set "`init import review --list --json promote
+  query doctor export version`" is superseded. `review` / `promote` /
+  `reject` are leftover implemented verbs, not the product gate (D9, D10),
+  and the accepted set adds `audit`, `tell`, `undo`, `context`, `timeline`,
+  `rebuild`, `models` and `serve` (RFC 0002 §2.5).
+- The quickstart fixture steps that extract a `proposal_id` and run
+  `promote "$ID" --sensitivity personal` are superseded twice over: by the
+  receipted writer (D9) and by auto-labeled sensitivity, which is never
+  supplied on the command line (D11, RFC 0002 §8). The fixture must drive the
+  loop and assert a receipt, a diff and an undo.
+- The zero-model claim the compile smoke asserts must be scoped: capture,
+  ledger, search, timeline, context, audit and undo run with no model; canon
+  writing requires one and `doctor` reports it as off when missing (D12).
+- The denylist gate is unchanged and binding: it scans every tracked file and
+  every reachable commit message. The retrieval engine's name may appear only
+  in `README.md` and `docs/upstream-policy.md`, with the exact spelling and
+  canonical URL the validator enforces (RFC 0002 §9.1, §18.4).
+
 Scope: `scripts/` (extend `verify.sh` and `verify-network.ts`; NEW
 `build.ts`, `quickstart.sh`, `network-allowlist.txt`), `.github/workflows/ci.yml`
 (extend the existing `test` job; add jobs), root `package.json` scripts, NEW

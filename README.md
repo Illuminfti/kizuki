@@ -4,24 +4,28 @@
 
 **Your life, queryable as a CLI.** Kizuki is a local-first personal memory
 substrate. Connectors capture source-linked evidence into an append-only
-ledger. Deterministic staging turns that evidence into proposals. The owner
-reviews those proposals and promotes accepted ones into a canonical Markdown
-vault on their own disk. The CLI queries that vault.
+ledger. An autonomous loop extracts claims, writes them into a canonical
+Markdown vault on the owner's disk with a receipt for every write, and
+refreshes retrieval. The owner corrects it in a sentence and undoes any
+write by receipt. The CLI queries that vault.
 
 An MCP serving layer for client harnesses is designed
 (see [docs/architecture.md](docs/architecture.md)) but not built. Kizuki is
 not a harness and hosts no agents. A client harness brings its own loop and
 connects here.
 
+Binding direction is [RFC 0002](rfcs/0002-autonomous-canon.md). See
+[docs/CURRENT.md](docs/CURRENT.md).
+
 ## How it works
 
 ```
 connectors
   → event ledger
-  → staging proposals
-  → owner review
+  → claims (provenance · confidence · sensitivity)
   → canon Markdown vault
   → derived (search / graph)
+  → audit & undo
   → serving (CLI today; MCP later)
   → proactive daemon (later)
 ```
@@ -29,41 +33,42 @@ connectors
 ```mermaid
 flowchart LR
   connectors --> ledger["event ledger"]
-  ledger --> staging["staging proposals"]
-  staging --> review["owner review"]
-  review --> canon["canon Markdown vault"]
+  ledger --> claims["claims"]
+  claims --> writer["receipted writer"]
+  writer --> canon["canon Markdown vault"]
   canon --> derived["derived search / graph"]
+  canon --> audit["audit & undo"]
   derived --> serving["serving: CLI today"]
   serving --> mcp["MCP later"]
   serving --> daemon["proactive daemon later"]
 ```
 
-Capture never writes canon. Only an owner-invoked promote does. Search and
+Capture never writes canon directly. The receipted writer does,
+and every write it makes can be undone by receipt. Search and
 graph are disposable. They rebuild from the ledger plus canon.
 
 ## Packages
 
-One Bun workspace. Five packages. There is no MCP package.
+One Bun workspace. Four packages. There is no MCP package.
 
 - **`@kizuki/core`** owns the durable contracts and policy boundary: event
-  ingest, the append-only ledger, connection state, staging, owner promote,
-  the Markdown vault, FTS search, graph, timeline, purge with receipts, and
-  agent identity, grants, and audit.
+  ingest, the append-only ledger, connection state, claims, the receipted
+  canon writer, undo, the Markdown vault, FTS search, graph, timeline, purge
+  with receipts, and agent identity, grants, and audit.
 - **`@kizuki/cli`** is a thin command-line composition over public core and
-  connector APIs. Verbs on this branch: `init`, `connect`, `backfill`,
-  `sync`, `import`, `review`, `promote`, `reject`, `query`, `doctor`,
-  `purge`, `export`, `version`, `llm`, `enrich`.
+  connector APIs. Implemented verbs on this branch: `init`, `connect`,
+  `backfill`, `sync`, `import`, `query`, `doctor`, `purge`, `export`,
+  `version`. Leftover Wave 1 verbs `review`, `promote`, and `reject` still
+  run; they are not the product gate. Accepted design verbs, not built:
+  `audit`, `tell`, `undo`, `context`, `timeline`, `rebuild`, `models`,
+  `serve`.
 - **`@kizuki/connectors`** owns the connector interface, the in-tree
   registry, and the shared conformance suite. Registry today:
   `kizuki.markdown-folder`, `kizuki.import-chatgpt`, `kizuki.import-claude`.
   All three read local files. No sign-in or OAuth connector is built.
-- **`@kizuki/llm`** is the optional model producer: an owner-configured,
-  budgeted, receipted pass that drafts a summary, entity candidates and
-  atomic claims into the review queue. It is the only package that may reach
-  the network, and it does nothing until the owner configures an endpoint.
-- **`@kizuki/tui`** is the owner review interface: pure state transitions and
-  rendering, with terminal I/O at the edge. The CLI `review` verb opens it
-  when stdin and stdout are a terminal.
+- **`@kizuki/tui`** is the audit and undo interface: pure state transitions and
+  rendering, with terminal I/O at the edge. The leftover CLI `review` verb
+  still opens it when stdin and stdout are a terminal.
 
 ## Data contracts
 
@@ -71,12 +76,14 @@ One Bun workspace. Five packages. There is no MCP package.
   as stored, duplicate, or error. Dedupe is
   `(connector_id, source_record_id, content_hash)`. The spine assigns
   `event_id` and `content_hash`. Callers cannot supply them.
-- **Promote.** Staging holds `kizuki.proposal/v1` records. Only
-  `ownerPromote` writes canon. Agents and automation may propose. They
-  cannot put a page.
+- **Canon writes.** Staging still holds `kizuki.proposal/v1` records on this
+  branch. Only the receipted writer in `@kizuki/core` writes canon. Agents
+  propose claims and relay corrections; they cannot put a page. The
+  receipted writer and claim store are accepted design; the leftover
+  `ownerPromote` path is the current implementation.
 - **Derived.** Search (SQLite FTS5) and graph edges rebuild from the ledger
   plus canon. `rebuildDerived` is the library call. The CLI indexes search
-  after each ingest and promote; there is no CLI rebuild verb yet, and the
+  after each ingest and leftover promote; there is no CLI rebuild verb yet, and the
   graph is not indexed on the write path.
 - **Fail closed.** A missing sensitivity label is not served. Missing
   connector credentials refuse. An unknown agent gets no access.
@@ -86,22 +93,34 @@ One Bun workspace. Five packages. There is no MCP package.
 
 The frozen contracts and invariants are in
 [docs/architecture.md](docs/architecture.md). Merged RFCs under `rfcs/`
-bind only when their status says they do.
+bind only when their status says they do. RFC 0002 is BINDING.
 
 ## Pledges
 
 - **Free local forever.** The local product is MIT. Recall is never metered.
 - **Zero phone-home.** No telemetry, no crash reports, no update checks. The
   only network calls are the owner's configured connectors and the owner's
-  configured model endpoint. Today there are zero runtime dependencies, and
-  the only network call in the tree is the model transport, allowlisted with
-  its reason in `scripts/network-allowlist.txt`; it runs only when you
-  configure an endpoint. CI greps the dependency manifests and scans every
-  tracked source file for network surface, failing on anything the allowlist
-  does not name.
+  configured model endpoint. Network
+  egress exists only in files listed in `scripts/network-allowlist.txt`,
+  each with a reason: the connectors the owner configured and the model
+  endpoint the owner configured. CI fails on any other network surface, and
+  on a stale allowlist entry. On this branch there is still no runtime
+  network and no allowlist file; the llm-port lane adds both.
 - **Your files.** Canon is Markdown on the owner's disk. Deleting Kizuki
   leaves a readable vault.
-- **Nothing writes canon but you.** Agents and automation can only propose.
+- **Nothing writes canon without a receipt.** Every write names its evidence, its
+  confidence and its writer, and `kizuki undo` reverses it.
+
+## Retrieval credit
+
+The hybrid retrieval recipe Kizuki will reimplement — reciprocal rank
+fusion, layered near-duplicate filtering, and tier-weighted finalization —
+is documented in [GBrain](https://github.com/garrytan/gbrain). Kizuki does
+not depend on that project today. The accepted design is a clean
+reimplementation with prominent credit; a permitted fork remains open for
+the entity graph only. That project is not on a package registry Kizuki can
+depend on, has no reranker, and has no local GGUF path. See
+[docs/upstream-policy.md](docs/upstream-policy.md).
 
 ## Try it (pre-alpha)
 
@@ -114,23 +133,24 @@ Config lives at `$KIZUKI_CONFIG`, else `$XDG_CONFIG_HOME/kizuki/config.toml`,
 else `$HOME/.config/kizuki/config.toml`. Only `default_vault` and named
 `[vaults]` are read. Every verb accepts `--vault <path|name>`.
 
-Wave 1 verbs:
+Implemented verbs:
 
 - `init` — create a vault and set `default_vault` when none is configured
 - `connect` — enroll a local-folder source as an opaque connection
 - `backfill` — historical sweep for one selected connection
 - `sync` — incremental sweep for one, some, or every active connection
 - `import` — connect plus backfill in one step
-- `review` — list staged proposals, or open the TUI on a terminal
-- `promote` — owner-promote one pending proposal into canon
-- `reject` — reject a pending proposal
 - `query` — full-text search over labeled canon and ledger text
 - `doctor` — report vault, connection, receipt, and hold health
 - `purge` — physically delete matching events, with a receipt
 - `export` — dump vault files and ledger tables to a directory
 - `version` — print the CLI package version
-- `llm` — configure and check the optional model endpoint
-- `enrich` — ask that endpoint for review-queue drafts
+
+Leftover Wave 1 verbs, not the product gate: `review`, `promote`, `reject`.
+They still run. RFC 0002 retires them as the owner path.
+
+Accepted design, not built: `audit`, `tell`, `undo`, `context`, `timeline`,
+`rebuild`, `models`, `serve`.
 
 Unlabeled capture is never served by `query`. Sign-in connectors are not
 wired yet.
@@ -138,46 +158,18 @@ wired yet.
 ```
 kizuki init ./vault
 kizuki import markdown-folder --source ./notes
-kizuki review --list
-kizuki promote <id> --sensitivity personal
 kizuki query acme
 kizuki doctor
 kizuki export --out ./export
 ```
 
-### Optional: a model producer
-
-Kizuki is useful with no model at all: the deterministic staging producers
-fill the review queue on their own. If you want model drafts as well, point
-the vault at an OpenAI-compatible chat-completions endpoint you control.
-
-```
-kizuki llm set --base-url http://127.0.0.1:11434/v1 --model YOUR-MODEL
-kizuki llm test
-kizuki enrich --dry-run
-kizuki enrich
-```
-
-The configuration lives in `<vault>/.kizuki/llm.toml`, mode 0600. There is
-one `fetch` in the tree, in one allowlisted file, and it goes only to the URL
-you typed; with no `llm.toml` nothing loads a network-capable path. Events
-with no sensitivity hint are not sent unless you ask (`--unlabeled send`),
-events hinted above the ceiling are never sent, a non-loopback endpoint needs
-`--allow-cloud-inference` and `https`, and an API key is given as `env:VAR`
-or `file:/absolute/path`, never pasted.
-
-Drafts arrive in `review` with `producer=llm`, below the deterministic
-floor's confidence, and are excluded from batch promotion; they reach canon
-only through `promote` like everything else. `kizuki llm show` and
-`kizuki doctor` print what is configured and when enrichment last ran. See
-[packages/llm/README.md](packages/llm/README.md) for every key.
-
 Designed, not built (see [docs/architecture.md](docs/architecture.md)):
 
-- MCP serving and a standing serve daemon
+- MCP serving, `correct`, and a standing serve daemon
+- Conversational correction (`kizuki tell`) and receipted undo
 - Sign-in and OAuth connectors
 - A compiled binary and an install path
-- CLI verbs for rebuild, disconnect, timeline, entity, and graph
+- CLI verbs for audit, rebuild, models, timeline, and context packets
 
 ## Develop
 
@@ -207,7 +199,7 @@ authorization engine. Credentials stay behind `env:` and `file:` secret
 references. They are never persisted as plaintext in SQLite, logs, fixtures,
 or Markdown.
 
-The threat model and the ten invariants live in
+The threat model and the fourteen invariants live in
 [docs/architecture.md](docs/architecture.md).
 
 ## License
