@@ -281,6 +281,7 @@ describe("correct", () => {
     );
     const winnerId = first.claim_ids[0];
     expect(winnerId).toBeDefined();
+    if (winnerId === undefined) return;
     let caught: unknown;
     try {
       await correct(
