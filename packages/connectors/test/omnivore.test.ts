@@ -339,14 +339,14 @@ test("a symlinked highlights or content directory reaches nothing", async () => 
 
 test("a highlights file that is present but unreadable refuses the import", async () => {
   await withTempRoot(async (root) => {
+    // The slug comes from the item title, so it must never be quoted back.
+    const slug = "my-quartz-heron-notes-2026";
     const exportDir = path.join(root, "export");
     await writeExport(exportDir, {
-      ...metadataFile([
-        { id: "1", slug: "notes", savedAt: "2026-01-01T09:00:00Z" },
-      ]),
+      ...metadataFile([{ id: "1", slug, savedAt: "2026-01-01T09:00:00Z" }]),
       "highlights/keep.md": "kept",
     });
-    const file = path.join(exportDir, "highlights", "notes.md");
+    const file = path.join(exportDir, "highlights", `${slug}.md`);
 
     await writeFile(file, Buffer.from([0x41, 0xff, 0x42]));
     const invalid = await rejected(async () =>
@@ -354,6 +354,8 @@ test("a highlights file that is present but unreadable refuses the import", asyn
     );
     expect(invalid.code).toBe("parse_error");
     expect(invalid.message).toContain("not valid UTF-8");
+    expect(invalid.message).toContain("metadata_0_to_9.json item 1");
+    expect(invalid.message).not.toContain(slug);
 
     await writeFile(file, "x".repeat(MAX_RECORD_BYTES + 1));
     const oversize = await rejected(async () =>
@@ -361,6 +363,8 @@ test("a highlights file that is present but unreadable refuses the import", asyn
     );
     expect(oversize.code).toBe("misconfigured");
     expect(oversize.message).toContain("import limit");
+    expect(oversize.message).toContain("metadata_0_to_9.json item 1");
+    expect(oversize.message).not.toContain(slug);
   });
 });
 

@@ -141,6 +141,40 @@ export function parseOmnivoreMetadata(
   return items;
 }
 
+/**
+ * A slug is derived from an item title, so neither it nor a path built from
+ * it may appear in a refusal. Only the reason travels out of the lookup; the
+ * caller adds the item position, which is what §0.6 allows a message to name.
+ */
+function highlightsRefusal(error: unknown): KizukiError {
+  const invalidEncoding =
+    error instanceof KizukiError && error.code === "parse_error";
+  return new KizukiError(
+    invalidEncoding ? "parse_error" : "misconfigured",
+    invalidEncoding
+      ? "highlights file is not valid UTF-8"
+      : "highlights file could not be read",
+    { cause: error },
+  );
+}
+
+async function highlightsOf(
+  files: OmnivoreFiles,
+  slug: string,
+  at: string,
+): Promise<string> {
+  try {
+    return (await files.highlight(slug))?.trimEnd() ?? "";
+  } catch (error) {
+    if (!(error instanceof KizukiError)) throw error;
+    throw new KizukiError(
+      error.code,
+      `${OMNIVORE_IMPORT_CONNECTOR_ID}: ${at}: ${error.message}`,
+      { cause: error },
+    );
+  }
+}
+
 export async function omnivoreEvents(
   files: OmnivoreFiles,
   observed_at: string,
@@ -160,7 +194,7 @@ export async function omnivoreEvents(
 
   const events: CaptureEventInput[] = [];
   for (const { item, at } of items) {
-    const highlights = (await files.highlight(item.slug))?.trimEnd() ?? "";
+    const highlights = await highlightsOf(files, item.slug, at);
     const content = await files.content(item.slug);
     // Each field is bounded on its own, so the assembled record is bounded
     // too — but a record is what the ledger stores, so it is checked as one.
@@ -272,12 +306,23 @@ export async function fsOmnivoreFiles(
       // file that is there but unreadable, oversize or not UTF-8 is a
       // refusal instead: an item stored without the owner's notes would be
       // indistinguishable from an item that never had any.
-      if ((await statRegularFile(file)) === null) return null;
-      return readBoundedUtf8(
-        file,
-        OMNIVORE_IMPORT_CONNECTOR_ID,
-        MAX_RECORD_BYTES,
-      );
+      const found = await statRegularFile(file);
+      if (found === null) return null;
+      if (found.byte_size > MAX_RECORD_BYTES) {
+        throw new KizukiError(
+          "misconfigured",
+          `highlights file exceeds the ${MAX_RECORD_BYTES} byte import limit`,
+        );
+      }
+      try {
+        return await readBoundedUtf8(
+          file,
+          OMNIVORE_IMPORT_CONNECTOR_ID,
+          MAX_RECORD_BYTES,
+        );
+      } catch (error) {
+        throw highlightsRefusal(error);
+      }
     },
     content: async (slug) => {
       if (contentDir === null || !SLUG.test(slug)) return null;
