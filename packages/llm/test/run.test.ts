@@ -366,6 +366,7 @@ describe("stopping", () => {
     built.config({ max_requests: 2 });
     const receipt = await enrich(built, { limit: 10 });
     expect(receipt.run?.stopped).toBe("budget");
+    expect(receipt.counts.sent).toBe(1);
     expect(
       built.db
         .query("SELECT count(*) AS n FROM llm_enrichments WHERE event_id = ?")
@@ -383,6 +384,8 @@ describe("stopping", () => {
       limit: 10,
     });
     expect(receipt.run?.stopped).toBe("consecutive_errors");
+    // The event was spent on even though the run gave up inside it.
+    expect(receipt.counts.sent).toBe(1);
     expect(receipt.counts.errors).toBe(3);
     expect(receipt.request_errors).toHaveLength(3);
     expect(receipt.request_errors[0]).toEqual({

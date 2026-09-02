@@ -342,11 +342,20 @@ export async function runEnrichment(
           continue;
         }
         const wrapped = wrapEvent(event, producer, config.max_event_chars);
+        // The event counts as sent the moment its first request is built, so
+        // a run that stops mid-event still reports what it spent.
+        if (!usedEvent) {
+          usedEvent = true;
+          if (dryRun) counts.would_send += 1;
+          else {
+            counts.sent += 1;
+            sentEvents += 1;
+          }
+        }
 
         if (dryRun) {
           counts.requests += 1;
           counts.input_chars += wrapped.chars;
-          usedEvent = true;
           continue;
         }
 
@@ -379,7 +388,6 @@ export async function runEnrichment(
             error_code: outcome.error.code,
             at: new Date().toISOString(),
           });
-          usedEvent = true;
           if (consecutiveErrors >= CONSECUTIVE_ERROR_LIMIT) {
             stopped = "consecutive_errors";
             break scan;
@@ -388,7 +396,6 @@ export async function runEnrichment(
         }
 
         consecutiveErrors = 0;
-        usedEvent = true;
         const parsed = parseModelJson(outcome.content);
         const validated =
           parsed === undefined
@@ -435,14 +442,7 @@ export async function runEnrichment(
         });
       }
 
-      if (usedEvent) {
-        if (dryRun) counts.would_send += 1;
-        else {
-          counts.sent += 1;
-          sentEvents += 1;
-          if (sentEvents >= limit) break scan;
-        }
-      }
+      if (usedEvent && !dryRun && sentEvents >= limit) break scan;
     }
     if (page.length < CANDIDATE_PAGE) break;
   }
