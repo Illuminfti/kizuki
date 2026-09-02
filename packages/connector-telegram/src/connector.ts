@@ -148,6 +148,13 @@ export class TelegramConnector implements Connector {
     }
     const state = parseState(text);
     const credentials = requireAppCredentials(this.#deps.credentials);
+    // Re-authentication keeps the same connection, so a second connect
+    // supersedes the first: hand its client back rather than abandon a live
+    // one for the life of the process. Only once nothing else can refuse.
+    const superseded = this.#api;
+    this.#api = null;
+    this.#self = null;
+    if (superseded !== null) await this.#disconnectQuietly(superseded);
     const api = this.#deps.api(state.session, credentials);
     await api.connect();
     let me: TelegramUser;

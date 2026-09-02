@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test";
-import { fixtureAccount } from "../src/scripted";
+import {
+  FIXTURE_CREDENTIALS,
+  FIXTURE_OBSERVED_AT,
+  ScriptedTelegramApi,
+  fixtureAccount,
+} from "../src/scripted";
+import { TelegramConnector } from "../src/connector";
 import {
   STATE_REF,
   harness,
@@ -91,4 +97,38 @@ test("connecting with the matching account never starts a login flow", async () 
     "isAuthorized",
     "me",
   ]);
+});
+
+test("connecting again lets go of the client it replaces", async () => {
+  const built: ScriptedTelegramApi[] = [];
+  const connector = new TelegramConnector(
+    { state_ref: STATE_REF },
+    {
+      api: () => {
+        const api = new ScriptedTelegramApi(fixtureAccount());
+        built.push(api);
+        return api;
+      },
+      credentials: () => FIXTURE_CREDENTIALS,
+      now: () => Date.parse(FIXTURE_OBSERVED_AT),
+      sleep: async () => {},
+    },
+  );
+
+  await connector.connect(stateResolver());
+  await connector.connect(stateResolver());
+  expect(built).toHaveLength(2);
+  // Re-authentication keeps the same connection, so the socket the first
+  // client is holding has to be handed back rather than abandoned.
+  expect(built[0]?.calls.map((call) => call.method)).toContain("disconnect");
+  expect(built[1]?.calls.map((call) => call.method)).not.toContain("disconnect");
+});
+
+test("a failed reconnect does not tear down the connection that works", async () => {
+  const { connector, api } = harness();
+  await connector.connect(stateResolver());
+  const error = await rejection(() => connector.connect(async () => "{}"));
+  expect(error.code).toBe("corrupt_state");
+  expect(api.calls.map((call) => call.method)).not.toContain("disconnect");
+  expect((await connector.health()).state).toBe("ok");
 });
