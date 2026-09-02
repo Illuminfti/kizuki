@@ -10,7 +10,12 @@ The optional model half of the loop, as two ports:
 `@kizuki/core` does not depend on this package and cannot import it, so the
 invariant boundary itself has no way to reach the network. Nothing here runs
 until a host binds `ports.llm` and `ports.producer` to these ids; a vault that
-binds neither never constructs either port and never makes a request.
+binds neither never constructs either port and never makes a request. No host
+in the tree binds them yet: nothing reads a vault's `ports` table, so both
+ports are reached today only through `registerPort` and `bindFromConfig` by
+whoever constructs a registry. That seam is exercised end to end in
+`test/boundaries.test.ts`, and the lane that ships the vault configuration
+loader is the one that registers them on a process registry.
 
 ## Egress
 
