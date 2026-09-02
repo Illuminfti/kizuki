@@ -77,6 +77,43 @@ async function highlightsOf(
   }
 }
 
+/** A folder of the export, and the identity it had when the scan found it. */
+interface ExportFolder {
+  path: string;
+  dev: number;
+  ino: number;
+}
+
+/**
+ * A listing is a snapshot: `highlights` can become a link to somewhere else
+ * between the scan and the read, and `O_NOFOLLOW` refuses only the last
+ * component of a path, not a parent that has since become a link. The folder's
+ * identity is therefore checked in the moment it is used, and again after the
+ * child was read, so a folder swapped underneath an import yields nothing
+ * rather than a route out of the export.
+ */
+async function inside<T>(
+  folder: ExportFolder,
+  body: () => Promise<T>,
+): Promise<T | null> {
+  if (!(await unchanged(folder))) return null;
+  const value = await body();
+  return (await unchanged(folder)) ? value : null;
+}
+
+async function unchanged(folder: ExportFolder): Promise<boolean> {
+  try {
+    const info = await lstat(folder.path);
+    return (
+      info.isDirectory() &&
+      info.dev === folder.dev &&
+      info.ino === folder.ino
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Highlights are shared: every item naming one slug carries that file's text.
  * The metadata budget therefore does not bound what the batch weighs, so the
@@ -192,12 +229,18 @@ export async function fsOmnivoreFiles(
   // here and never as the directory it points at: an export whose
   // `highlights` is a link elsewhere has no highlights rather than a route
   // out of the export folder.
-  const realDirectory = (name: string): string | null =>
-    entries.some((entry) => entry.name === name && entry.isDirectory())
-      ? join(dir, name)
+  const realDirectory = async (name: string): Promise<ExportFolder | null> => {
+    if (!entries.some((entry) => entry.name === name && entry.isDirectory())) {
+      return null;
+    }
+    const path = join(dir, name);
+    const info = await lstat(path).catch(() => null);
+    return info !== null && info.isDirectory()
+      ? { path, dev: info.dev, ino: info.ino }
       : null;
-  const highlightsDir = realDirectory("highlights");
-  const contentDir = realDirectory("content");
+  };
+  const highlightsDir = await realDirectory("highlights");
+  const contentDir = await realDirectory("content");
 
   const metadata = [];
   // One budget for the whole export: a per-file limit would let a folder of
@@ -224,44 +267,50 @@ export async function fsOmnivoreFiles(
       if (highlightsDir === null || !SLUG.test(slug)) return null;
       const cached = highlights.get(slug);
       if (cached !== undefined) return cached;
-      const file = join(highlightsDir, `${slug}.md`);
-      // Absence, a symlink and a directory are honestly "no highlights". A
-      // file that is there but unreadable, oversize or not UTF-8 is a
-      // refusal instead: an item stored without the owner's notes would be
-      // indistinguishable from an item that never had any.
-      const found = await statRegularFile(file);
-      if (found === null) {
+      const text = await inside(highlightsDir, async () => {
+        const file = join(highlightsDir.path, `${slug}.md`);
+        // Absence, a symlink and a directory are honestly "no highlights". A
+        // file that is there but unreadable, oversize or not UTF-8 is a
+        // refusal instead: an item stored without the owner's notes would be
+        // indistinguishable from an item that never had any.
+        const found = await statRegularFile(file);
+        if (found === null) return null;
+        // Highlights come out of the same export as the metadata and are
+        // charged to the same budget, so no number of items can spend it
+        // twice.
+        const limit = Math.min(MAX_RECORD_BYTES, bytesLeft);
+        if (found.byte_size > limit) {
+          throw new KizukiError(
+            "misconfigured",
+            `highlights file exceeds the ${limit} byte import limit`,
+          );
+        }
+        try {
+          return await readBoundedUtf8File(
+            file,
+            OMNIVORE_IMPORT_CONNECTOR_ID,
+            limit,
+          );
+        } catch (error) {
+          throw highlightsRefusal(error);
+        }
+      });
+      if (text === null || text === undefined) {
         highlights.set(slug, null);
         return null;
       }
-      // Highlights come out of the same export as the metadata and are
-      // charged to the same budget, so no number of items can spend it twice.
-      const limit = Math.min(MAX_RECORD_BYTES, bytesLeft);
-      if (found.byte_size > limit) {
-        throw new KizukiError(
-          "misconfigured",
-          `highlights file exceeds the ${limit} byte import limit`,
-        );
-      }
-      let read;
-      try {
-        read = await readBoundedUtf8File(
-          file,
-          OMNIVORE_IMPORT_CONNECTOR_ID,
-          limit,
-        );
-      } catch (error) {
-        throw highlightsRefusal(error);
-      }
-      bytesLeft -= read.byte_size;
-      highlights.set(slug, read.text);
-      return read.text;
+      bytesLeft -= text.byte_size;
+      highlights.set(slug, text.text);
+      return text.text;
     },
     content: async (slug) => {
       if (contentDir === null || !SLUG.test(slug)) return null;
       const cached = contents.get(slug);
       if (cached !== undefined) return cached;
-      const found = await statRegularFile(join(contentDir, `${slug}.html`));
+      const found =
+        (await inside(contentDir, () =>
+          statRegularFile(join(contentDir.path, `${slug}.html`)),
+        )) ?? null;
       contents.set(slug, found);
       return found;
     },

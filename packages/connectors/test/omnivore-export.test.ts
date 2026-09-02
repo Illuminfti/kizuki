@@ -215,6 +215,40 @@ test("a symlinked highlights or content directory reaches nothing", async () => 
   });
 });
 
+test("a folder swapped for a link after the scan reaches nothing", async () => {
+  await withTempRoot(async (root) => {
+    // The scan reads directory entries, and an entry's type is a snapshot: a
+    // real folder can become a link between being listed and being read.
+    const canary = "canary-quartz-heron";
+    const outside = path.join(root, "outside");
+    await mkdir(outside);
+    await writeFile(path.join(outside, "linked.md"), canary);
+    await writeFile(path.join(outside, "linked.html"), canary);
+    const exportDir = path.join(root, "export");
+    await writeExport(
+      exportDir,
+      metadataFile([
+        { id: "1", slug: "linked", savedAt: "2026-01-01T09:00:00Z" },
+      ]),
+    );
+    await mkdir(path.join(exportDir, "highlights"));
+    await mkdir(path.join(exportDir, "content"));
+
+    const files = await fsOmnivoreFiles(exportDir);
+    for (const name of ["highlights", "content"]) {
+      await rm(path.join(exportDir, name), { recursive: true });
+      await symlink(outside, path.join(exportDir, name));
+    }
+    expect(await files.highlight("linked")).toBe(null);
+    expect(await files.content("linked")).toBe(null);
+
+    const events = await omnivoreEvents(files, FIXTURE_OBSERVED_AT);
+    expect(events[0]?.text).not.toContain(canary);
+    expect(events[0]?.metadata["has_highlights"]).toBe(false);
+    expect(events[0]?.attachments).toEqual([]);
+  });
+});
+
 test("a highlights file that is present but unreadable refuses the import", async () => {
   await withTempRoot(async (root) => {
     // The slug comes from the item title, so it must never be quoted back.
