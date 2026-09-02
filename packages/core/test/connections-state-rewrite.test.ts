@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Database } from "bun:sqlite";
@@ -235,6 +243,52 @@ describe("non-interactive state rewrite", () => {
     expect(
       new TextDecoder().decode(store.read(current ?? connection) ?? new Uint8Array()),
     ).toBe("winner");
+    expect(readdirSync(store.directory)).toEqual([
+      `${connection.source_key}.state`,
+    ]);
+    db.close();
+  });
+
+  test("recovery sweeps the staging file a killed writer left behind", async () => {
+    const directory = temporary();
+    const { db, store, connection } = await enrolled(directory, "first-envelope");
+    const abandoned = join(
+      store.directory,
+      `${connection.source_key}.state.01ARZ3NDEKTSV4RRFFQ69G5FAV.tmp`,
+    );
+    writeFileSync(abandoned, "SENTINEL-REFRESH", { mode: 0o600 });
+    const long_ago = new Date(Date.now() - 3_600_000);
+    utimesSync(abandoned, long_ago, long_ago);
+
+    // A fresh store is what the next process holds after the crash.
+    new ConnectionStateStore(directory).recover(db);
+
+    expect(readdirSync(store.directory)).toEqual([
+      `${connection.source_key}.state`,
+    ]);
+    db.close();
+  });
+
+  test("recovery leaves the staging file this store still owns", async () => {
+    const directory = temporary();
+    const { db, store, connection } = await enrolled(directory, "first-envelope");
+    const pending = store.begin();
+    await pending.writer.write(new TextEncoder().encode("SENTINEL-REFRESH"));
+    const staged = readdirSync(store.directory).filter((name) =>
+      name.endsWith(".tmp"),
+    );
+    expect(staged).toHaveLength(1);
+    const long_ago = new Date(Date.now() - 3_600_000);
+    for (const name of staged) {
+      utimesSync(join(store.directory, name), long_ago, long_ago);
+    }
+
+    store.recover(db);
+    expect(
+      readdirSync(store.directory).filter((name) => name.endsWith(".tmp")),
+    ).toEqual(staged);
+
+    store.discard(pending.pending);
     expect(readdirSync(store.directory)).toEqual([
       `${connection.source_key}.state`,
     ]);

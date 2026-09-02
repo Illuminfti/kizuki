@@ -10,6 +10,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  statSync,
   writeSync,
 } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
@@ -78,8 +79,20 @@ type ChunkWriter = (
 const writeChunk: ChunkWriter = (fd, bytes, offset, length) =>
   writeSync(fd, bytes, offset, length);
 
+const CORE_ULID_PATTERN = "[0-9A-HJKMNPQRSTVWXYZ]{26}";
+const STAGING_NAME = new RegExp(
+  `^${CORE_ULID_PATTERN}\\.state\\.${CORE_ULID_PATTERN}\\.tmp$`,
+);
+/**
+ * A staging file younger than this may belong to a writer another process is
+ * running right now; only an older one is certainly the debris of a crash.
+ */
+const ABANDONED_STAGING_MS = 60_000;
+
+const CORE_ULID = new RegExp(`^${CORE_ULID_PATTERN}$`);
+
 function isCoreUlid(value: string): boolean {
-  return /^[0-9A-HJKMNPQRSTVWXYZ]{26}$/.test(value);
+  return CORE_ULID.test(value);
 }
 
 function stateRefFor(sourceKey: string): string {
@@ -170,6 +183,8 @@ export class ConnectionStateStore implements ConnectionStateReader {
   readonly directory: string;
   private readonly minted = new Set<string>();
   private readonly handles = new WeakSet<PendingState>();
+  /** Staging paths this store is still writing, so recovery leaves them alone. */
+  private readonly staging = new Set<string>();
 
   constructor(controlDirectory: string) {
     this.directory = join(controlDirectory, "connections");
@@ -222,6 +237,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
             writeDurableFile(temporary, state);
             pending.temporaryPath = temporary;
             pending.written = true;
+            this.staging.add(temporary);
           } catch (error) {
             rmSync(temporary, { force: true });
             throw error;
@@ -239,6 +255,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
     if (!this.handles.has(pending)) return;
     const hadTemporary = pending.temporaryPath !== null;
     if (pending.temporaryPath !== null) {
+      this.staging.delete(pending.temporaryPath);
       rmSync(pending.temporaryPath, { force: true });
       pending.temporaryPath = null;
     }
@@ -302,6 +319,33 @@ export class ConnectionStateStore implements ConnectionStateReader {
       rmSync(journalPath, { force: true });
       fsyncDirectory(this.directory);
     }
+    this.sweepStaging();
+  }
+
+  /**
+   * Staging files hold the same plaintext the durable file does. A writer that
+   * was killed between its write and its swap leaves one behind, and nothing
+   * else in the tree ever removes it.
+   */
+  private sweepStaging(): void {
+    const now = Date.now();
+    let removed = false;
+    for (const name of readdirSync(this.directory)) {
+      if (!STAGING_NAME.test(name)) continue;
+      const path = join(this.directory, name);
+      if (this.staging.has(path)) continue;
+      let age: number;
+      try {
+        age = now - statSync(path).mtimeMs;
+      } catch {
+        // Swapped or swept by another writer between the listing and this stat.
+        continue;
+      }
+      if (age < ABANDONED_STAGING_MS) continue;
+      rmSync(path, { force: true });
+      removed = true;
+    }
+    if (removed) fsyncDirectory(this.directory);
   }
 
   /**
@@ -357,6 +401,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
           throw new LedgerError("connection state staging is missing");
         }
         renameSync(pending.temporaryPath, pending.finalPath);
+        this.staging.delete(pending.temporaryPath);
         pending.temporaryPath = null;
         swapped = true;
         fsyncDirectory(this.directory);
@@ -416,6 +461,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
           renameSync(backupPath, pending.finalPath);
         }
         if (pending.temporaryPath !== null) {
+          this.staging.delete(pending.temporaryPath);
           rmSync(pending.temporaryPath, { force: true });
           pending.temporaryPath = null;
         }
