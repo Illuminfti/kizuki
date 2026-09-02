@@ -1,4 +1,5 @@
-import { readFile, readdir, stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { open, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { KizukiError } from "../errors";
 import { compareStrings, errorMessage } from "../util";
@@ -11,6 +12,7 @@ import { LEGACY_WIKI_CONNECTOR_ID } from "./mapping";
  * is bounded and every refusal is reported rather than swallowed.
  */
 
+/** Entries the walk will consider at all, not only the ones it keeps. */
 export const MAX_FILES = 50_000;
 export const MAX_FILE_BYTES = 4 * 1024 * 1024;
 export const MAX_DEPTH = 16;
@@ -36,6 +38,19 @@ export interface ScanResult {
   truncated: boolean;
 }
 
+/**
+ * Never follow: the directory listing said this was a regular file, but the
+ * entry can be replaced between the listing and the open, and a link out of
+ * the wiki is a traversal. Non-blocking so a pipe left in the tree cannot hold
+ * the walk open waiting for a writer.
+ */
+const OPEN_FLAGS =
+  constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
+
+export type FileRead =
+  | { file: Omit<LegacyWikiFile, "relpath"> }
+  | { reason: SkipReason };
+
 const utf8 = new TextDecoder("utf-8", { fatal: true });
 
 interface Walk {
@@ -43,6 +58,8 @@ interface Walk {
   ignore: string[];
   files: LegacyWikiFile[];
   skipped: { relpath: string; reason: SkipReason }[];
+  /** Every directory entry looked at, so a flood of skips is bounded too. */
+  considered: number;
   truncated: boolean;
 }
 
@@ -57,38 +74,56 @@ function skip(walk: Walk, relpath: string, reason: SkipReason): void {
   walk.skipped.push({ relpath, reason });
 }
 
+/**
+ * One page, read from a descriptor the walk opened itself. Every bound is
+ * checked against that descriptor rather than against an earlier `stat`, so a
+ * file swapped for a link, replaced by a directory, or grown mid-read cannot
+ * get past the limits the walk promises.
+ */
+export async function readWikiFile(absolute: string): Promise<FileRead> {
+  let handle: Awaited<ReturnType<typeof open>>;
+  try {
+    handle = await open(absolute, OPEN_FLAGS);
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    return { reason: code === "ELOOP" ? "symlink" : "unreadable" };
+  }
+  try {
+    const info = await handle.stat();
+    if (!info.isFile()) return { reason: "unreadable" };
+    if (info.size > MAX_FILE_BYTES) return { reason: "too_large" };
+    // One byte past what the descriptor just reported: enough to notice that
+    // the file grew, never enough to read an unbounded one.
+    const buffer = Buffer.alloc(info.size + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    if (bytesRead > MAX_FILE_BYTES) return { reason: "too_large" };
+    if (bytesRead > info.size) return { reason: "unreadable" };
+    let content: string;
+    try {
+      content = utf8.decode(buffer.subarray(0, bytesRead));
+    } catch {
+      // A page Kizuki cannot decode is not a page it can honestly import.
+      return { reason: "not_utf8" };
+    }
+    return { file: { content, mtimeMs: info.mtimeMs, size: bytesRead } };
+  } catch {
+    return { reason: "unreadable" };
+  } finally {
+    await handle.close();
+  }
+}
+
 async function readEntry(
   walk: Walk,
   absolute: string,
   relpath: string,
 ): Promise<void> {
-  let info: Awaited<ReturnType<typeof stat>>;
-  try {
-    info = await stat(absolute);
-  } catch {
-    skip(walk, relpath, "unreadable");
+  const result = await readWikiFile(absolute);
+  if ("reason" in result) {
+    skip(walk, relpath, result.reason);
     return;
   }
-  if (info.size > MAX_FILE_BYTES) {
-    skip(walk, relpath, "too_large");
-    return;
-  }
-  let bytes: Buffer;
-  try {
-    bytes = await readFile(absolute);
-  } catch {
-    skip(walk, relpath, "unreadable");
-    return;
-  }
-  let content: string;
-  try {
-    content = utf8.decode(bytes);
-  } catch {
-    // A page Kizuki cannot decode is not a page it can honestly import.
-    skip(walk, relpath, "not_utf8");
-    return;
-  }
-  walk.files.push({ relpath, content, mtimeMs: info.mtimeMs, size: info.size });
+  walk.files.push({ relpath, ...result.file });
 }
 
 async function walkDirectory(
@@ -108,6 +143,11 @@ async function walkDirectory(
     // Dot entries hold tool state, not pages, and the mapping file is input.
     if (entry.name.startsWith(".") || entry.name === MAPPING_FILE_NAME)
       continue;
+    if (walk.considered >= MAX_FILES) {
+      walk.truncated = true;
+      return;
+    }
+    walk.considered += 1;
     const absolute = path.join(directory, entry.name);
     const relpath = relative(walk.root, absolute);
     if (entry.isSymbolicLink()) {
@@ -129,10 +169,6 @@ async function walkDirectory(
       skip(walk, relpath, "ignored");
       continue;
     }
-    if (walk.files.length >= MAX_FILES) {
-      walk.truncated = true;
-      return;
-    }
     await readEntry(walk, absolute, relpath);
   }
 }
@@ -141,7 +177,14 @@ export async function scanLegacyWiki(
   root: string,
   ignore: string[],
 ): Promise<ScanResult> {
-  const walk: Walk = { root, ignore, files: [], skipped: [], truncated: false };
+  const walk: Walk = {
+    root,
+    ignore,
+    files: [],
+    skipped: [],
+    considered: 0,
+    truncated: false,
+  };
   try {
     const info = await stat(root);
     if (!info.isDirectory()) {

@@ -21,6 +21,7 @@ import {
 } from "../src/import-legacy-wiki";
 import { LEGACY_WIKI_FIXTURE } from "../src/import-legacy-wiki/fixture";
 import type { LegacyWikiReport } from "../src/import-legacy-wiki/report";
+import { readWikiFile } from "../src/import-legacy-wiki/scan";
 import type { ScanResult } from "../src/import-legacy-wiki/scan";
 
 const SENTINEL = "a-secret-outside-the-wiki";
@@ -286,6 +287,38 @@ describe("hostile files", () => {
     expect(connector.lastReport()?.pages).toContainEqual(
       expect.objectContaining({ relpath: "huge.md", skip_reason: "too_large" }),
     );
+  });
+
+  test("the reader refuses a link even when the listing called it a file", async () => {
+    // The dirent check runs before the open, and an entry can be replaced in
+    // between; the open itself has to refuse to follow.
+    const outside = join(root, "outside.md");
+    writeFileSync(outside, SENTINEL);
+    const link = join(wiki, "linked.md");
+    symlinkSync(outside, link);
+    expect(await readWikiFile(link)).toEqual({ reason: "symlink" });
+  });
+
+  test("the reader refuses anything that is not a regular file", async () => {
+    mkdirSync(join(wiki, "folder.md"));
+    expect(await readWikiFile(join(wiki, "folder.md"))).toEqual({
+      reason: "unreadable",
+    });
+    expect(await readWikiFile(join(wiki, "absent.md"))).toEqual({
+      reason: "unreadable",
+    });
+  });
+
+  test("the reader bounds the read by the descriptor, not by an old stat", async () => {
+    const page = join(wiki, "page.md");
+    writeFileSync(page, "body\n");
+    expect(await readWikiFile(page)).toEqual({
+      file: { content: "body\n", mtimeMs: expect.any(Number), size: 5 },
+    });
+    writeFileSync(join(wiki, "huge.md"), "x".repeat(4 * 1024 * 1024 + 1));
+    expect(await readWikiFile(join(wiki, "huge.md"))).toEqual({
+      reason: "too_large",
+    });
   });
 
   test("health degrades after a run that skipped unreadable pages", async () => {
