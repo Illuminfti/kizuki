@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import type { Database } from "bun:sqlite";
+import { Database } from "bun:sqlite";
 import type {
   Connector,
   ConnectionStateWriter,
@@ -275,6 +275,83 @@ describe("non-interactive state rewrite", () => {
     expect(readdirSync(store.directory)).toEqual([
       `${connection.source_key}.state`,
     ]);
+    db.close();
+  });
+
+  test("a rewrite refuses while another connection holds the write lock", async () => {
+    const directory = temporary();
+    const { db, store, connection } = await enrolled(directory, "first-envelope");
+    // A writer in another process is mid-swap: it holds the database's write
+    // lock across its own rename and commit, and this one must not rename a
+    // durable file underneath it.
+    const other = new Database(join(directory, "ledger.sqlite"));
+    other.exec("BEGIN IMMEDIATE");
+    try {
+      await expect(
+        store.rewrite(db, connection, (writer) =>
+          writer.write(new TextEncoder().encode("second-envelope")),
+        ),
+      ).rejects.toBeInstanceOf(LedgerError);
+    } finally {
+      other.exec("ROLLBACK");
+      other.close();
+    }
+
+    expect(new TextDecoder().decode(store.read(connection) ?? new Uint8Array())).toBe(
+      "first-envelope",
+    );
+    expect(readdirSync(store.directory)).toEqual([
+      `${connection.source_key}.state`,
+    ]);
+    db.close();
+  });
+
+  test("recovery refuses to repair while another connection holds the write lock", async () => {
+    const directory = temporary();
+    const { db, store, connection } = await enrolled(directory, "first-envelope");
+    const finalName = `${connection.source_key}.state`;
+    const backupName = `${finalName}.01ARZ3NDEKTSV4RRFFQ69G5FAV.rollback`;
+    const journalName = `${finalName}.01ARZ3NDEKTSV4RRFFQ69G5FAW.journal`;
+    // The tree a swap in another process leaves while it runs: a durable
+    // journal, the bytes it replaced kept as a rollback, and its own bytes in
+    // place. Its row is not committed yet, so a repair reads it as a crash.
+    writeFileSync(join(store.directory, backupName), "first-envelope", {
+      mode: 0o600,
+    });
+    writeFileSync(join(store.directory, finalName), "second-envelope", {
+      mode: 0o600,
+    });
+    writeFileSync(
+      join(store.directory, journalName),
+      JSON.stringify({
+        schema: "kizuki.connection-state-swap/v1",
+        connector_id: connection.connector_id,
+        source_key: connection.source_key,
+        connected_at: "2026-03-01T10:00:00.000Z",
+        final_name: finalName,
+        backup_name: backupName,
+      }),
+      { mode: 0o600 },
+    );
+
+    const other = new Database(join(directory, "ledger.sqlite"));
+    other.exec("BEGIN IMMEDIATE");
+    try {
+      expect(() => new ConnectionStateStore(directory).recover(db)).toThrow(
+        LedgerError,
+      );
+    } finally {
+      other.exec("ROLLBACK");
+      other.close();
+    }
+
+    // Nothing was rolled back over the swap the lock holder still owns.
+    expect(readFileSync(join(store.directory, finalName), "utf8")).toBe(
+      "second-envelope",
+    );
+    expect(readdirSync(store.directory).sort()).toEqual(
+      [finalName, backupName, journalName].sort(),
+    );
     db.close();
   });
 

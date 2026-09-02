@@ -68,6 +68,8 @@ const STALE_CONNECTION_SNAPSHOT = "connection does not match persisted state";
 /** Another writer committed while these bytes were being staged. */
 const CONCURRENT_CONNECTION_CHANGE =
   "connection changed while its state was being replaced";
+/** A writer in another process holds the lock this one has to swap under. */
+const LOCKED_CONTROL_STORE = "connection state is locked by another writer";
 
 type ChunkWriter = (
   fd: number,
@@ -152,6 +154,34 @@ function fsyncDirectory(directory: string): void {
     fsyncSync(fd);
   } finally {
     closeSync(fd);
+  }
+}
+
+function isLockedDatabase(error: unknown): boolean {
+  if (!(error instanceof Error) || !("code" in error)) return false;
+  const code = error.code;
+  return (
+    typeof code === "string" &&
+    (code.startsWith("SQLITE_BUSY") || code.startsWith("SQLITE_LOCKED"))
+  );
+}
+
+/**
+ * The durable swap and the row that names it have to land together. A writer
+ * in another process that renamed its own file between this one's rename and
+ * its commit would leave the row naming bytes this one's rollback then took
+ * away, and a recovery running at the same moment would read a live swap as
+ * crash debris. The database's write lock is the only lock both processes
+ * already share, so every file move happens while it is held.
+ */
+function writeLocked(db: Database, work: () => void): void {
+  try {
+    db.transaction(work).immediate();
+  } catch (error) {
+    if (isLockedDatabase(error)) {
+      throw new LedgerError(LOCKED_CONTROL_STORE, { cause: error });
+    }
+    throw error;
   }
 }
 
@@ -268,60 +298,70 @@ export class ConnectionStateStore implements ConnectionStateReader {
 
   /** Repairs an interrupted state swap before the next trusted enrollment. */
   recover(db: Database): void {
-    for (const name of readdirSync(this.directory)) {
-      if (!name.endsWith(".journal")) continue;
-      const journalPath = join(this.directory, name);
-      let journal: SwapJournal;
-      try {
-        journal = JSON.parse(readFileSync(journalPath, "utf8")) as SwapJournal;
-      } catch {
-        throw new LedgerError("connection state swap journal is unreadable");
-      }
-      if (
-        journal.schema !== "kizuki.connection-state-swap/v1" ||
-        typeof journal.connector_id !== "string" ||
-        journal.connector_id.length === 0 ||
-        !isCoreUlid(journal.source_key) ||
-        !isRfc3339(journal.connected_at) ||
-        journal.final_name !== `${journal.source_key}.state` ||
-        (journal.backup_name !== null &&
-          (basename(journal.backup_name) !== journal.backup_name ||
-            !journal.backup_name.startsWith(`${journal.final_name}.`) ||
-            !journal.backup_name.endsWith(".rollback")))
-      ) {
-        throw new LedgerError("connection state swap journal is invalid");
-      }
-      const finalPath = join(this.directory, journal.final_name);
-      const backupPath = journal.backup_name === null
-        ? null
-        : join(this.directory, journal.backup_name);
-      const row = db
-        .query<ConnectedAtRow, [string, string]>(
-          "SELECT connected_at FROM connections WHERE connector_id = ? AND source_key = ?",
-        )
-        .get(journal.connector_id, journal.source_key);
-      if (row?.connected_at === journal.connected_at) {
-        if (!existsSync(finalPath)) {
-          throw new LedgerError("committed connection state is missing");
-        }
-        if (backupPath !== null) rmSync(backupPath, { force: true });
-      } else if (backupPath !== null && existsSync(backupPath)) {
-        rmSync(finalPath, { force: true });
-        renameSync(backupPath, finalPath);
-      } else if (backupPath !== null) {
-        if (!existsSync(finalPath)) {
-          throw new LedgerError("connection state and rollback are both missing");
-        }
-        // The journal was durable before the first rename. The original final
-        // file is therefore still authoritative when its planned backup does
-        // not exist and the database row was not committed.
-      } else {
-        rmSync(finalPath, { force: true });
-      }
-      rmSync(journalPath, { force: true });
-      fsyncDirectory(this.directory);
+    const journals = readdirSync(this.directory).filter((name) =>
+      name.endsWith(".journal"),
+    );
+    if (journals.length > 0) {
+      // A journal is only crash debris once no writer is standing over it, and
+      // the write lock is what tells the two apart across processes.
+      writeLocked(db, () => {
+        for (const name of journals) this.repairSwap(db, name);
+      });
     }
     this.sweepStaging();
+  }
+
+  private repairSwap(db: Database, name: string): void {
+    const journalPath = join(this.directory, name);
+    let journal: SwapJournal;
+    try {
+      journal = JSON.parse(readFileSync(journalPath, "utf8")) as SwapJournal;
+    } catch {
+      throw new LedgerError("connection state swap journal is unreadable");
+    }
+    if (
+      journal.schema !== "kizuki.connection-state-swap/v1" ||
+      typeof journal.connector_id !== "string" ||
+      journal.connector_id.length === 0 ||
+      !isCoreUlid(journal.source_key) ||
+      !isRfc3339(journal.connected_at) ||
+      journal.final_name !== `${journal.source_key}.state` ||
+      (journal.backup_name !== null &&
+        (basename(journal.backup_name) !== journal.backup_name ||
+          !journal.backup_name.startsWith(`${journal.final_name}.`) ||
+          !journal.backup_name.endsWith(".rollback")))
+    ) {
+      throw new LedgerError("connection state swap journal is invalid");
+    }
+    const finalPath = join(this.directory, journal.final_name);
+    const backupPath = journal.backup_name === null
+      ? null
+      : join(this.directory, journal.backup_name);
+    const row = db
+      .query<ConnectedAtRow, [string, string]>(
+        "SELECT connected_at FROM connections WHERE connector_id = ? AND source_key = ?",
+      )
+      .get(journal.connector_id, journal.source_key);
+    if (row?.connected_at === journal.connected_at) {
+      if (!existsSync(finalPath)) {
+        throw new LedgerError("committed connection state is missing");
+      }
+      if (backupPath !== null) rmSync(backupPath, { force: true });
+    } else if (backupPath !== null && existsSync(backupPath)) {
+      rmSync(finalPath, { force: true });
+      renameSync(backupPath, finalPath);
+    } else if (backupPath !== null) {
+      if (!existsSync(finalPath)) {
+        throw new LedgerError("connection state and rollback are both missing");
+      }
+      // The journal was durable before the first rename. The original final
+      // file is therefore still authoritative when its planned backup does
+      // not exist and the database row was not committed.
+    } else {
+      rmSync(finalPath, { force: true });
+    }
+    rmSync(journalPath, { force: true });
+    fsyncDirectory(this.directory);
   }
 
   /**
@@ -368,57 +408,61 @@ export class ConnectionStateStore implements ConnectionStateReader {
     ) {
       throw new LedgerError("connection state handle was not minted by this store");
     }
-    const existing = existsSync(pending.finalPath);
-    if (existing && !pending.written) {
-      throw new LedgerError("existing connection state cannot be cleared implicitly");
-    }
-    const refs = pending.written ? [pending.ref] : [];
-    const config = pending.written ? STATE_CONNECTION_CONFIG : NULL_CONNECTION_CONFIG;
-    const connectedAt = nextConnectedAt(db, connectorId, pending.sourceKey);
-    const backupPath = existing
-      ? `${pending.finalPath}.${ulid()}.rollback`
-      : null;
-    const journalPath = pending.written
-      ? `${pending.finalPath}.${ulid()}.journal`
-      : null;
+    let backupPath: string | null = null;
+    let journalPath: string | null = null;
     let swapped = false;
     let committed = false;
     try {
-      if (journalPath !== null) {
-        const journal: SwapJournal = {
-          schema: "kizuki.connection-state-swap/v1",
-          connector_id: connectorId,
-          source_key: pending.sourceKey,
-          connected_at: connectedAt,
-          final_name: basename(pending.finalPath),
-          backup_name: backupPath === null ? null : basename(backupPath),
-        };
-        writeDurableFile(
-          journalPath,
-          new TextEncoder().encode(JSON.stringify(journal)),
-        );
-        fsyncDirectory(this.directory);
-        if (backupPath !== null) renameSync(pending.finalPath, backupPath);
-        const staging = pending.temporaryPath;
-        if (staging === null) {
-          throw new LedgerError("connection state staging is missing");
+      writeLocked(db, () => {
+        const existing = existsSync(pending.finalPath);
+        if (existing && !pending.written) {
+          throw new LedgerError(
+            "existing connection state cannot be cleared implicitly",
+          );
         }
-        try {
-          renameSync(staging, pending.finalPath);
-        } catch (error) {
-          // A recovery sweep in another process can remove a staging file this
-          // one still owns. The raw failure names the control directory, and a
-          // caller of this store never receives a filesystem path.
-          throw new LedgerError("connection state staging is missing", {
-            cause: error,
-          });
+        const refs = pending.written ? [pending.ref] : [];
+        const config = pending.written
+          ? STATE_CONNECTION_CONFIG
+          : NULL_CONNECTION_CONFIG;
+        const connectedAt = nextConnectedAt(db, connectorId, pending.sourceKey);
+        backupPath = existing ? `${pending.finalPath}.${ulid()}.rollback` : null;
+        journalPath = pending.written
+          ? `${pending.finalPath}.${ulid()}.journal`
+          : null;
+        if (journalPath !== null) {
+          const journal: SwapJournal = {
+            schema: "kizuki.connection-state-swap/v1",
+            connector_id: connectorId,
+            source_key: pending.sourceKey,
+            connected_at: connectedAt,
+            final_name: basename(pending.finalPath),
+            backup_name: backupPath === null ? null : basename(backupPath),
+          };
+          writeDurableFile(
+            journalPath,
+            new TextEncoder().encode(JSON.stringify(journal)),
+          );
+          fsyncDirectory(this.directory);
+          if (backupPath !== null) renameSync(pending.finalPath, backupPath);
+          const staging = pending.temporaryPath;
+          if (staging === null) {
+            throw new LedgerError("connection state staging is missing");
+          }
+          try {
+            renameSync(staging, pending.finalPath);
+          } catch (error) {
+            // A recovery sweep in another process can remove a staging file
+            // this one still owns. The raw failure names the control
+            // directory, and a caller of this store never receives a path.
+            throw new LedgerError("connection state staging is missing", {
+              cause: error,
+            });
+          }
+          this.staging.delete(staging);
+          pending.temporaryPath = null;
+          swapped = true;
+          fsyncDirectory(this.directory);
         }
-        this.staging.delete(staging);
-        pending.temporaryPath = null;
-        swapped = true;
-        fsyncDirectory(this.directory);
-      }
-      db.transaction(() => {
         if (expect === undefined) {
           db.query(
             `INSERT INTO connections
@@ -455,7 +499,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
         if (result.changes !== 1) {
           throw new LedgerError(CONCURRENT_CONNECTION_CHANGE);
         }
-      }).immediate();
+      });
       committed = true;
       if (backupPath !== null) rmSync(backupPath, { force: true });
       if (journalPath !== null) rmSync(journalPath, { force: true });
