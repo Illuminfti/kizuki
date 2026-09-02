@@ -9,60 +9,28 @@ export interface ProviderAnswer {
 }
 
 /**
- * The closed schema of an OpenAI-compatible chat completion. A provider
- * response is attacker-controlled input (AGENTS.md invariant 7), so every
- * level is validated against a key set rather than read field by field: a
- * key nobody in this file named is a refusal, not a warning.
- */
-const ANSWER_KEYS = new Set([
-  "id",
-  "object",
-  "created",
-  "model",
-  "choices",
-  "usage",
-  "system_fingerprint",
-  "service_tier",
-]);
-const CHOICE_KEYS = new Set(["index", "message", "finish_reason", "logprobs"]);
-const MESSAGE_KEYS = new Set(["role", "content", "refusal"]);
-const USAGE_KEYS = new Set([
-  "prompt_tokens",
-  "completion_tokens",
-  "total_tokens",
-  "prompt_tokens_details",
-  "completion_tokens_details",
-]);
-const PART_KEYS = new Set(["type", "text"]);
-
-/**
  * Extraction sends no tool definitions, so any of these coming back means the
- * endpoint answered a request nobody made (RFC 0002 §10.1).
+ * endpoint answered a request nobody made (RFC 0002 §10.1). This is the one
+ * closed set on the envelope: every OpenAI-compatible server adds fields of
+ * its own — timings, log probabilities, cache counters, a vendor block — and
+ * refusing those would burn a paid request per pass against a working
+ * endpoint while proving nothing about the answer.
  */
-const TOOL_KEYS = new Set([
-  "tool_calls",
-  "function_call",
-  "tool_call_id",
-  "audio",
-  "reasoning_content",
-]);
+const TOOL_KEYS = new Set(["tool_calls", "function_call", "tool_call_id"]);
 
 const MAX_CONTENT_PARTS = 64;
+const MAX_MODEL_CHARS = 200;
 
 /**
- * The only stop this package can use. Anything else means the endpoint
- * finished for a reason that makes its content unusable — truncation, a
- * content filter, or a call to a tool nobody offered — and an unusable
- * answer must never look like "these records held nothing durable".
+ * Stops that mean the endpoint finished the answer it was asked for. Anything
+ * else — a token limit, a content filter, a tool call — makes the content
+ * unusable, and an unusable answer must never look like "these records held
+ * nothing durable".
  */
-const FINISHED = "stop";
+const FINISHED = new Set(["stop", "eos", "end_turn"]);
 const CALLED_A_TOOL = new Set(["tool_calls", "function_call"]);
 
-function unexpectedKeys(
-  value: Record<string, unknown>,
-  allowed: ReadonlySet<string>,
-  where: string,
-): void {
+function refuseToolFields(value: Record<string, unknown>): void {
   for (const key of Object.keys(value)) {
     if (TOOL_KEYS.has(key)) {
       reject(
@@ -70,18 +38,21 @@ function unexpectedKeys(
         `the endpoint answered with ${key} to a request that offered no tools`,
       );
     }
-    if (!allowed.has(key)) {
-      reject("schema_invalid", `the endpoint answered with ${where}.${key}`);
-    }
   }
 }
 
-function integer(value: unknown): number | null {
-  return typeof value === "number" &&
-    Number.isSafeInteger(value) &&
-    value >= 0
-    ? value
-    : null;
+/**
+ * A count the endpoint reported. Absent is absent, but present and malformed
+ * is a refusal: a negative or fractional token count would otherwise be
+ * silently replaced by an estimate and charged as if it were measured.
+ */
+function tokenCount(usage: Record<string, unknown>, key: string): number | null {
+  const raw = usage[key];
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== "number" || !Number.isSafeInteger(raw) || raw < 0) {
+    reject("schema_invalid", `the endpoint reported an invalid usage.${key}`);
+  }
+  return raw;
 }
 
 function textOfParts(parts: readonly unknown[]): string {
@@ -96,7 +67,7 @@ function textOfParts(parts: readonly unknown[]): string {
         "the endpoint answered with a content part that is not text",
       );
     }
-    unexpectedKeys(part, PART_KEYS, "content part");
+    refuseToolFields(part);
     if (part["type"] !== "text" || typeof part["text"] !== "string") {
       reject(
         "tool_call_in_response",
@@ -112,7 +83,7 @@ export function readChatAnswer(body: unknown): ProviderAnswer {
   if (!isPlainObject(body)) {
     reject("schema_invalid", "the endpoint did not return an object");
   }
-  unexpectedKeys(body, ANSWER_KEYS, "answer");
+  refuseToolFields(body);
 
   const choices = body["choices"];
   if (!Array.isArray(choices) || choices.length !== 1) {
@@ -122,10 +93,10 @@ export function readChatAnswer(body: unknown): ProviderAnswer {
   if (!isPlainObject(choice)) {
     reject("schema_invalid", "the endpoint returned a choice that is not an object");
   }
-  unexpectedKeys(choice, CHOICE_KEYS, "choice");
+  refuseToolFields(choice);
 
   const finish = choice["finish_reason"];
-  if (finish !== undefined && finish !== null && finish !== FINISHED) {
+  if (finish !== undefined && finish !== null && !FINISHED.has(String(finish))) {
     if (typeof finish === "string" && CALLED_A_TOOL.has(finish)) {
       reject(
         "tool_call_in_response",
@@ -142,7 +113,7 @@ export function readChatAnswer(body: unknown): ProviderAnswer {
   if (!isPlainObject(message)) {
     reject("schema_invalid", "the endpoint returned no choice message");
   }
-  unexpectedKeys(message, MESSAGE_KEYS, "message");
+  refuseToolFields(message);
   if (message["role"] !== "assistant") {
     reject("schema_invalid", "the endpoint answered in an unexpected role");
   }
@@ -162,18 +133,24 @@ export function readChatAnswer(body: unknown): ProviderAnswer {
         : reject("schema_invalid", "the endpoint returned no message content");
 
   const usage = body["usage"];
-  if (usage !== undefined && !isPlainObject(usage)) {
+  if (usage !== undefined && usage !== null && !isPlainObject(usage)) {
     reject("schema_invalid", "the endpoint returned a usage that is not an object");
   }
-  if (isPlainObject(usage)) unexpectedKeys(usage, USAGE_KEYS, "usage");
+  const counted = isPlainObject(usage) ? usage : null;
 
   const model = body["model"];
+  if (
+    model !== undefined &&
+    model !== null &&
+    (typeof model !== "string" || model.length > MAX_MODEL_CHARS)
+  ) {
+    reject("schema_invalid", "the endpoint reported an invalid model");
+  }
   return {
     text,
-    model: typeof model === "string" && model.length <= 200 ? model : null,
-    input_tokens: isPlainObject(usage) ? integer(usage["prompt_tokens"]) : null,
-    output_tokens: isPlainObject(usage)
-      ? integer(usage["completion_tokens"])
-      : null,
+    model: typeof model === "string" ? model : null,
+    input_tokens: counted === null ? null : tokenCount(counted, "prompt_tokens"),
+    output_tokens:
+      counted === null ? null : tokenCount(counted, "completion_tokens"),
   };
 }

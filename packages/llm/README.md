@@ -69,9 +69,13 @@ disable a bound. A pasted key is refused without being echoed.
 - **Exact schema.** The answer must be one JSON object matching
   `ExtractResponse`. An extra key, a missing key or a value outside a closed
   set is `rejected: "schema_invalid"`, and so is an answer the endpoint cut
-  off at the token limit or declined to give. The endpoint must report
-  `finish_reason` as `stop` or leave it out; any other stop means its content
-  is not a finished extraction.
+  off at the token limit or declined to give. The reply that carries it is
+  read for what it must not contain rather than against a key set: a field a
+  server adds of its own is read past, while a tool or function call field, a
+  content part that is not text, a refusal, or a `finish_reason` that does not
+  mean a finished answer (`stop`, `eos`, `end_turn` or nothing) is a
+  rejection. A key this package reads is validated: a negative token count or
+  a model that is not a string is `schema_invalid`, never a silent estimate.
 - **Cited provenance.** Every draft must cite an event id from the request.
   Citing anything else discards the whole call as
   `rejected: "provenance_not_cited"`.

@@ -28,11 +28,14 @@ writes canon; it returns drafts to whoever bound it.
 
 - `src/transport.ts` holds the only `fetch` in the tree. Adding a second
   network call site anywhere fails `bun run verify`.
-- A provider answer is attacker-controlled input. Validate it against a closed
-  key set before reading a value out of it; a tool call, a non-text content
-  part or an unknown key is a rejection, never a warning. A key that is
-  allowlisted must also be read: a stop reason and a refusal decide whether
-  there is an answer at all.
+- A provider answer is attacker-controlled input. The model's own JSON is
+  validated against a closed key set: an extra key there is a rejection, never
+  a warning. The HTTP envelope around it is read for what it must not contain
+  instead - a tool or function call field, a content part that is not text, a
+  stop that does not mean a finished answer, a refusal - because every server
+  adds fields of its own and refusing those would spend a paid request per
+  pass while proving nothing. Every key this package does read is validated:
+  a malformed count or model is a rejection, not a silent null.
 - Every string that came from a record goes only in the user role, only inside
   a nonce fence, and never into the request's structure. That includes the
   context block: a subject id comes from a connector and a known claim's

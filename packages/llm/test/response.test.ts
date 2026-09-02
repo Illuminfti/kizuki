@@ -64,16 +64,95 @@ describe("provider answers", () => {
     expect(readChatAnswer(body).text).toBe('{"claims":[]}');
   });
 
-  test("an unknown key anywhere in the answer is schema_invalid", () => {
-    const top = chatCompletion("{}") as Record<string, unknown>;
-    top["x_extra"] = 1;
-    expect(refuses(top)).toBe("schema_invalid");
-
-    const message = chatCompletion("{}") as {
-      choices: { message: Record<string, unknown> }[];
+  test("a field the endpoint added of its own is read past, not refused", () => {
+    // Regression: every key outside a closed set was a rejection, so the
+    // ordinary output of real OpenAI-compatible servers - timings, log
+    // probabilities, a cache counter, a vendor block, a reasoning trace -
+    // turned a working endpoint into one paid rejection per pass forever.
+    const shapes: Record<string, (body: Record<string, unknown>) => void> = {
+      timings: (body) => {
+        body["timings"] = { predicted_ms: 12 };
+      },
+      prompt_logprobs: (body) => {
+        body["prompt_logprobs"] = null;
+      },
+      vendor_block: (body) => {
+        body["x_vendor"] = { id: "abc" };
+      },
+      usage_extension: (body) => {
+        (body["usage"] as Record<string, unknown>)["prompt_cache_hit_tokens"] = 4;
+      },
+      choice_extension: (body) => {
+        (body["choices"] as Record<string, unknown>[])[0]!["stop_reason"] = null;
+      },
+      reasoning: (body) => {
+        (
+          (body["choices"] as { message: Record<string, unknown> }[])[0]!
+            .message
+        )["reasoning_content"] = "the model thinking out loud";
+      },
+      annotations: (body) => {
+        (
+          (body["choices"] as { message: Record<string, unknown> }[])[0]!
+            .message
+        )["annotations"] = [];
+      },
     };
-    message.choices[0]!.message["annotations"] = [];
-    expect(refuses(message)).toBe("schema_invalid");
+    for (const [name, mutate] of Object.entries(shapes)) {
+      const body = chatCompletion('{"claims":[]}') as Record<string, unknown>;
+      mutate(body);
+      expect([name, readChatAnswer(body).text]).toEqual([
+        name,
+        '{"claims":[]}',
+      ]);
+    }
+  });
+
+  test("a stop that means the answer is finished is accepted", () => {
+    for (const finish of ["stop", "eos", "end_turn", null, undefined]) {
+      const body = chatCompletion('{"claims":[]}') as {
+        choices: Record<string, unknown>[];
+      };
+      if (finish === undefined) {
+        delete body.choices[0]!["finish_reason"];
+      } else {
+        body.choices[0]!["finish_reason"] = finish;
+      }
+      expect(readChatAnswer(body).text).toBe('{"claims":[]}');
+    }
+  });
+
+  test("a malformed value on a key that is read is schema_invalid", () => {
+    // Regression: a negative count and a model that is not a string were
+    // quietly turned into null, after which the port invented an estimate and
+    // substituted its own configured model into the answer.
+    const model = chatCompletion("{}") as Record<string, unknown>;
+    model["model"] = 42;
+    expect(refuses(model)).toBe("schema_invalid");
+
+    const negative = chatCompletion("{}") as {
+      usage: Record<string, unknown>;
+    };
+    negative.usage["prompt_tokens"] = -1;
+    expect(refuses(negative)).toBe("schema_invalid");
+
+    const fractional = chatCompletion("{}") as {
+      usage: Record<string, unknown>;
+    };
+    fractional.usage["completion_tokens"] = 1.5;
+    expect(refuses(fractional)).toBe("schema_invalid");
+  });
+
+  test("a tool field is still refused wherever it appears", () => {
+    const choice = chatCompletion("{}") as {
+      choices: Record<string, unknown>[];
+    };
+    choice.choices[0]!["tool_calls"] = [{ id: "c" }];
+    expect(refuses(choice)).toBe("tool_call_in_response");
+
+    const top = chatCompletion("{}") as Record<string, unknown>;
+    top["function_call"] = { name: "rm" };
+    expect(refuses(top)).toBe("tool_call_in_response");
   });
 
   test("more or fewer than one choice is schema_invalid", () => {
