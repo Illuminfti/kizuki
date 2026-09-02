@@ -355,23 +355,61 @@ describe("runToCompletion", () => {
     db.close();
   });
 
-  test("a batch that stores nothing but moves the cursor keeps going", async () => {
+  test("an empty batch ends the run even when the cursor moved", async () => {
     const db = database();
-    // What a paging connector does when a whole page holds only records it
-    // does not emit: the cursor advances, the batch is empty, and there is
-    // more behind it.
+    // A connector says it has nothing left to give by returning an empty
+    // batch. Reading on because the cursor moved would leave a connector whose
+    // cursor carries a clock spending the whole batch bound on a settled
+    // source, and then calling that run a failure.
     const connector = new ScriptedConnector([
       { events: [], cursor: "page-1" },
       page(2, 2),
-      { events: [], cursor: "page-2" },
     ]);
     const result = await runToCompletion(db, connector, "fixture", "src-1", "backfill");
-    expect(result.stored).toBe(2);
+    expect(result.stored).toBe(0);
     expect(result.errors).toEqual([]);
-    expect(result.cursor).toBe("page-2");
-    expect(connector.cursors).toEqual([null, "page-1", "page-2"]);
+    expect(result.cursor).toBe("page-1");
+    expect(connector.cursors).toEqual([null]);
+    expect(getCheckpoint(db, "fixture", "src-1")?.cursor).toBe("page-1");
     db.close();
   });
+
+  test("a settled sync whose cursor keeps moving still stops at once", async () => {
+    const db = database();
+    // The shape a connector that stamps the time of its last pass into the
+    // cursor has: every call answers with an empty batch and a cursor that
+    // differs from the one before it.
+    let tick = 0;
+    const connector = new (class extends FixtureConnector {
+      readonly calls: (string | null)[] = [];
+
+      override sync(cursor: string | null): Promise<SyncBatch> {
+        this.calls.push(cursor);
+        tick += 1;
+        return Promise.resolve({ events: [], cursor: `pass-${tick}` });
+      }
+    })({ events: [], cursor: null });
+    const result = await runToCompletion(db, connector, "fixture", "src-1", "sync");
+    expect(result.errors).toEqual([]);
+    expect(connector.calls).toEqual([null]);
+    expect(result.cursor).toBe("pass-1");
+    db.close();
+  });
+
+  test("duplicates are work, so a batch of them keeps the run going", async () => {
+    const db = database();
+    const connector = new ScriptedConnector([
+      page(1, 1),
+      { events: page(1, 1).events, cursor: "page-2" },
+      { events: [], cursor: "page-3" },
+    ]);
+    const result = await runToCompletion(db, connector, "fixture", "src-1", "backfill");
+    expect(result.stored).toBe(1);
+    expect(result.duplicates).toBe(1);
+    expect(result.cursor).toBe("page-3");
+    db.close();
+  });
+
 
   test("a connector that exhausts itself with a null cursor stops there", async () => {
     const db = database();
