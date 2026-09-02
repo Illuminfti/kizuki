@@ -1,0 +1,324 @@
+import {
+  PAGE_SENSITIVITIES,
+  PAGE_TYPES,
+  SUBJECT_ROLES,
+  isPlainObject,
+} from "@kizuki/core";
+import type { PageSensitivity, PageType, SubjectRole } from "@kizuki/core";
+import { KizukiError } from "../errors";
+import { TIMESTAMP_FORMATS } from "../legacy/coerce";
+import type { TimestampFormat } from "../legacy/coerce";
+
+export const LEGACY_WIKI_CONNECTOR_ID = "kizuki.import-legacy-wiki" as const;
+export const LEGACY_WIKI_MAPPING_SCHEMA =
+  "kizuki.legacy-wiki-mapping/v1" as const;
+
+const EXTENSION_NAME = /^x-[A-Za-z0-9][A-Za-z0-9_-]*$/;
+const NAMESPACE = /^[a-z][a-z0-9-]{0,31}$/;
+const DIRECTORY_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const MAX_DIRECTORY_SEGMENTS = 7;
+const MAX_FIELD_NAME = 200;
+
+export interface LegacyWikiConfig {
+  /** The wiki root directory. */
+  path: string;
+  /** A mapping file path, or the mapping itself; default: beside the source. */
+  mapping?: string | LegacyWikiMapping;
+  /** Absolute path; `.json` writes JSON, anything else writes Markdown. */
+  report?: string;
+}
+
+export interface LegacyWikiMapping {
+  schema: typeof LEGACY_WIKI_MAPPING_SCHEMA;
+  title: { field: string };
+  type: {
+    field: string;
+    /** Legacy value to page type; null excludes the page from the import. */
+    values: Record<string, PageType | null>;
+    default: PageType;
+  };
+  sensitivity: {
+    field: string;
+    /**
+     * No default by design: a page whose label cannot be read is unlabeled,
+     * and labelling it is the owner's keystroke, not the mapping's guess.
+     */
+    values: Record<string, PageSensitivity>;
+  };
+  occurred_at: { field: string; format: TimestampFormat } | null;
+  /** Legacy key to an `x-*` name, or null to drop it. */
+  fields: Record<string, string | null>;
+  subjects: { field: string; role: SubjectRole; namespace: string } | null;
+  target: { mode: "flat" | "mirror"; directories: Record<PageType, string> };
+  ignore: string[];
+}
+
+export const DEFAULT_DIRECTORIES: Record<PageType, string> = {
+  person: "entities",
+  org: "entities",
+  project: "entities",
+  place: "entities",
+  topic: "entities",
+  fact: "facts",
+  event: "events",
+  source: "sources",
+  rollup: "dashboards",
+};
+
+function fail(path: string, rule: string): never {
+  throw new KizukiError(
+    "misconfigured",
+    `${LEGACY_WIKI_CONNECTOR_ID}: ${path}: ${rule}`,
+  );
+}
+
+/** Unknown keys are refused: an owner's typo must not change the outcome. */
+function objectAt(
+  raw: unknown,
+  path: string,
+  allowed: readonly string[],
+): Record<string, unknown> {
+  if (!isPlainObject(raw)) fail(path, "must be an object");
+  for (const key of Object.keys(raw)) {
+    if (!allowed.includes(key)) fail(path, `unknown key ${key}`);
+  }
+  return raw;
+}
+
+function fieldName(raw: unknown, path: string): string {
+  if (
+    typeof raw !== "string" ||
+    raw.length === 0 ||
+    raw.length > MAX_FIELD_NAME
+  ) {
+    fail(path, `must be a field name of 1..${MAX_FIELD_NAME} characters`);
+  }
+  return raw;
+}
+
+function enumValue<T extends string>(
+  raw: unknown,
+  path: string,
+  values: readonly T[],
+): T {
+  if (typeof raw !== "string" || !(values as readonly string[]).includes(raw)) {
+    fail(path, `must be one of ${values.join(" | ")}`);
+  }
+  return raw as T;
+}
+
+function stringMap(raw: unknown, path: string): Record<string, unknown> {
+  if (raw === undefined) return {};
+  if (!isPlainObject(raw)) fail(path, "must be an object");
+  return raw;
+}
+
+function parseTitle(raw: unknown): LegacyWikiMapping["title"] {
+  if (raw === undefined) return { field: "title" };
+  const source = objectAt(raw, "mapping.title", ["field"]);
+  return {
+    field: fieldName(source["field"] ?? "title", "mapping.title.field"),
+  };
+}
+
+function parseType(raw: unknown): LegacyWikiMapping["type"] {
+  const source = objectAt(raw ?? {}, "mapping.type", [
+    "field",
+    "values",
+    "default",
+  ]);
+  const values: Record<string, PageType | null> = {};
+  for (const [legacy, mapped] of Object.entries(
+    stringMap(source["values"], "mapping.type.values"),
+  )) {
+    values[legacy] =
+      mapped === null
+        ? null
+        : enumValue(mapped, `mapping.type.values.${legacy}`, PAGE_TYPES);
+  }
+  return {
+    field: fieldName(source["field"] ?? "type", "mapping.type.field"),
+    values,
+    default: enumValue(source["default"], "mapping.type.default", PAGE_TYPES),
+  };
+}
+
+function parseSensitivity(raw: unknown): LegacyWikiMapping["sensitivity"] {
+  const source = objectAt(raw ?? {}, "mapping.sensitivity", [
+    "field",
+    "values",
+  ]);
+  const values: Record<string, PageSensitivity> = {};
+  for (const [legacy, mapped] of Object.entries(
+    stringMap(source["values"], "mapping.sensitivity.values"),
+  )) {
+    values[legacy] = enumValue(
+      mapped,
+      `mapping.sensitivity.values.${legacy}`,
+      PAGE_SENSITIVITIES,
+    );
+  }
+  return {
+    field: fieldName(
+      source["field"] ?? "sensitivity",
+      "mapping.sensitivity.field",
+    ),
+    values,
+  };
+}
+
+function parseOccurredAt(raw: unknown): LegacyWikiMapping["occurred_at"] {
+  if (raw === undefined || raw === null) return null;
+  const source = objectAt(raw, "mapping.occurred_at", ["field", "format"]);
+  return {
+    field: fieldName(source["field"], "mapping.occurred_at.field"),
+    format: enumValue(
+      source["format"],
+      "mapping.occurred_at.format",
+      TIMESTAMP_FORMATS,
+    ),
+  };
+}
+
+function parseSubjects(raw: unknown): LegacyWikiMapping["subjects"] {
+  if (raw === undefined || raw === null) return null;
+  const source = objectAt(raw, "mapping.subjects", [
+    "field",
+    "role",
+    "namespace",
+  ]);
+  const namespace = source["namespace"];
+  if (typeof namespace !== "string" || !NAMESPACE.test(namespace)) {
+    fail("mapping.subjects.namespace", `must match ${NAMESPACE.toString()}`);
+  }
+  return {
+    field: fieldName(source["field"], "mapping.subjects.field"),
+    role: enumValue(source["role"], "mapping.subjects.role", SUBJECT_ROLES),
+    namespace,
+  };
+}
+
+function parseFields(
+  raw: unknown,
+  consumed: Map<string, string>,
+): Record<string, string | null> {
+  const fields: Record<string, string | null> = {};
+  const taken = new Set<string>();
+  for (const [legacy, mapped] of Object.entries(
+    stringMap(raw, "mapping.fields"),
+  )) {
+    const owner = consumed.get(legacy);
+    if (owner !== undefined) {
+      fail(`mapping.fields.${legacy}`, `already consumed by ${owner}`);
+    }
+    if (mapped === null) {
+      fields[legacy] = null;
+      continue;
+    }
+    if (typeof mapped !== "string" || !EXTENSION_NAME.test(mapped)) {
+      fail(`mapping.fields.${legacy}`, "must be an x-* name or null");
+    }
+    if (taken.has(mapped)) {
+      fail(`mapping.fields.${legacy}`, `must be distinct; ${mapped} is taken`);
+    }
+    taken.add(mapped);
+    fields[legacy] = mapped;
+  }
+  return fields;
+}
+
+function parseTarget(raw: unknown): LegacyWikiMapping["target"] {
+  const source = objectAt(raw ?? {}, "mapping.target", ["mode", "directories"]);
+  const directories: Record<PageType, string> = { ...DEFAULT_DIRECTORIES };
+  for (const [type, directory] of Object.entries(
+    stringMap(source["directories"], "mapping.target.directories"),
+  )) {
+    const path = `mapping.target.directories.${type}`;
+    if (!(PAGE_TYPES as readonly string[]).includes(type)) {
+      fail("mapping.target.directories", `unknown key ${type}`);
+    }
+    if (typeof directory !== "string") fail(path, "must be a string");
+    const segments = directory.split("/");
+    if (
+      segments.length < 1 ||
+      segments.length > MAX_DIRECTORY_SEGMENTS ||
+      !segments.every(
+        (segment) => segment.length <= 64 && DIRECTORY_SEGMENT.test(segment),
+      )
+    ) {
+      fail(path, `must be 1..${MAX_DIRECTORY_SEGMENTS} usable path segments`);
+    }
+    directories[type as PageType] = directory;
+  }
+  return {
+    mode: enumValue(source["mode"] ?? "flat", "mapping.target.mode", [
+      "flat",
+      "mirror",
+    ] as const),
+    directories,
+  };
+}
+
+function parseIgnore(raw: unknown): string[] {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw) || raw.some((item) => typeof item !== "string")) {
+    fail("mapping.ignore", "must be an array of glob strings");
+  }
+  return [...(raw as string[])];
+}
+
+export function parseLegacyWikiMapping(raw: unknown): LegacyWikiMapping {
+  const source = objectAt(raw, "mapping", [
+    "schema",
+    "title",
+    "type",
+    "sensitivity",
+    "occurred_at",
+    "fields",
+    "subjects",
+    "target",
+    "ignore",
+  ]);
+  if (source["schema"] !== LEGACY_WIKI_MAPPING_SCHEMA) {
+    fail("mapping.schema", `must be "${LEGACY_WIKI_MAPPING_SCHEMA}"`);
+  }
+
+  const title = parseTitle(source["title"]);
+  const type = parseType(source["type"]);
+  const sensitivity = parseSensitivity(source["sensitivity"]);
+  const occurredAt = parseOccurredAt(source["occurred_at"]);
+  const subjects = parseSubjects(source["subjects"]);
+
+  const consumed = new Map<string, string>([
+    [title.field, "mapping.title.field"],
+    [type.field, "mapping.type.field"],
+    [sensitivity.field, "mapping.sensitivity.field"],
+  ]);
+  if (occurredAt !== null)
+    consumed.set(occurredAt.field, "mapping.occurred_at.field");
+  if (subjects !== null) consumed.set(subjects.field, "mapping.subjects.field");
+
+  return {
+    schema: LEGACY_WIKI_MAPPING_SCHEMA,
+    title,
+    type,
+    sensitivity,
+    occurred_at: occurredAt,
+    fields: parseFields(source["fields"], consumed),
+    subjects,
+    target: parseTarget(source["target"]),
+    ignore: parseIgnore(source["ignore"]),
+  };
+}
+
+/** The field names the mapping itself consumes; everything else is an x-* field. */
+export function consumedFields(mapping: LegacyWikiMapping): Set<string> {
+  const consumed = new Set([
+    mapping.title.field,
+    mapping.type.field,
+    mapping.sensitivity.field,
+  ]);
+  if (mapping.occurred_at !== null) consumed.add(mapping.occurred_at.field);
+  if (mapping.subjects !== null) consumed.add(mapping.subjects.field);
+  return consumed;
+}
