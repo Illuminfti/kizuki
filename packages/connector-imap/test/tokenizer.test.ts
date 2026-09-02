@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { KizukiError } from "@kizuki/core";
 import {
+  MAX_LIST_DEPTH,
   MAX_LITERAL_BYTES,
   ResponseReader,
   parseResponse,
@@ -93,6 +94,33 @@ describe("response tokenizer", () => {
   test("refuses a truncated literal", async () => {
     const reader = new ResponseReader(conn(["* OK {10}\r\nshort"]));
     await expect(reader.next()).rejects.toThrow(KizukiError);
+  });
+
+  test("refuses a line that nests lists past the bound", () => {
+    const error = ((): unknown => {
+      try {
+        parseResponse(`* 1 FETCH ${"(".repeat(40_000)}`, []);
+        return null;
+      } catch (caught: unknown) {
+        return caught;
+      }
+    })();
+    expect(error).toBeInstanceOf(KizukiError);
+    expect((error as KizukiError).message).toBe("list nesting exceeds bound");
+  });
+
+  test("reads a list nested to the bound", () => {
+    const depth = MAX_LIST_DEPTH;
+    const response = parseResponse(
+      `* 1 FETCH ${"(".repeat(depth)}A${")".repeat(depth)}`,
+      [],
+    );
+    let token = response.items[2];
+    for (let level = 1; level < depth; level += 1) {
+      expect(token?.kind).toBe("list");
+      token = token?.kind === "list" ? token.items[0] : undefined;
+    }
+    expect(token).toEqual({ kind: "list", items: [{ kind: "atom", value: "A" }] });
   });
 
   test("an unterminated final line is read once, then EOF", async () => {

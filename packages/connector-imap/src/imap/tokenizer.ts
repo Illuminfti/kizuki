@@ -3,6 +3,12 @@ import type { ImapConn } from "../transport";
 
 export const MAX_LINE_BYTES = 65_536;
 export const MAX_LITERAL_BYTES = 8_388_608;
+/**
+ * RFC 3501 responses nest a handful deep at most. Without a bound a line of
+ * open parentheses inside the line budget would exhaust the stack and escape
+ * as an untyped RangeError instead of the protocol error the caller handles.
+ */
+export const MAX_LIST_DEPTH = 32;
 
 export type Token =
   | { kind: "atom"; value: string }
@@ -132,6 +138,7 @@ interface Scanner {
   index: number;
   literals: Uint8Array[];
   literalIndex: number;
+  depth: number;
 }
 
 function skipSpaces(scanner: Scanner): void {
@@ -179,7 +186,11 @@ function readToken(scanner: Scanner): Token | null {
   const character = scanner.text[scanner.index] ?? "";
   if (character === ")") return null;
   if (character === "(") {
+    if (scanner.depth >= MAX_LIST_DEPTH) {
+      throw protocolError("list nesting exceeds bound");
+    }
     scanner.index += 1;
+    scanner.depth += 1;
     const items: Token[] = [];
     for (;;) {
       skipSpaces(scanner);
@@ -191,6 +202,7 @@ function readToken(scanner: Scanner): Token | null {
       if (token === null) throw protocolError("unterminated list");
       items.push(token);
     }
+    scanner.depth -= 1;
     return { kind: "list", items };
   }
   if (character === '"') return readQuoted(scanner);
@@ -207,7 +219,13 @@ function readToken(scanner: Scanner): Token | null {
 }
 
 export function parseResponse(line: string, literals: Uint8Array[]): ImapResponse {
-  const scanner: Scanner = { text: line, index: 0, literals, literalIndex: 0 };
+  const scanner: Scanner = {
+    text: line,
+    index: 0,
+    literals,
+    literalIndex: 0,
+    depth: 0,
+  };
   const first = readToken(scanner);
   if (first === null) return { tag: "", text: "", items: [] };
   const tag =
