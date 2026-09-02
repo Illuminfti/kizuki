@@ -211,8 +211,10 @@ export class LegacyWikiConnector implements Connector {
     const hashes = new Map(
       scan.files.map((file) => [file.relpath, contentHash(file.content)]),
     );
+    // A copy: the snapshot below is built from what the walk found, and the
+    // tombstones about to be pushed are not part of that.
     const kept = changed
-      ? events
+      ? [...events]
       : events.filter(
           (event) =>
             hashes.get(event.source_record_id) !==
@@ -224,7 +226,10 @@ export class LegacyWikiConnector implements Connector {
       kept.push(tombstone(relpath, observedAt));
     }
     kept.sort((a, b) => compareStrings(a.source_record_id, b.source_record_id));
-    return { events: kept, cursor: encodeCursor(scan, events, this.mappingHash) };
+    return {
+      events: kept,
+      cursor: encodeCursor(scan, events, this.mappingHash),
+    };
   }
 
   async revoke(): Promise<void> {}
