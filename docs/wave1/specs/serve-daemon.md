@@ -1,4 +1,58 @@
+> **VOID as written, 2026-09-02.** Reissue against rfcs/0002-autonomous-canon.md.
+
 # Lane: serve-daemon — `kizuki serve`: loopback daemon with a receipted scheduler, sync loops, the daily brief, notifiers and the standing MCP endpoint
+
+## Decision-log deltas (2026-09-02)
+
+VOID as written per `docs/CURRENT.md`; RFC 0002 §18 lanes replace this spec.
+The replacement lane is `serve-daemon` implemented against
+`kizuki.surface/v1` rather than concrete modules: unit install, rails,
+leases, budgets, run receipts and doctor sections, with a restart suite,
+seven days of receipts, and a masked unit reported as a failure
+(RFC 0002 §18.4, §11).
+
+Superseded sentences, and the semantics an implementer must follow instead:
+
+- The read-first list, "§12 (lessons-as-tests: scheduled-write-to-canon
+  impossible)", and §14's `invariants.test.ts` requirement that no file under
+  `packages/core/src/serve/` may reach `vault/write`, `staging/promote` or
+  `writePage`. That lesson is precisely inverted (RFC 0002 §18.4). The
+  scheduled path is exactly what writes canon, through the single receipted
+  writer in `packages/core/src/canon/` (D9). What the test must assert now is
+  that the daemon writes canon only through that writer, never by opening a
+  file itself.
+- §7, "The brief is a `kizuki.proposal/v1` filed into staging by the
+  deterministic floor; it reaches canon only if the owner promotes it
+  (invariant 3, RFC 0000 §2)". Invariant 3 and RFC 0000 §2 are both replaced
+  (RFC 0002 §2.1, §2.3). Nothing waits on an owner. The brief is written by
+  the receipted writer or delivered by the `kizuki.notifier/v1` file notifier
+  into `<vault>/dashboards/` (RFC 0002 §3.7).
+- §7, "a second brief for the same date is filed as an `edit` the owner can
+  accept or reject". There is no accept or reject (D10). A second brief for
+  the same date is an edit the arbiter decides and the writer performs, with
+  a receipt and an undo path (RFC 0002 §4.4, §7).
+- §Brief body, the `## Review queue` block and `pending=7 … Run: kizuki
+  review`. There is no queue to report. The brief reports what the loop
+  wrote, what it contested, what it was unable to write against budget, and
+  rail liveness (RFC 0002 §4.6).
+- §11.4, "The daemon and the owner's `kizuki review`/`promote`/`sync` share
+  one WAL database". Those verbs are not the product path. The contention
+  that matters is the retrieval writer lease and the busy timeout between the
+  daemon and the CLI (D13, D16; RFC 0002 §9.7).
+- §Objective and §11 CLI text, `serve unit systemd|launchd` "prints a
+  unit/plist to stdout for the owner to install (nothing is written)".
+  `kizuki init` installs `kizuki serve` as an always-on user service (D15,
+  RFC 0002 §11.1). Printing a unit for manual installation is not the
+  install path; a unit that is absent, disabled or masked is a `doctor`
+  failure, not a neutral state (RFC 0002 §2.1 invariant 9, §11.4).
+
+What survives: the receipted scheduler and its `schedules` / `run_receipts` /
+`leases` tables (RFC 0002 §18.1 v5); loopback-only binding with per-agent
+bearer tokens; one job at a time under a single SQLite writer; the busy-timeout
+assertion; redaction of paths, captured text and tokens from receipts and
+error messages; the network allowlist entries; and liveness asserted against
+the service manager rather than inferred from an absence of receipts
+(RFC 0002 §1.1 E10).
 
 Packages: `packages/core` (NEW directory `src/serve/`, one additive export in
 `src/staging/producers.ts`, one NEW function in `src/ingest/run.ts` if it is

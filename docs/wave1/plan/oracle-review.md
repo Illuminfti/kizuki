@@ -1,5 +1,21 @@
 # Oracle review — Kizuki architecture + RFC 0001 skeleton
 
+> **Superseded in part on 2026-09-02.** `docs/CURRENT.md`, `docs/decision-log.md`
+> and `rfcs/0002-autonomous-canon.md` are binding: autonomous canon with no
+> owner review gate, auto-labeled sensitivity, a configured model required for
+> the world model, retrieval behind a port, an MCP `correct` tool, an always-on
+> daemon installed at init, and a modular monolith with pluggable ports. This
+> document is a historical record; where it conflicts, the binding documents win.
+>
+> Specifically superseded and not to be implemented from this file: risk 8 and
+> delta D9 (an owner review queue, owner-invoked promote as the only canon
+> write path, owner-invoked promotion batches), the `owner_invoked_at` column
+> and the `Owner-invoked only` / `Canon redaction still goes through owner
+> review/promote` comments in the schema skeleton, and risk 10's assumption
+> that the deterministic floor must cover semantic reduction. See
+> `docs/decision-log.md` D9, D10, D12 and `rfcs/0002-autonomous-canon.md`
+> §2.1, §13.
+
 Date: 2026-09-01
 Source: GPT-5.5 Pro (ChatGPT browser mode, conversation 6a97153f-da40-83eb-a6da-6294032cf6eb)
 Status: UNARBITRATED input. Fable arbitrates before anything binds. Nothing in
@@ -23,9 +39,9 @@ I’ll treat RFC 0000 as binding and keep the response implementation-facing: co
 | 5 | **No atomic claim store between ledger and Markdown canon.** | Canon promotion becomes page-edit generation instead of fact promotion. Contradictions, stale values, and “known at time X” questions cannot be handled without rereading prose. |
 | 6 | **No bi-temporal validity model.** | “Alice works at X” and “Alice left X” overwrite each other or coexist as untyped notes. The system cannot answer “what did I believe on 2026-08-01?” versus “what was true during July?” |
 | 7 | **Provenance is mandatory by policy but not universal by schema.** | Purge/revocation cannot be computed from event IDs alone once claims are grouped, summarized, embedded, indexed, graphed, or packetized. Deleted capture remains in derived surfaces. |
-| 8 | **Review queue is not subject-level or conflict-aware.** | The owner receives hundreds of micro-proposals instead of coherent packets: “about this person/project, here are new facts, conflicts, deletions, and suggested promotions.” The gate becomes unusable and gets bypassed socially. |
+| 8 (superseded 2026-09-02, see `docs/decision-log.md` D10: there is no review queue; conflict handling lives in claim arbitration, RFC 0002 §5) | **Review queue is not subject-level or conflict-aware.** | The owner receives hundreds of micro-proposals instead of coherent packets: “about this person/project, here are new facts, conflicts, deletions, and suggested promotions.” The gate becomes unusable and gets bypassed socially. |
 | 9 | **Promotion is not transactionally specified across SQLite and Markdown files.** | A crash can leave Markdown changed without a receipt, or a receipt committed without the file write. Rebuild diverges from canon and `doctor` cannot prove which state is authoritative. |
-| 10 | **Deterministic floor is stated but not designed for semantic reduction.** | With no LLM configured, capture and search may work, but entity extraction, claim atomization, conflict detection, and review packet generation collapse into empty output or brittle ad hoc behavior. |
+| 10 (superseded in part 2026-09-02, see `docs/decision-log.md` D12: canon writing requires a configured model, so semantic reduction is never expected from the model-free floor) | **Deterministic floor is stated but not designed for semantic reduction.** | With no LLM configured, capture and search may work, but entity extraction, claim atomization, conflict detection, and review packet generation collapse into empty output or brittle ad hoc behavior. |
 
 ---
 
@@ -41,7 +57,7 @@ I’ll treat RFC 0000 as binding and keep the response implementation-facing: co
 | D6 | Add `wm_artifact_events` as universal provenance join. Every derived artifact has computable event ancestry. | Purge cascades computable from provenance alone. |
 | D7 | Add semantic reduction stages with deterministic fallbacks and optional LLM enrichment. LLM outputs must validate against deterministic schemas before storage. | LLM additive only. |
 | D8 | Add subject-level review packets that bundle proposal items by subject, conflict, tombstone, or purge. | Egress remains `kizuki.proposal/v1`-compatible. |
-| D9 | Add transactional promotion batches with file-hash preconditions, staged writes, append-only journal phases, and recovery receipts. | Owner-invoked promote remains the only canon write path. |
+| D9 (superseded 2026-09-02, see `docs/decision-log.md` D9, D10 and RFC 0002 §4.5, §14: the receipted writer is the only canon write path, and multi-file atomic batches stay deferred) | Add transactional promotion batches with file-hash preconditions, staged writes, append-only journal phases, and recovery receipts. | Owner-invoked promote remains the only canon write path. |
 | D10 | Extend serving/query surfaces with temporal parameters and taint separation: `as_of_valid`, `as_of_transaction`, `include_evidence`, `canon_only`. | MCP/CLI reads only; no new write path. |
 
 ---
@@ -1280,7 +1296,7 @@ CREATE TABLE IF NOT EXISTS wm_promotion_batches (
   batch_id TEXT PRIMARY KEY,
   schema TEXT NOT NULL DEFAULT 'kizuki.promotion_batch/v1',
 
-  owner_invoked_at TEXT NOT NULL,
+  owner_invoked_at TEXT NOT NULL, -- superseded 2026-09-02, see docs/decision-log.md D9
   owner_actor TEXT NOT NULL DEFAULT 'owner',
 
   packet_ids_json TEXT NOT NULL CHECK (json_valid(packet_ids_json)),
@@ -1378,7 +1394,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_wm_promoted_claim_once
 
 ```ts
 /**
- * Owner-invoked only.
+ * Owner-invoked only. (Superseded 2026-09-02, see `docs/decision-log.md` D9.)
  * No scheduler may call this.
  */
 export async function promoteBatch(input: {
@@ -1483,7 +1499,9 @@ CREATE TABLE IF NOT EXISTS wm_purge_plan_items (
 ```ts
 /**
  * Purge is physical deletion plus receipt.
- * Canon redaction still goes through owner review/promote.
+ * Canon redaction still goes through owner review/promote. (Superseded
+ * 2026-09-02, see `docs/decision-log.md` D9, D10 and RFC 0002 §13: redaction
+ * is written by the receipted writer and verified by two-phase purge.)
  * Until reviewed, affected canon paths are denied to serving if their source
  * provenance intersects the purged event set.
  */

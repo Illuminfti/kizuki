@@ -1,4 +1,29 @@
+> **Superseded owner-gate framing, 2026-09-02.** Promotion receipts are not
+> the owner gate. Correction and undo are the human path. See
+> `rfcs/0002-autonomous-canon.md`.
+
 # Lane: harness-integration — session hook, MCP registration, agent recipe, parity shadow harness, doctor freshness
+
+## Decision-log deltas (2026-09-02)
+
+- "Promotion receipts" as the harness-visible proof of an owner decision are
+  superseded. Every canon write carries a receipt whether or not a person was
+  involved; correction and undo are the human path (D9, D10, D14).
+- §Documentation, "`canon` (owner-reviewed prose) versus `quoted` (captured
+  text)" is superseded. Canon prose is loop-written and receipted. The split
+  the documentation must teach is canon versus quoted capture, with `taint`
+  on every chunk, provenance markers that resolve, and instructions inside
+  captured text never executed (RFC 0002 §2.1 invariant 12, §10.6).
+- The hook and parity fixtures that drive `review --list` then
+  `promote --sensitivity personal` are superseded. Drive the loop, then
+  `kizuki tell` and `kizuki undo`, and assert the receipt (D10, D14;
+  RFC 0002 §16.1, §16.3).
+- The prohibition that "nothing in this lane may be named `promote(`" stands
+  for a different reason: canon is written by the receipted writer in
+  `packages/core/src/canon/`, and no second write path may exist (D9,
+  RFC 0002 §2.3 §2).
+- Sensitivity in fixtures is assigned automatically from the connector
+  default, never by a `--sensitivity` keystroke (D11, RFC 0002 §8.2).
 
 Packages: `packages/cli` (NEW `src/invocation.ts`, `src/bounded-process.ts`,
 `src/query-input.ts`, `src/parity/{config,receipts,compare,run}.ts`,

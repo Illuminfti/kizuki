@@ -1,0 +1,5 @@
+# Permitted network call sites. Format: <tracked path>:<reason>
+# An entry is stale (and fails the gate) when the path is untracked, outside
+# packages/, or produces zero findings. Do not add a path until the call exists.
+packages/core/src/contracts/remote.ts:loopback port adapter; TCP is restricted to loopback and Unix sockets stay local
+packages/core/test/contracts/remote-child.ts:loopback child server for remote adapter parity tests

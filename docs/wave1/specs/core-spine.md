@@ -1,4 +1,33 @@
+> **Superseded owner-gate framing, 2026-09-02.** This lane shipped. Promotion
+> for every proposal kind is leftover implementation. It is not the product
+> gate. See `rfcs/0002-autonomous-canon.md`.
+
 # Lane: core-spine — checkpoints, connections, ingest runner, promote kinds, purge cascade, export
+
+## Decision-log deltas (2026-09-02)
+
+This lane shipped; the deltas below govern anything that reads it as a
+statement of the product's write path.
+
+- "promotion for every proposal kind" and `ownerPromote` are superseded by
+  the single receipted writer (D9, RFC 0002 §4.5). Promotion is leftover
+  implementation, a transitional state a named lane removes, and never the
+  product gate. There is no owner review queue and no owner approval step
+  (D10).
+- `canon_holds` lifted by a `purge_review` proposal is superseded. Purge is
+  two-phase and computable across every store, including the retrieval
+  engine, with `kizuki purge --verify <receipt>` printing an absence proof
+  per store and an unresolved purge operation failing `doctor`
+  (RFC 0002 §2.1 invariant 14, §13). A hold is not waiting on an owner
+  keystroke.
+- The `proposals` table and `kizuki.proposal/v1` become `claims` and
+  `kizuki.claim/v1` in migration v3, and `promotions` becomes
+  `canon_receipts` in migration v4 (RFC 0002 §18.1).
+- The `rejections` table and its body-hash suppression are dropped in
+  migration v3 and replaced by owner correction (D14, RFC 0002 §18.2).
+- Derived retrieval moves behind `kizuki.retrieval/v1` with its own
+  rebuildable store under `<vault>/.kizuki/retrieval/`; the ledger, claims,
+  receipts and canon stay SQLite plus Markdown (D13, D16).
 
 Package: `packages/core` only (plus its tests). Read CONVENTIONS.md first.
 

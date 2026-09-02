@@ -4,7 +4,6 @@ import {
   fileProposal,
   getProposal,
   hashBody,
-  isSuppressed,
   listProposals,
   setProposalStatus,
 } from "../../src/staging/proposals";
@@ -86,65 +85,6 @@ describe("fileProposal", () => {
   });
 });
 
-describe("rejection suppression", () => {
-  test("content the owner rejected cannot be refiled", () => {
-    const db = memoryDb();
-    const stored = fileProposal(db, proposalInput());
-    expect(stored.outcome).toBe("stored");
-    if (stored.outcome !== "stored") return;
-
-    setProposalStatus(db, stored.proposal.proposal_id, "rejected", "not true");
-    expect(isSuppressed(db, stored.proposal.body_hash)).toBe(true);
-
-    const refiled = fileProposal(db, proposalInput());
-    expect(refiled.outcome).toBe("suppressed");
-    if (refiled.outcome !== "suppressed") return;
-    expect(refiled.reason).toBe("not true");
-    expect(refiled.body_hash).toBe(stored.proposal.body_hash);
-    expect(listProposals(db)).toHaveLength(1);
-  });
-
-  test("suppression follows the body across producers, kinds, and targets", () => {
-    const db = memoryDb();
-    const stored = fileProposal(db, proposalInput());
-    if (stored.outcome !== "stored") throw new Error("expected stored");
-    setProposalStatus(db, stored.proposal.proposal_id, "rejected", "no");
-
-    const elsewhere = fileProposal(
-      db,
-      proposalInput({
-        kind: "entity",
-        target: "person:bob",
-        producer: "agent:scribe",
-      }),
-    );
-    expect(elsewhere.outcome).toBe("suppressed");
-  });
-
-  test("a different body is unaffected by the rejection", () => {
-    const db = memoryDb();
-    const stored = fileProposal(db, proposalInput());
-    if (stored.outcome !== "stored") throw new Error("expected stored");
-    setProposalStatus(db, stored.proposal.proposal_id, "rejected", "no");
-
-    expect(fileProposal(db, proposalInput({ body: "other" })).outcome).toBe(
-      "stored",
-    );
-  });
-
-  test("rejecting without a reason is refused", () => {
-    const db = memoryDb();
-    const stored = fileProposal(db, proposalInput());
-    if (stored.outcome !== "stored") throw new Error("expected stored");
-    expect(() =>
-      setProposalStatus(db, stored.proposal.proposal_id, "rejected"),
-    ).toThrow(StagingError);
-    expect(getProposal(db, stored.proposal.proposal_id)?.status).toBe(
-      "pending",
-    );
-  });
-});
-
 describe("listProposals", () => {
   test("filters by status and kind", () => {
     const db = memoryDb();
@@ -163,7 +103,7 @@ describe("listProposals", () => {
 describe("setProposalStatus", () => {
   test("refuses an unknown proposal and an unknown status", () => {
     const db = memoryDb();
-    expect(() => setProposalStatus(db, "nope", "promoted")).toThrow(
+    expect(() => setProposalStatus(db, "nope", "withdrawn")).toThrow(
       StagingError,
     );
     const stored = fileProposal(db, proposalInput());
@@ -172,7 +112,7 @@ describe("setProposalStatus", () => {
       setProposalStatus(
         db,
         stored.proposal.proposal_id,
-        "accepted" as unknown as "promoted",
+        "accepted" as unknown as "withdrawn",
       ),
     ).toThrow(StagingError);
   });

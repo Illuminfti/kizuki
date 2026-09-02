@@ -121,11 +121,17 @@ read-only plan: screenpipe's database is never changed. Site plans match the
 parsed host and may take seconds on a database with many URL-bearing frames.
 Ledger purge by subject or connector is not limited by the plan cap.
 
-## Review-queue volume
+## Capture volume
 
-Kizuki's deterministic floor creates one capture note per emitted frame or
-transcription. A database with millions of frames can therefore create a long
-review queue. Configure `since` when the CLI exposes that option if only recent
+Kizuki's model-free producer creates one capture note per emitted frame or
+transcription. A database with millions of frames therefore produces a large
+number of claims for the loop to write and budget against; it does not queue
+anything for a person to approve. There is no owner review queue and no owner
+approval step (`docs/decision-log.md` D9, D10; RFC 0002 §4). Canon writing is
+bounded by the loop's per-run and per-day write budget and every write is
+receipted and reversible; the model-free path here still runs with no model
+configured, while canon writing itself requires one (`docs/decision-log.md`
+D12). Configure `since` when the CLI exposes that option if only recent
 history is wanted.
 
 ## Provider research packet
@@ -144,4 +150,5 @@ database crate and migrations at
 | History and backfill | Every physically retained row of a compatible schema is visible. Kizuki pages them in 500-event batches; an optional initial `since` skips older IDs approximately. |
 | Incremental behavior | Each sweep resumes from the checkpointed frame and transcription IDs. There is no webhook and no network cursor; later row updates, hard deletions, and database ID rewinds are not detected. |
 | Edits and deletions | Late OCR is covered by the settle window. Redaction overwrites the text columns in place and stamps `*_redacted_at`; those rows are not re-read. Media eviction empties `file_path` and keeps the row. Retention and range deletion leave no deletion log suitable for tombstones. |
+| Approval, billing, and review | The connector itself has no provider approval or billing gate. Screenpipe's own plan can govern supported history and query-time privacy features; direct file access does not reproduce those gates. These are provider-side gates only; Kizuki itself has no owner review or approval gate (`docs/decision-log.md` D10). |
 | Honest fallback | Update screenpipe when the schema sits below the floor, and use owner-invoked Kizuki ledger purge when imported evidence must be removed. |

@@ -73,20 +73,17 @@ exact materiality threshold is not decided here. The intended behavior is to
 avoid interrupting the owner for low-value uncertainty while refusing to
 silently settle consequential contradictions.
 
-## The current design tension
+## The resolved boundary
 
-Two requirements must coexist:
+The tension between owner-gated canon and a self-updating working model is
+resolved in favor of autonomy plus reversibility. There is one durable
+knowledge record — the claim — and one durable artifact — the canon page.
+Automation writes both. What protects the owner is not an approval step; it
+is that every write is attributable, budgeted, reversible by one command,
+and outranked by the owner's own word.
 
-- Owner-gated canon and the prohibition on silent canon merges remain in
-  force for high-impact canonical truth.
-- Beneath canon, the working model must support automatic, reversible updates
-  and low-friction reconciliation.
-
-The working model is the pressure-release layer between raw evidence and
-canon. Automation may update this reversible layer, preserve competing
-evidence, and prepare proposed canonical changes. High-impact canon still
-requires the owner's explicit promotion. This document does not define the
-final boundary between low-impact working knowledge and high-impact canon.
+High-impact and low-impact writes differ in confidence, authority and
+budget, not in who presses a button.
 
 ## Agent and harness experience
 
@@ -150,12 +147,13 @@ generated it.
 
 The intended autonomy model has three modes:
 
-1. **Approval by default.** Consequential changes and high-impact canon wait
-   for explicit owner approval.
-2. **Delegated scope.** The owner may grant a bounded agent or automation
-   authority within an explicit scope.
-3. **Bounded YOLO.** The owner may explicitly authorize a tightly bounded
-   autonomous scope with deterministic limits and stop conditions.
+1. **Autonomous by default.** The loop writes canon within its configured
+   budgets. Every write is receipted and reversible.
+2. **Delegated scope.** An agent or automation reads and proposes within an
+   explicit grant: sensitivity ceiling, scope filters, tool allowlist, rate
+   limit, audit.
+3. **Correction.** The owner's statement outranks every other source,
+   supersedes immediately, and rewrites affected canon in the same pass.
 
 These modes do not make Kizuki an action harness. They describe how clients
 may be authorized to read, interpret, propose, or update permitted Kizuki
@@ -175,14 +173,16 @@ is not decided here.
 
 This context does not decide:
 
-- the materiality threshold for surfacing ambiguity;
-- the exact storage or embedding implementation for semantic/vector search;
-- the final boundary between working-model updates and canonical promotion;
 - the federation protocol or shared-world permission model;
-- the default proactive delivery channels; or
-- provider precedence when sources disagree;
+- the default proactive delivery channels;
 - the representation and compilation format for reusable agent skills; or
 - the confidence, review, and expiry rules for inferred taste.
+
+RFC 0002 decided the former open items: materiality uses `CONFLICT_MARGIN`
+(§5.4); semantic retrieval is a port with a lexical floor and an optional
+embedded engine (§9); working-model updates and canon writes are one
+receipted path (§4); provider precedence follows the authority order in
+§5.
 
 Those decisions require their own evidence and acceptance criteria. Agents
 must not infer them from this product context.

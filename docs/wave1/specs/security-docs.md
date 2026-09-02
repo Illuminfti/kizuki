@@ -1,4 +1,59 @@
+> **VOID as written, 2026-09-02.** Owner-gated canon, `kizuki review` /
+> `promote` as the daily path, and the tension paragraph are dead. Reissue
+> against `rfcs/0002-autonomous-canon.md` and `docs/CURRENT.md`.
+
 # Lane: security-docs — README rewrite, SECURITY.md, CONTRIBUTING.md, docs/connectors.md, and a docs gate that keeps every claim traceable
+
+## Decision-log deltas (2026-09-02)
+
+VOID as written per `docs/CURRENT.md`; RFC 0002 §18 lanes replace this spec.
+The replacement is the `docs-pivot` lane, whose scope is every replacement in
+RFC 0002 §2, the upstream-policy corrections and the attribution paragraph,
+and whose exit proof is `bun run verify` with no document contradicting
+another (RFC 0002 §18.4).
+
+Superseded sentences, and the semantics an implementer must follow instead:
+
+- §Claims table, "Nothing writes canon except owner promote", bound to
+  `packages/core/test/staging/invariants.test.ts::the promote path is the
+  only door to canon". The claim is retired (D9, D10). The claim to document
+  and bind to a test is: nothing writes canon without a receipt, and every
+  write is reversible by `kizuki undo` (RFC 0002 §2.5 README pledge).
+- §Diagrams, the pipeline node `review (kizuki review / promote)` and the
+  edge labels `owner promote only` / `Canon (owner-promoted Markdown)`. The
+  pipeline is `connectors → event ledger → extraction → claims → canon vault
+  via the receipted writer → derived (retrieval port) → serving → audit &
+  undo · proactive` (RFC 0002 §2.1 Layers block).
+- §Pledges, "the tension paragraph: owner-gated canon and no silent canon
+  merges stay" and its source in `docs/product-context.md`, "The current
+  design tension". That section is replaced by "The resolved boundary"
+  (RFC 0002 §2.4): autonomy plus reversibility, with correction outranking
+  every other source.
+- §README, the pledge "Nothing writes canon but you". It becomes "Nothing
+  writes canon without a receipt" (RFC 0002 §2.5).
+- §Verb list and the quickstart claim naming `review` and `promote`. The verb
+  list drops `review`, `promote` and `reject` and adds `audit`, `tell`,
+  `undo`, `context`, `timeline`, `rebuild`, `models` and `serve`
+  (RFC 0002 §2.5).
+- §Connector documentation, "owner promotes and labels a page". Sensitivity
+  is assigned automatically from connector defaults and model refinement, and
+  refinement may only move a label upward (D11, RFC 0002 §8). A connector
+  manifest carries `default_sensitivity` and `sensitivity_floor`.
+- Any statement that the deterministic floor covers canon writing. It does
+  not (D12).
+- The MCP write surface is two tools, `propose` and `correct`, not one
+  (D14, RFC 0002 §6.1).
+- `README.md` and `docs/upstream-policy.md` are the only files where the
+  retrieval engine's name may appear, with the exact spelling and canonical
+  URL the validator enforces (RFC 0002 §9.1); the attribution paragraph is
+  required in the README.
+
+What survives: the whole documentation gate. `SECURITY.md`, `CONTRIBUTING.md`,
+`docs/connectors.md`, the pull-request template, `scripts/verify-docs.ts`,
+every claim traceable to a named test, the computed zero-phone-home pledge
+sentence, the denylist assertion over tracked text, paths and commit
+messages, and the three-way status vocabulary (implemented / accepted design
+/ direction).
 
 Reconciled against `main` @ `76930db` (2026-09-02; `bun test` = 515 pass /
 41 files; bun 1.3.14 locally, CI pins 1.3.10). Every path, symbol, table and

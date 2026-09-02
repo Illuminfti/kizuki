@@ -68,6 +68,15 @@ describe("initVault", () => {
     for (const file of ["CANON.md", "SCHEMA.md", ".gitignore", ".kizuki/.gitignore"]) {
       expect(existsSync(join(vault, file))).toBe(true);
     }
+    const canonDoctrine = readFileSync(join(vault, "CANON.md"), "utf8");
+    expect(canonDoctrine).toContain("kizuki audit");
+    expect(canonDoctrine).toContain("kizuki undo");
+    expect(canonDoctrine).toContain("kizuki tell");
+    expect(canonDoctrine).not.toContain("owner-invoked");
+    const schemaDoctrine = readFileSync(join(vault, "SCHEMA.md"), "utf8");
+    expect(schemaDoctrine).toContain("sensitivity");
+    expect(schemaDoctrine).toContain("taint");
+    expect(schemaDoctrine).not.toContain("Only owner promotion writes canon.");
 
     const replacements = new Map([
       ["CANON.md", "owner-edited canon doctrine\n"],

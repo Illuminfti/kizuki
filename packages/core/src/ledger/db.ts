@@ -1,8 +1,10 @@
 import { Database } from "bun:sqlite";
+import { applyClaimsV3 } from "../claims/schema";
 
 interface Migration {
   version: number;
-  sql: string;
+  sql?: string;
+  apply?: (db: Database) => void;
 }
 
 interface SchemaVersionRow {
@@ -123,6 +125,10 @@ const MIGRATIONS: readonly Migration[] = [
       ALTER TABLE promotions_v2 RENAME TO promotions;
     `,
   },
+  {
+    version: 3,
+    apply: applyClaimsV3,
+  },
 ];
 
 function migrate(db: Database): void {
@@ -151,7 +157,8 @@ function migrate(db: Database): void {
 
   db.transaction(() => {
     for (const migration of pending) {
-      db.exec(migration.sql);
+      if (migration.sql !== undefined) db.exec(migration.sql);
+      migration.apply?.(db);
       db.query<never, [number]>("UPDATE schema_version SET version = ?").run(
         migration.version,
       );

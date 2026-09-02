@@ -1,0 +1,160 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  indexPage,
+  initSearch,
+  openLedger,
+  serializePage,
+} from "@kizuki/core";
+import type { CanonPage, SearchHit } from "@kizuki/core";
+import { createHelpers } from "./helpers";
+
+const { cleanup, runCli, tempVault } = createHelpers();
+afterEach(cleanup);
+
+function importNotes(setup: ReturnType<typeof tempVault>) {
+  const imported = runCli(
+    setup.env,
+    "import",
+    "markdown-folder",
+    "--source",
+    setup.notes,
+  );
+  expect(imported.exitCode).toBe(0);
+  return imported;
+}
+
+function seedCanonPage(
+  setup: ReturnType<typeof tempVault>,
+  {
+    id,
+    relPath,
+    body,
+    status = "active",
+  }: {
+    id: string;
+    relPath: string;
+    body: string;
+    status?: "active" | "archived";
+  },
+): string {
+  const data = {
+    id,
+    title: id,
+    type: "fact",
+    status,
+    sensitivity: "personal",
+    sources: ["event:fixture"],
+  };
+  const page: CanonPage = {
+    id,
+    path: relPath,
+    relPath,
+    data,
+    body,
+  };
+  writeFileSync(
+    join(setup.vault, relPath),
+    serializePage({ data, body }),
+    "utf8",
+  );
+
+  const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+  try {
+    initSearch(db);
+    indexPage(db, page);
+  } finally {
+    db.close();
+  }
+  return relPath;
+}
+
+describe("query", () => {
+  test("--limit 0 and --limit x are usage errors", () => {
+    const setup = tempVault();
+    for (const limit of ["0", "x"]) {
+      const result = runCli(setup.env, "query", "acme", "--limit", limit);
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("usage: kizuki query");
+    }
+  });
+
+  test("--scope canon and --scope ledger split labeled pages from unlabeled events", () => {
+    const setup = tempVault();
+    importNotes(setup);
+    seedCanonPage(setup, {
+      id: "fact:acme",
+      relPath: "facts/acme.md",
+      body: "acme canonical fact",
+    });
+
+    const canon = runCli(setup.env, "query", "acme", "--scope", "canon");
+    expect(canon.exitCode).toBe(0);
+    expect(canon.stdout).toMatch(/^page /);
+    expect(canon.stdout).not.toMatch(/^event /m);
+
+    const ledger = runCli(setup.env, "query", "acme", "--scope", "ledger");
+    expect(ledger.exitCode).toBe(0);
+    expect(ledger.stdout).toBe("");
+    expect(ledger.stderr).toContain("withheld=");
+  });
+
+  test("held and archived pages are never returned", () => {
+    const setup = tempVault();
+    const heldPath = seedCanonPage(setup, {
+      id: "fact:held",
+      relPath: "facts/held.md",
+      body: "heldword",
+    });
+    seedCanonPage(setup, {
+      id: "fact:archived",
+      relPath: "facts/archived.md",
+      body: "archivedword",
+      status: "archived",
+    });
+
+    const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+    try {
+      db.query(
+        `INSERT INTO canon_holds (page_path, proposal_id, reason, held_at)
+         VALUES (?, ?, ?, ?)`,
+      ).run(
+        heldPath,
+        "fixture-hold",
+        "source purge",
+        "2026-09-01T00:00:00Z",
+      );
+    } finally {
+      db.close();
+    }
+
+    expect(runCli(setup.env, "query", "heldword").stdout).toBe("");
+    expect(runCli(setup.env, "query", "archivedword").stdout).toBe("");
+  });
+
+  test("tombstoned records never return their events", () => {
+    const setup = tempVault();
+    importNotes(setup);
+    rmSync(join(setup.notes, "linus.md"));
+    expect(runCli(setup.env, "sync", "markdown-folder").exitCode).toBe(0);
+    const result = runCli(setup.env, "query", "moth-lantern", "--scope", "ledger");
+    expect(result.stdout).toBe("");
+  });
+
+  test("--json lines parse as SearchHit", () => {
+    const setup = tempVault();
+    seedCanonPage(setup, {
+      id: "fact:acme",
+      relPath: "facts/acme.md",
+      body: "acme canonical fact",
+    });
+
+    const result = runCli(setup.env, "query", "acme", "--json");
+    expect(result.exitCode).toBe(0);
+    const hit = JSON.parse(result.stdout.trim()) as SearchHit;
+    expect(hit.scope).toBe("canon");
+    expect(hit.doc_id).toBeDefined();
+    expect(hit.snippet).toContain("acme");
+  });
+});

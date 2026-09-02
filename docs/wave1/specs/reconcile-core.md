@@ -1,4 +1,28 @@
+> **Superseded owner-gate framing, 2026-09-02.** This lane shipped. Promote
+> kinds remain leftover implementation. They are not the product gate. See
+> `rfcs/0002-autonomous-canon.md`.
+
 # Lane: reconcile-core — land lane/core-spine on top of main
+
+## Decision-log deltas (2026-09-02)
+
+This lane shipped; the deltas below govern anything that reads it as a
+statement of the product's write path.
+
+- "Promote kinds" and "deletion promotion in `staging/promote.ts`" are
+  leftover implementation superseded by the receipted writer (D9,
+  RFC 0002 §4.5). They are not the product gate, and there is no owner review
+  queue or approval step (D10).
+- `purge_review` in `PROPOSAL_KINDS`, and "file a `deletion` proposal per
+  promoted page", are superseded by two-phase purge with `purge_ops`,
+  `verifyAbsent` and `kizuki purge --verify` (RFC 0002 §13, §2.1
+  invariant 14). Redaction is performed by the writer under a receipt, not
+  queued for a person.
+- The `packages/tui` reconciliation is superseded: the TUI keeps its ANSI
+  layer, key protocol, sanitization and diff renderer, and loses
+  `promote`, `reject`, `edit`, `merge`, `batch` and the `sensitivity`,
+  `reason` and `batch-confirm` modes. Its only effect is `undo`
+  (D10, RFC 0002 §7.3).
 
 You are in the worktree for branch `lane/core-spine`. Read CONVENTIONS.md
 first, then `core-spine.md` (the spec the branch implemented), then compare

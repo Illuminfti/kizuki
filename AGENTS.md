@@ -13,6 +13,8 @@ back here rather than grow independent policy.
 
 Before proposing work, read:
 
+0. `docs/CURRENT.md`, `docs/decision-log.md` and `rfcs/0002-autonomous-canon.md`.
+   They are binding and override every document below where they conflict.
 1. `docs/architecture.md`.
 2. `rfcs/0000-constraints.md`.
 3. Any other merged RFC that governs the area.
@@ -29,9 +31,9 @@ without checking it again.
 
 Kizuki is a local-first personal intelligence substrate. It is not an agent
 harness and does not own an agent loop. Connectors and imports produce
-source-linked evidence. Evidence enters an append-only ledger, becomes staged
-proposals, and reaches durable Markdown canon only through owner-invoked
-promotion. Search, graph, timeline, and other derived layers must remain
+source-linked evidence. Evidence enters an append-only ledger, is extracted into claims, and
+reaches durable Markdown canon through an autonomous receipted writer. The
+owner's leverage is correction and undo, not approval. Search, graph, timeline, and other derived layers must remain
 rebuildable. Agents and harnesses are replaceable clients with scoped identity,
 grants, rate limits, and audit.
 
@@ -50,11 +52,15 @@ or leave a precise blocker.
 Preserve these across every change:
 
 1. Canon is human-readable Markdown on the owner's disk.
-2. Only owner-invoked promotion may write canon. Agents and automation propose.
+2. Canon is written by the loop's receipted writer. Every write records
+   provenance, confidence, sensitivity, writer, model reference and
+   before/after hashes, and is reversible by receipt. Agents propose claims
+   and relay owner corrections; no client writes a page.
 3. The event ledger is append-only. Purge is physical deletion with a receipt.
 4. Derived state is disposable and reproducibly rebuildable.
-5. The deterministic, zero-model path remains useful. LLM behavior is additive
-   or gracefully skippable.
+5. The deterministic, zero-model path remains useful: capture, ledger,
+   search, timeline, context and undo never require a model. Canon writing
+   requires one, and doctor says so plainly when it is missing.
 6. No silent network egress. Runtime network access is limited to explicit,
    user-configured connectors and model endpoints.
 7. Captured text, metadata, filenames, archives, and provider responses are
@@ -69,6 +75,10 @@ Preserve these across every change:
     purge behavior remain reversible and testable.
 12. Durable state must fit the repository's local TypeScript, Bun, SQLite, and
     Markdown architecture unless a merged RFC explicitly changes that boundary.
+    RFC 0002 changes it for derived retrieval only: a retrieval port
+    implementation may own a non-SQLite embedded store under
+    `<vault>/.kizuki/retrieval/`. The ledger, claims, receipts and canon
+    stay SQLite plus Markdown.
 
 ## Multi-agent coordination
 
@@ -145,8 +155,8 @@ A passing test run from an earlier SHA is not evidence for the current head.
 - `packages/connectors`: connector interface, registry, imports, normalization,
   and conformance tests.
 - `packages/cli`: command-line composition over public core and connector APIs.
-- `packages/tui`: owner review interface, pure state transitions and rendering,
-  with terminal effects at the edge.
+- `packages/tui`: the audit and undo interface — receipts, diffs, taint and
+  provenance, with `undo` as its only effect. It has no accept/reject path.
 - `docs`: architecture and explanatory product documentation.
 - `rfcs`: proposed and binding design decisions. Status in each RFC matters.
 - `.github`: CI and repository automation.
@@ -255,8 +265,9 @@ and failure cleanup. The CLI must not bypass core policy.
 ### TUI
 
 Keep reducers and rendering pure. Test every key path without requiring a TTY.
-Treat all displayed capture as hostile, strip control sequences, preserve
-owner confirmation, and never create another canon write path.
+Treat all displayed capture as hostile, strip control sequences,
+never create another canon write path; the only effect the reducer may emit
+is `undo`, and undo goes through the core receipt reverser.
 
 ### Documentation and RFCs
 
@@ -280,6 +291,13 @@ A merge recommendation requires two explicit review axes on the exact head:
 2. **Implementation quality and regression:** Is the code correct under retries,
    concurrency, partial failure, migration, malformed input, and integration
    with existing callers?
+
+Fail any change that reintroduces a superseded policy, in code, tests,
+documentation, specs, skills or pull-request text: owner-invoked promotion or
+an owner review queue or approval step (`docs/decision-log.md` D9, D10), owner
+labeling of sensitivity (D11), a zero-model floor that writes canon (D12), a
+SQLite-only rule for derived retrieval (D13), an owner-started daemon (D15),
+or the review gate as the product's moat (C8).
 
 Report findings before summaries. Use severity, file and line, concrete failure,
 and a reproducible example. Do not approve because CI is green, and do not
@@ -328,6 +346,8 @@ Open the matching canonical playbook before performing the task:
 
 Use the smallest set that covers the task. `orient-repository` comes first for
 all non-trivial work; `handoff-work` comes last when work continues elsewhere.
+Every skill is subordinate to `docs/CURRENT.md`, `docs/decision-log.md` and
+`rfcs/0002-autonomous-canon.md`; see `.agents/skills/README.md`.
 
 ## Definition of done
 
