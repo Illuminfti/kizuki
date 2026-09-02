@@ -34,6 +34,8 @@ export interface FakeImapOptions {
   delimiter?: string;
   /** Names the fetched section `BODY[]<0>`, as some real servers do. */
   decorateBodySection?: boolean;
+  /** Answers every UID FETCH with the whole mailbox, ignoring the set asked for. */
+  fetchIgnoresRange?: boolean;
 }
 
 /**
@@ -64,6 +66,7 @@ export class FakeImapServer {
       preauth: options.preauth ?? false,
       delimiter: options.delimiter ?? "/",
       decorateBodySection: options.decorateBodySection ?? false,
+      fetchIgnoresRange: options.fetchIgnoresRange ?? false,
     };
     this.authenticated = this.options.preauth;
   }
@@ -284,10 +287,12 @@ export class FakeImapServer {
     const items = (args[2] ?? "").toUpperCase();
     const ranges = parseRanges(set, folder.uidnext);
     const selected = folder.messages
-      .filter((message) =>
-        ranges.some(
-          (range) => message.uid >= range.first && message.uid <= range.last,
-        ),
+      .filter(
+        (message) =>
+          this.options.fetchIgnoresRange ||
+          ranges.some(
+            (range) => message.uid >= range.first && message.uid <= range.last,
+          ),
       )
       .sort((a, b) => a.uid - b.uid);
 

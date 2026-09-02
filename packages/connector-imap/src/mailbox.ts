@@ -236,7 +236,10 @@ async function retryPending(
   let pending = holes;
   for (const piece of chunk(holes, BODY_FETCH)) {
     if (alreadyEmitted + into.length >= BATCH) break;
-    const summaries = await session.fetchSummaries(piece);
+    const requested = new Set(uids(parseSet(piece)));
+    const summaries = (await session.fetchSummaries(piece)).filter((summary) =>
+      requested.has(summary.uid),
+    );
     const present = new Set(summaries.map((summary) => summary.uid));
     for (const uid of uids(parseSet(piece))) {
       if (!present.has(uid)) pending = removeUid(pending, uid);
@@ -280,8 +283,13 @@ async function pageFolder(
     const windowEnd = Math.min(entry.scan_from + WINDOW - 1, entry.uidnext - 1);
     // `n:*` is never used for scanning: a server answers it with the last
     // message when n is past the end, which would re-emit a UID forever.
-    const summaries = await session.fetchSummaries(
-      `${entry.scan_from}:${windowEnd}`,
+    // A server that answers a bounded window with UIDs outside it would
+    // otherwise push `scan_from` past everything below them, and the rest of
+    // the mailbox would be unreachable for the life of this cursor.
+    const summaries = (
+      await session.fetchSummaries(`${entry.scan_from}:${windowEnd}`)
+    ).filter(
+      (summary) => summary.uid >= entry.scan_from && summary.uid <= windowEnd,
     );
     const room = BATCH - (alreadyEmitted + into.length);
     const selected = summaries.slice(0, room);

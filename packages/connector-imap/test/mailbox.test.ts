@@ -294,6 +294,32 @@ describe("sync", () => {
     ).toBe("");
   });
 
+  test("a uid outside the window asked for cannot end the walk", async () => {
+    const wide: FakeFolder = {
+      wire: "INBOX",
+      attributes: ["\\HasNoChildren"],
+      uidvalidity: 1,
+      uidnext: 1001,
+      messages: Array.from({ length: 300 }, (_unused, index) =>
+        message(5000 + index, `far ${index}`),
+      ),
+    };
+    const server = new FakeImapServer([wide], { fetchIgnoresRange: true });
+    const result = await walkMailboxes(
+      deps(server, state(["INBOX"])),
+      null,
+      "backfill",
+    );
+    // The reply names UIDs the walk never asked about. Trusting them used to
+    // set scan_from past 5000 and mark the mailbox done, leaving 1..1000
+    // unreachable for the life of the cursor.
+    expect(result.batch.events).toEqual([]);
+    const entry = decodeCursor(result.batch.cursor ?? "").folders["INBOX"];
+    expect(entry?.scan_from).toBe(1001);
+    expect(entry?.known).toBe("");
+    expect(entry?.done).toBe(true);
+  });
+
   test("a decorated body section is still read as the body", async () => {
     const server = new FakeImapServer([folder("INBOX", 2)], {
       decorateBodySection: true,
