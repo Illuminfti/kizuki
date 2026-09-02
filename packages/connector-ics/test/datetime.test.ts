@@ -184,3 +184,28 @@ describe("zone resolution", () => {
     expect(vtimezoneFixedOffset(undefined)).toBeNull();
   });
 });
+
+describe("timestamps the ledger cannot store are refused", () => {
+  test("a year before the first stops at the parser", () => {
+    expect(() => parseDateTime("00000101T000000Z", {})).toThrow(KizukiError);
+    expect(() => parseDateTime("00001231", { VALUE: "DATE" })).toThrow(
+      KizukiError,
+    );
+  });
+
+  test("a zone shift out of range is a parse error, not a bad timestamp", () => {
+    expect(() =>
+      toUtc(
+        { kind: "zoned", local: "00010101T000000", tzid: "Europe/Berlin" },
+        intlZones,
+        NO_ZONES,
+      ),
+    ).toThrow(KizukiError);
+  });
+
+  test("an ordinary instant still converts", () => {
+    expect(
+      toUtc({ kind: "utc", iso: "2026-03-02T09:00:00.000Z" }, intlZones, NO_ZONES),
+    ).toEqual({ iso: "2026-03-02T09:00:00.000Z", approximation: "none" });
+  });
+});

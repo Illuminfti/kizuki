@@ -191,6 +191,50 @@ describe("the fixture messages map to exact events", () => {
     );
   });
 
+  test.each([
+    ["a year the ledger cannot store", "Fri, 01 Jan 275760 00:00:00 +0000"],
+    ["a year before the common era", "Sat, 01 Jan -1000 00:00:00 +0000"],
+  ])("%s falls back to INTERNALDATE", (_label, header) => {
+    const event = build(
+      [
+        "From: ada@acme.example",
+        `Date: ${header}`,
+        "Subject: Far future",
+        "",
+        "body",
+        "",
+      ].join("\r\n"),
+    );
+    expect(event.occurred_at).toBe("2026-03-01T10:00:00.000Z");
+    expect(validateEventInput(event).ok).toBe(true);
+  });
+
+  test("an unstorable Date with an unusable INTERNALDATE lands on observed_at", () => {
+    const raw = encode(
+      [
+        "From: ada@acme.example",
+        "Date: Fri, 01 Jan 275760 00:00:00 +0000",
+        "Subject: Far future",
+        "",
+        "body",
+        "",
+      ].join("\r\n"),
+    );
+    const event = messageEvent({
+      folderWire: "INBOX",
+      folderDisplay: "INBOX",
+      uidvalidity: 9,
+      uid: 4,
+      internaldate: "nonsense",
+      size: raw.byteLength,
+      raw,
+      section: "",
+      observedAt: "2026-03-02T00:00:00.000Z",
+    });
+    expect(event.occurred_at).toBe("2026-03-02T00:00:00.000Z");
+    expect(validateEventInput(event).ok).toBe(true);
+  });
+
   test("no event carries IMAP flags in any field", () => {
     for (const event of fixtureEvents()) {
       expect(Object.keys(event.metadata)).not.toContain("flags");

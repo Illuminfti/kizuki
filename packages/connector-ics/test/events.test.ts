@@ -477,3 +477,27 @@ describe("one unreadable entry costs only itself", () => {
     expect(mapAll(bad.slice(0, 6)).skipped).toBe(0);
   });
 });
+
+describe("an unstorable start costs only its own entry", () => {
+  test("a year the ledger cannot hold is skipped, not emitted", () => {
+    const result = mapAll([
+      "BEGIN:VEVENT",
+      "UID:keeper@acme.example",
+      "DTSTART:20260301T100000Z",
+      "SUMMARY:Keeper",
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      "UID:ancient@acme.example",
+      "DTSTART:00000101T000000Z",
+      "SUMMARY:Ancient",
+      "END:VEVENT",
+    ]);
+    expect(result.events.map((event) => event.source_record_id)).toEqual([
+      "keeper@acme.example",
+    ]);
+    expect(result.skipped).toBe(1);
+    for (const event of result.events) {
+      expect(validateEventInput(event).ok).toBe(true);
+    }
+  });
+});

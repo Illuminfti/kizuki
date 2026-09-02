@@ -1,4 +1,4 @@
-import { KizukiError } from "@kizuki/core";
+import { KizukiError, isRfc3339 } from "@kizuki/core";
 import type { ZoneInfo } from "./parse";
 
 export type IcsInstant =
@@ -40,6 +40,9 @@ export function daysInMonth(year: number, month: number): number {
  * here rather than normalised into a different, wrong day.
  */
 function checked(local: LocalDateTime): LocalDateTime {
+  // Year 0 has no RFC3339 spelling, so the ledger would refuse the event and
+  // wedge the run; refusing the value here costs only the entry that has it.
+  if (local.year < 1) malformed();
   if (local.month < 1 || local.month > 12) malformed();
   if (local.day < 1 || local.day > daysInMonth(local.year, local.month)) {
     malformed();
@@ -167,24 +170,32 @@ export function vtimezoneFixedOffset(
   return zone.standardOffsetMinutes;
 }
 
+/** The ledger only accepts RFC3339, so an unrepresentable shift is refused. */
+function converted(
+  iso: string,
+  approximation: TzApproximation,
+): { iso: string; approximation: TzApproximation } {
+  if (!isRfc3339(iso)) malformed();
+  return { iso, approximation };
+}
+
 export function toUtc(
   instant: IcsInstant,
   zones: ZoneResolver,
   file: Map<string, ZoneInfo>,
 ): { iso: string; approximation: TzApproximation } {
-  if (instant.kind === "utc")
-    return { iso: instant.iso, approximation: "none" };
+  if (instant.kind === "utc") return converted(instant.iso, "none");
   if (instant.kind === "date") {
     const date = instant.date;
-    return {
-      iso: `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}T00:00:00.000Z`,
-      approximation: "none",
-    };
+    return converted(
+      `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}T00:00:00.000Z`,
+      "none",
+    );
   }
   const local = parseLocal(instant.local);
   const guess = localToMs(local);
   if (instant.kind === "floating") {
-    return { iso: new Date(guess).toISOString(), approximation: "floating" };
+    return converted(new Date(guess).toISOString(), "floating");
   }
 
   const first = zones.offsetMinutes(instant.tzid, guess);
@@ -192,17 +203,14 @@ export function toUtc(
     // Second pass so a start near a DST transition keeps its civil time.
     const provisional = guess - first * 60_000;
     const second = zones.offsetMinutes(instant.tzid, provisional) ?? first;
-    return {
-      iso: new Date(guess - second * 60_000).toISOString(),
-      approximation: "none",
-    };
+    return converted(new Date(guess - second * 60_000).toISOString(), "none");
   }
   const fixed = vtimezoneFixedOffset(file.get(instant.tzid));
   if (fixed !== null) {
-    return {
-      iso: new Date(guess - fixed * 60_000).toISOString(),
-      approximation: "vtimezone-fixed-offset",
-    };
+    return converted(
+      new Date(guess - fixed * 60_000).toISOString(),
+      "vtimezone-fixed-offset",
+    );
   }
-  return { iso: new Date(guess).toISOString(), approximation: "unresolved" };
+  return converted(new Date(guess).toISOString(), "unresolved");
 }

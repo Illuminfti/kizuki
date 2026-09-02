@@ -1,3 +1,4 @@
+import { isRfc3339 } from "@kizuki/core";
 import type {
   AttachmentRef,
   CaptureEventInput,
@@ -87,6 +88,17 @@ export function parseInternalDate(text: string): string | null {
   );
   const millis = utc - offset * 60_000;
   return Number.isFinite(millis) ? new Date(millis).toISOString() : null;
+}
+
+/** An ISO string the ledger will accept, or null when it is out of range. */
+function storable(iso: string | null): string | null {
+  return iso !== null && isRfc3339(iso) ? iso : null;
+}
+
+function storableIso(millis: number): string | null {
+  if (Number.isNaN(millis)) return null;
+  const date = new Date(millis);
+  return Number.isNaN(date.getTime()) ? null : storable(date.toISOString());
 }
 
 /** Server- and sender-controlled text is never shown or stored as it arrives. */
@@ -300,10 +312,13 @@ export function messageEvent(input: MessageEventInput): CaptureEventInput {
     .trim();
   const parsedDate =
     cleanedDate.length > 0 ? Date.parse(cleanedDate) : Number.NaN;
-  const internal = parseInternalDate(input.internaldate);
-  const occurredAt = Number.isNaN(parsedDate)
-    ? (internal ?? input.observedAt)
-    : new Date(parsedDate).toISOString();
+  // A sender picks the `Date:` header, and a year the ledger cannot store
+  // would fail the whole batch, so the fallback chain runs on what is
+  // representable rather than on what merely parsed.
+  const occurredAt =
+    storableIso(parsedDate) ??
+    storable(parseInternalDate(input.internaldate)) ??
+    input.observedAt;
 
   const attachments: AttachmentRef[] = [];
   for (const part of walkParts(parsed.root)) {
