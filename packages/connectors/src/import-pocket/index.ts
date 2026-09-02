@@ -238,6 +238,7 @@ export async function readPocketRows(
 ): Promise<PocketRow[]> {
   let bytesLeft = limits.maxBytes ?? MAX_EXPORT_BYTES;
   const maxRows = limits.maxRows ?? MAX_RECORDS;
+  let rowsLeft = maxRows;
   const rows: PocketRow[] = [];
   for (const source of sources) {
     const file = await readBoundedUtf8File(
@@ -246,17 +247,23 @@ export async function readPocketRows(
       bytesLeft,
     );
     bytesLeft -= file.byte_size;
-    // The header counts as a row to the reader, so one file may hold every
-    // record the export is allowed plus its own header line.
-    rows.push(
-      ...parsePocketCsv(file.text, basename(source), { maxRows: maxRows + 1 }),
-    );
-    if (rows.length > maxRows) {
+    // The header counts as a row to the reader, so a file may hold what the
+    // export has left, its own header line, and one row over the bound — which
+    // is what proves the bound was passed.
+    const parsed = parsePocketCsv(file.text, basename(source), {
+      maxRows: rowsLeft + 2,
+    });
+    if (parsed.length > rowsLeft) {
       throw new KizukiError(
         "parse_error",
         `export holds more than ${maxRows} rows`,
       );
     }
+    rowsLeft -= parsed.length;
+    // One row at a time: spreading a file's rows into `push` passes each of
+    // them as an argument, and a legal export at the row bound is more
+    // arguments than a call can carry.
+    for (const row of parsed) rows.push(row);
   }
   return rows;
 }

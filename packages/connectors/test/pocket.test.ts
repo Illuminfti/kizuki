@@ -276,6 +276,19 @@ test("the export budget is charged the bytes read, not the bytes kept", async ()
   });
 });
 
+test("an export with more rows than a call can carry still parses", async () => {
+  await withTempRoot(async (root) => {
+    // Above the number of arguments a spread `push` can pass, and well under
+    // the export's own row bound: a legal export, not a hostile one.
+    const count = 700_000;
+    const file = path.join(root, "part_000000.csv");
+    await writeFile(file, `url,time_added\n${"https://example.com/a,1\n".repeat(count)}`);
+    const rows = await readPocketRows([file]);
+    expect(rows.length).toBe(count);
+    expect(rows[count - 1]?.url).toBe("https://example.com/a");
+  });
+});
+
 test("a zip path is refused with an actionable message", async () => {
   await withTempRoot(async (root) => {
     const zip = path.join(root, "pocket.zip");
