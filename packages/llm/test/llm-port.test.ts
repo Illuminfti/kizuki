@@ -81,6 +81,32 @@ describe("configuration", () => {
     expect(message).not.toContain("sk-live-abcdefg");
   });
 
+  test("a secret reference must be resolvable, and is never echoed", () => {
+    // Regression: the grammar accepted any non-whitespace tail, so a relative
+    // path and a name that is not an environment variable both passed while
+    // the message and the README promised otherwise.
+    for (const secret_ref of [
+      "file:relative-key",
+      "file:../../etc/passwd",
+      "env:9-not-a-name",
+      "env:PATH=x",
+    ]) {
+      const message = refuses({
+        base_url: "https://host/v1",
+        model: "m",
+        secret_ref,
+      });
+      expect(message).toContain("ports.llm.secret_ref");
+      expect(message).not.toContain(secret_ref.split(":")[1] ?? "");
+    }
+    for (const secret_ref of ["file:/etc/kizuki/key", "env:KIZUKI_MODEL_KEY"]) {
+      expect(
+        readLlmPortConfig({ base_url: "https://host/v1", model: "m", secret_ref })
+          .secret_ref,
+      ).toBe(secret_ref);
+    }
+  });
+
   test("plain http is refused unless the endpoint is on loopback", () => {
     expect(refuses({ base_url: "http://example.test/v1", model: "m" })).toContain(
       "must use https",

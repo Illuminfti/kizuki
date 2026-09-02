@@ -1,4 +1,5 @@
-import { isSecretRef } from "@kizuki/core";
+import { isAbsolute } from "node:path";
+import { parseSecretRef } from "@kizuki/core";
 import { configError } from "./errors";
 
 /** Bounds every knob so a misconfigured port cannot outspend its owner. */
@@ -42,6 +43,7 @@ const NUMBERS: Readonly<Record<string, NumberRule>> = {
 };
 
 const LOOPBACK_V4 = /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 function isLoopbackHost(hostname: string): boolean {
   return (
@@ -128,12 +130,26 @@ export function readLlmPortConfig(
     configError("ports.llm.model is required and must be a short string");
   }
 
+  // The value is never echoed: a rejected secret_ref may be the key itself.
+  // The shared grammar only separates the scheme from the tail, so the two
+  // schemes this port can actually resolve are checked here rather than
+  // discovered at call time.
   const rawSecret = config["secret_ref"];
-  if (rawSecret !== undefined && !isSecretRef(rawSecret)) {
-    // The value is never echoed: a rejected secret_ref may be the key itself.
-    configError(
-      "ports.llm.secret_ref must be a secret reference (env:VAR or file:/abs/path)",
-    );
+  if (rawSecret !== undefined) {
+    const reference = parseSecretRef(rawSecret);
+    if (reference === null) {
+      configError(
+        "ports.llm.secret_ref must be a secret reference (env:VAR or file:/abs/path)",
+      );
+    }
+    if (reference.scheme === "file" && !isAbsolute(reference.value)) {
+      configError("ports.llm.secret_ref file reference must be an absolute path");
+    }
+    if (reference.scheme === "env" && !ENV_NAME.test(reference.value)) {
+      configError(
+        "ports.llm.secret_ref env reference must name an environment variable",
+      );
+    }
   }
 
   const jsonMode = config["json_mode"];
