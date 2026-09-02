@@ -330,8 +330,14 @@ export class LegacyWikiConnector implements Connector {
       (entry) => entry.reason === "unreadable" || entry.reason === "not_utf8",
     ).length;
     if (this.reportPath !== null) {
-      writeReport(this.reportPath, report, () =>
-        renderLegacyWikiReport(report),
+      writeReport(
+        {
+          path: this.reportPath,
+          source: this.path,
+          connectorId: LEGACY_WIKI_CONNECTOR_ID,
+        },
+        report,
+        () => renderLegacyWikiReport(report),
       );
     }
     return { scan, events };

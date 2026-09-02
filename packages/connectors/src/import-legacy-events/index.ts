@@ -251,8 +251,14 @@ export class LegacyEventsConnector implements Connector {
     };
     if (this.reportPath !== null) {
       const report = this.#report;
-      writeReport(this.reportPath, report, () =>
-        renderLegacyEventsReport(report),
+      writeReport(
+        {
+          path: this.reportPath,
+          source: this.path,
+          connectorId: LEGACY_EVENTS_CONNECTOR_ID,
+        },
+        report,
+        () => renderLegacyEventsReport(report),
       );
     }
     return { events, cursor: JSON.stringify(cursor) };

@@ -20,6 +20,15 @@ import { errorMessage } from "../util";
 /** Deep enough for any real tree; a bound, because the walk is on hostile input. */
 const MAX_ANCESTORS = 64;
 
+/** Where the report goes, and what it must stay outside of when it is written. */
+export interface ReportDestination {
+  /** Canonical at the time the connector was configured. */
+  path: string;
+  /** The import source, as the connector was configured with it. */
+  source: string;
+  connectorId: string;
+}
+
 /** Where a path really is, once every symlink in its parents is resolved. */
 function canonical(path: string): string {
   const parent = dirname(path);
@@ -47,17 +56,18 @@ function vaultAbove(path: string): string | null {
   return null;
 }
 
-/** A report inside the source would be imported as a page on the next run. */
-export function resolveReportPath(
-  report: string | undefined,
-  sourcePath: string,
-  connectorId: string,
-): string | null {
-  if (report === undefined) return null;
+/**
+ * Where this report may be written right now, or a refusal. Every answer here
+ * is about the filesystem as it is at the moment of the call: a directory can
+ * be replaced by a link into a vault between one run and the next, so the
+ * checks belong immediately before each write and not once at configuration.
+ */
+function checkedPath(destination: ReportDestination): string {
+  const { connectorId } = destination;
   // Canonical, so a symlinked parent cannot walk the report into a directory
   // the checks below would have refused by name.
-  const absolute = canonical(resolve(report));
-  const source = canonical(resolve(sourcePath));
+  const absolute = canonical(resolve(destination.path));
+  const source = canonical(resolve(destination.source));
   if (absolute === source || absolute.startsWith(`${source}${sep}`)) {
     throw new KizukiError(
       "misconfigured",
@@ -80,16 +90,33 @@ export function resolveReportPath(
   return absolute;
 }
 
+/**
+ * A report inside the source would be imported as a page on the next run, so
+ * a path that could never be written is refused when it is configured rather
+ * than after a whole estate has been walked.
+ */
+export function resolveReportPath(
+  report: string | undefined,
+  sourcePath: string,
+  connectorId: string,
+): string | null {
+  if (report === undefined) return null;
+  return checkedPath({ path: report, source: sourcePath, connectorId });
+}
+
 export function writeReport(
-  path: string,
+  destination: ReportDestination,
   document: unknown,
   markdown: () => string,
 ): void {
+  // Re-derived, not reused: the write goes to where the parent resolves now,
+  // so a link swapped in after the last check redirects nothing.
+  const path = checkedPath(destination);
   const directory = dirname(path);
   if (!existsSync(directory)) {
     throw new KizukiError(
       "misconfigured",
-      `report: parent directory does not exist: ${directory}`,
+      `${destination.connectorId}: report parent directory does not exist: ${directory}`,
     );
   }
   const contents = path.endsWith(".json")
@@ -107,12 +134,13 @@ export function writeReport(
     // An existing file keeps its old mode through writeFileSync; this path is
     // fresh, but the report can name every field an estate had, so pin it.
     chmodSync(temporary, 0o600);
+    // `rename` replaces the name, never the target of a link left at it.
     renameSync(temporary, path);
   } catch (error) {
     if (existsSync(temporary)) unlinkSync(temporary);
     throw new KizukiError(
       "misconfigured",
-      `report: cannot write ${path}: ${errorMessage(error)}`,
+      `${destination.connectorId}: cannot write report ${path}: ${errorMessage(error)}`,
       { cause: error },
     );
   }

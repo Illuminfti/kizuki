@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -587,6 +588,42 @@ describe("the report file", () => {
     expect(written.counts.files).toBe(9);
     expect(readdirSync(root).filter((name) => name.endsWith(".tmp"))).toEqual(
       [],
+    );
+  });
+
+  test("a parent swapped for a link into a vault is refused at write time", async () => {
+    seed();
+    const reports = join(root, "reports");
+    mkdirSync(reports);
+    const connector = createLegacyWikiConnector({
+      path: wiki,
+      report: join(reports, "report.md"),
+    });
+    // Everything the constructor checked was true when it checked it. The
+    // directory it approved is then replaced by a link into a canon tree.
+    const vault = join(root, "vault");
+    initVault(vault);
+    rmSync(reports, { recursive: true });
+    symlinkSync(join(vault, "entities"), reports);
+
+    await expect(connector.backfill(null)).rejects.toThrow(
+      /report path must be outside the vault/,
+    );
+    expect(existsSync(join(vault, "entities", "report.md"))).toBe(false);
+    expect(readdirSync(join(vault, "entities"))).toEqual([]);
+  });
+
+  test("a report directory removed after configuration is a refusal", async () => {
+    seed();
+    const reports = join(root, "reports");
+    mkdirSync(reports);
+    const connector = createLegacyWikiConnector({
+      path: wiki,
+      report: join(reports, "report.json"),
+    });
+    rmSync(reports, { recursive: true });
+    await expect(connector.backfill(null)).rejects.toThrow(
+      /report parent directory does not exist/,
     );
   });
 
