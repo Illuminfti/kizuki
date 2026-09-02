@@ -24,7 +24,7 @@ import {
 } from "./ledger";
 import type { CanonChunk, Envelope, QuotedChunk, ServeContext } from "./types";
 
-export const SEARCH_SCOPES = ["canon", "ledger", "all"] as const;
+const SEARCH_SCOPES = ["canon", "ledger", "all"] as const;
 
 const MAX_QUERY_CHARS = 512;
 const MAX_SCOPE_IDS = 16;

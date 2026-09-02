@@ -13,6 +13,7 @@ import type {
   Tool,
 } from "../agents";
 import type { ClaimsIo } from "../claims/store";
+import { compareText } from "../util/order";
 import { isPlainObject } from "../util/validate";
 import { ServeError, ENVELOPE_SCHEMA } from "./types";
 import type {
@@ -132,10 +133,6 @@ export function claimsIo(ctx: ServeContext): ClaimsIo {
 
 export function principalName(principal: Principal): string {
   return principal.kind === "owner" ? principal.name : principal.agent.name;
-}
-
-export function compareText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function collapse(withheld: AuditDenial[]): Denied[] {

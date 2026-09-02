@@ -1,4 +1,5 @@
 import type { AuditDenial } from "../agents";
+import { compareText } from "../util/order";
 import type { CanonPage } from "../vault/pages";
 import { enumOf, limit, text } from "./arguments";
 import {
@@ -8,8 +9,9 @@ import {
   excerptOf,
   loadCanon,
   pageDecision,
+  stringField,
 } from "./canon";
-import { auditArguments, compareText, gate } from "./gate";
+import { auditArguments, gate } from "./gate";
 import type { Served } from "./gate";
 import type { CanonChunk, Envelope, ServeContext } from "./types";
 
@@ -32,15 +34,10 @@ export interface EntitiesArgs {
   limit?: number;
 }
 
-function stringField(page: CanonPage, key: string): string {
-  const value = page.data[key];
-  return typeof value === "string" ? value : "";
-}
-
 function matchesName(page: CanonPage, needle: string): boolean {
   return (
-    stringField(page, "title").toLowerCase().includes(needle) ||
-    stringField(page, "x-handle").toLowerCase().includes(needle)
+    (stringField(page, "title") ?? "").toLowerCase().includes(needle) ||
+    (stringField(page, "x-handle") ?? "").toLowerCase().includes(needle)
   );
 }
 
@@ -64,7 +61,7 @@ export function serveEntities(ctx: ServeContext, args: EntitiesArgs): Envelope {
       const candidates = index.pages
         .filter((page) => {
           if (!eligible(page)) return false;
-          const pageType = stringField(page, "type");
+          const pageType = stringField(page, "type") ?? "";
           if (!(ENTITY_TYPES as readonly string[]).includes(pageType)) {
             return false;
           }
@@ -74,8 +71,8 @@ export function serveEntities(ctx: ServeContext, args: EntitiesArgs): Envelope {
         .sort(
           (left, right) =>
             compareText(
-              stringField(left, "title"),
-              stringField(right, "title"),
+              (stringField(left, "title") ?? ""),
+              (stringField(right, "title") ?? ""),
             ) || compareText(left.id, right.id),
         );
 

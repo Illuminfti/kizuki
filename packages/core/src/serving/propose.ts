@@ -1,18 +1,19 @@
 import type { Grant } from "../agents";
 import { isRegisteredPredicate } from "../claims/predicates";
 import { insertClaim } from "../claims/store";
+import { CLAIM_POLARITIES } from "../contracts/proposal";
 import type { ClaimPolarity, FrontmatterValue } from "../contracts/proposal";
 import { isPlainObject } from "../util/validate";
 import { PAGE_TYPES } from "../vault/schema";
 import { enumOf, identifier, idList, text } from "./arguments";
 import { auditArguments, claimsIo, gateAsync } from "./gate";
 import type { Served } from "./gate";
-import { eventDecision, readEventFacts } from "./ledger";
+import { eventDecision, readServableEvents } from "./ledger";
 import { ServeError } from "./types";
 import type { Envelope, ServeContext } from "./types";
 
 /** `purge_review` is filed by purge itself, never by a producer. */
-export const PROPOSE_KINDS = [
+const PROPOSE_KINDS = [
   "entity",
   "claim",
   "edit",
@@ -32,7 +33,6 @@ const MAX_TARGET_CHARS = 256;
 const MAX_PROVENANCE = 64;
 const MAX_SUBJECTS = 16;
 const MAX_OBJECT_CHARS = 1_024;
-export const CLAIM_POLARITIES = ["positive", "negative"] as const;
 const MAX_FRONTMATTER_KEYS = 32;
 const MAX_FRONTMATTER_STRING = 4_096;
 const MAX_FRONTMATTER_ITEMS = 32;
@@ -237,7 +237,7 @@ function predicateOf(
  * of the message and reaches the owner through the audit row instead.
  */
 function validateProvenance(ctx: ServeContext, provenance: string[]): void {
-  const facts = readEventFacts(ctx.db, provenance);
+  const facts = readServableEvents(ctx.db, provenance);
   for (const id of provenance) {
     const event = facts.get(id);
     if (event === undefined) {

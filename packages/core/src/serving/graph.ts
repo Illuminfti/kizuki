@@ -5,11 +5,11 @@ import { enumOf, identifier } from "./arguments";
 import { eligible, loadCanon, pageDecision, resolveLink } from "./canon";
 import { auditArguments, gate } from "./gate";
 import type { Served } from "./gate";
-import { eventDecision, readEventFacts } from "./ledger";
+import { eventDecision, readServableEvents } from "./ledger";
 import { ServeError } from "./types";
 import type { Envelope, ServeContext } from "./types";
 
-export const GRAPH_EDGE_KINDS = ["wikilink", "subject", "source"] as const;
+const GRAPH_EDGE_KINDS = ["wikilink", "subject", "source"] as const;
 
 const MAX_EDGES = 500;
 
@@ -97,7 +97,7 @@ export function serveGraph(
         depth,
         ...(kinds === undefined ? {} : { kinds }),
       });
-      const facts = readEventFacts(
+      const facts = readServableEvents(
         ctx.db,
         found.edges
           .filter((edge) => edge.kind === "source")

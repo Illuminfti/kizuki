@@ -3,13 +3,14 @@ import { authorize } from "../agents";
 import type { DenyReason, Grant, Sensitivity, Servable } from "../agents";
 import type { TimelineEntry } from "../query/timeline";
 import type { SearchHit } from "../search/query";
+import { placeholders } from "../util/sql";
 import { asSensitivity } from "./canon";
 import type { QuotedChunk } from "./types";
 
 /** Bound on one `IN (...)` list, matching the graph layer's frontier chunk. */
 const ID_CHUNK = 500;
 
-export interface EventFacts {
+export interface ServableEvent {
   event_id: string;
   kind: string;
   occurred_at: string;
@@ -17,21 +18,17 @@ export interface EventFacts {
   subjects: string[];
 }
 
-export interface QuotedSource extends EventFacts {
+export interface QuotedSource extends ServableEvent {
   connector_id: string;
   text: string;
 }
 
-interface EventFactsRow {
+interface ServableEventRow {
   event_id: string;
   kind: string;
   occurred_at: string;
   sensitivity: string;
   subjects: string;
-}
-
-function placeholders(count: number): string {
-  return new Array<string>(count).fill("?").join(", ");
 }
 
 function chunks(ids: string[]): string[][] {
@@ -72,15 +69,15 @@ export function liveEventIds(db: Database, ids: string[]): Set<string> {
 }
 
 /** Metadata only: the captured text stays out of authorization decisions. */
-export function readEventFacts(
+export function readServableEvents(
   db: Database,
   ids: string[],
-): Map<string, EventFacts> {
+): Map<string, ServableEvent> {
   const live = liveEventIds(db, ids);
-  const facts = new Map<string, EventFacts>();
+  const facts = new Map<string, ServableEvent>();
   for (const group of chunks([...live])) {
     const rows = db
-      .query<EventFactsRow, string[]>(
+      .query<ServableEventRow, string[]>(
         `SELECT event_id, kind, occurred_at,
                 coalesce(sensitivity_hint, 'unlabeled') AS sensitivity, subjects
            FROM events
@@ -104,7 +101,7 @@ export function readEventFacts(
  * `type` carries the event kind, so a `types`-scoped grant restricts ledger
  * events by kind the same way it restricts canon pages by page type.
  */
-export function eventServable(facts: EventFacts): Servable {
+export function eventServable(facts: ServableEvent): Servable {
   return {
     id: facts.event_id,
     sensitivity: facts.sensitivity,
@@ -116,7 +113,7 @@ export function eventServable(facts: EventFacts): Servable {
 
 export function eventDecision(
   grant: Grant,
-  facts: EventFacts,
+  facts: ServableEvent,
 ):
   | { allow: true; sensitivity: Sensitivity }
   | { allow: false; reason: DenyReason } {

@@ -15,8 +15,8 @@ import type { Envelope, ServeContext } from "./types";
 const MAX_STATEMENT_CHARS = 2_000;
 const MAX_OBJECT_CHARS = 1_024;
 /** The owner's own words enter the ledger on an internal connector. */
-export const CORRECTION_CONNECTOR = "kizuki.owner";
-export const CORRECTION_KIND = "correction";
+const CORRECTION_CONNECTOR = "kizuki.owner";
+const CORRECTION_KIND = "correction";
 
 export type { CorrectTarget };
 

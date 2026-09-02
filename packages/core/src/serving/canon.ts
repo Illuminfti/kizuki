@@ -1,4 +1,4 @@
-import { SENSITIVITY_ORDER, authorize } from "../agents";
+import { authorize, sensitivity } from "../agents";
 import type { DenyReason, Grant, Sensitivity, Servable } from "../agents";
 import type { AuthorityTier } from "../contracts/proposal";
 import { isAuthorityTier } from "../contracts/proposal";
@@ -22,14 +22,10 @@ export interface CanonIndex {
   authority: Map<string, AuthorityTier>;
 }
 
-export function asSensitivity(value: unknown): Sensitivity | null {
-  return typeof value === "string" &&
-    Object.prototype.hasOwnProperty.call(SENSITIVITY_ORDER, value)
-    ? (value as Sensitivity)
-    : null;
-}
+export { sensitivity as asSensitivity };
 
-function stringField(page: CanonPage, key: string): string | null {
+/** A frontmatter value only when it is a string; every other shape is absent. */
+export function stringField(page: CanonPage, key: string): string | null {
   const value = page.data[key];
   return typeof value === "string" ? value : null;
 }
@@ -136,7 +132,7 @@ export function pageDecision(
   // instead of casts. A page missing either is withheld from everyone, the
   // owner included: an unstamped page may be verbatim capture, and serving
   // it as canon would hand a reader capture dressed as produced prose.
-  const label = asSensitivity(page.data["sensitivity"]);
+  const label = sensitivity(page.data["sensitivity"]);
   if (label === null) return { allow: false, reason: "missing_sensitivity" };
   const taint = asTaint(page.data["taint"]);
   if (taint === null) return { allow: false, reason: "missing_taint" };

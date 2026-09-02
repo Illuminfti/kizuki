@@ -10,7 +10,8 @@ import type {
 
 type Authorization = { allow: true } | { allow: false; reason: DenyReason };
 
-function sensitivity(value: string | null | undefined): Sensitivity | null {
+/** The lattice or nothing: an unrecognized label is outside it, not below it. */
+export function sensitivity(value: unknown): Sensitivity | null {
   if (
     typeof value !== "string" ||
     !Object.prototype.hasOwnProperty.call(SENSITIVITY_ORDER, value)
