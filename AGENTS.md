@@ -13,6 +13,8 @@ back here rather than grow independent policy.
 
 Before proposing work, read:
 
+0. `docs/CURRENT.md`, `docs/decision-log.md` and `rfcs/0002-autonomous-canon.md`.
+   They are binding and override every document below where they conflict.
 1. `docs/architecture.md`.
 2. `rfcs/0000-constraints.md`.
 3. Any other merged RFC that governs the area.

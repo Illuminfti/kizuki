@@ -1,5 +1,12 @@
 # Kizuki — roadmap, waves, gates
 
+> **Superseded in part on 2026-09-02.** `docs/CURRENT.md`, `docs/decision-log.md`
+> and `rfcs/0002-autonomous-canon.md` are binding: autonomous canon with no
+> owner review gate, auto-labeled sensitivity, a configured model required for
+> the world model, retrieval behind a port, an MCP `correct` tool, an always-on
+> daemon installed at init, and a modular monolith with pluggable ports. This
+> document is a historical record; where it conflicts, the binding documents win.
+
 Waves are internal build phases; public claims lag reality (no public link
 until the demo loop runs — carried floor). 1.0 requires BOTH proofs: a
 stranger succeeds on a fresh machine, and the owner's estate is cut over

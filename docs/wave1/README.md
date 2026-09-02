@@ -1,5 +1,12 @@
 # Wave 1 session record (2026-09-02)
 
+> **Superseded in part on 2026-09-02.** `docs/CURRENT.md`, `docs/decision-log.md`
+> and `rfcs/0002-autonomous-canon.md` are binding: autonomous canon with no
+> owner review gate, auto-labeled sensitivity, a configured model required for
+> the world model, retrieval behind a port, an MCP `correct` tool, an always-on
+> daemon installed at init, and a modular monolith with pluggable ports. This
+> document is a historical record; where it conflicts, the binding documents win.
+
 Lane specs and the design plan from the paused Claude Code Wave 1 session
 (`a5628bd4-1ddc-45d7-a0bb-82a2f0065695`), reconciled against `main` at
 `76930db` (515 tests green).

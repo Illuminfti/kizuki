@@ -1,5 +1,12 @@
 # Kizuki — architecture
 
+> **Superseded in part on 2026-09-02.** `docs/CURRENT.md`, `docs/decision-log.md`
+> and `rfcs/0002-autonomous-canon.md` are binding: autonomous canon with no
+> owner review gate, auto-labeled sensitivity, a configured model required for
+> the world model, retrieval behind a port, an MCP `correct` tool, an always-on
+> daemon installed at init, and a modular monolith with pluggable ports. This
+> document is a historical record; where it conflicts, the binding documents win.
+
 Your life, queryable as a CLI and MCP. Not a harness; hosts no agents. This
 document is the build target for Wave 1–5 and the constraint set for GPT Pro's
 deep-model RFCs. Fable's design calls are marked as such; everything traceable

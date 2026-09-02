@@ -1,5 +1,12 @@
 # Estate → Kizuki migration (Wave 6)
 
+> **Superseded in part on 2026-09-02.** `docs/CURRENT.md`, `docs/decision-log.md`
+> and `rfcs/0002-autonomous-canon.md` are binding: autonomous canon with no
+> owner review gate, auto-labeled sensitivity, a configured model required for
+> the world model, retrieval behind a port, an MCP `correct` tool, an always-on
+> daemon installed at init, and a modular monolith with pluggable ports. This
+> document is a historical record; where it conflicts, the binding documents win.
+
 The private LifeOS estate migrates onto Kizuki and retires. the personal harness does NOT
 migrate — it re-points to Kizuki MCP and stays its own stack forever
 (decision 11). Nothing here blocks public visibility (Wave 5); the 1.0 tag
