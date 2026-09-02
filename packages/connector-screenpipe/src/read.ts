@@ -172,13 +172,13 @@ export function seedAfterIds(
   // every real row, and an unbounded predicate would seed from it — one such
   // row anywhere in the table would silently import the whole history the
   // owner asked to skip.
-  const window: TimestampWindow = {
+  const bounds: TimestampWindow = {
     isoFrom: new Date(since).toISOString(),
     isoTo: new Date(notAfter).toISOString(),
   };
   return {
-    frame: seedBefore(db, "frames", window),
-    transcription: seedBefore(db, "audio_transcriptions", window),
+    frame: seedBefore(db, "frames", bounds),
+    transcription: seedBefore(db, "audio_transcriptions", bounds),
   };
 }
 
@@ -242,7 +242,7 @@ function mapTranscriptionRow(
 function seedBefore(
   db: Database,
   table: "frames" | "audio_transcriptions",
-  window: TimestampWindow,
+  bounds: TimestampWindow,
 ): number {
   const first = db
     .query<{ id: unknown }, [string, string, string, string]>(
@@ -251,10 +251,10 @@ function seedBefore(
            OR (timestamp >= ? AND timestamp <= ?)`,
     )
     .get(
-      window.isoFrom,
-      window.isoTo,
-      legacyForm(window.isoFrom),
-      legacyForm(window.isoTo),
+      bounds.isoFrom,
+      bounds.isoTo,
+      legacyForm(bounds.isoFrom),
+      legacyForm(bounds.isoTo),
     );
   const firstAfter = requiredCursorId(first?.id);
   if (firstAfter > 0) return firstAfter - 1;
