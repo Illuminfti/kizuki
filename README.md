@@ -64,8 +64,10 @@ One Bun workspace. Four packages. There is no MCP package.
   `serve`.
 - **`@kizuki/connectors`** owns the connector interface, the in-tree
   registry, and the shared conformance suite. Registry today:
-  `kizuki.markdown-folder`, `kizuki.import-chatgpt`, `kizuki.import-claude`.
-  All three read local files. No sign-in or OAuth connector is built.
+  `kizuki.screenpipe`, `kizuki.markdown-folder`, `kizuki.import-chatgpt`,
+  `kizuki.import-claude`. All four read local files: three read a folder or an
+  export archive, and `kizuki.screenpipe` reads screenpipe's own SQLite file
+  read-only rather than its HTTP API. No sign-in or OAuth connector is built.
 - **`@kizuki/tui`** is the audit and undo interface: pure state transitions and
   rendering, with terminal I/O at the edge. The leftover CLI `review` verb
   still opens it when stdin and stdout are a terminal.
