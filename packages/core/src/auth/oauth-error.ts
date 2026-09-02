@@ -49,9 +49,22 @@ function sanitizeDetail(detail: unknown): string | undefined {
 }
 
 /**
- * A transport reports failures in its own terms and labels them with its own
- * name; callers branch on `OAuthError.provider`, so every error leaving this
- * module names the provider the caller asked for.
+ * A transport is a seam a provider package fills, and whatever it wrote into
+ * its own error may be a URL, a fragment of the provider's answer or the
+ * owner's private text. Only the name of the error crosses this line.
+ */
+export function transportError(error: unknown, provider: string): OAuthError {
+  return new OAuthError(
+    "transport",
+    provider,
+    error instanceof Error ? error.name : typeof error,
+  );
+}
+
+/**
+ * A failure raised inside this module already carries a sanitised detail;
+ * callers branch on `OAuthError.provider`, so every error leaving the module
+ * names the provider the caller asked for. Anything else is a transport's.
  */
 export function asOAuthError(error: unknown, provider: string): OAuthError {
   if (error instanceof OAuthError) {
@@ -59,11 +72,7 @@ export function asOAuthError(error: unknown, provider: string): OAuthError {
       ? error
       : new OAuthError(error.code, provider, error.detail);
   }
-  return new OAuthError(
-    "transport",
-    provider,
-    error instanceof Error ? error.name : typeof error,
-  );
+  return transportError(error, provider);
 }
 
 /**

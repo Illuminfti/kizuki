@@ -1,7 +1,12 @@
 import type { SignInIo } from "../contracts/connector";
 import { isRfc3339 } from "../util/time";
 import { isNonEmptyString, isPlainObject } from "../util/validate";
-import { OAuthError, asOAuthError, withoutSecrets } from "./oauth-error";
+import {
+  OAuthError,
+  asOAuthError,
+  transportError,
+  withoutSecrets,
+} from "./oauth-error";
 import { base64url, buildPkce, defaultRandomBytes, randomOf } from "./pkce";
 import {
   assertBrowserSafeProvider,
@@ -192,7 +197,9 @@ async function postForm(
   try {
     return await transport.postForm(url, form);
   } catch (error) {
-    throw asOAuthError(error, provider.name);
+    // Even an OAuthError from a transport is untrusted here: it was authored
+    // outside this module and its detail may quote the request or the answer.
+    throw transportError(error, provider.name);
   }
 }
 

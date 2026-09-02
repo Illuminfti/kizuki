@@ -241,7 +241,52 @@ describe("errors leaving the module", () => {
     );
     expect(error.provider).toBe("fixture");
     expect(error.code).toBe("transport");
-    expect(error.message).toContain("response exceeded the size cap");
+    expect(error.message).toBe("fixture: transport: OAuthError");
+  });
+
+  test.each([
+    [
+      "the endpoint it could not reach",
+      new OAuthError("transport", "loopback", "POST https://provider.invalid/token"),
+    ],
+    [
+      "a slice of the response body",
+      new OAuthError("provider_error", "loopback", "grant for ada@example.invalid"),
+    ],
+    ["a plain error of its own", new TypeError("connect ECONNREFUSED 10.0.0.7:443")],
+  ])("a transport may not report %s", async (_label, thrown) => {
+    // The transport is a seam a provider package fills. Whatever it puts in
+    // its own error may be a URL, a fragment of the provider's answer or the
+    // owner's private text, so only the name of the error crosses this line.
+    const transport = new FakeTransport(thrown);
+    const io = fakeIo();
+    const flow = signInWithBrowser(provider(), io, transport, deterministic());
+    await io.firstOpen;
+    transport.redirect({ code: "SENTINEL-CODE", state: NONCE });
+    const error = await flow.then(
+      () => {
+        throw new Error("sign-in was expected to fail");
+      },
+      (reason: unknown) => reason as OAuthError,
+    );
+    expect(error.code).toBe("transport");
+    for (const text of [error.message, String(error), JSON.stringify(error)]) {
+      expect(text).not.toContain("provider.invalid");
+      expect(text).not.toContain("ada@example.invalid");
+      expect(text).not.toContain("10.0.0.7");
+    }
+  });
+
+  test("a refresh reports a transport failure by name alone", async () => {
+    const transport = new FakeTransport(
+      new OAuthError("transport", "loopback", "POST https://provider.invalid/token"),
+    );
+    await expect(
+      refreshTokens(provider(), tokenSet(), transport, () => NOW),
+    ).rejects.toMatchObject({
+      code: "transport",
+      message: "fixture: transport: OAuthError",
+    });
   });
 
   test("a closed listener reports the provider the caller asked for", async () => {
