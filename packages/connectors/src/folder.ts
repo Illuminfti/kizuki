@@ -11,6 +11,7 @@ import {
   notARegularFile,
   openFile,
   readReason,
+  statRegularFile,
 } from "./read";
 import type { BoundedFile } from "./read";
 import { MAX_EXPORT_BYTES, safeFilename } from "./util";
@@ -146,10 +147,7 @@ export async function statFolderFile(
     return null;
   }
   try {
-    const info = await lstat(await childPath(folder, handle, name));
-    return info.isFile() ? { byte_size: info.size } : null;
-  } catch {
-    return null;
+    return await statRegularFile(await childPath(folder, handle, name));
   } finally {
     await handle.close();
   }
