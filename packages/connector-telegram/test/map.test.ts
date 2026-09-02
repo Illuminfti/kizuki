@@ -227,3 +227,25 @@ test("metadata carries no volatile counters", () => {
     "reply_to",
   ]);
 });
+
+test("a timestamp no clock can represent is skipped, not thrown over", () => {
+  // The date is copied straight off the wire, and a Date it cannot hold raises
+  // a RangeError that would take down the whole batch rather than one record.
+  for (const date of [
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+    8.64e15,
+    -8.64e15,
+    1.5,
+  ]) {
+    expect(mapMessage(message({ date }), PRIVATE, SELF, OBSERVED_AT)).toBeNull();
+  }
+});
+
+test("the timestamps a clock can represent still map", () => {
+  for (const date of [0, 1, 2_147_483_647, 8_640_000_000_000]) {
+    const event = mapMessage(message({ date }), PRIVATE, SELF, OBSERVED_AT);
+    expect(event?.occurred_at).toBe(new Date(date * 1000).toISOString());
+  }
+});

@@ -93,9 +93,15 @@ function subjectsFor(
   ];
 }
 
+/** Unix seconds either side of the epoch that a Date can still represent. */
+const TIME_LIMIT = 8_640_000_000_000;
+
 /**
  * `null` for service messages (joins, pins, title changes): they carry no
- * owner-authored content and would only add noise to the ledger.
+ * owner-authored content and would only add noise to the ledger, and for a
+ * record whose timestamp is not a time. Provider dates are attacker-controlled
+ * and a Date that cannot hold one raises where a whole batch would be lost;
+ * one unusable record is dropped instead.
  */
 export function mapMessage(
   message: TelegramMessage,
@@ -104,6 +110,12 @@ export function mapMessage(
   observed_at: string,
 ): CaptureEventInput | null {
   if (message.service) return null;
+  if (
+    !Number.isInteger(message.date) ||
+    Math.abs(message.date) > TIME_LIMIT
+  ) {
+    return null;
+  }
 
   const attachments: AttachmentRef[] = [];
   if (message.attachment !== undefined) {
