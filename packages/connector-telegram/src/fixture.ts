@@ -149,7 +149,19 @@ const CHANNEL_MESSAGES: TelegramMessage[] = [
   },
 ];
 
-export const FIXTURE_ACCOUNT: ScriptedAccount = {
+/**
+ * Frozen because it is exported, and because the scripted client that edits an
+ * account it is handed is exported beside it. A caller reaching for either
+ * must not be able to move the sample the conformance suite measures this
+ * connector against; an attempt to fails loudly rather than quietly.
+ */
+function deepFreeze<T>(value: T): T {
+  if (typeof value !== "object" || value === null) return value;
+  for (const entry of Object.values(value)) deepFreeze(entry);
+  return Object.freeze(value);
+}
+
+export const FIXTURE_ACCOUNT: ScriptedAccount = deepFreeze({
   me: ADA,
   authorized: true,
   dialogs: [
@@ -163,9 +175,9 @@ export const FIXTURE_ACCOUNT: ScriptedAccount = {
     "-100777": CHANNEL_MESSAGES,
   },
   sign_in: { code: "22222" },
-};
+});
 
-/** Deep copy so a mutating test cannot leak into the next one. */
+/** Deep copy so a mutating caller cannot leak into the next one. */
 export function fixtureAccount(
   overrides: Partial<ScriptedAccount> = {},
 ): ScriptedAccount {

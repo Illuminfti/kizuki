@@ -23,10 +23,7 @@ import {
 } from "./map";
 import { degradedDetail } from "./degraded";
 import { PurgeIndex } from "./plan";
-import {
-  FIXTURE_ACCOUNT,
-  FIXTURE_OBSERVED_AT,
-} from "./fixture";
+import { FIXTURE_OBSERVED_AT, fixtureAccount } from "./fixture";
 import { PHONE_FORMAT, runSignIn, terminalSafe, waitSeconds } from "./sign-in";
 import { TELEGRAM_STATE_SCHEMA, encodeState, parseState } from "./state";
 import { walk } from "./walk";
@@ -337,13 +334,17 @@ export class TelegramConnector implements Connector {
 
   /** Needs no credentials, no network and no connect: the conformance suite runs cold. */
   async fixture(): Promise<CaptureEventInput[]> {
+    // A copy, not the module's own account: the account and the scripted
+    // client that edits it are both exported, and the sample the conformance
+    // suite measures against cannot be something a caller can move.
+    const account = fixtureAccount();
     const events: CaptureEventInput[] = [];
-    for (const dialog of FIXTURE_ACCOUNT.dialogs) {
-      for (const message of FIXTURE_ACCOUNT.messages[dialog.peer_id] ?? []) {
+    for (const dialog of account.dialogs) {
+      for (const message of account.messages[dialog.peer_id] ?? []) {
         const event = mapMessage(
           message,
           dialog,
-          FIXTURE_ACCOUNT.me,
+          account.me,
           FIXTURE_OBSERVED_AT,
         );
         if (event !== null) events.push(event);
