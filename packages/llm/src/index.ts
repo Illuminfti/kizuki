@@ -13,7 +13,7 @@ export {
   serializeLlmConfig,
   writeLlmConfig,
 } from "./config";
-export type { LlmConfig, UnlabeledMode } from "./config";
+export type { LlmConfig, LlmConfigDefaults, UnlabeledMode } from "./config";
 
 export { resolveApiKey } from "./secrets";
 
@@ -36,13 +36,7 @@ export type {
   Clock,
 } from "./client";
 
-export {
-  LLM_INPUT_SCHEMA,
-  PRODUCERS,
-  PROMPT_VERSION,
-  systemPrompt,
-  wrapEvent,
-} from "./prompt";
+export { PRODUCERS, PROMPT_VERSION, systemPrompt, wrapEvent } from "./prompt";
 export type { ProducerName, WrappedEvent, WrappedInput } from "./prompt";
 
 export {
@@ -83,3 +77,11 @@ export type {
   LlmRun,
   StopReason,
 } from "./schema";
+
+export { runEnrichment } from "./run";
+export type {
+  EnrichCounts,
+  EnrichOptions,
+  EnrichReceipt,
+  RequestError,
+} from "./run";
