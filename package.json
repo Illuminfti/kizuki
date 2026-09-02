@@ -8,7 +8,8 @@
     "verify": "bash scripts/verify.sh",
     "verify:network": "bun scripts/verify-network.ts",
     "ci:workflows": "bun scripts/verify-workflows.ts",
-    "ci:secrets": "bun scripts/verify-secrets.ts"
+    "ci:secrets": "bun scripts/verify-secrets.ts",
+    "ci:gitleaks": "bash scripts/ci-gitleaks.sh"
   },
   "devDependencies": {
     "typescript": "^5.9.0",

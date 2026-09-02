@@ -106,7 +106,8 @@ assert_required_helpers() {
     "$verify_script_dir/verify-workflows.ts" \
     "$verify_script_dir/network-allowlist.txt" \
     "$verify_script_dir/verify-policy.test.sh" \
-    "$verify_script_dir/ci-restrict-origin-refs.sh"
+    "$verify_script_dir/ci-restrict-origin-refs.sh" \
+    "$verify_script_dir/ci-gitleaks.sh"
   do
     if [[ ! -f "$path" ]]; then
       printf 'verification failed: required helper missing\n%s\n' "$path" >&2
