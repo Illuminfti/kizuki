@@ -211,9 +211,11 @@ async function retryPending(
   into: CaptureEventInput[],
 ): Promise<void> {
   const entry = plan.entry;
-  let pending = parseSet(entry.pending);
-  if (pending.length === 0) return;
-  for (const piece of chunk(parseSet(entry.pending), BODY_FETCH)) {
+  // `holes` is the set this pass walks; `pending` is what survives it.
+  const holes = parseSet(entry.pending);
+  if (holes.length === 0) return;
+  let pending = holes;
+  for (const piece of chunk(holes, BODY_FETCH)) {
     if (alreadyEmitted + into.length >= BATCH) break;
     const summaries = await session.fetchSummaries(piece);
     const present = new Set(summaries.map((summary) => summary.uid));
