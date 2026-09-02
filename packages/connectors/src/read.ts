@@ -1,15 +1,25 @@
 import { constants } from "node:fs";
-import { lstat, open, readFile, stat } from "node:fs/promises";
+import { lstat, open } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
-import { basename } from "node:path";
 import { KizukiError } from "./errors";
 import { MAX_EXPORT_BYTES, errorMessage } from "./util";
 
-function notARegularFile(path: string, connectorId: string): KizukiError {
+function notARegularFile(label: string, connectorId: string): KizukiError {
   return new KizukiError(
     "misconfigured",
-    `${connectorId}: not a regular file: ${path}`,
+    `${connectorId}: not a regular file: ${label}`,
   );
+}
+
+/**
+ * Why a file would not open, without the path the filesystem repeats back: a
+ * caller reading a name it found inside an export names the configured path
+ * instead, and the operating system's own message would put the export's name
+ * back into the refusal.
+ */
+function readReason(error: unknown): string {
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : errorMessage(error);
 }
 
 function isErrno(error: unknown, code: string): boolean {
@@ -44,6 +54,13 @@ export async function readBoundedUtf8File(
   path: string,
   connectorId: string,
   maxBytes = MAX_EXPORT_BYTES,
+  /**
+   * What a refusal names in place of the path. A file name discovered inside
+   * an export is a contact, a chat or an article title, so a caller that found
+   * its path rather than being configured with it passes the configured path
+   * here and the discovered name never leaves the process (§0.6).
+   */
+  label = path,
 ): Promise<BoundedFile> {
   let handle: FileHandle;
   try {
@@ -52,21 +69,21 @@ export async function readBoundedUtf8File(
       constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
     );
   } catch (error) {
-    if (isErrno(error, "ELOOP")) throw notARegularFile(path, connectorId);
+    if (isErrno(error, "ELOOP")) throw notARegularFile(label, connectorId);
     throw new KizukiError(
       "misconfigured",
-      `${connectorId}: cannot read ${path}: ${errorMessage(error)}`,
+      `${connectorId}: cannot read ${label}: ${readReason(error)}`,
       { cause: error },
     );
   }
   let bytes: Buffer;
   try {
     const info = await handle.stat();
-    if (!info.isFile()) throw notARegularFile(path, connectorId);
+    if (!info.isFile()) throw notARegularFile(label, connectorId);
     if (info.size > maxBytes) {
       throw new KizukiError(
         "misconfigured",
-        `${connectorId}: ${path} exceeds the ${maxBytes} byte import limit`,
+        `${connectorId}: ${label} exceeds the ${maxBytes} byte import limit`,
       );
     }
     bytes = await handle.readFile();
@@ -77,10 +94,11 @@ export async function readBoundedUtf8File(
   try {
     text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch (error) {
-    // The file name is the owner's own; the contents are never quoted back.
+    // The contents are never quoted back, and neither is a name the importer
+    // discovered rather than the owner configured.
     throw new KizukiError(
       "parse_error",
-      `${connectorId}: ${basename(path)} is not valid UTF-8`,
+      `${connectorId}: ${label} is not valid UTF-8`,
       { cause: error },
     );
   }
@@ -95,8 +113,9 @@ export async function readBoundedUtf8(
   path: string,
   connectorId: string,
   maxBytes = MAX_EXPORT_BYTES,
+  label = path,
 ): Promise<string> {
-  return (await readBoundedUtf8File(path, connectorId, maxBytes)).text;
+  return (await readBoundedUtf8File(path, connectorId, maxBytes, label)).text;
 }
 
 /** Enough for any header line an export could honestly carry. */
@@ -125,7 +144,7 @@ export async function readFirstLine(
     if (isErrno(error, "ELOOP")) throw notARegularFile(path, connectorId);
     throw new KizukiError(
       "misconfigured",
-      `${connectorId}: cannot read ${path}: ${errorMessage(error)}`,
+      `${connectorId}: cannot read ${path}: ${readReason(error)}`,
       { cause: error },
     );
   }
@@ -153,7 +172,7 @@ export async function readFirstLine(
   if (cut === -1 && !complete) {
     throw new KizukiError(
       "parse_error",
-      `${connectorId}: ${basename(path)} has no line break in its first ${windowBytes} bytes`,
+      `${connectorId}: ${path} has no line break in its first ${windowBytes} bytes`,
     );
   }
   let text: string;
@@ -164,7 +183,7 @@ export async function readFirstLine(
   } catch (error) {
     throw new KizukiError(
       "parse_error",
-      `${connectorId}: ${basename(path)} is not valid UTF-8`,
+      `${connectorId}: ${path} is not valid UTF-8`,
       { cause: error },
     );
   }

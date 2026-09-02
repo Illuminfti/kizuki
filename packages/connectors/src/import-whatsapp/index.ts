@@ -15,10 +15,12 @@ import { KizukiError } from "../errors";
 import { readBoundedUtf8 } from "../read";
 import {
   FIXTURE_OBSERVED_AT,
+  MAX_EXPORT_BYTES,
   compareStrings,
   errorMessage,
   requireKnownKeys,
   requirePathConfig,
+  safeFilename,
 } from "../util";
 import { isDateOrder, resolveTimezone } from "./dates";
 import type { DateOrder } from "./dates";
@@ -142,9 +144,15 @@ export async function resolveExport(path: string): Promise<ResolvedExport> {
     throw misconfigured(`not a chat export directory or file: ${path}`);
   }
   const entries = await readEntries(path);
+  // The chat file's name becomes the chat's display name, and an export
+  // directory is attacker-controlled: a name a terminal would act on is not a
+  // candidate, so no such name can be adopted as a subject's.
   const texts = entries
     .filter(
-      (entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".txt"),
+      (entry) =>
+        entry.isFile() &&
+        entry.name.toLowerCase().endsWith(".txt") &&
+        safeFilename(entry.name) !== null,
     )
     .map((entry) => entry.name)
     .sort(compareStrings);
@@ -265,6 +273,12 @@ export class WhatsAppImportConnector implements Connector {
     const text = await readBoundedUtf8(
       resolved.txt,
       WHATSAPP_IMPORT_CONNECTOR_ID,
+      MAX_EXPORT_BYTES,
+      // The chat file inside an export is named after the chat, so a refusal
+      // names what the owner configured instead of who they were talking to.
+      resolved.txt === this.path
+        ? this.path
+        : `the chat file in ${this.path}`,
     );
     return parseWhatsAppExport(text, {
       ...(this.dateOrder !== undefined ? { date_order: this.dateOrder } : {}),

@@ -121,7 +121,27 @@ test("readBoundedUtf8 rejects invalid UTF-8 without quoting the bytes", async ()
     await writeFile(file, Buffer.from([0x41, 0xff, 0x42]));
     const error = await rejected(() => readBoundedUtf8(file, "kizuki.test"));
     expect(error.code).toBe("parse_error");
-    expect(error.message).toBe("kizuki.test: export.txt is not valid UTF-8");
+    expect(error.message).toBe(`kizuki.test: ${file} is not valid UTF-8`);
+  });
+});
+
+test("a caller that found a path can refuse under another name", async () => {
+  await withTempRoot(async (root) => {
+    // Whatever a reader was pointed at, only the label it was handed may be
+    // named: an export's own file names are the owner's contacts and titles.
+    const found = path.join(root, "chat with a canary.txt");
+    await writeFile(found, Buffer.from([0x41, 0xff, 0x42]));
+    const invalid = await rejected(() =>
+      readBoundedUtf8(found, "kizuki.test", 1024, root),
+    );
+    expect(invalid.message).toBe(`kizuki.test: ${root} is not valid UTF-8`);
+    const oversize = await rejected(() =>
+      readBoundedUtf8(found, "kizuki.test", 1, root),
+    );
+    expect(oversize.message).toContain(root);
+    for (const error of [invalid, oversize]) {
+      expect(error.message).not.toContain("canary");
+    }
   });
 });
 

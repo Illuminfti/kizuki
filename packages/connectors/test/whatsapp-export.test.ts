@@ -220,6 +220,70 @@ test("no refusal quotes a sender name or captured text", async () => {
   }
 });
 
+test("a refusal never names the chat file found inside an export", async () => {
+  const canary = "canary-quartz-heron";
+  await withTempRoot(async (root) => {
+    const unreadable = path.join(root, "unreadable");
+    await mkdir(unreadable);
+    const locked = path.join(unreadable, `WhatsApp Chat with ${canary}.txt`);
+    await writeFile(locked, FIXTURE_CHAT);
+    await chmod(locked, 0o000);
+
+    const garbled = path.join(root, "garbled");
+    await mkdir(garbled);
+    await writeFile(
+      path.join(garbled, `WhatsApp Chat with ${canary}.txt`),
+      Buffer.from([0x41, 0xff, 0x42]),
+    );
+
+    const messages: string[] = [];
+    try {
+      for (const source of [unreadable, garbled]) {
+        const connector = createWhatsAppImportConnector({
+          path: source,
+          timezone: WHATSAPP_FIXTURE_TIMEZONE,
+        });
+        for (const failure of [
+          () => connector.backfill(null),
+          () => connector.sync(null),
+          () => connector.purgeSource("whatsapp:chat:acme-planning"),
+        ]) {
+          const error = await rejected(failure);
+          messages.push(error.message);
+          // The owner's own configured path is what a refusal may name.
+          expect(error.message).toContain(source);
+        }
+        messages.push((await connector.health()).detail ?? "");
+      }
+    } finally {
+      await chmod(locked, 0o600);
+    }
+    for (const message of messages) {
+      expect(message).not.toContain(canary);
+    }
+  });
+});
+
+test("a chat file a terminal would act on is not a chat export", async () => {
+  await withTempRoot(async (root) => {
+    const hostile = path.join(root, "hostile");
+    await mkdir(hostile);
+    await writeFile(path.join(hostile, "chat\u001b[2Kwith.txt"), FIXTURE_CHAT);
+    const connector = createWhatsAppImportConnector({
+      path: hostile,
+      timezone: WHATSAPP_FIXTURE_TIMEZONE,
+    });
+    const error = await rejected(() => connector.backfill(null));
+    expect(error.code).toBe("misconfigured");
+    expect(error.message).toBe(
+      `kizuki.import-whatsapp: no .txt chat export in ${hostile}`,
+    );
+    const report = await connector.health();
+    expect(report.state).toBe("misconfigured");
+    expect(report.detail ?? "").not.toMatch(/[\u0000-\u001f\u007f]/);
+  });
+});
+
 test("a malformed config fails construction", () => {
   const construct = (config: unknown): void => {
     // The registry hands connectors whatever the host wrote; the constructor
