@@ -80,6 +80,9 @@ Known limits:
   message asking for `date_order` rather than guessing.
 - An export with media and one without name the same photo differently, so the
   two exports store that message twice.
+- Whether the media file was found beside the chat is part of the message. If
+  you import before copying the media folder in, importing again afterwards
+  stores a second version of that message, this time carrying the reference.
 - The chat name comes from the export file name and is part of every event.
   Re-exporting the same chat under a different file name re-stores each message
   as a new version. Pass `chat` to pin the name.
@@ -127,7 +130,9 @@ Known limits:
 - Highlights travel inside the item's text and have no ids of their own, so a
   single highlight cannot be cited or purged on its own.
 - The saved article HTML is referenced by name and size only. Kizuki does not
-  read it, convert it to text, or copy it into the vault.
+  read it, convert it to text, or copy it into the vault. Whether it was found
+  is part of the item, so an export that gains its `content/` folder later
+  stores a second version carrying the reference.
 - `updatedAt` and `readingProgress` are deliberately not stored: they change on
   every export and would fork the history of an item that did not change.
 - An item is identified by the id Omnivore gave it. Two entries carrying one

@@ -208,6 +208,71 @@ for (const { name, build } of scenarios) {
   });
 }
 
+test("an attachment that arrives later is a new version", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-tombstone-"));
+  const db = openVault();
+  try {
+    await writeFile(
+      path.join(root, CHAT_FILE),
+      "1/4/26, 9:20 AM - Ada: IMG-1.jpg (file attached)\n",
+    );
+    const connector = createWhatsAppImportConnector({
+      path: root,
+      timezone: WHATSAPP_FIXTURE_TIMEZONE,
+      date_order: "mdy",
+    });
+    const id = connector.manifest().connector_id;
+
+    // The media folder was not copied in yet: the message imports with no
+    // attachment, exactly as a "without media" export would.
+    expect((await runBackfill(db, connector, id, SOURCE_KEY)).stored).toBe(1);
+    expect(stored(db)[0]?.attachments).toEqual([]);
+
+    await writeFile(path.join(root, "IMG-1.jpg"), "fixture-bytes");
+    const repaired = await runSync(db, connector, id, SOURCE_KEY);
+    expect(repaired.stored).toBe(1);
+    expect(repaired.retractions_filed).toBe(0);
+
+    const rows = stored(db);
+    expect(rows.length).toBe(2);
+    expect(new Set(rows.map((event) => event.source_record_id)).size).toBe(1);
+    expect(rows.some((event) => event.attachments.length === 1)).toBe(true);
+  } finally {
+    db.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("content that arrives later is a new version", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-tombstone-"));
+  const db = openVault();
+  try {
+    await writeFile(
+      path.join(root, "metadata_0_to_9.json"),
+      JSON.stringify([
+        { id: "one", slug: "one", savedAt: "2026-01-01T09:00:00Z" },
+      ]),
+    );
+    const connector = createOmnivoreImportConnector({ path: root });
+    const id = connector.manifest().connector_id;
+
+    expect((await runBackfill(db, connector, id, SOURCE_KEY)).stored).toBe(1);
+    expect(stored(db)[0]?.attachments).toEqual([]);
+
+    await mkdir(path.join(root, "content"));
+    await writeFile(path.join(root, "content", "one.html"), "<p>saved</p>");
+    expect((await runSync(db, connector, id, SOURCE_KEY)).stored).toBe(1);
+
+    const rows = stored(db);
+    expect(rows.length).toBe(2);
+    expect(new Set(rows.map((event) => event.source_record_id)).size).toBe(1);
+    expect(rows.some((event) => event.attachments.length === 1)).toBe(true);
+  } finally {
+    db.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("an edited record is a new version, never a deletion", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-tombstone-"));
   const db = openVault();

@@ -73,6 +73,11 @@ export async function parseWhatsAppExport(
       media?.kind === "file" && filename !== null
         ? await attachmentFor(filename, opts.media)
         : [];
+    // Attachments sit outside the content hash, so a reference alone can
+    // never be repaired: importing before the media folder was copied in
+    // would fix the record as media-less forever. The size is hashed, so a
+    // repaired export comes back as a new version of the same message.
+    const mediaBytes = attachments[0]?.byte_size ?? null;
     const senderId =
       opts.self !== undefined && message.sender === opts.self
         ? "whatsapp:self"
@@ -110,6 +115,7 @@ export async function parseWhatsAppExport(
         timezone: opts.timezone,
         media: media?.kind ?? null,
         filename,
+        media_bytes: mediaBytes,
       },
     });
   }
