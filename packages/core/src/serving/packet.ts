@@ -153,8 +153,10 @@ export function serveContextPacket(
       const cached = epochOf(args.epoch);
       const status =
         cached !== undefined && cached !== epoch ? "superseded" : "current";
-      // The marker is what identifies this text as a packet when it comes
-      // back in as a captured transcript, so it leads and it is verbatim.
+      // RFC 0002 §10.6 fixes this shape and supersedes the lane spec's
+      // prose header: the marker is what identifies this text as a packet
+      // when it comes back in as a captured transcript, so it leads and it
+      // is verbatim.
       const header =
         `${PACKET_MARKER}\n` +
         `principal=${principalName(ctx.principal)} purpose=session` +
