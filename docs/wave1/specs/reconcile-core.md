@@ -70,6 +70,6 @@ git merge-base --is-ancestor main HEAD && echo BASED_ON_MAIN
 bun run typecheck
 bun test                                   # green, count ≥ (main's count + lane's new tests − duplicates)
 grep -c 'version: 2' packages/core/src/ledger/db.ts   # prints 1
-grep -rniE 'illumi|hermes|ika-hetzner|albedo|gbrain' packages/ docs/ README.md --include='*.ts' --include='*.md' --include='*.json'   # no output
+scripts/verify.sh must stay green (denylist produces no output)
 git status --porcelain                     # empty
 ```

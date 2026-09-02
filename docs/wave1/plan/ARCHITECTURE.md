@@ -250,9 +250,9 @@ reviewed, next_review`; `x-*` namespace free for private extensions
 
 ## 8. Serving — agents as first-class citizens
 
-The core product surface (Illumi's framing: "your life queryable as a CLI and
+The core product surface (the owner's framing: "your life queryable as a CLI and
 MCP; agents must be first-class citizens"). Kizuki hosts no agents — every
-harness (Hermes, Claude Code, codex, Grok bots) brings its own loop and
+harness (the personal harness, Claude Code, codex, Grok bots) brings its own loop and
 connects here.
 
 ### 8.1 Agent identity and grants
@@ -289,7 +289,7 @@ connects here.
 `kizuki timeline --day|--subject`, `kizuki entity <name>`,
 `kizuki context --budget 450` — the bounded context packet (estate kernel
 lesson: ~450-token briefs, retained-prefix deltas, fail-closed to empty),
-consumable by any harness's hook (Claude Code session-context, Hermes
+consumable by any harness's hook (Claude Code session-context, the personal harness
 context injection) without MCP overhead.
 
 ## 9. Proactive rails (`kizuki serve`)

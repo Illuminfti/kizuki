@@ -2,13 +2,13 @@
 
 Waves are internal build phases; public claims lag reality (no public link
 until the demo loop runs — carried floor). 1.0 requires BOTH proofs: a
-stranger succeeds on a fresh machine, and Illumi's estate is cut over
+stranger succeeds on a fresh machine, and the owner's estate is cut over
 (decision 13). Every gate: proof = a command someone else can run.
 
 ## Gate 0 — plan approval (now)
 
-Illumi approves this plan set. Then immediately: claim `kizuki` on npm + PyPI
-(honest placeholders; needs registry tokens), create `Illuminfti/kizuki`, MIT
+the owner approves this plan set. Then immediately: claim `kizuki` on npm + PyPI
+(honest placeholders; needs registry tokens), create `the ownernfti/kizuki`, MIT
 LICENSE + free-local-forever pledge in README from commit one, CI skeleton
 with all gates live, GPT Pro constraint brief sent, Maestro Wave-1 batch.
 
@@ -27,9 +27,9 @@ Contracts (`kizuki.event/v1`, `kizuki.proposal/v1`), ledger + queue semantics
 MCP server (stdio) with read tools + `propose`, agent identity/grants/audit,
 FTS query surface, `context` packets, response envelope with provenance
 separation.
-**Exit proof:** Claude Code and Hermes both wired to a test vault via MCP;
+**Exit proof:** Claude Code and the personal harness both wired to a test vault via MCP;
 grant-ceiling test (private page never served to a `personal`-ceiling agent);
-audit log renders. Illumi starts daily-driving a personal vault here.
+audit log renders. the owner starts daily-driving a personal vault here.
 
 ## Wave 3 — connector waves (all real, conformance-gated)
 
@@ -60,8 +60,8 @@ minutes with zero help. This is the earliest any announcement happens.
 
 ## Wave 6 — estate migration ([MIGRATION.md](MIGRATION.md))
 
-Importer + parallel run + Hermes re-point + cutover.
-**Exit proof:** estate LifeOS rails retired (archived, never deleted); Hermes
+Importer + parallel run + the personal harness re-point + cutover.
+**Exit proof:** estate LifeOS rails retired (archived, never deleted); the personal harness
 answering from Kizuki MCP; lossy-mapping report reviewed; 14-day parallel-run
 receipt parity.
 
@@ -75,5 +75,5 @@ exists on the day of the tag.
 
 Small branch, readable diff, tests included, CI green (typecheck, matrix,
 gitleaks, denylist, zero-phone-home, compile smoke). Lessons-as-tests only
-ratchet up. Contract/privacy/security/release PRs: Illumi merges.
+ratchet up. Contract/privacy/security/release PRs: the owner merges.
 Mechanical/test-only: Fable may merge. Workers never merge.

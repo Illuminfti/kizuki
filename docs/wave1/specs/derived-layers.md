@@ -161,6 +161,6 @@ deleting the tables it restores identical counts (invariant 2).
 ```
 bun run typecheck
 bun test                    # green; ≥ 30 new tests
-grep -rniE 'illumi|hermes|ika-hetzner|albedo|gbrain' packages/ --include='*.ts'   # no output
+scripts/verify.sh must stay green (denylist produces no output)
 git status --porcelain      # empty
 ```

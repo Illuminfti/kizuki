@@ -107,6 +107,6 @@ export function shapeArguments(args): Record<string, unknown>  // exported for t
 ```
 bun run typecheck
 bun test                    # green; ≥ 25 new tests
-grep -rniE 'illumi|hermes|ika-hetzner|albedo|gbrain' packages/ --include='*.ts'   # no output
+scripts/verify.sh must stay green (denylist produces no output)
 git status --porcelain      # empty
 ```

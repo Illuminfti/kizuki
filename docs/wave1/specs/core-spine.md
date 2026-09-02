@@ -238,6 +238,6 @@ Export every new public function/type from `packages/core/src/index.ts`
 ```
 bun run typecheck            # exit 0
 bun test                     # all green; ≥ 25 new tests in packages/core/test
-grep -rniE 'illumi|hermes|ika-hetzner|albedo|gbrain' packages/ docs/ README.md --include='*.ts' --include='*.md' --include='*.json'   # no output
+scripts/verify.sh must stay green (denylist produces no output)
 git status --porcelain       # empty
 ```
