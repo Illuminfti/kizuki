@@ -81,6 +81,21 @@ describe("screenpipe mapping", () => {
     ).toEqual([]);
   });
 
+  test("two long names that share a prefix stay different subjects", () => {
+    const shared = "a".repeat(63);
+    const one = slug(`${shared}.one.example`);
+    const two = slug(`${shared}.two.example`);
+
+    expect(one).not.toBe(two);
+    expect(one.length).toBeLessThanOrEqual(64);
+    expect(two.length).toBeLessThanOrEqual(64);
+    // A cut that lands on a separator would leave it dangling at the end.
+    expect(one.endsWith("-")).toBe(false);
+    expect(one.endsWith(".")).toBe(false);
+    // The same name always yields the same id, or a purge plan could not match.
+    expect(slug(`${shared}.one.example`)).toBe(one);
+  });
+
   test("a non-http browser_url yields no site subject and query strings never appear in subjects", () => {
     expect(siteHost("file:///home/ada/notes.txt")).toBeNull();
     expect(siteHost("not a url")).toBeNull();

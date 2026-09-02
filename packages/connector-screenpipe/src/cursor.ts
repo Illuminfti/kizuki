@@ -26,6 +26,12 @@ export const BATCH_LIMIT = 500;
  */
 export const MAX_PAGES_PER_CALL = 20;
 export const MAX_TEXT_CHARS = 65_536;
+/**
+ * Characters of a name that reach a subject id. A purge plan has to derive
+ * the same id from the same row, so both sides read the same bounded prefix
+ * rather than the whole provider-controlled column.
+ */
+export const MAX_SUBJECT_CHARS = 1_024;
 export const DEFAULT_SETTLE_SECONDS = 300;
 export const MAX_PLAN_IDS = 10_000;
 export const PLAN_PAGE = 5_000;

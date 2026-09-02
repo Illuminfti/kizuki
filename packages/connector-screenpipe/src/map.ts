@@ -4,24 +4,44 @@ import type {
   SubjectRef,
 } from "@kizuki/core";
 import { SCREENPIPE_CONNECTOR_ID } from "./config";
-import { MAX_TEXT_CHARS } from "./cursor";
+import { MAX_SUBJECT_CHARS, MAX_TEXT_CHARS } from "./cursor";
 import { ScreenpipeConnectorError } from "./errors";
 import type { FrameRow, TranscriptionRow } from "./read";
 import { normalizeTimestamp, offsetSeconds } from "./time";
 
+const SLUG_CHARS = 64;
+
 export function slug(name: string): string {
-  return name
+  const normalized = name
+    .slice(0, MAX_SUBJECT_CHARS)
     .normalize("NFKC")
     .toLowerCase()
     .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64);
+    .replace(/^-+|-+$/g, "");
+  if (normalized.length <= SLUG_CHARS) return normalized;
+  // Cutting alone would collapse two long names that share a prefix into one
+  // subject id: unrelated sites would become one entity and a purge plan for
+  // either would list the other's frames. The fingerprint keeps them apart.
+  const digest = fingerprint(normalized);
+  const head = normalized
+    .slice(0, SLUG_CHARS - digest.length - 1)
+    .replace(/[-._]+$/g, "");
+  return `${head}-${digest}`;
+}
+
+/** FNV-1a over the normalized name; a short, stable tail, not a checksum. */
+function fingerprint(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = Math.imul(hash ^ value.charCodeAt(index), 0x01000193) >>> 0;
+  }
+  return hash.toString(36).padStart(7, "0");
 }
 
 export function siteHost(browserUrl: string | null): string | null {
   if (browserUrl === null) return null;
   try {
-    const parsed = new URL(browserUrl);
+    const parsed = new URL(browserUrl.slice(0, MAX_SUBJECT_CHARS));
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       return null;
     }
