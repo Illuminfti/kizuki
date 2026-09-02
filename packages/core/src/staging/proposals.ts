@@ -1,12 +1,14 @@
 import { Database } from "bun:sqlite";
-import { PROPOSAL_KINDS, isProducer } from "../contracts/proposal";
+import { initClaims } from "../claims/schema";
+import { canonicalizeProducer, isProducer, PROPOSAL_KINDS } from "../contracts/proposal";
 import type { Producer, ProposalKind } from "../contracts/proposal";
+import { tableExists } from "../ledger/schema";
 import { ulid } from "../util/ulid";
 
 /**
- * Staging is the holding pen between the ledger and canon. A row here is a
- * candidate page, never canon: only `promote` writes the vault, and only the
- * owner may invoke it.
+ * Compatibility seam over the claims table (RFC 0002 §4.3). New callers
+ * should use `insertClaim`. Identical content still dedupes; there is no
+ * owner review queue and no rejection-suppression poison.
  */
 
 export const STAGING_STATUSES = [
@@ -22,14 +24,14 @@ export type FrontmatterValue = FrontmatterScalar | FrontmatterScalar[];
 
 export interface ProposalInput {
   kind: ProposalKind;
-  /** Canon page this targets; null means "mint a new page at promote time". */
+  /** Canon page this targets; null means the writer arbitrates. */
   target?: string | null;
   body: string;
   frontmatter: Record<string, FrontmatterValue>;
-  provenance: string[]; // event_ids; never empty
+  provenance: string[];
   subjects?: string[];
   producer: Producer;
-  confidence: number; // 0..1
+  confidence: number;
 }
 
 export interface StagedProposal {
@@ -49,9 +51,7 @@ export interface StagedProposal {
 
 export type FileProposalResult =
   | { outcome: "stored"; proposal: StagedProposal }
-  /** The identical candidate is already staged; the existing row is returned. */
   | { outcome: "duplicate"; proposal: StagedProposal }
-  /** The owner rejected this exact body before; refiling it is not allowed. */
   | { outcome: "suppressed"; body_hash: string; reason: string };
 
 export class StagingError extends Error {
@@ -73,56 +73,8 @@ interface ProposalRow {
   body_hash: string;
 }
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS proposals (
-  proposal_id TEXT PRIMARY KEY,
-  kind        TEXT NOT NULL,
-  target      TEXT,
-  body        TEXT NOT NULL,
-  frontmatter TEXT NOT NULL,
-  provenance  TEXT NOT NULL,
-  subjects    TEXT NOT NULL,
-  producer    TEXT NOT NULL,
-  confidence  REAL NOT NULL,
-  status      TEXT NOT NULL,
-  created_at  TEXT NOT NULL,
-  body_hash   TEXT NOT NULL
-) STRICT;
-
--- Purge reviews need a fresh proposal when different purged provenance reaches
--- the same unchanged page body. Their pending duplicates are resolved in the
--- filing transaction; every other kind keeps the durable database constraint.
-DROP INDEX IF EXISTS proposals_idempotency;
-CREATE UNIQUE INDEX proposals_idempotency
-  ON proposals (kind, coalesce(target, ''), body_hash)
-  WHERE kind <> 'purge_review';
-
-CREATE INDEX IF NOT EXISTS proposals_by_status
-  ON proposals (status, created_at);
-
-CREATE TABLE IF NOT EXISTS rejections (
-  body_hash   TEXT NOT NULL,
-  reason      TEXT NOT NULL,
-  proposal_id TEXT NOT NULL,
-  at          TEXT NOT NULL,
-  PRIMARY KEY (body_hash, proposal_id)
-) STRICT;
-
-CREATE TABLE IF NOT EXISTS promotions (
-  receipt_id  TEXT PRIMARY KEY,
-  proposal_id TEXT NOT NULL UNIQUE,
-  provenance  TEXT NOT NULL,
-  sensitivity TEXT NOT NULL,
-  page_path   TEXT NOT NULL,
-  kind        TEXT NOT NULL DEFAULT 'claim',
-  before_hash TEXT,
-  after_hash  TEXT NOT NULL,
-  at          TEXT NOT NULL
-) STRICT;
-`;
-
 export function initStaging(db: Database): void {
-  db.exec(SCHEMA);
+  initClaims(db);
 }
 
 export function openStagingDb(path: string): Database {
@@ -194,7 +146,7 @@ function validateInput(input: ProposalInput): void {
   }
   if (!isProducer(input.producer)) {
     throw new StagingError(
-      'producer: must be "deterministic", "llm", or "agent:<id>"',
+      'producer: must be "deterministic", "llm", "model", "owner", or "agent:<id>"',
     );
   }
   if (
@@ -212,17 +164,83 @@ function validateInput(input: ProposalInput): void {
   }
 }
 
+function compatStatusToClaim(status: StagingStatus): string {
+  switch (status) {
+    case "promoted":
+      return "live";
+    case "rejected":
+      return "superseded";
+    case "withdrawn":
+      return "skipped";
+    default:
+      return "skipped";
+  }
+}
+
+function insertCompatClaim(
+  db: Database,
+  proposal: StagedProposal,
+  status: StagingStatus,
+): void {
+  if (!tableExists(db, "claims")) return;
+  const subject = proposal.subjects[0] ?? null;
+  const producer = canonicalizeProducer(proposal.producer);
+  db.query(
+    `INSERT OR IGNORE INTO claims
+       (claim_id, kind, target, body, frontmatter, provenance, subjects,
+        producer, confidence, status, created_at, body_hash,
+        subject, predicate, object, polarity, claim_key, authority,
+        sensitivity, taint, model_ref, valid_from, valid_to, asserted_at,
+        retracted_at, superseded_by, receipt_id, corroboration, last_confirmed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'positive', NULL,
+             'connector_evidence', 'private', 'quoted', NULL, ?, NULL, ?,
+             ?, NULL, NULL, 1, ?)`,
+  ).run(
+    proposal.proposal_id,
+    proposal.kind,
+    proposal.target,
+    proposal.body,
+    JSON.stringify(proposal.frontmatter),
+    JSON.stringify(proposal.provenance),
+    JSON.stringify(proposal.subjects),
+    producer,
+    proposal.confidence,
+    compatStatusToClaim(status),
+    proposal.created_at,
+    proposal.body_hash,
+    subject,
+    proposal.created_at,
+    proposal.created_at,
+    status === "withdrawn" ? proposal.created_at : null,
+    proposal.created_at,
+  );
+}
+
+function updateCompatClaim(
+  db: Database,
+  proposalId: string,
+  status: StagingStatus,
+): void {
+  if (!tableExists(db, "claims")) return;
+  const retracted = status === "withdrawn" || status === "rejected"
+    ? nowRfc3339()
+    : null;
+  db.query(
+    "UPDATE claims SET status = ?, retracted_at = ? WHERE claim_id = ?",
+  ).run(compatStatusToClaim(status), retracted, proposalId);
+}
+
 /**
- * Idempotent file. Refiling identical content is a duplicate, not an error, so
- * a connector replay cannot flood the review queue; refiling content the owner
- * already rejected is suppressed, so no producer can nag by repetition.
+ * Idempotent file. Refiling identical content is a duplicate, not an error.
+ * Owner rejection no longer poisons a body hash (RFC 0002 §18.2).
  */
 export function fileProposal(
   db: Database,
   input: ProposalInput,
-  opts: { bypassSuppression?: boolean } = {},
+  _opts: { bypassSuppression?: boolean } = {},
 ): FileProposalResult {
   validateInput(input);
+  initStaging(db);
 
   const bodyHash = hashBody(input.body);
   const target = input.target ?? null;
@@ -232,19 +250,6 @@ export function fileProposal(
     : [...input.provenance];
 
   const file = db.transaction((): FileProposalResult => {
-    if (opts.bypassSuppression !== true) {
-      const rejection = db
-        .query("SELECT reason FROM rejections WHERE body_hash = ? LIMIT 1")
-        .get(bodyHash) as { reason: string } | null;
-      if (rejection !== null) {
-        return {
-          outcome: "suppressed",
-          body_hash: bodyHash,
-          reason: rejection.reason,
-        };
-      }
-    }
-
     const existing = input.kind === "purge_review"
       ? db
           .query(
@@ -296,6 +301,7 @@ export function fileProposal(
       proposal.created_at,
       proposal.body_hash,
     );
+    insertCompatClaim(db, proposal, "pending");
 
     return { outcome: "stored", proposal };
   });
@@ -343,22 +349,18 @@ export function listProposals(
   return rows.map(rowToProposal);
 }
 
-/**
- * A rejection is durable: the body hash is remembered so the same content is
- * suppressed on every later filing, whichever producer sends it.
- */
 export function setProposalStatus(
   db: Database,
   proposalId: string,
   status: StagingStatus,
-  reason?: string,
+  _reason?: string,
 ): StagedProposal {
   if (!(STAGING_STATUSES as readonly string[]).includes(status)) {
     throw new StagingError(
       `status: must be one of ${STAGING_STATUSES.join(" | ")}`,
     );
   }
-  if (status === "rejected" && (reason === undefined || reason.length === 0)) {
+  if (status === "rejected" && (_reason === undefined || _reason.length === 0)) {
     throw new StagingError("reason: rejection requires a reason");
   }
 
@@ -371,22 +373,13 @@ export function setProposalStatus(
       status,
       proposalId,
     );
-    if (status === "rejected") {
-      db.query(
-        `INSERT INTO rejections (body_hash, reason, proposal_id, at)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT (body_hash, proposal_id) DO UPDATE SET reason = excluded.reason`,
-      ).run(existing.body_hash, reason as string, proposalId, nowRfc3339());
-    }
+    updateCompatClaim(db, proposalId, status);
     return { ...existing, status };
   });
 
   return apply();
 }
 
-export function isSuppressed(db: Database, bodyHash: string): boolean {
-  const row = db
-    .query("SELECT 1 AS hit FROM rejections WHERE body_hash = ? LIMIT 1")
-    .get(bodyHash) as { hit: number } | null;
-  return row !== null;
+export function isSuppressed(_db: Database, _bodyHash: string): boolean {
+  return false;
 }

@@ -1,24 +1,42 @@
 import { describe, expect, test } from "bun:test";
 import {
+  CLAIM_SCHEMA,
   isProducer,
-  validateProposal,
+  validateClaim,
 } from "../src/contracts/proposal";
 
-function rawProposal(): Record<string, unknown> {
+function rawClaim(): Record<string, unknown> {
   return {
-    schema: "kizuki.proposal/v1",
-    proposal_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    schema: CLAIM_SCHEMA,
+    claim_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
     kind: "claim",
+    target: null,
+    subject: "person:ada",
+    predicate: "employment.works_at",
+    object: "org:acme",
+    polarity: "positive",
+    claim_key: "a".repeat(64),
+    body: "Ada works at Acme.",
+    frontmatter: { type: "fact" },
     provenance: ["01ARZ3NDEKTSV4RRFFQ69G5FAW"],
+    subjects: ["person:ada"],
     producer: "deterministic",
-    status: "pending",
-    payload: {
-      subject: "person:ada",
-      predicate: "works_at",
-      object: "org:acme",
-    },
-    content_hash: "a".repeat(64),
+    model_ref: null,
+    authority: "connector_evidence",
+    confidence: 0.8,
+    sensitivity: "personal",
+    taint: "clean",
+    valid_from: "2026-03-01T09:00:00Z",
+    valid_to: null,
+    asserted_at: "2026-03-01T09:00:00Z",
+    retracted_at: null,
+    status: "live",
+    superseded_by: null,
+    receipt_id: null,
+    body_hash: "b".repeat(64),
     created_at: "2026-03-01T09:00:00Z",
+    corroboration: 1,
+    last_confirmed_at: "2026-03-01T09:00:00Z",
   };
 }
 
@@ -26,6 +44,8 @@ describe("isProducer", () => {
   const valid = [
     "deterministic",
     "llm",
+    "model",
+    "owner",
     "agent:reviewer",
     "agent:cli-2",
     "agent:a.b_c-1",
@@ -50,10 +70,10 @@ describe("isProducer", () => {
   }
 });
 
-describe("validateProposal accepts", () => {
+describe("validateClaim accepts", () => {
   test("an agent producer with multi-event provenance", () => {
-    const result = validateProposal({
-      ...rawProposal(),
+    const result = validateClaim({
+      ...rawClaim(),
       producer: "agent:planner",
       provenance: ["e1", "e2", "e3"],
     });
@@ -62,13 +82,13 @@ describe("validateProposal accepts", () => {
     expect(result.value.provenance).toEqual(["e1", "e2", "e3"]);
   });
 
-  test("an empty payload", () => {
-    expect(validateProposal({ ...rawProposal(), payload: {} }).ok).toBe(true);
+  test("an empty frontmatter object", () => {
+    expect(validateClaim({ ...rawClaim(), frontmatter: {} }).ok).toBe(true);
   });
 
   test("and copies provenance rather than aliasing it", () => {
-    const input = rawProposal();
-    const result = validateProposal(input);
+    const input = rawClaim();
+    const result = validateClaim(input);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     (input["provenance"] as string[]).push("smuggled");
@@ -76,64 +96,64 @@ describe("validateProposal accepts", () => {
   });
 });
 
-describe("validateProposal rejects", () => {
+describe("validateClaim rejects", () => {
   const rejected: [string, unknown, string][] = [
-    ["a non-object", 42, "proposal"],
+    ["a non-object", 42, "claim"],
     [
       "a wrong schema tag",
-      { ...rawProposal(), schema: "kizuki.event/v1" },
+      { ...rawClaim(), schema: "kizuki.event/v1" },
       "schema",
     ],
     [
-      "a missing proposal_id",
-      { ...rawProposal(), proposal_id: "" },
-      "proposal_id",
+      "a missing claim_id",
+      { ...rawClaim(), claim_id: "" },
+      "claim_id",
     ],
-    ["an unknown kind", { ...rawProposal(), kind: "annotation" }, "kind"],
-    ["empty provenance", { ...rawProposal(), provenance: [] }, "provenance"],
+    ["an unknown kind", { ...rawClaim(), kind: "annotation" }, "kind"],
+    ["empty provenance", { ...rawClaim(), provenance: [] }, "provenance"],
     [
       "provenance as a string",
-      { ...rawProposal(), provenance: "e1" },
+      { ...rawClaim(), provenance: "e1" },
       "provenance",
     ],
     [
       "provenance with a blank entry",
-      { ...rawProposal(), provenance: ["e1", ""] },
+      { ...rawClaim(), provenance: ["e1", ""] },
       "provenance",
     ],
     [
       "an unknown producer",
-      { ...rawProposal(), producer: "intern" },
+      { ...rawClaim(), producer: "intern" },
       "producer",
     ],
     [
       "an anonymous agent producer",
-      { ...rawProposal(), producer: "agent:" },
+      { ...rawClaim(), producer: "agent:" },
       "producer",
     ],
-    ["an unknown status", { ...rawProposal(), status: "maybe" }, "status"],
-    ["an array payload", { ...rawProposal(), payload: [] }, "payload"],
-    ["a missing payload", { ...rawProposal(), payload: undefined }, "payload"],
+    ["a stored llm producer", { ...rawClaim(), producer: "llm" }, "producer"],
+    ["an unknown status", { ...rawClaim(), status: "maybe" }, "status"],
+    ["an unknown authority", { ...rawClaim(), authority: "hearsay" }, "authority"],
     [
-      "a short content_hash",
-      { ...rawProposal(), content_hash: "abc" },
-      "content_hash",
+      "a short body_hash",
+      { ...rawClaim(), body_hash: "abc" },
+      "body_hash",
     ],
     [
-      "an uppercase content_hash",
-      { ...rawProposal(), content_hash: "A".repeat(64) },
-      "content_hash",
+      "an uppercase body_hash",
+      { ...rawClaim(), body_hash: "A".repeat(64) },
+      "body_hash",
     ],
     [
       "a bad created_at",
-      { ...rawProposal(), created_at: "2026-02-30T00:00:00Z" },
+      { ...rawClaim(), created_at: "2026-02-30T00:00:00Z" },
       "created_at",
     ],
   ];
 
   for (const [name, input, field] of rejected) {
     test(name, () => {
-      const result = validateProposal(input);
+      const result = validateClaim(input);
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error("unreachable");
       expect(result.errors.some((e) => e.startsWith(field))).toBe(true);
@@ -141,7 +161,7 @@ describe("validateProposal rejects", () => {
   }
 
   test("reports every broken field at once", () => {
-    const result = validateProposal({});
+    const result = validateClaim({});
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("unreachable");
     expect(result.errors.length).toBeGreaterThanOrEqual(8);

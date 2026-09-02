@@ -1,4 +1,8 @@
+import { CLAIMS_SCHEMA_VERSION } from "../claims/schema";
 import { isNonEmptyString } from "../util/validate";
+
+/** RFC 0002 §18.1 — claims-core. Re-exported so vault schema tracks the durable version. */
+export { CLAIMS_SCHEMA_VERSION };
 
 export const PAGE_TYPES = [
   "person",
