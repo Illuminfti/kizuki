@@ -1,4 +1,4 @@
-import { TelegramConnectorError } from "./api";
+import { TelegramConnectorError, redactedCause } from "./api";
 
 /**
  * The refusals this connector raises on its own, without asking Telegram
@@ -7,10 +7,11 @@ import { TelegramConnectorError } from "./api";
  * than reaching for a connection it has no right to.
  */
 
-export function notSignedIn(): TelegramConnectorError {
+export function notSignedIn(cause?: unknown): TelegramConnectorError {
   return new TelegramConnectorError(
     "missing_session",
     "kizuki.telegram: not signed in; run: kizuki connect telegram",
+    cause === undefined ? undefined : { cause: redactedCause(cause) },
   );
 }
 

@@ -86,11 +86,11 @@ export async function runSignIn(
     }
   };
   const flow: SignInFlow = {
+    phone,
     // Telegram sends digits, and a terminal is a place where a pasted one
     // arrives with a space on it; the password is passed on as typed, because
     // an owner may have chosen to pad it.
     code: async () => (await ask("Code Telegram sent you: ")).trim(),
-    phone,
     password: (hint) =>
       ask(
         hint === undefined

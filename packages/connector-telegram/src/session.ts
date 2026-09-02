@@ -1,5 +1,5 @@
 import type { SecretResolver } from "@kizuki/core";
-import { TelegramConnectorError, redactedCause } from "./api";
+import { TelegramConnectorError } from "./api";
 import type { AppCredentials, TelegramApi, TelegramApiFactory, TelegramUser } from "./api";
 import { requireAppCredentials } from "./app-credentials";
 import { notSignedIn } from "./refusals";
@@ -36,11 +36,7 @@ export async function openSession(
   } catch (error) {
     // The resolver failed over the state file, so its own report may name the
     // bytes it was reading. Only the shape of that failure is safe to carry.
-    throw new TelegramConnectorError(
-      "missing_session",
-      notSignedIn().message,
-      { cause: redactedCause(error) },
-    );
+    throw notSignedIn(error);
   }
   const state = parseState(text);
   const credentials = requireAppCredentials(deps.credentials);
