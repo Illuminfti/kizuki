@@ -114,12 +114,16 @@ screenpipe schema older than supported: migration 20260613130000 not applied (ma
   compared against each row's own timestamp, so it holds even where ID order and
   timestamp order disagree, which is ordinary for `audio_transcriptions`. It
   must be a timestamp the runtime can represent, which excludes the leap second
-  RFC3339 otherwise allows. The starting ID is still probed through the
-  timestamp index and is approximate at the boundary second and for legacy
+  RFC3339 otherwise allows. The starting ID is still probed against the
+  timestamp column and is approximate at the boundary second and for legacy
   encodings; the probe only ever starts earlier than it needs to, so the
-  approximation costs a few reads rather than history. The cutoff applies on
-  every call, so raising it later excludes rows from then on, while lowering it
-  does not bring back rows the checkpoint has already passed.
+  approximation costs a few reads rather than history. Each table is probed in
+  a single statement, so a row screenpipe writes while the probe runs is behind
+  the starting ID rather than in front of it, and a row whose timestamp is not
+  stored as text is never probed past: it reaches the walk and is counted like
+  any other unreadable timestamp. The cutoff applies on every call, so raising
+  it later excludes rows from then on, while lowering it does not bring back
+  rows the checkpoint has already passed.
 - A call emits at most 500 events and reads rows in pages of 500. It keeps
   paging until it has an event, both tables are read out, or the settle window
   stops it, so a long idle run costs a slower call rather than a call that

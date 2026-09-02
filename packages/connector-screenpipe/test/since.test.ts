@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { ScreenpipeConnector, ScreenpipeConnectorError } from "../src";
+import type { Database } from "bun:sqlite";
+import {
+  ScreenpipeConnector,
+  ScreenpipeConnectorError,
+  openReadOnly,
+  parseCursor,
+} from "../src";
 import {
   cleanupFixtureDatabases,
   createFixtureDatabase,
@@ -212,4 +218,112 @@ describe("ScreenpipeConnector since", () => {
     expect((await usable.backfill(null)).events.length).toBeGreaterThan(0);
     await usable.revoke();
   });
+
+  test("a timestamp that is not text is counted whether since is set or not", async () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    for (let id = 1; id <= 3; id += 1) {
+      insertFrame(fixture.writer, {
+        id,
+        // The column is declared TIMESTAMP, which SQLite gives NUMERIC
+        // affinity, so a restored dump can store a numeric-looking value.
+        timestamp: 20_260_105,
+        fullText: `frame ${id}`,
+      });
+    }
+    const counted = async (since?: string): Promise<number> => {
+      const connector = new ScreenpipeConnector(
+        {
+          path: fixture.path,
+          settle_seconds: 0,
+          ...(since === undefined ? {} : { since }),
+        },
+        fixtureDeps("2026-03-01T00:00:00.000Z"),
+      );
+      const batch = await connector.backfill(null);
+      await connector.revoke();
+      if (batch.cursor === null) throw new Error("expected a screenpipe cursor");
+      return parseCursor(batch.cursor).skipped.frames_bad_timestamp;
+    };
+
+    // SQLite sorts every number before every string, so such a row can never
+    // satisfy the cutoff comparison. Seeding past it hides it from the counter
+    // that doctor reports while leaving it exactly as unread.
+    expect(await counted("2026-01-01T00:00:00Z")).toBe(3);
+    expect(await counted()).toBe(3);
+  });
+
+  test("a row written while the cutoff is being seeded is not skipped", async () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    insertFrame(fixture.writer, {
+      id: 1,
+      timestamp: "2020-01-01T00:00:00Z",
+      fullText: "older than the cutoff",
+    });
+    let written = false;
+    const concurrentWrite = (): void => {
+      if (written) return;
+      written = true;
+      insertFrame(fixture.writer, {
+        id: 2,
+        timestamp: "2026-01-08T12:00:00Z",
+        fullText: "written while the seed ran",
+      });
+    };
+    const connector = new ScreenpipeConnector(
+      {
+        path: fixture.path,
+        since: "2026-01-08T00:00:00Z",
+        settle_seconds: 0,
+      },
+      fixtureDeps("2026-01-09T00:00:00.000Z", (databasePath) =>
+        readerWritingMidSeed(openReadOnly(databasePath), concurrentWrite),
+      ),
+    );
+
+    // screenpipe keeps recording while the seed runs, and this connector opens
+    // no transaction. A fallback taken from a second statement would step over
+    // the row that landed in between and nothing would ever come back for it.
+    const batch = await connector.backfill(null);
+
+    expect(batch.events.map(({ source_record_id }) => source_record_id)).toEqual(
+      ["frame:2"],
+    );
+    await connector.revoke();
+  });
 });
+
+/**
+ * A read handle that lets a writer land a row immediately after each seed
+ * statement returns, which is the only moment a two-statement seed could lose
+ * one.
+ */
+function readerWritingMidSeed(
+  reader: Database,
+  afterSeedStatement: () => void,
+): Database {
+  return new Proxy(reader, {
+    get(target, property) {
+      const member: unknown = Reflect.get(target, property);
+      if (property !== "query" || typeof member !== "function") {
+        return typeof member === "function" ? member.bind(target) : member;
+      }
+      return (sql: string): unknown => {
+        const statement: object = Reflect.apply(member, target, [sql]);
+        if (!sql.includes("MIN(")) return statement;
+        return new Proxy(statement, {
+          get(inner, innerProperty) {
+            const value: unknown = Reflect.get(inner, innerProperty);
+            if (innerProperty !== "get" || typeof value !== "function") {
+              return typeof value === "function" ? value.bind(inner) : value;
+            }
+            return (...args: string[]): unknown => {
+              const row: unknown = Reflect.apply(value, inner, args);
+              afterSeedStatement();
+              return row;
+            };
+          },
+        });
+      };
+    },
+  });
+}

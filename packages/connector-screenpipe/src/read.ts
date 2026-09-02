@@ -277,33 +277,34 @@ function seedBefore(
   table: "frames" | "audio_transcriptions",
   probe: string,
 ): number {
-  const first = db
-    .query<{ id: unknown }, [string, string]>(
-      `SELECT COALESCE(MIN(id), 0) AS id FROM ${table}
-        WHERE timestamp >= ? OR timestamp >= ?`,
+  // One statement, so both values come from one snapshot of the table. Taking
+  // the fallback from a second statement would step over a row screenpipe
+  // wrote in between, and nothing would ever come back for it: the connector
+  // opens no transaction, and the writer keeps recording throughout.
+  //
+  // A row whose timestamp is not stored as text is kept as well. SQLite sorts
+  // every number before every string, so such a row can never satisfy the
+  // cutoff comparison; seeding past it would hide it from the counter the
+  // walk reports through the checkpoint, while leaving it just as unread.
+  const row = db
+    .query<{ kept: unknown; last: unknown }, [string, string]>(
+      `SELECT COALESCE(MIN(CASE WHEN typeof(timestamp) <> 'text'
+                                  OR timestamp >= ?1
+                                  OR timestamp >= ?2
+                                THEN id END), 0) AS kept,
+              COALESCE(MAX(id), 0) AS last
+         FROM ${table}`,
     )
     .get(probe, legacyForm(probe));
-  const firstAfter = requiredCursorId(first?.id);
-  if (firstAfter > 0) return firstAfter - 1;
-  // No row can be at or after the cutoff under either encoding, so every row
-  // the walk would read is older than it and the table can be seeded past.
-  return maxId(db, table);
+  const firstKept = requiredCursorId(row?.kept);
+  if (firstKept > 0) return firstKept - 1;
+  // No row the walk would keep, so every row in this snapshot is behind the
+  // cutoff and the table can be seeded past.
+  return requiredCursorId(row?.last);
 }
 
 function legacyForm(iso: string): string {
   return iso.replace("T", " ");
-}
-
-function maxId(
-  db: Database,
-  table: "frames" | "audio_transcriptions",
-): number {
-  const row = db
-    .query<{ id: unknown }, []>(
-      `SELECT COALESCE(MAX(id), 0) AS id FROM ${table}`,
-    )
-    .get();
-  return requiredCursorId(row?.id);
 }
 
 function requiredRowId(value: unknown): number {
