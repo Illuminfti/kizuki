@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { ScreenpipeConnector } from "../src";
+import { ScreenpipeConnector, ScreenpipeConnectorError } from "../src";
 import {
   cleanupFixtureDatabases,
   createFixtureDatabase,
@@ -68,5 +68,30 @@ describe("ScreenpipeConnector since", () => {
       Array.from({ length: 24 }, (_, index) => `frame:${index + 1}`),
     );
     await connector.revoke();
+  });
+
+  test("a since the runtime cannot represent is refused up front", async () => {
+    const fixture = createFixtureDatabase();
+
+    try {
+      new ScreenpipeConnector({
+        path: fixture.path,
+        // RFC3339 permits the leap second; the runtime has no date for it.
+        since: "2026-06-30T23:59:60Z",
+      });
+      throw new Error("expected the leap second to be refused");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ScreenpipeConnectorError);
+      if (error instanceof ScreenpipeConnectorError) {
+        expect(error.code).toBe("misconfigured");
+      }
+    }
+
+    const usable = new ScreenpipeConnector(
+      { path: fixture.path, since: "2026-01-05T09:00:01Z", settle_seconds: 0 },
+      fixtureDeps("2026-01-09T00:00:00.000Z"),
+    );
+    expect((await usable.backfill(null)).events.length).toBeGreaterThan(0);
+    await usable.revoke();
   });
 });

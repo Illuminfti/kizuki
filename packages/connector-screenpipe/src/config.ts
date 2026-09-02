@@ -40,8 +40,15 @@ export function parseConfig(config: unknown): ParsedScreenpipeConfig {
     misconfigured("config.path must be a non-empty string");
   }
   const since = config["since"];
-  if (since !== undefined && !isRfc3339(since)) {
-    misconfigured("config.since must be an RFC3339 timestamp");
+  // RFC3339 permits the leap second, which the runtime has no date for; taking
+  // it here would fail later, mid-batch, as an unopenable database.
+  if (
+    since !== undefined &&
+    (!isRfc3339(since) || Number.isNaN(Date.parse(since)))
+  ) {
+    misconfigured(
+      "config.since must be an RFC3339 timestamp the runtime can represent",
+    );
   }
   const settleSeconds = config["settle_seconds"];
   if (
