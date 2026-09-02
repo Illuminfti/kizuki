@@ -114,7 +114,10 @@ screenpipe schema older than supported: migration 20260613130000 not applied (ma
 - A call emits at most 500 events and reads rows in pages of 500. It keeps
   paging until it has an event, both tables are read out, or the settle window
   stops it, so a long idle run costs a slower call rather than a call that
-  reports nothing while rows remain behind the checkpoint.
+  reports nothing while rows remain behind the checkpoint. Screen frames may
+  take at most 400 of the 500 places while transcriptions are still behind the
+  checkpoint, so a machine in continuous use cannot leave its audio unread;
+  when the audio table is caught up, frames take the whole batch.
 - A row whose `offset_index` or `audio_chunk_id` holds something that is not a
   usable number is read with that field as `0` rather than failing the batch.
   Those columns position a row inside its capture; the identity columns still

@@ -200,6 +200,79 @@ describe("ScreenpipeConnector read bounds", () => {
     await connector.revoke();
   });
 
+  test("a saturated frame table still leaves room for transcriptions", async () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    fixture.writer.transaction(() => {
+      for (let id = 1; id <= BATCH_LIMIT + 200; id += 1) {
+        insertFrame(fixture.writer, {
+          id,
+          timestamp: "2026-01-01T00:00:00Z",
+          fullText: `frame ${id}`,
+        });
+      }
+      for (let id = 1; id <= 3; id += 1) {
+        insertTranscription(fixture.writer, {
+          id,
+          timestamp: "2026-01-01T00:00:00Z",
+          transcription: `spoken ${id}`,
+        });
+      }
+    })();
+    const connector = new ScreenpipeConnector(
+      { path: fixture.path, settle_seconds: 0 },
+      fixtureDeps("2026-01-09T00:00:00.000Z"),
+    );
+
+    // A machine that is being used keeps the frame table saturated, so a batch
+    // frames may fill on their own never reaches the other declared kind.
+    const batch = await connector.backfill(null);
+
+    expect(batch.events).toHaveLength(BATCH_LIMIT);
+    expect(
+      batch.events
+        .filter(({ kind }) => kind === "audio_transcription")
+        .map(({ source_record_id }) => source_record_id),
+    ).toEqual(["transcription:1", "transcription:2", "transcription:3"]);
+    await connector.revoke();
+  });
+
+  test("neither table starves the other while both stay behind", async () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    fixture.writer.transaction(() => {
+      for (let id = 1; id <= 3_000; id += 1) {
+        insertFrame(fixture.writer, {
+          id,
+          timestamp: "2026-01-01T00:00:00Z",
+          fullText: `frame ${id}`,
+        });
+        insertTranscription(fixture.writer, {
+          id,
+          timestamp: "2026-01-01T00:00:00Z",
+          transcription: `spoken ${id}`,
+        });
+      }
+    })();
+    const connector = new ScreenpipeConnector(
+      { path: fixture.path, settle_seconds: 0 },
+      fixtureDeps("2026-01-09T00:00:00.000Z"),
+    );
+
+    const spoken: number[] = [];
+    let cursor: string | null = null;
+    for (let call = 0; call < 4; call += 1) {
+      const batch: SyncBatch = await connector.backfill(cursor);
+      cursor = batch.cursor;
+      expect(batch.events).toHaveLength(BATCH_LIMIT);
+      spoken.push(
+        batch.events.filter(({ kind }) => kind === "audio_transcription")
+          .length,
+      );
+    }
+
+    expect(spoken).toEqual([100, 100, 100, 100]);
+    await connector.revoke();
+  });
+
   test("a batch stops at BATCH_LIMIT with rows still behind it", async () => {
     const fixture = createFixtureDatabase({ rows: false });
     fixture.writer.transaction(() => {

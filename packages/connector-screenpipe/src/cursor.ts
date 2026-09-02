@@ -1,8 +1,7 @@
 import { isPlainObject } from "@kizuki/core";
 import { ScreenpipeConnectorError } from "./errors";
 
-export const SCREENPIPE_CURSOR_SCHEMA =
-  "kizuki.screenpipe-cursor/v1" as const;
+export const SCREENPIPE_CURSOR_SCHEMA = "kizuki.screenpipe-cursor/v1" as const;
 
 export interface SkippedCounters {
   frames_without_text: number;
@@ -18,6 +17,13 @@ export interface ScreenpipeCursor {
 }
 
 export const BATCH_LIMIT = 500;
+/**
+ * Places in a batch that frames may not take while transcriptions are unread.
+ * Screen capture runs at about a frame a second and does not stop while the
+ * machine is in use, so with no reserve the frame table fills every batch on
+ * its own and the audio table is read only once the screen goes quiet.
+ */
+export const TRANSCRIPTION_RESERVE = 100;
 export const MAX_TEXT_CHARS = 65_536;
 /**
  * Characters of a name that reach a subject id. A purge plan has to derive
@@ -97,8 +103,7 @@ export function parseCursor(cursor: string): ScreenpipeCursor {
     skipped: {
       frames_without_text: skipped["frames_without_text"],
       frames_bad_timestamp: skipped["frames_bad_timestamp"],
-      transcriptions_bad_timestamp:
-        skipped["transcriptions_bad_timestamp"],
+      transcriptions_bad_timestamp: skipped["transcriptions_bad_timestamp"],
     },
   };
 }
@@ -109,11 +114,7 @@ export function encodeCursor(cursor: ScreenpipeCursor): string {
 }
 
 function isCounter(value: unknown): value is number {
-  return (
-    typeof value === "number" &&
-    Number.isSafeInteger(value) &&
-    value >= 0
-  );
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 function hasExactKeys(

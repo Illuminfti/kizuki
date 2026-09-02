@@ -17,7 +17,6 @@ import {
   type ScreenpipeDeps,
 } from "./config";
 import {
-  BATCH_LIMIT,
   encodeCursor,
   initialCursor,
   parseCursor,
@@ -26,16 +25,11 @@ import {
 } from "./cursor";
 import { ScreenpipeConnectorError } from "./errors";
 import { FIXTURE_NOW, seedFixtureDatabase } from "./fixture";
-import { mapFrame, mapTranscription } from "./map";
 import { classifyDatabaseError, openReadOnly } from "./open";
 import { planSourceRecords } from "./purge";
-import {
-  readFrames,
-  readTranscriptions,
-  seedAfterIds,
-} from "./read";
+import { seedAfterIds } from "./read";
 import { assertSchema, inspectSchema } from "./schema";
-import { normalizeTimestamp } from "./time";
+import { collectEvents, type WalkWindow } from "./walk";
 
 const MANIFEST: Manifest = {
   schema: "kizuki.connector/v1",
@@ -211,32 +205,12 @@ export class ScreenpipeConnector implements Connector {
             )
           : parseCursor(cursor);
       const before = { ...current.skipped };
-      const walk: Walk = {
+      const walk: WalkWindow = {
         observedAt,
         settling: (timestamp) => timestamp > boundary && timestamp <= horizon,
         beforeSince: (timestamp) => since !== null && timestamp < since,
       };
-      const events: CaptureEventInput[] = [];
-
-      // An empty batch is the drain signal every caller uses — the CLI reads
-      // exactly `events.length` — so a call may only return one when nothing
-      // more is readable. A page of frames without text is ordinary screenpipe
-      // output, not the end of the data, so the walk keeps reading pages until
-      // it has an event, both tables are exhausted for this cursor, or the
-      // settle window stops it. A long idle run therefore costs a slow call
-      // rather than a silent stop with rows still behind the checkpoint.
-      let framesDone = false;
-      let transcriptionsDone = false;
-      while (
-        events.length < BATCH_LIMIT &&
-        !(framesDone && transcriptionsDone)
-      ) {
-        if (!framesDone) {
-          framesDone = walkFrames(db, current, events, walk);
-          continue;
-        }
-        transcriptionsDone = walkTranscriptions(db, current, events, walk);
-      }
+      const events = collectEvents(db, current, walk);
 
       this.#lastSuccessAt = observedAt;
       this.#lastSkipped = skipDelta(before, current);
@@ -291,92 +265,4 @@ function skipDelta(
       current.skipped.transcriptions_bad_timestamp -
       before.transcriptions_bad_timestamp,
   };
-}
-
-interface Walk {
-  observedAt: string;
-  settling: (timestamp: string) => boolean;
-  /**
-   * `since` is enforced here rather than by the cursor seed alone. A row's id
-   * does not follow its timestamp — screenpipe stamps a transcription when it
-   * finishes transcribing, and a clock step reorders frames — so a single row
-   * dated inside the window can seed the walk at the head of the table and
-   * every older row behind it would be read.
-   */
-  beforeSince: (timestamp: string) => boolean;
-}
-
-/**
- * Returns true when the frame walk is finished for this batch. Every page is a
- * full one: sizing it by the remaining event budget collapses to one statement
- * per row as soon as a batch is nearly full, and a run of skipped rows behind
- * it then costs one round trip each.
- */
-function walkFrames(
-  db: Database,
-  cursor: ScreenpipeCursor,
-  events: CaptureEventInput[],
-  walk: Walk,
-): boolean {
-  const rows = readFrames(db, cursor.last_frame_id, BATCH_LIMIT);
-  for (const row of rows) {
-    // The cursor stays short of a row the batch has no room for, so the next
-    // call reads it instead.
-    if (events.length >= BATCH_LIMIT) return true;
-    const timestamp = normalizeTimestamp(row.timestamp);
-    if (timestamp === null) {
-      cursor.skipped.frames_bad_timestamp += 1;
-      cursor.last_frame_id = row.id;
-      continue;
-    }
-    // A row the owner asked to skip is dropped before the settle window, which
-    // exists to give late OCR a chance at a row that would be emitted. It is
-    // not counted: the cursor's counters record rows dropped despite being in
-    // scope, and configuration is not a skip of that kind.
-    if (walk.beforeSince(timestamp)) {
-      cursor.last_frame_id = row.id;
-      continue;
-    }
-    // A settling row is left for the next call so late OCR text is not lost.
-    if (walk.settling(timestamp)) return true;
-    if (row.full_text === null || row.full_text.trim().length === 0) {
-      cursor.skipped.frames_without_text += 1;
-      cursor.last_frame_id = row.id;
-      continue;
-    }
-    events.push(mapFrame(row, walk.observedAt));
-    cursor.last_frame_id = row.id;
-  }
-  return rows.length < BATCH_LIMIT;
-}
-
-/** Returns true when the transcription walk is finished for this batch. */
-function walkTranscriptions(
-  db: Database,
-  cursor: ScreenpipeCursor,
-  events: CaptureEventInput[],
-  walk: Walk,
-): boolean {
-  const rows = readTranscriptions(
-    db,
-    cursor.last_transcription_id,
-    BATCH_LIMIT,
-  );
-  for (const row of rows) {
-    if (events.length >= BATCH_LIMIT) return true;
-    const timestamp = normalizeTimestamp(row.timestamp);
-    if (timestamp === null) {
-      cursor.skipped.transcriptions_bad_timestamp += 1;
-      cursor.last_transcription_id = row.id;
-      continue;
-    }
-    if (walk.beforeSince(timestamp)) {
-      cursor.last_transcription_id = row.id;
-      continue;
-    }
-    if (walk.settling(timestamp)) return true;
-    events.push(mapTranscription(row, walk.observedAt));
-    cursor.last_transcription_id = row.id;
-  }
-  return rows.length < BATCH_LIMIT;
 }
