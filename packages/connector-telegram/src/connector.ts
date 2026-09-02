@@ -24,7 +24,7 @@ import {
 } from "./map";
 import { PurgeIndex } from "./plan";
 import { FIXTURE_ACCOUNT, FIXTURE_OBSERVED_AT } from "./scripted";
-import { PHONE_FORMAT, runSignIn } from "./sign-in";
+import { PHONE_FORMAT, runSignIn, terminalSafe } from "./sign-in";
 import { TELEGRAM_STATE_SCHEMA, encodeState, parseState } from "./state";
 import { walk } from "./walk";
 import type { DialogListing } from "./walk";
@@ -130,7 +130,10 @@ export class TelegramConnector implements Connector {
       throw error;
     }
     await api.disconnect();
-    return { display: userDisplay(me) };
+    // The label is printed, so it is sanitised; the same name reaches the
+    // ledger through the mapper untouched, where it is evidence.
+    const label = terminalSafe(userDisplay(me));
+    return { display: label.length === 0 ? `user ${me.id}` : label };
   }
 
   async connect(resolve: SecretResolver): Promise<void> {

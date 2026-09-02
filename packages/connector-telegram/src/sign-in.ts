@@ -9,6 +9,18 @@ const MAX_SILENT_WAIT_SECONDS = 60;
 
 export const PHONE_FORMAT = /^\+[0-9]{6,15}$/;
 
+/**
+ * Provider text on its way to a terminal. Account names and password hints are
+ * attacker-controlled, and one escape sequence in either can repaint the
+ * screen or answer for the owner. Evidence keeps the original; the terminal
+ * gets the printable part of it.
+ */
+export function terminalSafe(text: string): string {
+  return text.replace(CONTROL, " ").replace(/\s+/gu, " ").trim();
+}
+
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/gu;
+
 export function waitSeconds(error: unknown): number | null {
   return error instanceof TelegramConnectorError &&
     error.code === "flood_wait" &&
@@ -37,7 +49,7 @@ export async function runSignIn(
       io.prompt(
         hint === undefined
           ? "Two-step verification password: "
-          : `Two-step verification password (hint: ${hint}): `,
+          : `Two-step verification password (hint: ${terminalSafe(hint)}): `,
         { secret: true },
       ),
     onError: async () => {

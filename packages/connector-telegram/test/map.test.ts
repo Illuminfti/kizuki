@@ -249,3 +249,13 @@ test("the timestamps a clock can represent still map", () => {
     expect(event?.occurred_at).toBe(new Date(date * 1000).toISOString());
   }
 });
+
+test("a display name the terminal would choke on is still copied verbatim", () => {
+  // Evidence is not sanitised: the mapper keeps what the provider sent, and
+  // only the surfaces that print it strip control sequences.
+  const hostile = "grace\u001b]52;c;cGF5bG9hZA==\u0007";
+  const event = mapped(message(), { ...PRIVATE, title: hostile });
+  expect(event.subjects.map((subject) => subject.display_name)).toContain(
+    hostile,
+  );
+});

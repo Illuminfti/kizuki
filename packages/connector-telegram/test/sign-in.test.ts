@@ -154,3 +154,43 @@ test("core enrollment stores the blob on disk and never in the database", async 
     db.close();
   }
 });
+
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/u;
+
+test("provider text on its way to the terminal cannot drive it", async () => {
+  const account = fixtureAccount();
+  account.me = {
+    id: "1001",
+    first_name: "ada\u001b]52;c;cGF5bG9hZA==\u0007",
+    last_name: "\u001b[2J",
+    bot: false,
+  };
+  account.sign_in = {
+    code: "22222",
+    password: "correct horse",
+    password_hint: "the \u001b[31musual",
+  };
+  const io = new ScriptedIo(["+15550009876", "22222", "correct horse"]);
+  const { connector } = harness({ account, config: {} });
+
+  const display = await connector.signIn(io, new CapturingWriter());
+  expect(display.display).not.toMatch(CONTROL);
+  expect(display.display).toBe("ada ]52;c;cGF5bG9hZA== [2J");
+  for (const prompt of io.prompts) {
+    expect(prompt.question).not.toMatch(CONTROL);
+  }
+  expect(io.prompts.at(-1)?.question).toBe(
+    "Two-step verification password (hint: the [31musual): ",
+  );
+});
+
+test("a name made only of control sequences still labels the account", async () => {
+  const account = fixtureAccount();
+  account.me = { id: "1001", first_name: "\u0007\u001b", bot: false };
+  const { connector } = harness({ account, config: {} });
+  const display = await connector.signIn(
+    new ScriptedIo(["+15550009876", "22222"]),
+    new CapturingWriter(),
+  );
+  expect(display.display).toBe("user 1001");
+});
