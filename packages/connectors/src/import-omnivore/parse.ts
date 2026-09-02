@@ -270,10 +270,6 @@ export async function omnivoreEvents(
         labels: item.labels,
         published_at: item.published_at,
         has_highlights: highlights.length > 0,
-        // Hashed for the same reason the WhatsApp media size is: the
-        // attachment itself is not, so an export whose content folder was
-        // missing would otherwise stay content-less on every later import.
-        content_bytes: content === null ? null : content.byte_size,
       },
     });
   }

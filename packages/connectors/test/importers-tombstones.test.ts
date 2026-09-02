@@ -207,7 +207,7 @@ for (const { name, build } of scenarios) {
   });
 }
 
-test("an attachment that arrives later is a new version", async () => {
+test("a file appearing beside an export does not fork the message", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-tombstone-"));
   const db = openVault();
   try {
@@ -227,22 +227,24 @@ test("an attachment that arrives later is a new version", async () => {
     expect((await runBackfill(db, connector, id, SOURCE_KEY)).stored).toBe(1);
     expect(stored(db)[0]?.attachments).toEqual([]);
 
+    // A message is what it says. Which files sit beside the chat is not part
+    // of it, so copying the media in — or pruning it — re-stores nothing.
     await writeFile(path.join(root, "IMG-1.jpg"), "fixture-bytes");
-    const repaired = await runSync(db, connector, id, SOURCE_KEY);
-    expect(repaired.stored).toBe(1);
-    expect(repaired.retractions_filed).toBe(0);
-
-    const rows = stored(db);
-    expect(rows.length).toBe(2);
-    expect(new Set(rows.map((event) => event.source_record_id)).size).toBe(1);
-    expect(rows.some((event) => event.attachments.length === 1)).toBe(true);
+    const again = await runSync(db, connector, id, SOURCE_KEY);
+    expect(again).toMatchObject({
+      stored: 0,
+      duplicates: 1,
+      withdrawn: 0,
+      retractions_filed: 0,
+    });
+    expect(stored(db).length).toBe(1);
   } finally {
     db.close();
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("content that arrives later is a new version", async () => {
+test("a content file appearing later does not fork the item", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-tombstone-"));
   const db = openVault();
   try {
@@ -260,12 +262,9 @@ test("content that arrives later is a new version", async () => {
 
     await mkdir(path.join(root, "content"));
     await writeFile(path.join(root, "content", "one.html"), "<p>saved</p>");
-    expect((await runSync(db, connector, id, SOURCE_KEY)).stored).toBe(1);
-
-    const rows = stored(db);
-    expect(rows.length).toBe(2);
-    expect(new Set(rows.map((event) => event.source_record_id)).size).toBe(1);
-    expect(rows.some((event) => event.attachments.length === 1)).toBe(true);
+    const again = await runSync(db, connector, id, SOURCE_KEY);
+    expect(again).toMatchObject({ stored: 0, duplicates: 1 });
+    expect(stored(db).length).toBe(1);
   } finally {
     db.close();
     await rm(root, { recursive: true, force: true });

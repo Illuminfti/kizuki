@@ -135,7 +135,6 @@ test("volatile fields never reach the stored metadata", async () => {
   for (const event of events) {
     expect(Object.keys(event.metadata).sort()).toEqual([
       "author",
-      "content_bytes",
       "has_highlights",
       "labels",
       "published_at",
