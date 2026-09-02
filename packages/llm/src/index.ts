@@ -64,3 +64,14 @@ export type {
   OutputResult,
   SummaryOutput,
 } from "./output";
+
+export {
+  CONFIDENCE_CAPS,
+  claimsDraft,
+  entityDrafts,
+  entityTarget,
+  slugify,
+  summaryDraft,
+  targetRelPath,
+} from "./drafts";
+export type { DraftContext } from "./drafts";
