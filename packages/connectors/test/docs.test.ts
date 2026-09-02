@@ -83,7 +83,13 @@ describe("docs/legacy-import.md", () => {
 
   test("the README points at the doc without claiming more than it does", () => {
     const readme = readFileSync(join(ROOT, "README.md"), "utf8");
-    expect(readme).toContain("docs/legacy-import.md");
-    expect(readme).not.toContain("live sync");
+    // Only the paragraph this lane added: what the rest of the README says
+    // about other surfaces is not this connector's claim to police.
+    const paragraph = readme
+      .split(/\n\s*\n/)
+      .find((block) => block.includes("docs/legacy-import.md"));
+    expect(paragraph).toBeDefined();
+    expect(paragraph).toContain("importers");
+    expect(paragraph).not.toContain("live sync");
   });
 });
