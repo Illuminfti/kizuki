@@ -56,6 +56,12 @@ function statusFailure(status: number): KizukiError {
   );
 }
 
+/** The kind of failure, without whatever text the platform attached to it. */
+function errorLabel(error: unknown): string {
+  const name = error instanceof Error ? error.name : typeof error;
+  return /^[A-Za-z]{1,40}$/.test(name) ? name : "unknown";
+}
+
 function requireHttps(candidate: string): string {
   let parsed: URL;
   try {
@@ -126,44 +132,50 @@ export function makeFetcher(fetchImpl: FetchLike): IcsFetcher {
         headers["If-Modified-Since"] = conditional.last_modified;
       }
 
-      let response: Response;
+      let outcome: IcsFetchResult | { redirect: string };
       try {
-        response = await fetchImpl(target, {
+        const response = await fetchImpl(target, {
           method: "GET",
           headers,
           redirect: "manual",
           credentials: "omit",
           signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         });
+        const etag = response.headers.get("etag");
+        const lastModified = response.headers.get("last-modified");
+        if (response.status === 304) {
+          outcome = { status: 304, etag, last_modified: lastModified, text: "" };
+        } else if (response.status >= 300 && response.status < 400) {
+          const location = response.headers.get("location");
+          if (location === null) throw statusFailure(response.status);
+          outcome = { redirect: new URL(location, target).toString() };
+        } else if (!response.ok) {
+          throw statusFailure(response.status);
+        } else {
+          outcome = {
+            status: response.status,
+            etag,
+            last_modified: lastModified,
+            // Reading the body belongs inside this guard: a stream that fails
+            // mid-flight reports the request URL in its own message.
+            text: await readBounded(response),
+          };
+        }
       } catch (error) {
         if (error instanceof KizukiError) throw error;
+        // The cause is dropped rather than chained: a private calendar URL is
+        // the credential, and the platform puts it in the failure it raises.
         throw new KizukiError(
           "unreachable",
-          "kizuki.ics: calendar is unreachable",
-          {
-            cause: error,
-          },
+          `kizuki.ics: calendar is unreachable (${errorLabel(error)})`,
         );
       }
 
-      const etag = response.headers.get("etag");
-      const lastModified = response.headers.get("last-modified");
-      if (response.status === 304) {
-        return { status: 304, etag, last_modified: lastModified, text: "" };
-      }
-      if (response.status >= 300 && response.status < 400) {
-        const location = response.headers.get("location");
-        if (location === null) throw statusFailure(response.status);
-        target = requireHttps(new URL(location, target).toString());
+      if ("redirect" in outcome) {
+        target = requireHttps(outcome.redirect);
         continue;
       }
-      if (!response.ok) throw statusFailure(response.status);
-      return {
-        status: response.status,
-        etag,
-        last_modified: lastModified,
-        text: await readBounded(response),
-      };
+      return outcome;
     }
     throw new KizukiError("misconfigured", "kizuki.ics: too many redirects");
   };

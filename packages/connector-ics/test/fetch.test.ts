@@ -6,6 +6,18 @@ import type { FetchLike } from "../src/fetch";
 
 const URL_UNDER_TEST = "https://calendar.acme.example/private/abc123.ics";
 
+/** Every message reachable from a thrown error, causes included. */
+function chain(error: unknown): string {
+  const parts: string[] = [];
+  let current: unknown = error;
+  for (let depth = 0; depth < 8 && current instanceof Error; depth += 1) {
+    parts.push(current.message, String(current.stack ?? ""));
+    current = current.cause;
+  }
+  parts.push(String(current));
+  return parts.join("\n");
+}
+
 interface Call {
   url: string;
   headers: Record<string, string>;
@@ -191,5 +203,37 @@ describe("the calendar fetcher", () => {
       expect(message).not.toContain("abc123");
       expect(message).not.toContain("calendar.acme.example");
     }
+  });
+
+  test("a body that fails mid-stream is typed and says nothing", async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("BEGIN:VCALENDAR\r\n"));
+            controller.error(new Error(`stream failed for ${URL_UNDER_TEST}`));
+          },
+        }),
+        { status: 200 },
+      );
+    const error = await makeFetcher(fetchImpl)(URL_UNDER_TEST, {}).catch(
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(KizukiError);
+    expect((error as KizukiError).code).toBe("unreachable");
+    expect(chain(error)).not.toContain("abc123");
+    expect(chain(error)).not.toContain("calendar.acme.example");
+  });
+
+  test("a transport failure keeps the URL out of its cause chain", async () => {
+    const { fetchImpl } = stub(() => {
+      throw new Error(`connect ECONNREFUSED ${URL_UNDER_TEST}`);
+    });
+    const error = await makeFetcher(fetchImpl)(URL_UNDER_TEST, {}).catch(
+      (caught: unknown) => caught,
+    );
+    expect((error as KizukiError).code).toBe("unreachable");
+    expect(chain(error)).not.toContain("abc123");
+    expect(chain(error)).not.toContain("calendar.acme.example");
   });
 });
