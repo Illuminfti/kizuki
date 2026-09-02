@@ -1,5 +1,5 @@
 import { isPlainObject } from "@kizuki/core";
-import { PEER_TYPES, TelegramConnectorError } from "./api";
+import { PEER_TYPES, TelegramConnectorError, redactedCause } from "./api";
 import type { PeerType } from "./api";
 
 export const TELEGRAM_CURSOR_SCHEMA = "kizuki.telegram-cursor/v1" as const;
@@ -154,9 +154,11 @@ function hasExactKeys(
 }
 
 function malformed(cause?: unknown): TelegramConnectorError {
+  // A JSON parser quotes the token it stopped on, and a cursor is stored text
+  // the connector did not necessarily write; the shape is all that may travel.
   return new TelegramConnectorError(
     "parse_error",
     "kizuki.telegram: malformed cursor",
-    cause === undefined ? undefined : { cause },
+    cause === undefined ? undefined : { cause: redactedCause(cause) },
   );
 }

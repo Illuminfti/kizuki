@@ -11,7 +11,7 @@ import type {
   SignInIo,
   SyncBatch,
 } from "@kizuki/core";
-import { TelegramConnectorError } from "./api";
+import { TelegramConnectorError, redactedCause } from "./api";
 import type { AppCredentials, TelegramApi, TelegramApiFactory, TelegramUser } from "./api";
 import { appCredentials, requireAppCredentials } from "./app-credentials";
 import { createRealApi } from "./client";
@@ -146,10 +146,13 @@ export class TelegramConnector implements Connector {
     try {
       text = await resolve(ref);
     } catch (error) {
+      // The resolver failed over the state file, so its own report may name
+      // the bytes it was reading. Only the shape of that failure is safe to
+      // carry.
       throw new TelegramConnectorError(
         "missing_session",
         "kizuki.telegram: not signed in; run: kizuki connect telegram",
-        { cause: error },
+        { cause: redactedCause(error) },
       );
     }
     const state = parseState(text);

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { parseCursor } from "../src/cursor";
 import {
   FIXTURE_SESSION,
   fixtureAccount,
@@ -111,4 +112,28 @@ test("terminal prompts never echo what was already typed", async () => {
   for (const notice of io.notices) {
     assertClean("notice", notice);
   }
+});
+
+/**
+ * A failure raised over credential bytes carries them: a resolver names what it
+ * could not read, and a JSON parser quotes the token it stopped on. Only the
+ * shape of either failure may cross into a cause chain.
+ */
+test("a failure raised over credential bytes hands back its shape only", async () => {
+  const RESOLVED = "resolver-token-not-a-real-credential";
+  const STORED = "cursor-token-not-a-real-credential";
+
+  const resolved = await rejection(() =>
+    harness().connector.connect(async () => {
+      throw new Error(RESOLVED);
+    }),
+  );
+  expect(resolved.code).toBe("missing_session");
+  expect(chain(resolved)).not.toContain(RESOLVED);
+
+  const stored = await rejection(async () =>
+    parseCursor(`{"schema": ${STORED}}`),
+  );
+  expect(stored.code).toBe("parse_error");
+  expect(chain(stored)).not.toContain(STORED);
 });
