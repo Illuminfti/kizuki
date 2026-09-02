@@ -4,12 +4,6 @@ import {
   type OAuthTransport,
 } from "./oauth";
 
-/**
- * The one file in core that opens a socket, declared with its reason in
- * `scripts/network-allowlist.txt`. It is deliberately dumb: it moves bytes
- * for `auth/oauth.ts` and holds no policy, no secrets and no logging.
- */
-
 const CALLBACK_PAGE =
   "<!doctype html><title>Kizuki</title><p>Sign-in received. You can close this tab and return to the terminal.</p>";
 const MAX_RESPONSE_BYTES = 1024 * 1024;
@@ -54,6 +48,11 @@ async function readCapped(response: Response): Promise<string> {
   return new TextDecoder().decode(body);
 }
 
+/**
+ * The one transport in core that opens a socket, declared with its reason in
+ * `scripts/network-allowlist.txt`. It is deliberately dumb: it moves bytes for
+ * `auth/oauth.ts` and holds no policy, no secrets and no logging.
+ */
 export function loopbackTransport(
   opts: { postTimeoutMs?: number } = {},
 ): OAuthTransport {

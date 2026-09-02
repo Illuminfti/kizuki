@@ -110,6 +110,25 @@ describe("token endpoint posts", () => {
     }
   });
 
+  test("refuses a response body past the size cap", async () => {
+    const oversize = "x".repeat(2 * 1024 * 1024);
+    const endpoint = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: (): Response => new Response(oversize, { status: 200 }),
+    });
+    try {
+      await expect(
+        loopbackTransport().postForm(
+          `http://127.0.0.1:${endpoint.port}/token`,
+          { grant_type: "refresh_token" },
+        ),
+      ).rejects.toMatchObject({ code: "transport" });
+    } finally {
+      await endpoint.stop(true);
+    }
+  });
+
   test("reports a non-JSON response as a status with no document", async () => {
     const endpoint = Bun.serve({
       hostname: "127.0.0.1",
