@@ -39,18 +39,20 @@ export interface ProviderErrors {
 
 /** A length the connector can actually wait out, or nothing to act on. */
 function waitLength(seconds: unknown): number | null {
-  return Number.isSafeInteger(seconds) && (seconds as number) >= 0
-    ? (seconds as number)
+  return typeof seconds === "number" &&
+    Number.isSafeInteger(seconds) &&
+    seconds >= 0
+    ? seconds
     : null;
 }
 
 /**
  * Every field of a provider failure is text the provider chose, and this
  * connector holds a credential that would be worth writing into one. So no
- * part of such a failure is repeated or retained: a name is echoed only when
- * it is spelled like one of the provider's own, a wait only when its length
- * is a number, and the failure itself never becomes a cause a renderer would
- * walk into.
+ * part of such a failure is repeated or retained: the conclusion is drawn from
+ * the names this package taught itself to read and stated in its own words, a
+ * wait is reported only when its length is a number, and the failure itself
+ * never becomes a cause a renderer would walk into.
  */
 export function classify(
   error: unknown,
