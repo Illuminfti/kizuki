@@ -1,4 +1,5 @@
 import { constants } from "node:fs";
+import type { Dirent } from "node:fs";
 import { open, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { KizukiError } from "../errors";
@@ -31,9 +32,17 @@ export interface LegacyWikiFile {
   size: number;
 }
 
+export interface Skipped {
+  relpath: string;
+  reason: SkipReason;
+  /** A directory the walk did not enter hides every page beneath it, so a
+   * caller comparing against a snapshot cannot call any of them deleted. */
+  kind: "file" | "directory";
+}
+
 export interface ScanResult {
   files: LegacyWikiFile[];
-  skipped: { relpath: string; reason: SkipReason }[];
+  skipped: Skipped[];
   /** MAX_FILES was reached; the import is a prefix of the wiki. */
   truncated: boolean;
 }
@@ -48,8 +57,7 @@ const OPEN_FLAGS =
   constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
 
 export type FileRead =
-  | { file: Omit<LegacyWikiFile, "relpath"> }
-  | { reason: SkipReason };
+  { file: Omit<LegacyWikiFile, "relpath"> } | { reason: SkipReason };
 
 const utf8 = new TextDecoder("utf-8", { fatal: true });
 
@@ -57,7 +65,7 @@ interface Walk {
   root: string;
   ignore: string[];
   files: LegacyWikiFile[];
-  skipped: { relpath: string; reason: SkipReason }[];
+  skipped: Skipped[];
   /** Every directory entry looked at, so a flood of skips is bounded too. */
   considered: number;
   truncated: boolean;
@@ -67,11 +75,16 @@ function relative(root: string, absolute: string): string {
   return path.relative(root, absolute).split(path.sep).join("/");
 }
 
-function skip(walk: Walk, relpath: string, reason: SkipReason): void {
+function skip(
+  walk: Walk,
+  relpath: string,
+  reason: SkipReason,
+  kind: "file" | "directory" = "file",
+): void {
   // The raw relpath: a caller has to be able to match a skip against a cursor
   // snapshot exactly. The report layer is what makes a hostile name safe to
   // print.
-  walk.skipped.push({ relpath, reason });
+  walk.skipped.push({ relpath, reason, kind });
 }
 
 /**
@@ -145,10 +158,20 @@ async function walkDirectory(
 ): Promise<void> {
   if (walk.truncated) return;
   if (depth > MAX_DEPTH) {
-    skip(walk, relative(walk.root, directory), "depth");
+    skip(walk, relative(walk.root, directory), "depth", "directory");
     return;
   }
-  const entries = await readdir(directory, { withFileTypes: true });
+  let entries: Dirent[];
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    // One directory the owner cannot read is a reported gap, not a reason to
+    // abandon the rest of the estate. The root is different: a wiki that
+    // cannot be listed at all is a misconfiguration, and the caller is told.
+    if (depth === 0) throw error;
+    skip(walk, relative(walk.root, directory), "unreadable", "directory");
+    return;
+  }
   entries.sort((a, b) => compareStrings(a.name, b.name));
   for (const entry of entries) {
     if (walk.truncated) return;
@@ -170,7 +193,7 @@ async function walkDirectory(
     }
     if (entry.isDirectory()) {
       if (walk.ignore.some((pattern) => matchesGlob(relpath, pattern))) {
-        skip(walk, relpath, "ignored");
+        skip(walk, relpath, "ignored", "directory");
         continue;
       }
       await walkDirectory(walk, absolute, depth + 1);

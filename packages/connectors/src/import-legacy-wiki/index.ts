@@ -110,8 +110,9 @@ function encodeCursor(
  * The snapshot entries this scan proves are gone. A page the scan could not
  * read — unreadable, not UTF-8, oversized, ignored, past the depth limit — is
  * missing information, not a deletion, and a truncated walk never saw the rest
- * of the wiki at all. Absence has to be conclusive before the ledger is told a
- * source record was removed.
+ * of the wiki at all. A directory the walk never entered is the same gap one
+ * level up: every page beneath it is unseen, not removed. Absence has to be
+ * conclusive before the ledger is told a source record was removed.
  */
 export function goneFromSnapshot(
   previous: Record<string, SnapshotEntry>,
@@ -120,9 +121,17 @@ export function goneFromSnapshot(
   if (scan.truncated) return [];
   const seen = new Set<string>();
   for (const file of scan.files) seen.add(file.relpath);
-  for (const entry of scan.skipped) seen.add(entry.relpath);
+  const unentered: string[] = [];
+  for (const entry of scan.skipped) {
+    seen.add(entry.relpath);
+    if (entry.kind === "directory") unentered.push(`${entry.relpath}/`);
+  }
   return Object.keys(previous)
-    .filter((relpath) => !seen.has(relpath))
+    .filter(
+      (relpath) =>
+        !seen.has(relpath) &&
+        !unentered.some((prefix) => relpath.startsWith(prefix)),
+    )
     .sort(compareStrings);
 }
 

@@ -356,6 +356,48 @@ describe("hostile files", () => {
     expect("file" in read && read.file.size).toBe(big.length);
   });
 
+  // chmod is only a bound for a process that is not root.
+  test.skipIf(process.getuid?.() === 0)(
+    "one unreadable directory does not take the whole wiki down",
+    async () => {
+      writeMapping();
+      write("ok.md", "---\ntitle: Fine\n---\nfine\n");
+      mkdirSync(join(wiki, "private"));
+      writeFileSync(join(wiki, "private", "secret.md"), "---\ntitle: S\n---\n");
+      chmodSync(join(wiki, "private"), 0o000);
+      try {
+        const connector = createLegacyWikiConnector({ path: wiki });
+        const batch = await connector.backfill(null);
+        expect(batch.events.map((event) => event.source_record_id)).toEqual([
+          "ok.md",
+        ]);
+        expect(connector.lastReport()?.pages).toContainEqual(
+          expect.objectContaining({
+            relpath: "private",
+            outcome: "skipped",
+            skip_reason: "unreadable",
+          }),
+        );
+      } finally {
+        chmodSync(join(wiki, "private"), 0o700);
+      }
+    },
+  );
+
+  test("a root the walk cannot read is still a refusal", async () => {
+    writeMapping();
+    const connector = createLegacyWikiConnector({ path: wiki });
+    rmSync(wiki, { recursive: true, force: true });
+    let code = "";
+    try {
+      await connector.backfill(null);
+    } catch (error) {
+      if (!(error instanceof KizukiError)) throw error;
+      code = error.code;
+    }
+    expect(code).toBe("misconfigured");
+  });
+
   test("health degrades after a run that skipped unreadable pages", async () => {
     writeMapping();
     write("ok.md", "---\ntitle: Fine\n---\nfine\n");
@@ -461,7 +503,7 @@ describe("what counts as gone from a snapshot", () => {
       "depth",
     ] as const;
     for (const reason of reasons) {
-      const skipped = [{ relpath: "a.md", reason }];
+      const skipped = [{ relpath: "a.md", reason, kind: "file" as const }];
       expect(goneFromSnapshot(snapshot, scanned({ skipped }))).toEqual([]);
     }
   });
@@ -470,5 +512,34 @@ describe("what counts as gone from a snapshot", () => {
     expect(goneFromSnapshot(snapshot, scanned({ truncated: true }))).toEqual(
       [],
     );
+  });
+
+  test("a directory the walk never entered hides everything beneath it", () => {
+    const beneath = {
+      "private/a.md": { hash: "h", target: "entities/a" },
+      "private-notes/b.md": { hash: "h", target: "entities/b" },
+    };
+    for (const reason of ["ignored", "depth", "unreadable"] as const) {
+      const skipped = [
+        { relpath: "private", reason, kind: "directory" as const },
+      ];
+      // The sibling whose name merely starts with the same characters is
+      // outside the subtree and really is gone.
+      expect(goneFromSnapshot(beneath, scanned({ skipped }))).toEqual([
+        "private-notes/b.md",
+      ]);
+    }
+  });
+
+  test("a skipped file hides only itself", () => {
+    const skipped = [
+      { relpath: "a.md", reason: "not_utf8" as const, kind: "file" as const },
+    ];
+    expect(
+      goneFromSnapshot(
+        { ...snapshot, "a.md/b.md": { hash: "h", target: "entities/b" } },
+        scanned({ skipped }),
+      ),
+    ).toEqual(["a.md/b.md"]);
   });
 });

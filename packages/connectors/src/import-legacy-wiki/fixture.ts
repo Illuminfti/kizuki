@@ -193,7 +193,7 @@ export function fixtureScan(): ScanResult {
         matchesGlob(entry.relpath, pattern),
       )
     ) {
-      skipped.push({ relpath: entry.relpath, reason: "ignored" });
+      skipped.push({ relpath: entry.relpath, reason: "ignored", kind: "file" });
       continue;
     }
     files.push(entry);
