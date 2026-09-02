@@ -94,11 +94,32 @@ test("the header decides the columns, not their order", () => {
       title: "A title",
       url: "https://example.com/a",
       time_added: "1767225600",
-      occurred_at: "2026-01-01T00:00:00.000Z",
       tags: [],
       status: "unread",
     },
   ]);
+  // A row is the five fields the export has, and nothing derived beside them.
+  expect(Object.keys(rows[0] ?? {}).sort()).toEqual([
+    "status",
+    "tags",
+    "time_added",
+    "title",
+    "url",
+  ]);
+});
+
+test("a status cell is kept as the export wrote it", () => {
+  // The cell is evidence of what the export said, so it is not tidied on the
+  // way in: a reader comparing it against `archive` decides what to make of
+  // the padding, and the record still says what was there.
+  const rows = parsePocketCsv(
+    `${HEADER}\nA,https://example.com/a,1767225600,,"  archive  "\n`,
+    "part.csv",
+  );
+  expect(rows[0]?.status).toBe("  archive  ");
+  expect(pocketEvents(rows, FIXTURE_OBSERVED_AT)[0]?.metadata["status"]).toBe(
+    "  archive  ",
+  );
 });
 
 test("tags are split on the pipe and trimmed", () => {

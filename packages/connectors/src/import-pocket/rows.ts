@@ -8,12 +8,8 @@ export interface PocketRow {
   url: string;
   /** Unix seconds, exactly as the export wrote them. */
   time_added: string;
-  /**
-   * The instant `time_added` names, resolved once where the file and the row
-   * number are known, so one record carries one position through both seams.
-   */
-  occurred_at: string;
   tags: string[];
+  /** What the export said, verbatim: the cell is evidence, not a value. */
   status: string;
 }
 
@@ -90,17 +86,19 @@ export function parsePocketCsv(
       );
     }
     const time_added = cellOf(cells, "time_added").trim();
+    // Checked here, where the file name and the row number exist to name in
+    // the refusal. The instant itself is derived again where the event is
+    // built, so a row stays the five fields the export has.
+    unixSecondsToIso(time_added, at);
     return {
       title: cellOf(cells, "title").trim(),
       url,
       time_added,
-      // Resolved here, where the file name and the row number exist to name.
-      occurred_at: unixSecondsToIso(time_added, at),
       tags: cellOf(cells, "tags")
         .split("|")
         .map((tag) => tag.trim())
         .filter((tag) => tag.length > 0),
-      status: cellOf(cells, "status").trim(),
+      status: cellOf(cells, "status"),
     };
   });
 }

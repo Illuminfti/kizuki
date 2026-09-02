@@ -28,6 +28,7 @@ import {
   numberRepeats,
   requireKnownKeys,
   requirePathConfig,
+  unixSecondsToIso,
 } from "../util";
 import { parsePocketCsv, pocketHeaderLine } from "./rows";
 import type { PocketRow } from "./rows";
@@ -102,7 +103,10 @@ export function pocketEvents(
     connector_id: POCKET_IMPORT_CONNECTOR_ID,
     source_record_id: ids[index] ?? row.url,
     kind: "bookmark",
-    occurred_at: row.occurred_at,
+    // The reader refused an unreadable timestamp where it could name the file
+    // and the line; a row handed straight to this function is named by its
+    // place in the batch.
+    occurred_at: unixSecondsToIso(row.time_added, `row ${index + 1}`),
     observed_at,
     text: row.title.length > 0 ? `${row.title}\n${row.url}` : row.url,
     subjects: [{ subject_id: "pocket:self", role: "from" }],
