@@ -5,8 +5,10 @@ import {
   LLM_CONTRACT_MINOR,
   PRODUCER_CONTRACT_MINOR,
   PortRegistry,
+  isPlainObject,
 } from "@kizuki/core";
 import type { LlmPort } from "@kizuki/core";
+import { readLlmPortConfig } from "../src/config";
 import * as llm from "../src/index";
 import {
   OPENAI_COMPATIBLE_LLM,
@@ -78,6 +80,27 @@ describe("the package boundary", () => {
     // what this field is for; core cannot construct either one.
     expect(OPENAI_COMPATIBLE_LLM.optional_package).toBe("@kizuki/llm");
     expect(MODEL_PRODUCER.optional_package).toBe("@kizuki/llm");
+  });
+
+  test("the configuration the README documents parses and is accepted", () => {
+    const readme = readFileSync(
+      resolve(repoRoot, "packages/llm/README.md"),
+      "utf8",
+    );
+    const block = readme.split("```toml")[1]?.split("```")[0] ?? "";
+    expect(block.trim().length).toBeGreaterThan(0);
+    // Regression: the documented file defined ports.llm as a string and then
+    // reopened it as a table, which TOML refuses, so nobody could configure
+    // the port the way the package told them to.
+    const parsed: unknown = Bun.TOML.parse(block);
+    if (!isPlainObject(parsed)) {
+      throw new Error("the documented configuration is not a table");
+    }
+    expect(readLlmPortConfig(parsed)).toMatchObject({
+      base_url: "https://your-endpoint/v1",
+      model: "your-wire-model-id",
+      secret_ref: "env:KIZUKI_MODEL_KEY",
+    });
   });
 
   test("the package takes no dependency beyond the core contracts", () => {

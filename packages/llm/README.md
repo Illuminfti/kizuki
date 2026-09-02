@@ -23,15 +23,23 @@ rather than after it has all been buffered.
 
 ## Configuration
 
-```toml
-[ports]
-llm = "kizuki.llm.openai-compatible"
+`ports.llm` selects this implementation by its id,
+`kizuki.llm.openai-compatible`. These are the keys of the port's own table,
+which a host hands it as `ctx.config`:
 
-[ports.llm]
+```toml
 base_url   = "https://your-endpoint/v1"
 model      = "your-wire-model-id"
 secret_ref = "env:KIZUKI_MODEL_KEY"
 ```
+
+RFC 0002 §3.4 and §12.1 write the selection as `ports.llm = "<id>"` and the
+port's own table as `[ports.llm]`. TOML cannot express both: a key defined as
+a string cannot be reopened as a table, and a file with both is refused with
+`Table already defined`. Nothing in the tree reads a vault's `config.toml`
+yet, so the lane that ships that loader settles which of the two moves. This
+port validates the keys wherever they arrive from, and refuses one it does not
+know.
 
 | Key                   | Required | Meaning                                                                        |
 | --------------------- | -------- | ------------------------------------------------------------------------------ |
