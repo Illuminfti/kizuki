@@ -37,9 +37,6 @@ export interface OmnivoreFiles {
 
 const METADATA_FILE = /^metadata_\d+_to_\d+\.json$/;
 
-/** One item's notes are one record's worth of text, and no more. */
-const MAX_HIGHLIGHTS_BYTES = MAX_RECORD_BYTES;
-
 // A slug is captured text. Unless it is this shape it never reaches the
 // filesystem, so no export can name a path outside its own folders.
 const SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/;
@@ -265,7 +262,7 @@ export async function fsOmnivoreFiles(
       }
       // Highlights come out of the same export as the metadata and are
       // charged to the same budget, so no number of items can spend it twice.
-      const limit = Math.min(MAX_HIGHLIGHTS_BYTES, bytesLeft);
+      const limit = Math.min(MAX_RECORD_BYTES, bytesLeft);
       if (found.byte_size > limit) {
         throw new KizukiError(
           "misconfigured",
