@@ -16,12 +16,12 @@ export interface ServeContext {
   vaultPath: string;
   principal: Principal;
   /**
-   * One `kizuki.retrieval/v1` connection, held for the life of the process
-   * that built this context and handed to the claim store, which uses it to
-   * nominate near-duplicates and to index what it writes. Reads still go to
-   * the lexical index in this database: no implementation of the port ships
-   * in this tree yet, and serving nothing is worse than serving what the
-   * deterministic floor can answer.
+   * One `kizuki.retrieval/v1` connection, bound by the host for the life of
+   * the process and handed to the claim store, which uses it to nominate
+   * near-duplicates and to index what it writes. Reads still go to the
+   * lexical index in this database: no implementation of the port ships in
+   * this tree, and routing reads through a port nobody has registered would
+   * answer nothing where the deterministic floor answers (invariant 5).
    */
   retrieval?: RetrievalPort;
 }

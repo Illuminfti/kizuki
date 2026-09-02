@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { TOOLS, listAudit, revokeAgent, setGrant } from "@kizuki/core";
-import type { ServeContext } from "@kizuki/core";
+import type { RetrievalPort, ServeContext } from "@kizuki/core";
 import { listClaims } from "@kizuki/core";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -279,6 +279,65 @@ describe("the stdio MCP server over a real client", () => {
     const result = await call(client, "timeline", { day: "2026-02-28" });
     expect(result.isError).toBe(true);
     expect(errorOf(result).error).toBe("tool_not_granted");
+  });
+
+  test("one retrieval connection serves every call in a session", async () => {
+    const running = live();
+    const upserts: string[][] = [];
+    let closed = 0;
+    const port = {
+      descriptor: {
+        id: "test.session.retrieval",
+        kind: "retrieval",
+        contract: "kizuki.retrieval/v1",
+        contract_minor: 0,
+        supports: ["lexical"],
+        requires_lease: false,
+        optional_package: null,
+      },
+      health: () => Promise.resolve({ status: "ready", detail: {} }),
+      close: () => {
+        closed += 1;
+        return Promise.resolve();
+      },
+      upsert: (docs: readonly { doc_id: string }[]) => {
+        upserts.push(docs.map((doc) => doc.doc_id));
+        return Promise.resolve({ processed: docs.length });
+      },
+      search: () =>
+        Promise.resolve({ hits: [], degraded: [], timings_ms: {}, space: null }),
+      remove: () => Promise.resolve({ processed: 0 }),
+      verifyAbsent: (ids: readonly string[]) =>
+        Promise.resolve({
+          checked: ids.length,
+          found: [],
+          store: "test.session.retrieval",
+          method: "scan",
+          at: "2026-03-01T00:00:00Z",
+        }),
+      neighbors: () =>
+        Promise.resolve({ entity: "", edges: [], truncated: false }),
+    } as unknown as RetrievalPort;
+
+    const client = await connect({
+      ...running.agent("reader-private"),
+      retrieval: port,
+    });
+    for (const index of [1, 2, 3]) {
+      const result = await call(client, "propose", {
+        kind: "claim",
+        target: `facts:session-${index}`,
+        body: `The kettle boiled ${index} time(s).`,
+        provenance: [running.eventId],
+      });
+      expect(result.isError).toBeUndefined();
+    }
+
+    // The host binds the connection; the engine never opens its own, so every
+    // call in the session reaches the one instance and none of them close it.
+    expect(upserts).toHaveLength(3);
+    expect(new Set(upserts.flat()).size).toBe(3);
+    expect(closed).toBe(0);
   });
 
   test("an agent on the default grant cannot relay a correction", async () => {

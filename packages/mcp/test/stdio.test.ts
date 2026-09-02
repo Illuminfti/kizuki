@@ -91,6 +91,17 @@ describe("the stdio process entry", () => {
     );
   });
 
+  test("an unregistered retrieval port refuses before the server starts", async () => {
+    const running = live();
+    const result = await run(
+      ["--vault", running.vaultPath, "--owner", "--retrieval", "nobody"],
+      HANDSHAKE,
+    );
+    expect(result.code).toBe(1);
+    expect(result.stderr.trim()).toBe("retrieval port not registered: nobody");
+    expect(result.stdout).toBe("");
+  });
+
   test("a client that stops reading does not wedge the process", async () => {
     const running = live();
     writeFileSync(
