@@ -31,12 +31,13 @@ import type { TargetIndex } from "./decide";
 import { parseLegacyFrontmatter } from "./frontmatter";
 import { LEGACY_WIKI_CONNECTOR_ID } from "./mapping";
 import type { LegacyWikiMapping } from "./mapping";
-import type {
-  LegacyWikiCounts,
-  LegacyWikiPageReport,
-  LegacyWikiReport,
+import type { LegacyWikiPageReport, LegacyWikiReport } from "./report";
+import {
+  LEGACY_WIKI_REPORT_SCHEMA,
+  emptyCounts,
+  skippedPage,
+  tally,
 } from "./report";
-import { LEGACY_WIKI_REPORT_SCHEMA } from "./report";
 import type { ScanResult } from "./scan";
 
 /**
@@ -299,84 +300,6 @@ function planPage(
         migration,
       },
     },
-  };
-}
-
-function emptyCounts(): LegacyWikiCounts {
-  const types = {} as Record<PageType, number>;
-  for (const type of PAGE_TYPES) types[type] = 0;
-  return {
-    files: 0,
-    imported: 0,
-    skipped: 0,
-    labeled: 0,
-    unlabeled: 0,
-    unmapped_sensitivity: 0,
-    unreadable_sensitivity: 0,
-    sensitivity_raised: 0,
-    types,
-    type_defaulted: 0,
-    type_unmapped: 0,
-    fields_renamed: 0,
-    fields_dropped: 0,
-    fields_coerced: 0,
-    frontmatter_unparsed: 0,
-    scan_truncated: false,
-  };
-}
-
-/**
- * Every count except `files` and `skipped` describes the import. A page the
- * walk never read has no decisions to report — `skippedPage` fills its row
- * with placeholders — and counting those placeholders told the owner they had
- * more pages to label than the import actually produced.
- */
-function tally(counts: LegacyWikiCounts, page: LegacyWikiPageReport): void {
-  counts.files += 1;
-  if (page.outcome === "skipped") {
-    counts.skipped += 1;
-    return;
-  }
-  counts.imported += 1;
-  if (page.type.mapped !== null) counts.types[page.type.mapped] += 1;
-  if (page.sensitivity.decision === "labeled") counts.labeled += 1;
-  if (page.sensitivity.decision === "unlabeled") counts.unlabeled += 1;
-  if (page.sensitivity.decision === "unmapped_value") {
-    counts.unmapped_sensitivity += 1;
-  }
-  if (page.sensitivity.decision === "unreadable") {
-    counts.unreadable_sensitivity += 1;
-  }
-  if (page.notes.includes("sensitivity: raised_to_floor")) {
-    counts.sensitivity_raised += 1;
-  }
-  if (page.type.decision === "defaulted") counts.type_defaulted += 1;
-  if (page.type.decision === "unmapped_value") counts.type_unmapped += 1;
-  if (page.frontmatter.status === "unparsed") counts.frontmatter_unparsed += 1;
-  for (const field of page.fields) {
-    if (field.outcome === "renamed") counts.fields_renamed += 1;
-    if (field.outcome === "coerced") counts.fields_coerced += 1;
-    if (field.outcome === "dropped") counts.fields_dropped += 1;
-  }
-}
-
-function skippedPage(
-  entry: ScanResult["skipped"][number],
-): LegacyWikiPageReport {
-  return {
-    relpath: sanitizeLine(entry.relpath, 200),
-    outcome: "skipped",
-    skip_reason: entry.reason,
-    target: null,
-    kind: null,
-    frontmatter: { status: "absent", problems: [] },
-    type: { legacy: null, mapped: null, decision: "excluded" },
-    title: { source: "filename" },
-    sensitivity: { legacy: null, label: null, decision: "unlabeled" },
-    occurred_at: "mtime",
-    subjects: 0,
-    fields: [],
-    notes: [],
   };
 }
 
