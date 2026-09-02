@@ -94,21 +94,21 @@ test("hitting the dialog listing bound degrades health", async () => {
   );
 });
 
-test("health names the dialogs the account stopped listing", async () => {
+test("a chat the account stopped listing does not degrade health", async () => {
   const built = await connected();
   const drained = await drain(built.connector, "backfill");
   expect((await built.connector.health()).state).toBe("ok");
 
+  // Leaving or deleting a chat is an ordinary act. Nothing the owner can do
+  // would clear a report of it, so reporting it would pin the connection to
+  // degraded for the rest of its life, and name the peer while doing so.
   built.api.hideDialog("-42");
-  await built.connector.sync(drained.cursor);
-
-  const report = await built.connector.health();
-  expect(report.state).toBe("degraded");
-  expect(report.detail).toBe("dialogs the account no longer lists (1): -42");
-
-  built.api.showDialogs();
-  await built.connector.sync(drained.cursor);
-  expect((await built.connector.health()).state).toBe("ok");
+  for (let pass = 0; pass < 3; pass += 1) {
+    await built.connector.sync(drained.cursor);
+    const report = await built.connector.health();
+    expect(report.state).toBe("ok");
+    expect(report.detail).toBeUndefined();
+  }
 });
 
 test("a pass cut short by a wait is not recorded as a success", async () => {

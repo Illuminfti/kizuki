@@ -28,8 +28,6 @@ export interface WalkDeps {
 export interface DialogListing {
   dialogs: TelegramDialog[];
   limitReached: boolean;
-  /** Peers the cursor still has history for that the account no longer lists. */
-  unreadable: string[];
 }
 
 export interface WalkResult {
@@ -159,15 +157,6 @@ export async function walk(
   // that closes it counts as progress whatever it found itself.
   const resuming =
     stored !== null && stored.pass !== null && stored.pass.next_peer !== null;
-  // What this pass would have read had the account still listed it: a finished
-  // dialog is only a loss once sync is watching it for new messages.
-  const unreadable = Object.keys(cursor.dialogs)
-    .filter(
-      (peer) =>
-        !byPeer.has(peer) &&
-        (mode === "sync" || cursor.dialogs[peer]?.exhausted !== true),
-    )
-    .sort();
   const keys = Object.keys(cursor.dialogs).sort();
   const resume = mode === "sync" ? (cursor.pass?.next_peer ?? null) : null;
   let index = resume === null ? 0 : Math.max(0, keys.indexOf(resume));
@@ -227,7 +216,7 @@ export async function walk(
     batch: { events: batch.events, cursor: encodeCursor(cursor) },
     floodUntil,
     listing:
-      limitReached === null ? null : { dialogs, limitReached, unreadable },
+      limitReached === null ? null : { dialogs, limitReached },
   };
 }
 

@@ -175,9 +175,9 @@ test("a dialog the account stopped listing does not finish the backfill", async 
   });
   expect(stalled.phase).toBe("backfill");
 
-  const report = await resumed.health();
-  expect(report.state).toBe("degraded");
-  expect(report.detail).toContain("1003");
+  // The entry stays in the cursor: the backfill is honestly unfinished, and a
+  // chat that comes back to the listing resumes rather than starting again.
+  expect((await resumed.health()).state).toBe("ok");
 
   built.api.showDialogs();
   const recovered = await built.restart();

@@ -90,8 +90,8 @@ pass only completes, and the watermark only moves, once every dialog in it has
 been read to the end. An edit to something older than 200 messages is missed.
 
 Service messages are skipped: joins, pins and title changes carry no content
-worth keeping. So is a message whose timestamp is not a time a clock can hold,
-which is the one record a corrupt page can cost you.
+worth keeping. So is a message whose timestamp is not a date the ledger
+accepts, which is the one record a corrupt page can cost you.
 
 Attachments are recorded by id, media type, filename and size. No file is ever
 downloaded.
@@ -99,13 +99,13 @@ downloaded.
 A run lists at most 5000 dialogs. Reaching that bound sets health to degraded
 and names the limit, so a truncated view is visible rather than silent. A
 dialog that drops out of the listing is skipped rather than written off: its
-entry keeps the id it reached, the backfill stays unfinished, and health names
-the peers the account no longer lists. At the bound, the resume cursor may
-drop such a peer to stay within the same 5000, finished ones first.
+entry keeps the id it reached and the backfill stays unfinished, so a chat
+that comes back resumes instead of starting again. At the bound, the resume
+cursor may drop such a peer to stay within the same 5000, finished ones first.
 
 Waits are obeyed. When Telegram asks for a pause, the batch ends early with a
-cursor describing exactly the events it returned, and health reports how many
-seconds are left.
+cursor describing exactly the events it returned, health reports how many
+seconds are left, and no further request is made until the pause has lapsed.
 
 Secret chats cannot be read. They are end-to-end encrypted per device, and
 the library this connector uses implements no part of that protocol: the
