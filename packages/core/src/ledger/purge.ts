@@ -6,6 +6,7 @@ import { fileProposal } from "../staging/proposals";
 import { withdrawForTombstone } from "../staging/producers";
 import { ulid } from "../util/ulid";
 import { listCanonPagesReport } from "../vault/pages";
+import type { SkippedPage } from "../vault/pages";
 import { tableExists } from "./schema";
 
 export interface PurgeReceipt {
@@ -66,6 +67,22 @@ function selector(filter: PurgeFilter): { where: string; bindings: string[] } {
   return { where: conditions.join(" AND "), bindings };
 }
 
+/**
+ * The refusal reaches an operator through stderr, and a vault can hold any
+ * number of broken notes, so it names a few paths and counts the rest rather
+ * than pasting an unbounded list into an error message.
+ */
+const NAMED_IN_REFUSAL = 5;
+
+function namePages(skipped: SkippedPage[]): string {
+  const named = skipped
+    .slice(0, NAMED_IN_REFUSAL)
+    .map(({ relPath }) => relPath)
+    .join(", ");
+  const rest = skipped.length - NAMED_IN_REFUSAL;
+  return rest > 0 ? `${named} (+${rest} more; run doctor)` : named;
+}
+
 function pageSources(raw: unknown): string[] {
   if (raw === undefined) return [];
   if (!Array.isArray(raw) || !raw.every((source) => typeof source === "string")) {
@@ -83,10 +100,26 @@ export function purgeEvents(
   const { where, bindings } = selector(filter);
 
   return db.transaction((): PurgeOutcome => {
+    // The cascade is computed from page `sources`, so a page whose
+    // frontmatter cannot be read might cite a purged event and a purge that
+    // missed the hold would serve purged content (invariant 8). A page that
+    // parsed is a different case: a duplicate id keeps its provenance and is
+    // scanned below, and only a page with no id at all stops the purge,
+    // because a hold cannot name it.
     const report = listCanonPagesReport(vaultPath);
-    if (report.skipped.length > 0) {
-      const relPaths = report.skipped.map(({ relPath }) => relPath).join(", ");
-      throw new Error(`purge refused: cannot read canon page(s) ${relPaths}`);
+    const unreadable = report.skipped.filter(
+      ({ kind }) => kind === "unreadable",
+    );
+    if (unreadable.length > 0) {
+      throw new Error(
+        `purge refused: cannot read canon page(s) ${namePages(unreadable)}`,
+      );
+    }
+    const unnamed = report.skipped.filter(({ kind }) => kind === "no-id");
+    if (unnamed.length > 0) {
+      throw new Error(
+        `purge refused: canon page(s) without an id ${namePages(unnamed)}`,
+      );
     }
 
     const candidates = db
@@ -154,14 +187,10 @@ export function purgeEvents(
     }
 
     const holds: { page_path: string; proposal_id: string }[] = [];
-    for (const page of report.pages) {
+    for (const page of [...report.pages, ...report.duplicates]) {
       const provenance = pageSources(page.data["sources"])
         .filter((source) => purgedIds.includes(source));
       if (provenance.length === 0) continue;
-      const target = page.data["id"];
-      if (typeof target !== "string" || target.length === 0) {
-        throw new Error(`canon page ${page.relPath} has no usable id`);
-      }
       if (!tableExists(db, "proposals")) {
         throw new Error("staging is not initialized for canon purge review");
       }
@@ -169,7 +198,7 @@ export function purgeEvents(
         db,
         {
           kind: "purge_review",
-          target,
+          target: page.id,
           body: page.body,
           frontmatter: {},
           provenance,

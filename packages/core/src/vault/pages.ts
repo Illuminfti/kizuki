@@ -39,6 +39,13 @@ export interface CanonPageReadOptions {
 
 export interface CanonPageReport {
   pages: CanonPage[];
+  /**
+   * Pages that parsed and named an id another file claimed first. They are
+   * not served — every reader keys on the id — but they are real notes with
+   * real provenance, so a caller that reasons about `sources` rather than
+   * about ids reads them too. Each also appears in `skipped`.
+   */
+  duplicates: CanonPage[];
   skipped: SkippedPage[];
 }
 
@@ -75,6 +82,7 @@ export function listCanonPagesReport(
   opts: CanonPageReadOptions = {},
 ): CanonPageReport {
   const pages: CanonPage[] = [];
+  const duplicates: CanonPage[] = [];
   const skipped: SkippedPage[] = [];
   const seen = new Map<string, string>();
 
@@ -109,13 +117,20 @@ export function listCanonPagesReport(
         kind: "duplicate-id",
         reason: `duplicate id "${id}"; first seen at ${first}`,
       });
+      duplicates.push({
+        id,
+        path,
+        relPath,
+        data: parsed.data,
+        body: parsed.body,
+      });
       continue;
     }
     seen.set(id, relPath);
     pages.push({ id, path, relPath, data: parsed.data, body: parsed.body });
   }
 
-  return { pages, skipped };
+  return { pages, duplicates, skipped };
 }
 
 export function listCanonPages(vaultPath: string): CanonPage[] {

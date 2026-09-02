@@ -7,7 +7,7 @@ import { neighbors } from "../src/graph/graph";
 import { initGraph } from "../src/graph/schema";
 import { openLedger } from "../src/ledger/db";
 import { accept, count, readSince } from "../src/ledger/ledger";
-import { purgeEvents } from "../src/ledger/purge";
+import { purgeEvents, readHolds } from "../src/ledger/purge";
 import { indexEvent } from "../src/search/indexer";
 import { search } from "../src/search/query";
 import { initSearch } from "../src/search/schema";
@@ -17,7 +17,7 @@ import {
   initStaging,
 } from "../src/staging/proposals";
 import { validEvent } from "./fixtures";
-import { tempVault } from "./helpers/vault";
+import { tempVault, writeCanon } from "./helpers/vault";
 
 const ULID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const disposers: (() => void)[] = [];
@@ -31,6 +31,17 @@ function vault(): string {
 afterEach(() => {
   for (const dispose of disposers.splice(0)) dispose();
 });
+
+function fact(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "fact:dup",
+    title: "Kettle",
+    type: "fact",
+    status: "active",
+    sensitivity: "public",
+    ...overrides,
+  };
+}
 
 function event(
   sourceRecordId: string,
@@ -176,6 +187,65 @@ describe("purgeEvents", () => {
     expect(
       db.query<{ n: number }, []>("SELECT count(*) AS n FROM event_purges").get(),
     ).toEqual({ n: 0 });
+    db.close();
+  });
+
+  test("purges past a duplicate canon id and holds the duplicate", () => {
+    const db = openLedger(":memory:");
+    initStaging(db);
+    const target = storedEvent(db, event("target"));
+    const vaultPath = vault();
+    // Nothing in the vault stops two pages naming one id: `writePage` guards
+    // the path, not the id. The second page still cites the purged event, so
+    // the purge has to run and record its hold, not refuse forever.
+    writeCanon(vaultPath, "facts/B.md", fact(), "Kept.\n");
+    writeCanon(
+      vaultPath,
+      "facts/a.md",
+      fact({ sources: [target.event_id] }),
+      "Duplicate.\n",
+    );
+
+    const outcome = purgeEvents(
+      db,
+      vaultPath,
+      { event_id: target.event_id },
+      "record request",
+    );
+
+    expect(outcome.receipts).toHaveLength(1);
+    expect(count(db)).toBe(0);
+    expect(outcome.canon_holds.map(({ page_path }) => page_path)).toEqual([
+      "facts/a.md",
+    ]);
+    expect(readHolds(db).map(({ page_path }) => page_path)).toEqual([
+      "facts/a.md",
+    ]);
+    db.close();
+  });
+
+  test("names a bounded number of pages when it refuses", () => {
+    const db = openLedger(":memory:");
+    const target = storedEvent(db, event("target"));
+    const vaultPath = vault();
+    for (let index = 0; index < 8; index += 1) {
+      writeFileSync(
+        join(vaultPath, "facts", `stray-${index}.md`),
+        "no frontmatter\n",
+      );
+    }
+
+    let message = "";
+    try {
+      purgeEvents(db, vaultPath, { event_id: target.event_id }, "request");
+    } catch (error) {
+      message = (error as Error).message;
+    }
+
+    expect(message).toMatch(/^purge refused: cannot read canon page\(s\) /);
+    expect(message.match(/facts\//g)).toHaveLength(5);
+    expect(message).toContain("(+3 more; run doctor)");
+    expect(count(db)).toBe(1);
     db.close();
   });
 
