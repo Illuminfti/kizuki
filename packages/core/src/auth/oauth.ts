@@ -182,7 +182,9 @@ export function parseTokenResponse(
 
   const rotated = body["refresh_token"];
   let refreshToken: string | null;
-  if (rotated === undefined || rotated === null) {
+  // Only an absent field means "unchanged": an explicit null is a malformed
+  // response, not a provider telling us to keep what we have.
+  if (rotated === undefined) {
     refreshToken = previous?.refresh_token ?? null;
   } else if (isNonEmptyString(rotated)) {
     refreshToken = rotated;
@@ -195,11 +197,18 @@ export function parseTokenResponse(
     return invalid();
   }
 
+  // A lifetime large enough to leave the ECMAScript time range would make
+  // toISOString throw past this module's error contract.
+  const expiresAt = new Date(now.getTime() + expiresIn * 1000);
+  if (Number.isNaN(expiresAt.getTime())) return invalid();
+
   return {
     access_token: accessToken,
     refresh_token: refreshToken,
-    expires_at: new Date(now.getTime() + expiresIn * 1000).toISOString(),
-    scope: grantedScope ?? provider.scopes.join(" "),
+    expires_at: expiresAt.toISOString(),
+    // A refresh that omits the scope granted the same scope as before; falling
+    // back to the requested scopes would record a grant the owner never made.
+    scope: grantedScope ?? previous?.scope ?? provider.scopes.join(" "),
     token_type: "Bearer",
   };
 }
