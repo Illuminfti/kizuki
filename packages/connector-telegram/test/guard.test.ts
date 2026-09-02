@@ -1,26 +1,7 @@
 import { expect, test } from "bun:test";
 import { TelegramConnectorError } from "../src/api";
 import { classify, guarded } from "../src/guard";
-import type { ProviderErrors } from "../src/guard";
-
-class Wait extends Error {
-  constructor(readonly seconds: number) {
-    super(`A wait of ${seconds} seconds is required`);
-    this.name = "FloodWaitError";
-  }
-}
-
-class Rpc extends Error {
-  constructor(readonly errorMessage: string) {
-    super(errorMessage);
-    this.name = "RPCError";
-  }
-}
-
-const PROVIDER: ProviderErrors = {
-  isFloodWait: (error): error is { seconds: number } => error instanceof Wait,
-  isRpcError: (error): error is { errorMessage: string } => error instanceof Rpc,
-};
+import { PROVIDER, Rpc, Wait } from "./helpers";
 
 async function collect<T>(source: AsyncIterable<T>): Promise<T[]> {
   const items: T[] = [];
