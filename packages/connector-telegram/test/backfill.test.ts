@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import { BATCH_LIMIT, parseCursor } from "../src/cursor";
-import { fixtureAccount } from "../src/scripted";
+import {
+  fixtureAccount,
+} from "../src/fixture";
 import type { TelegramMessage } from "../src/api";
 import { connected, drain } from "./helpers";
 

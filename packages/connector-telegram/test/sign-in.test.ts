@@ -6,7 +6,10 @@ import {
   enrollConnection,
   openLedger,
 } from "@kizuki/core";
-import { FIXTURE_SESSION, fixtureAccount } from "../src/scripted";
+import {
+  FIXTURE_SESSION,
+  fixtureAccount,
+} from "../src/fixture";
 import { parseState } from "../src/state";
 import {
   CapturingWriter,

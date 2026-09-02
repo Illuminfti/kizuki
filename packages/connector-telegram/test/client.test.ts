@@ -1,6 +1,8 @@
 import { expect, mock, test } from "bun:test";
 import { TelegramConnectorError } from "../src/api";
-import { FIXTURE_CREDENTIALS } from "../src/scripted";
+import {
+  FIXTURE_CREDENTIALS,
+} from "../src/fixture";
 
 /**
  * The library stands in for GramJS so the one file that talks to Telegram can

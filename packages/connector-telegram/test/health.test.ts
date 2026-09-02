@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
 import { HealthReport } from "@kizuki/core";
 import { MAX_DIALOGS } from "../src/cursor";
-import { fixtureAccount } from "../src/scripted";
+import {
+  fixtureAccount,
+} from "../src/fixture";
 import type { TelegramDialog } from "../src/api";
 import { connected, drain, harness, stateResolver } from "./helpers";
 

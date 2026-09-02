@@ -46,10 +46,9 @@ export {
   FIXTURE_CREDENTIALS,
   FIXTURE_OBSERVED_AT,
   FIXTURE_SESSION,
-  ScriptedTelegramApi,
   fixtureAccount,
-  scriptedDeps,
-} from "./scripted";
-export type { ScriptedAccount, ScriptedSignIn } from "./scripted";
+} from "./fixture";
+export type { ScriptedAccount, ScriptedSignIn } from "./fixture";
+export { ScriptedTelegramApi, scriptedDeps } from "./scripted";
 export { TELEGRAM_STATE_SCHEMA, encodeState, parseState } from "./state";
 export type { TelegramState } from "./state";

@@ -1,10 +1,12 @@
 import { expect, test } from "bun:test";
 import {
+  ScriptedTelegramApi,
+} from "../src/scripted";
+import {
   FIXTURE_CREDENTIALS,
   FIXTURE_OBSERVED_AT,
-  ScriptedTelegramApi,
   fixtureAccount,
-} from "../src/scripted";
+} from "../src/fixture";
 import { TelegramConnector } from "../src/connector";
 import {
   STATE_REF,

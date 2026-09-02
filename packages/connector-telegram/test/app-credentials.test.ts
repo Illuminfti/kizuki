@@ -6,7 +6,12 @@ import {
 } from "../src/app-credentials";
 import { TelegramConnectorError } from "../src/api";
 import { TelegramConnector } from "../src/connector";
-import { ScriptedTelegramApi, fixtureAccount } from "../src/scripted";
+import {
+  ScriptedTelegramApi,
+} from "../src/scripted";
+import {
+  fixtureAccount,
+} from "../src/fixture";
 import {
   CapturingWriter,
   STATE_REF,

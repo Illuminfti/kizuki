@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
-import { FIXTURE_SESSION, fixtureAccount } from "../src/scripted";
+import {
+  FIXTURE_SESSION,
+  fixtureAccount,
+} from "../src/fixture";
 import {
   CapturingWriter,
   ScriptedIo,

@@ -11,13 +11,17 @@ import { TelegramConnectorError } from "../src/api";
 import { TelegramConnector } from "../src/connector";
 import type { TelegramConnectorConfig, TelegramDeps } from "../src/connector";
 import {
+  ScriptedTelegramApi,
+} from "../src/scripted";
+import {
   FIXTURE_CREDENTIALS,
   FIXTURE_OBSERVED_AT,
   FIXTURE_SESSION,
-  ScriptedTelegramApi,
   fixtureAccount,
-} from "../src/scripted";
-import type { ScriptedAccount } from "../src/scripted";
+} from "../src/fixture";
+import type {
+  ScriptedAccount,
+} from "../src/fixture";
 import { TELEGRAM_STATE_SCHEMA, encodeState } from "../src/state";
 
 /** Any core-minted ULID shape; the connector only ever echoes what it was given. */
