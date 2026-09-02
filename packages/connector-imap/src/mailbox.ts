@@ -1,10 +1,9 @@
 import type { CaptureEventInput, Cursor, SyncBatch } from "@kizuki/core";
 import { decodeCursor, emptyCursor, encodeCursor } from "./cursor";
 import type { ImapCursor, ImapFolderCursor } from "./cursor";
-import { messageEvent, tombstoneEvent } from "./events";
+import { folderLabel, messageEvent, tombstoneEvent } from "./events";
 import { ImapSession } from "./imap/session";
 import type { MessageSummary, SessionOptions } from "./imap/session";
-import { decodeModifiedUtf7 } from "./imap/utf7";
 import type { ImapState } from "./state";
 import type { ImapDialer } from "./transport";
 import { addUid, chunk, formatSet, parseSet, removeUid, uids } from "./uidset";
@@ -103,7 +102,7 @@ export async function walkMailboxes(
   );
   try {
     for (const wire of deps.state.folders) {
-      const display = decodeModifiedUtf7(wire);
+      const display = folderLabel(wire);
       const status = await session.examine(wire);
       const stored = cursor.folders[wire];
       const plan: FolderPlan = {
@@ -115,18 +114,17 @@ export async function walkMailboxes(
       const folderTombstones: CaptureEventInput[] = [];
       const folderEvents: CaptureEventInput[] = [];
 
-      if (stored !== undefined && stored.uidvalidity !== status.uidvalidity) {
-        for (const uid of uids(parseSet(stored.known))) {
-          folderTombstones.push(
-            tombstoneEvent({
-              folderWire: wire,
-              folderDisplay: display,
-              uidvalidity: stored.uidvalidity,
-              uid,
-              observedAt,
-              uidvalidityReset: true,
-            }),
-          );
+      const renumbered =
+        stored !== undefined && stored.uidvalidity !== status.uidvalidity;
+      if (renumbered) {
+        // The drain runs under the OLD uidvalidity and keeps it in the cursor
+        // until every old id is tombstoned, so a large mailbox costs one page
+        // per call like every other path.
+        drainKnown(plan, observedAt, events.length, folderTombstones, true);
+        if (parseSet(plan.entry.known).length > 0) {
+          cursor.folders[wire] = plan.entry;
+          events.push(...folderTombstones);
+          continue;
         }
         plan.entry = initialEntry(status.uidvalidity, status.uidnext);
         notes.push(`uidvalidity changed: ${display}`);
@@ -136,8 +134,14 @@ export async function walkMailboxes(
       plan.entry.uidnext = status.uidnext;
       plan.entry.done = plan.entry.scan_from >= status.uidnext;
 
-      if (mode === "sync" && wasDone) {
-        await detectExpunges(session, plan, observedAt, folderTombstones);
+      if (mode === "sync" && wasDone && !renumbered) {
+        await detectExpunges(
+          session,
+          plan,
+          observedAt,
+          events.length + folderTombstones.length,
+          folderTombstones,
+        );
       } else {
         await pageFolder(
           session,
@@ -211,20 +215,56 @@ async function pageFolder(
   }
 }
 
+/**
+ * Tombstones every id still in `known`, up to the batch cap, and leaves the
+ * rest for the next call. Used when the server renumbered the mailbox: every
+ * old id is gone by definition, so no existence check is needed.
+ */
+function drainKnown(
+  plan: FolderPlan,
+  observedAt: string,
+  alreadyEmitted: number,
+  into: CaptureEventInput[],
+  uidvalidityReset: boolean,
+): void {
+  const entry = plan.entry;
+  let known = parseSet(entry.known);
+  for (const uid of uids(known)) {
+    if (alreadyEmitted + into.length >= BATCH) break;
+    into.push(
+      tombstoneEvent({
+        folderWire: plan.wire,
+        folderDisplay: plan.display,
+        uidvalidity: entry.uidvalidity,
+        uid,
+        observedAt,
+        ...(uidvalidityReset ? { uidvalidityReset: true } : {}),
+      }),
+    );
+    known = removeUid(known, uid);
+  }
+  entry.known = formatSet(known);
+}
+
 async function detectExpunges(
   session: ImapSession,
   plan: FolderPlan,
   observedAt: string,
+  alreadyEmitted: number,
   into: CaptureEventInput[],
 ): Promise<void> {
   const entry = plan.entry;
   let known = parseSet(entry.known);
   for (const piece of chunk(known, EXPUNGE_CHUNK)) {
+    if (alreadyEmitted + into.length >= BATCH) break;
     const present = new Set(
       (await session.fetchSummaries(piece)).map((summary) => summary.uid),
     );
     for (const uid of uids(parseSet(piece))) {
       if (present.has(uid)) continue;
+      // The walk is already done, so the ids left behind simply wait for the
+      // next sync; nothing else in the cursor has to change.
+      if (alreadyEmitted + into.length >= BATCH) break;
       into.push(
         tombstoneEvent({
           folderWire: plan.wire,

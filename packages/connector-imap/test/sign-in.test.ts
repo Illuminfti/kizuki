@@ -223,6 +223,34 @@ describe("interactive sign-in", () => {
     expect(fake.received).toEqual([]);
   });
 
+  test("a hostile mailbox name cannot reach the terminal", async () => {
+    const hostile = "INBOX/\u001b]0;pwned\u0007\u001b[2J";
+    const fake = new FakeImapServer(
+      [
+        ...fixtureMailbox(),
+        {
+          wire: hostile,
+          attributes: ["\\HasNoChildren"],
+          uidvalidity: 3,
+          uidnext: 1,
+          messages: [],
+        },
+      ],
+      { username: FIXTURE_USERNAME, password: FIXTURE_PASSWORD },
+    );
+    const io = scriptedIo(HAPPY);
+    const connector = createImapConnector({}, { dial: memoryDialer(fake) });
+    await connector.signIn(io, { write: async () => {} });
+
+    const notice = io.notices[0] ?? "";
+    expect(notice).toContain("Folders on the server: ");
+    for (const character of notice) {
+      expect((character.codePointAt(0) ?? 0) >= 0x20).toBe(true);
+    }
+    expect(notice).not.toContain("\u001b");
+    expect(notice).not.toContain("\u0007");
+  });
+
   test("a host with whitespace is refused before any connection", async () => {
     const fake = server();
     const connector = createImapConnector({}, { dial: memoryDialer(fake) });

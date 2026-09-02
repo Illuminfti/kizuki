@@ -5,7 +5,7 @@ import { ImapClient, atom, str } from "./client";
 import type { ClientOptions } from "./client";
 import { tokenText } from "./tokenizer";
 import type { ImapResponse, Token } from "./tokenizer";
-import { decodeModifiedUtf7 } from "./utf7";
+import { folderLabel } from "../events";
 
 export const MAX_BODY_FETCH = 20;
 
@@ -141,7 +141,7 @@ export class ImapSession {
       if (wire.length === 0) continue;
       entries.push({
         wire,
-        display: decodeModifiedUtf7(wire),
+        display: folderLabel(wire),
         delimiter:
           delimiterToken?.kind === "nil" ? null : tokenText(delimiterToken),
         attributes,

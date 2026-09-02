@@ -12,11 +12,10 @@ import type {
   SignInIo,
   SyncBatch,
 } from "@kizuki/core";
-import { IMAP_CONNECTOR_ID, recordId } from "./events";
+import { IMAP_CONNECTOR_ID, folderLabel, recordId } from "./events";
 import { fixtureEvents } from "./fixture";
 import { ImapSession } from "./imap/session";
 import type { SessionOptions } from "./imap/session";
-import { decodeModifiedUtf7 } from "./imap/utf7";
 import { walkMailboxes } from "./mailbox";
 import { parseImapState } from "./state";
 import type { ImapState } from "./state";
@@ -80,6 +79,8 @@ export class ImapConnector implements Connector {
   private readonly sessionOptions: SessionOptions;
   private state: ImapState | null = null;
   private lastSuccessAt: string | undefined;
+  /** Facts a run found that the next health report has to surface once. */
+  private pendingNotes: string[] = [];
 
   constructor(
     private readonly config: ImapConnectorConfig,
@@ -163,7 +164,7 @@ export class ImapConnector implements Connector {
               (error.code === "protocol" || error.code === "misconfigured")
             ) {
               return this.report("misconfigured", checkedAt, {
-                detail: `folder not found: ${decodeModifiedUtf7(wire)}`,
+                detail: `folder not found: ${folderLabel(wire)}`,
               });
             }
             throw error;
@@ -172,11 +173,18 @@ export class ImapConnector implements Connector {
       } finally {
         await session.logout();
       }
-      return this.report("ok", checkedAt, {});
+      const notes = this.pendingNotes.splice(0);
+      return notes.length > 0
+        ? this.report("degraded", checkedAt, { detail: notes.join("; ") })
+        : this.report("ok", checkedAt, {});
     } catch (error) {
-      const code = error instanceof KizukiError ? error.code : "unreachable";
-      return this.report(HEALTH_BY_CODE[code] ?? "degraded", checkedAt, {
-        detail: error instanceof Error ? error.message : String(error),
+      // Only a typed message is safe to surface; anything else may quote the
+      // command that failed, and a LOGIN line carries the app password.
+      if (!(error instanceof KizukiError)) {
+        return this.report("degraded", checkedAt, { detail: "check failed" });
+      }
+      return this.report(HEALTH_BY_CODE[error.code] ?? "degraded", checkedAt, {
+        detail: error.message,
       });
     }
   }
@@ -207,6 +215,7 @@ export class ImapConnector implements Connector {
       mode,
     );
     this.lastSuccessAt = this.now().toISOString();
+    this.pendingNotes.push(...result.notes);
     return result.batch;
   }
 

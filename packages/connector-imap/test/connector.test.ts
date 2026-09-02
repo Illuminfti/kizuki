@@ -133,6 +133,23 @@ describe("health", () => {
     expect(report.detail).toBe("folder not found: Gone");
   });
 
+  test("a uidvalidity change is reported once, then clears", async () => {
+    const fake = server();
+    const { connector, resolve } = connectorFor(fake);
+    await connector.connect(resolve);
+    const first = await connector.backfill(null);
+    expect((await connector.health()).state).toBe("ok");
+
+    fake.resetUidValidity("INBOX");
+    const second = await connector.sync(first.cursor);
+    expect(second.events.some((event) => event.deleted)).toBe(true);
+
+    const degraded = await connector.health();
+    expect(degraded.state).toBe("degraded");
+    expect(degraded.detail).toBe("uidvalidity changed: INBOX");
+    expect((await connector.health()).state).toBe("ok");
+  });
+
   test("maps a refused LOGIN, a rate limit and a BYE", async () => {
     const refused = createImapConnector(
       { secret_ref: REF },

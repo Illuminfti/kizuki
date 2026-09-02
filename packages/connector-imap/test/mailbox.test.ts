@@ -208,6 +208,63 @@ describe("sync", () => {
     expect(second.notes).toEqual(["uidvalidity changed: INBOX"]);
   });
 
+  test("a bulk expunge is paged like everything else", async () => {
+    const server = new FakeImapServer([folder("INBOX", 300)]);
+    const walkDeps = deps(server, state(["INBOX"]));
+    let cursor: Cursor | null = null;
+    for (let page = 0; page < 2; page += 1) {
+      cursor = (await walkMailboxes(walkDeps, cursor, "backfill")).batch.cursor;
+    }
+    expect(decodeCursor(cursor ?? "").folders["INBOX"]?.known).toBe("1:300");
+
+    for (let uid = 1; uid <= 300; uid += 1) server.expunge("INBOX", uid);
+
+    const first = await walkMailboxes(walkDeps, cursor, "sync");
+    expect(first.batch.events).toHaveLength(BATCH);
+    expect(first.batch.events.every((event) => event.deleted)).toBe(true);
+    expect(decodeCursor(first.batch.cursor ?? "").folders["INBOX"]?.known).toBe(
+      "201:300",
+    );
+
+    const second = await walkMailboxes(walkDeps, first.batch.cursor, "sync");
+    expect(second.batch.events).toHaveLength(100);
+    expect(uidsOf(second.batch.events)[0]).toBe(201);
+    expect(decodeCursor(second.batch.cursor ?? "").folders["INBOX"]?.known).toBe(
+      "",
+    );
+
+    const third = await walkMailboxes(walkDeps, second.batch.cursor, "sync");
+    expect(third.batch.events).toEqual([]);
+  });
+
+  test("a uidvalidity reset pages its tombstones before re-walking", async () => {
+    const server = new FakeImapServer([folder("INBOX", 250)]);
+    const walkDeps = deps(server, state(["INBOX"]));
+    let cursor: Cursor | null = null;
+    for (let page = 0; page < 2; page += 1) {
+      cursor = (await walkMailboxes(walkDeps, cursor, "backfill")).batch.cursor;
+    }
+    server.resetUidValidity("INBOX");
+
+    const first = await walkMailboxes(walkDeps, cursor, "sync");
+    expect(first.batch.events).toHaveLength(BATCH);
+    expect(first.batch.events.every((event) => event.deleted)).toBe(true);
+    expect(
+      first.batch.events.every((event) => event.metadata["uidvalidity_reset"]),
+    ).toBe(true);
+    expect(uidsOf(first.batch.events)).toEqual(
+      Array.from({ length: BATCH }, (_unused, index) => index + 1),
+    );
+
+    const second = await walkMailboxes(walkDeps, first.batch.cursor, "sync");
+    const tombstones = second.batch.events.filter((event) => event.deleted);
+    const fresh = second.batch.events.filter((event) => !event.deleted);
+    expect(tombstones).toHaveLength(50);
+    expect(uidsOf(tombstones)[0]).toBe(201);
+    expect(fresh).toHaveLength(150);
+    expect(fresh[0]?.source_record_id).toBe("6:1:INBOX");
+  });
+
   test("sync from a null cursor behaves like a fresh backfill", async () => {
     const server = new FakeImapServer([folder("INBOX", 2)]);
     const walkDeps = deps(server, state(["INBOX"]));

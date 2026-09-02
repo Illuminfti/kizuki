@@ -8,6 +8,7 @@ import { headerValue, headerValues } from "./mime/headers";
 import type { HeaderField } from "./mime/headers";
 import { decodeHeaderText, parseMessage, partText } from "./mime/parse";
 import type { MimePart } from "./mime/parse";
+import { decodeModifiedUtf7 } from "./imap/utf7";
 
 export const IMAP_CONNECTOR_ID = "kizuki.imap" as const;
 export const MAX_TEXT_CODE_POINTS = 262_144;
@@ -15,6 +16,15 @@ export const MAX_HEADER_VALUE_CHARS = 4_096;
 export const MAX_SUBJECTS = 200;
 export const MAX_FILENAME_CHARS = 255;
 export const MAX_DISPLAY_NAME_CHARS = 120;
+export const MAX_FOLDER_NAME_CHARS = 255;
+
+/**
+ * The one way a mailbox name becomes display text. A mailbox name comes from
+ * the server, so it can carry terminal escapes; decoding it is not enough.
+ */
+export function folderLabel(wire: string): string {
+  return stripControls(decodeModifiedUtf7(wire), MAX_FOLDER_NAME_CHARS);
+}
 
 const MONTHS = [
   "jan",
@@ -79,7 +89,8 @@ export function parseInternalDate(text: string): string | null {
   return Number.isFinite(millis) ? new Date(millis).toISOString() : null;
 }
 
-function stripControls(text: string, limit: number): string {
+/** Server- and sender-controlled text is never shown or stored as it arrives. */
+export function stripControls(text: string, limit: number): string {
   const cleaned = Array.from(text)
     .filter((character) => {
       const code = character.codePointAt(0) ?? 0;
