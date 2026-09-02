@@ -335,6 +335,34 @@ export type { KizukiErrorCode } from "./contracts/errors";
 export { KizukiError } from "./errors";
 export type { KizukiErrorCode } from "./errors";
 
+export {
+  OAUTH_STATE_SCHEMA,
+  OAuthError,
+  OAuthSession,
+  buildAuthorizationUrl,
+  buildPkce,
+  encodeOAuthState,
+  parseOAuthState,
+  parseTokenResponse,
+  pkceChallenge,
+  refreshTokens,
+  revokeToken,
+  signInWithBrowser,
+} from "./auth";
+export type {
+  LoopbackListener,
+  OAuthErrorCode,
+  OAuthProvider,
+  OAuthSessionInit,
+  OAuthState,
+  OAuthTransport,
+  Pkce,
+  SignInOptions,
+  StatePersister,
+  TokenSet,
+} from "./auth";
+export { loopbackTransport } from "./auth/loopback";
+
 export { doctorVault } from "./vault/doctor";
 export type { DoctorPageResult, DoctorVaultResult } from "./vault/doctor";
 export { parseFrontmatter, serializePage } from "./vault/frontmatter";
@@ -447,11 +475,15 @@ export {
 export type { Checkpoint, Connection, ConnectionConfig } from "./ledger/connections";
 export {
   ConnectionStateStore,
+  createStatePersister,
   enrollConnection,
   CONNECTION_CONFIG_SCHEMA,
   MAX_CONNECTION_STATE_BYTES,
 } from "./ledger/connection-state";
-export type { ConnectionStateReader } from "./ledger/connection-state";
+export type {
+  ConnectionStateReader,
+  StatePersisterHandle,
+} from "./ledger/connection-state";
 export { isSecretRef, parseSecretRef } from "./contracts/secret-ref";
 export type { SecretRef, SecretRefScheme } from "./contracts/secret-ref";
 export type { RunResult, RunToCompletionOptions } from "./ingest/run";
