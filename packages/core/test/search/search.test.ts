@@ -499,5 +499,11 @@ describe("search policy and filters", () => {
     expect(() => search(db, "windowword", { until: "garbage" })).toThrow(
       RangeError,
     );
+    // A short-circuit must not swallow the argument error: a caller that
+    // types a bad bound learns about it whatever else it asked for.
+    expect(() => search(db, "", { since: "garbage" })).toThrow(RangeError);
+    expect(() => search(db, "windowword", { limit: 0, until: "garbage" })).toThrow(
+      RangeError,
+    );
   });
 });

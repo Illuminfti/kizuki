@@ -63,26 +63,36 @@ export function timeline(
   db: Database,
   opts: TimelineOptions = {},
 ): TimelineEntry[] {
+  // Arguments are checked before any short-circuit: an empty answer is a
+  // result, and it must not hide a bound the caller mistyped.
   const limit = validLimit(opts.limit ?? 200, "timeline");
+  const day = opts.day === undefined ? undefined : dayWindow(opts.day);
+  const since =
+    opts.since === undefined
+      ? undefined
+      : instantBound(opts.since, "timeline since");
+  const until =
+    opts.until === undefined
+      ? undefined
+      : instantBound(opts.until, "timeline until");
   if (limit === 0) return [];
 
   const clauses = ["events.deleted = 0"];
   const bindings: (string | number)[] = [];
-  if (opts.day !== undefined) {
-    const window = dayWindow(opts.day);
+  if (day !== undefined) {
     clauses.push(
       `${OCCURRED_AT_INSTANT} >= julianday(?)`,
       `${OCCURRED_AT_INSTANT} < julianday(?)`,
     );
-    bindings.push(window.since, window.until);
+    bindings.push(day.since, day.until);
   }
-  if (opts.since !== undefined) {
+  if (since !== undefined) {
     clauses.push(`${OCCURRED_AT_INSTANT} >= julianday(?)`);
-    bindings.push(instantBound(opts.since, "timeline since"));
+    bindings.push(since);
   }
-  if (opts.until !== undefined) {
+  if (until !== undefined) {
     clauses.push(`${OCCURRED_AT_INSTANT} < julianday(?)`);
-    bindings.push(instantBound(opts.until, "timeline until"));
+    bindings.push(until);
   }
   if (opts.subject !== undefined) {
     clauses.push(`EXISTS (

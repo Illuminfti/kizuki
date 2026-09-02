@@ -183,6 +183,9 @@ describe("timeline", () => {
     storedEvent(db, "live");
     expect(() => timeline(db, { since: "garbage" })).toThrow(RangeError);
     expect(() => timeline(db, { until: "garbage" })).toThrow(RangeError);
+    // A zero limit is an empty answer, not a reason to skip validation.
+    expect(() => timeline(db, { limit: 0, since: "garbage" })).toThrow(RangeError);
+    expect(() => timeline(db, { limit: 0, day: "2026-02-30" })).toThrow(RangeError);
   });
 
   test("accepts a fractional leap second echoed back from an entry as a bound", () => {

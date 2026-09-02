@@ -106,9 +106,20 @@ export function search(
   query: string,
   opts: SearchOptions = {},
 ): SearchHit[] {
+  // Arguments are checked before any short-circuit: an empty answer is a
+  // result, and it must not hide a bound the caller mistyped.
+  const limit = validLimit(opts.limit ?? 50, "search");
+  const since =
+    opts.since === undefined
+      ? undefined
+      : instantBound(opts.since, "search since");
+  const until =
+    opts.until === undefined
+      ? undefined
+      : instantBound(opts.until, "search until");
+
   const ftsQuery = toFtsQuery(query);
   if (ftsQuery.length === 0) return [];
-  const limit = validLimit(opts.limit ?? 50, "search");
   if (limit === 0 || opts.types?.length === 0 || opts.subjects?.length === 0) {
     return [];
   }
@@ -127,17 +138,17 @@ export function search(
     clauses.push(`page_type IN (${placeholders(opts.types.length)})`);
     bindings.push(...opts.types);
   }
-  if (opts.since !== undefined) {
+  if (since !== undefined) {
     clauses.push(
       `(search_docs.scope = 'canon' OR ${OCCURRED_AT_INSTANT} >= julianday(?))`,
     );
-    bindings.push(instantBound(opts.since, "search since"));
+    bindings.push(since);
   }
-  if (opts.until !== undefined) {
+  if (until !== undefined) {
     clauses.push(
       `(search_docs.scope = 'canon' OR ${OCCURRED_AT_INSTANT} < julianday(?))`,
     );
-    bindings.push(instantBound(opts.until, "search until"));
+    bindings.push(until);
   }
   if (opts.subjects !== undefined) {
     clauses.push(`EXISTS (
