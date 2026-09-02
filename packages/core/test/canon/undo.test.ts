@@ -248,6 +248,166 @@ describe("undoReceipt", () => {
     expect(proof.checked).toBe(1);
   });
 
+  test("undo of an edit re-upserts the restored page instead of dropping it", async () => {
+    const retrieval = new FixtureVectorPort();
+    const { db, io, vault } = fixture({
+      retrieval_store: retrieval.descriptor.id,
+      retrieval,
+    });
+    const eventId = putEvent(db);
+    const created = write(io, await storeClaim(db, eventId));
+    const prior = readFileSync(join(vault, created.page_path), "utf8");
+    const docId = created.retrieval_ops[0]?.doc as string;
+    await retrieval.upsert([
+      {
+        doc_id: docId,
+        kind: "page",
+        title: "Grace",
+        text: prior,
+        sensitivity: "personal",
+        taint: "clean",
+        authority: "connector_evidence",
+        subjects: [],
+        provenance: created.provenance,
+        occurred_at: null,
+        updated_at: created.at,
+      },
+    ]);
+
+    const edited = write(
+      io,
+      await storeClaim(db, eventId, {
+        kind: "edit",
+        predicate: null,
+        object: null,
+        body: "Grace leads partnerships at Acme.",
+        frontmatter: { title: "Grace (Acme)" },
+      }),
+    );
+    await retrieval.upsert([
+      {
+        doc_id: docId,
+        kind: "page",
+        title: "Grace (Acme)",
+        text: readFileSync(join(vault, edited.page_path), "utf8"),
+        sensitivity: "personal",
+        taint: "clean",
+        authority: "connector_evidence",
+        subjects: [],
+        provenance: edited.provenance,
+        occurred_at: null,
+        updated_at: edited.at,
+      },
+    ]);
+
+    const revert = await undoReceipt(io, edited.receipt_id);
+    expect(retrieval.docs.has(docId)).toBe(true);
+    expect(retrieval.docs.get(docId)?.text).toContain("runs partnerships");
+    expect(retrieval.docs.get(docId)?.text).not.toContain("leads partnerships");
+    expect(revert.retrieval_ops).toEqual([
+      { store: retrieval.descriptor.id, op: "upsert", doc: docId },
+    ]);
+  });
+
+  test("a retrieval failure after bytes restore can be retried", async () => {
+    let blows = 1;
+    const retrieval = new FixtureVectorPort();
+    const originalRemove = retrieval.remove.bind(retrieval);
+    retrieval.remove = async (ids) => {
+      if (blows > 0) {
+        blows -= 1;
+        throw new Error("retrieval down");
+      }
+      return originalRemove(ids);
+    };
+
+    const { db, io, vault } = fixture({
+      retrieval_store: retrieval.descriptor.id,
+      retrieval,
+    });
+    const eventId = putEvent(db);
+    const claim = await storeClaim(db, eventId);
+    const receipt = write(io, claim);
+    const docId = receipt.retrieval_ops[0]?.doc as string;
+    await retrieval.upsert([
+      {
+        doc_id: docId,
+        kind: "page",
+        title: "Grace",
+        text: readFileSync(join(vault, receipt.page_path), "utf8"),
+        sensitivity: "personal",
+        taint: "clean",
+        authority: "connector_evidence",
+        subjects: [],
+        provenance: claim.provenance,
+        occurred_at: null,
+        updated_at: receipt.at,
+      },
+    ]);
+
+    const first = await attempt(() => undoReceipt(io, receipt.receipt_id));
+    expect(first).toBeInstanceOf(Error);
+    expect(String(first)).toContain("retrieval down");
+    expect(existsSync(join(vault, receipt.page_path))).toBe(false);
+    expect(getCanonReceipt(db, receipt.receipt_id)?.reverted_by).toBeNull();
+
+    const revert = await undoReceipt(io, receipt.receipt_id);
+    expect(revert.kind).toBe("revert");
+    expect(getCanonReceipt(db, receipt.receipt_id)?.reverted_by).toBe(revert.receipt_id);
+    expect(retrieval.docs.has(docId)).toBe(false);
+  });
+
+  test("concurrent undo of the same receipt writes one revert", async () => {
+    const { db, io } = fixture();
+    const created = write(io, await storeClaim(db, putEvent(db)));
+    const results = await Promise.allSettled([
+      undoReceipt(io, created.receipt_id),
+      undoReceipt(io, created.receipt_id),
+    ]);
+    const fulfilled = results.filter((row) => row.status === "fulfilled");
+    const rejected = results.filter((row) => row.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(listCanonReceipts(db).filter((row) => row.kind === "revert")).toHaveLength(1);
+    expect(getCanonReceipt(db, created.receipt_id)?.reverted_by).not.toBeNull();
+  });
+
+  test("undo of a revert restores the original supersession window", async () => {
+    const { db, io } = fixture();
+    const sources = twoSources(db);
+    const live = await storeClaim(db, sources.ids[0] as string, {
+      provenance: sources.ids,
+      events: sources.events,
+      confidence: 0.6,
+      valid_from: "2026-01-01T00:00:00Z",
+      valid_to: "2026-12-31T00:00:00Z",
+    });
+    write(io, live);
+
+    const incoming = await storeClaim(db, sources.ids[0] as string, {
+      provenance: sources.ids,
+      events: sources.events,
+      object: "initech",
+      body: "Grace moved to partnerships lead at Initech.",
+      confidence: 0.9,
+      valid_from: "2026-07-01T00:00:00Z",
+    });
+    const receipt = write(io, incoming, { decision: resolveTarget(io, incoming) });
+    const afterWrite = getClaim(db, live.claim_id);
+    expect(afterWrite?.status).toBe("superseded");
+    expect(afterWrite?.valid_to).toBe("2026-07-01T00:00:00Z");
+
+    const revert = await undoReceipt(io, receipt.receipt_id);
+    expect(getClaim(db, live.claim_id)?.valid_to).toBe("2026-12-31T00:00:00Z");
+
+    await undoReceipt(io, revert.receipt_id);
+    const again = getClaim(db, live.claim_id);
+    expect(again?.status).toBe("superseded");
+    expect(again?.superseded_by).toBe(incoming.claim_id);
+    expect(again?.valid_to).toBe(afterWrite?.valid_to);
+    expect(getClaim(db, incoming.claim_id)?.status).toBe("live");
+  });
+
   test("unknown receipts and import writes without an archive refuse precisely", async () => {
     const { io, db } = fixture();
     const unknown = await attempt(() => undoReceipt(io, "01JCUNKNOWNRECEIPT0000000000"));

@@ -102,6 +102,7 @@ describe("audit reducer", () => {
     expect(model).not.toMatch(/\b(promote|reject|ownerPromote|writePage|applyCanonWrite)\b/);
     expect(model).not.toMatch(/\bapplyRevertWrite\b/);
     expect(app).toMatch(/\bundoReceipt\b/);
+    expect(app).toMatch(/keyQueue/);
     expect(app).not.toMatch(/\b(ownerPromote|writePage|applyCanonWrite|applyRevertWrite)\b/);
     expect(model).toMatch(/type Effect/);
     expect(model).toMatch(/type: "undo"/);

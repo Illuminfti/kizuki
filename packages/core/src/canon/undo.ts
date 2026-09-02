@@ -97,35 +97,29 @@ async function reverseRetrieval(
   const port = io.retrieval;
   if (port === undefined || original.retrieval_ops.length === 0) return [];
 
-  const added = original.retrieval_ops.filter((op) => op.op === "upsert").map((op) => op.doc);
-  const removed = original.retrieval_ops.filter((op) => op.op === "remove");
-  const reversed: RetrievalOpRef[] = [];
-
-  if (added.length > 0) {
-    await port.remove(added);
-    const proof = await port.verifyAbsent(added);
+  const docs = original.retrieval_ops.map((op) => op.doc);
+  if (restored === null) {
+    await port.remove(docs);
+    const proof = await port.verifyAbsent(docs);
     if (proof.found.length > 0) {
       throw new UndoError(
         "not_undoable",
         `undo: retrieval still holds ${proof.found.length} document(s)`,
       );
     }
-    for (const doc of added) {
-      reversed.push({ store: port.descriptor.id, op: "remove", doc });
-    }
+    return docs.map((doc) => ({ store: port.descriptor.id, op: "remove" as const, doc }));
   }
 
-  if (removed.length > 0 && restored !== null) {
-    const pageId = pageIdOf(restored, pageIndexByPath(io.db, original.page_path)?.page_id ?? null);
-    if (pageId !== null) {
-      await port.upsert([pageDoc(pageId, restored, original, at)]);
-      for (const op of removed) {
-        reversed.push({ store: port.descriptor.id, op: "upsert", doc: op.doc });
-      }
-    }
-  }
+  const pageId = pageIdOf(restored, pageIndexByPath(io.db, original.page_path)?.page_id ?? null);
+  if (pageId === null) return [];
+  await port.upsert([pageDoc(pageId, restored, original, at)]);
+  return docs.map((doc) => ({ store: port.descriptor.id, op: "upsert" as const, doc }));
+}
 
-  return reversed;
+function earlierTimestamp(left: string | null, right: string | null): string | null {
+  if (left === null || left === "") return right;
+  if (right === null || right === "") return left;
+  return left < right ? left : right;
 }
 
 function restoreClaims(io: CanonIo, original: CanonReceipt, at: string): void {
@@ -135,10 +129,20 @@ function restoreClaims(io: CanonIo, original: CanonReceipt, at: string): void {
       if (claim === null) continue;
       reinstateClaim(io.db, claim.claim_id, claim.valid_to);
     }
-    const winner = original.claim_ids[0];
+    const winnerId = original.claim_ids[0];
+    const writeId = original.reverts;
+    const rows = writeId === null ? [] : supersessionsForReceipt(io.db, writeId);
+    const priorByLoser = new Map(rows.map((row) => [row.loser, row.prior_valid_to]));
+    const winner = winnerId === undefined ? null : getClaim(io.db, winnerId);
     for (const ref of original.superseded) {
-      if (winner === undefined) break;
-      resupersedeClaim(io.db, ref.claim_id, winner, at, at);
+      if (winnerId === undefined) break;
+      resupersedeClaim(
+        io.db,
+        ref.claim_id,
+        winnerId,
+        at,
+        earlierTimestamp(priorByLoser.get(ref.claim_id) ?? null, winner?.valid_from ?? null),
+      );
     }
     return;
   }
@@ -160,10 +164,17 @@ function restoreBytes(
   current: string,
 ): { outcome: { archive_path: string | null; after_hash: string }; page: VaultPage | null; action: PageAction } {
   if (original.page_action === "create" && original.kind !== "revert") {
+    if (current === ABSENT_PAGE_HASH) {
+      return {
+        outcome: { archive_path: null, after_hash: ABSENT_PAGE_HASH },
+        page: null,
+        action: "archive",
+      };
+    }
     const outcome = applyRevertWrite(io, {
       receipt_id: revertId,
       rel_path: original.page_path,
-      expected_hash: current === ABSENT_PAGE_HASH ? null : current,
+      expected_hash: current,
       page: null,
     });
     return { outcome, page: null, action: "archive" };
@@ -209,6 +220,8 @@ function updateIndex(
   });
 }
 
+const reversing = new Set<string>();
+
 /**
  * RFC 0002 §7.2. Restores bytes from the receipt's archive; does not re-run
  * a producer. The revert is itself a receipted write.
@@ -231,6 +244,7 @@ export async function undoReceipt(
 
   const current = currentHash(io, original.page_path);
   const later = laterIds(io, original);
+  const undoTarget = original.before_hash ?? ABSENT_PAGE_HASH;
   if (current !== original.after_hash) {
     if (opts.cascade === true && later.length > 0) {
       for (const id of later) {
@@ -238,12 +252,30 @@ export async function undoReceipt(
       }
       return undoReceipt(io, receiptId, { cascade: false });
     }
-    throw new UndoError(
-      "page_changed",
-      `undo: page changed since receipt ${receiptId}; later receipts: ${later.join(", ")}`,
-    );
+    if (current !== undoTarget) {
+      throw new UndoError(
+        "page_changed",
+        `undo: page changed since receipt ${receiptId}; later receipts: ${later.join(", ")}`,
+      );
+    }
   }
 
+  if (reversing.has(receiptId)) {
+    throw new UndoError("already_reverted", `undo: already reverting ${receiptId}`);
+  }
+  reversing.add(receiptId);
+  try {
+    return await applyUndo(io, original, current);
+  } finally {
+    reversing.delete(receiptId);
+  }
+}
+
+async function applyUndo(
+  io: CanonIo,
+  original: CanonReceipt,
+  current: string,
+): Promise<CanonReceipt> {
   const revertId = mintId(io);
   const at = nowOf(io);
   const restored = restoreBytes(io, original, revertId, current);

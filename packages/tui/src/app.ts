@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { listAuditReceipts, undoReceipt } from "@kizuki/core";
+import { laterReceiptsForPage, listAuditReceipts, undoReceipt } from "@kizuki/core";
 import type { AuditReceipt, CanonIo } from "@kizuki/core";
 import { parseFrontmatter } from "@kizuki/core";
 import { colorsEnabled, paint, sanitize, truncate } from "./ansi";
@@ -52,8 +52,37 @@ function evidenceQuotes(receipt: AuditReceipt): string[] {
   return receipt.provenance.slice(0, 8).map((eventId) => sanitize(`event ${eventId}`));
 }
 
-export function toAuditItem(vaultPath: string, receipt: AuditReceipt): AuditItem {
-  const currentBody = readBody(vaultPath, receipt.page_path);
+function fileHash(path: string): string | null {
+  if (!existsSync(path)) return null;
+  return new Bun.CryptoHasher("sha256").update(readFileSync(path)).digest("hex");
+}
+
+/** This receipt's after bytes, not whatever the page later became. */
+function afterBody(
+  vaultPath: string,
+  receipt: AuditReceipt,
+  db?: Database,
+): string | null {
+  const path = join(vaultPath, receipt.page_path);
+  if (fileHash(path) === receipt.after_hash) {
+    return readBody(vaultPath, receipt.page_path);
+  }
+  if (db === undefined) return null;
+  const later = laterReceiptsForPage(db, receipt.page_path, {
+    at: receipt.at,
+    receipt_id: receipt.receipt_id,
+  });
+  const next = later[later.length - 1];
+  if (next === undefined || next.archive_path === null) return null;
+  return readBody(vaultPath, next.archive_path);
+}
+
+export function toAuditItem(
+  vaultPath: string,
+  receipt: AuditReceipt,
+  db?: Database,
+): AuditItem {
+  const currentBody = afterBody(vaultPath, receipt, db);
   const priorBody = readBody(vaultPath, receipt.archive_path);
   return {
     receipt,
@@ -66,7 +95,7 @@ export function toAuditItem(vaultPath: string, receipt: AuditReceipt): AuditItem
 
 export function loadItems(db: Database, vaultPath: string): AuditItem[] {
   return listAuditReceipts(db, { limit: QUEUE_LIMIT }).map((receipt) =>
-    toAuditItem(vaultPath, receipt),
+    toAuditItem(vaultPath, receipt, db),
   );
 }
 
@@ -173,17 +202,25 @@ export async function runAudit(opts: AuditOptions): Promise<AuditSummary> {
     const stopResize = terminal.onResize(() => {
       if (!finished) draw();
     });
+    let keyQueue: Promise<void> = Promise.resolve();
     const stopKeys = terminal.onKeys((keys) => {
       if (finished) return;
-      void (async () => {
-        for (const key of keys) {
-          if (await handleKey(key)) {
-            finish();
-            return;
+      keyQueue = keyQueue
+        .then(async () => {
+          if (finished) return;
+          for (const key of keys) {
+            if (await handleKey(key)) {
+              finish();
+              return;
+            }
           }
-        }
-        draw();
-      })();
+          if (!finished) draw();
+        })
+        .catch((error: unknown) => {
+          if (finished) return;
+          state = withNotice(state, { text: errorText(error), tone: "error" });
+          draw();
+        });
     });
   });
 }
