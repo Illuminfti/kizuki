@@ -31,6 +31,7 @@ export function describeMedia(media: unknown): {
       attributes?: unknown;
     };
     const size = Number(file.size);
+    const name = fileName(file.attributes);
     return {
       attachment: {
         attachment_id: documentId,
@@ -38,9 +39,7 @@ export function describeMedia(media: unknown): {
           typeof file.mimeType === "string" && file.mimeType.length > 0
             ? file.mimeType
             : "application/octet-stream",
-        ...(fileName(file.attributes) === null
-          ? {}
-          : { filename: fileName(file.attributes) as string }),
+        ...(name === null ? {} : { filename: name }),
         ...(Number.isSafeInteger(size) && size >= 0
           ? { byte_size: size }
           : {}),
