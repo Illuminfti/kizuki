@@ -226,3 +226,65 @@ test("an answer with nothing in it is asked again rather than sent", async () =>
   expect(io.prompts).toHaveLength(3);
   expect(api.calls.filter((call) => call.method === "start")).toHaveLength(1);
 });
+
+test("a blank entry is not one of the tries a refused credential spends", async () => {
+  const account = fixtureAccount();
+  account.sign_in = { code: "22222" };
+  const { connector, api } = harness({ account, config: {} });
+  // One entry that never reached Telegram, then the two wrong codes the owner
+  // is entitled to before the third try that works.
+  const io = new ScriptedIo([PHONE, "  ", "11111", "11111", "22222"]);
+
+  expect(await connector.signIn(io, new CapturingWriter())).toEqual({
+    display: "@ada",
+  });
+  expect(io.notices).toEqual([
+    "nothing was entered, try again",
+    "that code was not accepted, try again",
+    "that code was not accepted, try again",
+  ]);
+  expect(api.answers).toEqual(["11111", "11111", "22222"]);
+});
+
+test("nothing typed is never sent, however often the owner enters it", async () => {
+  const { connector, api } = harness({ config: {} });
+  const io = new ScriptedIo([PHONE, "", " ", "\t"]);
+
+  const error = await rejection(() =>
+    connector.signIn(io, new CapturingWriter()),
+  );
+  expect(error.code).toBe("sign_in_aborted");
+  // An empty credential is not one Telegram refused; sending it would spend a
+  // real attempt on an answer that was never given.
+  expect(api.answers).toEqual([]);
+  expect(io.notices).toEqual([
+    "nothing was entered, try again",
+    "nothing was entered, try again",
+    "nothing was entered, try again",
+  ]);
+});
+
+test("a code typed with stray spaces is sent as the digits alone", async () => {
+  const { connector, api } = harness({ config: {} });
+  expect(
+    await connector.signIn(
+      new ScriptedIo([PHONE, " 22222 "]),
+      new CapturingWriter(),
+    ),
+  ).toEqual({ display: "@ada" });
+  expect(api.answers).toEqual(["22222"]);
+});
+
+test("a password is sent exactly as it was typed", async () => {
+  const account = fixtureAccount();
+  account.sign_in = { code: "22222", password: "  two words  " };
+  const { connector, api } = harness({ account, config: {} });
+  expect(
+    await connector.signIn(
+      new ScriptedIo([PHONE, "22222", "  two words  "]),
+      new CapturingWriter(),
+    ),
+  ).toEqual({ display: "@ada" });
+  // Trimming a password would refuse one the owner chose to pad.
+  expect(api.answers).toEqual(["22222", "  two words  "]);
+});

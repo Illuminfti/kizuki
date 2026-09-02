@@ -4,6 +4,8 @@ import type { SignInFlow, TelegramApi } from "./api";
 
 /** Rejected codes or passwords tolerated before sign-in is abandoned. */
 const MAX_ATTEMPTS = 3;
+/** Answers that never reached Telegram, on their own budget. */
+const MAX_BLANK_ANSWERS = 3;
 /** A wait longer than this is reported to the owner rather than slept through. */
 const MAX_SILENT_WAIT_SECONDS = 60;
 
@@ -41,7 +43,9 @@ export async function runSignIn(
   sleep: (ms: number) => Promise<void>,
 ): Promise<void> {
   let failures = 0;
+  let blanks = 0;
   let aborted = false;
+  let abandoned: TelegramConnectorError | null = null;
   const reject = (notice: string): boolean => {
     failures += 1;
     io.notify(notice);
@@ -49,9 +53,10 @@ export async function runSignIn(
     return aborted;
   };
   /**
-   * Nothing typed never reaches the provider: the library raises a local fault
-   * for an empty answer, which is not a credential Telegram refused, and would
-   * now end the sign-in rather than ask again.
+   * Nothing typed never reaches the provider. An empty answer is not a
+   * credential Telegram refused, so it neither spends one of the tries that
+   * are and is not sent in place of one; the owner is asked again until it is
+   * plain that no answer is coming.
    */
   const ask = async (
     question: string,
@@ -60,12 +65,23 @@ export async function runSignIn(
     for (;;) {
       const value = await io.prompt(question, opts);
       if (value.trim().length > 0) return value;
-      if (reject("nothing was entered, try again")) return value;
+      blanks += 1;
+      io.notify("nothing was entered, try again");
+      if (blanks >= MAX_BLANK_ANSWERS) {
+        abandoned = new TelegramConnectorError(
+          "sign_in_aborted",
+          "kizuki.telegram: sign-in was abandoned; nothing was entered",
+        );
+        throw abandoned;
+      }
     }
   };
   const flow: SignInFlow = {
+    // Telegram sends digits, and a terminal is a place where a pasted one
+    // arrives with a space on it; the password is passed on as typed, because
+    // an owner may have chosen to pad it.
+    code: async () => (await ask("Code Telegram sent you: ")).trim(),
     phone,
-    code: () => ask("Code Telegram sent you: "),
     password: (hint) =>
       ask(
         hint === undefined
@@ -81,6 +97,9 @@ export async function runSignIn(
       await api.start(flow);
       return;
     } catch (error) {
+      // The owner entered nothing, repeatedly. Whatever the library made of
+      // that on the way out, the reason it stopped is the one to report.
+      if (abandoned !== null) throw abandoned;
       if (aborted) {
         throw new TelegramConnectorError(
           "sign_in_aborted",

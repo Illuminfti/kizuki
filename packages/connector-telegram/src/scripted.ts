@@ -18,6 +18,8 @@ import type { ScriptedAccount, ScriptedSignIn } from "./fixture";
 
 export class ScriptedTelegramApi implements TelegramApi {
   readonly calls: { method: keyof TelegramApi; args: unknown[] }[] = [];
+  /** Every answer the sign-in flow handed over, so a test can see what was sent. */
+  readonly answers: string[] = [];
   readonly #account: ScriptedAccount;
   readonly #session: string;
   #authorized: boolean;
@@ -224,6 +226,7 @@ export class ScriptedTelegramApi implements TelegramApi {
         field === "code"
           ? await flow.code()
           : await flow.password(script.password_hint);
+      this.answers.push(supplied);
       if (supplied === expected) return;
       if (await flow.onError(name)) {
         throw new TelegramConnectorError(

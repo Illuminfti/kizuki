@@ -54,7 +54,10 @@ You get two more tries after a wrong code or password, and the prompt says
 which of the two Telegram refused. The third rejection abandons sign-in and
 writes nothing. Only a credential Telegram named as wrong counts against those
 tries: a wait or a connection fault ends the attempt with its own reason
-instead of being spent as one of them. A short wait passes quietly and sign-in
+instead of being spent as one of them, and an entry with nothing in it is
+asked again rather than sent, on a budget of its own that ends sign-in after
+three. A code is sent as its digits alone, so a pasted one carrying a space
+still works; a password is sent exactly as typed, padding included. A short wait passes quietly and sign-in
 continues; a longer one is reported to you with the number of seconds, because
 a silent multi-minute pause looks like a hang.
 
