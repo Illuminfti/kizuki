@@ -22,8 +22,6 @@ import {
   requireKnownKeys,
   requirePathConfig,
 } from "../util";
-import { resolveSensitivity } from "../sensitivity";
-import type { SensitivityPolicy } from "../sensitivity";
 import type { CsvOptions } from "./csv";
 import { parsePocketCsv, pocketHeaderLine } from "./rows";
 import type { PocketRow } from "./rows";
@@ -36,10 +34,7 @@ export type { PocketRow } from "./rows";
 export const POCKET_IMPORT_CONNECTOR_ID = "kizuki.import-pocket" as const;
 
 /** A reading list is about the owner, not a secret, and not public either. */
-export const POCKET_SENSITIVITY: SensitivityPolicy = {
-  default_sensitivity: "personal",
-  sensitivity_floor: "public",
-};
+const POCKET_SENSITIVITY = "personal" as const;
 
 export interface PocketImportConfig {
   path: string;
@@ -79,7 +74,6 @@ const MANIFEST: Manifest = {
   },
   required_secrets: [],
   emits_sensitivity_hint: true,
-  ...POCKET_SENSITIVITY,
   auth_modes: ["none"],
 };
 
@@ -116,7 +110,6 @@ export function pocketEvents(
   observed_at: string,
 ): CaptureEventInput[] {
   const ids = pocketRecordIds(rows);
-  const sensitivity_hint = resolveSensitivity(POCKET_SENSITIVITY);
   return rows.map((row, index) => ({
     schema: "kizuki.event/v1",
     connector_id: POCKET_IMPORT_CONNECTOR_ID,
@@ -126,7 +119,7 @@ export function pocketEvents(
     observed_at,
     text: row.title.length > 0 ? `${row.title}\n${row.url}` : row.url,
     subjects: [{ subject_id: "pocket:self", role: "from" }],
-    sensitivity_hint,
+    sensitivity_hint: POCKET_SENSITIVITY,
     deleted: false,
     attachments: [],
     metadata: {

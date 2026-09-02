@@ -13,16 +13,11 @@ import {
 } from "../util";
 import { bounded, parseOmnivoreMetadata } from "./metadata";
 import type { OmnivoreItem } from "./metadata";
-import { resolveSensitivity } from "../sensitivity";
-import type { SensitivityPolicy } from "../sensitivity";
 
 export const OMNIVORE_IMPORT_CONNECTOR_ID = "kizuki.import-omnivore" as const;
 
 /** A reading list is about the owner, not a secret, and not public either. */
-export const OMNIVORE_SENSITIVITY: SensitivityPolicy = {
-  default_sensitivity: "personal",
-  sensitivity_floor: "public",
-};
+const OMNIVORE_SENSITIVITY = "personal" as const;
 
 export { parseOmnivoreMetadata } from "./metadata";
 export type { OmnivoreItem } from "./metadata";
@@ -126,7 +121,6 @@ export async function omnivoreEvents(
   }
 
   const ids = omnivoreRecordIds(items.map(({ item }) => item.id));
-  const sensitivity_hint = resolveSensitivity(OMNIVORE_SENSITIVITY);
   const events: CaptureEventInput[] = [];
   let textLeft = maxBytes;
   for (const [index, { item, at }] of items.entries()) {
@@ -156,7 +150,7 @@ export async function omnivoreEvents(
       observed_at,
       text,
       subjects: [{ subject_id: "omnivore:self", role: "from" }],
-      sensitivity_hint,
+      sensitivity_hint: OMNIVORE_SENSITIVITY,
       deleted: false,
       attachments:
         content === null

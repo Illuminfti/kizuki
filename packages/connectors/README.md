@@ -5,10 +5,9 @@ evidence. Nothing here writes canon: events land in the append-only ledger,
 where the receipted writer picks them up. The owner's leverage over what is
 written is correction and undo.
 
-Sensitivity is assigned, never asked for. Every importer here declares the
-label its records carry and the least sensitive label they may ever carry, so
-a record whose sensitivity cannot be worked out is treated as private rather
-than left unlabeled.
+Sensitivity is assigned, never asked for. Each importer below labels its
+records from what the source is, so nothing an export says can talk a record
+down into being served more widely.
 
 Two kinds of adapter live in this package:
 

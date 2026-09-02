@@ -17,7 +17,6 @@ import {
 } from "../util";
 import {
   OMNIVORE_IMPORT_CONNECTOR_ID,
-  OMNIVORE_SENSITIVITY,
   fsOmnivoreFiles,
   mapOmnivoreFiles,
   omnivoreEvents,
@@ -25,7 +24,6 @@ import {
 
 export {
   OMNIVORE_IMPORT_CONNECTOR_ID,
-  OMNIVORE_SENSITIVITY,
   fsOmnivoreFiles,
   mapOmnivoreFiles,
   omnivoreEvents,
@@ -103,7 +101,6 @@ const MANIFEST: Manifest = {
   },
   required_secrets: [],
   emits_sensitivity_hint: true,
-  ...OMNIVORE_SENSITIVITY,
   auth_modes: ["none"],
 };
 
