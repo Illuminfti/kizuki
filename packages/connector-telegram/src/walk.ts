@@ -137,21 +137,24 @@ export async function walk(
     const peer = keys[index];
     const dialogCursor = peer === undefined ? undefined : cursor.dialogs[peer];
     if (peer === undefined || dialogCursor === undefined) continue;
-    if (batch.events.length >= BATCH_LIMIT) {
-      stoppedAt = peer;
-      break;
-    }
     if (mode === "backfill" && dialogCursor.exhausted) continue;
     const dialog = byPeer.get(peer);
     // Absent from this listing is not the same as read to the end. Leaving the
     // entry alone keeps the backfill honestly unfinished, and health names it.
     if (dialog === undefined) continue;
+    let outcome: DialogOutcome;
     try {
-      await readDialog(deps, dialog, dialogCursor, batch);
+      outcome = await readDialog(deps, dialog, dialogCursor, batch);
     } catch (error) {
       const seconds = waitSeconds(error);
       if (seconds === null) throw error;
       floodUntil = deps.now() + seconds * 1000;
+      stoppedAt = peer;
+      break;
+    }
+    // Only a dialog whose new messages and whose edit window both ran to the
+    // end is behind us; anything else has to be resumed where it stopped.
+    if (outcome === "partial") {
       stoppedAt = peer;
       break;
     }
@@ -180,12 +183,15 @@ export async function walk(
   };
 }
 
+/** `partial` means the batch filled before this dialog was done with. */
+type DialogOutcome = "complete" | "partial";
+
 async function readDialog(
   deps: WalkDeps,
   dialog: TelegramDialog,
   dialogCursor: DialogCursor,
   batch: Batch,
-): Promise<void> {
+): Promise<DialogOutcome> {
   const known = dialogCursor.last_id;
   const want = BATCH_LIMIT - batch.events.length;
   let seen = 0;
@@ -196,25 +202,26 @@ async function readDialog(
     seen += 1;
     collect(deps, message, dialog, batch);
     dialogCursor.last_id = Math.max(dialogCursor.last_id, message.id);
-    if (batch.events.length >= BATCH_LIMIT) return;
+    if (batch.events.length >= BATCH_LIMIT) return "partial";
   }
   if (seen < want) dialogCursor.exhausted = true;
-  if (batch.mode !== "sync" || known === 0) return;
+  if (batch.mode !== "sync" || known === 0) return "complete";
 
   // Edits carry no separate feed: re-read the tail of what we already have and
-  // re-emit only what changed since the last completed pass.
-  const remaining = BATCH_LIMIT - batch.events.length;
-  if (remaining <= 0) return;
+  // re-emit only what changed since the last completed pass. The whole window
+  // is read whatever room is left, because a window cut short to fit the batch
+  // would be declared clean and never looked at again.
   for await (const message of deps.api.messages(dialog.peer_id, {
     min_id: Math.max(0, known - EDIT_WINDOW),
     max_id: known + 1,
-    limit: Math.min(EDIT_WINDOW, remaining),
+    limit: EDIT_WINDOW,
   })) {
     if (message.edit_date === undefined) continue;
     if (message.edit_date <= batch.watermark) continue;
     collect(deps, message, dialog, batch);
-    if (batch.events.length >= BATCH_LIMIT) return;
+    if (batch.events.length >= BATCH_LIMIT) return "partial";
   }
+  return "complete";
 }
 
 function collect(

@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 import { computeContentHash } from "@kizuki/core";
 import type { CaptureEventInput } from "@kizuki/core";
 import { parseCursor } from "../src/cursor";
+import { fixtureAccount } from "../src/scripted";
+import type { TelegramMessage } from "../src/api";
 import { connected, drain } from "./helpers";
 
 const FEBRUARY = Date.parse("2026-02-01T00:00:00.000Z");
@@ -121,4 +123,76 @@ test("a sync with no cursor behaves exactly as a first backfill", async () => {
   const backfill = await built.connector.backfill(null);
   const sync = await built.connector.sync(null);
   expect(sync).toEqual(backfill);
+});
+
+function bulk(peer_id: string, from: number, to: number): TelegramMessage[] {
+  const messages: TelegramMessage[] = [];
+  for (let id = from; id <= to; id += 1) {
+    messages.push({
+      peer_id,
+      id,
+      date: LATER + id,
+      text: `${peer_id} note ${id}`,
+      out: false,
+      service: false,
+    });
+  }
+  return messages;
+}
+
+function twoDialogs() {
+  const account = fixtureAccount();
+  account.dialogs = ["1", "2"].map((peer_id) => ({
+    peer_id,
+    peer_type: "user" as const,
+    title: "grace",
+    public: false,
+    top_message_id: peer_id === "1" ? 1 : 5,
+  }));
+  account.messages = { "1": bulk("1", 1, 1), "2": bulk("2", 1, 5) };
+  return account;
+}
+
+async function settled(account = twoDialogs()) {
+  const built = await connected({ account, now: FEBRUARY });
+  const drained = await drain(built.connector, "backfill");
+  const first = await built.connector.sync(drained.cursor);
+  expect(first.events).toEqual([]);
+  return { built, cursor: first.cursor as string };
+}
+
+test("an edit is still found when an earlier dialog nearly filled the batch", async () => {
+  const { built, cursor } = await settled();
+  const watermark = parseCursor(cursor).edit_watermark;
+  for (const message of bulk("1", 2, 500)) built.api.append("1", message);
+  built.api.edit("2", 5, "rewritten", watermark + 60);
+  // A later pass start is what makes a missed edit permanent: the watermark
+  // would move past it and nothing would look at that message again.
+  built.clock.now += 300_000;
+
+  const first = await built.connector.sync(cursor);
+  expect(parseCursor(first.cursor as string).pass?.next_peer).toBe("2");
+  const rest = await drain(built.connector, "sync", first.cursor);
+  const seen = ids([...first.events, ...rest.events]);
+  expect(seen).toContain("2:5");
+  expect(parseCursor(rest.cursor).edit_watermark).toBeGreaterThan(watermark);
+});
+
+test("a dialog that fills the batch keeps the pass on itself", async () => {
+  const { built, cursor } = await settled();
+  for (const message of bulk("1", 2, 1201)) built.api.append("1", message);
+
+  const sizes: number[] = [];
+  let current = cursor;
+  for (let round = 0; round < 4; round += 1) {
+    const batch = await built.connector.sync(current);
+    sizes.push(batch.events.length);
+    current = batch.cursor as string;
+    if (round === 0) {
+      expect(parseCursor(current).pass?.next_peer).toBe("1");
+    }
+  }
+  expect(sizes).toEqual([500, 500, 200, 0]);
+  expect(parseCursor(current).pass).toBeNull();
+  expect(parseCursor(current).dialogs["1"]?.last_id).toBe(1201);
 });
