@@ -2,8 +2,11 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { PortError } from "@kizuki/core";
 import type { PortLogLine, ProduceResult } from "@kizuki/core";
 import { LlmRejection } from "../src/errors";
+import { OpenAiCompatibleLlm } from "../src/llm-port";
 import { MODEL_PRODUCER, ModelProducer, modelProducer } from "../src/producer";
 import { EXTRACT_BATCH } from "../src/prompt";
+import { chatCompletion, startFakeEndpoint } from "./fake-endpoint";
+import type { FakeEndpoint } from "./fake-endpoint";
 import {
   claimsPayload,
   event,
@@ -23,9 +26,28 @@ const knownClaim = {
 };
 
 const cleanups: (() => void)[] = [];
-afterEach(() => {
+let endpoint: FakeEndpoint | undefined;
+
+afterEach(async () => {
   while (cleanups.length > 0) cleanups.pop()?.();
+  await endpoint?.stop();
+  endpoint = undefined;
 });
+
+/** The producer over the real transport, so a reply is read end to end. */
+async function overEndpoint(body: unknown): Promise<ProduceResult> {
+  endpoint = startFakeEndpoint([{ body }]);
+  const built = portContext(MODEL_PRODUCER, {
+    base_url: `${endpoint.url}/v1`,
+    model: "m",
+  });
+  cleanups.push(built.cleanup);
+  const port = new ModelProducer(
+    built.ctx,
+    new OpenAiCompatibleLlm(built.ctx),
+  );
+  return await port.produce(produceInput([event("ev-1", "Ada joined acme.")]));
+}
 
 function producer(script: (string | Error)[]): {
   port: ModelProducer;
@@ -314,5 +336,34 @@ describe("input validation", () => {
       status: "unavailable",
       reason: "llm port: no endpoint",
     });
+  });
+});
+
+describe("an answer that is not an extraction", () => {
+  test("a truncated reply never advances over unread records", async () => {
+    const body = chatCompletion('{"claims":[]}') as {
+      choices: Record<string, unknown>[];
+    };
+    body.choices[0]!["finish_reason"] = "length";
+    // Regression: a cut-off reply whose JSON happened to parse was `ok` with
+    // no claims, which reads as "these records held nothing durable".
+    expect(await overEndpoint(body)).toMatchObject({
+      status: "rejected",
+      reason: "schema_invalid",
+    });
+  });
+
+  test("a refusal never advances over unread records", async () => {
+    const body = chatCompletion('{"claims":[]}') as {
+      choices: { message: Record<string, unknown> }[];
+    };
+    body.choices[0]!.message["refusal"] = "I will not answer that.";
+    const result = await overEndpoint(body);
+    expect(result).toMatchObject({
+      status: "rejected",
+      reason: "schema_invalid",
+    });
+    if (result.status !== "rejected") throw new Error("not rejected");
+    expect(JSON.stringify(result)).not.toContain("I will not answer");
   });
 });

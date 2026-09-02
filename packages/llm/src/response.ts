@@ -49,6 +49,15 @@ const TOOL_KEYS = new Set([
 
 const MAX_CONTENT_PARTS = 64;
 
+/**
+ * The only stop this package can use. Anything else means the endpoint
+ * finished for a reason that makes its content unusable — truncation, a
+ * content filter, or a call to a tool nobody offered — and an unusable
+ * answer must never look like "these records held nothing durable".
+ */
+const FINISHED = "stop";
+const CALLED_A_TOOL = new Set(["tool_calls", "function_call"]);
+
 function unexpectedKeys(
   value: Record<string, unknown>,
   allowed: ReadonlySet<string>,
@@ -115,6 +124,20 @@ export function readChatAnswer(body: unknown): ProviderAnswer {
   }
   unexpectedKeys(choice, CHOICE_KEYS, "choice");
 
+  const finish = choice["finish_reason"];
+  if (finish !== undefined && finish !== null && finish !== FINISHED) {
+    if (typeof finish === "string" && CALLED_A_TOOL.has(finish)) {
+      reject(
+        "tool_call_in_response",
+        "the endpoint stopped to call a tool the request never offered",
+      );
+    }
+    reject(
+      "schema_invalid",
+      "the endpoint stopped before it finished a usable answer",
+    );
+  }
+
   const message = choice["message"];
   if (!isPlainObject(message)) {
     reject("schema_invalid", "the endpoint returned no choice message");
@@ -122,6 +145,12 @@ export function readChatAnswer(body: unknown): ProviderAnswer {
   unexpectedKeys(message, MESSAGE_KEYS, "message");
   if (message["role"] !== "assistant") {
     reject("schema_invalid", "the endpoint answered in an unexpected role");
+  }
+  const refusal = message["refusal"];
+  if (refusal !== undefined && refusal !== null && refusal !== "") {
+    // The refusal text is the provider's prose about captured content, so it
+    // is counted and never carried into the message this throws.
+    reject("schema_invalid", "the endpoint declined to answer");
   }
 
   const content = message["content"];
