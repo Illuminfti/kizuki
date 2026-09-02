@@ -277,6 +277,24 @@ describe("timeline", () => {
     expect(timeline(db, { until: echoed })).toEqual([]);
   });
 
+  test("previews a huge capture without materializing it", () => {
+    const db = searchDb();
+    // Event text is connector-supplied and unbounded. Expanding the whole of
+    // it per row cost ~890 ms and ~600 MB here; the bounded walk is ~80 ms.
+    const huge = "lorem ".repeat(1_400_000);
+    for (let index = 0; index < 4; index += 1) {
+      storedEvent(db, `huge-${index}`, { text: huge });
+    }
+
+    const started = performance.now();
+    const entries = timeline(db);
+    const elapsed = performance.now() - started;
+
+    expect(entries).toHaveLength(4);
+    expect(entries[0]?.text_preview).toHaveLength(160);
+    expect(elapsed).toBeLessThan(400);
+  });
+
   test("does not split a trailing emoji into a lone UTF-16 surrogate", () => {
     const db = searchDb();
     storedEvent(db, "emoji", { text: `${"x".repeat(159)}\u{1F600}` });

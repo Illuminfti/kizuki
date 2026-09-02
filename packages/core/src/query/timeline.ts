@@ -47,6 +47,7 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
 // total instead: such a row sorts last, behind every instant that resolved.
 const OCCURRED_AT_INSTANT = instantSql("events.occurred_at");
 const PREVIEW_CODE_POINTS = 160;
+const WHITESPACE = /\s/;
 
 function dayWindow(day: string): { since: string; until: string } {
   if (!DAY.test(day)) {
@@ -62,10 +63,34 @@ function dayWindow(day: string): { since: string; until: string } {
   };
 }
 
+/**
+ * Collapsed whitespace, trimmed, cut to `PREVIEW_CODE_POINTS` code points.
+ * Built by walking the string and stopping at the cap rather than collapsing
+ * and expanding the whole of it: `text` is connector-supplied and has no
+ * length bound, so materializing every code point of a captured document
+ * would let one row size the heap (AGENTS.md, bound user-controlled
+ * allocation). The result is identical to collapsing first and slicing after.
+ */
 function preview(text: string): string {
-  return Array.from(text.replace(/\s+/g, " ").trim())
-    .slice(0, PREVIEW_CODE_POINTS)
-    .join("");
+  let result = "";
+  let taken = 0;
+  let gap = false;
+  for (const character of text) {
+    if (WHITESPACE.test(character)) {
+      if (taken > 0) gap = true;
+      continue;
+    }
+    if (taken === PREVIEW_CODE_POINTS) break;
+    if (gap) {
+      result += " ";
+      taken += 1;
+      gap = false;
+      if (taken === PREVIEW_CODE_POINTS) break;
+    }
+    result += character;
+    taken += 1;
+  }
+  return result;
 }
 
 export function timeline(
