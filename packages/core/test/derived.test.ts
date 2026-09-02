@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { rebuildDerived } from "../src/derived";
 import { readDerivedMeta } from "../src/derived-meta";
 import { openLedger } from "../src/ledger/db";
-import { serializePage } from "../src/vault/frontmatter";
+import { writeCanon } from "./helpers/vault";
 import { searchDb, storedEvent, tempVault } from "./search/helpers";
 
 const disposers: (() => void)[] = [];
@@ -17,21 +17,19 @@ function fixture() {
   const db = searchDb();
   const vault = tempVault();
   disposers.push(vault.dispose);
-  writeFileSync(
-    join(vault.path, "facts", "tea.md"),
-    serializePage({
-      data: {
-        id: "fact:tea",
-        title: "Tea",
-        type: "fact",
-        status: "active",
-        sensitivity: "personal",
-        subjects: ["person:ada"],
-        sources: ["event:source"],
-      },
-      body: "Tea uses a [[Kettle]].",
-    }),
-    "utf8",
+  writeCanon(
+    vault.path,
+    "facts/tea.md",
+    {
+      id: "fact:tea",
+      title: "Tea",
+      type: "fact",
+      status: "active",
+      sensitivity: "personal",
+      subjects: ["person:ada"],
+      sources: ["event:source"],
+    },
+    "Tea uses a [[Kettle]].",
   );
   storedEvent(db, "event-one", { text: "Ledger tea note." });
   return { db, vaultPath: vault.path };

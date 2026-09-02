@@ -10,8 +10,8 @@ import {
 } from "../../src/search/indexer";
 import { search, toFtsQuery } from "../../src/search/query";
 import { initSearch } from "../../src/search/schema";
-import { serializePage } from "../../src/vault/frontmatter";
 import type { CanonPage } from "../../src/vault/pages";
+import { writeCanon } from "../helpers/vault";
 import { searchDb, storedEvent, tempVault } from "./helpers";
 
 const disposers: (() => void)[] = [];
@@ -39,19 +39,6 @@ function page(
     },
     body,
   };
-}
-
-function writeCanon(
-  vaultPath: string,
-  relPath: string,
-  data: Record<string, unknown>,
-  body: string,
-): void {
-  writeFileSync(
-    join(vaultPath, relPath),
-    serializePage({ data, body }),
-    "utf8",
-  );
 }
 
 describe("toFtsQuery", () => {

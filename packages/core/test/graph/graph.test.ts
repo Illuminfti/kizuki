@@ -5,8 +5,7 @@ import { join } from "node:path";
 import { neighbors, rebuildGraph } from "../../src/graph/graph";
 import type { GraphEdge } from "../../src/graph/graph";
 import { initGraph } from "../../src/graph/schema";
-import { serializePage } from "../../src/vault/frontmatter";
-import { tempVault } from "../search/helpers";
+import { tempVault, writeCanon } from "../helpers/vault";
 
 const disposers: (() => void)[] = [];
 
@@ -20,27 +19,25 @@ function vault(): string {
   return created.path;
 }
 
-function writeCanon(
+function writeFact(
   vaultPath: string,
   name: string,
   id: string,
   body: string,
   extra: Record<string, unknown> = {},
 ): void {
-  writeFileSync(
-    join(vaultPath, "facts", `${name}.md`),
-    serializePage({
-      data: {
-        id,
-        title: name,
-        type: "fact",
-        status: "active",
-        sensitivity: "personal",
-        ...extra,
-      },
-      body,
-    }),
-    "utf8",
+  writeCanon(
+    vaultPath,
+    `facts/${name}.md`,
+    {
+      id,
+      title: name,
+      type: "fact",
+      status: "active",
+      sensitivity: "personal",
+      ...extra,
+    },
+    body,
   );
 }
 
@@ -70,7 +67,7 @@ describe("graph rebuild", () => {
   test("extracts plain and aliased wikilinks", () => {
     const db = new Database(":memory:");
     const path = vault();
-    writeCanon(path, "origin", "fact:origin", "See [[Target]] and [[Other|label]].");
+    writeFact(path, "origin", "fact:origin", "See [[Target]] and [[Other|label]].");
 
     rebuildGraph(db, path);
 
@@ -83,7 +80,7 @@ describe("graph rebuild", () => {
   test("ignores wikilinks in code spans and nested brackets", () => {
     const db = new Database(":memory:");
     const path = vault();
-    writeCanon(
+    writeFact(
       path,
       "origin",
       "fact:origin",
@@ -100,7 +97,7 @@ describe("graph rebuild", () => {
   test("does not treat an unmatched backtick as a code span", () => {
     const db = new Database(":memory:");
     const path = vault();
-    writeCanon(path, "origin", "fact:origin", "Unmatched ` then [[Visible]].");
+    writeFact(path, "origin", "fact:origin", "Unmatched ` then [[Visible]].");
 
     rebuildGraph(db, path);
 
@@ -112,7 +109,7 @@ describe("graph rebuild", () => {
   test("adds subject and source edges from frontmatter", () => {
     const db = new Database(":memory:");
     const path = vault();
-    writeCanon(path, "origin", "fact:origin", "No links.", {
+    writeFact(path, "origin", "fact:origin", "No links.", {
       subjects: ["person:ada", "person:grace"],
       sources: ["event:one"],
     });
@@ -129,7 +126,7 @@ describe("graph rebuild", () => {
   test("is idempotent and stamps the edge count", () => {
     const db = new Database(":memory:");
     const path = vault();
-    writeCanon(path, "origin", "fact:origin", "[[Target]] [[Target]]");
+    writeFact(path, "origin", "fact:origin", "[[Target]] [[Target]]");
 
     rebuildGraph(db, path);
     const result = rebuildGraph(db, path);
@@ -148,7 +145,7 @@ describe("graph rebuild", () => {
   test("reports skipped pages and counts edges once", () => {
     const db = new Database(":memory:");
     const path = vault();
-    writeCanon(path, "linked", "fact:linked", "[[Target]]", {
+    writeFact(path, "linked", "fact:linked", "[[Target]]", {
       subjects: ["person:ada"],
     });
     writeFileSync(join(path, "facts", "stray.md"), "no frontmatter here\n", "utf8");

@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CaptureEventInput } from "../src/contracts/event";
 import { neighbors } from "../src/graph/graph";
@@ -17,23 +16,20 @@ import {
   getProposal,
   initStaging,
 } from "../src/staging/proposals";
-import { initVault } from "../src/vault/init";
 import { validEvent } from "./fixtures";
+import { tempVault } from "./helpers/vault";
 
 const ULID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
-const directories: string[] = [];
+const disposers: (() => void)[] = [];
 
-function temporaryVault(): string {
-  const path = mkdtempSync(join(tmpdir(), "kizuki-purge-vault-"));
-  directories.push(path);
-  initVault(path);
-  return path;
+function vault(): string {
+  const created = tempVault("kizuki-purge-vault-");
+  disposers.push(created.dispose);
+  return created.path;
 }
 
 afterEach(() => {
-  for (const path of directories.splice(0)) {
-    rmSync(path, { recursive: true, force: true });
-  }
+  for (const dispose of disposers.splice(0)) dispose();
 });
 
 function event(
@@ -56,7 +52,7 @@ describe("purgeEvents", () => {
     storedEvent(db, event("keep"));
     const outcome = purgeEvents(
       db,
-      temporaryVault(),
+      vault(),
       { event_id: target.event_id },
       "record request",
     );
@@ -76,7 +72,7 @@ describe("purgeEvents", () => {
     storedEvent(db, event("c", { connector_id: "calendar" }));
     const receipts = purgeEvents(
       db,
-      temporaryVault(),
+      vault(),
       { connector_id: "mail" },
       "account erased",
     ).receipts;
@@ -105,7 +101,7 @@ describe("purgeEvents", () => {
     }));
     const receipts = purgeEvents(
       db,
-      temporaryVault(),
+      vault(),
       { subject_handle: "person:grace" },
       "subject request",
     ).receipts;
@@ -119,7 +115,7 @@ describe("purgeEvents", () => {
   test("rejects an empty filter and returns an empty outcome for no matches", () => {
     const db = openLedger(":memory:");
     storedEvent(db, validEvent());
-    const vaultPath = temporaryVault();
+    const vaultPath = vault();
     expect(() => purgeEvents(db, vaultPath, {}, "unsafe")).toThrow("filter");
     expect(
       purgeEvents(db, vaultPath, { connector_id: "missing" }, "no match"),
@@ -154,7 +150,7 @@ describe("purgeEvents", () => {
     }
     const outcome = purgeEvents(
       db,
-      temporaryVault(),
+      vault(),
       { event_id: purged.event_id },
       "source erased",
     );
@@ -171,7 +167,7 @@ describe("purgeEvents", () => {
   test("refuses to purge while a canon page cannot be read", () => {
     const db = openLedger(":memory:");
     const target = storedEvent(db, event("target"));
-    const vaultPath = temporaryVault();
+    const vaultPath = vault();
     writeFileSync(join(vaultPath, "facts", "orphan.md"), "no frontmatter\n");
     expect(() =>
       purgeEvents(db, vaultPath, { event_id: target.event_id }, "record request"),
@@ -204,7 +200,7 @@ describe("purgeEvents", () => {
     );
     purgeEvents(
       db,
-      temporaryVault(),
+      vault(),
       { event_id: source.event_id },
       "source erased",
     );
