@@ -11,10 +11,12 @@ import type {
   PortHealth,
   PortLogLine,
   ProduceInput,
+  ProduceResult,
   QuotedEvent,
 } from "@kizuki/core";
 import { OPENAI_COMPATIBLE_LLM, OpenAiCompatibleLlm } from "../src/llm-port";
 import type { LlmPortOverrides } from "../src/llm-port";
+import { MODEL_PRODUCER, ModelProducer } from "../src/producer";
 
 export interface TestContext {
   ctx: PortContext;
@@ -169,4 +171,38 @@ export function scriptedLlm(
     },
     async close(): Promise<void> {},
   };
+}
+
+export interface ProducerHarness {
+  port: ModelProducer;
+  llm: ScriptedLlm;
+  logs: PortLogLine[];
+  cleanup(): void;
+}
+
+/** The producer over a scripted model port, so no producer test needs a socket. */
+export function modelProducerFor(
+  script: (string | Error)[],
+  usage?: { input_tokens: number; output_tokens: number; attempts: number },
+): ProducerHarness {
+  const built = portContext(MODEL_PRODUCER);
+  const llm =
+    usage === undefined
+      ? scriptedLlm(script)
+      : scriptedLlm(script, { status: "ready", detail: {} }, usage);
+  return {
+    port: new ModelProducer(built.ctx, llm),
+    llm,
+    logs: built.logs,
+    cleanup: built.cleanup,
+  };
+}
+
+export function ok(
+  result: ProduceResult,
+): Extract<ProduceResult, { status: "ok" }> {
+  if (result.status !== "ok") {
+    throw new Error(`expected ok, got ${result.status}`);
+  }
+  return result;
 }
