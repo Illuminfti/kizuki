@@ -418,7 +418,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
     db: Database,
     connection: Connection,
     update: (writer: ConnectionStateWriter) => Promise<void>,
-    missingStateMessage: string,
+    options: { missingStateMessage: string; refuseDisconnected: boolean },
   ): Promise<Connection> {
     this.recover(db);
     const persisted = getConnection(
@@ -444,12 +444,18 @@ export class ConnectionStateStore implements ConnectionStateReader {
     ) {
       throw new LedgerError("connection is not eligible for state replacement");
     }
+    // save() clears disconnected_at, so an automatic path that accepted a
+    // withdrawn grant would let a background refresh undo an owner's
+    // disconnect. Only an interactive re-sign-in may reconnect a source.
+    if (options.refuseDisconnected && persisted.disconnected_at !== null) {
+      throw new LedgerError("connection is disconnected");
+    }
     this.read(persisted);
     const pending = this.beginFor(persisted.source_key);
     try {
       await update(pending.writer);
       if (!pending.pending.written) {
-        throw new LedgerError(missingStateMessage);
+        throw new LedgerError(options.missingStateMessage);
       }
       return this.save(db, persisted.connector_id, pending.pending);
     } catch (error) {
@@ -479,14 +485,20 @@ export class ConnectionStateStore implements ConnectionStateReader {
       async (writer) => {
         await signIn.call(connector, io, writer);
       },
-      "replacement sign-in did not provide connection state",
+      {
+        missingStateMessage:
+          "replacement sign-in did not provide connection state",
+        // A re-sign-in is the owner reconnecting a source on purpose.
+        refuseDisconnected: false,
+      },
     );
   }
 
   /**
    * Non-interactive state replacement for the same source: token refresh and
-   * refresh-token rotation. The connection must already hold state, and
-   * `update` gets a one-shot writer scoped to it. `save` advances
+   * refresh-token rotation. The connection must already hold state and must
+   * still be connected, and `update` gets a one-shot writer scoped to it.
+   * `save` advances
    * `connected_at` on every rewrite, so from here on that column means
    * "state last written at", not "signed in at".
    */
@@ -495,12 +507,10 @@ export class ConnectionStateStore implements ConnectionStateReader {
     connection: Connection,
     update: (writer: ConnectionStateWriter) => Promise<void>,
   ): Promise<Connection> {
-    return this.swap(
-      db,
-      connection,
-      update,
-      "state rewrite did not provide connection state",
-    );
+    return this.swap(db, connection, update, {
+      missingStateMessage: "state rewrite did not provide connection state",
+      refuseDisconnected: true,
+    });
   }
 }
 
