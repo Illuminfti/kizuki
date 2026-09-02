@@ -4,7 +4,10 @@ import type { FileHandle } from "node:fs/promises";
 import { KizukiError } from "./errors";
 import { MAX_EXPORT_BYTES, errorMessage } from "./util";
 
-export function notARegularFile(label: string, connectorId: string): KizukiError {
+export function notARegularFile(
+  label: string,
+  connectorId: string,
+): KizukiError {
   return new KizukiError(
     "misconfigured",
     `${connectorId}: not a regular file: ${label}`,
@@ -33,16 +36,6 @@ function isErrno(error: unknown, code: string): boolean {
   );
 }
 
-/**
- * Reads an export file the way the importers need it: size-checked before a
- * byte is read, never through a symlink, strictly UTF-8, newline-normalized.
- *
- * One descriptor serves the type check, the size check and the read, so the
- * file cannot be swapped for another between them. `O_NOFOLLOW` makes the
- * kernel refuse a symlink instead of the caller noticing afterwards, and
- * `O_NONBLOCK` keeps a pipe planted in an export folder from hanging the
- * import before its file type is even known.
- */
 function overLimit(
   label: string,
   connectorId: string,
@@ -121,6 +114,12 @@ export interface BoundedFile {
   byte_size: number;
 }
 
+/**
+ * Opens a file for reading, and only a file: `O_NOFOLLOW` makes the kernel
+ * refuse a symlink instead of the caller noticing afterwards, and `O_NONBLOCK`
+ * keeps a pipe planted in an export folder from hanging the import before its
+ * file type is even known.
+ */
 export async function openFile(
   path: string,
   connectorId: string,
@@ -141,7 +140,13 @@ export async function openFile(
   }
 }
 
-/** Reads an open file to the end its bound allows, and closes it either way. */
+/**
+ * Reads an open export file the way the importers need it: bounded whatever
+ * the file says about itself, never through a symlink, strictly UTF-8,
+ * newline-normalized. One descriptor serves the type check, the size check and
+ * the read, so the file cannot be swapped for another between them, and the
+ * descriptor is closed either way.
+ */
 export async function boundedFile(
   handle: FileHandle,
   connectorId: string,
