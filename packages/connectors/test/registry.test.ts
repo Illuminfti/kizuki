@@ -1,5 +1,17 @@
 import { expect, test } from "bun:test";
-import { KizukiError, getConnector } from "../src";
+import {
+  KizukiError,
+  SCREENPIPE_CONNECTOR_ID,
+  getConnector,
+} from "../src";
+
+test("getConnector builds kizuki.screenpipe", () => {
+  expect(
+    getConnector(SCREENPIPE_CONNECTOR_ID, {
+      path: "/tmp/not-opened-screenpipe.sqlite",
+    }).manifest().connector_id,
+  ).toBe(SCREENPIPE_CONNECTOR_ID);
+});
 
 test("getConnector rejects an unknown connector id", () => {
   try {

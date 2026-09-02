@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -8,8 +9,10 @@ import {
   CLAUDE_FIXTURE_EXPORT,
   CLAUDE_IMPORT_CONNECTOR_ID,
   MARKDOWN_FOLDER_CONNECTOR_ID,
+  SCREENPIPE_CONNECTOR_ID,
   getConnector,
   runConformance,
+  seedFixtureDatabase,
 } from "../src";
 import type { Connector } from "@kizuki/core";
 
@@ -31,6 +34,10 @@ test("all registry connectors pass conformance", async () => {
       writeFile(chatGptPath, JSON.stringify(CHATGPT_FIXTURE_EXPORT)),
       writeFile(claudePath, JSON.stringify(CLAUDE_FIXTURE_EXPORT)),
     ]);
+    const screenpipePath = path.join(root, "screenpipe.sqlite");
+    const screenpipeFixture = new Database(screenpipePath);
+    seedFixtureDatabase(screenpipeFixture);
+    screenpipeFixture.close();
 
     const markdown = getConnector(MARKDOWN_FOLDER_CONNECTOR_ID, {
       path: markdownRoot,
@@ -48,9 +55,16 @@ test("all registry connectors pass conformance", async () => {
       runConformance(
         getConnector(CLAUDE_IMPORT_CONNECTOR_ID, { path: claudePath }),
       ),
+      runConformance(
+        getConnector(SCREENPIPE_CONNECTOR_ID, {
+          path: screenpipePath,
+          settle_seconds: 0,
+        }),
+      ),
     ]);
 
     expect(results).toEqual([
+      { pass: true, failures: [] },
       { pass: true, failures: [] },
       { pass: true, failures: [] },
       { pass: true, failures: [] },

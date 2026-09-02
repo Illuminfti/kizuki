@@ -1,12 +1,11 @@
 {
-  "name": "@kizuki/connectors",
+  "name": "@kizuki/connector-screenpipe",
   "type": "module",
   "module": "src/index.ts",
   "exports": {
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@kizuki/connector-screenpipe": "workspace:*",
     "@kizuki/core": "workspace:*"
   }
 }

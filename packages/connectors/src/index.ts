@@ -17,6 +17,19 @@ export type {
 export { getConnector, REGISTRY } from "./registry";
 export type { ConnectorId } from "./registry";
 export {
+  FIXTURE_NOW,
+  SCREENPIPE_CONNECTOR_ID,
+  ScreenpipeConnector,
+  ScreenpipeConnectorError,
+  createScreenpipeConnector,
+  seedFixtureDatabase,
+} from "@kizuki/connector-screenpipe";
+export type {
+  ScreenpipeConfig,
+  ScreenpipeCursor,
+  ScreenpipeDeps,
+} from "@kizuki/connector-screenpipe";
+export {
   MARKDOWN_FOLDER_CONNECTOR_ID,
   MarkdownFolderConnector,
   createMarkdownFolderConnector,
