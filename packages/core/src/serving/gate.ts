@@ -198,22 +198,24 @@ export function gate<T>(
   run: (call: ServeCall) => Served<T>,
 ): Envelope<T> {
   const at = new Date().toISOString();
-  const bag = boundedArguments(args);
+  // Only a refusal audits the raw bag; a served call audits it with the ids
+  // the call created merged in, so the shaping happens once either way.
+  const bag = (): Record<string, unknown> => boundedArguments(args);
 
   const live = liveContext(ctx);
   if (live === null) {
-    auditRefusal(ctx, tool, bag, "unknown_agent", at);
+    auditRefusal(ctx, tool, bag(), "unknown_agent", at);
     throw new ServeError("unknown_agent", "unknown agent");
   }
 
   if (!toolAllowed(live.principal.grant, tool)) {
-    auditRefusal(live, tool, bag, "tool_not_granted", at);
+    auditRefusal(live, tool, bag(), "tool_not_granted", at);
     throw new ServeError("tool_not_granted", "tool not granted");
   }
 
   const rate = checkRate(live.db, live.principal, tool, at);
   if (!rate.allow) {
-    auditRefusal(live, tool, bag, "rate_limited", at);
+    auditRefusal(live, tool, bag(), "rate_limited", at);
     throw new ServeError("rate_limited", "rate limited", {
       retry_after_seconds: rate.retry_after_seconds,
     });
@@ -224,18 +226,18 @@ export function gate<T>(
     served = run({ ctx: live, at });
   } catch (error) {
     if (error instanceof ServeError) {
-      auditRefusal(live, tool, bag, error.code, at);
+      auditRefusal(live, tool, bag(), error.code, at);
       throw error;
     }
     if (error instanceof RangeError) {
-      auditRefusal(live, tool, bag, "invalid_arguments", at);
+      auditRefusal(live, tool, bag(), "invalid_arguments", at);
       throw new ServeError(
         "invalid_arguments",
         "invalid arguments: request out of range",
         { cause: error },
       );
     }
-    auditRefusal(live, tool, bag, "error", at);
+    auditRefusal(live, tool, bag(), "error", at);
     throw new ServeError("error", "serving failed", { cause: error });
   }
 
