@@ -215,15 +215,23 @@ test("carriage returns do not change a single event", async () => {
   });
 });
 
-test("newlines at the end of a file do not change the last message", async () => {
+test("the newline a file ends on is a terminator, the next one is text", async () => {
   const chat = "1/4/26, 9:15 AM - Ada: hi";
   const bare = await parse(chat, { date_order: "mdy" });
-  // Carriage returns are normalized by the reader, so the parser sees the
-  // run of line feeds an editor left behind.
-  for (const suffix of ["\n", "\n\n", "\n\n\n"]) {
-    expect(await parse(`${chat}${suffix}`, { date_order: "mdy" })).toEqual(
-      bare,
-    );
+  expect(bare[0]?.text).toBe("hi");
+  // One newline ends the file's last line. Every newline after it is a blank
+  // continuation line, which the export wrote and the message says, so it is
+  // kept verbatim and the message is a different record for having it.
+  expect((await parse(`${chat}\n`, { date_order: "mdy" }))[0]).toEqual(
+    bare[0] as CaptureEventInput,
+  );
+  for (const [suffix, text] of [
+    ["\n\n", "hi\n"],
+    ["\n\n\n", "hi\n\n"],
+  ] as const) {
+    const events = await parse(`${chat}${suffix}`, { date_order: "mdy" });
+    expect(events[0]?.text).toBe(text);
+    expect(events[0]?.source_record_id).not.toBe(bare[0]?.source_record_id);
   }
 });
 

@@ -102,12 +102,12 @@ export function splitWhatsAppMessages(
   text: string,
   date_order?: DateOrder,
 ): { messages: ParsedWhatsAppMessage[]; date_order: DateOrder } {
-  // The newlines a file ends with terminate the last message; they are not
-  // empty continuation lines inside it. A saved-over export that gained or
-  // lost a final blank line would otherwise change that message's text, and
-  // text is hashed, so the same chat would fork its last record.
-  const body = text.replace(/\n+$/, "");
-  const lines = body.split("\n");
+  // A file's last line ends with a line terminator, and that terminator is not
+  // an empty line inside the last message. Anything after it is: a blank
+  // continuation line is part of what a message says, and a message is
+  // identified by what it says.
+  const lines = text.split("\n");
+  if (lines.at(-1) === "") lines.pop();
   const starts: StartLine[] = [];
   const continuations = new Map<number, string[]>();
   let current: number | undefined;
