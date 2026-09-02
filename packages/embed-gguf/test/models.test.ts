@@ -125,6 +125,33 @@ describe("local GGUF model install", () => {
     }
   });
 
+  test("a second install atomically replaces the destination via rename", () => {
+    const temporary = temporaryEmbed();
+    cleanups.push(temporary.cleanup);
+    const destDir = vaultModelsDir(temporary.vault);
+    const first = writeTempGguf(join(temporary.root, "first"), {
+      name: "first-embed",
+    });
+    const second = writeTempGguf(join(temporary.root, "second"), {
+      name: "second-embed",
+    });
+    const initial = installGgufModel({
+      source_path: first,
+      dest_dir: destDir,
+    });
+    const replaced = installGgufModel({
+      source_path: second,
+      dest_dir: destDir,
+    });
+    expect(replaced.path).toBe(initial.path);
+    expect(replaced.sha256).toBe(sha256File(second));
+    expect(replaced.sha256).not.toBe(initial.sha256);
+    expect(sha256File(replaced.path)).toBe(replaced.sha256);
+    expect(
+      readdirSync(destDir).filter((name) => name.endsWith(".partial")),
+    ).toEqual([]);
+  });
+
   test("each install gets a unique exclusive partial path", () => {
     const dest = "/tmp/kizuki-models/model.gguf";
     const first = installPartialPath(dest);

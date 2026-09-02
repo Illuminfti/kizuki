@@ -452,17 +452,21 @@ export function loadEmbeddingTable(file: GgufFile): EmbeddingTable {
   if (tensor.type !== GGUF_F32) fail("GGUF token_embd.weight must be F32");
   if (tensor.dims.length !== 2) fail("GGUF token_embd.weight rank is invalid");
 
-  const [inner, outer] = tensor.dims;
-  if (inner === undefined || outer === undefined) {
+  const [first, second] = tensor.dims;
+  if (first === undefined || second === undefined) {
     fail("GGUF token_embd.weight dims are invalid");
   }
-  const nEmb =
-    inner === dims ? inner : outer === dims ? outer : undefined;
   const nVocab =
-    inner === vocab.length
-      ? inner
-      : outer === vocab.length
-        ? outer
+    first === vocab.length && second === dims
+      ? first
+      : first === dims && second === vocab.length
+        ? second
+        : undefined;
+  const nEmb =
+    first === vocab.length && second === dims
+      ? second
+      : first === dims && second === vocab.length
+        ? first
         : undefined;
   if (nEmb !== dims || nVocab !== vocab.length) {
     fail("GGUF token_embd.weight shape does not match vocab and dims");

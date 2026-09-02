@@ -1,7 +1,6 @@
 import { randomBytes } from "node:crypto";
 import {
   closeSync,
-  copyFileSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -123,18 +122,9 @@ export function installGgufModel(
   const dest = join(input.dest_dir, filename);
   const temp = writeExclusivePartial(dest, bytes);
   try {
-    try {
-      renameSync(temp, dest);
-    } catch {
-      copyFileSync(temp, dest);
-      unlinkSync(temp);
-    }
+    renameSync(temp, dest);
   } catch (error) {
-    try {
-      unlinkSync(temp);
-    } catch (cleanupError) {
-      if (errnoCode(cleanupError) !== "ENOENT") throw cleanupError;
-    }
+    removeIfPresent(temp);
     throw error;
   }
 
@@ -150,16 +140,38 @@ export function installPartialPath(dest: string): string {
   return `${dest}.${process.pid}.${randomBytes(8).toString("hex")}.partial`;
 }
 
+function writeAll(fd: number, bytes: Uint8Array): void {
+  let offset = 0;
+  while (offset < bytes.byteLength) {
+    const written = writeSync(fd, bytes, offset, bytes.byteLength - offset);
+    if (written <= 0) {
+      unavailable("GGUF install write did not complete");
+    }
+    offset += written;
+  }
+}
+
+function removeIfPresent(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch (error) {
+    if (errnoCode(error) !== "ENOENT") throw error;
+  }
+}
+
 function writeExclusivePartial(dest: string, bytes: Uint8Array): string {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const temp = installPartialPath(dest);
     try {
       const fd = openSync(temp, "wx", 0o600);
       try {
-        writeSync(fd, bytes);
-      } finally {
+        writeAll(fd, bytes);
+      } catch (error) {
         closeSync(fd);
+        removeIfPresent(temp);
+        throw error;
       }
+      closeSync(fd);
       return temp;
     } catch (error) {
       if (errnoCode(error) === "EEXIST") continue;
