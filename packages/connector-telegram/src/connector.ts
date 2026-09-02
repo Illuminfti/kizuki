@@ -384,13 +384,17 @@ export class TelegramConnector implements Connector {
     // The pass stopped where the provider told it to, not where it meant to:
     // that instant is the last failure, not the last success.
     this.#floodUntil = result.floodUntil;
-    // A batch whose cursor did not move cannot be resumed from, so returning
-    // it would leave a runner to choose between reading the same records for
-    // ever and calling honest backpressure a broken connector. The records go
-    // back with the wait; they are still there to be read once it lapses.
-    if (result.batch.cursor === null || result.batch.cursor === cursor) {
-      throw this.#waiting();
-    }
+    // Only a batch that both carries records and moves the cursor is worth
+    // handing back mid-wait. An empty one reads as a drained account, and one
+    // whose cursor did not move leaves a runner to choose between reading the
+    // same records for ever and calling honest backpressure a broken
+    // connector. Anything else goes back with the wait; the records it reached
+    // are still there to be read once the pause has lapsed.
+    const resumable =
+      result.batch.events.length > 0 &&
+      result.batch.cursor !== null &&
+      result.batch.cursor !== cursor;
+    if (!resumable) throw this.#waiting();
     return result.batch;
   }
 

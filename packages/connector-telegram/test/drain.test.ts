@@ -242,3 +242,51 @@ test("a wait during a resumed edit scan reads as a wait, not a stuck connector",
   expect((await built.connector.health()).state).toBe("rate_limited");
   db.close();
 });
+
+test("a wait that reached only skipped records is reported, not drained", async () => {
+  const account = fixtureAccount();
+  account.dialogs = [
+    {
+      peer_id: "1",
+      peer_type: "user",
+      title: "grace",
+      public: false,
+      top_message_id: 2,
+    },
+  ];
+  account.messages = {
+    "1": [
+      // Read, and emitted nothing from: the batch is empty for a reason that
+      // has nothing to do with the account being drained.
+      { peer_id: "1", id: 1, date: 1767225600, text: "", out: false, service: true },
+      { peer_id: "1", id: 2, date: 1767225700, text: "second", out: false, service: false },
+    ],
+  };
+  const built = await connected({ account, now: FEBRUARY });
+  const db = ledger();
+  built.api.floodAfter(0, 600);
+
+  const throttled = await runToCompletion(
+    db,
+    built.connector,
+    TELEGRAM_CONNECTOR_ID,
+    SOURCE,
+    "backfill",
+  );
+  expect(throttled.stored).toBe(0);
+  expect(throttled.errors).toEqual([
+    "kizuki.telegram: telegram asked us to wait 600s",
+  ]);
+
+  built.clock.now += 600_000;
+  const resumed = await runToCompletion(
+    db,
+    built.connector,
+    TELEGRAM_CONNECTOR_ID,
+    SOURCE,
+    "backfill",
+  );
+  expect(resumed.errors).toEqual([]);
+  expect(resumed.stored).toBe(1);
+  db.close();
+});

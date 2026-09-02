@@ -109,9 +109,13 @@ test("a dialog that appeared after the last pass is walked from its start", asyn
 
 test("a pass interrupted by a reported wait resumes at the dialog it stopped on", async () => {
   const { built, cursor } = await caughtUp();
+  // The wait lands after the pass has something to hand back, which is what
+  // makes the batch it returns one a caller can resume from at all.
+  built.api.edit("-42", 10, "rewritten", parseCursor(cursor).edit_watermark + 60);
   built.api.floodAfter(2, 5);
 
   const partial = await built.connector.sync(cursor);
+  expect(ids(partial.events)).toEqual(["-42:10"]);
   const stopped = parseCursor(partial.cursor as string);
   expect(stopped.pass?.next_peer).toBe("-42");
 

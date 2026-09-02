@@ -83,6 +83,12 @@ Re-authenticating replaces that file in place and keeps the same source key,
 so checkpoints survive. Connecting with a session that belongs to a different
 account is refused rather than quietly re-pointed.
 
+Revoking ends the session at Telegram itself, and it is final for the
+connector that did it: the client closes and every later read, sync or
+reconnect on that instance is refused. A connector with nothing live to end
+refuses to revoke rather than report an access that never stopped. Removing
+the state file and marking the row are the host's part.
+
 ## What it does not do
 
 Deletions are invisible to it. Telegram publishes them on the update stream,
@@ -116,12 +122,12 @@ that comes back resumes instead of starting again. At the bound, the resume
 cursor may drop such a peer to stay within the same 5000, finished ones first.
 
 Waits are obeyed. When Telegram asks for a pause, a batch that had already
-read something ends early with a cursor describing exactly the events it
-returned. A pause that leaves nothing to resume from is reported to the caller
-as the wait it is, because an empty batch is how this connector says an account
-is drained, and a paused run must not be mistaken for a finished one. Either
-way health reports how many seconds are left, and no further request is made
-until the pause has lapsed.
+collected records ends early with a cursor describing exactly the events it
+returned. A pause that leaves nothing to hand back, or nothing a cursor can
+resume from, is reported to the caller as the wait it is: an empty batch is how
+this connector says an account is drained, and a paused run must not be
+mistaken for a finished one. Either way health reports how many seconds are
+left, and no further request is made until the pause has lapsed.
 
 Secret chats cannot be read. They are end-to-end encrypted per device, and
 the library this connector uses implements no part of that protocol: the
