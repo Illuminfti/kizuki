@@ -31,7 +31,8 @@ export interface ProposeArgs {
   kind: (typeof PROPOSE_KINDS)[number];
   target?: string | null;
   body: string;
-  frontmatter?: Record<string, FrontmatterValue>;
+  /** An array value is `string[]`: the vault writes no other array. */
+  frontmatter?: Record<string, string | number | boolean | string[]>;
   subjects?: string[];
   provenance: string[];
   confidence?: number;
@@ -61,21 +62,42 @@ function confidenceOf(value: unknown): number {
   return value;
 }
 
-function scalar(key: string, value: unknown): void {
-  if (typeof value === "string") {
-    if (Array.from(value).length > MAX_FRONTMATTER_STRING) {
-      throw refuse(`frontmatter.${key}`, "string value is too long");
+function frontmatterString(value: string): void {
+  if (Array.from(value).length > MAX_FRONTMATTER_STRING) {
+    throw refuse("frontmatter", "a string value is too long");
+  }
+}
+
+/**
+ * The vault serializer writes string arrays only, so a numeric or boolean
+ * entry could never reach canon. Refusing it here beats filing a proposal
+ * that the writer would later choke on.
+ */
+function frontmatterValue(value: unknown): void {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      if (typeof entry !== "string") {
+        throw refuse("frontmatter", "an array value must hold only strings");
+      }
+      frontmatterString(entry);
     }
+    return;
+  }
+  if (typeof value === "string") {
+    frontmatterString(value);
     return;
   }
   if (typeof value === "number") {
     if (!Number.isFinite(value)) {
-      throw refuse(`frontmatter.${key}`, "must be a finite number");
+      throw refuse("frontmatter", "a number value must be finite");
     }
     return;
   }
   if (typeof value !== "boolean") {
-    throw refuse(`frontmatter.${key}`, "must be a string, number or boolean");
+    throw refuse(
+      "frontmatter",
+      "a value must be a string, number, boolean or string array",
+    );
   }
 }
 
@@ -101,12 +123,7 @@ function validateFrontmatter(
         `${key} is set by promotion, not by a producer`,
       );
     }
-    const value = frontmatter[key];
-    if (Array.isArray(value)) {
-      for (const entry of value) scalar(key, entry);
-      continue;
-    }
-    scalar(key, value);
+    frontmatterValue(frontmatter[key]);
   }
 
   const type = frontmatter["type"];

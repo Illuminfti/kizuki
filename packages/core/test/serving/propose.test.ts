@@ -4,6 +4,7 @@ import { servePropose } from "../../src/serving/propose";
 import type { ProposeArgs } from "../../src/serving/propose";
 import { ServeError } from "../../src/serving/types";
 import { listProposals, setProposalStatus } from "../../src/staging/proposals";
+import { serializePage } from "../../src/vault/frontmatter";
 import { serveFixture } from "./helpers";
 import type { Fixture } from "./helpers";
 
@@ -119,6 +120,41 @@ describe("servePropose files a claim for the receipted writer", () => {
         }),
       ).code,
     ).toBe("invalid_arguments");
+  });
+
+  test("a frontmatter array the vault cannot write is refused", () => {
+    const live = newFixture();
+    const ctx = live.agent("reader-private");
+    const mixed = {
+      ...candidate(live, "A candidate with a mixed array."),
+      frontmatter: {
+        type: "fact",
+        "x-tags": [1, true] as unknown as string[],
+      },
+    };
+    expect(refusal(() => servePropose(ctx, mixed)).code).toBe(
+      "invalid_arguments",
+    );
+    expect(
+      listProposals(live.db, { status: "pending", kind: "claim" }),
+    ).toHaveLength(0);
+
+    const strings = {
+      ...candidate(live, "A candidate with a string array."),
+      frontmatter: { type: "fact", "x-tags": ["kettle", "log"] },
+    };
+    expect(servePropose(ctx, strings).data?.outcome).toBe("stored");
+    // The writer would have refused the mixed array, which is the point of
+    // refusing it here: a stored proposal has to be serializable.
+    expect(() =>
+      serializePage({
+        data: { "x-tags": ["kettle", "log"] },
+        body: "",
+      }),
+    ).not.toThrow();
+    expect(() =>
+      serializePage({ data: { "x-tags": [1, true] }, body: "" }),
+    ).toThrow(TypeError);
   });
 
   test("provenance must name live events this principal can read", () => {
