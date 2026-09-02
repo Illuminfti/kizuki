@@ -73,9 +73,9 @@ kizuki import import-whatsapp --vault VAULT --source EXPORT_DIR
 ```
 
 Each message becomes one `message` event, labeled `private` by the importer's
-own policy, never by you. Its subjects are
-the sender and the chat. The importer references media without opening or
-copying it: a file present beside the chat is recorded by name, type and size.
+own policy rather than by you. Its subjects are the sender and the chat. The
+importer references media without opening or copying it: a file present beside
+the chat is recorded by name, type and size.
 
 Known limits:
 
@@ -128,8 +128,8 @@ Unzip it and point the importer at the folder or at a single `.csv`.
 kizuki import import-pocket --vault VAULT --source EXPORT.csv
 ```
 
-Each row becomes one `bookmark` event, labeled `personal`, identified by the url
-it saved, with the tags and status kept as metadata.
+Each row becomes one `bookmark` event, labeled `personal`, identified by the
+url it saved, with the tags and status kept as metadata.
 
 Known limits:
 
