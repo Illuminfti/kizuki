@@ -156,10 +156,19 @@ export function splitWhatsAppMessages(
         `line ${start.line}: message exceeds ${MAX_RECORD_BYTES} bytes`,
       );
     }
+    // A sender becomes a subject and a display name, so it is a captured
+    // field like any other and carries the same bound.
+    const sender = start.rest.slice(0, cut).trim();
+    if (Buffer.byteLength(sender, "utf8") > MAX_RECORD_BYTES) {
+      throw new KizukiError(
+        "parse_error",
+        `line ${start.line}: sender exceeds ${MAX_RECORD_BYTES} bytes`,
+      );
+    }
     messages.push({
       line: start.line,
       local_timestamp: stamp,
-      sender: start.rest.slice(0, cut).trim(),
+      sender,
       text: body,
     });
   });

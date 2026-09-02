@@ -11,6 +11,7 @@ import {
   createPocketImportConnector,
   parsePocketCsv,
   pocketEvents,
+  readPocketRows,
 } from "../src/import-pocket";
 import type { PocketImportConfig } from "../src/import-pocket";
 
@@ -190,6 +191,30 @@ test("a url that already ends in a number cannot claim another record", () => {
   const ids = events.map((event) => event.source_record_id);
   expect(new Set(ids).size).toBe(3);
   expect(ids).toContain("1767312000:https://example.com/a#2");
+});
+
+test("the byte and row budgets are spent across the whole export", async () => {
+  await withTempRoot(async (root) => {
+    const first = path.join(root, "part_000000.csv");
+    const second = path.join(root, "part_000001.csv");
+    const body = (name: string, at: string): string =>
+      `${HEADER}\n${name},https://example.com/${name},${at},,unread\n`;
+    await writeFile(first, body("first", "1767225600"));
+    await writeFile(second, body("second", "1767312000"));
+    const size = body("first", "1767225600").length;
+
+    expect((await readPocketRows([first, second])).length).toBe(2);
+    const bytes = await rejected(() =>
+      readPocketRows([first, second], { maxBytes: size + 1 }),
+    );
+    expect(bytes.code).toBe("misconfigured");
+    expect(bytes.message).toContain("import limit");
+    const rows = await rejected(() =>
+      readPocketRows([first, second], { maxRows: 1 }),
+    );
+    expect(rows.code).toBe("parse_error");
+    expect(rows.message).toContain("export holds more than 1 rows");
+  });
 });
 
 test("a zip path is refused with an actionable message", async () => {

@@ -4,6 +4,7 @@ import { isPlainObject } from "@kizuki/core";
 import type { CaptureEventInput } from "@kizuki/core";
 import { KizukiError } from "../errors";
 import {
+  MAX_EXPORT_BYTES,
   MAX_RECORDS,
   MAX_RECORD_BYTES,
   compareStrings,
@@ -49,22 +50,39 @@ function misconfigured(detail: string): KizukiError {
   );
 }
 
-function stringOr(value: unknown, fallback: string): string {
-  return typeof value === "string" ? value : fallback;
+/**
+ * Every captured field is bounded on its own: an export is hostile input, and
+ * a title alone must not be able to spend the whole record budget. The
+ * position is named, never the value.
+ */
+function bounded(text: string, where: string): string {
+  if (Buffer.byteLength(text, "utf8") > MAX_RECORD_BYTES) {
+    throw new KizukiError(
+      "parse_error",
+      `${where}: exceeds ${MAX_RECORD_BYTES} bytes`,
+    );
+  }
+  return text;
 }
 
-function labelsOf(value: unknown): string[] {
+function stringOr(value: unknown, fallback: string, where: string): string {
+  return bounded(typeof value === "string" ? value : fallback, where);
+}
+
+function labelsOf(value: unknown, where: string): string[] {
   if (!Array.isArray(value)) return [];
   const labels: string[] = [];
-  for (const label of value) {
+  value.forEach((label, index) => {
+    const at = `${where}[${index}]`;
     if (typeof label === "string" && label.length > 0) {
-      labels.push(label);
-      continue;
+      labels.push(bounded(label, at));
+      return;
     }
     if (isPlainObject(label) && typeof label["name"] === "string") {
-      if (label["name"].length > 0) labels.push(label["name"]);
+      const name = label["name"];
+      if (name.length > 0) labels.push(bounded(name, `${at}.name`));
     }
-  }
+  });
   return labels;
 }
 
@@ -104,14 +122,14 @@ export function parseOmnivoreMetadata(
       throw new KizukiError("parse_error", `${at}: id and slug are required`);
     }
     items.push({
-      id,
-      slug,
-      title: stringOr(element["title"], ""),
-      description: stringOr(element["description"], ""),
-      author: stringOr(element["author"], ""),
-      url: stringOr(element["url"], ""),
-      state: stringOr(element["state"], ""),
-      labels: labelsOf(element["labels"]),
+      id: bounded(id, `${at}.id`),
+      slug: bounded(slug, `${at}.slug`),
+      title: stringOr(element["title"], "", `${at}.title`),
+      description: stringOr(element["description"], "", `${at}.description`),
+      author: stringOr(element["author"], "", `${at}.author`),
+      url: stringOr(element["url"], "", `${at}.url`),
+      state: stringOr(element["state"], "", `${at}.state`),
+      labels: labelsOf(element["labels"], `${at}.labels`),
       saved_at: isoToRfc3339(element["savedAt"], `${at}.savedAt`),
       published_at: optionalTimestamp(
         element["publishedAt"],
@@ -126,9 +144,11 @@ export async function omnivoreEvents(
   files: OmnivoreFiles,
   observed_at: string,
 ): Promise<CaptureEventInput[]> {
-  const items: OmnivoreItem[] = [];
+  const items: { item: OmnivoreItem; at: string }[] = [];
   for (const file of files.metadata) {
-    items.push(...parseOmnivoreMetadata(file.text, file.name));
+    parseOmnivoreMetadata(file.text, file.name).forEach((item, index) => {
+      items.push({ item, at: `${file.name} item ${index + 1}` });
+    });
   }
   if (items.length > MAX_RECORDS) {
     throw new KizukiError(
@@ -138,9 +158,17 @@ export async function omnivoreEvents(
   }
 
   const events: CaptureEventInput[] = [];
-  for (const item of items) {
+  for (const { item, at } of items) {
     const highlights = (await files.highlight(item.slug))?.trimEnd() ?? "";
     const content = await files.content(item.slug);
+    // Each field is bounded on its own, so the assembled record is bounded
+    // too — but a record is what the ledger stores, so it is checked as one.
+    const text = bounded(
+      [item.title, item.url, item.description, highlights]
+        .filter((part) => part.length > 0)
+        .join("\n\n"),
+      at,
+    );
     events.push({
       schema: "kizuki.event/v1",
       connector_id: OMNIVORE_IMPORT_CONNECTOR_ID,
@@ -153,9 +181,7 @@ export async function omnivoreEvents(
       kind: "bookmark",
       occurred_at: item.saved_at,
       observed_at,
-      text: [item.title, item.url, item.description, highlights]
-        .filter((part) => part.length > 0)
-        .join("\n\n"),
+      text,
       subjects: [{ subject_id: "omnivore:self", role: "from" }],
       sensitivity_hint: "personal",
       deleted: false,
@@ -184,7 +210,10 @@ export async function omnivoreEvents(
   return events;
 }
 
-export async function fsOmnivoreFiles(dir: string): Promise<OmnivoreFiles> {
+export async function fsOmnivoreFiles(
+  dir: string,
+  maxBytes = MAX_EXPORT_BYTES,
+): Promise<OmnivoreFiles> {
   if (dir.toLowerCase().endsWith(".zip")) {
     throw misconfigured(`unzip the export first: ${dir}`);
   }
@@ -217,14 +246,17 @@ export async function fsOmnivoreFiles(dir: string): Promise<OmnivoreFiles> {
   const contentDir = realDirectory("content");
 
   const metadata = [];
+  // One budget for the whole export: a per-file limit would let a folder of
+  // maximal metadata files spend it once per file.
+  let bytesLeft = maxBytes;
   for (const name of names) {
-    metadata.push({
-      name,
-      text: await readBoundedUtf8(
-        join(dir, name),
-        OMNIVORE_IMPORT_CONNECTOR_ID,
-      ),
-    });
+    const text = await readBoundedUtf8(
+      join(dir, name),
+      OMNIVORE_IMPORT_CONNECTOR_ID,
+      bytesLeft,
+    );
+    bytesLeft -= Buffer.byteLength(text, "utf8");
+    metadata.push({ name, text });
   }
   return {
     metadata,

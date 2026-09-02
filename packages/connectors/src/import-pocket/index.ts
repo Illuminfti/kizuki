@@ -13,6 +13,8 @@ import type {
 import { KizukiError } from "../errors";
 import {
   FIXTURE_OBSERVED_AT,
+  MAX_EXPORT_BYTES,
+  MAX_RECORDS,
   compareStrings,
   errorMessage,
   readBoundedUtf8,
@@ -21,6 +23,7 @@ import {
   unixSecondsToIso,
 } from "../util";
 import { parseCsv } from "./csv";
+import type { CsvOptions } from "./csv";
 
 export { parseCsv } from "./csv";
 export type { CsvOptions } from "./csv";
@@ -95,7 +98,11 @@ function notPocketExport(where: string, cause?: unknown): KizukiError {
   );
 }
 
-export function parsePocketCsv(text: string, where: string): PocketRow[] {
+export function parsePocketCsv(
+  text: string,
+  where: string,
+  opts: CsvOptions = {},
+): PocketRow[] {
   const firstLine = text.split("\n", 1)[0] ?? "";
   let columns: string[];
   try {
@@ -109,7 +116,7 @@ export function parsePocketCsv(text: string, where: string): PocketRow[] {
     throw notPocketExport(where);
   }
 
-  const rows = parseCsv(text, where);
+  const rows = parseCsv(text, where, opts);
   const cellOf = (cells: string[], name: string): string => {
     const at = columns.indexOf(name);
     return at === -1 ? "" : (cells[at] ?? "");
@@ -188,6 +195,45 @@ export function pocketEvents(
       },
     };
   });
+}
+
+export interface PocketReadLimits {
+  maxBytes?: number;
+  maxRows?: number;
+}
+
+/**
+ * Reads every CSV of one export under a single budget. A per-file limit would
+ * let a directory of a hundred maximal files spend a hundred times the bound,
+ * so the bytes read and the rows kept are counted across the whole export.
+ */
+export async function readPocketRows(
+  sources: readonly string[],
+  limits: PocketReadLimits = {},
+): Promise<PocketRow[]> {
+  let bytesLeft = limits.maxBytes ?? MAX_EXPORT_BYTES;
+  const maxRows = limits.maxRows ?? MAX_RECORDS;
+  const rows: PocketRow[] = [];
+  for (const source of sources) {
+    const text = await readBoundedUtf8(
+      source,
+      POCKET_IMPORT_CONNECTOR_ID,
+      bytesLeft,
+    );
+    bytesLeft -= Buffer.byteLength(text, "utf8");
+    // The header counts as a row to the reader, so one file may hold every
+    // record the export is allowed plus its own header line.
+    rows.push(
+      ...parsePocketCsv(text, basename(source), { maxRows: maxRows + 1 }),
+    );
+    if (rows.length > maxRows) {
+      throw new KizukiError(
+        "parse_error",
+        `export holds more than ${maxRows} rows`,
+      );
+    }
+  }
+  return rows;
 }
 
 async function resolveSources(path: string): Promise<string[]> {
@@ -282,12 +328,7 @@ export class PocketImportConnector implements Connector {
   }
 
   private async read(): Promise<CaptureEventInput[]> {
-    const sources = await resolveSources(this.path);
-    const rows: PocketRow[] = [];
-    for (const source of sources) {
-      const text = await readBoundedUtf8(source, POCKET_IMPORT_CONNECTOR_ID);
-      rows.push(...parsePocketCsv(text, basename(source)));
-    }
+    const rows = await readPocketRows(await resolveSources(this.path));
     return pocketEvents(rows, new Date().toISOString());
   }
 }

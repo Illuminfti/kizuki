@@ -202,6 +202,65 @@ test("a malformed item names its file and index, never its title", () => {
   }
 });
 
+test("an oversize field names its position and never its value", () => {
+  const huge = "h".repeat(MAX_RECORD_BYTES + 1);
+  for (const [field, item] of [
+    ["title", { id: "x", slug: "x", title: huge }],
+    ["description", { id: "x", slug: "x", description: huge }],
+    ["url", { id: "x", slug: "x", url: huge }],
+    ["labels", { id: "x", slug: "x", labels: [huge] }],
+  ] as const) {
+    const error = thrown(() =>
+      parseOmnivoreMetadata(
+        JSON.stringify([{ ...item, savedAt: "2026-01-01T09:00:00Z" }]),
+        "metadata_0_to_9.json",
+      ),
+    );
+    expect(error.code).toBe("parse_error");
+    expect(error.message).toContain(`metadata_0_to_9.json[0].${field}`);
+    expect(error.message).not.toContain(huge);
+  }
+});
+
+test("an assembled record beyond the bound names its item", async () => {
+  const half = "h".repeat(MAX_RECORD_BYTES - 16);
+  const error = await rejected(() =>
+    omnivoreEvents(
+      mapOmnivoreFiles(
+        metadataFile([
+          {
+            id: "x",
+            slug: "x",
+            title: half,
+            description: half,
+            savedAt: "2026-01-01T09:00:00Z",
+          },
+        ]),
+      ),
+      FIXTURE_OBSERVED_AT,
+    ),
+  );
+  expect(error.code).toBe("parse_error");
+  expect(error.message).toContain("metadata_0_to_9.json item 1");
+});
+
+test("the byte budget is spent across the whole export, not per file", async () => {
+  await withTempRoot(async (root) => {
+    const items = (id: string): unknown[] => [
+      { id, slug: id, savedAt: "2026-01-01T09:00:00Z" },
+    ];
+    await writeExport(root, {
+      "metadata_0_to_9.json": JSON.stringify(items("one")),
+      "metadata_10_to_19.json": JSON.stringify(items("two")),
+    });
+    const first = JSON.stringify(items("one")).length;
+    expect((await fsOmnivoreFiles(root, first * 2)).metadata.length).toBe(2);
+    const error = await rejected(() => fsOmnivoreFiles(root, first + 1));
+    expect(error.code).toBe("misconfigured");
+    expect(error.message).toContain("import limit");
+  });
+});
+
 test("a slug that is not a bare name reaches no file at all", async () => {
   await withTempRoot(async (root) => {
     const canary = "canary-quartz-heron";

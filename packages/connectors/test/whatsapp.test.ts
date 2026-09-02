@@ -343,6 +343,16 @@ test("a message beyond the per-record bound names its line", async () => {
   expect(error.message).toContain("line 1");
 });
 
+test("a sender name beyond the per-record bound names its line", async () => {
+  const huge = "S".repeat(MAX_RECORD_BYTES + 1);
+  const error = await rejected(() =>
+    parse(`4/1/26, 09:00 - ${huge}: hi`, { date_order: "dmy" }),
+  );
+  expect(error.code).toBe("parse_error");
+  expect(error.message).toContain("line 1");
+  expect(error.message).toContain("sender");
+});
+
 test("no refusal quotes a sender name or captured text", async () => {
   const canary = "canary-quartz-heron";
   const messages: string[] = [];
