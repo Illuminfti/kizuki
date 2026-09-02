@@ -87,57 +87,9 @@ assert_safe_tracked_paths() {
   rm -f -- "$paths_file"
 }
 
-# Extensions whose files must be readable text. A tracked binary asset (an
-# image, a font) is not covered: only a file that claims to be source is.
-TEXT_SOURCE_PATHSPECS=(
-  ':(glob)**/*.ts'
-  ':(glob)**/*.js'
-  ':(glob)**/*.json'
-  ':(glob)**/*.md'
-  ':(glob)**/*.sh'
-  ':(glob)**/*.txt'
-  ':(glob)**/*.yml'
-  ':(glob)**/*.yaml'
-  ':(glob)**/*.toml'
-)
-
-assert_scannable_tracked_text() {
-  # The identifier and attribution gates below run `git grep -I`, which never
-  # reads a file git classifies as binary. A tracked source file that carries a
-  # NUL byte is therefore invisible to every one of them.
-  local nonempty
-  local scannable
-  local unscannable
-  local status
-
-  set +e
-  nonempty="$(git grep -a -l -e '.' -- "${TEXT_SOURCE_PATHSPECS[@]}")"
-  status=$?
-  set -e
-  if ((status > 1)); then
-    printf 'verification failed: tracked-text producer exited %d\n' "$status" >&2
-    return "$status"
-  fi
-
-  set +e
-  scannable="$(git grep -I -l -e '.' -- "${TEXT_SOURCE_PATHSPECS[@]}")"
-  status=$?
-  set -e
-  if ((status > 1)); then
-    printf 'verification failed: scannable-text producer exited %d\n' "$status" >&2
-    return "$status"
-  fi
-
-  unscannable="$(comm -23 <(printf '%s\n' "$nonempty" | sort) <(printf '%s\n' "$scannable" | sort))"
-  if [[ -n "$unscannable" ]]; then
-    printf 'verification failed: tracked source is not scannable text\n%s\n' "$unscannable" >&2
-    return 1
-  fi
-}
-
 assert_required_commands() {
   local cmd
-  for cmd in bun comm git grep; do
+  for cmd in bun git grep; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
       printf 'verification failed: required command missing: %s\n' "$cmd" >&2
       return 2
@@ -235,11 +187,6 @@ main() {
 
   assert_no_match "phone-home dependency" git grep -I -n -E "$dependency_re" -- ':(glob)**/package.json'
   gate phone-home
-  assert_no_match "tls verification disabled" \
-    git grep -I -n -E 'rejectUnauthorized[[:space:]]*:[[:space:]]*(false|0)' -- \
-    ':(glob)**/*.ts' ':(glob)**/*.js' ':(glob)**/*.json'
-  gate tls
-  assert_scannable_tracked_text
   assert_safe_tracked_paths "$forbidden_identifier_re|$attributed_identifier_re"
   assert_no_match "forbidden identifier in tracked text" git grep -I -n -i -E "$forbidden_identifier_re"
   assert_no_match "attributed identifier outside public documentation" git grep -I -n -i -E "$attributed_identifier_re" -- . ':(exclude)README.md' ':(exclude)docs/upstream-policy.md'

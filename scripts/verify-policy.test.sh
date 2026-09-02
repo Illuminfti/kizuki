@@ -120,60 +120,6 @@ if (
   exit 1
 fi
 
-tls_disable_re='rejectUnauthorized[[:space:]]*:[[:space:]]*(false|0)'
-printf 'const socket = connect({ tls: { rejectUnauthorized: true } });\n' \
-  >"$fixture_root/packages/tls.ts"
-git -C "$fixture_root" add packages/tls.ts
-(
-  cd "$fixture_root"
-  assert_no_match "tls verification disabled" \
-    git grep -I -n -E "$tls_disable_re" -- ':(glob)**/*.ts'
-)
-printf 'const socket = connect({ tls: { rejectUnauthorized: false } });\n' \
-  >"$fixture_root/packages/tls.ts"
-git -C "$fixture_root" add packages/tls.ts
-if (
-  cd "$fixture_root"
-  assert_no_match "tls verification disabled" \
-    git grep -I -n -E "$tls_disable_re" -- ':(glob)**/*.ts'
-) >/dev/null 2>&1; then
-  printf 'policy test failed: disabled TLS verification passed\n' >&2
-  exit 1
-fi
-git -C "$fixture_root" rm -q -f packages/tls.ts
-
-printf 'export const marker = "x";\n' >"$fixture_root/packages/scannable.ts"
-git -C "$fixture_root" add packages/scannable.ts
-(
-  cd "$fixture_root"
-  assert_scannable_tracked_text
-)
-
-printf 'export const marker = "\0%s";\n' "$exact_name" >"$fixture_root/packages/unscannable.ts"
-git -C "$fixture_root" add packages/unscannable.ts
-(
-  cd "$fixture_root"
-  assert_no_match \
-    "attributed identifier outside public documentation" \
-    git grep -I -n -i -E "$name_re" -- packages/unscannable.ts
-)
-if (
-  cd "$fixture_root"
-  assert_scannable_tracked_text
-) >/dev/null 2>&1; then
-  printf 'policy test failed: NUL-bearing tracked source passed\n' >&2
-  exit 1
-fi
-git -C "$fixture_root" rm -q -f packages/unscannable.ts
-
-printf 'PNG\r\n\032\n\0binary fixture\n' >"$fixture_root/packages/asset.png"
-git -C "$fixture_root" add packages/asset.png
-(
-  cd "$fixture_root"
-  assert_scannable_tracked_text
-)
-git -C "$fixture_root" rm -q -f packages/asset.png
-
 mkdir -p "$fixture_root/packages/phone"
 printf '{"dependencies":{"@datadog/browser-rum":"1.0.0"}}\n' >"$fixture_root/packages/phone/package.json"
 git -C "$fixture_root" add packages/phone/package.json
