@@ -187,17 +187,15 @@ function servedItems(canon: CanonChunk[], quoted: QuotedChunk[]): AuditItem[] {
 
 /**
  * The single enforcement point below the prompt layer: current authority,
- * then tool allowlist, then rate limit, then the grant-filtered read, then
- * the audit row. Every path out of here — served, refused or failed — leaves
- * a row behind.
+ * then tool allowlist, then rate limit. Every path out of here — served,
+ * refused or failed — leaves a row behind.
  */
-export function gate<T>(
+function enter(
   ctx: ServeContext,
   tool: Tool,
   args: Record<string, unknown>,
-  run: (call: ServeCall) => Served<T>,
-): Envelope<T> {
-  const at = new Date().toISOString();
+  at: string,
+): ServeContext {
   // Only a refusal audits the raw bag; a served call audits it with the ids
   // the call created merged in, so the shaping happens once either way.
   const bag = (): Record<string, unknown> => boundedArguments(args);
@@ -228,27 +226,41 @@ export function gate<T>(
   }
 
   limited(live);
+  return live;
+}
 
-  let served: Served<T>;
-  try {
-    served = run({ ctx: live, at });
-  } catch (error) {
-    if (error instanceof ServeError) {
-      auditRefusal(live, tool, bag(), error.code, at);
-      throw error;
-    }
-    if (error instanceof RangeError) {
-      auditRefusal(live, tool, bag(), "invalid_arguments", at);
-      throw new ServeError(
-        "invalid_arguments",
-        "invalid arguments: request out of range",
-        { cause: error },
-      );
-    }
-    auditRefusal(live, tool, bag(), "error", at);
-    throw new ServeError("error", "serving failed", { cause: error });
+/** Whatever `run` threw becomes an audited refusal with a stable message. */
+function failed(
+  live: ServeContext,
+  tool: Tool,
+  args: Record<string, unknown>,
+  at: string,
+  error: unknown,
+): never {
+  const bag = boundedArguments(args);
+  if (error instanceof ServeError) {
+    auditRefusal(live, tool, bag, error.code, at);
+    throw error;
   }
+  if (error instanceof RangeError) {
+    auditRefusal(live, tool, bag, "invalid_arguments", at);
+    throw new ServeError(
+      "invalid_arguments",
+      "invalid arguments: request out of range",
+      { cause: error },
+    );
+  }
+  auditRefusal(live, tool, bag, "error", at);
+  throw new ServeError("error", "serving failed", { cause: error });
+}
 
+function envelopeOf<T>(
+  live: ServeContext,
+  tool: Tool,
+  args: Record<string, unknown>,
+  at: string,
+  served: Served<T>,
+): Envelope<T> {
   recordAudit(
     live.db,
     live.principal,
@@ -270,4 +282,43 @@ export function gate<T>(
     denied: collapse(served.withheld),
     ...(data === undefined ? {} : { data }),
   };
+}
+
+export function gate<T>(
+  ctx: ServeContext,
+  tool: Tool,
+  args: Record<string, unknown>,
+  run: (call: ServeCall) => Served<T>,
+): Envelope<T> {
+  const at = new Date().toISOString();
+  const live = enter(ctx, tool, args, at);
+  let served: Served<T>;
+  try {
+    served = run({ ctx: live, at });
+  } catch (error) {
+    failed(live, tool, args, at, error);
+  }
+  return envelopeOf(live, tool, args, at, served);
+}
+
+/**
+ * The same gate for a tool whose work is asynchronous. The claim store is
+ * async because a retrieval port may be bound to it, so the two write tools
+ * come through here; nothing else about the order changes.
+ */
+export async function gateAsync<T>(
+  ctx: ServeContext,
+  tool: Tool,
+  args: Record<string, unknown>,
+  run: (call: ServeCall) => Promise<Served<T>>,
+): Promise<Envelope<T>> {
+  const at = new Date().toISOString();
+  const live = enter(ctx, tool, args, at);
+  let served: Served<T>;
+  try {
+    served = await run({ ctx: live, at });
+  } catch (error) {
+    failed(live, tool, args, at, error);
+  }
+  return envelopeOf(live, tool, args, at, served);
 }

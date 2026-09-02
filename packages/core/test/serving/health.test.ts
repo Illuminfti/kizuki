@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { OWNER, initAgents } from "../../src/agents";
 import { openLedger } from "../../src/ledger/db";
 import { serveHealth } from "../../src/serving/health";
+import { servePropose } from "../../src/serving/propose";
 import { serveFixture } from "./helpers";
 import type { Fixture } from "./helpers";
 
@@ -32,10 +33,23 @@ describe("serveHealth", () => {
       held: 1,
     });
     expect(data?.events).toBe(6);
-    expect(data?.pending_proposals).toBe(1);
+    // Nothing has filed one yet: the compatibility rows the fixture leaves
+    // behind are not live claims.
+    expect(data?.live_claims).toBe(0);
     expect(data?.derived.search).not.toBeNull();
     expect(data?.derived.graph).not.toBeNull();
     expect(data?.agents).toEqual({ total: 9, revoked: 1 });
+  });
+
+  test("a filed claim shows up as one the writer can act on", async () => {
+    await servePropose(fixture.agent("reader-private"), {
+      kind: "claim",
+      target: "facts:health-candidate",
+      body: "The kettle counts as one claim.",
+      subjects: ["person:ada"],
+      provenance: [fixture.events["public"] as string],
+    });
+    expect(serveHealth(fixture.owner()).data?.live_claims).toBe(1);
   });
 
   test("an agent sees its own grant and its own servable count", () => {
@@ -70,7 +84,7 @@ describe("serveHealth", () => {
     expect(json).not.toContain("/");
   });
 
-  test("a database without staging reports no pending proposals", () => {
+  test("a database without a claim store reports no claims", () => {
     const db = openLedger(":memory:");
     initAgents(db);
     const data = serveHealth({
@@ -78,7 +92,7 @@ describe("serveHealth", () => {
       vaultPath: fixture.vaultPath,
       principal: OWNER,
     }).data;
-    expect(data?.pending_proposals).toBe(0);
+    expect(data?.live_claims).toBe(0);
     expect(data?.derived).toEqual({ search: null, graph: null });
     expect(data?.connections).toEqual([]);
     db.close();

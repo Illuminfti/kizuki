@@ -1,10 +1,11 @@
 import type { Grant } from "../agents";
-import { fileProposal } from "../staging/proposals";
-import type { FrontmatterValue } from "../staging/proposals";
+import { isRegisteredPredicate } from "../claims/predicates";
+import { insertClaim } from "../claims/store";
+import type { ClaimPolarity, FrontmatterValue } from "../contracts/proposal";
 import { isPlainObject } from "../util/validate";
 import { PAGE_TYPES } from "../vault/schema";
-import { enumOf, idList, text } from "./arguments";
-import { auditArguments, gate } from "./gate";
+import { enumOf, identifier, idList, text } from "./arguments";
+import { auditArguments, gateAsync } from "./gate";
 import type { Served } from "./gate";
 import { eventDecision, readEventFacts } from "./ledger";
 import { ServeError } from "./types";
@@ -19,12 +20,19 @@ export const PROPOSE_KINDS = [
   "deletion",
 ] as const;
 
-const RESERVED_KEYS = ["id", "status", "sensitivity", "sources"];
+/**
+ * The writer sets these. `taint` in particular is the label that decides
+ * whether the body may leave a blockquote, so a producer that could set it
+ * would be labelling its own untrusted text as produced prose.
+ */
+const RESERVED_KEYS = ["id", "status", "sensitivity", "sources", "taint"];
 const FRONTMATTER_KEY = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 const MAX_BODY_CHARS = 65_536;
 const MAX_TARGET_CHARS = 256;
 const MAX_PROVENANCE = 64;
 const MAX_SUBJECTS = 16;
+const MAX_OBJECT_CHARS = 1_024;
+export const CLAIM_POLARITIES = ["positive", "negative"] as const;
 const MAX_FRONTMATTER_KEYS = 32;
 const MAX_FRONTMATTER_STRING = 4_096;
 const MAX_FRONTMATTER_ITEMS = 32;
@@ -41,13 +49,27 @@ export interface ProposeArgs {
   /** An array value is `string[]`: the vault writes no other array. */
   frontmatter?: Record<string, string | number | boolean | string[]>;
   subjects?: string[];
+  /** The claim's own subject; defaults to the first of `subjects`. */
+  subject?: string;
+  /** A registered predicate. With a subject it forms the conflict key. */
+  predicate?: string;
+  object?: string;
+  polarity?: ClaimPolarity;
   provenance: string[];
   confidence?: number;
 }
 
-export type ProposeData =
-  | { outcome: "stored" | "duplicate"; proposal_id: string }
-  | { outcome: "suppressed" };
+export interface ProposeData {
+  /**
+   * `stored` is live, `duplicate` is an idempotent refile, `skipped` lost to
+   * a claim of higher authority, `contested` sits beside one of equal
+   * standing. None of them waits for a person.
+   */
+  outcome: "stored" | "duplicate" | "skipped" | "contested";
+  claim_id: string;
+  /** Claims this one retired, by id. Empty for every other outcome. */
+  superseded: string[];
+}
 
 function refuse(field: string, rule: string): ServeError {
   return new ServeError(
@@ -171,6 +193,44 @@ function validateFrontmatter(
 }
 
 /**
+ * The claim's subject is the first half of its conflict key, so a scoped
+ * grant has to bound it exactly as it bounds `subjects`.
+ */
+function subjectOf(
+  grant: Grant,
+  requestedSubject: string | undefined,
+  subjects: string[] | undefined,
+): string | undefined {
+  if (requestedSubject === undefined) return subjects?.[0];
+  const subject = identifier("subject", requestedSubject);
+  if (grant.subjects !== null && !grant.subjects.includes(subject)) {
+    throw new ServeError("subject_out_of_scope", "subject outside the grant");
+  }
+  return subject;
+}
+
+/**
+ * A predicate outside the registry would reach the claim store as an
+ * engine failure; refusing it here keeps it a caller error. Without a
+ * subject there is no conflict key, so a claim that asks for one and gets
+ * none would be filed as something it is not.
+ */
+function predicateOf(
+  requested: string | undefined,
+  subject: string | undefined,
+): string | undefined {
+  if (requested === undefined) return undefined;
+  const predicate = identifier("predicate", requested);
+  if (!isRegisteredPredicate(predicate)) {
+    throw refuse("predicate", "must be a registered predicate");
+  }
+  if (subject === undefined) {
+    throw refuse("predicate", "needs a subject to key the claim");
+  }
+  return predicate;
+}
+
+/**
  * An agent cannot cite what it cannot read: every provenance id has to be a
  * live event this principal is allowed to quote, so a proposal can never
  * launder a withheld record into the claim store. The offending id stays out
@@ -193,11 +253,15 @@ function validateProvenance(ctx: ServeContext, provenance: string[]): void {
   }
 }
 
-export function servePropose(
+export async function servePropose(
   ctx: ServeContext,
   args: ProposeArgs,
-): Envelope<ProposeData> {
-  return gate(ctx, "propose", auditArguments(args), ({ ctx }): Served<ProposeData> => {
+): Promise<Envelope<ProposeData>> {
+  return gateAsync(
+    ctx,
+    "propose",
+    auditArguments(args),
+    async ({ ctx }): Promise<Served<ProposeData>> => {
     const principal = ctx.principal;
     // A proposal has to carry a distinct identity in `producer`: agents
     // propose claims, and the owner speaks as the owner elsewhere.
@@ -245,37 +309,56 @@ export function servePropose(
       }
     }
     const confidence = confidenceOf(args.confidence);
+    const subject = subjectOf(grant, args.subject, requested);
+    const predicate = predicateOf(args.predicate, subject);
 
     validateProvenance(ctx, provenance);
 
-    const filed = fileProposal(ctx.db, {
-      kind,
-      target,
-      body,
-      frontmatter,
-      provenance,
-      subjects: requested ?? [],
-      producer: `agent:${principal.agent.name}`,
-      confidence,
-    });
+    const filed = await insertClaim(
+      { db: ctx.db },
+      {
+        kind,
+        target,
+        body,
+        frontmatter,
+        provenance,
+        subjects: requested ?? [],
+        producer: `agent:${principal.agent.name}`,
+        confidence,
+        intent: "propose",
+        // An agent's body is derived from captured records and is never
+        // trusted as produced prose: the writer has to keep it quoted.
+        taint: "quoted",
+        ...(subject === undefined ? {} : { subject }),
+        ...(predicate === undefined ? {} : { predicate }),
+        ...(args.object === undefined
+          ? {}
+          : { object: text("object", args.object, MAX_OBJECT_CHARS) }),
+        ...(args.polarity === undefined
+          ? {}
+          : {
+              polarity: enumOf("polarity", args.polarity, CLAIM_POLARITIES),
+            }),
+      },
+    );
 
-    if (filed.outcome === "suppressed") {
-      return {
-        canon: [],
-        quoted: [],
-        withheld: [],
-        data: { outcome: "suppressed" },
-      };
-    }
+    const claim =
+      filed.outcome === "contested" ? filed.incoming : filed.claim;
+    const data: ProposeData = {
+      outcome: filed.outcome,
+      claim_id: claim.claim_id,
+      superseded:
+        filed.outcome === "stored"
+          ? filed.superseded.map((entry) => entry.claim_id)
+          : [],
+    };
     return {
       canon: [],
       quoted: [],
       withheld: [],
-      data: {
-        outcome: filed.outcome,
-        proposal_id: filed.proposal.proposal_id,
-      },
-      audit_ids: { proposal_ids: [filed.proposal.proposal_id] },
+      data,
+      audit_ids: { claim_ids: [claim.claim_id] },
     };
-  });
+  },
+  );
 }

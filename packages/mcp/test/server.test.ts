@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { TOOLS, listAudit, revokeAgent, setGrant } from "@kizuki/core";
 import type { ServeContext } from "@kizuki/core";
-import { listProposals } from "@kizuki/core/staging";
+import { listClaims } from "@kizuki/core";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer } from "../src/server";
@@ -120,7 +120,7 @@ describe("the stdio MCP server over a real client", () => {
     expect(envelopeOf(records)["canon"]).toEqual([]);
   });
 
-  test("propose files a pending candidate stamped with the agent", async () => {
+  test("propose files a live claim stamped with the agent", async () => {
     const running = live();
     const client = await connect(running.agent("reader-private"));
     const result = await call(client, "propose", {
@@ -130,9 +130,12 @@ describe("the stdio MCP server over a real client", () => {
       provenance: [running.eventId],
     });
     expect(result.isError).toBeUndefined();
-    const staged = listProposals(running.db, { status: "pending" });
-    expect(staged).toHaveLength(1);
-    expect(staged[0]?.producer).toBe("agent:reader-private");
+    const filed = listClaims(running.db, { status: "live" });
+    expect(filed).toHaveLength(1);
+    expect(filed[0]?.producer).toBe("agent:reader-private");
+    expect(
+      (envelopeOf(result)["data"] as { claim_id?: string }).claim_id,
+    ).toBe(filed[0]?.claim_id);
   });
 
   test("the owner cannot propose", async () => {

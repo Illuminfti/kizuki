@@ -73,35 +73,53 @@ type ToolResult = {
   isError?: boolean;
 };
 
+function served(envelope: Envelope<unknown>): ToolResult {
+  return {
+    content: [{ type: "text", text: JSON.stringify(envelope) }],
+    structuredContent: envelope,
+  };
+}
+
 /**
  * A refusal is a tool result, not a protocol error: the SDK skips output
  * validation for `isError`, and the caller still needs the machine-readable
  * code. `ServeError.cause` never crosses this line.
  */
+function refused(error: unknown): ToolResult {
+  const payload =
+    error instanceof ServeError
+      ? {
+          error: error.code,
+          message: error.message,
+          retry_after_seconds: error.retry_after_seconds,
+        }
+      : {
+          error: "error",
+          message: "serving failed",
+          retry_after_seconds: null,
+        };
+  return {
+    content: [{ type: "text", text: JSON.stringify(payload) }],
+    isError: true,
+  };
+}
+
 function respond(run: () => Envelope<unknown>): ToolResult {
   try {
-    const envelope = run();
-    return {
-      content: [{ type: "text", text: JSON.stringify(envelope) }],
-      structuredContent: envelope,
-    };
+    return served(run());
   } catch (error) {
-    const payload =
-      error instanceof ServeError
-        ? {
-            error: error.code,
-            message: error.message,
-            retry_after_seconds: error.retry_after_seconds,
-          }
-        : {
-            error: "error",
-            message: "serving failed",
-            retry_after_seconds: null,
-          };
-    return {
-      content: [{ type: "text", text: JSON.stringify(payload) }],
-      isError: true,
-    };
+    return refused(error);
+  }
+}
+
+/** The write tools reach an async claim store; the contract is unchanged. */
+async function respondAsync(
+  run: () => Promise<Envelope<unknown>>,
+): Promise<ToolResult> {
+  try {
+    return served(await run());
+  } catch (error) {
+    return refused(error);
   }
 }
 
@@ -204,7 +222,7 @@ export function createServer(ctx: ServeContext): McpServer {
       outputSchema: ENVELOPE_SHAPE,
       annotations: WRITE,
     },
-    (args) => respond(() => servePropose(ctx, args as ProposeArgs)),
+    async (args) => respondAsync(() => servePropose(ctx, args as ProposeArgs)),
   );
 
   return server;

@@ -24,7 +24,11 @@ export interface HealthData {
     held: number;
   };
   events: number;
-  pending_proposals: number;
+  /**
+   * Claims the writer can act on. There is no queue and no `pending`: a
+   * filed claim is live until something of higher authority retires it.
+   */
+  live_claims: number;
   derived: { search: string | null; graph: string | null };
   connections: {
     connector_id: string;
@@ -43,12 +47,12 @@ export interface HealthData {
   agents: { total: number; revoked: number };
 }
 
-function pendingProposals(ctx: ServeContext): number {
-  if (!tableExists(ctx.db, "proposals")) return 0;
+function liveClaims(ctx: ServeContext): number {
+  if (!tableExists(ctx.db, "claims")) return 0;
   return (
     ctx.db
       .query<{ count: number }, []>(
-        "SELECT count(*) AS count FROM proposals WHERE status = 'pending'",
+        "SELECT count(*) AS count FROM claims WHERE status = 'live'",
       )
       .get()?.count ?? 0
   );
@@ -120,7 +124,7 @@ export function serveHealth(ctx: ServeContext): Envelope<HealthData> {
               .length,
           },
           events: count(ctx.db),
-          pending_proposals: pendingProposals(ctx),
+          live_claims: liveClaims(ctx),
           derived: {
             search: readDerivedMeta(ctx.db, "search")?.rebuilt_at ?? null,
             graph: readDerivedMeta(ctx.db, "graph")?.rebuilt_at ?? null,
