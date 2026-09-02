@@ -191,6 +191,30 @@ describe("non-interactive state rewrite", () => {
     db.close();
   });
 
+  test("an interactive re-sign-in still reconnects a disconnected source", async () => {
+    const directory = temporary();
+    const { db, store, connection } = await enrolled(directory, "first-envelope");
+    disconnect(db, connection.connector_id, connection.source_key);
+    const dropped = listConnections(db, { includeDisconnected: true })[0];
+
+    const replaced = await store.replace(
+      db,
+      dropped ?? connection,
+      connector(async (_io, state) => {
+        await state.write(new TextEncoder().encode("second-envelope"));
+        return { display: "ada" };
+      }),
+      io,
+    );
+
+    expect(replaced.disconnected_at).toBeNull();
+    expect(listConnections(db)).toHaveLength(1);
+    expect(new TextDecoder().decode(store.read(replaced) ?? new Uint8Array())).toBe(
+      "second-envelope",
+    );
+    db.close();
+  });
+
   test("a persister built before a disconnect cannot resurrect the source", async () => {
     const directory = temporary();
     const { db, store, connection } = await enrolled(directory, "first-envelope");
