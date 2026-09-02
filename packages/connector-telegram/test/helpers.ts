@@ -101,7 +101,7 @@ export async function connected(options: Parameters<typeof harness>[0] = {}): Pr
   return built;
 }
 
-/** Repeats one mode until the cursor stops moving, exactly as the runner does. */
+/** Repeats one mode until the batch comes back empty, exactly as the runner does. */
 export async function drain(
   connector: TelegramConnector,
   mode: "backfill" | "sync",
@@ -119,7 +119,8 @@ export async function drain(
     events.push(...batch.events);
     if (batch.cursor === null) throw new Error("the walk dropped its cursor");
     current = batch.cursor;
-    if (current === before) return { events, cursor: current, batches };
+    if (batch.events.length === 0) return { events, cursor: current, batches };
+    if (current === before) throw new Error("the walk made no progress");
     if (batches > 100) throw new Error("the walk did not settle");
   }
 }

@@ -170,7 +170,8 @@ export async function walk(
     if (mode === "backfill" && dialogCursor.exhausted) continue;
     const dialog = byPeer.get(peer);
     // Absent from this listing is not the same as read to the end. Leaving the
-    // entry alone keeps the backfill honestly unfinished, and health names it.
+    // entry alone keeps the backfill honestly unfinished, and lets a chat that
+    // comes back to the listing resume rather than start again.
     if (dialog === undefined) continue;
     let outcome: DialogOutcome;
     try {
