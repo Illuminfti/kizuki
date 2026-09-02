@@ -128,7 +128,7 @@ function tlsFailure(detail: string): KizukiError {
  * The single socket in this package. Bun reports a rejected certificate
  * through `authorizationError` while still calling back with `success` and
  * `socket.authorized` true, so the gate below — not the runtime — decides
- * whether a byte is ever written. `rejectUnauthorized: false` appears nowhere.
+ * whether a byte is ever written. Nothing in this tree turns verification off.
  */
 export const dialTls: ImapDialer = async (host, port, opts) => {
   const conn = new QueueConn();

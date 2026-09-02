@@ -77,8 +77,8 @@ disconnects the source.
 ## Security
 
 - Certificates are verified. A server whose certificate the system trust store
-  does not accept is unsupported. There is no insecure switch, and
-  `rejectUnauthorized: false` appears nowhere in this tree.
+  does not accept is unsupported. There is no insecure switch: nothing in this
+  tree can turn certificate verification off, and CI greps for the attempt.
 - The hostname is checked against the certificate by this package, because the
   runtime does not fail the handshake on a mismatch. Not one byte is written
   before both checks pass.
