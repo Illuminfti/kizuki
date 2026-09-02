@@ -11,6 +11,8 @@ const IMPLEMENTED_NON_GATE_VERBS = [
   "backfill",
   "sync",
   "import",
+  "audit",
+  "undo",
   "query",
   "doctor",
   "purge",
@@ -57,8 +59,22 @@ describe("help", () => {
     }
   });
 
+  test("help exposes the undo-audit RFC 0002 verbs", () => {
+    const env = isolatedEnv();
+    const result = runCli(env, "--help");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("audit");
+    expect(result.stdout).toContain("undo");
+    expect(runCli(env, "help", "audit").stdout).toContain(
+      "usage: kizuki audit [--since TIME] [--page PATH] [--writer NAME]",
+    );
+    expect(runCli(env, "help", "undo").stdout).toContain(
+      "usage: kizuki undo <receipt_id> [--cascade]",
+    );
+  });
+
   test.todo(
-    "canon-writer, correction, undo-audit, and serve-daemon lanes: help exposes the RFC 0002 verb set",
+    "correction and serve-daemon lanes: help exposes the remaining RFC 0002 verbs",
     () => {
       throw new Error("pending RFC 0002 CLI lanes");
     },

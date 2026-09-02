@@ -58,6 +58,10 @@ export {
   insertClaim,
   listClaims,
   listSupersessions,
+  markClaimReverted,
   markClaimsPurged,
+  reinstateClaim,
+  resupersedeClaim,
+  supersessionsForReceipt,
 } from "./store";
 export type { ClaimsIo, InsertClaimInput, InsertClaimResult } from "./store";

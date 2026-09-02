@@ -14,6 +14,7 @@ import { initVault } from "../../src/vault/init";
 import { parseFrontmatter, serializePage } from "../../src/vault/frontmatter";
 import type { VaultPage } from "../../src/vault/frontmatter";
 import {
+  ABSENT_PAGE_HASH,
   CanonWriteRefused,
   grantCanonWrite,
   hashFile,
@@ -178,6 +179,24 @@ describe("writePage", () => {
     ).toThrow(/changed since it was read/);
     expect(readFileSync(path, "utf8")).toContain("Owner edited this.");
     expect(readdirSync(join(root, "archive"))).toEqual([]);
+  });
+
+  test("delete archives the current bytes and removes the file", () => {
+    const root = vault();
+    const path = join(root, "entities", "ada.md");
+    const original: VaultPage = { data: validData(), body: "Former canon.\n" };
+    const created = writePage(cap(), path, original);
+
+    const deleted = writePage(cap(), path, original, {
+      delete: true,
+      expected_hash: created.after_hash,
+    });
+    expect(existsSync(path)).toBe(false);
+    expect(deleted.after_hash).toBe(ABSENT_PAGE_HASH);
+    expect(deleted.archive_path).not.toBeNull();
+    expect(readFileSync(join(root, deleted.archive_path as string), "utf8")).toBe(
+      serializePage(original),
+    );
   });
 
   test("refuses to write through a symlink or to revise a missing page", () => {

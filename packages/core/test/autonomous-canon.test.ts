@@ -8,6 +8,7 @@ import {
   filterServable,
   getCanonReceipt,
   resolveTarget,
+  undoReceipt,
 } from "../src";
 import { canonFixture, putEvent, storeClaim } from "./canon/helpers";
 
@@ -37,12 +38,27 @@ describe("RFC 0002 autonomous canon contract", () => {
     }
   });
 
-  test.todo(
-    "correction and undo-audit lanes: correction supersession is reversible from its receipt",
-    () => {
-      throw new Error("pending correction and undo-audit lanes");
-    },
-  );
+  test("a receipted write is reversible from its receipt", async () => {
+    const fixture = canonFixture();
+    try {
+      const claim = await storeClaim(fixture.db, putEvent(fixture.db));
+      const receipt = applyCanonWrite(fixture.io, claim, resolveTarget(fixture.io, claim), {
+        writer: "loop",
+        budget: createBudgetTracker({ canon_writes_per_run: 1 }),
+      });
+      const path = join(fixture.vault, receipt.page_path);
+      expect(existsSync(path)).toBe(true);
+
+      const revert = await undoReceipt(fixture.io, receipt.receipt_id);
+      expect(existsSync(path)).toBe(false);
+      expect(revert.reverts).toBe(receipt.receipt_id);
+      expect(getCanonReceipt(fixture.db, receipt.receipt_id)?.reverted_by).toBe(
+        revert.receipt_id,
+      );
+    } finally {
+      fixture.dispose();
+    }
+  });
 
   test("unlabeled sensitivity is not served, including to the owner", () => {
     const item = { id: "fact:unlabeled", sensitivity: undefined };

@@ -1,25 +1,23 @@
-export { runReview, loadItems, pickEditor, editInEditor } from "./app";
-export type { ReviewOptions, ReviewSummary } from "./app";
+export { runAudit, loadItems, toAuditItem } from "./app";
+export type { AuditOptions, AuditSummary } from "./app";
+export { pickEditor, editInEditor } from "./editor";
 export {
-  KIND_LABEL,
-  KIND_ORDER,
+  WRITER_ORDER,
   applyItems,
-  batchEligible,
   currentItem,
   cursorRow,
   initialState,
+  listRowCount,
   reduce,
-  resumeAfterEdit,
-  touchesExistingPage,
   withNotice,
 } from "./model";
 export type {
+  AuditItem,
+  AuditState,
   Effect,
   Group,
   Mode,
   Notice,
-  ReviewItem,
-  ReviewState,
   Step,
   Viewport,
 } from "./model";

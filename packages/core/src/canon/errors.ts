@@ -16,12 +16,31 @@ export type CanonWriteErrorCode =
   | "writer_invalid"
   | "decision_stale";
 
+export type UndoErrorCode =
+  | "receipt_unknown"
+  | "already_reverted"
+  | "page_changed"
+  | "archive_missing"
+  | "not_undoable";
+
 /** Stable, actionable, and never carries captured text. */
 export class CanonWriteError extends Error {
   override readonly name = "CanonWriteError";
 
   constructor(
     readonly code: CanonWriteErrorCode,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/** Undo refusals. Messages are the exact CLI/TUI text. */
+export class UndoError extends Error {
+  override readonly name = "UndoError";
+
+  constructor(
+    readonly code: UndoErrorCode,
     message: string,
   ) {
     super(message);

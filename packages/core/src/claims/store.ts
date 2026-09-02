@@ -513,6 +513,62 @@ export function listSupersessions(
     .all();
 }
 
+export function supersessionsForReceipt(
+  db: Database,
+  receiptId: string,
+): { winner: string; loser: string; prior_valid_to: string | null }[] {
+  if (!tableExists(db, "claim_supersessions")) return [];
+  return db
+    .query<{ winner: string; loser: string; prior_valid_to: string | null }, [string]>(
+      `SELECT winner, loser, prior_valid_to FROM claim_supersessions
+        WHERE receipt_id = ? ORDER BY at, loser`,
+    )
+    .all(receiptId);
+}
+
+/** Undo of a write: the claim this receipt materialized is no longer live. */
+export function markClaimReverted(db: Database, claimId: string, at: string): void {
+  const claim = getClaim(db, claimId);
+  if (claim === null) return;
+  persistClaim(db, { ...claim, status: "reverted", retracted_at: at });
+}
+
+/** Undo of a write: a claim this receipt superseded is live again. */
+export function reinstateClaim(
+  db: Database,
+  claimId: string,
+  priorValidTo: string | null,
+): void {
+  const claim = getClaim(db, claimId);
+  if (claim === null) return;
+  persistClaim(db, {
+    ...claim,
+    status: "live",
+    superseded_by: null,
+    retracted_at: null,
+    valid_to: priorValidTo,
+  });
+}
+
+/** Undo of a revert: put a previously-reinstated loser back to superseded. */
+export function resupersedeClaim(
+  db: Database,
+  claimId: string,
+  winnerId: string,
+  at: string,
+  validTo: string | null,
+): void {
+  const claim = getClaim(db, claimId);
+  if (claim === null) return;
+  persistClaim(db, {
+    ...claim,
+    status: "superseded",
+    superseded_by: winnerId,
+    retracted_at: at,
+    valid_to: validTo,
+  });
+}
+
 export function markClaimsPurged(db: Database): string[] {
   if (!tableExists(db, "claims")) return [];
   const live = listClaims(db, { status: "live" });

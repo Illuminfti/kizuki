@@ -1,227 +1,94 @@
 import type { Database } from "bun:sqlite";
-import {
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import type { Dirent } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { listAuditReceipts, undoReceipt } from "@kizuki/core";
+import type { AuditReceipt, CanonIo } from "@kizuki/core";
 import { parseFrontmatter } from "@kizuki/core";
-import {
-  PromoteError,
-  SENSITIVITY_LEVELS,
-  fileProposal,
-  listProposals,
-  ownerPromote,
-  pageRelPath,
-  setProposalStatus,
-} from "@kizuki/core/staging";
-import type { Sensitivity, StagedProposal } from "@kizuki/core/staging";
 import { colorsEnabled, paint, sanitize, truncate } from "./ansi";
 import type { Key } from "./keys";
-import {
-  applyItems,
-  initialState,
-  reduce,
-  resumeAfterEdit,
-  withNotice,
-} from "./model";
-import type { Effect, ReviewItem, ReviewState } from "./model";
+import { applyItems, initialState, reduce, withNotice } from "./model";
+import type { AuditItem, AuditState, Effect } from "./model";
 import { createTerminal } from "./terminal";
 import type { Terminal } from "./terminal";
 import { render, viewportFor } from "./view";
+import { editInEditor, pickEditor } from "./editor";
 
-export interface ReviewOptions {
+export interface AuditOptions {
   db: Database;
   vaultPath: string;
-  /** Enables the `a` batch-promote key (the flag half of the two-key rule). */
-  batch?: boolean;
-  editor?: string | null;
   terminal?: Terminal;
   env?: Record<string, string | undefined>;
   now?: () => Date;
 }
 
-export interface ReviewSummary {
-  promoted: number;
-  rejected: number;
+export interface AuditSummary {
+  undone: number;
 }
 
 const QUEUE_LIMIT = 5000;
 
-interface CanonIndex {
-  byId: Map<
-    string,
-    { relPath: string; body: string; label: Sensitivity | null }
-  >;
-  byPath: Map<string, { body: string; label: Sensitivity | null }>;
-}
-
-function isSensitivity(value: unknown): value is Sensitivity {
-  return (
-    typeof value === "string" &&
-    (SENSITIVITY_LEVELS as readonly string[]).includes(value)
-  );
-}
-
-function indexCanon(vaultPath: string): CanonIndex {
-  const index: CanonIndex = { byId: new Map(), byPath: new Map() };
-  const walk = (dir: string, rel: string): void => {
-    let entries: Dirent[];
-    try {
-      entries = readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      if (entry.name === ".kizuki") continue;
-      const relPath = rel.length === 0 ? entry.name : `${rel}/${entry.name}`;
-      if (entry.isDirectory()) {
-        walk(join(dir, entry.name), relPath);
-        continue;
-      }
-      if (
-        !entry.isFile() ||
-        !entry.name.endsWith(".md") ||
-        entry.name === "CANON.md" ||
-        entry.name === "SCHEMA.md"
-      )
-        continue;
-      try {
-        const page = parseFrontmatter(
-          readFileSync(join(dir, entry.name), "utf8"),
-        );
-        const label = isSensitivity(page.data["sensitivity"])
-          ? page.data["sensitivity"]
-          : null;
-        index.byPath.set(relPath, { body: page.body, label });
-        const id = page.data["id"];
-        if (typeof id === "string")
-          index.byId.set(id, { relPath, body: page.body, label });
-      } catch {
-        // Unparseable pages are doctor's business; review only needs readable targets.
-      }
-    }
-  };
-  walk(vaultPath, "");
-  return index;
-}
-
-/**
- * A capture's frontmatter title names the connector and time; what the owner
- * scans for is the first line the source actually said, so quoted text wins
- * when it exists.
- */
-function titleOf(proposal: StagedProposal): string {
-  const lines = sanitize(proposal.body).split("\n");
-  if (proposal.kind === "claim") {
-    const quoted = lines.find((l) => /^>\s*\S/.test(l));
-    if (quoted !== undefined) return truncate(quoted.replace(/^>\s*/, "").trim(), 80);
-  }
-  const title = proposal.frontmatter["title"];
-  if (typeof title === "string" && title.trim().length > 0)
-    return sanitize(title.trim());
-  const firstLine = lines.find((l) => l.trim().length > 0) ?? "(empty)";
-  return truncate(firstLine.trim(), 80);
-}
-
-function toItem(proposal: StagedProposal, canon: CanonIndex): ReviewItem {
-  let targetPath: string | null = null;
-  let current: { body: string; label: Sensitivity | null } | null = null;
-  if (proposal.target !== null) {
-    const byId = canon.byId.get(proposal.target);
-    if (byId !== undefined) {
-      targetPath = byId.relPath;
-      current = byId;
-    } else {
-      try {
-        const relPath = pageRelPath(proposal);
-        const byPath = canon.byPath.get(relPath);
-        if (byPath !== undefined) {
-          targetPath = relPath;
-          current = byPath;
-        }
-      } catch {
-        // An unusable target is refused at promote time; here it is just "no page".
-      }
-    }
-  }
-  return {
-    proposal,
-    title: titleOf(proposal),
-    subject: proposal.subjects[0] ?? null,
-    targetPath,
-    currentBody: current?.body ?? null,
-    currentLabel: current?.label ?? null,
-  };
-}
-
-export function loadItems(db: Database, vaultPath: string): ReviewItem[] {
-  const canon = indexCanon(vaultPath);
-  return listProposals(db, { status: "pending", limit: QUEUE_LIMIT }).map((p) =>
-    toItem(p, canon),
-  );
-}
-
-export function pickEditor(
-  env: Record<string, string | undefined>,
-): string | null {
-  for (const name of ["VISUAL", "EDITOR"]) {
-    const value = env[name];
-    if (value !== undefined && value.trim().length > 0) return value.trim();
-  }
-  for (const candidate of ["vim", "nano", "vi"]) {
-    if (Bun.which(candidate) !== null) return candidate;
-  }
-  return null;
-}
-
-/** Opens the body in the owner's editor and returns what they saved. */
-export function editInEditor(editor: string, body: string, id: string): string {
-  const dir = mkdtempSync(join(tmpdir(), "kizuki-review-"));
-  const file = join(dir, `${id}.md`);
+function readBody(vaultPath: string, relPath: string | null): string | null {
+  if (relPath === null) return null;
+  const path = join(vaultPath, relPath);
+  if (!existsSync(path)) return null;
   try {
-    writeFileSync(file, body, "utf8");
-    const argv = [...editor.split(/\s+/).filter((t) => t.length > 0), file];
-    const result = Bun.spawnSync(argv, {
-      stdin: "inherit",
-      stdout: "inherit",
-      stderr: "inherit",
-    });
-    if (result.exitCode !== 0)
-      throw new Error(
-        `${basename(argv[0] ?? editor)} exited with ${result.exitCode}`,
-      );
-    return readFileSync(file, "utf8");
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
+    return parseFrontmatter(readFileSync(path, "utf8")).body;
+  } catch {
+    return readFileSync(path, "utf8");
   }
+}
+
+function titleOf(receipt: AuditReceipt, currentBody: string | null): string {
+  if (currentBody !== null) {
+    const first = sanitize(currentBody)
+      .split("\n")
+      .find((line) => line.trim().length > 0);
+    if (first !== undefined) return truncate(first.trim(), 80);
+  }
+  return sanitize(receipt.page_path);
+}
+
+function evidenceQuotes(receipt: AuditReceipt): string[] {
+  return receipt.provenance.slice(0, 8).map((eventId) => sanitize(`event ${eventId}`));
+}
+
+export function toAuditItem(vaultPath: string, receipt: AuditReceipt): AuditItem {
+  const currentBody = readBody(vaultPath, receipt.page_path);
+  const priorBody = readBody(vaultPath, receipt.archive_path);
+  return {
+    receipt,
+    title: titleOf(receipt, currentBody ?? priorBody),
+    priorBody,
+    currentBody,
+    evidence: evidenceQuotes(receipt),
+  };
+}
+
+export function loadItems(db: Database, vaultPath: string): AuditItem[] {
+  return listAuditReceipts(db, { limit: QUEUE_LIMIT }).map((receipt) =>
+    toAuditItem(vaultPath, receipt),
+  );
 }
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export async function runReview(opts: ReviewOptions): Promise<ReviewSummary> {
+export async function runAudit(opts: AuditOptions): Promise<AuditSummary> {
   const terminal = opts.terminal ?? createTerminal();
   if (!terminal.isTTY) {
-    throw new Error(
-      "kizuki review needs an interactive terminal; use `kizuki review --list`",
-    );
+    throw new Error("kizuki audit needs an interactive terminal; use `kizuki audit --json`");
   }
   const env = opts.env ?? process.env;
   const now = opts.now ?? (() => new Date());
   const p = paint(colorsEnabled(env, true));
   const vaultName = basename(opts.vaultPath);
+  const io: CanonIo = { db: opts.db, vault_path: opts.vaultPath };
 
-  let state: ReviewState = initialState({
+  let state: AuditState = initialState({
     vaultName,
     today: now().toISOString().slice(0, 10),
     items: loadItems(opts.db, opts.vaultPath),
-    batchEnabled: opts.batch === true,
   });
 
   const draw = (): void => {
@@ -233,172 +100,67 @@ export async function runReview(opts: ReviewOptions): Promise<ReviewSummary> {
     state = applyItems(state, loadItems(opts.db, opts.vaultPath));
   };
 
-  const runEffect = (effect: Effect): boolean => {
+  const runEffect = async (effect: Effect): Promise<boolean> => {
     switch (effect.type) {
       case "quit":
         return true;
-      case "promote": {
-        try {
-          const receipt = ownerPromote(opts.db, opts.vaultPath, effect.id, {
-            sensitivity: effect.sensitivity,
-            ...(effect.editBody === null ? {} : { editBody: effect.editBody }),
-          });
-          state = withNotice(state, {
-            text: `promoted → ${receipt.page_path} (${effect.sensitivity})`,
-            tone: "ok",
-          });
-          state = {
-            ...state,
-            session: { ...state.session, promoted: state.session.promoted + 1 },
-          };
-        } catch (error) {
-          state = withNotice(state, {
-            text: `promote refused: ${errorText(error)}`,
-            tone: "error",
-          });
-        }
-        reload();
+      case "filter":
         return false;
-      }
-      case "reject": {
-        try {
-          setProposalStatus(opts.db, effect.id, "rejected", effect.reason);
-          state = withNotice(state, {
-            text: `rejected (${effect.reason})`,
-            tone: "ok",
-          });
-          state = {
-            ...state,
-            session: { ...state.session, rejected: state.session.rejected + 1 },
-          };
-        } catch (error) {
-          state = withNotice(state, {
-            text: `reject failed: ${errorText(error)}`,
-            tone: "error",
-          });
-        }
-        reload();
-        return false;
-      }
-      case "edit": {
-        const item = state.items.find(
-          (i) => i.proposal.proposal_id === effect.id,
-        );
-        const editor =
-          opts.editor === undefined ? pickEditor(env) : opts.editor;
-        if (item === undefined) return false;
+      case "open": {
+        const editor = pickEditor(env);
         if (editor === null) {
-          state = withNotice(state, {
-            text: "no editor found: set $EDITOR",
-            tone: "error",
-          });
+          state = withNotice(state, { text: "no editor found: set $EDITOR", tone: "error" });
+          return false;
+        }
+        const path = join(opts.vaultPath, effect.path);
+        if (!existsSync(path)) {
+          state = withNotice(state, { text: "page is not on disk", tone: "warn" });
           return false;
         }
         try {
-          const edited = terminal.suspend(() =>
-            editInEditor(editor, item.proposal.body, item.proposal.proposal_id),
-          );
-          state = resumeAfterEdit(state, effect.id, edited);
+          terminal.suspend(() => editInEditor(editor, readFileSync(path, "utf8"), "audit"));
         } catch (error) {
-          state = withNotice(state, {
-            text: `edit aborted: ${errorText(error)}`,
-            tone: "error",
-          });
+          state = withNotice(state, { text: `open aborted: ${errorText(error)}`, tone: "error" });
         }
         return false;
       }
-      case "merge": {
-        const item = state.items.find(
-          (i) => i.proposal.proposal_id === effect.id,
-        );
-        if (item === undefined) return false;
-        const original = item.proposal;
+      case "undo": {
         try {
-          const filed = fileProposal(opts.db, {
-            kind: "merge",
-            target: original.target,
-            body: original.body,
-            frontmatter: original.frontmatter,
-            provenance: original.provenance,
-            subjects: original.subjects,
-            producer: original.producer,
-            confidence: original.confidence,
-          });
-          if (filed.outcome === "suppressed")
-            throw new PromoteError(
-              `content was rejected before: ${filed.reason}`,
-            );
-          const receipt = ownerPromote(
-            opts.db,
-            opts.vaultPath,
-            filed.proposal.proposal_id,
-            { sensitivity: effect.sensitivity },
-          );
-          setProposalStatus(opts.db, original.proposal_id, "withdrawn");
+          const revert = await undoReceipt(io, effect.receiptId);
           state = withNotice(state, {
-            text: `merged into ${receipt.page_path} (${effect.sensitivity})`,
+            text: `undone ${effect.receiptId} → ${revert.receipt_id}`,
             tone: "ok",
           });
-          state = {
-            ...state,
-            session: { ...state.session, promoted: state.session.promoted + 1 },
-          };
+          state = { ...state, session: { undone: state.session.undone + 1 } };
         } catch (error) {
           state = withNotice(state, {
-            text: `merge refused: ${errorText(error)}`,
+            text: errorText(error),
             tone: "error",
           });
         }
         reload();
         return false;
       }
-      case "batch": {
-        let done = 0;
-        let firstFailure: string | null = null;
-        for (const id of effect.ids) {
-          try {
-            ownerPromote(opts.db, opts.vaultPath, id, {
-              sensitivity: effect.sensitivity,
-            });
-            done += 1;
-          } catch (error) {
-            firstFailure ??= errorText(error);
-          }
-        }
-        const failed = effect.ids.length - done;
-        state = withNotice(state, {
-          text:
-            failed === 0
-              ? `batch: ${done} promoted as ${effect.sensitivity}`
-              : `batch: ${done} promoted, ${failed} refused (first: ${firstFailure ?? "unknown"})`,
-          tone: failed === 0 ? "ok" : "warn",
-        });
-        state = {
-          ...state,
-          session: {
-            ...state.session,
-            promoted: state.session.promoted + done,
-          },
-        };
-        reload();
-        return false;
+      default: {
+        const _never: never = effect;
+        return _never;
       }
     }
   };
 
-  const handleKey = (key: Key): boolean => {
+  const handleKey = async (key: Key): Promise<boolean> => {
     const { cols, rows } = terminal.size();
-    const step = reduce(state, key, viewportFor(cols, rows));
-    state = step.state;
-    for (const effect of step.effects) {
-      if (runEffect(effect)) return true;
+    const next = reduce(state, key, viewportFor(cols, rows));
+    state = next.state;
+    for (const effect of next.effects) {
+      if (await runEffect(effect)) return true;
     }
     return false;
   };
 
   terminal.enter();
   draw();
-  return new Promise<ReviewSummary>((resolve) => {
+  return new Promise<AuditSummary>((resolve) => {
     let finished = false;
     const finish = (): void => {
       if (finished) return;
@@ -413,13 +175,17 @@ export async function runReview(opts: ReviewOptions): Promise<ReviewSummary> {
     });
     const stopKeys = terminal.onKeys((keys) => {
       if (finished) return;
-      for (const key of keys) {
-        if (handleKey(key)) {
-          finish();
-          return;
+      void (async () => {
+        for (const key of keys) {
+          if (await handleKey(key)) {
+            finish();
+            return;
+          }
         }
-      }
-      draw();
+        draw();
+      })();
     });
   });
 }
+
+export { pickEditor, editInEditor } from "./editor";

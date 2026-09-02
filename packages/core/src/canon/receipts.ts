@@ -191,25 +191,64 @@ export function getCanonReceipt(db: Database, receiptId: string): CanonReceipt |
   return row === null ? null : rowToReceipt(row);
 }
 
+export interface ListCanonReceiptsOptions {
+  page_path?: string;
+  writer?: string;
+  since?: string;
+  newest_first?: boolean;
+  include_reverted?: boolean;
+  limit?: number;
+}
+
 export function listCanonReceipts(
   db: Database,
-  opts: { page_path?: string; limit?: number } = {},
+  opts: ListCanonReceiptsOptions = {},
 ): CanonReceipt[] {
   if (!tableExists(db, "canon_receipts")) return [];
   const limit = Math.min(Math.max(opts.limit ?? 200, 1), 10_000);
+  const clauses: string[] = [];
+  const params: (string | number)[] = [];
   if (opts.page_path !== undefined) {
-    return db
-      .query<CanonReceiptRow, [string, number]>(
-        "SELECT * FROM canon_receipts WHERE page_path = ? ORDER BY at, receipt_id LIMIT ?",
-      )
-      .all(opts.page_path, limit)
-      .map(rowToReceipt);
+    clauses.push("page_path = ?");
+    params.push(opts.page_path);
   }
+  if (opts.writer !== undefined) {
+    clauses.push("writer = ?");
+    params.push(opts.writer);
+  }
+  if (opts.since !== undefined) {
+    clauses.push("at >= ?");
+    params.push(opts.since);
+  }
+  if (opts.include_reverted === false) {
+    clauses.push("reverted_by IS NULL");
+  }
+  const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
+  const order = opts.newest_first === true ? "at DESC, receipt_id DESC" : "at, receipt_id";
   return db
-    .query<CanonReceiptRow, [number]>(
-      "SELECT * FROM canon_receipts ORDER BY at, receipt_id LIMIT ?",
+    .query<CanonReceiptRow, (string | number)[]>(
+      `SELECT * FROM canon_receipts${where} ORDER BY ${order} LIMIT ?`,
     )
-    .all(limit)
+    .all(...params, limit)
+    .map(rowToReceipt);
+}
+
+/** Later un-reverted receipts on the same page, newest first. */
+export function laterReceiptsForPage(
+  db: Database,
+  pagePath: string,
+  after: { at: string; receipt_id: string },
+): CanonReceipt[] {
+  if (!tableExists(db, "canon_receipts")) return [];
+  return db
+    .query<CanonReceiptRow, [string, string, string, string]>(
+      `SELECT * FROM canon_receipts
+        WHERE page_path = ?
+          AND reverted_by IS NULL
+          AND (at > ? OR (at = ? AND receipt_id > ?))
+        ORDER BY at DESC, receipt_id DESC`,
+    )
+    .all(pagePath, after.at, after.at, after.receipt_id)
     .map(rowToReceipt);
 }
 
