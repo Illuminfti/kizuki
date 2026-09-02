@@ -1,6 +1,6 @@
 import type { Sensitivity } from "../agents/types";
 import type { SubjectRef } from "./event";
-import type { Port } from "./ports";
+import type { Port, PortDescriptor } from "./ports";
 
 export const PRODUCER_CONTRACT = "kizuki.producer/v1" as const;
 export const PRODUCER_CONTRACT_MINOR = 1;
@@ -96,11 +96,13 @@ export type ProduceResult =
       /**
        * The input events this result accounts for. A run that stopped early —
        * a spent budget, a refused answer, a model that did not reply — covers
-       * a prefix of the input, and a caller advances its checkpoint over
-       * these events and no further. Optional because an implementation
-       * written to minor 0 does not report it; a caller that reads it checks
-       * `descriptor.contract_minor >= 1` and otherwise advances over the
-       * whole input it submitted. `contract_minor >= 1`.
+       * a prefix of the input, so at this minor `ok` does not mean the
+       * producer worked through everything it was given. A caller advances
+       * its checkpoint over these events and no further, and reads them
+       * through `coveredEvents` rather than off the result: an absent list
+       * from a producer at this minor accounts for nothing, never for
+       * everything. Optional because an implementation written to minor 0
+       * does not report it. `contract_minor >= 1`.
        */
       covered_event_ids?: string[];
       /**
@@ -144,4 +146,35 @@ export type ProduceResult =
 
 export interface ProducerPort extends Port {
   produce(input: ProduceInput): Promise<ProduceResult>;
+}
+
+/**
+ * The minor at which a producer reports which events a result accounts for.
+ * A caller that advances a checkpoint records this as the minor it needs
+ * (RFC 0002 §3.3): below it a producer has no way to stop part way, so `ok`
+ * covers everything submitted, and at or above it `ok` may be a run that
+ * stopped early.
+ */
+export const PRODUCER_COVERAGE_MINOR = 1;
+
+/**
+ * The events a result accounts for, read against the descriptor of the
+ * producer that returned it. Switching on `status` alone is the unsafe
+ * reading this exists to remove: at `PRODUCER_COVERAGE_MINOR` and above,
+ * `status: "ok"` can be a run that stopped at an outage or a spent budget
+ * part way through, and a caller that advanced over the whole input it
+ * submitted would lose every event the model never saw. A result that is not
+ * `ok` accounts for nothing, and neither does an `ok` from a producer at this
+ * minor that named no coverage.
+ */
+export function coveredEvents(
+  descriptor: PortDescriptor,
+  result: ProduceResult,
+  submitted: readonly QuotedEvent[],
+): readonly string[] {
+  if (result.status !== "ok") return [];
+  if (descriptor.contract_minor < PRODUCER_COVERAGE_MINOR) {
+    return submitted.map((event) => event.event_id);
+  }
+  return result.covered_event_ids ?? [];
 }

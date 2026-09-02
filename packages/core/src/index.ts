@@ -204,7 +204,9 @@ export {
   PRODUCER_CAPABILITIES,
   PRODUCER_CONTRACT,
   PRODUCER_CONTRACT_MINOR,
+  PRODUCER_COVERAGE_MINOR,
   PRODUCER_REJECT_REASONS,
+  coveredEvents,
 } from "./contracts/producer";
 export type {
   ClaimDraft,

@@ -127,7 +127,12 @@ disable a bound. A pasted key is refused without being echoed.
   that fails. The calls that already answered come back as `ok` with
   `covered_event_ids`, which names exactly the events this result accounts
   for; a caller advances its checkpoint that far and re-reads the rest on its
-  next pass. Every claim on the result cites only covered events: a draft from
+  next pass. `ok` from this minor therefore does not mean the run worked
+  through its input, and a caller reads its coverage through core's
+  `coveredEvents(descriptor, result, submitted)` rather than off the status:
+  that is the one reading in which an absent coverage list accounts for
+  nothing instead of for everything. Every claim on the result cites only
+  covered events: a draft from
   the first half of a record whose later call never went out is dropped, so no
   claim rests on evidence the run did not finish sending. A batch whose answer
   is refused as malformed is put back split in two first, a bounded number of
