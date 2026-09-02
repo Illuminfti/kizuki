@@ -181,6 +181,23 @@ test("a sender name beyond the per-record bound names its line", async () => {
   expect(error.message).toContain("sender");
 });
 
+test("a message is weighed while it gathers its continuation lines", async () => {
+  // A message runs until the next timestamped line, so an export with none
+  // assembles the rest of the file into one record. The refusal arrives
+  // before the export's dates are even resolved, which is why this export's
+  // ambiguous dates never get a chance to fail first.
+  const lines = [
+    "1/2/26, 09:00 - Ada: one",
+    "3/4/26, 09:00 - Grace: two",
+    ...Array.from({ length: 24 }, () => "c".repeat(64 * 1024)),
+  ];
+  const error = await rejected(() => parse(lines.join("\n")));
+  expect(error.code).toBe("parse_error");
+  expect(error.message).toBe(
+    `line 2: message exceeds ${MAX_RECORD_BYTES} bytes`,
+  );
+});
+
 test("no refusal quotes a sender name or captured text", async () => {
   const canary = "canary-quartz-heron";
   const messages: string[] = [];

@@ -126,15 +126,19 @@ export async function omnivoreEvents(
 ): Promise<CaptureEventInput[]> {
   const items: { item: OmnivoreItem; at: string }[] = [];
   for (const file of files.metadata) {
-    parseOmnivoreMetadata(file.text, file.name).forEach((item, index) => {
-      items.push({ item, at: `${file.name} item ${index + 1}` });
-    });
-  }
-  if (items.length > MAX_RECORDS) {
-    throw new KizukiError(
-      "parse_error",
-      `export holds more than ${MAX_RECORDS} items`,
-    );
+    let index = 0;
+    for (const item of parseOmnivoreMetadata(file.text, file.name)) {
+      index += 1;
+      // Counted as they arrive: an export past the bound is refused on the
+      // item that passes it rather than after every one has been collected.
+      if (items.length >= MAX_RECORDS) {
+        throw new KizukiError(
+          "parse_error",
+          `export holds more than ${MAX_RECORDS} items`,
+        );
+      }
+      items.push({ item, at: `${file.name} item ${index}` });
+    }
   }
 
   const ids = numberRepeats(items.map(({ item }) => item.id));

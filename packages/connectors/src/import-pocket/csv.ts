@@ -49,6 +49,16 @@ export function parseCsvRows(
     rowStarted = true;
   };
 
+  // A field is bounded as it grows, not once it is whole: a hostile export
+  // must not be able to make the reader hold what it is going to refuse. One
+  // UTF-8 byte per code unit at least, so this never refuses early.
+  const append = (character: string): void => {
+    field += character;
+    if (field.length > maxFieldBytes) {
+      fail(`field exceeds ${maxFieldBytes} bytes`);
+    }
+  };
+
   const endField = (): void => {
     if (Buffer.byteLength(field, "utf8") > maxFieldBytes) {
       fail(`field exceeds ${maxFieldBytes} bytes`);
@@ -79,7 +89,7 @@ export function parseCsvRows(
     if (inQuotes) {
       if (character === '"') {
         if (source[index + 1] === '"') {
-          field += '"';
+          append('"');
           index += 1;
           continue;
         }
@@ -88,7 +98,7 @@ export function parseCsvRows(
         continue;
       }
       if (character === "\n") line += 1;
-      field += character;
+      append(character);
       continue;
     }
     // Only a delimiter, a newline or the end of the input may follow a
@@ -114,7 +124,7 @@ export function parseCsvRows(
       line += 1;
       continue;
     }
-    field += character;
+    append(character);
     fieldStarted = true;
     startRow();
   }

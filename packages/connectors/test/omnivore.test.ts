@@ -209,6 +209,29 @@ test("an oversize field names its position and never its value", () => {
   }
 });
 
+test("a labels list is bounded as a field, not label by label", () => {
+  // Every label is small; there are simply too many of them for the record
+  // budget, which bounding each of them on its own never noticed.
+  const labels = Array.from({ length: 300_000 }, (_, index) => `l${index}`);
+  const error = thrown(() =>
+    parseOmnivoreMetadata(
+      JSON.stringify([
+        {
+          id: "x",
+          slug: "x",
+          labels,
+          savedAt: "2026-01-01T09:00:00Z",
+        },
+      ]),
+      "metadata_0_to_9.json",
+    ),
+  );
+  expect(error.code).toBe("parse_error");
+  expect(error.message).toBe(
+    `metadata_0_to_9.json[0].labels: exceeds ${MAX_RECORD_BYTES} bytes`,
+  );
+});
+
 test("an assembled record beyond the bound names its item", async () => {
   const half = "h".repeat(MAX_RECORD_BYTES - 16);
   const error = await rejected(() =>

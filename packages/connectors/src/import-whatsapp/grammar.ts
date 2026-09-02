@@ -103,6 +103,8 @@ export function splitWhatsAppMessages(
   const starts: StartLine[] = [];
   const continuations = new Map<number, string[]>();
   let current: number | undefined;
+  let currentLine = 0;
+  let carried = 0;
 
   lines.forEach((raw, index) => {
     const line = stripLeadingMarks(raw);
@@ -114,8 +116,25 @@ export function splitWhatsAppMessages(
     if (matched === null || stamp === undefined) {
       // A continuation before the first start belongs to no message.
       if (current === undefined) return;
+      // What a message has gathered so far, charged as it gathers: a message
+      // runs until the next timestamped line, so an export with none can
+      // otherwise assemble the whole file into one record before it is
+      // weighed.
+      carried += Buffer.byteLength(line, "utf8") + 1;
+      if (carried > MAX_RECORD_BYTES) {
+        throw new KizukiError(
+          "parse_error",
+          `line ${currentLine}: message exceeds ${MAX_RECORD_BYTES} bytes`,
+        );
+      }
       continuations.get(current)?.push(line);
       return;
+    }
+    if (starts.length >= MAX_RECORDS) {
+      throw new KizukiError(
+        "parse_error",
+        `export holds more than ${MAX_RECORDS} messages`,
+      );
     }
     starts.push({
       line: index + 1,
@@ -124,6 +143,8 @@ export function splitWhatsAppMessages(
       rest: matched[3] ?? "",
     });
     current = starts.length - 1;
+    currentLine = index + 1;
+    carried = 0;
     continuations.set(current, []);
   });
 
@@ -131,12 +152,6 @@ export function splitWhatsAppMessages(
     throw new KizukiError(
       "parse_error",
       "not a WhatsApp chat export (no timestamped line found)",
-    );
-  }
-  if (starts.length > MAX_RECORDS) {
-    throw new KizukiError(
-      "parse_error",
-      `export holds more than ${MAX_RECORDS} messages`,
     );
   }
 

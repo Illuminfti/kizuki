@@ -39,20 +39,33 @@ function stringOr(value: unknown, fallback: string, where: string): string {
   return bounded(typeof value === "string" ? value : fallback, where);
 }
 
+/**
+ * Labels are bounded as one field, while they are being collected. Bounding
+ * each of them on its own left the list itself unbounded, so an export could
+ * spend several times the record budget on labels no single one of which was
+ * too long.
+ */
 function labelsOf(value: unknown, where: string): string[] {
   if (!Array.isArray(value)) return [];
   const labels: string[] = [];
-  value.forEach((label, index) => {
-    const at = `${where}[${index}]`;
-    if (typeof label === "string" && label.length > 0) {
-      labels.push(bounded(label, at));
-      return;
+  let bytes = 0;
+  for (const label of value) {
+    const name =
+      typeof label === "string"
+        ? label
+        : isPlainObject(label) && typeof label["name"] === "string"
+          ? label["name"]
+          : "";
+    if (name.length === 0) continue;
+    bytes += Buffer.byteLength(name, "utf8");
+    if (bytes > MAX_RECORD_BYTES) {
+      throw new KizukiError(
+        "parse_error",
+        `${where}: exceeds ${MAX_RECORD_BYTES} bytes`,
+      );
     }
-    if (isPlainObject(label) && typeof label["name"] === "string") {
-      const name = label["name"];
-      if (name.length > 0) labels.push(bounded(name, `${at}.name`));
-    }
-  });
+    labels.push(name);
+  }
   return labels;
 }
 

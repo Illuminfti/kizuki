@@ -83,6 +83,16 @@ test("field and row bounds are enforced", () => {
   expect(tall.message).toContain("more than 2 rows");
 });
 
+test("a field is refused while it grows, not once it is whole", () => {
+  // The quote is never closed, so a reader that weighed the field only when
+  // it ended would hold the whole file and then complain about the quote.
+  const runaway = thrown(() =>
+    parseCsv(`a\n"${"x".repeat(64)}\n`, "part.csv", { maxFieldBytes: 8 }),
+  );
+  expect(runaway.code).toBe("parse_error");
+  expect(runaway.message).toBe("part.csv row 2: field exceeds 8 bytes");
+});
+
 test("a row is numbered by the file line it started on", () => {
   expect(
     parseCsvRows('a,b\n\n\nc,d\n"two\nlines",e\nf,g\n', "part.csv").map(
