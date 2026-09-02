@@ -202,9 +202,15 @@ export class ScreenpipeConnector implements Connector {
       const before = { ...current.skipped };
       const now = this.#deps.now();
       const observedAt = new Date(now).toISOString();
-      const boundary = new Date(
-        now - this.#config.settle_seconds * 1_000,
-      ).toISOString();
+      const settleMs = this.#config.settle_seconds * 1_000;
+      const boundary = new Date(now - settleMs).toISOString();
+      // screenpipe stamps rows from the capture machine's clock, so a bad row
+      // or a clock step can date a row past `now`. Such a row is not waiting
+      // for the OCR update the settle window exists for, and holding it would
+      // park this walk on its id for as long as the date says.
+      const horizon = new Date(now + settleMs).toISOString();
+      const settling = (timestamp: string): boolean =>
+        timestamp > boundary && timestamp <= horizon;
       const events: CaptureEventInput[] = [];
 
       const frames = readFrames(db, current.last_frame_id, BATCH_LIMIT);
@@ -216,7 +222,7 @@ export class ScreenpipeConnector implements Connector {
           current.last_frame_id = row.id;
           continue;
         }
-        if (timestamp > boundary) {
+        if (settling(timestamp)) {
           frameStopped = true;
           break;
         }
@@ -243,7 +249,7 @@ export class ScreenpipeConnector implements Connector {
             current.last_transcription_id = row.id;
             continue;
           }
-          if (timestamp > boundary) break;
+          if (settling(timestamp)) break;
           events.push(mapTranscription(row, observedAt));
           current.last_transcription_id = row.id;
         }
