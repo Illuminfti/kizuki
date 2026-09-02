@@ -75,6 +75,7 @@ export {
   listClaims,
   listSupersessions,
   markClaimReverted,
+  markClaimsAfterPurge,
   markClaimsPurged,
   reinstateClaim,
   resupersedeClaim,
@@ -500,12 +501,30 @@ export type {
   LedgerCursor,
   ReplayFilter,
 } from "./ledger/ledger";
-export { isHeld, purgeEvents, readHolds } from "./ledger/purge";
+export {
+  PURGE_SLA_SECONDS,
+  PURGE_SCHEMA_VERSION,
+  applyPurgeV5,
+  createVaultFts5Port,
+  inspectPurgeHealth,
+  isHeld,
+  purgeEvents,
+  readHolds,
+  runPurge,
+  verifyPurge,
+} from "./ledger/purge";
 export type {
   CanonHold,
   PurgeFilter,
+  PurgeHealth,
+  PurgeHealthFailure,
+  PurgeOp,
   PurgeOutcome,
+  PurgePhaseOptions,
   PurgeReceipt,
+  PurgeRewriteRef,
+  PurgeRunOptions,
+  PurgeVerifyReport,
 } from "./ledger/purge";
 export {
   LedgerError,

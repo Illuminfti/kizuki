@@ -1,10 +1,12 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
+  PURGE_SLA_SECONDS,
   count,
   doctorVault,
   getCanonReceipt,
   getCheckpoint,
+  inspectPurgeHealth,
   readHolds,
 } from "@kizuki/core";
 import {
@@ -169,9 +171,23 @@ async function collect(
   const problems = vault.pages.flatMap((page) =>
     page.errors.map((error) => ({ page: page.page, error })),
   );
+  const purge = inspectPurgeHealth(ctx.db);
+  for (const failure of purge.failures) {
+    problems.push({
+      page: "-",
+      error:
+        failure.kind === "purge_op_stale"
+          ? `purge_op ${failure.id} pending for ${failure.age_s}s (SLA ${PURGE_SLA_SECONDS}s)`
+          : `canon hold ${failure.id} pending for ${failure.age_s}s (SLA ${PURGE_SLA_SECONDS}s)`,
+    });
+  }
 
   const unhealthy = connections.some((item) => item.health !== "ok");
-  const ok = vault.counts.invalid === 0 && orphans.length === 0 && !unhealthy;
+  const ok =
+    vault.counts.invalid === 0 &&
+    orphans.length === 0 &&
+    !unhealthy &&
+    purge.ok;
 
   return {
     config,

@@ -128,6 +128,7 @@ describe("openLedger migrations", () => {
       "event_purges",
       "events",
       "proposals",
+      "purge_ops",
       "schema_version",
     ]));
     db.close();
@@ -306,7 +307,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(4);
+      expect(schemaVersion(upgraded)).toBe(5);
       const tables = upgraded
         .query<{ name: string }, []>(
           "SELECT name FROM sqlite_master WHERE type = 'table'",
@@ -429,7 +430,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(4);
+      expect(schemaVersion(upgraded)).toBe(5);
       const receipts = upgraded
         .query<
           {
@@ -559,6 +560,55 @@ describe("openLedger migrations", () => {
     } finally {
       rmSync(directory, { recursive: true, force: true });
       fresh.close();
+    }
+  });
+
+  test("v4 databases gain purge_ops at schema v5", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-ledger-v4-"));
+    const path = join(directory, "ledger.sqlite");
+    try {
+      const legacy = new Database(path);
+      legacy.exec(V2_SCHEMA);
+      applyClaimsV3(legacy);
+      applyCanonV4(legacy);
+      legacy.exec("UPDATE schema_version SET version = 4");
+      expect(
+        legacy
+          .query<{ name: string }, []>(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'purge_ops'",
+          )
+          .get(),
+      ).toBeNull();
+      legacy.close();
+
+      const upgraded = openLedger(path);
+      expect(schemaVersion(upgraded)).toBe(5);
+      expect(
+        upgraded
+          .query<{ name: string }, []>(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'purge_ops'",
+          )
+          .get()?.name,
+      ).toBe("purge_ops");
+      expect(
+        upgraded
+          .query<{ name: string }, [string]>("SELECT name FROM pragma_table_info(?)")
+          .all("purge_ops")
+          .map(({ name }) => name)
+          .sort(),
+      ).toEqual([
+        "created_at",
+        "done_at",
+        "ids",
+        "op_id",
+        "proof",
+        "receipt_id",
+        "state",
+        "store",
+      ]);
+      upgraded.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
     }
   });
 });

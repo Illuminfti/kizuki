@@ -59,6 +59,7 @@ export {
   listClaims,
   listSupersessions,
   markClaimReverted,
+  markClaimsAfterPurge,
   markClaimsPurged,
   reinstateClaim,
   resupersedeClaim,
