@@ -1,23 +1,30 @@
 import { isRfc3339 } from "@kizuki/core";
-import type {
-  AttachmentRef,
-  CaptureEventInput,
-  SubjectRef,
-} from "@kizuki/core";
+import type { AttachmentRef, CaptureEventInput } from "@kizuki/core";
+import { collectSubjects } from "./addresses";
 import { htmlToText } from "./mime/html";
-import { headerValue, headerValues } from "./mime/headers";
-import type { HeaderField } from "./mime/headers";
+import { headerValue } from "./mime/headers";
 import { decodeHeaderText, parseMessage, partText } from "./mime/parse";
 import type { MimePart } from "./mime/parse";
 import { decodeModifiedUtf7 } from "./imap/utf7";
+import {
+  MAX_FILENAME_CHARS,
+  MAX_FOLDER_NAME_CHARS,
+  MAX_HEADER_VALUE_CHARS,
+  MAX_TEXT_CODE_POINTS,
+  stripControls,
+} from "./text";
 
 export const IMAP_CONNECTOR_ID = "kizuki.imap" as const;
-export const MAX_TEXT_CODE_POINTS = 262_144;
-export const MAX_HEADER_VALUE_CHARS = 4_096;
-export const MAX_SUBJECTS = 200;
-export const MAX_FILENAME_CHARS = 255;
-export const MAX_DISPLAY_NAME_CHARS = 120;
-export const MAX_FOLDER_NAME_CHARS = 255;
+
+export {
+  MAX_DISPLAY_NAME_CHARS,
+  MAX_FILENAME_CHARS,
+  MAX_FOLDER_NAME_CHARS,
+  MAX_HEADER_VALUE_CHARS,
+  MAX_SUBJECTS,
+  MAX_TEXT_CODE_POINTS,
+  stripControls,
+} from "./text";
 
 /**
  * The one way a mailbox name becomes display text. A mailbox name comes from
@@ -101,128 +108,11 @@ function storableIso(millis: number): string | null {
   return Number.isNaN(date.getTime()) ? null : storable(date.toISOString());
 }
 
-/** Server- and sender-controlled text is never shown or stored as it arrives. */
-export function stripControls(text: string, limit: number): string {
-  const cleaned = Array.from(text)
-    .filter((character) => {
-      const code = character.codePointAt(0) ?? 0;
-      return code >= 0x20 && code !== 0x7f;
-    })
-    .join("")
-    .trim();
-  return Array.from(cleaned).slice(0, limit).join("");
-}
-
 function capHeader(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   return value.length > MAX_HEADER_VALUE_CHARS
     ? value.slice(0, MAX_HEADER_VALUE_CHARS)
     : value;
-}
-
-/** Splits an address list on commas that are not inside quotes or brackets. */
-function splitAddressList(value: string): string[] {
-  const entries: string[] = [];
-  let current = "";
-  let quoted = false;
-  let angle = false;
-  let comment = 0;
-  let group = false;
-  for (const character of value) {
-    if (quoted) {
-      current += character;
-      if (character === '"') quoted = false;
-      continue;
-    }
-    if (group) {
-      // Everything from `Team:` to the closing `;` is a group, not a mailbox.
-      if (character === ";") group = false;
-      continue;
-    }
-    if (character === '"') {
-      quoted = true;
-      current += character;
-      continue;
-    }
-    if (character === "(") comment += 1;
-    if (character === ")" && comment > 0) comment -= 1;
-    if (character === "<") angle = true;
-    if (character === ">") angle = false;
-    if (character === ":" && !angle && comment === 0) {
-      group = true;
-      current = "";
-      continue;
-    }
-    if (character === "," && !angle && comment === 0) {
-      entries.push(current);
-      current = "";
-      continue;
-    }
-    current += character;
-  }
-  entries.push(current);
-  return entries
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
-}
-
-interface ParsedAddress {
-  address: string;
-  phrase: string;
-}
-
-function parseAddress(
-  entry: string,
-  fallbacks: string[],
-): ParsedAddress | null {
-  const angle = /<([^>]*)>/.exec(entry);
-  const address = (angle === null ? entry : (angle[1] ?? "")).trim();
-  if (
-    address.split("@").length !== 2 ||
-    /\s/.test(address) ||
-    address.length < 3
-  ) {
-    return null;
-  }
-  const rawPhrase =
-    angle === null ? "" : entry.slice(0, angle.index).replace(/"/g, "").trim();
-  return {
-    address,
-    phrase: stripControls(
-      decodeHeaderText(rawPhrase, fallbacks),
-      MAX_DISPLAY_NAME_CHARS,
-    ),
-  };
-}
-
-function collectSubjects(
-  fields: HeaderField[],
-  fallbacks: string[],
-): SubjectRef[] {
-  const subjects: SubjectRef[] = [];
-  const seen = new Set<string>();
-  const add = (header: string, role: "from" | "to"): void => {
-    for (const raw of headerValues(fields, header)) {
-      for (const entry of splitAddressList(raw)) {
-        if (subjects.length >= MAX_SUBJECTS) return;
-        const parsed = parseAddress(entry, fallbacks);
-        if (parsed === null) continue;
-        const subjectId = `email:${parsed.address.toLowerCase()}`;
-        const key = `${subjectId}\u0000${role}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        subjects.push({
-          subject_id: subjectId,
-          role,
-          ...(parsed.phrase.length > 0 ? { display_name: parsed.phrase } : {}),
-        });
-      }
-    }
-  };
-  add("from", "from");
-  add("to", "to");
-  add("cc", "to");
-  return subjects;
 }
 
 function walkParts(part: MimePart, into: MimePart[] = []): MimePart[] {
