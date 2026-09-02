@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { MAX_TEXT_CHARS } from "./cursor";
 import { ScreenpipeConnectorError } from "./errors";
 
 export interface FrameRow {
@@ -65,6 +66,19 @@ interface RawTranscriptionRow {
   end_time: unknown;
 }
 
+/**
+ * Every TEXT column here is provider-controlled and unbounded in the file, so
+ * the value is cut in SQLite rather than read whole and cut afterwards. One
+ * character past the event limit is kept so truncation is still detectable,
+ * and a column holding something other than text is passed through unchanged
+ * so it still fails its own validation.
+ */
+function bounded(column: string, alias = column): string {
+  return `CASE WHEN typeof(${column}) = 'text'
+               THEN substr(${column}, 1, ${MAX_TEXT_CHARS + 1})
+               ELSE ${column} END AS ${alias}`;
+}
+
 export function toSafeNumber(value: unknown): number | null {
   if (typeof value === "bigint") {
     const converted = Number(value);
@@ -75,6 +89,38 @@ export function toSafeNumber(value: unknown): number | null {
     : null;
 }
 
+const FRAME_COLUMNS = [
+  "id",
+  bounded("timestamp"),
+  bounded("app_name"),
+  bounded("window_name"),
+  bounded("browser_url"),
+  bounded("device_name"),
+  "focused",
+  bounded("full_text"),
+  bounded("text_source"),
+  bounded("capture_trigger"),
+  bounded("snapshot_path"),
+  bounded("document_path"),
+  "video_chunk_id",
+  "offset_index",
+].join(", ");
+
+const TRANSCRIPTION_COLUMNS = [
+  "t.id",
+  "t.audio_chunk_id",
+  "t.offset_index",
+  bounded("t.timestamp", "timestamp"),
+  bounded("t.transcription", "transcription"),
+  bounded("t.device", "device"),
+  "t.is_input_device",
+  "t.speaker_id",
+  bounded("s.name", "speaker_name"),
+  bounded("t.transcription_engine", "transcription_engine"),
+  "t.start_time",
+  "t.end_time",
+].join(", ");
+
 export function readFrames(
   db: Database,
   afterId: number,
@@ -82,9 +128,7 @@ export function readFrames(
 ): FrameRow[] {
   return db
     .query<RawFrameRow, [number, number]>(
-      `SELECT id, timestamp, app_name, window_name, browser_url, device_name,
-              focused, full_text, text_source, capture_trigger, snapshot_path,
-              document_path, video_chunk_id, offset_index
+      `SELECT ${FRAME_COLUMNS}
          FROM frames
         WHERE id > ?
         ORDER BY id
@@ -101,10 +145,7 @@ export function readTranscriptions(
 ): TranscriptionRow[] {
   return db
     .query<RawTranscriptionRow, [number, number]>(
-      `SELECT t.id, t.audio_chunk_id, t.offset_index, t.timestamp,
-              t.transcription, t.device, t.is_input_device, t.speaker_id,
-              s.name AS speaker_name, t.transcription_engine,
-              t.start_time, t.end_time
+      `SELECT ${TRANSCRIPTION_COLUMNS}
          FROM audio_transcriptions t
          LEFT JOIN speakers s ON s.id = t.speaker_id
         WHERE t.id > ?
