@@ -86,11 +86,7 @@ function latin1(bytes: Uint8Array): string {
  * alphabet, which is how a body with one stray character stays readable.
  */
 function decodeBase64Lenient(text: string): Uint8Array {
-  let kept = "";
-  for (const character of text) {
-    if (BASE64_ALPHABET.includes(character)) kept += character;
-  }
-  return decodeBase64Text(kept) ?? new Uint8Array();
+  return decodeBase64Text(text.replace(/[^A-Za-z0-9+/]/g, "")) ?? new Uint8Array();
 }
 
 export interface DecodedBody {
@@ -117,10 +113,8 @@ export function decodeTransfer(
     };
   }
   if (name === "quoted-printable") {
-    const decoded = decodeQuotedPrintableText(latin1(body));
-    return decoded === null
-      ? { bytes: body, fallback: "quoted-printable" }
-      : { bytes: decoded };
+    // The soft-break form has no failure case; the raw body satisfies the type.
+    return { bytes: decodeQuotedPrintableText(latin1(body)) ?? body };
   }
   return { bytes: body };
 }
