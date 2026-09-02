@@ -73,7 +73,7 @@ class CoreSafetyTests(unittest.TestCase):
         _, task=self.campaign_task(); token=self.store.acquire(task,"scope/test","worker",limits=Limits(max_attempts=1))
         with self.assertRaises(TypeError): self.store.receipt(task,SHA,["test"])
         with self.assertRaises(FencedError): self.store.receipt(task,SHA,["test"],"scope/test","bad",token)
-        with self.assertRaisesRegex(GuardError,"submitted verification state"): self.store.receipt(task,SHA,["test"],"scope/test","worker",token)
+        with self.assertRaisesRegex(GuardError,"submitted state"): self.store.receipt(task,SHA,["test"],"scope/test","worker",token)
         version=self.store.snapshot()["tasks"][0]["version"]
         version=self.store.task_state(task,"RUNNING",version,"scope/test","worker",token)
         version=self.store.task_state(task,"SUBMITTED",version,"scope/test","worker",token)
@@ -92,7 +92,37 @@ class CoreSafetyTests(unittest.TestCase):
         rid=self.store.receipt(task,SHA,["test"],"scope/second","worker",second)
         receipt=next(x for x in self.store.snapshot()["receipts"] if x["id"]==rid)
         self.assertEqual((receipt["scope"],receipt["holder"],receipt["token"],receipt["epoch"]),("scope/second","worker",second,self.store.claimed_epoch))
+        self.assertEqual((receipt["attempt"],receipt["phase"]),(1,"SUBMISSION"))
         self.assertGreater(second,0); self.assertGreater(first,0)
+    def test_submission_receipts_are_attempt_bound_and_pipeline_is_locked(self):
+        _,task=self.campaign_task(); token1=self.store.acquire(task,"scope/test","worker-1")
+        version=self.store.snapshot()["tasks"][0]["version"]
+        version=self.store.task_state(task,"RUNNING",version,"scope/test","worker-1",token1)
+        version=self.store.task_state(task,"SUBMITTED",version,"scope/test","worker-1",token1)
+        first_id=self.store.receipt(task,SHA,["attempt-1"],"scope/test","worker-1",token1)
+        with self.assertRaisesRegex(GuardError,"controller authority"):
+            self.store.task_state(task,"VERIFYING",version,"scope/test","worker-1",token1)
+        version=self.store.task_state(task,"CHANGES_REQUESTED",version,"scope/test","worker-1",token1)
+        version=self.store.task_state(task,"READY",version)
+        token2=self.store.acquire(task,"scope/test","worker-2")
+        version=self.store.snapshot()["tasks"][0]["version"]
+        version=self.store.task_state(task,"RUNNING",version,"scope/test","worker-2",token2)
+        version=self.store.task_state(task,"SUBMITTED",version,"scope/test","worker-2",token2)
+        second_id=self.store.receipt(task,"c"*40,["attempt-2"],"scope/test","worker-2",token2)
+        receipts={row["id"]:row for row in self.store.snapshot()["receipts"]}
+        self.assertEqual((receipts[first_id]["attempt"],receipts[first_id]["token"]),(1,token1))
+        self.assertEqual((receipts[second_id]["attempt"],receipts[second_id]["token"]),(2,token2))
+        self.assertGreater(token2,token1)
+        with self.assertRaisesRegex(GuardError,"controller authority"):
+            self.store.task_state(task,"VERIFYING",version,"scope/test","worker-2",token2)
+    def test_controller_can_fail_or_supersede_ready_tasks(self):
+        campaign,first=self.campaign_task()
+        version=self.store.snapshot()["tasks"][0]["version"]
+        self.store.task_state(first,"FAILED",version)
+        second=self.store.create_task(campaign,"scope/second")
+        version=next(row["version"] for row in self.store.snapshot()["tasks"] if row["id"]==second)
+        version=self.store.task_state(second,"READY",version)
+        self.store.task_state(second,"SUPERSEDED",version)
     def test_old_epoch_lease_does_not_block_recovery(self):
         _, task=self.campaign_task(); token=self.store.acquire(task,"scope/test","worker")
         self.store.release_controller(); next_controller=Store(self.tmp.name); next_controller.claim_controller()

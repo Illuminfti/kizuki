@@ -26,11 +26,22 @@ Codex `/home/ubuntu/.local/bin/codex`, Claude `/home/ubuntu/.local/bin/claude`,
 Cursor `/home/ubuntu/.local/bin/cursor-agent`, and Grok `/home/ubuntu/.grok/bin/grok`.
 No adapter receives a token, prompt, worktree, or arbitrary child command.
 
+Task submission is also a deliberate hard boundary. A worker lease can start
+work, submit it, or receive changes; neither a worker nor the controller can
+advance a submission into verification, review, integration, merge,
+post-merge verification, or completion. Each submission receipt is stamped
+with the exact attempt, phase, lease token, and controller epoch. The later
+states remain vocabulary for the reviewed execution phase, not reachable
+capability in this release.
+
 The tree also contains unwired process supervision and worktree evidence types.
 They are deliberately absent from every CLI/service path and are not a sandbox:
 requested CPU/memory budgets are metadata, and networked execution is rejected.
 Future work may connect them only after adding separately reviewed systemd or
 bubblewrap isolation, dedicated minimal harness homes/configs, scheduler leases,
-and adapter-specific fixed argument construction. It must preserve the fencing
-protocol, require per-run enablement, and use external authorization for merges,
-releases, account actions, or spend.
+and adapter-specific fixed argument construction. That phase must add distinct
+verifier, reviewer, and integrator roles; a global merge lease/fence; and
+separate verification, merge, and post-merge receipts that are all bound to the
+current attempt. It must preserve the fencing protocol, require per-run
+enablement, and use external authorization for merges, releases, account
+actions, or spend.

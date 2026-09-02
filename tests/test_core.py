@@ -115,6 +115,8 @@ class CoreTests(unittest.TestCase):
         receipt = self.store.snapshot()["receipts"][0]
         self.assertEqual(receipt["sha"], SHA)
         self.assertEqual(receipt["token"], token)
+        self.assertEqual(receipt["attempt"], 1)
+        self.assertEqual(receipt["phase"], "SUBMISSION")
 
     def test_adapter_probe_is_nonsecret(self):
         result = Adapter("x", "/not/found").probe()

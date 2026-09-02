@@ -54,14 +54,11 @@ TASK_TRANSITIONS = {
 }
 WORKER_TASK_TRANSITIONS = {
     ("LEASED","RUNNING"), ("RUNNING","SUBMITTED"),
-    ("SUBMITTED","VERIFYING"), ("SUBMITTED","CHANGES_REQUESTED"),
-    ("VERIFYING","REVIEWING"), ("VERIFYING","CHANGES_REQUESTED"),
-    ("REVIEWING","INTEGRATING"), ("REVIEWING","CHANGES_REQUESTED"),
-    ("INTEGRATING","MERGED"), ("MERGED","POST_MERGE_VERIFYING"),
-    ("POST_MERGE_VERIFYING","DONE"),
+    ("SUBMITTED","CHANGES_REQUESTED"),
 }
 CONTROLLER_TASK_TRANSITIONS = {
     ("DISCOVERED","READY"), ("DISCOVERED","FAILED"), ("DISCOVERED","SUPERSEDED"),
+    ("READY","FAILED"), ("READY","SUPERSEDED"),
     ("LEASED","RECOVERING"), ("LEASED","FAILED"),
     ("RUNNING","RECOVERING"), ("RUNNING","FAILED"),
     ("SUBMITTED","CHANGES_REQUESTED"), ("SUBMITTED","FAILED"),
@@ -138,7 +135,7 @@ class Store:
         CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY,campaign_id TEXT NOT NULL,scope TEXT NOT NULL,state TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,version INTEGER NOT NULL,updated_at REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS leases(scope TEXT PRIMARY KEY,task_id TEXT NOT NULL,holder TEXT NOT NULL,token INTEGER NOT NULL,expires_at REAL NOT NULL,heartbeat_at REAL NOT NULL,epoch INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS fences(scope TEXT PRIMARY KEY,token INTEGER NOT NULL);
-        CREATE TABLE IF NOT EXISTS receipts(id TEXT PRIMARY KEY,task_id TEXT NOT NULL,sha TEXT NOT NULL,tests TEXT NOT NULL,scope TEXT NOT NULL,holder TEXT NOT NULL,token INTEGER NOT NULL,epoch INTEGER NOT NULL,artifact TEXT,created_at REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS receipts(id TEXT PRIMARY KEY,task_id TEXT NOT NULL,attempt INTEGER NOT NULL,phase TEXT NOT NULL,sha TEXT NOT NULL,tests TEXT NOT NULL,scope TEXT NOT NULL,holder TEXT NOT NULL,token INTEGER NOT NULL,epoch INTEGER NOT NULL,artifact TEXT,created_at REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS incidents(id TEXT PRIMARY KEY,kind TEXT NOT NULL,detail TEXT NOT NULL,created_at REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS reconciliation(id TEXT PRIMARY KEY,campaign_id TEXT NOT NULL,evidence TEXT NOT NULL,created_at REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS adapter_receipts(name TEXT PRIMARY KEY,version TEXT NOT NULL,auth_status TEXT NOT NULL,route_status TEXT NOT NULL,evidence_sha256 TEXT NOT NULL,executable_sha256 TEXT NOT NULL,method TEXT NOT NULL,reason_code TEXT NOT NULL,checked_at REAL NOT NULL,expires_at REAL NOT NULL);
@@ -146,6 +143,10 @@ class Store:
         """)
     def _schema(self):
         self._install_schema(self.db)
+        receipt_columns=[row[1] for row in self.db.execute("PRAGMA table_info(receipts)")]
+        expected=["id","task_id","attempt","phase","sha","tests","scope","holder","token","epoch","artifact","created_at"]
+        if receipt_columns!=expected:
+            raise GuardError("incompatible receipt schema; preserve state and do not upgrade in place")
     @staticmethod
     def _raw(prev, typ, payload, created):
         return json.dumps({"prev":prev,"type":typ,"payload":payload,"created_at":created},sort_keys=True,separators=(",",":"))
@@ -222,7 +223,9 @@ class Store:
             if p.get("starts_attempt",False): db.execute("UPDATE tasks SET attempts=attempts+1,state='LEASED',version=version+1,updated_at=? WHERE id=?",(now,p["task_id"]))
         elif typ=="lease.heartbeat": db.execute("UPDATE leases SET expires_at=?,heartbeat_at=? WHERE scope=?",(p["expires_at"],p["heartbeat_at"],p["scope"]))
         elif typ=="lease.released": db.execute("DELETE FROM leases WHERE scope=?",(p["scope"],))
-        elif typ=="receipt.recorded": db.execute("INSERT OR IGNORE INTO receipts VALUES(?,?,?,?,?,?,?,?,?,?)",(p["id"],p["task_id"],p["sha"],json.dumps(p["tests"],sort_keys=True),p["scope"],p["holder"],p["token"],p["epoch"],p.get("artifact"),now))
+        elif typ=="receipt.recorded":
+            if "attempt" not in p or "phase" not in p: raise GuardError("legacy receipt event is not attempt-bound")
+            db.execute("INSERT OR IGNORE INTO receipts VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",(p["id"],p["task_id"],p["attempt"],p["phase"],p["sha"],json.dumps(p["tests"],sort_keys=True),p["scope"],p["holder"],p["token"],p["epoch"],p.get("artifact"),now))
         elif typ=="incident": db.execute("INSERT OR IGNORE INTO incidents VALUES(?,?,?,?)",(p["id"],p["kind"],p["detail"],now))
         elif typ=="reconciliation": db.execute("INSERT OR REPLACE INTO reconciliation VALUES(?,?,?,?)",(p["id"],p["campaign_id"],json.dumps(p["evidence"],sort_keys=True),now))
         elif typ=="adapter.receipt": db.execute(
@@ -335,9 +338,6 @@ class Store:
             else:
                 if (row[0],state) not in WORKER_TASK_TRANSITIONS: raise GuardError("worker transition requires controller authority")
                 self._assert_lease(scope or row[3],holder,token,tid)
-                if row[0] in {"SUBMITTED","VERIFYING","REVIEWING","INTEGRATING","MERGED","POST_MERGE_VERIFYING"} and state not in {"CHANGES_REQUESTED","FAILED"}:
-                    evidence=self.db.execute("SELECT 1 FROM receipts WHERE task_id=? AND epoch=? LIMIT 1",(tid,self._current_epoch())).fetchone()
-                    if not evidence: raise GuardError("progress transition requires a fenced receipt")
                 if state in {"CHANGES_REQUESTED","DONE"}: payload["retire_leases"]=True
         self._write(validate,"task.state",payload); return version+1
     def _assert_lease(self,scope,holder,token,task_id=None):
@@ -377,11 +377,12 @@ class Store:
     def receipt(self,task_id,sha,tests,scope,holder,token,artifact=None):
         if len(sha)!=40 or any(c not in "0123456789abcdef" for c in sha): raise GuardError("receipt requires exact 40-char lowercase SHA")
         if not isinstance(tests,list) or not tests: raise GuardError("receipt requires nonempty test evidence")
-        payload={"id":str(uuid.uuid4()),"task_id":task_id,"sha":sha,"tests":tests,"scope":scope,"holder":holder,"token":token,"epoch":self._current_epoch(),"artifact":artifact}
+        payload={"id":str(uuid.uuid4()),"task_id":task_id,"phase":"SUBMISSION","sha":sha,"tests":tests,"scope":scope,"holder":holder,"token":token,"epoch":self._current_epoch(),"artifact":artifact}
         def validate():
             self._assert_lease(scope,holder,token,task_id)
-            row=self.db.execute("SELECT state FROM tasks WHERE id=?",(task_id,)).fetchone()
-            if not row or row[0] not in {"SUBMITTED","VERIFYING","REVIEWING","INTEGRATING"}: raise GuardError("receipt requires submitted verification state")
+            row=self.db.execute("SELECT state,attempts FROM tasks WHERE id=?",(task_id,)).fetchone()
+            if not row or row[0]!="SUBMITTED": raise GuardError("receipt requires submitted state")
+            payload["attempt"]=row[1]
         self._write(validate,"receipt.recorded",payload); return payload["id"]
     def record_adapter_receipt(self,name,version,auth_status,route_status,evidence_sha256,executable_sha256,reason_code,ttl_seconds=21600):
         self._require_controller(); auth_status=auth_status.upper(); route_status=route_status.upper()

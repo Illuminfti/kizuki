@@ -95,15 +95,24 @@ fails, preserve evidence and open an incident; do not edit JSONL to make it pass
 Execution enablement is deliberately absent. Promotion only moves a campaign
 from `RECONCILING` to `READY` after persisted evidence explicitly permits it;
 the built-in offline reconciliation correctly records `safe_to_promote: false`.
-A future executor needs an
-explicit approved design, per-worktree sandboxing, path policy, command allow
-lists, audit logging, secrets isolation, and an external merge authority.
+The bootstrap task pipeline is hard-locked at a fenced `SUBMITTED` receipt;
+verification, review, integration, merge, post-merge verification, and done are
+unreachable even if a caller holds the submission lease. A future executor
+needs an explicit approved design, per-worktree sandboxing, path policy,
+command allow lists, audit logging, secrets isolation, distinct
+verifier/reviewer/integrator leases, a global merge fence, phase-specific
+verification/merge/post-merge receipts, and an external merge authority.
 
 The source tree contains unwired process/worktree proof mechanics for that
 future phase. They do not enforce CPU, memory, or network limits and must not be
 connected to real harnesses without an outer systemd/bubblewrap sandbox and a
 new security review. Cursor's native CLI sandbox is not available on this VPS,
 so outer containment is mandatory for any future Cursor execution.
+
+This revision deliberately rejects a pre-attempt receipt schema or legacy
+receipt ledger event instead of guessing an attempt. Preserve such state and
+perform a separately reviewed migration; never copy an old receipt into a new
+attempt or delete the ledger to force startup.
 
 Because the observer process owns the single controller lock, later
 `record-adapter`, reconciliation, promotion, or quiesce operations require a

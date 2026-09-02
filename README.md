@@ -19,6 +19,13 @@ cannot be enabled in `config.json`, and provide no OS sandbox. Real harness
 execution remains disabled until separately reviewed scheduler, sandbox, and
 adapter wiring is merged.
 
+The task state machine is sealed at `SUBMITTED` in this bootstrap. A leased
+worker may move only `LEASED -> RUNNING -> SUBMITTED`, or return a submission
+to `CHANGES_REQUESTED`. No caller can reach verification, review, integration,
+merge, post-merge verification, or done. Unlocking those stages requires a new
+reviewed design with distinct verifier/reviewer/integrator authority, a global
+merge fence, and phase-specific pre-merge, merge, and post-merge receipts.
+
 ## Safety model
 
 - State defaults to `/home/ubuntu/.local/state/kizuki-gauntlet` (outside a
@@ -30,8 +37,11 @@ adapter wiring is merged.
   future capacity ceiling; this bootstrap build starts zero workers.
 - Leases have a scope, controller epoch, TTL/heartbeat and monotonically
   increasing fencing token. Stale holders cannot release or heartbeat a lease.
-- Tasks use row-version compare-and-swap. Receipts require a lowercase exact
-  40-character commit SHA and nonempty test evidence.
+- Tasks use row-version compare-and-swap. Submission receipts require a
+  lowercase exact 40-character commit SHA and nonempty test evidence, and are
+  bound to the current task attempt, lease token, controller epoch, and
+  `SUBMISSION` phase. An earlier attempt's receipt can never authorize a later
+  attempt; this bootstrap does not authorize any post-submission transition.
 - `reconcile` reads local Git references/worktrees only. It deliberately does
   not contact GitHub and marks remote PR inventory unavailable.
 - Persisted adapter receipts capture the exact live `--version` output and

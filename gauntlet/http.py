@@ -34,7 +34,7 @@ def _incident(row):
 
 def _receipt(row):
     # Tests, scope, holder, fence token, and artifact are worker-private.
-    return _pick(row, "id", "task_id", "sha", "created_at")
+    return _pick(row, "id", "task_id", "attempt", "phase", "sha", "created_at")
 
 
 def _event(row):

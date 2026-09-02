@@ -157,6 +157,27 @@ class SurfaceSafetyTests(unittest.TestCase):
         finally:
             server.server_close()
 
+    def test_receipt_observer_exposes_only_deliberate_submission_metadata(self):
+        campaign_version=self.store.snapshot()["campaigns"][0]["version"]
+        self.store.record_reconciliation(self.campaign,{"safe_to_promote":True})
+        campaign_version=self.store.campaign_state(self.campaign,"READY",campaign_version)
+        self.store.campaign_state(self.campaign,"ACTIVE",campaign_version)
+        task_version=self.store.snapshot()["tasks"][0]["version"]
+        task_version=self.store.task_state(self.task,"READY",task_version)
+        token=self.store.acquire(self.task,"src/surface","worker")
+        task_version=self.store.snapshot()["tasks"][0]["version"]
+        task_version=self.store.task_state(self.task,"RUNNING",task_version,"src/surface","worker",token)
+        self.store.task_state(self.task,"SUBMITTED",task_version,"src/surface","worker",token)
+        self.store.receipt(self.task,"d"*40,["private test output"],"src/surface","worker",token,"private artifact")
+        server=serve(self.store,[],port=0)
+        try:
+            status,body,_=self.request(server,"GET","/v1/receipts")
+            receipt=json.loads(body)[0]
+            self.assertEqual(status,200)
+            self.assertEqual(set(receipt),{"id","task_id","attempt","phase","sha","created_at"})
+            self.assertEqual((receipt["attempt"],receipt["phase"]),(1,"SUBMISSION"))
+        finally: server.server_close()
+
     def test_event_cursor_pages_forward_without_history_gap(self):
         for number in range(110): self.store.incident("test",str(number))
         server=serve(self.store,[],port=0)
