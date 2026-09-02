@@ -28,6 +28,18 @@ export interface Served<T> {
   audit_ids?: Record<string, string[]>;
 }
 
+/**
+ * The audited argument bag. Absent optional arguments are dropped rather than
+ * recorded as nulls, so an audit row shows what the caller actually asked for.
+ */
+export function auditArguments(args: object): Record<string, unknown> {
+  const shaped: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (value !== undefined) shaped[key] = value;
+  }
+  return shaped;
+}
+
 export function principalName(principal: Principal): string {
   return principal.kind === "owner" ? principal.name : principal.agent.name;
 }

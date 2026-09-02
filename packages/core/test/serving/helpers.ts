@@ -41,6 +41,11 @@ const AGENTS: Record<string, Partial<Grant>> = {
   subjected: { ceiling: "private", subjects: ["person:ada"] },
   "search-only": { ceiling: "private", tools: ["search"] },
   slow: { ceiling: "private", rate_limit_per_minute: 2 },
+  windowed: {
+    ceiling: "private",
+    since: "2026-02-28T10:30:00Z",
+    until: "2026-02-28T13:30:00Z",
+  },
   gone: { ceiling: "private" },
 };
 
