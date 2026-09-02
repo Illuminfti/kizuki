@@ -280,6 +280,65 @@ test("the export budget is charged the bytes read, not the bytes kept", async ()
   });
 });
 
+test("one highlights file costs the export budget once, not once per item", async () => {
+  await withTempRoot(async (root) => {
+    const notes = `${"n".repeat(400)}\n`;
+    const items = Array.from({ length: 20 }, (_, index) => ({
+      id: `item-${index}`,
+      slug: "shared",
+      savedAt: "2026-01-01T09:00:00Z",
+    }));
+    await writeExport(root, {
+      ...metadataFile(items),
+      "highlights/shared.md": notes,
+    });
+    const metadataBytes = Buffer.byteLength(
+      metadataFile(items)["metadata_0_to_9.json"] ?? "",
+      "utf8",
+    );
+    const notesBytes = Buffer.byteLength(notes, "utf8");
+
+    // Twenty items name one file: read once, it fits alongside the metadata.
+    const events = await omnivoreEvents(
+      await fsOmnivoreFiles(root, metadataBytes + notesBytes),
+      FIXTURE_OBSERVED_AT,
+    );
+    expect(events.length).toBe(20);
+    for (const event of events) {
+      expect(event.metadata["has_highlights"]).toBe(true);
+    }
+
+    // A budget with no room left for it refuses rather than reading it free.
+    const error = await rejected(async () =>
+      omnivoreEvents(
+        await fsOmnivoreFiles(root, metadataBytes),
+        FIXTURE_OBSERVED_AT,
+      ),
+    );
+    expect(error.code).toBe("misconfigured");
+    expect(error.message).toContain("import limit");
+  });
+});
+
+test("the assembled records are bounded, not just the files they came from", async () => {
+  const notes = "n".repeat(2000);
+  const items = Array.from({ length: 20 }, (_, index) => ({
+    id: `item-${index}`,
+    slug: "shared",
+    savedAt: "2026-01-01T09:00:00Z",
+  }));
+  const files = mapOmnivoreFiles({
+    ...metadataFile(items),
+    "highlights/shared.md": notes,
+  });
+  expect((await omnivoreEvents(files, FIXTURE_OBSERVED_AT)).length).toBe(20);
+  const error = await rejected(() =>
+    omnivoreEvents(files, FIXTURE_OBSERVED_AT, 5000),
+  );
+  expect(error.code).toBe("parse_error");
+  expect(error.message).toBe("export holds more than 5000 bytes of item text");
+});
+
 test("a slug that is not a bare name reaches no file at all", async () => {
   await withTempRoot(async (root) => {
     const canary = "canary-quartz-heron";

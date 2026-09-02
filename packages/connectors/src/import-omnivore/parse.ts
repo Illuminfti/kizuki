@@ -11,7 +11,6 @@ import {
   errorMessage,
   isoToRfc3339,
   parseJsonArray,
-  readBoundedUtf8,
   readBoundedUtf8File,
   statRegularFile,
 } from "../util";
@@ -175,9 +174,15 @@ async function highlightsOf(
   }
 }
 
+/**
+ * Highlights are shared: every item naming one slug carries that file's text.
+ * The metadata budget therefore does not bound what the batch weighs, so the
+ * assembled records are counted on their own before any of them is returned.
+ */
 export async function omnivoreEvents(
   files: OmnivoreFiles,
   observed_at: string,
+  maxBytes = MAX_EXPORT_BYTES,
 ): Promise<CaptureEventInput[]> {
   const items: { item: OmnivoreItem; at: string }[] = [];
   for (const file of files.metadata) {
@@ -193,6 +198,7 @@ export async function omnivoreEvents(
   }
 
   const events: CaptureEventInput[] = [];
+  let textLeft = maxBytes;
   for (const { item, at } of items) {
     const highlights = await highlightsOf(files, item.slug, at);
     const content = await files.content(item.slug);
@@ -204,6 +210,13 @@ export async function omnivoreEvents(
         .join("\n\n"),
       at,
     );
+    textLeft -= Buffer.byteLength(text, "utf8");
+    if (textLeft < 0) {
+      throw new KizukiError(
+        "parse_error",
+        `export holds more than ${maxBytes} bytes of item text`,
+      );
+    }
     events.push({
       schema: "kizuki.event/v1",
       connector_id: OMNIVORE_IMPORT_CONNECTOR_ID,
@@ -297,36 +310,58 @@ export async function fsOmnivoreFiles(
     bytesLeft -= file.byte_size;
     metadata.push({ name, text: file.text });
   }
+  // Many items may name one slug, and each of them would otherwise re-read
+  // and re-charge the same file. A file is read once, costs the export budget
+  // once, and every later item is served the text already in hand.
+  const highlights = new Map<string, string | null>();
+  const contents = new Map<string, { byte_size: number } | null>();
+
   return {
     metadata,
     highlight: async (slug) => {
       if (highlightsDir === null || !SLUG.test(slug)) return null;
+      const cached = highlights.get(slug);
+      if (cached !== undefined) return cached;
       const file = join(highlightsDir, `${slug}.md`);
       // Absence, a symlink and a directory are honestly "no highlights". A
       // file that is there but unreadable, oversize or not UTF-8 is a
       // refusal instead: an item stored without the owner's notes would be
       // indistinguishable from an item that never had any.
       const found = await statRegularFile(file);
-      if (found === null) return null;
-      if (found.byte_size > MAX_RECORD_BYTES) {
+      if (found === null) {
+        highlights.set(slug, null);
+        return null;
+      }
+      // Highlights come out of the same export as the metadata and are
+      // charged to the same budget, so no number of items can spend it twice.
+      const limit = Math.min(MAX_RECORD_BYTES, bytesLeft);
+      if (found.byte_size > limit) {
         throw new KizukiError(
           "misconfigured",
-          `highlights file exceeds the ${MAX_RECORD_BYTES} byte import limit`,
+          `highlights file exceeds the ${limit} byte import limit`,
         );
       }
+      let read;
       try {
-        return await readBoundedUtf8(
+        read = await readBoundedUtf8File(
           file,
           OMNIVORE_IMPORT_CONNECTOR_ID,
-          MAX_RECORD_BYTES,
+          limit,
         );
       } catch (error) {
         throw highlightsRefusal(error);
       }
+      bytesLeft -= read.byte_size;
+      highlights.set(slug, read.text);
+      return read.text;
     },
     content: async (slug) => {
       if (contentDir === null || !SLUG.test(slug)) return null;
-      return statRegularFile(join(contentDir, `${slug}.html`));
+      const cached = contents.get(slug);
+      if (cached !== undefined) return cached;
+      const found = await statRegularFile(join(contentDir, `${slug}.html`));
+      contents.set(slug, found);
+      return found;
     },
   };
 }
