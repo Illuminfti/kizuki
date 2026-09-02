@@ -14,8 +14,11 @@ when that information is present.
 
 Screen text and audio transcription are a local-capture source class, so the
 manifest declares `default_sensitivity: private` and `sensitivity_floor:
-personal`. Sensitivity is resolved from that class and from the event hint;
-nobody is asked to label anything.
+personal`, and every event this connector emits carries
+`sensitivity_hint: private`. Nobody is asked to label anything. The shared
+conformance suite validates the declaration and the ledger stores the hint;
+resolving a label from the source class is accepted design (RFC 0002 §8.2) and
+has no consumer on this branch.
 
 screenpipe stores the database at `~/.screenpipe/db.sqlite` by default and keeps
 media separately under `~/.screenpipe/data/`.

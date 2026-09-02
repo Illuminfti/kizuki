@@ -62,6 +62,11 @@ export interface Manifest {
    * What a record from this source is, absent any other signal. Sensitivity is
    * resolved from the source class, never by asking the owner to label
    * (RFC 0002 §8.2).
+   *
+   * Declared and validated only, so far: the conformance suite requires both
+   * fields, and nothing else reads them. Serving reads the event's own
+   * `sensitivity_hint`, which the ledger stores verbatim. A lane implementing
+   * class-based resolution is adding the first consumer, not joining one.
    */
   default_sensitivity: Sensitivity;
   /** The lowest label anything from this source may carry. */
