@@ -150,8 +150,11 @@ test("a dialog the account stopped listing does not finish the backfill", async 
   expect(first.events).toHaveLength(BATCH_LIMIT);
   expect(parseCursor(first.cursor as string).dialogs["1003"]?.last_id).toBe(100);
 
+  // A listing only changes what a walk sees when the walk starts again, so
+  // this is the next run rather than the next batch.
   built.api.hideDialog("1003");
-  const second = await built.connector.backfill(first.cursor);
+  const resumed = await built.restart();
+  const second = await resumed.backfill(first.cursor);
   const stalled = parseCursor(second.cursor as string);
   expect(second.events).toEqual([]);
   expect(stalled.dialogs["1003"]).toEqual({
@@ -161,15 +164,16 @@ test("a dialog the account stopped listing does not finish the backfill", async 
   });
   expect(stalled.phase).toBe("backfill");
 
-  const report = await built.connector.health();
+  const report = await resumed.health();
   expect(report.state).toBe("degraded");
   expect(report.detail).toContain("1003");
 
   built.api.showDialogs();
-  const rest = await drain(built.connector, "backfill", second.cursor);
+  const recovered = await built.restart();
+  const rest = await drain(recovered, "backfill", second.cursor);
   expect(rest.events).toHaveLength(300);
   expect(parseCursor(rest.cursor).phase).toBe("synced");
-  expect((await built.connector.health()).state).toBe("ok");
+  expect((await recovered.health()).state).toBe("ok");
 });
 
 test("a page of service messages moves the cursor without emitting anything", async () => {
@@ -219,4 +223,22 @@ test("a page of service messages moves the cursor without emitting anything", as
   const rest = await drain(built.connector, "backfill", first.cursor);
   expect(rest.events).toHaveLength(3);
   expect(parseCursor(rest.cursor).phase).toBe("synced");
+});
+
+test("continuing a walk costs one dialog listing, not one per batch", async () => {
+  const built = await connected({ account: busyAccount(1200) });
+  const drained = await drain(built.connector, "backfill");
+  expect(drained.batches).toBe(4);
+  const listings = built.api.calls.filter((call) => call.method === "dialogs");
+  // The dialog set a backfill walks is fixed when it is seeded, so re-listing
+  // per batch buys nothing and spends a request against the same rate limit.
+  expect(listings).toHaveLength(1);
+
+  // The next run has nothing carried over and lists once more.
+  const resumed = await built.restart();
+  built.api.calls.length = 0;
+  await drain(resumed, "sync", drained.cursor);
+  expect(built.api.calls.filter((call) => call.method === "dialogs")).toHaveLength(
+    1,
+  );
 });

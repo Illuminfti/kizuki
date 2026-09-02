@@ -181,6 +181,7 @@ export class TelegramConnector implements Connector {
     }
     this.#api = api;
     this.#self = me;
+    this.#listing = null;
     this.#revoked = false;
     this.#lastSuccessAt = this.#nowIso();
   }
@@ -325,6 +326,7 @@ export class TelegramConnector implements Connector {
       self,
       now: this.#deps.now,
       plan: this.#plan,
+      dialogs: this.#listing?.dialogs ?? null,
     });
     // A pass that listed nothing says nothing about the account's dialogs.
     if (result.listing !== null) this.#listing = result.listing;

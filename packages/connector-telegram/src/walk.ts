@@ -20,10 +20,13 @@ export interface WalkDeps {
   self: TelegramUser;
   now: () => number;
   plan: PurgeIndex;
+  /** Dialogs listed earlier in this process, or `null` to list them again. */
+  dialogs: TelegramDialog[] | null;
 }
 
 /** What one dialog listing showed; absent when the pass needed no listing. */
 export interface DialogListing {
+  dialogs: TelegramDialog[];
   limitReached: boolean;
   /** Peers the cursor still has history for that the account no longer lists. */
   unreadable: string[];
@@ -93,13 +96,28 @@ export async function walk(
       listing: null,
     };
   }
-  const listing = await listDialogs(deps.api);
-  const cursor = stored ?? seedCursor(listing.dialogs);
+  // The listing supplies the titles and hints the mapper needs, so it is not
+  // free to skip; it is only free to reuse. Only a walk that is starting has
+  // to see the account afresh; the batches that continue it keep the dialogs
+  // it began with, which is cheaper and more consistent than re-walking every
+  // dialog once per batch of five hundred events.
+  const starting = stored === null || (mode === "sync" && stored.pass === null);
+  const carried = starting ? null : deps.dialogs;
+  let dialogs: TelegramDialog[];
+  let limitReached: boolean | null = null;
+  if (carried === null) {
+    const listed = await listDialogs(deps.api);
+    dialogs = listed.dialogs;
+    limitReached = listed.limitReached;
+  } else {
+    dialogs = carried;
+  }
+  const cursor = stored ?? seedCursor(dialogs);
   const byPeer = new Map(
-    listing.dialogs.map((dialog) => [dialog.peer_id, dialog] as const),
+    dialogs.map((dialog) => [dialog.peer_id, dialog] as const),
   );
   if (mode === "sync" && cursor.pass === null) {
-    for (const dialog of listing.dialogs) {
+    for (const dialog of dialogs) {
       cursor.dialogs[dialog.peer_id] ??= {
         peer_type: dialog.peer_type,
         last_id: 0,
@@ -180,7 +198,8 @@ export async function walk(
   return {
     batch: { events: batch.events, cursor: encodeCursor(cursor) },
     floodUntil,
-    listing: { limitReached: listing.limitReached, unreadable },
+    listing:
+      limitReached === null ? null : { dialogs, limitReached, unreadable },
   };
 }
 

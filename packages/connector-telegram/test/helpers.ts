@@ -43,6 +43,8 @@ export interface Harness {
   account: ScriptedAccount;
   clock: { now: number };
   sleeps: number[];
+  /** A second connector over the same account: what the next process sees. */
+  restart(): Promise<TelegramConnector>;
 }
 
 export function harness(options: {
@@ -63,11 +65,14 @@ export function harness(options: {
       sleeps.push(ms);
     },
   };
-  const connector = new TelegramConnector(
-    options.config ?? { state_ref: STATE_REF },
-    deps,
-  );
-  return { connector, api, account, clock, sleeps };
+  const config = options.config ?? { state_ref: STATE_REF };
+  const connector = new TelegramConnector(config, deps);
+  const restart = async (): Promise<TelegramConnector> => {
+    const fresh = new TelegramConnector(config, deps);
+    await fresh.connect(stateResolver());
+    return fresh;
+  };
+  return { connector, api, account, clock, sleeps, restart };
 }
 
 export function stateText(
