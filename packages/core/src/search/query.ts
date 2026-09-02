@@ -1,10 +1,13 @@
 import type { Database } from "bun:sqlite";
-import type { PageSensitivity } from "../vault/schema";
+import { SENSITIVITY_ORDER } from "../agents/types";
+import type { Sensitivity } from "../agents/types";
+import { ceilingSql, instantBound, instantSql } from "../query/sql";
+import type { DocScope } from "./indexer";
 
 export interface SearchOptions {
-  scope?: "canon" | "ledger" | "all";
+  scope?: DocScope | "all";
   limit?: number;
-  ceiling?: PageSensitivity;
+  ceiling?: Sensitivity;
   types?: string[];
   since?: string;
   until?: string;
@@ -14,7 +17,7 @@ export interface SearchOptions {
 
 export interface SearchHit {
   doc_id: string;
-  scope: "canon" | "ledger";
+  scope: DocScope;
   title: string;
   path: string;
   page_type: string;
@@ -31,11 +34,8 @@ interface SearchRow extends Omit<SearchHit, "subjects"> {
 }
 
 const BOOLEAN_OPERATORS = new Set(["AND", "OR", "NOT", "NEAR"]);
-const CEILING_RANK: Record<PageSensitivity, number> = {
-  public: 0,
-  personal: 1,
-  private: 2,
-};
+const OCCURRED_AT_INSTANT = instantSql("search_docs.occurred_at");
+const HAS_TOKEN_CHAR = /[\p{L}\p{N}]/u;
 
 function tokens(raw: string): string[] {
   const result: string[] = [];
@@ -65,19 +65,15 @@ function tokens(raw: string): string[] {
 }
 
 function sanitizeToken(raw: string): { value: string; prefix: boolean } | null {
-  let value = raw.trim();
+  let value = raw.replace(/[\u0000-\u001f\u007f]/g, "");
   if (BOOLEAN_OPERATORS.has(value.toUpperCase())) return null;
 
-  value = value.replace(/^NEAR(?:\/\d+)?\(/i, "");
   const prefix =
     value.length > 1 &&
     value.endsWith("*") &&
     value.indexOf("*") === value.length - 1;
-  value = value.replace(/\*/g, "").replace(/[()\[\]{}:^+~-]/g, "").trim();
-
-  if (value.length === 0 || BOOLEAN_OPERATORS.has(value.toUpperCase())) {
-    return null;
-  }
+  value = value.replace(/\*/g, "");
+  if (!HAS_TOKEN_CHAR.test(value)) return null;
   return { value, prefix };
 }
 
@@ -121,27 +117,24 @@ export function search(
     bindings.push(opts.scope);
   }
   if (opts.ceiling !== undefined) {
-    clauses.push(`
-      CASE sensitivity
-        WHEN 'public' THEN 0
-        WHEN 'personal' THEN 1
-        WHEN 'private' THEN 2
-        ELSE NULL
-      END <= ?
-    `);
-    bindings.push(CEILING_RANK[opts.ceiling]);
+    clauses.push(ceilingSql("search_docs.sensitivity"));
+    bindings.push(SENSITIVITY_ORDER[opts.ceiling]);
   }
   if (opts.types !== undefined) {
     clauses.push(`page_type IN (${placeholders(opts.types.length)})`);
     bindings.push(...opts.types);
   }
   if (opts.since !== undefined) {
-    clauses.push("occurred_at >= ?");
-    bindings.push(opts.since);
+    clauses.push(
+      `(search_docs.scope = 'canon' OR ${OCCURRED_AT_INSTANT} >= julianday(?))`,
+    );
+    bindings.push(instantBound(opts.since, "search since"));
   }
   if (opts.until !== undefined) {
-    clauses.push("occurred_at < ?");
-    bindings.push(opts.until);
+    clauses.push(
+      `(search_docs.scope = 'canon' OR ${OCCURRED_AT_INSTANT} < julianday(?))`,
+    );
+    bindings.push(instantBound(opts.until, "search until"));
   }
   if (opts.subjects !== undefined) {
     clauses.push(`EXISTS (
@@ -156,6 +149,9 @@ export function search(
   }
   bindings.push(limit);
 
+  // bm25() weights are positional over every declared column, UNINDEXED ones
+  // included: doc_id, scope, title, body, then the remaining six metadata
+  // columns. Title is 4.0 so a title hit outranks a body hit of the same term.
   const rows = db
     .query<SearchRow, (string | number)[]>(
       `SELECT
@@ -169,17 +165,16 @@ export function search(
          connector_id,
          subjects,
          snippet(search_docs, 3, '[', ']', '…', 24) AS snippet,
-         bm25(search_docs, 4.0, 1.0) AS rank
+         bm25(search_docs, 0, 0, 4.0, 1.0, 0, 0, 0, 0, 0, 0) AS rank
        FROM search_docs
        WHERE ${clauses.join(" AND ")}
-       ORDER BY rank, doc_id
+       ORDER BY rank, scope, doc_id
        LIMIT ?`,
     )
     .all(...bindings);
 
   return rows.map((row) => ({
     ...row,
-    scope: row.scope,
     subjects: JSON.parse(row.subjects) as string[],
   }));
 }

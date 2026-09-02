@@ -10,10 +10,30 @@ export interface CanonPage {
   body: string;
 }
 
+export interface SkippedPage {
+  relPath: string;
+  reason: string;
+}
+
+export interface CanonPageReport {
+  pages: CanonPage[];
+  skipped: SkippedPage[];
+}
+
+export function stringArray(value: unknown): string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string")
+    ? value
+    : [];
+}
+
+function compareName(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function markdownFiles(directory: string): string[] {
   const files: string[] = [];
   const entries = readdirSync(directory, { withFileTypes: true }).sort((a, b) =>
-    a.name.localeCompare(b.name),
+    compareName(a.name, b.name),
   );
   for (const entry of entries) {
     if (entry.name === ".kizuki" || entry.name === "archive") continue;
@@ -32,16 +52,45 @@ function markdownFiles(directory: string): string[] {
   return files;
 }
 
-export function listCanonPages(vaultPath: string): CanonPage[] {
-  return markdownFiles(vaultPath).map((path) => {
+export function listCanonPagesReport(vaultPath: string): CanonPageReport {
+  const pages: CanonPage[] = [];
+  const skipped: SkippedPage[] = [];
+  const seen = new Map<string, string>();
+
+  for (const path of markdownFiles(vaultPath)) {
     const relPath = relative(vaultPath, path).split(sep).join("/");
-    const page = parseFrontmatter(readFileSync(path, "utf8"));
-    const id = page.data["id"];
-    if (typeof id !== "string" || id.length === 0) {
-      throw new TypeError(`${relPath}: frontmatter.id must be a non-empty string`);
+    let parsed: ReturnType<typeof parseFrontmatter>;
+    try {
+      parsed = parseFrontmatter(readFileSync(path, "utf8"));
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        skipped.push({ relPath, reason: error.message });
+        continue;
+      }
+      throw error;
     }
-    return { id, path, relPath, data: page.data, body: page.body };
-  });
+    const id = parsed.data["id"];
+    if (typeof id !== "string" || id.length === 0) {
+      skipped.push({ relPath, reason: "id: must be a non-empty string" });
+      continue;
+    }
+    const first = seen.get(id);
+    if (first !== undefined) {
+      skipped.push({
+        relPath,
+        reason: `duplicate id "${id}"; first seen at ${first}`,
+      });
+      continue;
+    }
+    seen.set(id, relPath);
+    pages.push({ id, path, relPath, data: parsed.data, body: parsed.body });
+  }
+
+  return { pages, skipped };
+}
+
+export function listCanonPages(vaultPath: string): CanonPage[] {
+  return listCanonPagesReport(vaultPath).pages;
 }
 
 export function findPageById(vaultPath: string, id: string): CanonPage | null {

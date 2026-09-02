@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { indexEvent, indexPage, rebuildSearch } from "../../src/search/indexer";
+import { indexEvent, indexPage, rebuildSearch, removeDoc } from "../../src/search/indexer";
 import { search, toFtsQuery } from "../../src/search/query";
 import { initSearch } from "../../src/search/schema";
 import { serializePage } from "../../src/vault/frontmatter";
@@ -56,7 +56,7 @@ describe("toFtsQuery", () => {
 
   const neutralized: [string, string][] = [
     ["alpha OR beta", '"alpha" "beta"'],
-    ["NEAR(beta gamma)", '"beta" "gamma"'],
+    ["NEAR(beta gamma)", '"NEAR(beta" "gamma)"'],
     ["alpha - ^ beta", '"alpha" "beta"'],
     ['"unfinished phrase', '"unfinished phrase"'],
     ["mid*dle", '"middle"'],
@@ -71,6 +71,29 @@ describe("toFtsQuery", () => {
   test("drops a query with no usable token without touching SQLite", () => {
     const db = new Database(":memory:");
     expect(search(db, "OR - ^")).toEqual([]);
+  });
+
+  test("keeps literal dates, handles, times, and hyphenated words as typed", () => {
+    expect(toFtsQuery("2026-02-03")).toBe('"2026-02-03"');
+    expect(toFtsQuery("person:ada")).toBe('"person:ada"');
+    expect(toFtsQuery("e-mail")).toBe('"e-mail"');
+    expect(toFtsQuery("10:30")).toBe('"10:30"');
+    expect(toFtsQuery("c++")).toBe('"c++"');
+  });
+
+  test("searches a literal date the way it was typed", () => {
+    const db = searchDb();
+    indexPage(db, page("fact:dated", "Meeting on 2026-02-03 at noon."));
+    expect(search(db, "2026-02-03").map(({ doc_id }) => doc_id)).toEqual([
+      "fact:dated",
+    ]);
+  });
+
+  test("drops control characters and a NUL query does not throw", () => {
+    const db = searchDb();
+    indexPage(db, page("fact:hello", "hello world"));
+    expect(toFtsQuery(`a\u0000b`)).toBe('"ab"');
+    expect(search(db, `a\u0000b`)).toEqual([]);
   });
 });
 
@@ -131,6 +154,43 @@ describe("search indexing", () => {
     expect(search(db, "cafe").map(({ doc_id }) => doc_id)).toEqual([
       "fact:cafe",
     ]);
+  });
+
+  test("title matches outrank body matches", () => {
+    const db = searchDb();
+    indexPage(
+      db,
+      page("fact:title", "other body words", { title: "UniqueKeyword here" }),
+    );
+    indexPage(
+      db,
+      page("fact:body", "UniqueKeyword here", { title: "Other title words" }),
+    );
+
+    expect(search(db, "UniqueKeyword").map(({ doc_id }) => doc_id)).toEqual([
+      "fact:title",
+      "fact:body",
+    ]);
+  });
+
+  test("indexing a canon page does not delete a ledger row with the same id", () => {
+    const db = searchDb();
+    const event = storedEvent(db, "shared-id", { text: "ledger unique phrase" });
+    indexEvent(db, event);
+    indexPage(db, page(event.event_id, "canon unique phrase"));
+
+    expect(
+      search(db, "ledger").map(({ scope, doc_id }) => `${scope}:${doc_id}`),
+    ).toEqual([`ledger:${event.event_id}`]);
+    expect(
+      search(db, "canon").map(({ scope, doc_id }) => `${scope}:${doc_id}`),
+    ).toEqual([`canon:${event.event_id}`]);
+
+    removeDoc(db, "canon", event.event_id);
+    expect(search(db, "canon")).toEqual([]);
+    expect(search(db, "ledger").map(({ scope }) => scope)).toEqual(["ledger"]);
+    removeDoc(db, "ledger", event.event_id);
+    expect(search(db, "ledger")).toEqual([]);
   });
 });
 
@@ -214,6 +274,38 @@ describe("search rebuild", () => {
     expect(rebuildSearch(db, vault.path).events).toBe(0);
     expect(search(db, "obsolete")).toEqual([]);
   });
+
+  test("rebuildSearch stays linear for thousands of ledger rows", () => {
+    const db = searchDb();
+    const vault = tempVault();
+    disposers.push(vault.dispose);
+    const insert = db.query(
+      `INSERT INTO events (
+         event_id, connector_id, source_record_id, kind, occurred_at, observed_at,
+         text, subjects, sensitivity_hint, deleted, attachments, metadata,
+         content_hash, accepted_at
+       ) VALUES (?, 'fixture', ?, 'message', '2026-02-28T10:30:00Z',
+                '2026-03-01T00:00:00Z', ?, '[]', 'personal', 0, '[]', '{}', ?, ?)`,
+    );
+    db.transaction(() => {
+      for (let index = 0; index < 6000; index += 1) {
+        insert.run(
+          `E${String(index).padStart(25, "0")}`,
+          `src-${index}`,
+          `body ${index}`,
+          `${"h".repeat(64)}${index}`,
+          "2026-03-01T00:00:00.000Z",
+        );
+      }
+    })();
+
+    const started = performance.now();
+    const result = rebuildSearch(db, vault.path);
+    const elapsed = performance.now() - started;
+
+    expect(result.events).toBe(6000);
+    expect(elapsed).toBeLessThan(1000);
+  });
 });
 
 describe("search policy and filters", () => {
@@ -292,5 +384,40 @@ describe("search policy and filters", () => {
         subjects: ["person:grace"],
       }).map(({ doc_id }) => doc_id),
     ).toEqual([later.event_id]);
+  });
+
+  test("compares since and until as instants, not raw strings", () => {
+    const db = searchDb();
+    const offset = storedEvent(db, "offset", {
+      text: "windowword",
+      occurred_at: "2026-02-03T00:30:00-05:00",
+    });
+    indexEvent(db, offset);
+    indexPage(db, page("fact:empty", "windowword"));
+
+    expect(
+      search(db, "windowword", {
+        since: "2026-02-03T04:00:00Z",
+        until: "2026-02-03T06:00:00Z",
+      })
+        .map(({ doc_id, scope }) => `${scope}:${doc_id}`)
+        .sort(),
+    ).toEqual([`canon:fact:empty`, `ledger:${offset.event_id}`].sort());
+    expect(
+      search(db, "windowword", { since: "2026-02-03T00:00:00Z" }).map(
+        ({ scope }) => scope,
+      ),
+    ).toContain("canon");
+  });
+
+  test("rejects a garbage search time bound instead of matching nothing", () => {
+    const db = searchDb();
+    indexEvent(db, storedEvent(db, "live", { text: "windowword" }));
+    expect(() => search(db, "windowword", { since: "garbage" })).toThrow(
+      RangeError,
+    );
+    expect(() => search(db, "windowword", { until: "garbage" })).toThrow(
+      RangeError,
+    );
   });
 });

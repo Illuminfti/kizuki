@@ -14,6 +14,7 @@ import {
   findPageById,
   initVault,
   listCanonPages,
+  listCanonPagesReport,
   parseFrontmatter,
   serializePage,
   validatePage,
@@ -202,6 +203,24 @@ describe("doctorVault", () => {
       true,
     );
   });
+
+  test("reports a markdown file that has no frontmatter and ignores archive", () => {
+    const vault = tempDir();
+    initVault(vault);
+    writeFileSync(join(vault, "facts", "orphan.md"), "just a note\n");
+    writeFileSync(
+      join(vault, "archive", "stale.md"),
+      serializePage({
+        data: { id: "fact:stale", title: "Stale" },
+        body: "Old revision.\n",
+      }),
+    );
+
+    const result = doctorVault(vault);
+    expect(result.counts).toEqual({ total: 1, valid: 0, invalid: 1 });
+    expect(result.pages[0]?.page).toBe("facts/orphan.md");
+    expect(result.pages[0]?.errors[0]).toMatch(/frontmatter/);
+  });
 });
 
 describe("canon page discovery", () => {
@@ -236,6 +255,23 @@ describe("canon page discovery", () => {
 
     expect(findPageById(vault, "fact:engine")?.relPath).toBe("facts/engine.md");
     expect(findPageById(vault, "fact:missing")).toBeNull();
+  });
+
+  test("skips a malformed note without aborting the vault", () => {
+    const vault = tempDir();
+    initVault(vault);
+    writePage(join(vault, "facts", "good.md"), {
+      data: validData({ id: "fact:good", type: "fact", title: "Good" }),
+      body: "A good note.\n",
+    });
+    writeFileSync(join(vault, "facts", "bad.md"), "no frontmatter here\n");
+
+    expect(listCanonPages(vault).map((page) => page.id)).toEqual(["fact:good"]);
+    expect(findPageById(vault, "fact:good")?.relPath).toBe("facts/good.md");
+    expect(findPageById(vault, "fact:missing")).toBeNull();
+    expect(listCanonPagesReport(vault).skipped.map(({ relPath }) => relPath)).toEqual([
+      "facts/bad.md",
+    ]);
   });
 });
 

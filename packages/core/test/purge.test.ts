@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Database } from "bun:sqlite";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CaptureEventInput } from "../src/contracts/event";
@@ -210,6 +210,21 @@ describe("purgeEvents", () => {
       purgeEvents(db, vaultPath, { event_id: source.event_id }, "again"),
     ).toEqual({ receipts: [], withdrawn_proposals: [], canon_holds: [] });
     expect(listProposals(db, { kind: "purge_review" })).toHaveLength(1);
+    db.close();
+  });
+
+  test("refuses to purge while a canon page cannot be read", () => {
+    const db = openLedger(":memory:");
+    const target = storedEvent(db, event("target"));
+    const vaultPath = temporaryVault();
+    writeFileSync(join(vaultPath, "facts", "orphan.md"), "no frontmatter\n");
+    expect(() =>
+      purgeEvents(db, vaultPath, { event_id: target.event_id }, "record request"),
+    ).toThrow(/purge refused/);
+    expect(count(db)).toBe(1);
+    expect(
+      db.query<{ n: number }, []>("SELECT count(*) AS n FROM event_purges").get(),
+    ).toEqual({ n: 0 });
     db.close();
   });
 

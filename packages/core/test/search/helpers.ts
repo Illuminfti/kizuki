@@ -1,7 +1,4 @@
 import type { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type {
   CaptureEvent,
   CaptureEventInput,
@@ -9,8 +6,8 @@ import type {
 import { openLedger } from "../../src/ledger/db";
 import { accept } from "../../src/ledger/ledger";
 import { initSearch } from "../../src/search/schema";
-import { initVault } from "../../src/vault/init";
 import { validEvent } from "../fixtures";
+export { tempVault } from "../helpers/vault";
 
 export function searchDb(): Database {
   const db = openLedger(":memory:");
@@ -34,11 +31,3 @@ export function storedEvent(
   return result.event;
 }
 
-export function tempVault(): { path: string; dispose: () => void } {
-  const path = mkdtempSync(join(tmpdir(), "kizuki-search-"));
-  initVault(path);
-  return {
-    path,
-    dispose: () => rmSync(path, { recursive: true, force: true }),
-  };
-}

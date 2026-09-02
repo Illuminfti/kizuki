@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { initDerivedMeta } from "../derived-meta";
 
 const SEARCH_SCHEMA = `
 CREATE VIRTUAL TABLE IF NOT EXISTS search_docs USING fts5(
@@ -14,14 +15,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search_docs USING fts5(
   subjects UNINDEXED,
   tokenize = 'unicode61 remove_diacritics 2'
 );
-
-CREATE TABLE IF NOT EXISTS derived_meta (
-  layer TEXT PRIMARY KEY,
-  rebuilt_at TEXT NOT NULL,
-  doc_count INTEGER NOT NULL
-) STRICT;
 `;
 
 export function initSearch(db: Database): void {
   db.exec(SEARCH_SCHEMA);
+  initDerivedMeta(db);
 }

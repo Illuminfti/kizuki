@@ -160,30 +160,95 @@ describe("neighbors", () => {
   }
 
   test("returns incoming and outgoing edges at depth one", () => {
-    expect(neighbors(linkedDb(), "a").edges).toEqual([
-      { src: "a", dst: "b", kind: "wikilink" },
-      { src: "c", dst: "a", kind: "subject" },
-    ]);
+    expect(neighbors(linkedDb(), "a")).toEqual({
+      id: "a",
+      truncated: false,
+      edges: [
+        { src: "a", dst: "b", kind: "wikilink" },
+        { src: "c", dst: "a", kind: "subject" },
+      ],
+    });
   });
 
   test("traverses both directions through depth two", () => {
-    expect(neighbors(linkedDb(), "a", { depth: 2 }).edges).toEqual([
-      { src: "a", dst: "b", kind: "wikilink" },
-      { src: "b", dst: "d", kind: "source" },
-      { src: "c", dst: "a", kind: "subject" },
-    ]);
+    expect(neighbors(linkedDb(), "a", { depth: 2 })).toEqual({
+      id: "a",
+      truncated: false,
+      edges: [
+        { src: "a", dst: "b", kind: "wikilink" },
+        { src: "b", dst: "d", kind: "source" },
+        { src: "c", dst: "a", kind: "subject" },
+      ],
+    });
   });
 
   test("filters traversal by edge kind", () => {
-    expect(
-      neighbors(linkedDb(), "a", { depth: 2, kinds: ["wikilink"] }).edges,
-    ).toEqual([{ src: "a", dst: "b", kind: "wikilink" }]);
+    expect(neighbors(linkedDb(), "a", { depth: 2, kinds: ["wikilink"] })).toEqual({
+      id: "a",
+      truncated: false,
+      edges: [{ src: "a", dst: "b", kind: "wikilink" }],
+    });
   });
 
   test("returns an empty envelope for an unknown id", () => {
     expect(neighbors(linkedDb(), "missing", { depth: 2 })).toEqual({
       id: "missing",
       edges: [],
+      truncated: false,
     });
+  });
+
+  test("queries incident edges instead of loading the whole table", () => {
+    const db = new Database(":memory:");
+    initGraph(db);
+    db.exec(`
+      INSERT INTO graph_edges VALUES ('a', 'b', 'wikilink');
+      INSERT INTO graph_edges VALUES ('x', 'y', 'wikilink');
+    `);
+    const select = db.query.bind(db);
+    let scanned = 0;
+    db.query = ((sql: string) => {
+      if (sql.includes("FROM graph_edges") && !sql.includes("WHERE")) {
+        scanned += 1;
+      }
+      return select(sql);
+    }) as Database["query"];
+
+    expect(neighbors(db, "a").edges).toEqual([
+      { src: "a", dst: "b", kind: "wikilink" },
+    ]);
+    expect(scanned).toBe(0);
+  });
+
+  test("bounds fan-out and reports truncation", () => {
+    const db = new Database(":memory:");
+    initGraph(db);
+    const insert = db.query<never, [string, string, string]>(
+      "INSERT INTO graph_edges (src, dst, kind) VALUES (?, ?, ?)",
+    );
+    insert.run("hub", "Z-node", "subject");
+    insert.run("hub", "a-node", "subject");
+    for (let index = 0; index < 3; index += 1) {
+      insert.run("hub", `n${index}`, "subject");
+    }
+
+    const limited = neighbors(db, "hub", { limit: 3 });
+    expect(limited.truncated).toBe(true);
+    expect(limited.edges).toHaveLength(3);
+    expect(neighbors(db, "hub", { limit: 5 }).truncated).toBe(false);
+    expect(() => neighbors(db, "hub", { limit: -1 })).toThrow(RangeError);
+  });
+
+  test("orders edges by code point, not locale", () => {
+    const db = new Database(":memory:");
+    initGraph(db);
+    db.exec(`
+      INSERT INTO graph_edges VALUES ('hub', 'a-node', 'subject');
+      INSERT INTO graph_edges VALUES ('hub', 'Z-node', 'subject');
+    `);
+    expect(neighbors(db, "hub").edges.map(({ dst }) => dst)).toEqual([
+      "Z-node",
+      "a-node",
+    ]);
   });
 });
