@@ -223,4 +223,3 @@ export function jsonSafeFrontmatter(
   }
   return { frontmatter: JSON.parse(serialized) as Record<string, unknown> };
 }
-

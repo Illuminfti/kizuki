@@ -252,4 +252,3 @@ export function readBlockScalar(
   if (header.chomp === "keep") return core + "\n".repeat(trailing + 1);
   return `${core}\n`;
 }
-
