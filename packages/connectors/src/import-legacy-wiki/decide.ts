@@ -34,13 +34,24 @@ export function stem(relpath: string): string {
   return dot > 0 ? name.slice(0, dot) : name;
 }
 
-/** A legacy value usable as vocabulary; anything else is reported unusable. */
-export function vocabulary(raw: unknown): string | null | "unusable" {
-  if (raw === undefined || raw === null) return null;
-  if (typeof raw === "string") return raw;
-  if (typeof raw === "number" && Number.isFinite(raw)) return String(raw);
-  if (typeof raw === "boolean") return String(raw);
-  return "unusable";
+/**
+ * A legacy value usable as vocabulary. Discriminated rather than a sentinel
+ * string: a page whose type really is the word "unusable" is a value the
+ * mapping may name, and a sentinel would silently take the default instead.
+ */
+export type Vocabulary =
+  | { ok: true; value: string }
+  | { ok: false; reason: "absent" | "unusable" };
+
+export function vocabulary(raw: unknown): Vocabulary {
+  if (raw === undefined || raw === null) return { ok: false, reason: "absent" };
+  if (typeof raw === "string") return { ok: true, value: raw };
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return { ok: true, value: String(raw) };
+  }
+  // A boolean, a list or a nested block is not a vocabulary term: `true` is
+  // not a type name, and stringifying it would invent one.
+  return { ok: false, reason: "unusable" };
 }
 
 function headingTitle(body: string): string | null {

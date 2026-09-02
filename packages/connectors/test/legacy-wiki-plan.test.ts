@@ -99,6 +99,56 @@ describe("planLegacyWiki over the fixture wiki", () => {
     ]);
   });
 
+  test("a legacy value the mapping names is used, sentinel-shaped or not", () => {
+    const mapping = parseLegacyWikiMapping({
+      schema: "kizuki.legacy-wiki-mapping/v1",
+      type: { field: "type", values: { unusable: "fact" }, default: "topic" },
+      sensitivity: { field: "visibility", values: { unusable: "private" } },
+    });
+    const scan: ScanResult = {
+      files: [
+        {
+          relpath: "named.md",
+          content: "---\ntype: unusable\nvisibility: unusable\n---\nbody\n",
+          mtimeMs: 1,
+          size: 40,
+        },
+        {
+          // A boolean is not a vocabulary term: `true` is not a type name,
+          // and stringifying it would invent one the mapping never saw.
+          relpath: "boolean.md",
+          content: "---\ntype: true\n---\nbody\n",
+          mtimeMs: 1,
+          size: 26,
+        },
+      ],
+      skipped: [],
+      truncated: false,
+    };
+    const { report } = planLegacyWiki(scan, mapping, OPTIONS);
+    expect(page(report, "named.md").type).toEqual({
+      legacy: "unusable",
+      mapped: "fact",
+      decision: "mapped",
+    });
+    expect(page(report, "named.md").sensitivity).toEqual({
+      legacy: "unusable",
+      label: "private",
+      decision: "labeled",
+    });
+    expect(page(report, "boolean.md").type).toEqual({
+      legacy: null,
+      mapped: "topic",
+      decision: "defaulted",
+    });
+    expect(page(report, "boolean.md").fields).toContainEqual({
+      key: "type",
+      outcome: "dropped",
+      to: "type",
+      note: "unusable",
+    });
+  });
+
   test("an mtime outside the ledger's grammar still imports the page", () => {
     const scan: ScanResult = {
       files: [

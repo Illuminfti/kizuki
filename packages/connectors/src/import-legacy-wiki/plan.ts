@@ -88,8 +88,8 @@ function planPage(
   if (mapping.subjects !== null) slots.set(mapping.subjects.field, "subjects");
 
   const rawType = vocabulary(data[mapping.type.field]);
-  const unusableType = rawType === "unusable";
-  const legacyType = unusableType ? null : rawType;
+  const unusableType = !rawType.ok && rawType.reason === "unusable";
+  const legacyType = rawType.ok ? rawType.value : null;
   let type: PageType | null = mapping.type.default;
   let typeDecision: LegacyWikiPageReport["type"]["decision"] = "defaulted";
   let confidence = 0.75;
@@ -107,8 +107,9 @@ function planPage(
   const title = planTitle(data, mapping, relpath, parsed.body);
 
   const rawSensitivity = vocabulary(data[mapping.sensitivity.field]);
-  const unusableSensitivity = rawSensitivity === "unusable";
-  const legacySensitivity = unusableSensitivity ? null : rawSensitivity;
+  const unusableSensitivity =
+    !rawSensitivity.ok && rawSensitivity.reason === "unusable";
+  const legacySensitivity = rawSensitivity.ok ? rawSensitivity.value : null;
   const read =
     legacySensitivity === null
       ? null
