@@ -232,11 +232,27 @@ function deriveTarget(
   return target;
 }
 
+/**
+ * The targets a run has already handed out. The next free suffix is
+ * remembered per target rather than searched from 2 every time: a wiki whose
+ * names all slug to one leaf — every estate written in a non-Latin script
+ * does — would otherwise cost a quadratic scan over the 50 000 files the walk
+ * advertises.
+ */
+export interface TargetIndex {
+  taken: Set<string>;
+  next: Map<string, number>;
+}
+
+export function newTargetIndex(pinned: Iterable<string>): TargetIndex {
+  return { taken: new Set(pinned), next: new Map() };
+}
+
 export function planTarget(
   relpath: string,
   type: PageType,
   mapping: LegacyWikiMapping,
-  taken: Set<string>,
+  index: TargetIndex,
   notes: string[],
   /** The target a previous run already emitted this page with, when there is one. */
   pinned: string | undefined,
@@ -248,26 +264,26 @@ export function planTarget(
     // event, so a note that depended on which run emitted the page would
     // give two byte-identical copies of it two different content hashes.
     if (pinned !== target) notes.push("target_collision");
-    taken.add(pinned);
+    index.taken.add(pinned);
     return pinned;
   }
 
   const prefix = target.slice(0, target.lastIndexOf("/") + 1);
+  const leaf = target.slice(target.lastIndexOf("/") + 1);
   let unique = target;
-  let suffix = 2;
-  // Two suffixes can never produce the same leaf (the suffix is everything
-  // after the last "-"), so the loop cannot outlive the set it is avoiding.
-  while (taken.has(unique)) {
-    unique = `${prefix}${collisionLeaf(leaf(target), suffix)}`;
+  let suffix = index.next.get(target) ?? 2;
+  // A suffixed leaf can still meet a page literally named that way, so the
+  // search continues; two suffixes never produce the same leaf, so it ends.
+  while (index.taken.has(unique)) {
+    unique = `${prefix}${collisionLeaf(leaf, suffix)}`;
     suffix += 1;
   }
-  if (unique !== target) notes.push("target_collision");
-  taken.add(unique);
+  if (unique !== target) {
+    notes.push("target_collision");
+    index.next.set(target, suffix);
+  }
+  index.taken.add(unique);
   return unique;
-}
-
-function leaf(target: string): string {
-  return target.slice(target.lastIndexOf("/") + 1);
 }
 
 export function jsonSafeFrontmatter(

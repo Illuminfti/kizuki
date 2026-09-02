@@ -20,12 +20,14 @@ import {
 import { compareStrings } from "../util";
 import {
   jsonSafeFrontmatter,
+  newTargetIndex,
   planFields,
   planSubjects,
   planTarget,
   planTitle,
   vocabulary,
 } from "./decide";
+import type { TargetIndex } from "./decide";
 import { parseLegacyFrontmatter } from "./frontmatter";
 import { LEGACY_WIKI_CONNECTOR_ID } from "./mapping";
 import type { LegacyWikiMapping } from "./mapping";
@@ -70,7 +72,7 @@ function planPage(
   file: ScanResult["files"][number],
   mapping: LegacyWikiMapping,
   opts: PlanOptions,
-  taken: Set<string>,
+  targets: TargetIndex,
 ): PageDraft {
   const pinned = opts.pinned?.[file.relpath];
   const relpath = sanitizeLine(file.relpath, 200);
@@ -217,7 +219,7 @@ function planPage(
     };
   }
 
-  const target = planTarget(relpath, type, mapping, taken, notes, pinned);
+  const target = planTarget(relpath, type, mapping, targets, notes, pinned);
   const points = [...parsed.body];
   const truncated = points.length > MAX_TEXT_LENGTH;
   if (truncated) notes.push("text_truncated");
@@ -385,7 +387,7 @@ export function planLegacyWiki(
 ): { events: CaptureEventInput[]; report: LegacyWikiReport } {
   const events: CaptureEventInput[] = [];
   const pages: LegacyWikiPageReport[] = [];
-  const taken = new Set(Object.values(opts.pinned ?? {}));
+  const targets = newTargetIndex(Object.values(opts.pinned ?? {}));
 
   // Relpath order, whatever the caller handed over: collision suffixes and
   // therefore page paths would otherwise depend on directory read order.
@@ -393,7 +395,7 @@ export function planLegacyWiki(
     compareStrings(a.relpath, b.relpath),
   );
   for (const file of files) {
-    const draft = planPage(file, mapping, opts, taken);
+    const draft = planPage(file, mapping, opts, targets);
     pages.push(draft.report);
     if (draft.event !== null) events.push(draft.event);
   }

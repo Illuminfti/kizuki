@@ -343,8 +343,9 @@ the three happened:
 | decision | meaning |
 | --- | --- |
 | `labeled` | the estate's own value mapped to a Kizuki label |
-| `unlabeled` | the page carried no label at all; the default applied |
-| `unmapped_value` | the page carried a label `sensitivity.values` does not know; the default applied |
+| `unlabeled` | the page carried no label at all; `sensitivity.default` applied |
+| `unmapped_value` | the page carried a label `sensitivity.values` does not know; `private` applied |
+| `unreadable` | the frontmatter did not parse, or the label was not a word; `private` applied |
 
 A blanket `private` is safe, not useful, so widen `sensitivity.values` until
 the report shows no `unmapped_value` rows and no more `unlabeled` than the
@@ -368,6 +369,10 @@ so a defaulted page never looks like a decision the previous system made.
   scalars, and comments. Anchors, aliases, tags, complex keys, directives and
   multi-document files are reported as unparsed — the page still imports, with
   the file's heading or name as its title.
+- **A page path is ASCII.** File names are slugged into path segments, and a
+  name with no ASCII letters or digits slugs to `page`, so an estate written
+  entirely in another script lands on `entities/page`, `entities/page-2` and
+  so on. The titles survive intact; only the paths carry no information.
 - **Wiki links are not rewritten.** A `[[Title]]` in a body stays as written.
 - **Attachments are not copied.** An image link stays text.
 - **No LLM, no network, no credentials.** Both importers declare

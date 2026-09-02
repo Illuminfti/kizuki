@@ -566,6 +566,26 @@ describe("determinism and targets", () => {
     ]);
   });
 
+  test("an estate that slugs to one leaf still plans in linear time", () => {
+    // Every name here slugs to the same leaf, which is the ordinary case for
+    // an estate written in a non-Latin script. Rescanning the suffixes from
+    // 2 for each page made the walk's advertised 50 000 files unreachable.
+    const files = Array.from({ length: 3000 }, (_, i) => ({
+      relpath: `dir${i}/\u30da\u30fc\u30b8.md`,
+      content: "body\n",
+      mtimeMs: 1,
+      size: 5,
+    }));
+    const started = Bun.nanoseconds();
+    const { report } = plan({ files, skipped: [], truncated: false });
+    const elapsed = (Bun.nanoseconds() - started) / 1e6;
+    const targets = new Set(report.pages.map((entry) => entry.target));
+    expect(targets.size).toBe(3000);
+    expect(report.pages[2999]?.target).toBe("entities/page-3000");
+    // Quadratic resolution took well over a second for this many pages.
+    expect(elapsed).toBeLessThan(1000);
+  });
+
   test("a collision between two maximum-length leaves still terminates", () => {
     // Both stems slug to the same 64-character leaf, so appending the suffix
     // before slugging truncates it straight back off: the search for a free
