@@ -55,22 +55,48 @@ const FLOOR_OWNED_KEYS = new Set([
   "title",
 ]);
 
-/**
- * The rule `pageRelPath` applies to a target; null when the target is usable.
- * Lives here rather than in promote so a producer can check a target it is
- * about to mint without reaching into the canon writer.
- */
-export function targetProblem(target: string): string | null {
+const SEGMENT_COUNT_RULE = `target: more than ${MAX_SEGMENTS} path segments`;
+const SEGMENT_RULE = "target: unusable path segment";
+
+interface TargetFault {
+  rule: string;
+  /** The offending segment, for a producer checking a target it built itself. */
+  segment?: string;
+}
+
+function targetFault(target: string): TargetFault | null {
   const segments = target.split(/[:/]/);
-  if (segments.length > MAX_SEGMENTS) {
-    return `target: more than ${MAX_SEGMENTS} path segments`;
-  }
+  if (segments.length > MAX_SEGMENTS) return { rule: SEGMENT_COUNT_RULE };
   for (const segment of segments) {
     if (segment.length > MAX_SEGMENT_LENGTH || !PATH_SEGMENT.test(segment)) {
-      return `target: unusable path segment ${JSON.stringify(segment)}`;
+      // Bounded: a segment is refused precisely because it broke the length
+      // and character rules, so it can be arbitrary text of arbitrary length.
+      return { rule: SEGMENT_RULE, segment: segment.slice(0, MAX_SEGMENT_LENGTH) };
     }
   }
   return null;
+}
+
+/**
+ * The rule a target breaks, naming nothing from the target itself; null when
+ * the target is usable. This is what the canon writer raises, because a claim
+ * target is derived from captured text and an error is not a place to echo it.
+ */
+export function targetRefusal(target: string): string | null {
+  return targetFault(target)?.rule ?? null;
+}
+
+/**
+ * The same rule, naming the segment that broke it. Lives here rather than in
+ * the writer so a producer can check a target it is about to mint — its own
+ * input, at the moment it can still fix it — against the writer's rule.
+ */
+export function targetProblem(target: string): string | null {
+  const fault = targetFault(target);
+  if (fault === null) return null;
+  return fault.segment === undefined
+    ? fault.rule
+    : `${fault.rule} ${JSON.stringify(fault.segment)}`;
 }
 
 /**

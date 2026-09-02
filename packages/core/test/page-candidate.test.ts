@@ -201,8 +201,11 @@ describe("targetProblem", () => {
     );
     expect(targetProblem("a/ b")).toBe('target: unusable path segment " b"');
     expect(targetProblem("a//b")).toBe('target: unusable path segment ""');
+    // Bounded: the segment is refused precisely because it broke the length
+    // rule, so the message must not grow with it.
     expect(targetProblem(`a/${"b".repeat(65)}`)).toBe(
-      `target: unusable path segment ${JSON.stringify("b".repeat(65))}`,
+      `target: unusable path segment ${JSON.stringify("b".repeat(64))}`,
     );
+    expect(targetProblem(`a/${"b".repeat(5000)}`)?.length).toBeLessThan(120);
   });
 });
