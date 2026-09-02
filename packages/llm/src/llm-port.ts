@@ -20,7 +20,7 @@ import type { LlmPortConfig } from "./config";
 import { LlmFailure, configError, refusedAfter } from "./errors";
 import { readChatAnswer } from "./response";
 import type { ProviderAnswer } from "./response";
-import { RateWindow, defaultClock } from "./rate";
+import { CallDeadline, RateWindow, defaultClock } from "./rate";
 import type { Clock } from "./rate";
 import {
   NOTHING_SPENT,
@@ -148,7 +148,7 @@ export class OpenAiCompatibleLlm implements LlmPort {
     );
     // One deadline for the whole call. A retry that cannot finish inside it is
     // not a retry, it is an overrun no scheduler above this port can plan for.
-    const deadline = this.clock.now() + request.deadline_ms;
+    const deadline = new CallDeadline(this.clock.now() + request.deadline_ms);
     const chat: ChatRequest = {
       model: this.config.model,
       messages,
@@ -166,7 +166,7 @@ export class OpenAiCompatibleLlm implements LlmPort {
 
     let used = 0;
     for (;;) {
-      if (this.clock.now() >= deadline) {
+      if (this.clock.now() >= deadline.at) {
         throw this.deadlineError(unansweredSpend(used, inputChars));
       }
       const result = await this.send(chat, deadline, used, inputChars);
@@ -201,7 +201,7 @@ export class OpenAiCompatibleLlm implements LlmPort {
         result.retry_after_ms ?? DEFAULT_RETRY_MS,
         MAX_RETRY_MS,
       );
-      if (this.clock.now() + wait >= deadline) {
+      if (this.clock.now() + wait >= deadline.at) {
         throw this.transportError(result, spend);
       }
       await this.clock.sleep(wait);
@@ -280,25 +280,28 @@ export class OpenAiCompatibleLlm implements LlmPort {
 
   private async send(
     request: ChatRequest,
-    deadline: number,
+    deadline: CallDeadline,
     used: number,
     inputChars: number,
   ): Promise<TransportResult> {
     const spend = unansweredSpend(used, inputChars);
-    const slot = await this.rate.take(deadline);
+    const slot = await this.rate.take(deadline.rateBound);
     if (slot === null) throw this.deadlineError(spend);
+    // The wait was this host throttling itself, so it buys the request back
+    // the time it took rather than being charged to the endpoint.
+    deadline.credit(slot.waited);
     let key: string | null;
     try {
       key = await this.apiKey(spend);
     } catch (error) {
       // A request that fails closed here never happened, so it must not keep
       // a slot in the rate window either.
-      this.rate.release(slot);
+      this.rate.release(slot.at);
       throw error;
     }
-    const remaining = deadline - this.clock.now();
+    const remaining = deadline.at - this.clock.now();
     if (remaining <= 0) {
-      this.rate.release(slot);
+      this.rate.release(slot.at);
       throw this.deadlineError(spend);
     }
     this.physicalAttempts += 1;

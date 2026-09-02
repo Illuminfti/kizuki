@@ -22,6 +22,44 @@ export const defaultClock: Clock = {
 export const RATE_WINDOW_MS = 60_000;
 
 /**
+ * How long one call may run. Queueing for a rate slot is this host's own
+ * backpressure, not the endpoint's latency, so the wait extends the call's
+ * deadline instead of being spent from it: charged to the request, a wait
+ * left a throttled call a fraction of its configured timeout and the cut-off
+ * answer reached the caller as a model outage. The extension is capped at one
+ * window, so a call stays bounded by `deadline_ms + RATE_WINDOW_MS`.
+ */
+export class CallDeadline {
+  private credited = 0;
+
+  constructor(private end: number) {}
+
+  /** The instant the call is over, waits credited so far included. */
+  get at(): number {
+    return this.end;
+  }
+
+  /** The furthest a wait for a slot may reach, on the credit left to give. */
+  get rateBound(): number {
+    return this.end + (RATE_WINDOW_MS - this.credited);
+  }
+
+  credit(waited: number): void {
+    const given = Math.min(waited, RATE_WINDOW_MS - this.credited);
+    if (given > 0) {
+      this.credited += given;
+      this.end += given;
+    }
+  }
+}
+
+/** A slot in the window, and what waiting for it cost. */
+export interface RateSlot {
+  readonly at: number;
+  readonly waited: number;
+}
+
+/**
  * A sliding window of the requests made in the last minute. `take` hands back
  * the time a request may go out at, or `null` when waiting for a slot would
  * run past the caller's deadline.
@@ -41,7 +79,7 @@ export class RateWindow {
    * recorded a request, and nothing in `kizuki.llm/v1` says a call is
    * single-flight.
    */
-  async take(deadline: number): Promise<number | null> {
+  async take(deadline: number): Promise<RateSlot | null> {
     const taken = this.queue.then(
       () => this.waitForSlot(deadline),
       () => this.waitForSlot(deadline),
@@ -63,12 +101,13 @@ export class RateWindow {
   /**
    * The wait is clamped to the window so a backward clock step (an NTP
    * correction, a resume from suspend) cannot park a run for the size of the
-   * step. Waiting is part of the call, so it is spent from the same deadline
-   * rather than added on top of it.
+   * step. What the wait cost is reported rather than swallowed, so the caller
+   * can credit it back to the deadline it holds.
    */
-  private async waitForSlot(deadline: number): Promise<number | null> {
+  private async waitForSlot(deadline: number): Promise<RateSlot | null> {
     this.prune();
     const oldest = this.slots[0];
+    let waited = 0;
     if (this.slots.length >= this.perMinute && oldest !== undefined) {
       const wait = Math.max(
         0,
@@ -76,12 +115,13 @@ export class RateWindow {
       );
       if (this.clock.now() + wait > deadline) return null;
       await this.clock.sleep(wait);
+      waited = wait;
       this.prune();
     }
     // Taken here, with no await between the check above and this line.
     const at = this.clock.now();
     this.slots.push(at);
-    return at;
+    return { at, waited };
   }
 
   private prune(): void {

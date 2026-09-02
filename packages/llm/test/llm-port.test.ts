@@ -216,6 +216,40 @@ describe("bounds on a call", () => {
     expect(now).toBeLessThanOrEqual(60_000);
   });
 
+  test("a wait for a rate slot does not eat the request's timeout", async () => {
+    const granted: number[] = [];
+    let now = 0;
+    const advancing: Clock = {
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+    };
+    const transport: ChatTransport = async (_request, opts) => {
+      granted.push(opts.timeout_ms);
+      now += 200;
+      return { ok: true, status: 200, body: chatCompletion("{}") };
+    };
+    const llm = port(
+      {
+        base_url: "https://host.test/v1",
+        model: "m",
+        requests_per_minute: 1,
+        max_retries: 0,
+      },
+      { transport, clock: advancing },
+    );
+    await llm.complete({ ...request, deadline_ms: 60_000 });
+    await llm.complete({ ...request, deadline_ms: 60_000 });
+    // Regression: the minute a saturated window makes a call wait came out of
+    // the same deadline as the request, so the second call was granted the
+    // first one's latency and any slower answer failed as an endpoint
+    // outage - a local throttle reported as a model outage the loop counts.
+    expect(granted).toEqual([60_000, 60_000]);
+    // Queueing extends the call by at most one window, so it stays bounded.
+    expect(now).toBeLessThanOrEqual(60_000 + 60_000);
+  });
+
   test("a status that is not retryable is not retried", async () => {
     const scripted = counting([{ ok: false, status: 400, retry_after_ms: null }]);
     const llm = port(

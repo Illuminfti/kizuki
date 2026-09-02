@@ -147,8 +147,13 @@ throws, and an outage carries the usage the run accrued before it.
 for a slot in the same sliding window, and a call that fails closed before its
 request leaves gives its slot back.
 
-`LlmRequest.deadline_ms` bounds the whole call. Every attempt, every retry
-backoff and every wait for the rate window comes out of it, and the call ends
-as `PortError("timeout")` once it is spent. The producer gives each batch
-sixty seconds, so one `produce` is bounded by its batch count times that
-however the endpoint behaves.
+`LlmRequest.deadline_ms` bounds the whole call: every attempt and every retry
+backoff comes out of it, and the call ends as `PortError("timeout")` once it
+is spent. Waiting for a rate slot is this host throttling itself rather than
+the endpoint being slow, so that wait is credited back to the deadline — up to
+one window per call, which keeps a call bounded by `deadline_ms` plus sixty
+seconds. Charging it to the request instead left a throttled call a fraction
+of its configured `timeout_ms`, and the answer it then cut off reached the
+caller as a model outage. The producer gives each batch sixty seconds, so one
+`produce` is bounded by its batch count times two minutes however the endpoint
+behaves.
