@@ -9,11 +9,28 @@ export const FIXTURE_UIDVALIDITY = 42;
 export interface FixtureMessage {
   uid: number;
   internaldate: string;
-  raw: string;
+  /** Bytes when the message is not 7-bit; the wire carries bytes, not text. */
+  raw: string | Uint8Array;
   section: "" | "HEADER";
 }
 
 const crlf = (lines: string[]): string => lines.join("\r\n");
+
+/** Latin-1 on the wire: one byte per character, as an 8bit body arrives. */
+function latin1Bytes(lines: string[]): Uint8Array {
+  const text = crlf(lines);
+  const bytes = new Uint8Array(text.length);
+  for (let index = 0; index < text.length; index += 1) {
+    bytes[index] = text.charCodeAt(index) & 0xff;
+  }
+  return bytes;
+}
+
+export function fixtureBytes(message: FixtureMessage): Uint8Array {
+  return typeof message.raw === "string"
+    ? new TextEncoder().encode(message.raw)
+    : message.raw;
+}
 
 /**
  * Synthetic RFC 5322 messages that exercise every branch of the parser. They
@@ -261,12 +278,28 @@ export const FIXTURE_MESSAGES: FixtureMessage[] = [
       "",
     ]),
   },
+  {
+    uid: 14,
+    internaldate: "01-Mar-2026 09:05:00 +0000",
+    section: "",
+    raw: latin1Bytes([
+      "From: Linus <linus@example.org>",
+      "To: ada@acme.example",
+      "Subject: Caf\u00e9 order",
+      "Date: Sun, 01 Mar 2026 09:05:00 +0000",
+      "Message-ID: <eightbit-1@acme.example>",
+      "Content-Type: text/plain; charset=iso-8859-1",
+      "Content-Transfer-Encoding: 8bit",
+      "",
+      "Une pi\u00e8ce de r\u00e9sistance.",
+      "",
+    ]),
+  },
 ];
 
 export function fixtureEvents(): CaptureEventInput[] {
-  const encoder = new TextEncoder();
   return FIXTURE_MESSAGES.map((message) => {
-    const raw = encoder.encode(message.raw);
+    const raw = fixtureBytes(message);
     return messageEvent({
       folderWire: FIXTURE_FOLDER_WIRE,
       folderDisplay: FIXTURE_FOLDER_DISPLAY,

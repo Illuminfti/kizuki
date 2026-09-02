@@ -266,6 +266,12 @@ describe("the fixture messages map to exact events", () => {
     expect(event.metadata).not.toHaveProperty("transfer_fallback");
   });
 
+  test("an 8-bit latin-1 body decodes through its declared charset", () => {
+    const event = byId().get("42:14:INBOX");
+    expect(event?.text).toBe("Café order\n\nUne pièce de résistance.");
+    expect(event?.metadata).not.toHaveProperty("charset_fallback");
+  });
+
   test("no event carries IMAP flags in any field", () => {
     for (const event of fixtureEvents()) {
       expect(Object.keys(event.metadata)).not.toContain("flags");

@@ -4,6 +4,7 @@ import {
   FIXTURE_FOLDER_WIRE,
   FIXTURE_MESSAGES,
   FIXTURE_UIDVALIDITY,
+  fixtureBytes,
 } from "../fixture";
 import { FakeImapServer } from "./fake-imap";
 import type { FakeFolder } from "./fake-imap";
@@ -42,7 +43,7 @@ export function fixtureMailbox(): FakeFolder[] {
       messages: FIXTURE_MESSAGES.map((message) => ({
         uid: message.uid,
         internaldate: message.internaldate,
-        raw: encoder.encode(message.raw),
+        raw: fixtureBytes(message),
       })),
     },
     {

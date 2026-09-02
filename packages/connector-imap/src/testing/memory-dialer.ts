@@ -1,20 +1,17 @@
 import type { ImapConn, ImapDialer } from "../transport";
 import type { FakeImapServer } from "./fake-imap";
 
-const encoder = new TextEncoder();
-
 /**
  * Wires a `FakeImapServer` to the connector through the same `ImapDialer`
  * seam production uses, so tests exercise the real client without a socket.
  */
 export function memoryDialer(server: FakeImapServer): ImapDialer {
   return async (): Promise<ImapConn> => {
-    const pending: Uint8Array[] = [encoder.encode(server.greeting())];
+    const pending: Uint8Array[] = [server.greeting()];
     const waiters: ((chunk: Uint8Array | null) => void)[] = [];
     let closed = false;
 
-    const deliver = (text: string): void => {
-      const bytes = encoder.encode(text);
+    const deliver = (bytes: Uint8Array): void => {
       const waiter = waiters.shift();
       if (waiter !== undefined) waiter(bytes);
       else pending.push(bytes);

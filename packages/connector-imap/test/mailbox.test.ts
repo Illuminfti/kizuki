@@ -7,6 +7,7 @@ import { DEFAULT_MAX_MESSAGE_BYTES } from "../src/state";
 import type { ImapState } from "../src/state";
 import { FakeImapServer } from "../src/testing/fake-imap";
 import type { FakeFolder } from "../src/testing/fake-imap";
+import { fixtureServer, fixtureState } from "../src/testing";
 import { memoryDialer } from "../src/testing/memory-dialer";
 
 const NOW = (): Date => new Date("2026-03-02T00:00:00.000Z");
@@ -337,5 +338,20 @@ describe("read-only discipline and failures", () => {
       "backfill",
     );
     expect(fine.batch.events).toHaveLength(3);
+  });
+});
+
+describe("bytes on the wire", () => {
+  test("an 8-bit body survives the literal framing intact", async () => {
+    const server = fixtureServer();
+    const result = await walkMailboxes(
+      deps(server, fixtureState()),
+      null,
+      "backfill",
+    );
+    const event = result.batch.events.find(
+      (candidate) => candidate.source_record_id === "42:14:INBOX",
+    );
+    expect(event?.text).toBe("Café order\n\nUne pièce de résistance.");
   });
 });
