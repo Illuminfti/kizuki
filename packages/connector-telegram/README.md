@@ -57,9 +57,10 @@ tries: a wait or a connection fault ends the attempt with its own reason
 instead of being spent as one of them, and an entry with nothing in it is
 asked again rather than sent, on a budget of its own that ends sign-in after
 three. A code is sent as its digits alone, so a pasted one carrying a space
-still works; a password is sent exactly as typed, padding included. A short wait passes quietly and sign-in
-continues; a longer one is reported to you with the number of seconds, because
-a silent multi-minute pause looks like a hang.
+still works; a password is sent exactly as typed, padding included. A short
+wait passes quietly and sign-in continues; a longer one is reported to you
+with the number of seconds, because a silent multi-minute pause looks like a
+hang.
 
 A number no Telegram account exists for is refused. The library this package
 uses would otherwise register one under a placeholder name and accept
@@ -92,9 +93,9 @@ account is refused rather than quietly re-pointed.
 Revoking ends the session at Telegram itself, and it is final for the
 connector that did it: the client is let go and every later read, sync or
 reconnect on that instance is refused, whether or not the socket closed
-cleanly. A connector with nothing live to end
-refuses to revoke rather than report an access that never stopped. Removing
-the state file and marking the row are the host's part.
+cleanly. A connector with nothing live to end refuses to revoke rather than
+report an access that never stopped. Removing the state file and marking the
+row are the host's part.
 
 ## What it does not do
 
@@ -163,9 +164,8 @@ Everything runs against a scripted in-memory account with no network. The
 module that talks to Telegram is driven against a stand-in for the library, so
 its error handling, its record mapping and its whole client lifecycle —
 opening, closing, signing out, and saving the session sign-in persists — are
-covered cold. The one test that
-reaches Telegram itself is skipped by default and never runs in CI. To run it
-by hand:
+covered cold. The one test that reaches Telegram itself is skipped by default
+and never runs in CI. To run it by hand:
 
 ```sh
 KIZUKI_TELEGRAM_SMOKE=1 KIZUKI_TELEGRAM_API_ID=… KIZUKI_TELEGRAM_API_HASH=… \
