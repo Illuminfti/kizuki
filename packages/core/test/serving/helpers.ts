@@ -12,6 +12,7 @@ import {
 import type { Grant, Principal } from "../../src/agents";
 import { rebuildDerived } from "../../src/derived";
 import { initGraph } from "../../src/graph/schema";
+import { saveCheckpoint } from "../../src/ledger/connections";
 import { openLedger } from "../../src/ledger/db";
 import { accept } from "../../src/ledger/ledger";
 import { purgeEvents } from "../../src/ledger/purge";
@@ -19,6 +20,7 @@ import { initSearch } from "../../src/search/schema";
 import { ownerPromote } from "../../src/staging/promote";
 import { fileProposal, initStaging } from "../../src/staging/proposals";
 import type { ServeContext } from "../../src/serving/types";
+import { ulid } from "../../src/util/ulid";
 import { serializePage } from "../../src/vault/frontmatter";
 import { initVault } from "../../src/vault/init";
 
@@ -28,6 +30,7 @@ export interface Fixture {
   events: Record<string, string>;
   tokens: Record<string, string>;
   heldPath: string;
+  sourceKey: string;
   owner: () => ServeContext;
   agent: (name: string) => ServeContext;
   dispose: () => void;
@@ -221,6 +224,31 @@ function makeHeldPage(
   return receipt.page_path;
 }
 
+/**
+ * A connection row written directly: the public enrolment path needs a live
+ * connector with interactive sign-in, which this fixture has no use for.
+ */
+function enrollFixtureConnection(db: Database): string {
+  const sourceKey = ulid();
+  db.query<never, [string, string]>(
+    `INSERT INTO connections
+       (connector_id, source_key, config, secret_refs, connected_at)
+     VALUES ('fixture', ?,
+             '{"schema":"kizuki.connection-config/v1","state_ref_index":null}',
+             '[]', ?)`,
+  ).run(sourceKey, "2026-02-27T08:00:00Z");
+  saveCheckpoint(db, "fixture", sourceKey, "cursor-1", "sync", {
+    stored: 6,
+    duplicates: 0,
+    errors: [],
+    proposals_created: 0,
+    withdrawn: 0,
+    retractions_filed: 0,
+    cursor: "cursor-1",
+  });
+  return sourceKey;
+}
+
 export function serveFixture(): Fixture {
   const vaultPath = mkdtempSync(join(tmpdir(), "kizuki-serving-"));
   initVault(vaultPath);
@@ -292,7 +320,22 @@ export function serveFixture(): Fixture {
     true,
   );
 
+  page(
+    vaultPath,
+    "facts/sourced.md",
+    {
+      id: "fact:sourced",
+      title: "Sourced kettle note",
+      type: "fact",
+      status: "active",
+      sensitivity: "public",
+      sources: [events["tombstoned"], events["public"]],
+    },
+    "A kettle note that cites one live and one retracted record.",
+  );
+
   const heldPath = makeHeldPage(db, vaultPath, events["hold"] as string);
+  const sourceKey = enrollFixtureConnection(db);
 
   const tokens: Record<string, string> = {};
   for (const [name, grant] of Object.entries(AGENTS)) {
@@ -317,6 +360,7 @@ export function serveFixture(): Fixture {
     events,
     tokens,
     heldPath,
+    sourceKey,
     owner: () => ({ db, vaultPath, principal: OWNER }),
     agent: (name) => ({ db, vaultPath, principal: principalFor(name) }),
     dispose: () => {
