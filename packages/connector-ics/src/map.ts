@@ -21,6 +21,11 @@ export const ICS_CONNECTOR_ID = "kizuki.ics" as const;
 export const MAX_TEXT_CODE_POINTS = 262_144;
 export const MAX_DISPLAY_NAME_CHARS = 120;
 export const MAX_SLUG_CHARS = 64;
+/**
+ * Metadata is stored verbatim per event, so a single hostile value repeated
+ * across a calendar's entries is an amplification of the source's size.
+ */
+export const MAX_METADATA_VALUE_CHARS = 1_024;
 
 export interface MapOptions {
   /** File base name or URL hostname; only used when the file has no name. */
@@ -240,7 +245,10 @@ export function emit(input: EmitInput): CaptureEventInput {
   const tzid = input.start.kind === "zoned" ? input.start.tzid : undefined;
   const created = instantOf(firstValue(input.event, "CREATED"));
   const lastModified = instantOf(firstValue(input.event, "LAST-MODIFIED"));
-  const url = firstValue(input.event, "URL")?.value;
+  const url = sanitize(
+    firstValue(input.event, "URL")?.value ?? "",
+    MAX_METADATA_VALUE_CHARS,
+  );
   const sequence = Number(firstValue(input.event, "SEQUENCE")?.value ?? "0");
 
   return {
@@ -262,8 +270,10 @@ export function emit(input: EmitInput): CaptureEventInput {
         (firstValue(input.event, "STATUS")?.value ?? "").trim().toUpperCase() ||
         null,
       location:
-        unescapeText(firstValue(input.event, "LOCATION")?.value ?? "").trim() ||
-        null,
+        sanitize(
+          unescapeText(firstValue(input.event, "LOCATION")?.value ?? ""),
+          MAX_METADATA_VALUE_CHARS,
+        ) || null,
       ends_at: endsAt,
       all_day: allDay,
       ...(allDay && endInstant?.kind === "date"
@@ -283,9 +293,9 @@ export function emit(input: EmitInput): CaptureEventInput {
       ...(lastModified !== null
         ? { last_modified: toUtc(lastModified, zones, input.parsed.zones).iso }
         : {}),
-      ...(url !== undefined && url.length > 0 ? { url } : {}),
+      ...(url.length > 0 ? { url } : {}),
       ...(input.calendarName !== null
-        ? { calendar_name: input.calendarName }
+        ? { calendar_name: sanitize(input.calendarName, MAX_METADATA_VALUE_CHARS) }
         : {}),
       ...(input.synthesized ? { uid_synthesized: true } : {}),
       ...(input.duplicate ? { duplicate_uid: true } : {}),

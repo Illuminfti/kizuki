@@ -3,7 +3,12 @@ import { validateEventInput } from "@kizuki/core";
 import type { CaptureEventInput } from "@kizuki/core";
 import { calendarEvents } from "../src/events";
 import type { CalendarMapping } from "../src/events";
-import { parseDuration, slugify, synthesizeUid } from "../src/map";
+import {
+  MAX_METADATA_VALUE_CHARS,
+  parseDuration,
+  slugify,
+  synthesizeUid,
+} from "../src/map";
 import { parseIcs } from "../src/parse";
 import { FIXTURE_NOW, fixtureIcsEvents } from "../src/fixture";
 
@@ -499,5 +504,57 @@ describe("an unstorable start costs only its own entry", () => {
     for (const event of result.events) {
       expect(validateEventInput(event).ok).toBe(true);
     }
+  });
+});
+
+describe("hostile metadata is bounded", () => {
+  const long = "x".repeat(70_000);
+
+  test("a huge calendar name, location and url are capped", () => {
+    const result = mapAll(
+      [
+        "BEGIN:VEVENT",
+        "UID:big@acme.example",
+        "DTSTART:20260301T100000Z",
+        "SUMMARY:Big",
+        `LOCATION:${long}`,
+        `URL:https://acme.example/${long}`,
+        "END:VEVENT",
+      ].map((line) => line),
+    );
+    const event = result.events[0];
+    expect((event?.metadata["location"] as string).length).toBe(
+      MAX_METADATA_VALUE_CHARS,
+    );
+    expect((event?.metadata["url"] as string).length).toBe(
+      MAX_METADATA_VALUE_CHARS,
+    );
+  });
+
+  test("a huge X-WR-CALNAME is capped in every event it names", () => {
+    const result = calendarEvents(
+      parseIcs(
+        [
+          "BEGIN:VCALENDAR",
+          "VERSION:2.0",
+          `X-WR-CALNAME:${long}`,
+          "BEGIN:VEVENT",
+          "UID:big@acme.example",
+          "DTSTART:20260301T100000Z",
+          "SUMMARY:Big",
+          "END:VEVENT",
+          "END:VCALENDAR",
+          "",
+        ].join("\r\n"),
+      ),
+      {
+        slugSource: "acme-team",
+        observedAt: "2026-03-01T00:00:00.000Z",
+        now: FIXTURE_NOW,
+      },
+    );
+    expect(
+      (result.events[0]?.metadata["calendar_name"] as string).length,
+    ).toBe(MAX_METADATA_VALUE_CHARS);
   });
 });
