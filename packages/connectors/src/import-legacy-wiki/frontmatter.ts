@@ -1,10 +1,11 @@
-import { sanitizeLine } from "../legacy/coerce";
 import {
+  KEY,
   MAX_FRONTMATTER_DEPTH,
   MAX_FRONTMATTER_KEYS,
   Unparsable,
   blockHeader,
   indentOf,
+  insertKey,
   parseScalar,
   peek,
   readBlockScalar,
@@ -34,14 +35,6 @@ export const MAX_FRONTMATTER_BYTES = 64 * 1024;
 export { MAX_FRONTMATTER_DEPTH, MAX_FRONTMATTER_KEYS } from "./yaml-subset";
 
 const OPEN_FENCE = /^---[ \t]*(?:\r?\n|$)/;
-const KEY = /^[^\s:#][^:]*$/;
-
-function countKey(reader: Reader): void {
-  reader.keys += 1;
-  if (reader.keys > MAX_FRONTMATTER_KEYS) {
-    throw new Unparsable(`more than ${MAX_FRONTMATTER_KEYS} keys`);
-  }
-}
 
 function startsSequence(content: string): boolean {
   return content === "-" || content.startsWith("- ");
@@ -51,11 +44,12 @@ function parseMapping(
   reader: Reader,
   indent: number,
   depth: number,
+  /** A sequence item's mapping continues into the object its first key opened. */
+  data: Record<string, unknown> = {},
 ): Record<string, unknown> {
   if (depth > MAX_FRONTMATTER_DEPTH) {
     throw new Unparsable(`nesting deeper than ${MAX_FRONTMATTER_DEPTH}`);
   }
-  const data: Record<string, unknown> = {};
   for (;;) {
     const at = peek(reader);
     if (at === -1) break;
@@ -71,7 +65,6 @@ function parseMapping(
     if (separator <= 0) throw new Unparsable("expected a key: value line");
     const key = content.slice(0, separator).trim();
     if (!KEY.test(key)) throw new Unparsable("unusable key");
-    countKey(reader);
     reader.index = at + 1;
 
     const value = parseValue(
@@ -80,18 +73,7 @@ function parseMapping(
       indent,
       depth,
     );
-    if (Object.prototype.hasOwnProperty.call(data, key)) {
-      reader.problems.push(
-        `duplicate key ${JSON.stringify(sanitizeLine(key, 120))}`,
-      );
-      continue;
-    }
-    Object.defineProperty(data, key, {
-      value,
-      enumerable: true,
-      configurable: true,
-      writable: true,
-    });
+    insertKey(data, key, value, reader);
   }
   return data;
 }
@@ -127,18 +109,20 @@ function parseSequence(
     if (separator > 0 && KEY.test(rest.slice(0, separator).trim())) {
       // `- key: value` opens a mapping whose later keys line up under `key`.
       const key = rest.slice(0, separator).trim();
-      countKey(reader);
       const first = parseValue(
         reader,
         rest.slice(separator + 1),
         itemIndent,
         depth,
       );
-      const mapping = parseMapping(reader, itemIndent, depth + 1);
-      items.push({ [key]: first, ...mapping });
+      const item: Record<string, unknown> = {};
+      insertKey(item, key, first, reader);
+      // Into the same object, so a key the item repeats is the duplicate the
+      // block form would have reported rather than a silent overwrite.
+      items.push(parseMapping(reader, itemIndent, depth + 1, item));
       continue;
     }
-    items.push(parseScalar(rest));
+    items.push(parseScalar(rest, reader));
   }
   return items;
 }
@@ -173,7 +157,7 @@ function parseValue(
   const header = blockHeader(value);
   if (header !== null) return readBlockScalar(reader, indent, header);
   if (value.length === 0) return parseNested(reader, indent, depth);
-  return parseScalar(value);
+  return parseScalar(value, reader);
 }
 
 interface Block {

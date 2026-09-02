@@ -5,7 +5,10 @@
  * scalar, which is why it holds the shared reader cursor.
  */
 
+import { sanitizeLine } from "../legacy/coerce";
+
 const NUMBER = /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/;
+export const KEY = /^[^\s:#][^:]*$/;
 
 export const MAX_FRONTMATTER_KEYS = 500;
 export const MAX_FRONTMATTER_DEPTH = 8;
@@ -22,6 +25,44 @@ export class Unparsable extends Error {
     super(rule);
     this.name = "Unparsable";
   }
+}
+
+function countKey(reader: Reader): void {
+  reader.keys += 1;
+  if (reader.keys > MAX_FRONTMATTER_KEYS) {
+    throw new Unparsable(`more than ${MAX_FRONTMATTER_KEYS} keys`);
+  }
+}
+
+/**
+ * The one insertion rule every mapping form shares — block, sequence item and
+ * flow alike. The first value for a key wins and the repeat is reported: a
+ * reader that kept the last would resolve a page's type or label to whichever
+ * of two lines came second, which is not a decision the estate made.
+ */
+export function insertKey(
+  data: Record<string, unknown>,
+  rawKey: string,
+  value: unknown,
+  reader: Reader | null,
+): void {
+  const key = rawKey.trim();
+  if (!KEY.test(key)) throw new Unparsable("unusable key");
+  if (reader !== null) countKey(reader);
+  if (Object.prototype.hasOwnProperty.call(data, key)) {
+    reader?.problems.push(
+      `duplicate key ${JSON.stringify(sanitizeLine(key, 120))}`,
+    );
+    return;
+  }
+  // Defined rather than assigned: a key named after an Object member must
+  // become data on this object, never a change to its prototype.
+  Object.defineProperty(data, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
 }
 
 export function indentOf(line: string): number {
@@ -151,7 +192,7 @@ function parseQuoted(value: string): string | undefined {
   return parsed;
 }
 
-export function parseScalar(raw: string): unknown {
+export function parseScalar(raw: string, reader: Reader | null = null): unknown {
   const value = raw.trim();
   if (value.length === 0 || value === "~" || value.toLowerCase() === "null") {
     return null;
@@ -168,7 +209,7 @@ export function parseScalar(raw: string): unknown {
     const inner = value.slice(1, -1).trim();
     return inner.length === 0
       ? []
-      : splitFlow(inner).map((item) => parseScalar(item));
+      : splitFlow(inner).map((item) => parseScalar(item, reader));
   }
   if (value.startsWith("{")) {
     if (!value.endsWith("}"))
@@ -180,8 +221,13 @@ export function parseScalar(raw: string): unknown {
       const separator = pair.indexOf(":");
       if (separator <= 0)
         throw new Unparsable("flow mapping needs key: value pairs");
-      mapping[pair.slice(0, separator).trim()] = parseScalar(
-        pair.slice(separator + 1),
+      // A flow mapping is a mapping: the same key grammar, the same key
+      // budget and the same duplicate rule as the block form.
+      insertKey(
+        mapping,
+        pair.slice(0, separator),
+        parseScalar(pair.slice(separator + 1), reader),
+        reader,
       );
     }
     return mapping;

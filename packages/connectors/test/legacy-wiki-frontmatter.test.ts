@@ -272,6 +272,31 @@ describe("refusals and bounds", () => {
     expect(result.data["title"]).toBe("Ada");
     expect(result.problems).toEqual(['duplicate key "title"']);
   });
+
+  test("a sequence item's mapping keeps the first value too", () => {
+    const result = parseLegacyFrontmatter(
+      fence("people:\n  - name: Ada\n    name: Grace\n"),
+    );
+    expect(result.data["people"]).toEqual([{ name: "Ada" }]);
+    expect(result.problems).toEqual(['duplicate key "name"']);
+  });
+
+  test("a flow mapping keeps the first value too", () => {
+    const result = parseLegacyFrontmatter(fence("meta: {a: 1, a: 2}\n"));
+    expect(result.data["meta"]).toEqual({ a: 1 });
+    expect(result.problems).toEqual(['duplicate key "a"']);
+  });
+
+  test("a flow mapping obeys the key grammar and the key budget", () => {
+    expect(refused(fence("meta: {: 1}\n"))).toEqual([
+      "flow mapping needs key: value pairs",
+    ]);
+    expect(refused(fence("meta: {a: 1, : 2}\n"))).toEqual(["unusable key"]);
+    const wide = Array.from({ length: 501 }, (_, i) => `k${i}: ${i}`).join(", ");
+    expect(refused(fence(`meta: {${wide}}\n`))).toEqual([
+      "more than 500 keys",
+    ]);
+  });
 });
 
 describe("hostile input", () => {
