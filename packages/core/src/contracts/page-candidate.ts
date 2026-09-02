@@ -73,13 +73,26 @@ export function targetProblem(target: string): string | null {
   return null;
 }
 
+/**
+ * Length in code points, the unit a producer counts in. A UTF-16 count would
+ * make an emoji two characters and refuse a title its author sees as short
+ * enough, so the check that guards the floor and the code that mints the
+ * candidate have to agree on what a character is. Bounded: a string more than
+ * twice the cap in units is already too long, and is never expanded.
+ */
+function tooLong(value: string, max: number): boolean {
+  if (value.length <= max) return false;
+  if (value.length > max * 2) return true;
+  return [...value].length > max;
+}
+
 function validateExtensionValue(
   key: string,
   value: unknown,
   errors: string[],
 ): FrontmatterValue | undefined {
   if (typeof value === "string") {
-    if (value.length > MAX_EXTENSION_STRING) {
+    if (tooLong(value, MAX_EXTENSION_STRING)) {
       errors.push(
         `extensions: value for ${JSON.stringify(key)} exceeds ${MAX_EXTENSION_STRING} characters`,
       );
@@ -104,7 +117,7 @@ function validateExtensionValue(
       );
       return undefined;
     }
-    if (value.some((item) => item.length > MAX_EXTENSION_STRING)) {
+    if (value.some((item) => tooLong(item, MAX_EXTENSION_STRING))) {
       errors.push(
         `extensions: value for ${JSON.stringify(key)} exceeds ${MAX_EXTENSION_STRING} characters`,
       );
@@ -191,7 +204,7 @@ export function validatePageCandidate(
     errors.push("title: must not contain control characters");
   } else if (
     title.trim().length === 0 ||
-    title.trim().length > MAX_TITLE_LENGTH
+    tooLong(title.trim(), MAX_TITLE_LENGTH)
   ) {
     errors.push(
       `title: must be 1..${MAX_TITLE_LENGTH} characters after trimming`,

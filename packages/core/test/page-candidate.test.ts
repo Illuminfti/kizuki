@@ -83,6 +83,29 @@ describe("validatePageCandidate", () => {
     ]);
   });
 
+  test("counts a title and an extension string in code points", () => {
+    // The importers bound by code points; counting UTF-16 units here would
+    // refuse a title of 200 emoji as if it were 400 characters long.
+    const emoji = "\u{1F600}";
+    const accepts = (raw: unknown): boolean => {
+      const result = validatePageCandidate(wrap(raw));
+      return result !== null && result.ok;
+    };
+    expect(accepts(candidate({ title: emoji.repeat(200) }))).toBe(true);
+    expect(errorsFor(candidate({ title: emoji.repeat(201) }))).toEqual([
+      "title: must be 1..200 characters after trimming",
+    ]);
+    expect(
+      accepts(candidate({ extensions: { "x-a": emoji.repeat(4096) } })),
+    ).toBe(true);
+    expect(
+      errorsFor(candidate({ extensions: { "x-a": emoji.repeat(4097) } })),
+    ).toEqual(['extensions: value for "x-a" exceeds 4096 characters']);
+    expect(
+      errorsFor(candidate({ extensions: { "x-a": [emoji.repeat(4097)] } })),
+    ).toEqual(['extensions: value for "x-a" exceeds 4096 characters']);
+  });
+
   test("refuses a traversal target, a deep target, and a long segment", () => {
     expect(
       errorsFor(candidate({ target: "entities/../../etc/passwd" })),

@@ -594,6 +594,29 @@ describe("the candidate the floor will actually accept", () => {
     expect(outcomes).toContain("date-created:dropped");
   });
 
+  test("an astral title survives to a candidate the floor accepts", () => {
+    const emoji = "\u{1F600}".repeat(150);
+    const scan: ScanResult = {
+      files: [
+        {
+          relpath: "a.md",
+          content: `---\ntitle: "${emoji}"\nnote: "${emoji}"\n---\nbody\n`,
+          mtimeMs: 1,
+          size: 20,
+        },
+      ],
+      skipped: [],
+      truncated: false,
+    };
+    const { events, report } = plan(scan);
+    expect(page(report, "a.md").notes).not.toContain("candidate_rejected");
+    expect(candidate(events[0] as CaptureEventInput)["title"]).toBe(emoji);
+    const checked = validatePageCandidate(
+      (events[0] as CaptureEventInput).metadata,
+    );
+    expect(checked !== null && checked.ok).toBe(true);
+  });
+
   test("a candidate the floor would refuse is reported, not emitted", () => {
     // A directory past the segment limit can only come from a mapping that
     // never went through the parser, which is exactly the case where a silent
