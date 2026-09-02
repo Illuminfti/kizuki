@@ -57,8 +57,11 @@ describe("rebuildDerived", () => {
     const { db, vaultPath } = fixture();
     expect(readDerivedMeta(openLedger(":memory:"), "search")).toBeNull();
     rebuildDerived(db, vaultPath);
-    expect(readDerivedMeta(db, "search")?.doc_count).toBe(2);
-    expect(readDerivedMeta(db, "graph")?.doc_count).toBe(3);
+    // Each layer stamps its own unit: indexed documents for search, edges for
+    // graph. The fixture has 1 page + 1 event and 3 edges.
+    expect(readDerivedMeta(db, "search")?.doc_count).toBe(derivedCounts(db).search);
+    expect(readDerivedMeta(db, "graph")?.doc_count).toBe(derivedCounts(db).graph);
+    expect(derivedCounts(db)).toEqual({ search: 2, graph: 3 });
   });
 
   test("rebuilds search and graph in one call", () => {
