@@ -230,7 +230,10 @@ export class ScreenpipeConnector implements Connector {
       let transcriptionsDone = false;
       let framePages = 0;
       let transcriptionPages = 0;
-      while (events.length < BATCH_LIMIT && !(framesDone && transcriptionsDone)) {
+      while (
+        events.length < BATCH_LIMIT &&
+        !(framesDone && transcriptionsDone)
+      ) {
         if (!framesDone && framePages < MAX_PAGES_PER_CALL) {
           framePages += 1;
           framesDone = walkFrames(db, current, events, walk);
@@ -346,7 +349,11 @@ function walkTranscriptions(
   events: CaptureEventInput[],
   walk: Walk,
 ): boolean {
-  const rows = readTranscriptions(db, cursor.last_transcription_id, BATCH_LIMIT);
+  const rows = readTranscriptions(
+    db,
+    cursor.last_transcription_id,
+    BATCH_LIMIT,
+  );
   for (const row of rows) {
     if (events.length >= BATCH_LIMIT) return true;
     const timestamp = normalizeTimestamp(row.timestamp);
