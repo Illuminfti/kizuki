@@ -17,6 +17,7 @@ import type { LegacyWikiFieldReport } from "./report";
 
 export const MAX_EXTENSIONS = 64;
 const MAX_SUBJECTS = 200;
+const MAX_SEGMENT_LENGTH = 64;
 const MAX_METADATA_FRONTMATTER = 64 * 1024;
 const EXTENSION_NAME = /^x-[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
@@ -121,7 +122,8 @@ export function planFields(
       reports.push({ key: label, outcome: "dropped", note: "unnameable" });
       continue;
     }
-    const name = explicit ?? (EXTENSION_NAME.test(key) ? key : `x-${slug(key)}`);
+    const name =
+      explicit ?? (EXTENSION_NAME.test(key) ? key : `x-${slug(key)}`);
     if (taken.has(name)) {
       reports.push({
         key: label,
@@ -172,6 +174,20 @@ export function planFields(
   return { extensions, reports };
 }
 
+/**
+ * A distinct leaf for a target another page already took. The suffix goes onto
+ * a leaf already trimmed to make room for it: re-slugging `${leaf}-${suffix}`
+ * would truncate the suffix straight back off a leaf that is already at the
+ * segment limit, and the search for a free name would never end.
+ */
+function collisionLeaf(leaf: string, suffix: number): string {
+  const mark = `-${suffix}`;
+  const base = leaf
+    .slice(0, MAX_SEGMENT_LENGTH - mark.length)
+    .replace(/[-.]+$/, "");
+  return `${base}${mark}`;
+}
+
 export function planTarget(
   relpath: string,
   type: PageType,
@@ -198,10 +214,13 @@ export function planTarget(
     notes.push("target: flattened");
   }
 
+  const prefix = target.slice(0, target.lastIndexOf("/") + 1);
   let unique = target;
   let suffix = 2;
+  // Two suffixes can never produce the same leaf (the suffix is everything
+  // after the last "-"), so the loop cannot outlive the set it is avoiding.
   while (taken.has(unique)) {
-    unique = `${target.slice(0, target.lastIndexOf("/") + 1)}${slug(`${leaf}-${suffix}`)}`;
+    unique = `${prefix}${collisionLeaf(leaf, suffix)}`;
     suffix += 1;
   }
   if (unique !== target) notes.push("target_collision");

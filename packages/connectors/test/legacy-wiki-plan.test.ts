@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   PAGE_CANDIDATE_KEY,
+  targetProblem,
   validateEventInput,
   validatePageCandidate,
 } from "@kizuki/core";
@@ -365,6 +366,30 @@ describe("determinism and targets", () => {
     expect(report.pages[1]?.notes).toEqual(["target_collision"]);
   });
 
+  test("a collision between two maximum-length leaves still terminates", () => {
+    // Both stems slug to the same 64-character leaf, so appending the suffix
+    // before slugging truncates it straight back off: the search for a free
+    // name would never end.
+    const long = "a".repeat(70);
+    const scan: ScanResult = {
+      files: [
+        { relpath: `one/${long}.md`, content: "one\n", mtimeMs: 1, size: 4 },
+        { relpath: `two/${long}.md`, content: "two\n", mtimeMs: 1, size: 4 },
+        { relpath: `six/${long}.md`, content: "six\n", mtimeMs: 1, size: 4 },
+      ],
+      skipped: [],
+      truncated: false,
+    };
+    const targets = plan(scan).report.pages.map((entry) => entry.target);
+    expect(new Set(targets).size).toBe(3);
+    for (const target of targets) {
+      expect(typeof target).toBe("string");
+      expect(targetProblem(target as string)).toBeNull();
+    }
+    expect(targets[1]).toBe(`entities/${"a".repeat(62)}-2`);
+    expect(targets[2]).toBe(`entities/${"a".repeat(62)}-3`);
+  });
+
   test("mirror mode keeps the legacy directories under the type directory", () => {
     const mapping = parseLegacyWikiMapping({
       schema: "kizuki.legacy-wiki-mapping/v1",
@@ -450,9 +475,9 @@ describe("the report keeps page prose out", () => {
     };
     const markdown = renderLegacyWikiReport(plan(scan).report);
     expect(markdown).toContain("## pipe\\|name.md");
-    expect(/[\u0000-\u0009\u000B\u000C\u000E-\u001F\u007F]/.test(markdown)).toBe(
-      false,
-    );
+    expect(
+      /[\u0000-\u0009\u000B\u000C\u000E-\u001F\u007F]/.test(markdown),
+    ).toBe(false);
   });
 
   test("the rendered Markdown reports the counts table and every page", () => {
