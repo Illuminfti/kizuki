@@ -103,14 +103,32 @@ export const PACKET_INPUT = z.strictObject({
     .optional(),
 });
 
+const MAX_FRONTMATTER_STRING = 4096;
+const MAX_FRONTMATTER_ITEMS = 32;
+const MAX_FRONTMATTER_KEYS = 32;
+/** Mirrors the engine's ceiling on the whole bag, not only on each value. */
+const MAX_FRONTMATTER_CHARS = 16384;
+
 const FRONTMATTER_VALUE = z.union([
-  z.string().max(4096),
+  z.string().max(MAX_FRONTMATTER_STRING),
   z.number(),
   z.boolean(),
-  z.array(z.string().max(4096)),
+  z.array(z.string().max(MAX_FRONTMATTER_STRING)).max(MAX_FRONTMATTER_ITEMS),
 ]);
 
-const MAX_FRONTMATTER_KEYS = 32;
+function frontmatterChars(bag: Record<string, unknown>): number {
+  let total = 0;
+  for (const [key, value] of Object.entries(bag)) {
+    total += key.length;
+    if (typeof value === "string") total += value.length;
+    else if (Array.isArray(value)) {
+      for (const entry of value) {
+        if (typeof entry === "string") total += entry.length;
+      }
+    }
+  }
+  return total;
+}
 
 export const PROPOSE_INPUT = z.strictObject({
   kind: z.enum(["entity", "claim", "edit", "merge", "deletion"]),
@@ -121,6 +139,10 @@ export const PROPOSE_INPUT = z.strictObject({
     .refine(
       (bag) => Object.keys(bag).length <= MAX_FRONTMATTER_KEYS,
       `must hold at most ${MAX_FRONTMATTER_KEYS} keys`,
+    )
+    .refine(
+      (bag) => frontmatterChars(bag) <= MAX_FRONTMATTER_CHARS,
+      `must hold at most ${MAX_FRONTMATTER_CHARS} characters in total`,
     )
     .optional(),
   subjects: z.array(ID).max(16).optional(),

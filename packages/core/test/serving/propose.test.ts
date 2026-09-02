@@ -155,6 +155,45 @@ describe("servePropose files a claim for the receipted writer", () => {
     ).toThrow(TypeError);
   });
 
+  test("a frontmatter payload is bounded by items and by total size", () => {
+    const live = newFixture();
+    const ctx = live.agent("reader-private");
+
+    const withTags = (tags: string[], body: string): ProposeArgs => ({
+      ...candidate(live, body),
+      frontmatter: { type: "fact", "x-tags": tags },
+    });
+    const tag = (index: number): string => `tag-${index}`;
+    const atCap = Array.from({ length: 32 }, (_, index) => tag(index));
+    expect(
+      servePropose(ctx, withTags(atCap, "A candidate at the item cap.")).data
+        ?.outcome,
+    ).toBe("stored");
+    expect(
+      refusal(() =>
+        servePropose(
+          ctx,
+          withTags([...atCap, tag(32)], "A candidate past the item cap."),
+        ),
+      ).message,
+    ).toBe("invalid arguments: frontmatter: an array value holds too many entries");
+
+    // Eight maximum-length strings clear every per-value bound and still
+    // multiply into a payload no page should carry.
+    const wide: Record<string, string> = { type: "fact" };
+    for (let index = 0; index < 8; index += 1) {
+      wide[`x-note-${index}`] = "k".repeat(4_096);
+    }
+    expect(
+      refusal(() =>
+        servePropose(ctx, {
+          ...candidate(live, "A candidate with a wide payload."),
+          frontmatter: wide,
+        }),
+      ).message,
+    ).toBe("invalid arguments: frontmatter: is too large");
+  });
+
   test("a frontmatter bag that is not an object is refused", () => {
     const live = newFixture();
     const ctx = live.agent("reader-private");

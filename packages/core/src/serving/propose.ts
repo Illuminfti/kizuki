@@ -27,6 +27,12 @@ const MAX_PROVENANCE = 64;
 const MAX_SUBJECTS = 16;
 const MAX_FRONTMATTER_KEYS = 32;
 const MAX_FRONTMATTER_STRING = 4_096;
+const MAX_FRONTMATTER_ITEMS = 32;
+/**
+ * The per-value bounds multiply: 32 keys of 32 entries of 4 096 characters
+ * is a 4 MB row a single call could file. The whole bag is bounded too.
+ */
+const MAX_FRONTMATTER_CHARS = 16_384;
 
 export interface ProposeArgs {
   kind: (typeof PROPOSE_KINDS)[number];
@@ -63,9 +69,18 @@ function confidenceOf(value: unknown): number {
   return value;
 }
 
-function frontmatterString(value: string): void {
-  if (Array.from(value).length > MAX_FRONTMATTER_STRING) {
+interface CharBudget {
+  spent: number;
+}
+
+function frontmatterString(value: string, budget: CharBudget): void {
+  const length = Array.from(value).length;
+  if (length > MAX_FRONTMATTER_STRING) {
     throw refuse("frontmatter", "a string value is too long");
+  }
+  budget.spent += length;
+  if (budget.spent > MAX_FRONTMATTER_CHARS) {
+    throw refuse("frontmatter", "is too large");
   }
 }
 
@@ -74,20 +89,23 @@ function frontmatterString(value: string): void {
  * entry could never reach canon. Refusing it here beats filing a proposal
  * that the writer would later choke on.
  */
-function frontmatterValue(value: unknown): FrontmatterValue {
+function frontmatterValue(value: unknown, budget: CharBudget): FrontmatterValue {
   if (Array.isArray(value)) {
+    if (value.length > MAX_FRONTMATTER_ITEMS) {
+      throw refuse("frontmatter", "an array value holds too many entries");
+    }
     const entries: string[] = [];
     for (const entry of value) {
       if (typeof entry !== "string") {
         throw refuse("frontmatter", "an array value must hold only strings");
       }
-      frontmatterString(entry);
+      frontmatterString(entry, budget);
       entries.push(entry);
     }
     return entries;
   }
   if (typeof value === "string") {
-    frontmatterString(value);
+    frontmatterString(value, budget);
     return value;
   }
   if (typeof value === "number") {
@@ -123,6 +141,7 @@ function validateFrontmatter(
     );
   }
   const shaped: Record<string, FrontmatterValue> = {};
+  const budget: CharBudget = { spent: 0 };
   for (const key of keys) {
     if (!FRONTMATTER_KEY.test(key)) {
       throw refuse("frontmatter", "a key is not usable");
@@ -134,7 +153,8 @@ function validateFrontmatter(
         "a key is set by the writer, not by a producer",
       );
     }
-    shaped[key] = frontmatterValue(frontmatter[key]);
+    budget.spent += key.length;
+    shaped[key] = frontmatterValue(frontmatter[key], budget);
   }
 
   const type = shaped["type"];

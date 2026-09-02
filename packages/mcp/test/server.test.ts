@@ -49,10 +49,8 @@ async function call(
   name: string,
   args: Record<string, unknown>,
 ): Promise<ToolCallResult> {
-  return (await client.callTool({
-    name,
-    arguments: args,
-  })) as unknown as ToolCallResult;
+  const result: unknown = await client.callTool({ name, arguments: args });
+  return result as ToolCallResult;
 }
 
 function envelopeOf(result: ToolCallResult): Record<string, unknown> {
@@ -277,6 +275,17 @@ describe("the stdio MCP server over a real client", () => {
     });
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toContain("Input validation error");
+
+    const listed = await call(client, "propose", {
+      kind: "claim",
+      body: "A candidate with too many tags.",
+      provenance: [running.eventId],
+      frontmatter: {
+        "x-tags": Array.from({ length: 33 }, (_, index) => `tag-${index}`),
+      },
+    });
+    expect(listed.isError).toBe(true);
+    expect(listed.content[0]?.text).toContain("Input validation error");
   });
 
   test("a refusal payload carries no cause, path or captured text", async () => {
