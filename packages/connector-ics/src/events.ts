@@ -27,7 +27,7 @@ import { expand, parseRrule } from "./rrule";
 
 export const MAX_INSTANCES = 1_000;
 /** Used only when neither the calendar nor its source yields a usable slug. */
-export const FALLBACK_SLUG = "unnamed";
+const FALLBACK_SLUG = "unnamed";
 export const MAX_STEPS = 100_000;
 export const WINDOW_DAYS = 365;
 
