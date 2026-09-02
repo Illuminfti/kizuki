@@ -78,6 +78,23 @@ const FIXED_AUTHORIZATION_PARAMS = new Set([
 ]);
 
 /**
+ * The authorization URL is handed to a browser, so it lands in history, in
+ * referrer headers and in the provider's access log. Nothing that
+ * authenticates the client or the owner may ride along.
+ */
+const CREDENTIAL_AUTHORIZATION_PARAMS = new Set([
+  "client_secret",
+  "client_assertion",
+  "assertion",
+  "password",
+  "code",
+  "code_verifier",
+  "access_token",
+  "refresh_token",
+  "id_token",
+]);
+
+/**
  * Only a short printable ASCII fragment of provider-controlled text may reach
  * an error message; everything else is dropped rather than truncated.
  */
@@ -126,6 +143,12 @@ export function buildAuthorizationUrl(
   params: { redirect_uri: string; state: string; code_challenge: string },
 ): string {
   const url = new URL(provider.authorization_url);
+  // A query already on the endpoint is a parameter nobody reviewed.
+  if (url.search.length > 0 || url.hash.length > 0) {
+    throw new TypeError(
+      "authorization_url may not carry a query or a fragment; put provider extras in extra_authorization_params",
+    );
+  }
   url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", provider.client_id);
   url.searchParams.set("redirect_uri", params.redirect_uri);
@@ -139,6 +162,11 @@ export function buildAuthorizationUrl(
     if (FIXED_AUTHORIZATION_PARAMS.has(key)) {
       throw new TypeError(
         `extra_authorization_params may not override the fixed parameter ${key}`,
+      );
+    }
+    if (CREDENTIAL_AUTHORIZATION_PARAMS.has(key)) {
+      throw new TypeError(
+        `extra_authorization_params may not put the credential ${key} in a browser URL`,
       );
     }
     url.searchParams.set(key, value);

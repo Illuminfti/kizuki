@@ -1,10 +1,59 @@
 import { describe, expect, test } from "bun:test";
 import {
   OAuthError,
+  buildAuthorizationUrl,
   parseTokenResponse,
   refreshTokens,
 } from "../../src/auth/oauth";
-import { FakeTransport, NOW, provider, tokenResponse, tokenSet } from "./helpers";
+import {
+  FakeTransport,
+  NOW,
+  base64url,
+  provider,
+  tokenResponse,
+  tokenSet,
+} from "./helpers";
+
+const NONCE = base64url(new Uint8Array(32).fill(2));
+
+const urlParams = {
+  redirect_uri: "http://127.0.0.1:1234/callback",
+  state: NONCE,
+  code_challenge: "challenge",
+};
+
+describe("a hostile authorization URL", () => {
+  test("refuses to carry a credential the provider declared as an extra", () => {
+    expect(() =>
+      buildAuthorizationUrl(
+        provider({
+          extra_authorization_params: { client_secret: "installed-app" },
+        }),
+        urlParams,
+      ),
+    ).toThrow(TypeError);
+  });
+
+  test("refuses an endpoint that already carries unreviewed parameters", () => {
+    expect(() =>
+      buildAuthorizationUrl(
+        provider({
+          authorization_url: "https://provider.invalid/authorize?prompt=none",
+        }),
+        urlParams,
+      ),
+    ).toThrow(TypeError);
+  });
+
+  test("refuses an endpoint carrying a fragment", () => {
+    expect(() =>
+      buildAuthorizationUrl(
+        provider({ authorization_url: "https://provider.invalid/authorize#x" }),
+        urlParams,
+      ),
+    ).toThrow(TypeError);
+  });
+});
 
 describe("a hostile token response", () => {
   test.each([
