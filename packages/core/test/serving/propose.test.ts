@@ -125,12 +125,10 @@ describe("servePropose files a claim for the receipted writer", () => {
   test("a frontmatter array the vault cannot write is refused", () => {
     const live = newFixture();
     const ctx = live.agent("reader-private");
+    const mixedBag: unknown = { type: "fact", "x-tags": [1, true] };
     const mixed = {
       ...candidate(live, "A candidate with a mixed array."),
-      frontmatter: {
-        type: "fact",
-        "x-tags": [1, true] as unknown as string[],
-      },
+      frontmatter: mixedBag as NonNullable<ProposeArgs["frontmatter"]>,
     };
     expect(refusal(() => servePropose(ctx, mixed)).code).toBe(
       "invalid_arguments",
@@ -155,6 +153,26 @@ describe("servePropose files a claim for the receipted writer", () => {
     expect(() =>
       serializePage({ data: { "x-tags": [1, true] }, body: "" }),
     ).toThrow(TypeError);
+  });
+
+  test("a frontmatter bag that is not an object is refused", () => {
+    const live = newFixture();
+    const ctx = live.agent("reader-private");
+    const before = listProposals(live.db, {}).length;
+    const bags: unknown[] = [12, "abc", ["alpha", "beta"], null];
+    for (const bag of bags) {
+      expect(
+        refusal(() =>
+          servePropose(ctx, {
+            ...candidate(live, "A candidate with an unusable bag."),
+            frontmatter: bag as NonNullable<ProposeArgs["frontmatter"]>,
+          }),
+        ).code,
+      ).toBe("invalid_arguments");
+    }
+    // The store still reads: a bag that is not an object never reached it,
+    // so no row can break every later listing.
+    expect(listProposals(live.db, {})).toHaveLength(before);
   });
 
   test("provenance must name live events this principal can read", () => {

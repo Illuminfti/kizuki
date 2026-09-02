@@ -1,6 +1,7 @@
 import type { Grant } from "../agents";
 import { fileProposal } from "../staging/proposals";
 import type { FrontmatterValue } from "../staging/proposals";
+import { isPlainObject } from "../util/validate";
 import { PAGE_TYPES } from "../vault/schema";
 import { enumOf, idList, text } from "./arguments";
 import { auditArguments, gate } from "./gate";
@@ -73,25 +74,27 @@ function frontmatterString(value: string): void {
  * entry could never reach canon. Refusing it here beats filing a proposal
  * that the writer would later choke on.
  */
-function frontmatterValue(value: unknown): void {
+function frontmatterValue(value: unknown): FrontmatterValue {
   if (Array.isArray(value)) {
+    const entries: string[] = [];
     for (const entry of value) {
       if (typeof entry !== "string") {
         throw refuse("frontmatter", "an array value must hold only strings");
       }
       frontmatterString(entry);
+      entries.push(entry);
     }
-    return;
+    return entries;
   }
   if (typeof value === "string") {
     frontmatterString(value);
-    return;
+    return value;
   }
   if (typeof value === "number") {
     if (!Number.isFinite(value)) {
       throw refuse("frontmatter", "a number value must be finite");
     }
-    return;
+    return value;
   }
   if (typeof value !== "boolean") {
     throw refuse(
@@ -99,12 +102,19 @@ function frontmatterValue(value: unknown): void {
       "a value must be a string, number, boolean or string array",
     );
   }
+  return value;
 }
 
 function validateFrontmatter(
   grant: Grant,
-  frontmatter: Record<string, FrontmatterValue>,
+  frontmatter: unknown,
 ): Record<string, FrontmatterValue> {
+  // A string, a number or an array all answer `Object.keys` without
+  // complaint, and the store would write the result verbatim: every later
+  // reader of the table then fails on a value that is not an object.
+  if (!isPlainObject(frontmatter)) {
+    throw refuse("frontmatter", "must be an object");
+  }
   const keys = Object.keys(frontmatter);
   if (keys.length > MAX_FRONTMATTER_KEYS) {
     throw refuse(
@@ -112,6 +122,7 @@ function validateFrontmatter(
       `must hold at most ${MAX_FRONTMATTER_KEYS} keys`,
     );
   }
+  const shaped: Record<string, FrontmatterValue> = {};
   for (const key of keys) {
     if (!FRONTMATTER_KEY.test(key)) {
       throw refuse("frontmatter", "a key is not usable");
@@ -123,10 +134,10 @@ function validateFrontmatter(
         "a key is set by the writer, not by a producer",
       );
     }
-    frontmatterValue(frontmatter[key]);
+    shaped[key] = frontmatterValue(frontmatter[key]);
   }
 
-  const type = frontmatter["type"];
+  const type = shaped["type"];
   if (type !== undefined) {
     const pageType = enumOf("frontmatter.type", type, PAGE_TYPES);
     if (grant.types !== null && !grant.types.includes(pageType)) {
@@ -136,7 +147,7 @@ function validateFrontmatter(
       );
     }
   }
-  return frontmatter;
+  return shaped;
 }
 
 /**
@@ -188,7 +199,10 @@ export function servePropose(
     if (provenance.length === 0) {
       throw refuse("provenance", "must name at least one event");
     }
-    const frontmatter = validateFrontmatter(grant, args.frontmatter ?? {});
+    const frontmatter = validateFrontmatter(
+      grant,
+      args.frontmatter === undefined ? {} : args.frontmatter,
+    );
     const requested =
       args.subjects === undefined
         ? undefined
