@@ -23,6 +23,19 @@ export interface OAuthSessionInit {
 const DEFAULT_SKEW_SECONDS = 60;
 
 /**
+ * The skew exists to refresh before a token dies. A negative or non-numeric one
+ * moves the deadline past the expiry instead, and accessToken() would then hand
+ * out a token the provider has already stopped accepting without ever making a
+ * request.
+ */
+function skewMilliseconds(seconds: number): number {
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    throw new TypeError("skewSeconds must be a finite number of seconds, zero or more");
+  }
+  return seconds * 1000;
+}
+
+/**
  * A live access token for one connection. Refresh is single-flight so a batch
  * of concurrent requests costs one round trip, and every refreshed envelope
  * is persisted before the caller sees the new token: a rotated refresh token
@@ -51,7 +64,7 @@ export class OAuthSession {
     this.transport = init.transport;
     this.persist = init.persist;
     this.now = init.now ?? ((): Date => new Date());
-    this.skewMs = (init.skewSeconds ?? DEFAULT_SKEW_SECONDS) * 1000;
+    this.skewMs = skewMilliseconds(init.skewSeconds ?? DEFAULT_SKEW_SECONDS);
     this.state = init.state;
     this.provider = init.state.provider;
     this.account = init.state.account;

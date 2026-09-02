@@ -28,6 +28,9 @@ const FRESH = oauthState({ tokens: tokenSet({ expires_at: "2026-03-01T11:00:00.0
 const NEARLY_EXPIRED = oauthState({
   tokens: tokenSet({ expires_at: "2026-03-01T10:00:30.000Z" }),
 });
+const EXPIRED = oauthState({
+  tokens: tokenSet({ expires_at: "2026-03-01T09:59:59.000Z" }),
+});
 
 describe("oauth session", () => {
   test("serves a token that is still comfortably valid without a request", async () => {
@@ -160,6 +163,26 @@ describe("oauth session", () => {
       code: "unauthenticated",
     });
     expect(() => session.tokens()).toThrow("unauthenticated");
+  });
+
+  test("refuses a skew that cannot bring a refresh forward", () => {
+    const build = (skewSeconds: number): OAuthSession =>
+      new OAuthSession({
+        provider: provider(),
+        state: EXPIRED,
+        transport: new FakeTransport(),
+        persist: recorder().persist,
+        now: () => NOW,
+        skewSeconds,
+      });
+
+    // A skew that is negative or not a number moved the refresh deadline past
+    // the expiry it exists to beat, so accessToken() served a token the
+    // provider had already stopped accepting and never made a request.
+    for (const skew of [-60, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => build(skew)).toThrow(TypeError);
+    }
+    expect(build(0)).toBeInstanceOf(OAuthSession);
   });
 
   test("refuses state minted for a different provider", () => {
