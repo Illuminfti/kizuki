@@ -10,10 +10,13 @@ export {
   OPENAI_COMPATIBLE_LLM,
   OPENAI_COMPATIBLE_LLM_ID,
   OpenAiCompatibleLlm,
-  estimateTokens,
   openAiCompatibleLlm,
 } from "./llm-port";
-export type { Clock, LlmPortOverrides } from "./llm-port";
+export type { LlmPortOverrides } from "./llm-port";
+
+export type { Clock } from "./rate";
+
+export { estimateTokens } from "./spend";
 
 export {
   MODEL_PRODUCER,

@@ -24,6 +24,11 @@ Two port implementations and nothing else:
 The package owns no schema, no table, no vault file and no CLI verb. It never
 writes canon; it returns drafts to whoever bound it.
 
+One responsibility per module: `transport.ts` speaks to the endpoint,
+`rate.ts` bounds how often, `spend.ts` says what a call cost, `response.ts`
+and `extract.ts` read what came back, `prompt.ts` decides what goes out, and
+the two port classes compose them.
+
 ## Rules
 
 - `src/transport.ts` holds the only `fetch` in the tree. Adding a second

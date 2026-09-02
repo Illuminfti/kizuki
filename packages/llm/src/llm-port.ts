@@ -20,6 +20,14 @@ import type { LlmPortConfig } from "./config";
 import { LlmFailure, configError, refusedAfter } from "./errors";
 import { readChatAnswer } from "./response";
 import type { ProviderAnswer } from "./response";
+import { RateWindow, defaultClock } from "./rate";
+import type { Clock } from "./rate";
+import {
+  NOTHING_SPENT,
+  answeredSpend,
+  estimateTokens,
+  unansweredSpend,
+} from "./spend";
 import { fetchTransport } from "./transport";
 import type {
   ChatMessage,
@@ -44,45 +52,17 @@ export const OPENAI_COMPATIBLE_LLM: PortDescriptor = validatePortDescriptor({
   requires_lease: false,
 });
 
-export interface Clock {
-  now: () => number;
-  sleep: (ms: number) => Promise<void>;
-}
-
 export interface LlmPortOverrides {
   transport?: ChatTransport;
   clock?: Clock;
 }
 
-/** Nothing reached the endpoint, so the call owes nothing for it. */
-const NOTHING_SPEND: LlmSpend = {
-  attempts: 0,
-  input_tokens: 0,
-  output_tokens: 0,
-};
-
-const RATE_WINDOW_MS = 60_000;
 const RETRY_STATUSES = new Set([429, 502, 503, 504]);
 const DEFAULT_RETRY_MS = 2_000;
 const MAX_RETRY_MS = 30_000;
 const MAX_MESSAGES = 32;
 const MAX_REQUEST_CHARS = 500_000;
 const MAX_OUTPUT_TOKENS = 100_000;
-/** Four characters per token is the usual rough ratio for English prose. */
-const CHARS_PER_TOKEN = 4;
-
-export function estimateTokens(chars: number): number {
-  return Math.ceil(chars / CHARS_PER_TOKEN);
-}
-
-/**
- * Monotonic, so a deadline cannot be moved by an NTP correction or a resume
- * from suspend. Nothing here is persisted or compared with a wall clock.
- */
-const defaultClock: Clock = {
-  now: () => performance.now(),
-  sleep: (ms) => Bun.sleep(ms),
-};
 
 /**
  * `kizuki.llm/v1` over an OpenAI-compatible chat-completions endpoint. It
@@ -97,8 +77,7 @@ export class OpenAiCompatibleLlm implements LlmPort {
   private readonly context: PortContext;
   private readonly transport: ChatTransport;
   private readonly clock: Clock;
-  private readonly window: number[] = [];
-  private gate: Promise<unknown> = Promise.resolve();
+  private readonly rate: RateWindow;
   private physicalAttempts = 0;
   private closed = false;
 
@@ -111,6 +90,7 @@ export class OpenAiCompatibleLlm implements LlmPort {
     this.url = `${this.config.base_url}/chat/completions`;
     this.transport = overrides.transport ?? fetchTransport;
     this.clock = overrides.clock ?? defaultClock;
+    this.rate = new RateWindow(this.clock, this.config.requests_per_minute);
   }
 
   /**
@@ -187,7 +167,7 @@ export class OpenAiCompatibleLlm implements LlmPort {
     let used = 0;
     for (;;) {
       if (this.clock.now() >= deadline) {
-        throw this.deadlineError(this.unanswered(used, inputChars));
+        throw this.deadlineError(unansweredSpend(used, inputChars));
       }
       const result = await this.send(chat, deadline, used, inputChars);
       used += 1;
@@ -198,9 +178,9 @@ export class OpenAiCompatibleLlm implements LlmPort {
         } catch (error) {
           // A refused answer still cost what the endpoint served to produce
           // it, so the refusal carries the spend rather than dropping it.
-          throw refusedAfter(error, this.answered(null, used, inputChars));
+          throw refusedAfter(error, answeredSpend(null, used, inputChars));
         }
-        const spend = this.answered(answer, used, inputChars);
+        const spend = answeredSpend(answer, used, inputChars);
         return {
           text: answer.text,
           model: answer.model ?? this.config.model,
@@ -211,7 +191,7 @@ export class OpenAiCompatibleLlm implements LlmPort {
           attempts: used,
         };
       }
-      const spend = this.unanswered(used, inputChars);
+      const spend = unansweredSpend(used, inputChars);
       const retryable =
         "retry_after_ms" in result && RETRY_STATUSES.has(result.status);
       if (!retryable || used >= allowance) {
@@ -228,34 +208,6 @@ export class OpenAiCompatibleLlm implements LlmPort {
     }
   }
 
-  /**
-   * What a call that reached an answer spent. A retry sends the same prompt
-   * again, so the input is charged once per request that went out, while the
-   * output is charged once: only the answered request produced any.
-   */
-  private answered(
-    answer: ProviderAnswer | null,
-    attempts: number,
-    inputChars: number,
-  ): LlmSpend {
-    const input = answer?.input_tokens ?? estimateTokens(inputChars);
-    const output =
-      answer === null ? 0 : (answer.output_tokens ?? estimateTokens(answer.text.length));
-    return {
-      attempts,
-      input_tokens: input * attempts,
-      output_tokens: output,
-    };
-  }
-
-  /** What a call that never reached an answer had already put on the wire. */
-  private unanswered(attempts: number, inputChars: number): LlmSpend {
-    return {
-      attempts,
-      input_tokens: estimateTokens(inputChars) * attempts,
-      output_tokens: 0,
-    };
-  }
 
   private validate(request: LlmRequest): ChatMessage[] {
     if (
@@ -306,7 +258,7 @@ export class OpenAiCompatibleLlm implements LlmPort {
     return messages;
   }
 
-  private async apiKey(spend: LlmSpend = NOTHING_SPEND): Promise<string | null> {
+  private async apiKey(spend: LlmSpend = NOTHING_SPENT): Promise<string | null> {
     if (this.config.secret_ref === null) return null;
     let value: string;
     try {
@@ -332,20 +284,21 @@ export class OpenAiCompatibleLlm implements LlmPort {
     used: number,
     inputChars: number,
   ): Promise<TransportResult> {
-    const spend = this.unanswered(used, inputChars);
-    const slot = await this.takeSlot(deadline, spend);
+    const spend = unansweredSpend(used, inputChars);
+    const slot = await this.rate.take(deadline);
+    if (slot === null) throw this.deadlineError(spend);
     let key: string | null;
     try {
       key = await this.apiKey(spend);
     } catch (error) {
       // A request that fails closed here never happened, so it must not keep
       // a slot in the rate window either.
-      this.release(slot);
+      this.rate.release(slot);
       throw error;
     }
     const remaining = deadline - this.clock.now();
     if (remaining <= 0) {
-      this.release(slot);
+      this.rate.release(slot);
       throw this.deadlineError(spend);
     }
     this.physicalAttempts += 1;
@@ -357,59 +310,6 @@ export class OpenAiCompatibleLlm implements LlmPort {
     });
   }
 
-  /**
-   * One caller at a time reads the window and takes a slot in it. This port
-   * is a host-bound singleton and nothing in `kizuki.llm/v1` says a call is
-   * single-flight, so without the queue every concurrent call passed the same
-   * check before any of them had recorded a request.
-   */
-  private async takeSlot(deadline: number, spend: LlmSpend): Promise<number> {
-    const taken = this.gate.then(
-      () => this.waitForSlot(deadline, spend),
-      () => this.waitForSlot(deadline, spend),
-    );
-    // The queue outlives a failed call: a rejection here is the caller's.
-    this.gate = taken.then(
-      () => undefined,
-      () => undefined,
-    );
-    return await taken;
-  }
-
-  /**
-   * Sliding window over the configured rate. The wait is clamped to the
-   * window so a backward clock step (an NTP correction, a resume from
-   * suspend) cannot park a run for the size of the step.
-   */
-  private async waitForSlot(deadline: number, spend: LlmSpend): Promise<number> {
-    this.prune();
-    const oldest = this.window[0];
-    if (
-      this.window.length >= this.config.requests_per_minute &&
-      oldest !== undefined
-    ) {
-      const wait = Math.max(
-        0,
-        Math.min(oldest + RATE_WINDOW_MS - this.clock.now(), RATE_WINDOW_MS),
-      );
-      // Waiting out the rate window is part of the call, so it is spent from
-      // the same deadline rather than added on top of it.
-      if (this.clock.now() + wait > deadline) throw this.deadlineError(spend);
-      await this.clock.sleep(wait);
-      this.prune();
-    }
-    // Taken here, with no await between the check above and this line.
-    const at = this.clock.now();
-    this.window.push(at);
-    return at;
-  }
-
-  /** Give back a slot whose request never left. */
-  private release(at: number): void {
-    const index = this.window.lastIndexOf(at);
-    if (index >= 0) this.window.splice(index, 1);
-  }
-
   private deadlineError(spend: LlmSpend): PortError {
     return new LlmFailure(
       "timeout",
@@ -417,13 +317,6 @@ export class OpenAiCompatibleLlm implements LlmPort {
       true,
       spend,
     );
-  }
-
-  private prune(): void {
-    const cutoff = this.clock.now() - RATE_WINDOW_MS;
-    while (this.window.length > 0 && (this.window[0] ?? 0) <= cutoff) {
-      this.window.shift();
-    }
   }
 
   private transportError(result: TransportResult, spend: LlmSpend): PortError {
