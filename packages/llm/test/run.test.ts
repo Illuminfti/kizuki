@@ -359,6 +359,17 @@ describe("idempotency", () => {
 });
 
 describe("stopping", () => {
+  test("an event the budget stops before its first request is not counted as sent", async () => {
+    const built = harness();
+    built.add({ sensitivity_hint: "public" });
+    built.add({ sensitivity_hint: "public" });
+    built.config({ max_requests: 1 });
+    const receipt = await enrich(built, { producers: ["summary"], limit: 10 });
+    expect(receipt.run?.stopped).toBe("budget");
+    expect(receipt.counts.requests).toBe(1);
+    expect(receipt.counts.sent).toBe(1);
+  });
+
   test("an exhausted budget stops the run and leaves the next event untouched", async () => {
     const built = harness();
     built.add({ sensitivity_hint: "public" });

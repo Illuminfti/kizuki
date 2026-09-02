@@ -235,18 +235,11 @@ export async function runEnrichment(
           continue;
         }
         const wrapped = wrapEvent(event, producer, config.max_event_chars);
-        // The event counts as sent the moment its first request is built, so
-        // a run that stops mid-event still reports what it spent.
-        if (!usedEvent) {
-          usedEvent = true;
-          if (dryRun) counts.would_send += 1;
-          else {
-            counts.sent += 1;
-            sentEvents += 1;
-          }
-        }
-
         if (dryRun) {
+          if (!usedEvent) {
+            usedEvent = true;
+            counts.would_send += 1;
+          }
           counts.requests += 1;
           counts.input_chars += wrapped.chars;
           continue;
@@ -256,11 +249,21 @@ export async function runEnrichment(
           systemPrompt(producer),
           wrapped.user,
         );
+        // A spent budget is refused before the transport, so nothing left the
+        // machine for this producer and the run stops without counting it.
+        if (!outcome.ok && outcome.error.code === "budget_exhausted") {
+          stopped = "budget";
+          break scan;
+        }
+        // Past that point a request was made, so the event was spent on even
+        // if the run gives up inside it.
+        if (!usedEvent) {
+          usedEvent = true;
+          counts.sent += 1;
+          sentEvents += 1;
+        }
+
         if (!outcome.ok) {
-          if (outcome.error.code === "budget_exhausted") {
-            stopped = "budget";
-            break scan;
-          }
           counts.errors += 1;
           consecutiveErrors += 1;
           requestErrors.push({
