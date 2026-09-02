@@ -15,8 +15,8 @@ const MAX_EDGES = 500;
 
 export interface GraphArgs {
   id: string;
-  /** Narrowed to 1 or 2 at run time: core re-checks whatever reaches it. */
-  depth?: number;
+  /** A typed caller is held to the bound; `depthOf` re-checks the rest. */
+  depth?: 1 | 2;
   kinds?: GraphEdgeKind[];
 }
 

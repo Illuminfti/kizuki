@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { rebuildGraph } from "../../src/graph/graph";
 import { serveGraph } from "../../src/serving/graph";
-import type { GraphData } from "../../src/serving/graph";
+import type { GraphArgs, GraphData } from "../../src/serving/graph";
 import { ServeError } from "../../src/serving/types";
 import type { Envelope } from "../../src/serving/types";
 import { serializePage } from "../../src/vault/frontmatter";
@@ -116,9 +116,19 @@ describe("serveGraph", () => {
 
   test("bad depth and repeated kinds are refused before any read", () => {
     const ctx = fixture.owner();
+    // A typed caller cannot write `depth: 3` at all: this assignment stops
+    // compiling the moment the public type widens back to `number`.
+    type OutOfBound = 3 extends NonNullable<GraphArgs["depth"]> ? true : false;
+    const typedCallerRefused: OutOfBound = false;
+    expect(typedCallerRefused).toBe(false);
+
+    const untyped: unknown = 3;
     expect(
       refusal(() =>
-        serveGraph(ctx, { id: "person:ada", depth: 3 }),
+        serveGraph(ctx, {
+          id: "person:ada",
+          depth: untyped as NonNullable<GraphArgs["depth"]>,
+        }),
       ).code,
     ).toBe("invalid_arguments");
     expect(
