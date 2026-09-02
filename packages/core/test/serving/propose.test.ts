@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import { listAudit } from "../../src/agents";
 import { getClaim, listClaims } from "../../src/claims/store";
 import { servePropose } from "../../src/serving/propose";
 import type { ProposeArgs } from "../../src/serving/propose";
 import { ServeError } from "../../src/serving/types";
 import { serializePage } from "../../src/vault/frontmatter";
+import { ReferenceRetrievalPort } from "../contracts/reference-retrieval";
 import { serveFixture } from "./helpers";
 import type { Fixture } from "./helpers";
 
@@ -78,6 +80,25 @@ describe("servePropose files a claim for the receipted writer", () => {
     const body = row?.query_shape["body"] as { sha256?: string };
     expect(body.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(JSON.stringify(row?.query_shape)).not.toContain("boiled at dawn");
+  });
+
+  test("a bound retrieval port is the one the claim store indexes into", async () => {
+    const live = newFixture();
+    const port = new ReferenceRetrievalPort({
+      vault_path: live.vaultPath,
+      data_dir: join(live.vaultPath, ".kizuki", "retrieval", "test"),
+      config: {},
+      secrets: () => Promise.reject(new Error("no secret is needed here")),
+      clock: () => "2026-03-01T00:00:00Z",
+      logger: () => undefined,
+    });
+    const ctx = { ...live.agent("reader-private"), retrieval: port };
+
+    const filed = await servePropose(ctx, candidate(live, "The kettle is indexed."));
+    const claimId = filed.data?.claim_id ?? "";
+    // The port the host bound is the one the claim reaches: serving holds it
+    // for the process, it does not open its own.
+    expect((await port.verifyAbsent([claimId])).found).toEqual([claimId]);
   });
 
   test("refiling the same candidate is a duplicate, not an error", async () => {

@@ -5,7 +5,7 @@ import type { ClaimPolarity, FrontmatterValue } from "../contracts/proposal";
 import { isPlainObject } from "../util/validate";
 import { PAGE_TYPES } from "../vault/schema";
 import { enumOf, identifier, idList, text } from "./arguments";
-import { auditArguments, gateAsync } from "./gate";
+import { auditArguments, claimsIo, gateAsync } from "./gate";
 import type { Served } from "./gate";
 import { eventDecision, readEventFacts } from "./ledger";
 import { ServeError } from "./types";
@@ -315,7 +315,7 @@ export async function servePropose(
     validateProvenance(ctx, provenance);
 
     const filed = await insertClaim(
-      { db: ctx.db },
+      claimsIo(ctx),
       {
         kind,
         target,

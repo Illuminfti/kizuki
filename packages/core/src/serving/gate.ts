@@ -6,6 +6,7 @@ import type {
   Principal,
   Tool,
 } from "../agents";
+import type { ClaimsIo } from "../claims/store";
 import { isPlainObject } from "../util/validate";
 import { ServeError, ENVELOPE_SCHEMA } from "./types";
 import type {
@@ -110,6 +111,17 @@ function boundedArguments(
   return budget.dropped === 0
     ? shaped
     : { ...shaped, [TRUNCATION_KEY]: budget.dropped };
+}
+
+/**
+ * The claim store's io, carrying the process's one retrieval connection when
+ * the host bound one.
+ */
+export function claimsIo(ctx: ServeContext): ClaimsIo {
+  return {
+    db: ctx.db,
+    ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }),
+  };
 }
 
 export function principalName(principal: Principal): string {

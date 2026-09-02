@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { DenyReason, Principal, Sensitivity, Tool } from "../agents";
+import type { RetrievalPort } from "../contracts/retrieval";
 
 export const ENVELOPE_SCHEMA = "kizuki.envelope/v1" as const;
 
@@ -12,6 +13,15 @@ export interface ServeContext {
   db: Database;
   vaultPath: string;
   principal: Principal;
+  /**
+   * One `kizuki.retrieval/v1` connection, held for the life of the process
+   * that built this context and handed to the claim store, which uses it to
+   * nominate near-duplicates and to index what it writes. Reads still go to
+   * the lexical index in this database: no implementation of the port ships
+   * in this tree yet, and serving nothing is worse than serving what the
+   * deterministic floor can answer.
+   */
+  retrieval?: RetrievalPort;
 }
 
 export interface CanonChunk {

@@ -4,7 +4,7 @@ import { getClaim, insertClaim, listClaims } from "../claims/store";
 import type { Claim, ClaimPolarity } from "../contracts/proposal";
 import { accept } from "../ledger/ledger";
 import { identifier, text } from "./arguments";
-import { auditArguments, gateAsync, principalName } from "./gate";
+import { auditArguments, claimsIo, gateAsync, principalName } from "./gate";
 import type { Served } from "./gate";
 import { ServeError } from "./types";
 import type { Envelope, ServeContext } from "./types";
@@ -234,7 +234,7 @@ export async function serveCorrect(
       const eventId = recordStatement(ctx, statement, subject, at);
       const sensitivity: Sensitivity = first.sensitivity;
       const filed = await insertClaim(
-        { db: ctx.db },
+        claimsIo(ctx),
         {
           kind: "claim",
           body: statement,
