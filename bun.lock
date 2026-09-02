@@ -50,6 +50,8 @@
     "packages/connectors": {
       "name": "@kizuki/connectors",
       "dependencies": {
+        "@kizuki/connector-ics": "workspace:*",
+        "@kizuki/connector-imap": "workspace:*",
         "@kizuki/connector-screenpipe": "workspace:*",
         "@kizuki/connector-telegram": "workspace:*",
         "@kizuki/core": "workspace:*",
