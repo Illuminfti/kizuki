@@ -174,6 +174,25 @@ describe("search indexing", () => {
     expect(search(db, "vanishing")).toEqual([]);
   });
 
+  test("a tombstone removes only ledger documents of its record", () => {
+    const db = searchDb();
+    const indexed = storedEvent(db, "same-source", { text: "vanishing record" });
+    indexEvent(db, indexed);
+    indexPage(db, page(indexed.event_id, "canon copy stays"));
+    const other = storedEvent(db, "other-source", { text: "unrelated record" });
+    indexEvent(db, other);
+
+    indexEvent(db, storedEvent(db, "same-source", { text: "", deleted: true }));
+
+    expect(search(db, "vanishing")).toEqual([]);
+    expect(
+      search(db, "canon").map(({ scope, doc_id }) => `${scope}:${doc_id}`),
+    ).toEqual([`canon:${indexed.event_id}`]);
+    expect(search(db, "unrelated").map(({ doc_id }) => doc_id)).toEqual([
+      other.event_id,
+    ]);
+  });
+
   test("prefix search works and snippets mark the match", () => {
     const db = searchDb();
     indexPage(db, page("fact:prefix", "A telescope reveals distant worlds."));
@@ -314,6 +333,86 @@ describe("search rebuild", () => {
 
     expect(rebuildSearch(db, vault.path).events).toBe(0);
     expect(search(db, "obsolete")).toEqual([]);
+  });
+
+  test("rebuild re-indexes a record re-created after its tombstone", () => {
+    const db = searchDb();
+    const vault = tempVault();
+    disposers.push(vault.dispose);
+    storedEvent(db, "recreated", { text: "first version" });
+    storedEvent(db, "recreated", { text: "", deleted: true });
+    const revived = storedEvent(db, "recreated", { text: "second version" });
+
+    // The two-pass rebuild has to compare positions, not just see a tombstone.
+    expect(rebuildSearch(db, vault.path).events).toBe(1);
+    expect(search(db, "first")).toEqual([]);
+    expect(search(db, "second").map(({ doc_id }) => doc_id)).toEqual([
+      revived.event_id,
+    ]);
+  });
+
+  test("rebuild keeps the first page for a duplicate id and reports the rest", () => {
+    const db = searchDb();
+    const vault = tempVault();
+    disposers.push(vault.dispose);
+    // "B" sorts before "a" by code point and after it in most locales.
+    writeCanon(vault.path, "facts/B.md", {
+        id: "fact:dup",
+        title: "B",
+        type: "fact",
+        status: "active",
+        sensitivity: "personal",
+      }, "kept body");
+    writeCanon(vault.path, "facts/a.md", {
+        id: "fact:dup",
+        title: "a",
+        type: "fact",
+        status: "active",
+        sensitivity: "personal",
+      }, "shadowed body");
+
+    const result = rebuildSearch(db, vault.path);
+
+    expect(result.pages).toBe(1);
+    expect(result.skipped).toEqual([
+      {
+        relPath: "facts/a.md",
+        reason: 'duplicate id "fact:dup"; first seen at facts/B.md',
+      },
+    ]);
+    expect(search(db, "kept").map(({ doc_id }) => doc_id)).toEqual(["fact:dup"]);
+    expect(search(db, "shadowed")).toEqual([]);
+    expect(
+      db
+        .query<{ count: number }, []>(
+          "SELECT count(*) AS count FROM search_docs",
+        )
+        .get(),
+    ).toEqual({ count: 1 });
+  });
+
+  test("rebuild tolerates a malformed note and reports it as skipped", () => {
+    const db = searchDb();
+    const vault = tempVault();
+    disposers.push(vault.dispose);
+    writeCanon(vault.path, "facts/good.md", {
+        id: "fact:good",
+        title: "Good",
+        type: "fact",
+        status: "active",
+        sensitivity: "personal",
+      }, "indexed body");
+    writeFileSync(join(vault.path, "facts", "stray.md"), "just a note\n", "utf8");
+
+    const result = rebuildSearch(db, vault.path);
+
+    expect(result.pages).toBe(1);
+    expect(result.skipped.map(({ relPath }) => relPath)).toEqual([
+      "facts/stray.md",
+    ]);
+    expect(search(db, "indexed").map(({ doc_id }) => doc_id)).toEqual([
+      "fact:good",
+    ]);
   });
 
   test("rebuild keys a record by connector and source id, not their join", () => {

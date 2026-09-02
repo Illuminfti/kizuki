@@ -4,11 +4,13 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CaptureEventInput } from "../src/contracts/event";
+import { neighbors } from "../src/graph/graph";
 import { initGraph } from "../src/graph/schema";
 import { openLedger } from "../src/ledger/db";
 import { accept, count, readSince } from "../src/ledger/ledger";
 import { purgeEvents } from "../src/ledger/purge";
 import { indexEvent } from "../src/search/indexer";
+import { search } from "../src/search/query";
 import { initSearch } from "../src/search/schema";
 import {
   fileProposal,
@@ -183,7 +185,10 @@ describe("purgeEvents", () => {
 
   test("removes matching derived search and graph rows through real schemas", () => {
     const db = openLedger(":memory:");
-    const source = storedEvent(db, event("search-source"));
+    const source = storedEvent(
+      db,
+      event("search-source", { text: "purgeable phrase" }),
+    );
     initSearch(db);
     initGraph(db);
     indexEvent(db, source);
@@ -209,6 +214,10 @@ describe("purgeEvents", () => {
     expect(
       db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM graph_edges").get(),
     ).toEqual({ count: 0 });
+    // The rows are gone from the public readers too, at every ceiling.
+    expect(search(db, "purgeable")).toEqual([]);
+    expect(search(db, "purgeable", { ceiling: "private" })).toEqual([]);
+    expect(neighbors(db, "fact:one").edges).toEqual([]);
     db.close();
   });
 });

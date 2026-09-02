@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { RECEIPTS_PATH, getCanonReceipt, readReceiptsLog } from "../../src/canon/receipts";
 import { getClaim } from "../../src/claims/store";
@@ -77,6 +77,34 @@ describe("promote shim", () => {
     if (tombstone.status !== "stored") throw new Error("fixture tombstone");
     const cascade = cascadeTombstone(db, tombstone.event);
     expect(cascade.retractions_filed).toHaveLength(1);
+    db.close();
+  });
+
+  test("promotes while a stray note sits in the vault", () => {
+    const db = memoryDb();
+    const root = vault();
+    // One hand-written note without frontmatter used to abort every vault
+    // reader, and the writer scans the vault to resolve its target.
+    writeFileSync(join(root, "facts", "stray.md"), "just a note\n", "utf8");
+    const stored = accept(db, validEvent());
+    if (stored.status !== "stored") throw new Error("fixture event");
+    const filed = fileProposal(
+      db,
+      proposalInput({
+        kind: "entity",
+        target: "person:ada",
+        frontmatter: { type: "person", title: "Ada" },
+        provenance: [stored.event.event_id],
+      }),
+    );
+    if (filed.outcome !== "stored") throw new Error("fixture proposal");
+
+    const receipt = ownerPromote(db, root, filed.proposal.proposal_id, {
+      sensitivity: "personal",
+    });
+
+    expect(receipt.page_path).toBe("person/ada.md");
+    expect(existsSync(join(root, receipt.page_path))).toBe(true);
     db.close();
   });
 

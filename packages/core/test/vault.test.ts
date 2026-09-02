@@ -216,7 +216,7 @@ describe("doctorVault", () => {
     );
   });
 
-  test("reports a markdown file that has no frontmatter and ignores archive", () => {
+  test("reports skipped notes as frontmatter problems and ignores archive/", () => {
     const vault = tempDir();
     initVault(vault);
     writeFileSync(join(vault, "facts", "orphan.md"), "just a note\n");
@@ -231,7 +231,9 @@ describe("doctorVault", () => {
     const result = doctorVault(vault);
     expect(result.counts).toEqual({ total: 1, valid: 0, invalid: 1 });
     expect(result.pages[0]?.page).toBe("facts/orphan.md");
-    expect(result.pages[0]?.errors[0]).toMatch(/frontmatter/);
+    expect(result.pages[0]?.errors).toEqual([
+      "frontmatter: frontmatter must begin with an exact --- line",
+    ]);
   });
 });
 
