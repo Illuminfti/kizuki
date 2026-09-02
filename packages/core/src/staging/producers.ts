@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { CaptureEvent, SubjectRef } from "../contracts/event";
+import { tableExists } from "../ledger/schema";
 import { fileProposal } from "./proposals";
 import type { ProposalInput } from "./proposals";
 
@@ -159,12 +160,18 @@ export function cascadeTombstone(
   const withdrawn: string[] = [];
   for (const id of ids) withdrawn.push(...withdrawForTombstone(db, id));
 
+  if (!tableExists(db, "canon_receipts")) {
+    return { withdrawn, retractions_filed: [] };
+  }
   const placeholders = ids.map(() => "?").join(", ");
+  // Receipts name their claims in `claim_ids`; a promoted proposal shares its
+  // id with the claim the receipted writer materialized (RFC 0002 §18.1 v4).
   const promotedPages = db
     .query(
-      `SELECT DISTINCT pr.proposal_id AS proposal_id, pr.page_path AS page_path
-         FROM promotions pr, proposals p, json_each(p.provenance) j
-        WHERE p.proposal_id = pr.proposal_id
+      `SELECT DISTINCT p.proposal_id AS proposal_id, r.page_path AS page_path
+         FROM canon_receipts r, json_each(r.claim_ids) c,
+              proposals p, json_each(p.provenance) j
+        WHERE p.proposal_id = c.value
           AND p.status = 'promoted'
           AND j.value IN (${placeholders})`,
     )

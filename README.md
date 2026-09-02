@@ -76,11 +76,13 @@ One Bun workspace. Four packages. There is no MCP package.
   as stored, duplicate, or error. Dedupe is
   `(connector_id, source_record_id, content_hash)`. The spine assigns
   `event_id` and `content_hash`. Callers cannot supply them.
-- **Canon writes.** Staging still holds `kizuki.proposal/v1` records on this
-  branch. Only the receipted writer in `@kizuki/core` writes canon. Agents
-  propose claims and relay corrections; they cannot put a page. The
-  receipted writer and claim store are accepted design; the leftover
-  `ownerPromote` path is the current implementation.
+- **Canon writes.** `kizuki.claim/v1` is the durable record; the compat
+  `proposals` table is still dual-written on this branch. Only the receipted
+  writer in `@kizuki/core` (`applyCanonWrite`) writes canon: page file, then
+  JSONL receipt, then `canon_receipts` row, with before/after hashes of the
+  bytes on disk and a capability that only that module can mint. Agents
+  propose claims and relay corrections; they cannot put a page. The leftover
+  `ownerPromote` path is a shim over the same writer (`writer: "import"`).
 - **Derived.** Search (SQLite FTS5) and graph edges rebuild from the ledger
   plus canon. `rebuildDerived` is the library call. The CLI indexes search
   after each ingest and leftover promote; there is no CLI rebuild verb yet, and the
