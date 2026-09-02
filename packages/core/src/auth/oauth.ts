@@ -271,6 +271,33 @@ function clientSecretForm(provider: OAuthProvider): Record<string, string> {
     : { client_secret: provider.client_secret };
 }
 
+/**
+ * Provider-controlled text may echo back the very secrets the request carried.
+ * A detail holding one is dropped whole rather than truncated.
+ */
+function withoutSecrets(error: unknown, secrets: readonly string[]): unknown {
+  if (!(error instanceof OAuthError)) return error;
+  for (const secret of secrets) {
+    if (secret.length > 0 && error.message.includes(secret)) {
+      return new OAuthError(error.code, error.provider);
+    }
+  }
+  return error;
+}
+
+/** Everything one operation could see echoed back at it. */
+function operationSecrets(
+  provider: OAuthProvider,
+  ...rest: (string | null)[]
+): string[] {
+  const secrets =
+    provider.client_secret === undefined ? [] : [provider.client_secret];
+  for (const value of rest) {
+    if (value !== null) secrets.push(value);
+  }
+  return secrets;
+}
+
 /** The only place a transport rejection becomes an error owners may see. */
 async function postForm(
   provider: OAuthProvider,
@@ -325,6 +352,8 @@ export async function signInWithBrowser(
   const pkce = buildPkce(randomBytes);
   const nonce = base64url(randomOf(randomBytes, STATE_BYTES));
 
+  const secrets = operationSecrets(provider, pkce.verifier, nonce);
+
   const listener = await transport.listen(provider.redirect_path ?? "/callback");
   let tokens: TokenSet;
   try {
@@ -369,6 +398,7 @@ export async function signInWithBrowser(
     if (code === null || code.length === 0) {
       throw new OAuthError("provider_error", provider.name);
     }
+    secrets.push(code);
 
     const response = await postForm(provider, transport, provider.token_url, {
       grant_type: "authorization_code",
@@ -383,7 +413,7 @@ export async function signInWithBrowser(
     // A listener that will not shut down must not displace the failure the
     // caller has to act on.
     await listener.close().catch(() => undefined);
-    throw error;
+    throw withoutSecrets(error, secrets);
   }
   await listener.close();
   return tokens;
@@ -398,25 +428,34 @@ export async function refreshTokens(
   if (tokens.refresh_token === null) {
     throw new OAuthError("refresh_rejected", provider.name);
   }
-  const response = await postForm(provider, transport, provider.token_url, {
-    grant_type: "refresh_token",
-    refresh_token: tokens.refresh_token,
-    client_id: provider.client_id,
-    ...clientSecretForm(provider),
-  });
-  if (
-    (response.status === 400 || response.status === 401) &&
-    bodyError(response.body) === "invalid_grant"
-  ) {
-    throw new OAuthError("refresh_rejected", provider.name, "invalid_grant");
-  }
-  return parseTokenResponse(
+  const secrets = operationSecrets(
     provider,
-    response.status,
-    response.body,
-    now(),
-    tokens,
+    tokens.refresh_token,
+    tokens.access_token,
   );
+  try {
+    const response = await postForm(provider, transport, provider.token_url, {
+      grant_type: "refresh_token",
+      refresh_token: tokens.refresh_token,
+      client_id: provider.client_id,
+      ...clientSecretForm(provider),
+    });
+    if (
+      (response.status === 400 || response.status === 401) &&
+      bodyError(response.body) === "invalid_grant"
+    ) {
+      throw new OAuthError("refresh_rejected", provider.name, "invalid_grant");
+    }
+    return parseTokenResponse(
+      provider,
+      response.status,
+      response.body,
+      now(),
+      tokens,
+    );
+  } catch (error) {
+    throw withoutSecrets(error, secrets);
+  }
 }
 
 export async function revokeToken(
@@ -428,19 +467,24 @@ export async function revokeToken(
   if (revocationUrl === undefined) {
     throw new OAuthError("not_supported", provider.name);
   }
-  const response = await postForm(provider, transport, revocationUrl, {
-    token,
-    client_id: provider.client_id,
-    ...clientSecretForm(provider),
-  });
-  if (response.status === 200) return;
-  // A token the provider already dropped is a revoked token.
-  if (response.status === 400 && bodyError(response.body) === "invalid_token") {
-    return;
+  const secrets = operationSecrets(provider, token);
+  try {
+    const response = await postForm(provider, transport, revocationUrl, {
+      token,
+      client_id: provider.client_id,
+      ...clientSecretForm(provider),
+    });
+    if (response.status === 200) return;
+    // A token the provider already dropped is a revoked token.
+    if (response.status === 400 && bodyError(response.body) === "invalid_token") {
+      return;
+    }
+    throw new OAuthError(
+      "provider_error",
+      provider.name,
+      bodyError(response.body),
+    );
+  } catch (error) {
+    throw withoutSecrets(error, secrets);
   }
-  throw new OAuthError(
-    "provider_error",
-    provider.name,
-    bodyError(response.body),
-  );
 }

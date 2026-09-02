@@ -15,11 +15,14 @@ import {
   tokenSet,
 } from "./helpers";
 
+const VERIFIER = base64url(new Uint8Array(32).fill(1));
+
 const SENTINELS = [
   "SENTINEL-CODE",
   "SENTINEL-ACCESS",
   "SENTINEL-REFRESH",
-  base64url(new Uint8Array(32).fill(1)),
+  "SENTINEL-SECRET",
+  VERIFIER,
   base64url(new Uint8Array(32).fill(2)),
 ];
 
@@ -43,9 +46,10 @@ function expectRedacted(error: unknown): void {
 async function captureSignIn(
   transport: FakeTransport,
   query: Record<string, string>,
+  definition = provider(),
 ): Promise<unknown> {
   const io = fakeIo();
-  const flow = signInWithBrowser(provider(), io, transport, {
+  const flow = signInWithBrowser(definition, io, transport, {
     randomBytes: countingRandom(),
     now: () => NOW,
   });
@@ -139,6 +143,61 @@ describe("secrets never reach an error", () => {
       provider(),
       "SENTINEL-ACCESS",
       new FakeTransport({ status: 500, body: leakyBody }),
+    ).then(
+      () => {
+        throw new Error("revocation was expected to fail");
+      },
+      expectRedacted,
+    );
+  });
+
+  test("a token endpoint that echoes the code back drops the whole detail", async () => {
+    const error = await captureSignIn(
+      new FakeTransport({ status: 400, body: { error: "SENTINEL-CODE" } }),
+      { code: "SENTINEL-CODE", state: NONCE },
+    );
+    expectRedacted(error);
+    expect((error as Error).message).toBe("fixture: provider_error");
+  });
+
+  test("a callback that echoes the PKCE verifier drops the whole detail", async () => {
+    const error = await captureSignIn(new FakeTransport(), {
+      error: VERIFIER,
+      state: NONCE,
+    });
+    expectRedacted(error);
+    expect((error as Error).message).toBe("fixture: provider_error");
+  });
+
+  test("a token endpoint that echoes the installed-app secret drops it", async () => {
+    expectRedacted(
+      await captureSignIn(
+        new FakeTransport({ status: 400, body: { error: "SENTINEL-SECRET" } }),
+        { code: "SENTINEL-CODE", state: NONCE },
+        provider({ client_secret: "SENTINEL-SECRET" }),
+      ),
+    );
+  });
+
+  test("a refresh whose error field is the refresh token drops the detail", async () => {
+    await refreshTokens(
+      provider(),
+      tokenSet(),
+      new FakeTransport({ status: 500, body: { error: "SENTINEL-REFRESH" } }),
+      () => NOW,
+    ).then(
+      () => {
+        throw new Error("refresh was expected to fail");
+      },
+      expectRedacted,
+    );
+  });
+
+  test("a revocation whose error field is the revoked token drops the detail", async () => {
+    await revokeToken(
+      provider(),
+      "SENTINEL-ACCESS",
+      new FakeTransport({ status: 500, body: { error: "SENTINEL-ACCESS" } }),
     ).then(
       () => {
         throw new Error("revocation was expected to fail");
