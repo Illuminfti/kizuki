@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { SINGLE_SOURCE_CAP } from "../../src/claims/authority";
 import { ClaimError } from "../../src/claims/errors";
 import {
   getClaim,
@@ -62,6 +63,8 @@ describe("claims provenance", () => {
     );
     expect(first.outcome).toBe("stored");
     if (first.outcome !== "stored") return;
+    expect(first.claim.authority).toBe("model_inference");
+    expect(first.claim.confidence).toBe(SINGLE_SOURCE_CAP);
 
     const second = await insertClaim(
       { db, now: () => "2026-09-02T12:05:00.000Z" },
@@ -82,6 +85,7 @@ describe("claims provenance", () => {
     expect(second.claim.claim_id).toBe(first.claim.claim_id);
     expect(second.claim.confidence).toBe(0.8);
     expect(second.claim.corroboration).toBe(2);
+    expect(second.claim.authority).toBe("connector_evidence");
     expect(second.claim.last_confirmed_at).toBe("2026-09-02T12:05:00.000Z");
     expect(listSupersessions(db)).toEqual([]);
     db.close();

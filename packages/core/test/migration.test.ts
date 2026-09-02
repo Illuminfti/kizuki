@@ -3,6 +3,7 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { initClaims } from "../src/claims/schema";
 import { openLedger } from "../src/ledger/db";
 import { accept, count } from "../src/ledger/ledger";
 import { validEvent } from "./fixtures";
@@ -366,6 +367,19 @@ describe("openLedger migrations", () => {
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
+  });
+
+  test("initClaims is a no-op once the v3 surface exists", () => {
+    const db = openLedger(":memory:");
+    db.exec("DELETE FROM proposals");
+    initClaims(db);
+    expect(
+      db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM proposals").get()?.n,
+    ).toBe(0);
+    expect(
+      db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM claims").get()?.n,
+    ).toBe(0);
+    db.close();
   });
 
   test.todo(

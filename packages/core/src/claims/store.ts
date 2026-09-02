@@ -12,7 +12,7 @@ import type {
   FrontmatterValue,
   Producer,
 } from "../contracts/proposal";
-import { CLAIM_SCHEMA, canonicalizeProducer, isClaimKind, isProducer } from "../contracts/proposal";
+import { AUTHORITY_TIERS, CLAIM_SCHEMA, canonicalizeProducer, isClaimKind, isProducer } from "../contracts/proposal";
 import { tableExists } from "../ledger/schema";
 import { isRfc3339 } from "../util/time";
 import { ulid } from "../util/ulid";
@@ -321,12 +321,16 @@ function insertRow(db: Database, claim: Claim): void {
   );
 }
 
+function higherAuthority(left: AuthorityTier, right: AuthorityTier): AuthorityTier {
+  return AUTHORITY_TIERS[left] >= AUTHORITY_TIERS[right] ? left : right;
+}
+
 function persistClaim(db: Database, claim: Claim): void {
   db.query(
     `UPDATE claims SET
        confidence = ?, status = ?, retracted_at = ?, superseded_by = ?,
        valid_to = ?, corroboration = ?, last_confirmed_at = ?,
-       frontmatter = ?
+       authority = ?, frontmatter = ?
      WHERE claim_id = ?`,
   ).run(
     claim.confidence,
@@ -336,6 +340,7 @@ function persistClaim(db: Database, claim: Claim): void {
     claim.valid_to,
     claim.corroboration,
     claim.last_confirmed_at,
+    claim.authority,
     JSON.stringify(claim.frontmatter),
     claim.claim_id,
   );
@@ -394,6 +399,7 @@ function corroborate(db: Database, live: Claim, incoming: Claim, at: string): Cl
     ...live,
     confidence: Math.max(live.confidence, incoming.confidence),
     corroboration: live.corroboration + 1,
+    authority: higherAuthority(incoming.authority, live.authority),
     last_confirmed_at: at,
   };
   persistClaim(db, next);

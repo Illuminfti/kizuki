@@ -279,6 +279,23 @@ export function applyClaimsV3(db: Database): void {
   copyClaimsToCompatProposals(db);
 }
 
+function claimsSurfaceReady(db: Database): boolean {
+  if (!tableExists(db, "claims")) return false;
+  const claims = columnNames(db, "claims");
+  if (!claims.has("claim_id") || !claims.has("claim_key") || !claims.has("authority")) {
+    return false;
+  }
+  return (
+    tableExists(db, "claim_supersessions") &&
+    tableExists(db, "claim_bindings") &&
+    tableExists(db, "proposals")
+  );
+}
+
+/** Cheap no-op once v3 exists. `applyClaimsV3` stays the migration path. */
 export function initClaims(db: Database): void {
+  if (claimsSurfaceReady(db)) {
+    return;
+  }
   applyClaimsV3(db);
 }
