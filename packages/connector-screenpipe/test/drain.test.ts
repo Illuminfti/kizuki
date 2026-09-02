@@ -137,6 +137,37 @@ describe("ScreenpipeConnector read bounds", () => {
     await connector.revoke();
   });
 
+  test("a capped frame walk still reads the transcription table", async () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    fixture.writer.transaction(() => {
+      for (let id = 1; id <= MAX_PAGES_PER_CALL * BATCH_LIMIT + 100; id += 1) {
+        insertFrame(fixture.writer, {
+          id,
+          timestamp: "2026-01-01T00:00:00Z",
+          fullText: null,
+        });
+      }
+      insertTranscription(fixture.writer, {
+        id: 1,
+        timestamp: "2026-01-01T00:00:00Z",
+        transcription: "spoken while the screen showed nothing",
+      });
+    })();
+    const connector = new ScreenpipeConnector(
+      { path: fixture.path, settle_seconds: 0 },
+      fixtureDeps("2026-01-09T00:00:00.000Z"),
+    );
+
+    // The frame bound is per table: spending it must not hide a table the
+    // caller would otherwise read in the same call.
+    const batch = await connector.backfill(null);
+
+    expect(batch.events.map(({ source_record_id }) => source_record_id)).toEqual([
+      "transcription:1",
+    ]);
+    await connector.revoke();
+  });
+
   test("one call reads a bounded number of pages and resumes after them", async () => {
     const fixture = createFixtureDatabase({ rows: false });
     const total = MAX_PAGES_PER_CALL * BATCH_LIMIT + BATCH_LIMIT;

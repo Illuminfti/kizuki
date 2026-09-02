@@ -95,7 +95,8 @@ screenpipe schema older than supported: migration 20260613130000 not applied (ma
   clock's settle horizon, so one row carrying a corrupt or clock-skewed date
   cannot pull the whole history back in; a row dated beyond that horizon is
   skipped by `since` rather than seeding from it.
-- A call emits at most 500 events and reads at most 20 pages of 500 rows.
+- A call emits at most 500 events and reads at most 20 pages of 500 rows from
+  each of the two tables.
   Within that bound the connector keeps reading until it has an event, so a
   long run of frames without text costs extra reads instead of cutting the
   import short. A run longer than the bound ends the call with no events and an
