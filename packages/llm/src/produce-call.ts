@@ -17,6 +17,7 @@ import type { ExtractOutcome } from "./extract";
 import { buildExtractPrompt, leaksFence, quoteNonce } from "./prompt";
 import type { ExtractPrompt, QuotedChunk } from "./prompt";
 import { estimateTokens, requestTokens } from "./spend";
+import { sanitize } from "./text";
 
 /**
  * What a failed call is charged when the port it came from reports nothing:
@@ -44,9 +45,6 @@ const ANSWER_ENVELOPE_CHARS = 256;
 export const MAX_OUTPUT_TOKENS_PER_CALL = 8_192;
 export const CALL_DEADLINE_MS = 60_000;
 const MAX_REASON_CHARS = 200;
-
-/** C0 and C1 controls, the delete character and the two line separators. */
-const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
 
 
 /**
@@ -115,10 +113,7 @@ function stopFor(error: unknown): ProduceStop {
  */
 function scrubReason(error: unknown): string {
   if (!(error instanceof PortError)) return "the model port failed";
-  return error.message
-    .replace(CONTROL, " ")
-    .slice(0, MAX_REASON_CHARS)
-    .trim();
+  return sanitize(error.message, false).slice(0, MAX_REASON_CHARS).trim();
 }
 
 function isWholeNumber(value: unknown, least: number): boolean {

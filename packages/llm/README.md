@@ -98,6 +98,13 @@ disable a bound. A pasted key is refused without being echoed.
   mean a finished answer (`stop`, `eos`, `end_turn` or nothing) is a
   rejection. A key this package reads is validated: a negative token count or
   a model that is not a string is `schema_invalid`, never a silent estimate.
+- **Nothing invisible reaches a page.** Every value a draft carries is
+  stripped of control characters, of the two line separators, and of the
+  invisible formatting characters a rendered string can be spoofed with — the
+  bidirectional overrides and isolates, the marks, the zero-width space and
+  the byte-order mark — by the one sanitizer in `src/text.ts`, which the reason
+  on a failed call goes through as well. The joiners U+200C and U+200D stay:
+  they carry meaning in Persian and Indic scripts.
 - **Cited provenance.** Every draft must cite an event id from the request.
   Citing anything else discards the whole call as
   `rejected: "provenance_not_cited"`.

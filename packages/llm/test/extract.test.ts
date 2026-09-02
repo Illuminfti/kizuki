@@ -110,6 +110,28 @@ describe("model answers", () => {
     expect(outcome.claims[0]?.body).toBe("line one[31m red\nline two");
   });
 
+  test("a bidi override never survives into a draft", () => {
+    // Regression: the strip covered C0, C1 and the delete character only, so
+    // a right-to-left override reached a page and a terminal, where
+    // "ada\u202emoc.emca" renders as a different string than it holds.
+    const outcome = parse(
+      claimsPayload({
+        subject: "person:ada\u202emoc.emca",
+        object: "\u2066acme\u2069",
+        body: "\u200fone\u200etwo\ufeff",
+      }),
+    );
+    const claim = outcome.claims[0];
+    expect(claim?.subject).toBe("person:adamoc.emca");
+    expect(claim?.object).toBe("acme");
+    expect(claim?.body).toBe("onetwo");
+    for (const value of Object.values(claim ?? {})) {
+      expect(JSON.stringify(value)).not.toMatch(
+        /\\u(?:200[be-f]|202[a-e]|206[6-9]|feff)/,
+      );
+    }
+  });
+
   test("a line separator never survives into a single-line value", () => {
     // Regression: U+2028 and U+2029 are neither C0 nor C1, so a subject or an
     // object the code treats as one line could still carry a second one into

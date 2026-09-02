@@ -1,6 +1,7 @@
 import { isPlainObject, isRfc3339 } from "@kizuki/core";
 import type { ClaimDraft, ClaimDraftKind, Sensitivity } from "@kizuki/core";
 import { reject } from "./errors";
+import { sanitize } from "./text";
 
 const CLAIM_KEYS = new Set([
   "kind",
@@ -53,14 +54,6 @@ export const MAX_CLAIM_CHARS =
  */
 const PREDICATE_ID = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/;
 
-/** C0 and C1 controls, newline excepted, plus the delete character. */
-const CONTROL = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g;
-/**
- * Every break a renderer or a terminal treats as one, including the two
- * separators that are neither C0 nor C1 and would otherwise carry a second
- * line into a value this package promises is single-line.
- */
-const LINE_BREAK = /\r\n|\r|\u2028|\u2029/g;
 
 export interface ExtractOutcome {
   claims: ClaimDraft[];
@@ -69,17 +62,6 @@ export interface ExtractOutcome {
    * hold, so the registry can grow deliberately.
    */
   unknown_predicates: string[];
-}
-
-/**
- * Model output is untrusted text. Escapes, NULs and other control characters
- * are removed before a value can reach a page, a receipt or a terminal.
- */
-function sanitize(value: string, allowNewlines: boolean): string {
-  const stripped = value.replace(LINE_BREAK, "\n").replace(CONTROL, "");
-  return allowNewlines
-    ? stripped.trim()
-    : stripped.replaceAll("\n", " ").trim();
 }
 
 function text(
