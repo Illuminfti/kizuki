@@ -111,14 +111,18 @@ export function* uids(ranges: UidRange[]): Generator<number> {
 }
 
 /**
- * Splits a set into wire-form pieces of at most `size` UIDs, so an existence
- * check never hands a server a command line it will refuse.
+ * Yields wire-form pieces of at most `size` UIDs, so an existence check never
+ * hands a server a command line it will refuse. Lazy on purpose: a caller
+ * that stops at a work budget must not have paid for the whole known set of
+ * a large mailbox first.
  */
-export function chunk(ranges: UidRange[], size: number): string[] {
+export function* chunk(
+  ranges: UidRange[],
+  size: number,
+): Generator<string> {
   if (!Number.isInteger(size) || size < 1) {
     throw new KizukiError("parse_error", "sequence set: chunk size must be >= 1");
   }
-  const pieces: string[] = [];
   let current: UidRange[] = [];
   let count = 0;
   for (const range of normalize(ranges)) {
@@ -130,12 +134,11 @@ export function chunk(ranges: UidRange[], size: number): string[] {
       count += last - first + 1;
       first = last + 1;
       if (count === size) {
-        pieces.push(formatSet(current));
+        yield formatSet(current);
         current = [];
         count = 0;
       }
     }
   }
-  if (current.length > 0) pieces.push(formatSet(current));
-  return pieces;
+  if (current.length > 0) yield formatSet(current);
 }

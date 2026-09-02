@@ -63,8 +63,17 @@ describe("sequence sets", () => {
   });
 
   test("chunks a set into wire-form pieces of a bounded size", () => {
-    expect(chunk(parseSet("1:5,9"), 2)).toEqual(["1:2", "3:4", "5,9"]);
-    expect(chunk(parseSet("1:4"), 10)).toEqual(["1:4"]);
-    expect(chunk([], 10)).toEqual([]);
+    expect([...chunk(parseSet("1:5,9"), 2)]).toEqual(["1:2", "3:4", "5,9"]);
+    expect([...chunk(parseSet("1:4"), 10)]).toEqual(["1:4"]);
+    expect([...chunk([], 10)]).toEqual([]);
+  });
+
+  test("produces only the pieces a caller asks for", () => {
+    // A million known UIDs must not become a million strings before the
+    // caller has looked at the first one.
+    const pieces = chunk(parseSet("1:1000000"), 500);
+    expect(pieces.next().value).toBe("1:500");
+    expect(pieces.next().value).toBe("501:1000");
+    pieces.return(undefined);
   });
 });
