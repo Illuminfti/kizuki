@@ -149,9 +149,13 @@ function absorb(total: RunResult, batch: RunResult): void {
 }
 
 /**
- * Repeats a bounded-batch connector until it reports nothing left. Each batch
- * and its checkpoint are committed before the next call, so an interruption
- * resumes from the last durable checkpoint rather than replaying the run.
+ * Repeats a bounded-batch connector until its cursor stops moving. Progress,
+ * not event count, is the end: a connector may legitimately return an empty
+ * batch with an advanced cursor when a whole page held only records it does
+ * not emit, and stopping there would call an unfinished run complete. Each
+ * batch and its checkpoint are committed before the next call, so an
+ * interruption resumes from the last durable checkpoint rather than replaying
+ * the run.
  */
 export async function runToCompletion(
   db: Database,
@@ -185,11 +189,11 @@ export async function runToCompletion(
     absorb(total, result);
     total.cursor = stored();
     if (result.errors.length > 0) return total;
-    if (drained(result)) return total;
     if (total.cursor === null) return total;
     if (total.cursor === before) {
-      // Progress is what makes the loop terminate; a repeating cursor with
-      // events behind it would replay the same batch forever.
+      // A cursor that stayed put with an empty batch is the connector saying
+      // it is caught up; one with events behind it would replay forever.
+      if (drained(result)) return total;
       total.errors.push("run made no progress");
       return total;
     }

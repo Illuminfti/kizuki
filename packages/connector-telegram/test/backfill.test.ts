@@ -171,3 +171,52 @@ test("a dialog the account stopped listing does not finish the backfill", async 
   expect(parseCursor(rest.cursor).phase).toBe("synced");
   expect((await built.connector.health()).state).toBe("ok");
 });
+
+test("a page of service messages moves the cursor without emitting anything", async () => {
+  const account = fixtureAccount();
+  const messages: TelegramMessage[] = [];
+  for (let id = 1; id <= BATCH_LIMIT; id += 1) {
+    messages.push({
+      peer_id: "-42",
+      id,
+      date: Math.floor(Date.UTC(2026, 0, 3, 0, 0, 0) / 1000) + id,
+      text: "",
+      out: false,
+      service: true,
+    });
+  }
+  for (let id = BATCH_LIMIT + 1; id <= BATCH_LIMIT + 3; id += 1) {
+    messages.push({
+      peer_id: "-42",
+      id,
+      date: Math.floor(Date.UTC(2026, 0, 3, 0, 0, 0) / 1000) + id,
+      text: `note ${id}`,
+      out: false,
+      service: false,
+    });
+  }
+  account.dialogs = [
+    {
+      peer_id: "-42",
+      peer_type: "group",
+      title: "acme planning",
+      public: false,
+      top_message_id: BATCH_LIMIT + 3,
+    },
+  ];
+  account.messages = { "-42": messages };
+
+  const built = await connected({ account });
+  const first = await built.connector.backfill(null);
+  expect(first.events).toEqual([]);
+  // Empty is not the same as finished: the runner has to look at the cursor.
+  expect(parseCursor(first.cursor as string).dialogs["-42"]).toEqual({
+    peer_type: "group",
+    last_id: BATCH_LIMIT,
+    exhausted: false,
+  });
+
+  const rest = await drain(built.connector, "backfill", first.cursor);
+  expect(rest.events).toHaveLength(3);
+  expect(parseCursor(rest.cursor).phase).toBe("synced");
+});

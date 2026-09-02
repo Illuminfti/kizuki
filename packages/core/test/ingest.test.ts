@@ -355,6 +355,24 @@ describe("runToCompletion", () => {
     db.close();
   });
 
+  test("a batch that stores nothing but moves the cursor keeps going", async () => {
+    const db = database();
+    // What a paging connector does when a whole page holds only records it
+    // does not emit: the cursor advances, the batch is empty, and there is
+    // more behind it.
+    const connector = new ScriptedConnector([
+      { events: [], cursor: "page-1" },
+      page(2, 2),
+      { events: [], cursor: "page-2" },
+    ]);
+    const result = await runToCompletion(db, connector, "fixture", "src-1", "backfill");
+    expect(result.stored).toBe(2);
+    expect(result.errors).toEqual([]);
+    expect(result.cursor).toBe("page-2");
+    expect(connector.cursors).toEqual([null, "page-1", "page-2"]);
+    db.close();
+  });
+
   test("a connector that exhausts itself with a null cursor stops there", async () => {
     const db = database();
     const connector = new ScriptedConnector([
