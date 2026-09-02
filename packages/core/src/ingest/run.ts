@@ -1,9 +1,53 @@
 import type { Database } from "bun:sqlite";
-import type { Connector, SyncBatch } from "../contracts/connector";
+import type { Connector, Manifest, SyncBatch } from "../contracts/connector";
+import { isSensitivityHint, raiseSensitivity } from "../contracts/event";
+import type { SensitivityHint } from "../contracts/event";
 import { getCheckpoint, saveCheckpoint } from "../ledger/connections";
 import { accept } from "../ledger/ledger";
 import { cascadeTombstone, proposalsForEvent } from "../staging/producers";
+import type { ProducerGrants } from "../staging/producers";
 import { fileProposal } from "../staging/proposals";
+import { isPlainObject } from "../util/validate";
+
+/**
+ * What the manifest of the connector a batch came from grants that source.
+ * The host reads it once per run; a batch handed over without one is treated
+ * as granting nothing, so a caller cannot skip the check by omitting it.
+ */
+export interface SourcePolicy extends ProducerGrants {
+  /** RFC 0002 §8.2: no hint from this source may resolve below this label. */
+  sensitivity_floor: SensitivityHint | null;
+}
+
+const CLOSED_POLICY: SourcePolicy = {
+  page_candidates: false,
+  sensitivity_floor: null,
+};
+
+export function sourcePolicy(manifest: Manifest): SourcePolicy {
+  return {
+    page_candidates: manifest.capabilities.page_candidates === true,
+    sensitivity_floor: isSensitivityHint(manifest.sensitivity_floor)
+      ? manifest.sensitivity_floor
+      : null,
+  };
+}
+
+/**
+ * RFC 0002 §8.1 at the ledger door: a hint below the source's floor is raised,
+ * an absent one becomes the floor, and one the grammar refuses is left exactly
+ * as it arrived so `accept` refuses the event rather than laundering it.
+ */
+function atFloor(input: unknown, floor: SensitivityHint | null): unknown {
+  if (floor === null || !isPlainObject(input)) return input;
+  const hint = input["sensitivity_hint"];
+  if (hint !== undefined && !isSensitivityHint(hint)) return input;
+  return {
+    ...input,
+    sensitivity_hint:
+      hint === undefined ? floor : raiseSensitivity(floor, hint),
+  };
+}
 
 export interface RunResult {
   stored: number;
@@ -21,7 +65,11 @@ function errorText(error: unknown): string {
 
 type EventResult = Omit<RunResult, "cursor">;
 
-function processEvent(db: Database, input: unknown): EventResult {
+function processEvent(
+  db: Database,
+  input: unknown,
+  policy: SourcePolicy,
+): EventResult {
   return db.transaction((): EventResult => {
     const result: EventResult = {
       stored: 0,
@@ -31,7 +79,7 @@ function processEvent(db: Database, input: unknown): EventResult {
       withdrawn: 0,
       retractions_filed: 0,
     };
-    const accepted = accept(db, input);
+    const accepted = accept(db, atFloor(input, policy.sensitivity_floor));
     if (accepted.status === "error") {
       result.errors.push(accepted.error);
       return result;
@@ -48,7 +96,7 @@ function processEvent(db: Database, input: unknown): EventResult {
       result.retractions_filed = cascade.retractions_filed.length;
       return result;
     }
-    for (const proposal of proposalsForEvent(accepted.event)) {
+    for (const proposal of proposalsForEvent(accepted.event, policy)) {
       if (fileProposal(db, proposal).outcome === "stored") {
         result.proposals_created += 1;
       }
@@ -57,7 +105,11 @@ function processEvent(db: Database, input: unknown): EventResult {
   }).immediate();
 }
 
-export function runBatch(db: Database, batch: SyncBatch): RunResult {
+export function runBatch(
+  db: Database,
+  batch: SyncBatch,
+  policy: SourcePolicy = CLOSED_POLICY,
+): RunResult {
   const result: RunResult = {
     stored: 0,
     duplicates: 0,
@@ -70,7 +122,7 @@ export function runBatch(db: Database, batch: SyncBatch): RunResult {
 
   for (const input of batch.events) {
     try {
-      const event = processEvent(db, input);
+      const event = processEvent(db, input, policy);
       result.stored += event.stored;
       result.duplicates += event.duplicates;
       result.errors.push(...event.errors);
@@ -95,6 +147,7 @@ export async function runBackfill(
   const result = runBatch(
     db,
     await connector.backfill(checkpoint?.cursor ?? null),
+    sourcePolicy(connector.manifest()),
   );
   saveCheckpoint(
     db,
@@ -115,7 +168,11 @@ export async function runSync(
 ): Promise<RunResult> {
   const checkpoint = getCheckpoint(db, connector_id, source_key);
   const cursor = checkpoint?.cursor ?? null;
-  const result = runBatch(db, await connector.sync(cursor));
+  const result = runBatch(
+    db,
+    await connector.sync(cursor),
+    sourcePolicy(connector.manifest()),
+  );
   saveCheckpoint(
     db,
     connector_id,

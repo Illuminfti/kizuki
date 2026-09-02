@@ -11,6 +11,10 @@ import type {
 import { KizukiError } from "../errors";
 import { defaultMappingPath, loadMapping } from "../legacy/mapping-file";
 import { resolveReportPath, writeReport } from "../legacy/report-file";
+import {
+  LEGACY_DEFAULT_SENSITIVITY,
+  LEGACY_SENSITIVITY_FLOOR,
+} from "../legacy/sensitivity";
 import { pathHealth, requirePathConfig } from "../util";
 import {
   LEGACY_EVENTS_FIXTURE,
@@ -145,8 +149,11 @@ export class LegacyEventsConnector implements Connector {
         fixture: true,
       },
       required_secrets: [],
-      emits_sensitivity_hint: this.mapping.sensitivity_hint !== null,
+      // Every row leaves with a label, mapped or defaulted at the floor.
+      emits_sensitivity_hint: true,
       auth_modes: ["none"],
+      default_sensitivity: LEGACY_DEFAULT_SENSITIVITY,
+      sensitivity_floor: LEGACY_SENSITIVITY_FLOOR,
     };
   }
 

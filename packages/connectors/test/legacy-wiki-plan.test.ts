@@ -92,11 +92,72 @@ describe("planLegacyWiki over the fixture wiki", () => {
       "notes/broken.md:private",
       "notes/no-frontmatter.md:private",
       "notes/plan.md:private",
-      "orgs/acme.md:public",
+      "orgs/acme.md:personal",
       "people/ada.md:personal",
       "people/grace.md:private",
       "people/linus.md:private",
     ]);
+  });
+
+  test("a page the estate published is raised to the connector floor", () => {
+    const { report } = plan();
+    // The wiki said `public`; a local estate's floor is `personal`, so the
+    // label the estate wrote is recorded and the served label is raised.
+    expect(page(report, "orgs/acme.md").sensitivity).toEqual({
+      legacy: "public",
+      label: "personal",
+      decision: "labeled",
+    });
+    expect(page(report, "orgs/acme.md").notes).toEqual([
+      "sensitivity: raised_to_floor",
+    ]);
+    expect(report.counts.sensitivity_raised).toBe(1);
+  });
+
+  test("a label the mapping cannot read resolves to private, not the default", () => {
+    const wide: LegacyWikiMapping = {
+      ...LEGACY_WIKI_FIXTURE.mapping,
+      sensitivity: {
+        ...LEGACY_WIKI_FIXTURE.mapping.sensitivity,
+        default: "public",
+      },
+    };
+    const scan: ScanResult = {
+      files: [
+        {
+          relpath: "unmapped.md",
+          content: "---\nvisibility: totally-secret\n---\nbody\n",
+          mtimeMs: 1,
+          size: 40,
+        },
+        {
+          relpath: "unparsed.md",
+          content: "---\nvisibility: &anchor\n---\nbody\n",
+          mtimeMs: 1,
+          size: 34,
+        },
+        { relpath: "absent.md", content: "no frontmatter\n", mtimeMs: 1, size: 15 },
+      ],
+      skipped: [],
+      truncated: false,
+    };
+    const { events, report } = planLegacyWiki(scan, wide, OPTIONS);
+    expect(
+      events.map((e) => `${e.source_record_id}:${e.sensitivity_hint}`),
+    ).toEqual([
+      // Nothing the mapping could not read is published, whatever the
+      // connector default says; an estate that really carried no label takes
+      // the default, raised to the floor.
+      "absent.md:personal",
+      "unmapped.md:private",
+      "unparsed.md:private",
+    ]);
+    expect(page(report, "unparsed.md").sensitivity.decision).toBe("unreadable");
+    expect(page(report, "unmapped.md").sensitivity.decision).toBe(
+      "unmapped_value",
+    );
+    expect(page(report, "absent.md").sensitivity.decision).toBe("unlabeled");
+    expect(report.counts.unreadable_sensitivity).toBe(1);
   });
 
   test("a defaulted label says so, and never claims the estate wrote it", () => {
@@ -196,7 +257,7 @@ describe("planLegacyWiki over the fixture wiki", () => {
       },
       type: { legacy: null, mapped: "topic", decision: "defaulted" },
       title: { source: "heading" },
-      sensitivity: { legacy: null, label: "private", decision: "unlabeled" },
+      sensitivity: { legacy: null, label: "private", decision: "unreadable" },
       occurred_at: "mtime",
       subjects: 0,
       fields: [],
@@ -349,8 +410,10 @@ describe("planLegacyWiki over the fixture wiki", () => {
       imported: 8,
       skipped: 2,
       labeled: 3,
-      unlabeled: 4,
+      unlabeled: 3,
       unmapped_sensitivity: 1,
+      unreadable_sensitivity: 1,
+      sensitivity_raised: 1,
       type_defaulted: 4,
       type_unmapped: 1,
       frontmatter_unparsed: 1,
@@ -363,9 +426,12 @@ describe("planLegacyWiki over the fixture wiki", () => {
     const { counts } = plan().report;
     // A page the walk skipped and a page the mapping excluded have no label to
     // decide, so counting them as unlabeled would overstate the job.
-    expect(counts.labeled + counts.unlabeled + counts.unmapped_sensitivity).toBe(
-      counts.imported,
-    );
+    expect(
+      counts.labeled +
+        counts.unlabeled +
+        counts.unmapped_sensitivity +
+        counts.unreadable_sensitivity,
+    ).toBe(counts.imported);
     expect(counts.imported + counts.skipped).toBe(counts.files);
   });
 });

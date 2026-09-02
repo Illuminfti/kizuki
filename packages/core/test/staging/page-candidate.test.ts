@@ -5,16 +5,16 @@ import {
   PAGE_CANDIDATE_KEY,
   PAGE_CANDIDATE_SCHEMA,
 } from "../../src/contracts/page-candidate";
+import { getCanonReceipt } from "../../src/canon/receipts";
+import { accept } from "../../src/ledger/ledger";
 import { proposalsForEvent } from "../../src/staging/producers";
-import {
-  PromoteError,
-  ownerPromote,
-  renderPage,
-} from "../../src/staging/promote";
+import { ownerPromote } from "../../src/staging/promote";
 import { fileProposal } from "../../src/staging/proposals";
-import type { StagedProposal } from "../../src/staging/proposals";
 import { validatePage } from "../../src/vault/schema";
 import { parseFrontmatter } from "../../src/vault/frontmatter";
+import type { CaptureEvent } from "../../src/contracts/event";
+import type { ProposalInput } from "../../src/staging/proposals";
+import { validEvent } from "../fixtures";
 import { event, memoryDb, tempVault } from "./helpers";
 
 function candidateMetadata(
@@ -34,9 +34,39 @@ function candidateMetadata(
   };
 }
 
+/**
+ * The grant a connector's manifest carries. Every call here supplies it
+ * explicitly, because the seam is shut for a source that does not.
+ */
+const GRANTED = { page_candidates: true };
+
+function granted(event: CaptureEvent): ProposalInput[] {
+  return proposalsForEvent(event, GRANTED);
+}
+
 describe("a page candidate on an event", () => {
+  test("a source with no page-candidate grant gets the capture note", () => {
+    for (const grants of [undefined, { page_candidates: false }]) {
+      const proposals =
+        grants === undefined
+          ? proposalsForEvent(
+              event({ text: "line one", metadata: candidateMetadata() }),
+            )
+          : proposalsForEvent(
+              event({ text: "line one", metadata: candidateMetadata() }),
+              grants,
+            );
+      const note = proposals[1];
+      expect(note?.kind).toBe("claim");
+      expect(note?.target).toBeNull();
+      expect(note?.frontmatter["type"]).toBe("source");
+      expect(note?.frontmatter["title"]).toContain("Capture from");
+      expect(note?.body).toContain("> line one");
+    }
+  });
+
   test("replaces the capture note with one typed entity proposal", () => {
-    const proposals = proposalsForEvent(
+    const proposals = granted(
       event({
         metadata: candidateMetadata(),
         text: "# Ada\n\nMet at the fair.",
@@ -53,7 +83,7 @@ describe("a page candidate on an event", () => {
   });
 
   test("a non-entity type files as a claim", () => {
-    const proposals = proposalsForEvent(
+    const proposals = granted(
       event({
         subjects: [],
         metadata: candidateMetadata({ type: "fact", target: "facts/steam" }),
@@ -64,7 +94,7 @@ describe("a page candidate on an event", () => {
   });
 
   test("frontmatter carries the mapped fields and the floor's provenance", () => {
-    const [, page] = proposalsForEvent(
+    const [, page] = granted(
       event({ metadata: candidateMetadata() }),
     );
     expect(page?.frontmatter).toEqual({
@@ -82,7 +112,7 @@ describe("a page candidate on an event", () => {
   });
 
   test("a candidate cannot forge the connector stamp", () => {
-    const [, page] = proposalsForEvent(
+    const [, page] = granted(
       event({
         metadata: candidateMetadata({
           extensions: {
@@ -97,7 +127,7 @@ describe("a page candidate on an event", () => {
   });
 
   test("an invalid candidate falls back to the blockquoted capture note", () => {
-    const proposals = proposalsForEvent(
+    const proposals = granted(
       event({
         text: "line one",
         metadata: candidateMetadata({ type: "template" }),
@@ -112,41 +142,18 @@ describe("a page candidate on an event", () => {
 
   test("a tombstone carrying a candidate still produces nothing", () => {
     expect(
-      proposalsForEvent(
+      granted(
         event({ deleted: true, metadata: candidateMetadata() }),
       ),
     ).toEqual([]);
   });
 
-  test("every produced proposal renders a page validatePage accepts", () => {
+  test("refiling the same page is a duplicate, not a second staged item", () => {
     const db = memoryDb();
-    for (const type of ["person", "fact", "rollup"]) {
-      const [, input] = proposalsForEvent(
-        event({
-          metadata: candidateMetadata({
-            type,
-            target: `pages/${type}`,
-            title: `A ${type}`,
-          }),
-        }),
-      );
-      if (input === undefined) throw new Error("expected a candidate proposal");
-      const filed = fileProposal(db, input);
-      if (filed.outcome !== "stored") throw new Error("expected stored");
-      const staged: StagedProposal = filed.proposal;
-      for (const sensitivity of ["public", "personal", "private"] as const) {
-        const rendered = renderPage(staged, sensitivity, staged.body);
-        expect(validatePage(parseFrontmatter(rendered).data)).toEqual([]);
-      }
-    }
-  });
-
-  test("refiling the same page is a duplicate, not a second review item", () => {
-    const db = memoryDb();
-    const [, first] = proposalsForEvent(
+    const [, first] = granted(
       event({ metadata: candidateMetadata() }),
     );
-    const [, second] = proposalsForEvent(
+    const [, second] = granted(
       event({
         event_id: "01ARZ3NDEKTSV4RRFFQ69G5FB0",
         metadata: candidateMetadata(),
@@ -157,75 +164,95 @@ describe("a page candidate on an event", () => {
     }
     expect(fileProposal(db, first).outcome).toBe("stored");
     expect(fileProposal(db, second).outcome).toBe("duplicate");
+    db.close();
   });
 });
 
-describe("promoting a migrated page", () => {
+/**
+ * The receipted writer is the only door into canon; `promote` is the shim the
+ * leftover verbs still call it through. Nothing here supplies a label: a
+ * migrated page carries the lattice bottom (RFC 0002 section 8.1), never an
+ * owner keystroke.
+ */
+describe("a migrated page through the receipted writer", () => {
+  function staged(
+    db: ReturnType<typeof memoryDb>,
+    overrides: Record<string, unknown> = {},
+    text = "Met at the fair.",
+  ): string {
+    const stored = accept(db, { ...validEvent(), text, metadata: candidateMetadata(overrides) });
+    if (stored.status !== "stored") throw new Error("expected a stored event");
+    const [, input] = granted(stored.event);
+    if (input === undefined) throw new Error("expected a candidate proposal");
+    const filed = fileProposal(db, input);
+    if (filed.outcome !== "stored") throw new Error("expected a stored proposal");
+    return filed.proposal.proposal_id;
+  }
+
   test("writes the target path with the mapped frontmatter and provenance", () => {
     const db = memoryDb();
     const vault = tempVault();
     try {
-      const [, input] = proposalsForEvent(
-        event({ metadata: candidateMetadata(), text: "Met at the fair." }),
-      );
-      if (input === undefined) throw new Error("expected a candidate proposal");
-      const filed = fileProposal(db, input);
-      if (filed.outcome !== "stored") throw new Error("expected stored");
+      const id = staged(db);
+      const receipt = ownerPromote(db, vault.path, id, {});
 
-      const receipt = ownerPromote(db, vault.path, filed.proposal.proposal_id, {
-        sensitivity: "personal",
-      });
       expect(receipt.page_path).toBe("entities/ada.md");
+      expect(receipt.sensitivity).toBe("private");
+      expect(getCanonReceipt(db, receipt.receipt_id)?.writer).toBe("import");
       const page = parseFrontmatter(
         readFileSync(join(vault.path, receipt.page_path), "utf8"),
       );
+      expect(validatePage(page.data)).toEqual([]);
       expect(page.data["type"]).toBe("person");
       expect(page.data["title"]).toBe("Ada");
-      expect(page.data["sensitivity"]).toBe("personal");
+      expect(page.data["sensitivity"]).toBe("private");
       expect(page.data["x-born"]).toBe(1815);
-      expect(page.data["sources"]).toEqual(["01ARZ3NDEKTSV4RRFFQ69G5FAV"]);
-      expect(page.body.trim()).toBe("Met at the fair.");
+      expect(page.body).toContain("Met at the fair.");
     } finally {
+      db.close();
       vault.dispose();
     }
   });
 
-  test("an edited page re-imported after promotion is refused, not merged", () => {
+  test("every page type the floor stages passes validatePage", () => {
+    for (const type of ["person", "fact", "rollup"]) {
+      const db = memoryDb();
+      const vault = tempVault();
+      try {
+        const id = staged(db, {
+          type,
+          target: `pages/${type}`,
+          title: `A ${type}`,
+        });
+        const receipt = ownerPromote(db, vault.path, id, {});
+        const page = parseFrontmatter(
+          readFileSync(join(vault.path, receipt.page_path), "utf8"),
+        );
+        expect(validatePage(page.data)).toEqual([]);
+      } finally {
+        db.close();
+        vault.dispose();
+      }
+    }
+  });
+
+  test("a re-imported page edits the page it already wrote", () => {
     const db = memoryDb();
     const vault = tempVault();
     try {
-      const [, first] = proposalsForEvent(
-        event({ metadata: candidateMetadata(), text: "first body" }),
-      );
-      const [, second] = proposalsForEvent(
-        event({
-          event_id: "01ARZ3NDEKTSV4RRFFQ69G5FB0",
-          metadata: candidateMetadata(),
-          text: "an edited body",
-        }),
-      );
-      if (first === undefined || second === undefined) {
-        throw new Error("expected candidate proposals");
-      }
-      const filed = fileProposal(db, first);
-      if (filed.outcome !== "stored") throw new Error("expected stored");
-      ownerPromote(db, vault.path, filed.proposal.proposal_id, {
-        sensitivity: "personal",
-      });
+      const first = staged(db, {}, "first body");
+      const written = ownerPromote(db, vault.path, first, {});
+      expect(written.before_hash).toBeNull();
 
-      const refiled = fileProposal(db, second);
-      if (refiled.outcome !== "stored") throw new Error("expected stored");
-      expect(() =>
-        ownerPromote(db, vault.path, refiled.proposal.proposal_id, {
-          sensitivity: "personal",
-        }),
-      ).toThrow(PromoteError);
-      expect(() =>
-        ownerPromote(db, vault.path, refiled.proposal.proposal_id, {
-          sensitivity: "personal",
-        }),
-      ).toThrow(/already exists/);
+      const second = staged(db, { title: "Ada L." }, "an edited body");
+      const revised = ownerPromote(db, vault.path, second, {});
+
+      expect(revised.page_path).toBe(written.page_path);
+      expect(revised.before_hash).toBe(written.after_hash);
+      const page = readFileSync(join(vault.path, revised.page_path), "utf8");
+      expect(page).toContain("an edited body");
     } finally {
+      db.close();
       vault.dispose();
     }
   });

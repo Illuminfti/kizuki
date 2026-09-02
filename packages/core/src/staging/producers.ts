@@ -81,13 +81,30 @@ function captureNoteProposal(event: CaptureEvent): ProposalInput {
   };
 }
 
+/** What the trusted host grants the source an event arrived from. */
+export interface ProducerGrants {
+  /**
+   * The emitting connector's `page_candidates` manifest capability. Event
+   * metadata is attacker-controlled (AGENTS.md invariant 7), so the authority
+   * to turn it into unquoted page prose is bound to the connector the host
+   * enrolled, never to the metadata that asks for it.
+   */
+  page_candidates: boolean;
+}
+
+/** Nothing granted: what a caller that names no source policy gets. */
+const NO_GRANTS: ProducerGrants = { page_candidates: false };
+
 /**
  * Entity candidates for every distinct subject, plus either the typed page an
  * event proposes through its metadata or, failing that, one source-faithful
  * capture note quoting the event text. A tombstone produces nothing: it
  * withdraws proposals rather than making them.
  */
-export function proposalsForEvent(event: CaptureEvent): ProposalInput[] {
+export function proposalsForEvent(
+  event: CaptureEvent,
+  grants: ProducerGrants = NO_GRANTS,
+): ProposalInput[] {
   if (event.deleted) return [];
 
   const proposals: ProposalInput[] = [];
@@ -98,12 +115,15 @@ export function proposalsForEvent(event: CaptureEvent): ProposalInput[] {
     proposals.push(entityProposal(event, subject));
   }
 
-  const candidate = validatePageCandidate(event.metadata);
+  const candidate = grants.page_candidates
+    ? validatePageCandidate(event.metadata)
+    : null;
   if (candidate !== null && candidate.ok) {
     proposals.push(pageCandidateProposal(event, candidate.value));
   } else {
-    // Fail closed: metadata that claims to be a page but does not validate
-    // becomes the blockquoted capture note, never a typed page.
+    // Fail closed: metadata that claims to be a page but does not validate —
+    // or that arrived from a source with no grant to mint one — becomes the
+    // blockquoted capture note, never a typed page.
     proposals.push(captureNoteProposal(event));
   }
   return proposals;

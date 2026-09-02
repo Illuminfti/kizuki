@@ -11,6 +11,10 @@ import {
   subjectId,
 } from "../legacy/coerce";
 import {
+  LEGACY_DEFAULT_SENSITIVITY,
+  atLegacyFloor,
+} from "../legacy/sensitivity";
+import {
   LEGACY_EVENTS_CONNECTOR_ID,
   ROWID_ALIAS,
   consumedColumns,
@@ -149,7 +153,21 @@ function rowSubjects(
   return subjects;
 }
 
+/**
+ * Every row leaves labeled. A mapping that says nothing about a row, or says
+ * something the mapping cannot read, is the unknown case RFC 0002 §8.1 puts at
+ * the connector default, and §8.2 keeps the result at or above the floor: an
+ * export of the owner's own messages is not published because a column in it
+ * said "pub".
+ */
 function rowHint(
+  values: Record<string, unknown>,
+  mapping: LegacyEventsMapping,
+): PageSensitivity {
+  return atLegacyFloor(mappedHint(values, mapping) ?? LEGACY_DEFAULT_SENSITIVITY);
+}
+
+function mappedHint(
   values: Record<string, unknown>,
   mapping: LegacyEventsMapping,
 ): PageSensitivity | null {
@@ -291,13 +309,12 @@ export function rowToEvent(
   }
 
   const text = truncate(rowText(values, mapping), MAX_TEXT_LENGTH);
-  const hint = rowHint(values, mapping);
   return {
     event: {
       ...base,
       text: text.value,
       subjects: rowSubjects(values, mapping),
-      ...(hint !== null ? { sensitivity_hint: hint } : {}),
+      sensitivity_hint: rowHint(values, mapping),
       deleted: false,
       attachments: [],
       metadata: {

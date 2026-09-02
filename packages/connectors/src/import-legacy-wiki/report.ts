@@ -52,7 +52,12 @@ export interface LegacyWikiPageReport {
   sensitivity: {
     legacy: string | null;
     label: PageSensitivity | null;
-    decision: "labeled" | "unlabeled" | "unmapped_value";
+    /**
+     * `unreadable` is not `unlabeled`: the estate may well have labeled the
+     * page, and the frontmatter it sits in could not be parsed. The two
+     * resolve differently (RFC 0002 §8.1), so the report separates them.
+     */
+    decision: "labeled" | "unlabeled" | "unmapped_value" | "unreadable";
   };
   occurred_at: "field" | "mtime";
   subjects: number;
@@ -67,6 +72,9 @@ export interface LegacyWikiCounts {
   labeled: number;
   unlabeled: number;
   unmapped_sensitivity: number;
+  unreadable_sensitivity: number;
+  /** Labels the estate carried that the connector floor had to raise. */
+  sensitivity_raised: number;
   types: Record<PageType, number>;
   type_defaulted: number;
   type_unmapped: number;
@@ -99,6 +107,8 @@ function countsTable(counts: LegacyWikiCounts): string[] {
     ["labeled", String(counts.labeled)],
     ["unlabeled", String(counts.unlabeled)],
     ["unmapped sensitivity", String(counts.unmapped_sensitivity)],
+    ["unreadable sensitivity", String(counts.unreadable_sensitivity)],
+    ["sensitivity raised to floor", String(counts.sensitivity_raised)],
     ["type defaulted", String(counts.type_defaulted)],
     ["type unmapped", String(counts.type_unmapped)],
     ["fields renamed", String(counts.fields_renamed)],

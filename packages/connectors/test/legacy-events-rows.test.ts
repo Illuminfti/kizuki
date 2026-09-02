@@ -73,6 +73,7 @@ describe("the fixture rows", () => {
         { subject_id: "legacy:ada", role: "from", display_name: "Ada" },
         { subject_id: "legacy:grace", role: "to", display_name: "Grace" },
       ],
+      sensitivity_hint: "private",
       deleted: false,
       attachments: [],
       metadata: { mapping_hash: OPTIONS.mappingHash },
@@ -114,17 +115,37 @@ describe("the fixture rows", () => {
     ]);
   });
 
-  test("a mapped sensitivity value becomes a hint and an unmapped one does not", () => {
+  test("every row is labeled, and no mapping can label one below the floor", () => {
     const events = convert(fixtureRows()).events;
     expect(
       events.find((event) => event.source_record_id === "r2")?.sensitivity_hint,
     ).toBe("private");
+    // The export calls r3 "pub"; the floor for an owner's own export is
+    // `personal`, so the mapped `public` is raised rather than honored.
     expect(
       events.find((event) => event.source_record_id === "r3")?.sensitivity_hint,
-    ).toBe("public");
+    ).toBe("personal");
+    // Nothing maps r1's cell, and an unknown label is the connector default.
     expect(
       events.find((event) => event.source_record_id === "r1")?.sensitivity_hint,
-    ).toBeUndefined();
+    ).toBe("private");
+  });
+
+  test("a const public mapping still cannot publish an export", () => {
+    const mapping = {
+      ...LEGACY_EVENTS_FIXTURE.mapping,
+      sensitivity_hint: { const: "public" as const },
+    };
+    const result = rowToEvent(
+      {
+        position: 1,
+        values: { id: "r1", type: "msg", ts: 1_700_000_000, body: "hi" },
+      },
+      mapping,
+      OPTIONS,
+    );
+    if (!("event" in result)) throw new Error("expected an event");
+    expect(result.event.sensitivity_hint).toBe("personal");
   });
 
   test("unconsumed columns become metadata, blobs by name only", () => {
@@ -332,7 +353,8 @@ describe("a source value named after an Object member", () => {
         body: "hi",
         visibility: member,
       });
-      expect(event.sensitivity_hint).toBeUndefined();
+      // The default, not a value read off Object.prototype.
+      expect(event.sensitivity_hint).toBe("private");
       expect(validateEventInput(event).ok).toBe(true);
     }
   });

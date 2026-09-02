@@ -88,6 +88,8 @@ describe("the manifest", () => {
       required_secrets: [],
       emits_sensitivity_hint: true,
       auth_modes: ["none"],
+      default_sensitivity: "private",
+      sensitivity_floor: "personal",
     });
   });
 
@@ -96,7 +98,16 @@ describe("the manifest", () => {
     writeMapping(dbPath, { deleted: null, sensitivity_hint: null });
     const manifest = createLegacyEventsConnector({ path: dbPath }).manifest();
     expect(manifest.capabilities.tombstones).toBe(false);
-    expect(manifest.emits_sensitivity_hint).toBe(false);
+    // A mapping that labels nothing still labels every row at the floor.
+    expect(manifest.emits_sensitivity_hint).toBe(true);
+  });
+
+  test("the manifest grants no typed page and declares the source class", () => {
+    seedSqlite();
+    const manifest = createLegacyEventsConnector({ path: dbPath }).manifest();
+    expect(manifest.capabilities.page_candidates).toBeUndefined();
+    expect(manifest.default_sensitivity).toBe("private");
+    expect(manifest.sensitivity_floor).toBe("personal");
   });
 
   test("a path with no known suffix needs an explicit format", () => {

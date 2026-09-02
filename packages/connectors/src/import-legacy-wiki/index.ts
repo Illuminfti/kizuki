@@ -16,6 +16,10 @@ import type {
 import { KizukiError } from "../errors";
 import { defaultMappingPath, loadMapping } from "../legacy/mapping-file";
 import { resolveReportPath, writeReport } from "../legacy/report-file";
+import {
+  LEGACY_DEFAULT_SENSITIVITY,
+  LEGACY_SENSITIVITY_FLOOR,
+} from "../legacy/sensitivity";
 import { compareStrings, pathHealth, requirePathConfig } from "../util";
 import {
   LEGACY_WIKI_FIXTURE,
@@ -51,10 +55,16 @@ const MANIFEST: Manifest = {
     tombstones: true,
     purge: false,
     fixture: true,
+    // The pages are the owner's own prose, mapped by a file the owner wrote,
+    // so this source is entitled to stage a typed page rather than a quoted
+    // capture note. The host reads the grant here, never from an event.
+    page_candidates: true,
   },
   required_secrets: [],
   emits_sensitivity_hint: true,
   auth_modes: ["none"],
+  default_sensitivity: LEGACY_DEFAULT_SENSITIVITY,
+  sensitivity_floor: LEGACY_SENSITIVITY_FLOOR,
 };
 
 interface SnapshotEntry {

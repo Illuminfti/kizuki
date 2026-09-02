@@ -12,6 +12,10 @@ import {
   parseLegacyTimestamp,
   sanitizeLine,
 } from "../legacy/coerce";
+import {
+  LEGACY_SENSITIVITY_FLOOR,
+  atLegacyFloor,
+} from "../legacy/sensitivity";
 import { compareStrings } from "../util";
 import {
   jsonSafeFrontmatter,
@@ -113,16 +117,27 @@ function planPage(
         )
           ? (legacySensitivity as PageSensitivity)
           : null));
-  // Nothing leaves this planner unlabeled: an absent or unreadable label
-  // resolves to the connector default (RFC 0002 section 8.1). The decision
-  // says which of the three happened so the report stays honest about it.
-  const label: PageSensitivity = read ?? mapping.sensitivity.default;
   const sensitivityDecision: LegacyWikiPageReport["sensitivity"]["decision"] =
     read !== null
       ? "labeled"
-      : legacySensitivity === null
-        ? "unlabeled"
-        : "unmapped_value";
+      : legacySensitivity !== null
+        ? "unmapped_value"
+        : parsed.status === "unparsed" || unusableSensitivity
+          ? "unreadable"
+          : "unlabeled";
+  // Nothing leaves this planner unlabeled, and only a page the estate really
+  // carried no label for takes the connector default: a value the mapping
+  // cannot read, or a page whose frontmatter did not parse at all, is
+  // unknown, and unknown resolves to `private` (RFC 0002 section 8.1).
+  const resolved: PageSensitivity =
+    read ??
+    (sensitivityDecision === "unlabeled"
+      ? mapping.sensitivity.default
+      : "private");
+  // The floor is the connector's, not the mapping's: an owner who widens the
+  // default cannot publish an estate below the class it belongs to (8.2).
+  const label = atLegacyFloor(resolved);
+  if (label !== resolved) notes.push("sensitivity: raised_to_floor");
 
   let occurredAt: string | null = null;
   if (mapping.occurred_at !== null) {
@@ -286,6 +301,8 @@ function emptyCounts(): LegacyWikiCounts {
     labeled: 0,
     unlabeled: 0,
     unmapped_sensitivity: 0,
+    unreadable_sensitivity: 0,
+    sensitivity_raised: 0,
     types,
     type_defaulted: 0,
     type_unmapped: 0,
@@ -315,6 +332,12 @@ function tally(counts: LegacyWikiCounts, page: LegacyWikiPageReport): void {
   if (page.sensitivity.decision === "unlabeled") counts.unlabeled += 1;
   if (page.sensitivity.decision === "unmapped_value") {
     counts.unmapped_sensitivity += 1;
+  }
+  if (page.sensitivity.decision === "unreadable") {
+    counts.unreadable_sensitivity += 1;
+  }
+  if (page.notes.includes("sensitivity: raised_to_floor")) {
+    counts.sensitivity_raised += 1;
   }
   if (page.type.decision === "defaulted") counts.type_defaulted += 1;
   if (page.type.decision === "unmapped_value") counts.type_unmapped += 1;

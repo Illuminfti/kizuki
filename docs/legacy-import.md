@@ -47,7 +47,7 @@ Schema tag: `kizuki.legacy-wiki-mapping/v1`.
 | `type.default` | **required** | page type for a page whose type is absent or unmapped |
 | `sensitivity.field` | `"sensitivity"` | frontmatter key holding the legacy label |
 | `sensitivity.values` | `{}` | legacy value to `public` / `personal` / `private`; those three names also map to themselves |
-| `sensitivity.default` | `"private"` | the label for a page whose own label is absent or unmapped |
+| `sensitivity.default` | `"private"` | the label for a page the estate carried no label for at all |
 | `occurred_at` | `null` | `{ field, format }`; `null` means the file's mtime is used |
 | `fields` | `{}` | legacy key to an `x-*` frontmatter name, or `null` to drop it |
 | `subjects` | `null` | `{ field, role, namespace }`; the field may hold one name or a list |
@@ -55,11 +55,25 @@ Schema tag: `kizuki.legacy-wiki-mapping/v1`.
 | `target.directories` | see below | page type to the directory its pages land in, 1..7 path segments |
 | `ignore` | `[]` | globs over the relative path; `*` stays inside a segment, `**` spans segments, `?` is one character |
 
-Sensitivity resolves bottom-up: a label the mapping could not read becomes
-`sensitivity.default`, which is `private` unless you widen it. Nothing is left
-unlabeled, because an unlabeled page is outside the lattice and is served to
-nobody at all, the owner included. Refinement only ever moves a page up the
-lattice, never down.
+Sensitivity resolves as `max(floor, label or default)` over
+`public < personal < private`, and only ever moves up:
+
+- a label the mapping reads is that label;
+- a label the mapping cannot read — a value outside `sensitivity.values`, or a
+  page whose frontmatter did not parse — is `private`, because unknown and
+  unparseable resolve to the top of the lattice, never to a default someone
+  widened;
+- only a page the estate carried no label for at all takes
+  `sensitivity.default`;
+- both importers then raise the result to the connector floor. An export of
+  the owner's own files, notes and messages sits at default `private`, floor
+  `personal`, so a page a previous system called `public` imports as
+  `personal` and the report counts it under "sensitivity raised to floor".
+  The label the estate wrote is still recorded, in the report's
+  `sensitivity.legacy` and in the page's `x-legacy-sensitivity`.
+
+Nothing is left unlabeled, because an unlabeled page is outside the lattice
+and is served to nobody at all, the owner included.
 
 Default `target.directories`: `person`, `org`, `project`, `place` and
 `topic` go to `entities`; `fact` to `facts`; `event` to `events`;
@@ -144,12 +158,16 @@ SQL identifiers.
 | `observed_at` | `null` | `{ column, format }`; `null` means the import time |
 | `text` | **required** | `{ column }`, or `{ columns, join }` with empty parts dropped |
 | `subjects` | `[]` | `{ column, role, namespace, split }`; a cell may be a name, a JSON array of names, or a `split`-separated list |
-| `sensitivity_hint` | `null` | `{ const }`, or `{ column, values }`; an unmapped value produces no hint |
+| `sensitivity_hint` | `null` | `{ const }`, or `{ column, values }`; an unmapped value falls to the connector default |
 | `deleted` | `null` | `{ column, true_values }`; a matching row becomes a tombstone |
 | `metadata.columns` | `"rest"` | `"rest"` keeps every column the mapping did not consume; a list keeps exactly those |
 
 One column may fill only one role, so a mapping cannot quietly double-count
 it. A column the source does not have is a refusal before any row is read.
+
+Every row leaves labeled, by the same rule the wiki importer follows: the
+mapped label, or `private` when nothing maps it, raised to the `personal`
+floor. A mapping that says `public` cannot publish an export.
 
 ### Events mapping (SQLite): worked example
 
