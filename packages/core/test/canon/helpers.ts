@@ -13,7 +13,7 @@ import type { InsertClaimInput } from "../../src/claims/store";
 import type { Claim } from "../../src/contracts/proposal";
 import { openLedger } from "../../src/ledger/db";
 import type { Writer } from "../../src/vault/write";
-import { eventFacts, putEvent } from "../claims/helpers";
+import { eventFacts } from "../claims/helpers";
 import { tempVault } from "../helpers/vault";
 
 export { putEvent } from "../claims/helpers";
