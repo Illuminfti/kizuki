@@ -64,8 +64,16 @@ function tokens(raw: string): string[] {
   return result;
 }
 
+/**
+ * C0 controls, DEL, and surrogates left without their pair. A lone surrogate
+ * has no UTF-8 encoding, so SQLite truncates the bound MATCH string at it and
+ * raises "unterminated string" — quoting cannot neutralize that.
+ */
+const UNQUOTABLE =
+  /[\u0000-\u001f\u007f]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
 function sanitizeToken(raw: string): { value: string; prefix: boolean } | null {
-  let value = raw.replace(/[\u0000-\u001f\u007f]/g, "");
+  let value = raw.replace(UNQUOTABLE, "");
   if (BOOLEAN_OPERATORS.has(value.toUpperCase())) return null;
 
   const prefix =

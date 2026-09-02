@@ -2,7 +2,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { indexEvent, indexPage, rebuildSearch, removeDoc } from "../../src/search/indexer";
+import {
+  indexEvent,
+  indexPage,
+  rebuildSearch,
+  removeDoc,
+} from "../../src/search/indexer";
 import { search, toFtsQuery } from "../../src/search/query";
 import { initSearch } from "../../src/search/schema";
 import { serializePage } from "../../src/vault/frontmatter";
@@ -42,7 +47,11 @@ function writeCanon(
   data: Record<string, unknown>,
   body: string,
 ): void {
-  writeFileSync(join(vaultPath, relPath), serializePage({ data, body }), "utf8");
+  writeFileSync(
+    join(vaultPath, relPath),
+    serializePage({ data, body }),
+    "utf8",
+  );
 }
 
 describe("toFtsQuery", () => {
@@ -61,6 +70,8 @@ describe("toFtsQuery", () => {
     ['"unfinished phrase', '"unfinished phrase"'],
     ["mid*dle", '"middle"'],
     ["prefix*", '"prefix"*'],
+    ["*", ""],
+    ["OR - ^", ""],
   ];
   for (const [raw, expected] of neutralized) {
     test(`neutralizes ${raw}`, () => {
@@ -94,6 +105,26 @@ describe("toFtsQuery", () => {
     indexPage(db, page("fact:hello", "hello world"));
     expect(toFtsQuery(`a\u0000b`)).toBe('"ab"');
     expect(search(db, `a\u0000b`)).toEqual([]);
+    expect(toFtsQuery(`a\u0007b`)).toBe('"ab"');
+    expect(search(db, `a\u0007b`)).toEqual([]);
+  });
+
+  test("drops an unpaired surrogate left by a truncated query", () => {
+    const db = searchDb();
+    indexPage(db, page("fact:hello", "hello world"));
+    // A caller that cuts a query by UTF-16 length splits an astral
+    // character in half; the surviving half is not encodable and SQLite
+    // rejects the whole MATCH string with "unterminated string".
+    const truncated = `hello${"\u{1F600}".slice(0, 1)}`;
+    expect(toFtsQuery(truncated)).toBe('"hello"');
+    expect(search(db, truncated).map(({ doc_id }) => doc_id)).toEqual([
+      "fact:hello",
+    ]);
+    expect(toFtsQuery("\uDE00hello")).toBe('"hello"');
+    expect(search(db, "\uDE00hello").map(({ doc_id }) => doc_id)).toEqual([
+      "fact:hello",
+    ]);
+    expect(toFtsQuery("hello\u{1F600}")).toBe('"hello\u{1F600}"');
   });
 });
 
@@ -119,7 +150,11 @@ describe("search indexing", () => {
     expect(search(db, "old")).toEqual([]);
     expect(search(db, "new").map(({ doc_id }) => doc_id)).toEqual(["fact:one"]);
     expect(
-      db.query<{ count: number }, []>("SELECT count(*) AS count FROM search_docs").get(),
+      db
+        .query<{ count: number }, []>(
+          "SELECT count(*) AS count FROM search_docs",
+        )
+        .get(),
     ).toEqual({ count: 1 });
   });
 
@@ -175,7 +210,9 @@ describe("search indexing", () => {
 
   test("indexing a canon page does not delete a ledger row with the same id", () => {
     const db = searchDb();
-    const event = storedEvent(db, "shared-id", { text: "ledger unique phrase" });
+    const event = storedEvent(db, "shared-id", {
+      text: "ledger unique phrase",
+    });
     indexEvent(db, event);
     indexPage(db, page(event.event_id, "canon unique phrase"));
 
@@ -251,7 +288,11 @@ describe("search rebuild", () => {
 
     expect(search(db, "repeatable")).toHaveLength(2);
     expect(
-      db.query<{ count: number }, []>("SELECT count(*) AS count FROM search_docs").get(),
+      db
+        .query<{ count: number }, []>(
+          "SELECT count(*) AS count FROM search_docs",
+        )
+        .get(),
     ).toEqual({ count: 2 });
   });
 
@@ -311,7 +352,10 @@ describe("search rebuild", () => {
 describe("search policy and filters", () => {
   function policyDb(): Database {
     const db = searchDb();
-    indexPage(db, page("fact:public", "shared keyword", { sensitivity: "public" }));
+    indexPage(
+      db,
+      page("fact:public", "shared keyword", { sensitivity: "public" }),
+    );
     indexPage(
       db,
       page("fact:personal", "shared keyword", { sensitivity: "personal" }),
@@ -320,7 +364,10 @@ describe("search policy and filters", () => {
       db,
       page("fact:private", "shared keyword", { sensitivity: "private" }),
     );
-    indexPage(db, page("fact:unlabeled", "shared keyword", { sensitivity: undefined }));
+    indexPage(
+      db,
+      page("fact:unlabeled", "shared keyword", { sensitivity: undefined }),
+    );
     return db;
   }
 
