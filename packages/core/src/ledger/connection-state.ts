@@ -187,7 +187,25 @@ export class ConnectionStateStore implements ConnectionStateReader {
     let backupPath: string | null = null;
     let journalPath: string | null = null;
     let swapped = false;
-    let committed = false;
+    let rolledBack = false;
+    const undoSwap = (): void => {
+      // Set first: a rollback that fails part way through must not be run
+      // again outside the lock, where it could take away bytes a recovery in
+      // another process had already restored.
+      rolledBack = true;
+      const staging = pending.temporaryPath;
+      if (staging !== null) {
+        this.staging.delete(staging);
+        pending.temporaryPath = null;
+      }
+      restoreStateFile(this.directory, {
+        finalPath: pending.finalPath,
+        stagingPath: staging,
+        backupPath,
+        journalPath,
+        swapped,
+      });
+    };
     try {
       writeLocked(db, () => {
         const existing = existsSync(pending.finalPath);
@@ -233,26 +251,17 @@ export class ConnectionStateStore implements ConnectionStateReader {
           connectedAt,
           expect,
         });
-      });
-      committed = true;
-      clearSwapDebris(this.directory, { backupPath, journalPath });
+      }, undoSwap);
     } catch (error) {
-      if (!committed) {
-        const staging = pending.temporaryPath;
-        if (staging !== null) {
-          this.staging.delete(staging);
-          pending.temporaryPath = null;
-        }
-        restoreStateFile(this.directory, {
-          finalPath: pending.finalPath,
-          stagingPath: staging,
-          backupPath,
-          journalPath,
-          swapped,
-        });
-      }
+      // Reached without the locked rollback only when the transaction never
+      // opened, or when the commit itself failed after the files had moved.
+      // A swap that landed belongs to recovery from here: its journal is on
+      // disk and the next recover() undoes it under the lock. The staged
+      // bytes of a swap that never started are still this call's to remove.
+      if (!rolledBack && !swapped) undoSwap();
       throw error;
     }
+    clearSwapDebris(this.directory, { backupPath, journalPath });
     pending.completed = true;
     this.minted.delete(pending.sourceKey);
     const connection = getConnection(db, connectorId, pending.sourceKey);

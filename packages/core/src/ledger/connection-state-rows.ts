@@ -35,10 +35,36 @@ function isLockedDatabase(error: unknown): boolean {
  * away, and a recovery running at the same moment would read a live swap as
  * crash debris. The database's write lock is the only lock both processes
  * already share, so every file move happens while it is held.
+ *
+ * `rollback` undoes the file moves `work` made and runs under that same lock:
+ * released first, it would race a recovery in another process that had already
+ * repaired this journal, and the restore would then delete the bytes that
+ * recovery had just put back.
  */
-export function writeLocked(db: Database, work: () => void): void {
+export function writeLocked(
+  db: Database,
+  work: () => void,
+  rollback?: () => void,
+): void {
   try {
-    db.transaction(work).immediate();
+    db.transaction(() => {
+      if (rollback === undefined) {
+        work();
+        return;
+      }
+      try {
+        work();
+      } catch (error) {
+        try {
+          rollback();
+        } catch {
+          // The journal the rollback could not remove is the record recovery
+          // reads, so the next recover() finishes the undo. What the caller
+          // has to act on is the failure that started this.
+        }
+        throw error;
+      }
+    }).immediate();
   } catch (error) {
     if (isLockedDatabase(error)) {
       throw new LedgerError(LOCKED_CONTROL_STORE, { cause: error });

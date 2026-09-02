@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { openLedger } from "../src/ledger/db";
+import { writeLocked } from "../src/ledger/connection-state-rows";
 import { ConnectionStateStore } from "../src/ledger/connection-state";
 import { enrollConnection } from "../src/ledger/enroll";
 import { createStatePersister } from "../src/ledger/state-persister";
@@ -204,6 +205,71 @@ describe("non-interactive state rewrite", () => {
       ),
     ).rejects.toThrow("not eligible");
     expect(readdirSync(store.directory)).toEqual([]);
+    db.close();
+  });
+});
+
+describe("the lock a failed swap rolls back under", () => {
+  /** What a writer on another connection sees when it tries to take the lock. */
+  function competingWrite(db: ReturnType<typeof openLedger>): string | null {
+    try {
+      writeLocked(db, () => undefined);
+      return null;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  test("no other connection can write between the failure and the undo", () => {
+    const path = join(temporary(), "ledger.sqlite");
+    const db = openLedger(path);
+    const other = openLedger(path);
+    const observed: { inTransaction: boolean; competitor: string | null }[] = [];
+
+    expect(() =>
+      writeLocked(
+        db,
+        () => {
+          throw new LedgerError("the row commit lost the race");
+        },
+        () => {
+          // This is where the state file is put back. A recovery in another
+          // process reaching the journal here would repair the same swap, and
+          // the restore would then delete what recovery had just restored.
+          observed.push({
+            inTransaction: db.inTransaction,
+            competitor: competingWrite(other),
+          });
+        },
+      ),
+    ).toThrow("the row commit lost the race");
+
+    expect(observed).toEqual([
+      {
+        inTransaction: true,
+        competitor: "connection state is locked by another writer",
+      },
+    ]);
+    expect(db.inTransaction).toBe(false);
+    expect(competingWrite(other)).toBeNull();
+    db.close();
+    other.close();
+  });
+
+  test("a rollback that fails leaves the failure the caller has to act on", () => {
+    const path = join(temporary(), "ledger.sqlite");
+    const db = openLedger(path);
+    expect(() =>
+      writeLocked(
+        db,
+        () => {
+          throw new LedgerError("the row commit lost the race");
+        },
+        () => {
+          throw new Error("the state file could not be put back");
+        },
+      ),
+    ).toThrow("the row commit lost the race");
     db.close();
   });
 });
