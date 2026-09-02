@@ -1,4 +1,4 @@
-import { lstat, readdir } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { basename, join } from "node:path";
 import { HealthReport } from "@kizuki/core";
@@ -12,6 +12,12 @@ import type {
   SyncBatch,
 } from "@kizuki/core";
 import { KizukiError } from "../errors";
+import {
+  folderEntries,
+  readFolderFile,
+  readFolderFirstLine,
+} from "../folder";
+import type { ExportFolder } from "../folder";
 import { readBoundedUtf8File, readFirstLine } from "../read";
 import {
   FIXTURE_OBSERVED_AT,
@@ -118,24 +124,45 @@ export interface PocketReadLimits {
 }
 
 /**
+ * The files of one export. `folder` is the directory they were listed in,
+ * remembered by identity so every read comes out of that directory and not out
+ * of whatever its name points at by the time the read happens; it is `null`
+ * when the owner named a single file, which is then read as configured.
+ */
+export interface PocketSources {
+  folder: ExportFolder | null;
+  names: string[];
+}
+
+/**
  * Reads every CSV of one export under a single budget. A per-file limit would
  * let a directory of a hundred maximal files spend a hundred times the bound,
  * so the bytes read and the rows kept are counted across the whole export.
  */
 export async function readPocketRows(
-  sources: readonly string[],
+  sources: PocketSources,
   limits: PocketReadLimits = {},
 ): Promise<PocketRow[]> {
   let bytesLeft = limits.maxBytes ?? MAX_EXPORT_BYTES;
   const maxRows = limits.maxRows ?? MAX_RECORDS;
   let rowsLeft = maxRows;
   const rows: PocketRow[] = [];
-  for (const source of sources) {
-    const file = await readBoundedUtf8File(
-      source,
-      POCKET_IMPORT_CONNECTOR_ID,
-      bytesLeft,
-    );
+  const folder = sources.folder;
+  for (const source of sources.names) {
+    const file =
+      folder === null
+        ? await readBoundedUtf8File(
+            source,
+            POCKET_IMPORT_CONNECTOR_ID,
+            bytesLeft,
+          )
+        : await readFolderFile(
+            folder,
+            source,
+            POCKET_IMPORT_CONNECTOR_ID,
+            bytesLeft,
+            join(folder.path, source),
+          );
     bytesLeft -= file.byte_size;
     // The header counts as a row to the reader, so a file may hold what the
     // export has left, its own header line, and one row over the bound — which
@@ -158,7 +185,7 @@ export async function readPocketRows(
   return rows;
 }
 
-async function resolveSources(path: string): Promise<string[]> {
+async function resolveSources(path: string): Promise<PocketSources> {
   let info;
   try {
     info = await lstat(path);
@@ -172,14 +199,17 @@ async function resolveSources(path: string): Promise<string[]> {
     if (!path.toLowerCase().endsWith(".csv")) {
       throw misconfigured(`not a .csv export: ${path}`);
     }
-    return [path];
+    return { folder: null, names: [path] };
   }
   if (!info.isDirectory()) {
     throw misconfigured(`not an export directory or file: ${path}`);
   }
+  // The directory that answered the listing is the one every part is read
+  // from, whatever its name points at afterwards.
+  const folder: ExportFolder = { path, dev: info.dev, ino: info.ino };
   let entries: Dirent[];
   try {
-    entries = await readdir(path, { withFileTypes: true });
+    entries = await folderEntries(folder);
   } catch (error) {
     // A directory that cannot be listed is a configuration problem like any
     // other unreadable path, not an error only the filesystem understands.
@@ -197,7 +227,7 @@ async function resolveSources(path: string): Promise<string[]> {
       `no part_*.csv export in ${path}; pass the .csv file path`,
     );
   }
-  return files.map((name) => join(path, name));
+  return { folder, names: files };
 }
 
 export class PocketImportConnector implements Connector {
@@ -219,9 +249,17 @@ export class PocketImportConnector implements Connector {
       // A path that resolves is not yet an export. The first file is opened
       // and its header read, so an unreadable file or a CSV that is not a
       // Pocket export is reported now rather than at ingest.
-      const first = sources[0];
+      const first = sources.names[0];
       if (first !== undefined) {
-        const header = await readFirstLine(first, POCKET_IMPORT_CONNECTOR_ID);
+        const header =
+          sources.folder === null
+            ? await readFirstLine(first, POCKET_IMPORT_CONNECTOR_ID)
+            : await readFolderFirstLine(
+                sources.folder,
+                first,
+                POCKET_IMPORT_CONNECTOR_ID,
+                join(sources.folder.path, first),
+              );
         pocketHeaderLine(header, basename(first));
       }
       return new HealthReport({ state: "ok", checked_at });

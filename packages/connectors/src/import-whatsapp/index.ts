@@ -1,4 +1,4 @@
-import { lstat, readdir } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { HealthReport } from "@kizuki/core";
@@ -12,6 +12,8 @@ import type {
   SyncBatch,
 } from "@kizuki/core";
 import { KizukiError } from "../errors";
+import { folderEntries, readFolderFile } from "../folder";
+import type { ExportFolder } from "../folder";
 import { readBoundedUtf8 } from "../read";
 import {
   FIXTURE_OBSERVED_AT,
@@ -106,16 +108,25 @@ function misconfigured(detail: string): KizukiError {
  * unreadable path, so it leaves as a refusal callers can discriminate on
  * rather than as whatever the filesystem threw.
  */
-async function readEntries(path: string): Promise<Dirent[]> {
+async function readEntries(folder: ExportFolder): Promise<Dirent[]> {
   try {
-    return await readdir(path, { withFileTypes: true });
+    return await folderEntries(folder);
   } catch (error) {
-    throw misconfigured(`cannot read ${path}: ${errorMessage(error)}`);
+    throw misconfigured(`cannot read ${folder.path}: ${errorMessage(error)}`);
   }
 }
 
 interface ResolvedExport {
+  /** The chat file's path; the chat's display name is derived from it. */
   txt: string;
+  /**
+   * The folder the chat file was listed in, remembered by identity so the
+   * file is read out of that directory rather than out of whatever its name
+   * points at afterwards. `null` when the owner named the chat file itself,
+   * which is then read as configured.
+   */
+  folder: ExportFolder | null;
+  name: string;
   mediaDir: string;
 }
 
@@ -138,12 +149,18 @@ export async function resolveExport(path: string): Promise<ResolvedExport> {
     if (!path.toLowerCase().endsWith(".txt")) {
       throw misconfigured(`not a .txt chat export: ${path}`);
     }
-    return { txt: path, mediaDir: dirname(path) };
+    return {
+      txt: path,
+      folder: null,
+      name: basename(path),
+      mediaDir: dirname(path),
+    };
   }
   if (!info.isDirectory()) {
     throw misconfigured(`not a chat export directory or file: ${path}`);
   }
-  const entries = await readEntries(path);
+  const folder: ExportFolder = { path, dev: info.dev, ino: info.ino };
+  const entries = await readEntries(folder);
   // The chat file's name becomes the chat's display name, and an export
   // directory is attacker-controlled: a name a terminal would act on is not a
   // candidate, so no such name can be adopted as a subject's.
@@ -165,7 +182,7 @@ export async function resolveExport(path: string): Promise<ResolvedExport> {
       `several .txt files in ${path}; pass the chat file path`,
     );
   }
-  return { txt: join(path, only), mediaDir: path };
+  return { txt: join(path, only), folder, name: only, mediaDir: path };
 }
 
 /**
@@ -270,16 +287,27 @@ export class WhatsAppImportConnector implements Connector {
 
   private async read(): Promise<CaptureEventInput[]> {
     const resolved = await resolveExport(this.path);
-    const text = await readBoundedUtf8(
-      resolved.txt,
-      WHATSAPP_IMPORT_CONNECTOR_ID,
-      MAX_EXPORT_BYTES,
-      // The chat file inside an export is named after the chat, so a refusal
-      // names what the owner configured instead of who they were talking to.
-      resolved.txt === this.path
-        ? this.path
-        : `the chat file in ${this.path}`,
-    );
+    // The chat file inside an export is named after the chat, so a refusal
+    // names what the owner configured instead of who they were talking to.
+    const label =
+      resolved.folder === null ? this.path : `the chat file in ${this.path}`;
+    const text =
+      resolved.folder === null
+        ? await readBoundedUtf8(
+            resolved.txt,
+            WHATSAPP_IMPORT_CONNECTOR_ID,
+            MAX_EXPORT_BYTES,
+            label,
+          )
+        : (
+            await readFolderFile(
+              resolved.folder,
+              resolved.name,
+              WHATSAPP_IMPORT_CONNECTOR_ID,
+              MAX_EXPORT_BYTES,
+              label,
+            )
+          ).text;
     return parseWhatsAppExport(text, {
       ...(this.dateOrder !== undefined ? { date_order: this.dateOrder } : {}),
       timezone: this.timezone,

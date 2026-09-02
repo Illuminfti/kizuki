@@ -1,6 +1,5 @@
-import { join } from "node:path";
-import { statRegularFile } from "../read";
-import { safeFilename } from "../util";
+import { exportFolder, statFolderFile } from "../folder";
+import type { ExportFolder } from "../folder";
 
 /**
  * Media in a chat export is a line of text plus, for a "with media" export,
@@ -37,12 +36,18 @@ export function detectMedia(text: string): MediaRef | null {
   return null;
 }
 
-/** Sizes a file beside the chat, and only ever a bare name beside the chat. */
+/**
+ * Sizes a file beside the chat, and only ever a bare name beside the chat.
+ * The folder is taken once, on the first name the export asks about, and every
+ * later name is sized inside that same folder: a media directory swapped for
+ * another one mid-import is not the export, and has nothing to say about it.
+ */
 export function fsMediaLookup(mediaDir: string): MediaLookup {
+  let folder: Promise<ExportFolder | null> | undefined;
   return async (filename) => {
-    const safe = safeFilename(filename);
-    if (safe === null) return null;
-    return statRegularFile(join(mediaDir, safe));
+    folder ??= exportFolder(mediaDir);
+    const beside = await folder;
+    return beside === null ? null : statFolderFile(beside, filename);
   };
 }
 

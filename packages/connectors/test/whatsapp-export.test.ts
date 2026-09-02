@@ -3,6 +3,7 @@ import {
   chmod,
   mkdir,
   mkdtemp,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -381,5 +382,34 @@ test("an export directory that cannot be listed is refused, not thrown", async (
     } finally {
       await chmod(locked, 0o700);
     }
+  });
+});
+
+test("media is sized in the folder the export was listed in", async () => {
+  await withTempRoot(async (root) => {
+    // A media folder is named once, when the export is resolved, and read
+    // afterwards. Anything with write access to a directory above it can point
+    // that name at another folder in between, so the name is not what the
+    // sizes come from.
+    const exportDir = path.join(root, "export");
+    const outside = path.join(root, "outside");
+    await mkdir(exportDir);
+    await mkdir(outside);
+    await writeFile(path.join(exportDir, "IMG-1.jpg"), "beside the chat");
+    await writeFile(path.join(outside, "IMG-1.jpg"), "somewhere else");
+
+    const lookup = fsMediaLookup(exportDir);
+    expect(await lookup("IMG-1.jpg")).toEqual({ byte_size: 15 });
+
+    await rm(path.join(exportDir, "IMG-1.jpg"));
+    await rm(exportDir, { recursive: true });
+    await symlink(outside, exportDir);
+    expect(await lookup("IMG-1.jpg")).toBe(null);
+
+    // Nor from a directory moved into the export's place, which is how a file
+    // the owner can read and an attacker cannot would be offered up.
+    await rm(exportDir);
+    await rename(outside, exportDir);
+    expect(await lookup("IMG-1.jpg")).toBe(null);
   });
 });

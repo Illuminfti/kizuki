@@ -1,14 +1,25 @@
 import { expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { KizukiError } from "../src/errors";
+import { exportFolder } from "../src/folder";
 import {
   POCKET_FIXTURE_EXPORT,
   createPocketImportConnector,
   readPocketRows,
 } from "../src/import-pocket";
-import type { PocketImportConfig } from "../src/import-pocket";
+import type {
+  PocketImportConfig,
+  PocketSources,
+} from "../src/import-pocket";
 
 const HEADER = "title,url,time_added,tags,status";
 
@@ -41,6 +52,11 @@ async function rejected(body: () => Promise<unknown>): Promise<KizukiError> {
   throw new Error("expected a KizukiError");
 }
 
+/** Files the owner named directly, which is how a single CSV is read. */
+function named(...names: string[]): PocketSources {
+  return { folder: null, names };
+}
+
 test("the byte and row budgets are spent across the whole export", async () => {
   await withTempRoot(async (root) => {
     const first = path.join(root, "part_000000.csv");
@@ -51,14 +67,14 @@ test("the byte and row budgets are spent across the whole export", async () => {
     await writeFile(second, body("second", "1767312000"));
     const size = body("first", "1767225600").length;
 
-    expect((await readPocketRows([first, second])).length).toBe(2);
+    expect((await readPocketRows(named(first, second))).length).toBe(2);
     const bytes = await rejected(() =>
-      readPocketRows([first, second], { maxBytes: size + 1 }),
+      readPocketRows(named(first, second), { maxBytes: size + 1 }),
     );
     expect(bytes.code).toBe("misconfigured");
     expect(bytes.message).toContain("import limit");
     const rows = await rejected(() =>
-      readPocketRows([first, second], { maxRows: 1 }),
+      readPocketRows(named(first, second), { maxRows: 1 }),
     );
     expect(rows.code).toBe("parse_error");
     expect(rows.message).toContain("export holds more than 1 rows");
@@ -78,11 +94,11 @@ test("the export budget is charged the bytes read, not the bytes kept", async ()
     // A budget one byte short of both files must not stretch to cover them
     // because normalizing CRLF made the kept text smaller than the file.
     const error = await rejected(() =>
-      readPocketRows([first, second], { maxBytes: raw * 2 - 1 }),
+      readPocketRows(named(first, second), { maxBytes: raw * 2 - 1 }),
     );
     expect(error.code).toBe("misconfigured");
     expect(error.message).toContain("import limit");
-    expect((await readPocketRows([first, second], { maxBytes: raw * 2 })).length).toBe(2);
+    expect((await readPocketRows(named(first, second), { maxBytes: raw * 2 })).length).toBe(2);
   });
 });
 
@@ -93,7 +109,7 @@ test("an export with more rows than a call can carry still parses", async () => 
     const count = 700_000;
     const file = path.join(root, "part_000000.csv");
     await writeFile(file, `url,time_added\n${"https://example.com/a,1\n".repeat(count)}`);
-    const rows = await readPocketRows([file]);
+    const rows = await readPocketRows(named(file));
     expect(rows.length).toBe(count);
     expect(rows[count - 1]?.url).toBe("https://example.com/a");
   });
@@ -234,5 +250,33 @@ test("a healthy export reports ok", async () => {
       source_record_ids: [],
       unreachable_source_record_ids: [],
     });
+  });
+});
+
+test("an export's parts are read from the directory that was listed", async () => {
+  await withTempRoot(async (root) => {
+    // The part names come from a listing, and the files are opened after it.
+    // A name can be pointed at another directory in between, which is how a
+    // file the owner can read and an attacker cannot would end up imported.
+    const exportDir = path.join(root, "export");
+    const outside = path.join(root, "outside");
+    await mkdir(exportDir);
+    await mkdir(outside);
+    const row = (name: string): string =>
+      `${HEADER}\n${name},https://example.com/${name},1767225600,,unread\n`;
+    await writeFile(path.join(exportDir, "part_000000.csv"), row("mine"));
+    await writeFile(path.join(outside, "part_000000.csv"), row("theirs"));
+
+    const folder = await exportFolder(exportDir);
+    if (folder === null) throw new Error("expected an export directory");
+    const sources = { folder, names: ["part_000000.csv"] };
+    const rows = await readPocketRows(sources);
+    expect(rows[0]?.url).toBe("https://example.com/mine");
+
+    await rm(exportDir, { recursive: true });
+    await symlink(outside, exportDir);
+    const error = await rejected(() => readPocketRows(sources));
+    expect(error.code).toBe("misconfigured");
+    expect(error.message).toContain("cannot read");
   });
 });
