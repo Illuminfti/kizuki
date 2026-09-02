@@ -205,6 +205,39 @@ describe("a provider endpoint on a scheme core will not speak", () => {
   });
 });
 
+describe("a hostile redirect path", () => {
+  test.each([
+    ["userinfo that moves the host off the box", "@evil.invalid/callback"],
+    ["a protocol-relative host", "//evil.invalid/callback"],
+    ["a query the listener can never match", "/callback?code=planted"],
+    ["a fragment", "/callback#planted"],
+    ["a path that is not rooted", "callback"],
+  ])("refuses %s", async (_label, redirect_path) => {
+    const io = fakeIo();
+    const transport = new FakeTransport();
+    await expect(
+      signInWithBrowser(provider({ redirect_path }), io, transport, {
+        ...deterministic(),
+        timeoutMs: 10,
+      }),
+    ).rejects.toThrow(TypeError);
+    expect(transport.listeners).toEqual([]);
+    expect(io.opened).toEqual([]);
+  });
+
+  test("keeps the redirect the owner's browser is sent back to on the box", async () => {
+    const io = fakeIo();
+    const transport = new FakeTransport({ status: 200, body: tokenResponse() });
+    const signedIn = signInWithBrowser(provider(), io, transport, deterministic());
+    const opened = await io.firstOpen;
+    const redirect = new URL(opened).searchParams.get("redirect_uri") ?? "";
+    expect(new URL(redirect).hostname).toBe("127.0.0.1");
+    transport.redirect({ code: "SENTINEL-CODE", state: NONCE });
+    await signedIn;
+    expect(transport.posts[0]?.form["redirect_uri"]).toBe(redirect);
+  });
+});
+
 describe("a hostile token response", () => {
   test.each([
     ["a lifetime past the representable range", 1e18],

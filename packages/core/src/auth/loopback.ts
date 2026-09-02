@@ -1,5 +1,6 @@
 import {
   OAuthError,
+  assertRedirectPath,
   type LoopbackListener,
   type OAuthTransport,
 } from "./oauth";
@@ -59,6 +60,9 @@ export function loopbackTransport(
   const postTimeoutMs = opts.postTimeoutMs ?? DEFAULT_POST_TIMEOUT_MS;
   return {
     async listen(redirectPath: string): Promise<LoopbackListener> {
+      // The transport is the one that builds the redirect URI, so it judges
+      // the path itself rather than trusting whoever assembled the call.
+      assertRedirectPath(redirectPath);
       const waiters: Waiter[] = [];
       let received: URL | null = null;
       let closed = false;

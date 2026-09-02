@@ -111,12 +111,34 @@ function assertTransportScheme(endpoint: string, where: string): void {
   throw new TypeError(`${where} must use https, or http on a loopback host`);
 }
 
+/**
+ * The listener interpolates this straight after `host:port`, so anything but a
+ * bare rooted path rewrites the redirect URI: `@host/cb` moves the authority
+ * to another host and would hand the owner's authorization code to it.
+ */
+export function assertRedirectPath(path: string): void {
+  const probe = new URL(path, "http://127.0.0.1:1/");
+  if (
+    probe.origin !== "http://127.0.0.1:1" ||
+    probe.pathname !== path ||
+    probe.search.length > 0 ||
+    probe.hash.length > 0
+  ) {
+    throw new TypeError(
+      "redirect_path must be a rooted path with no query, fragment or authority",
+    );
+  }
+}
+
 /** Every endpoint of the provider, judged before any of them is used. */
 function assertProviderEndpoints(provider: OAuthProvider): void {
   assertTransportScheme(provider.authorization_url, "authorization_url");
   assertTransportScheme(provider.token_url, "token_url");
   if (provider.revocation_url !== undefined) {
     assertTransportScheme(provider.revocation_url, "revocation_url");
+  }
+  if (provider.redirect_path !== undefined) {
+    assertRedirectPath(provider.redirect_path);
   }
 }
 

@@ -21,6 +21,15 @@ describe("loopback redirect listener", () => {
     expect(opened.redirect_uri).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/callback$/);
   });
 
+  test.each([
+    ["userinfo that moves the host off the box", "@evil.invalid/callback"],
+    ["a protocol-relative host", "//evil.invalid/callback"],
+    ["a query", "/callback?code=planted"],
+    ["an unrooted path", "callback"],
+  ])("refuses to listen on %s", async (_label, path) => {
+    await expect(loopbackTransport().listen(path)).rejects.toThrow(TypeError);
+  });
+
   test("answers the redirect with a page that never echoes the query", async () => {
     const opened = await listener();
     const pending = opened.callback();
