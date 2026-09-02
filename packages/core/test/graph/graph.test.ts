@@ -157,6 +157,7 @@ describe("graph rebuild", () => {
     expect(result.skipped).toEqual([
       {
         relPath: "facts/stray.md",
+        kind: "unreadable",
         reason: "frontmatter must begin with an exact --- line",
       },
     ]);

@@ -364,6 +364,7 @@ describe("search rebuild", () => {
     expect(result.skipped).toEqual([
       {
         relPath: "facts/a.md",
+        kind: "duplicate-id",
         reason: 'duplicate id "fact:dup"; first seen at facts/B.md',
       },
     ]);

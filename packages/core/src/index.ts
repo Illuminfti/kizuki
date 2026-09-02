@@ -373,7 +373,13 @@ export type {
   TargetDecision,
 } from "./canon";
 export { findPageById, listCanonPages, listCanonPagesReport } from "./vault/pages";
-export type { CanonPage, CanonPageReport, SkippedPage } from "./vault/pages";
+export type {
+  CanonPage,
+  CanonPageReadOptions,
+  CanonPageReport,
+  SkipKind,
+  SkippedPage,
+} from "./vault/pages";
 export { readDerivedMeta } from "./derived-meta";
 export type { DerivedLayer, DerivedMeta } from "./derived-meta";
 

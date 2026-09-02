@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  chmodSync,
   existsSync,
   mkdtempSync,
   readFileSync,
@@ -21,6 +22,10 @@ import {
 import type { VaultPage } from "../src/index";
 
 const tempDirs: string[] = [];
+
+/** `chmod` cannot hide a file from root, so the unreadable case is only
+ *  reachable for an unprivileged user. */
+const UNPRIVILEGED = process.getuid !== undefined && process.getuid() !== 0;
 
 function tempDir(): string {
   const path = mkdtempSync(join(tmpdir(), "kizuki-vault-"));
@@ -270,6 +275,31 @@ describe("canon page discovery", () => {
     expect(findPageById(vault, "fact:engine")?.relPath).toBe("facts/engine.md");
     expect(findPageById(vault, "fact:missing")).toBeNull();
   });
+
+  test.skipIf(!UNPRIVILEGED)(
+    "doctorVault reports a page it cannot open instead of aborting",
+    () => {
+      const vault = tempDir();
+      initVault(vault);
+      seedPage(join(vault, "facts", "good.md"), {
+        data: validData({ id: "fact:good", type: "fact", title: "Good" }),
+        body: "A good note.\n",
+      });
+      seedPage(join(vault, "facts", "locked.md"), {
+        data: validData({ id: "fact:locked", type: "fact", title: "Locked" }),
+        body: "Locked.\n",
+      });
+      chmodSync(join(vault, "facts", "locked.md"), 0o000);
+
+      const report = doctorVault(vault);
+      chmodSync(join(vault, "facts", "locked.md"), 0o644);
+
+      expect(report.counts).toEqual({ total: 2, valid: 1, invalid: 1 });
+      expect(
+        report.pages.find(({ page }) => page === "facts/locked.md")?.errors[0],
+      ).toMatch(/^frontmatter: EACCES/);
+    },
+  );
 
   test("skips a malformed note without aborting the vault", () => {
     const vault = tempDir();

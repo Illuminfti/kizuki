@@ -11,9 +11,30 @@ export interface CanonPage {
   body: string;
 }
 
+/**
+ * `unreadable` means the frontmatter is not available at all: it did not
+ * parse, or the file did not open and the caller tolerates that. The other
+ * two parsed, so their frontmatter can still be read by a caller that needs
+ * it (`ledger/purge.ts` computes its cascade from `sources`).
+ */
+export type SkipKind = "unreadable" | "no-id" | "duplicate-id";
+
 export interface SkippedPage {
   relPath: string;
+  kind: SkipKind;
   reason: string;
+}
+
+export interface CanonPageReadOptions {
+  /**
+   * Report a file the OS refuses (permissions, I/O) as `unreadable` instead
+   * of throwing. Only `doctor` asks for it: describing a broken vault is that
+   * verb's whole job, so one unreadable note must not take the report
+   * offline. Every other reader keeps the fail-loud default, because a
+   * rebuild that silently omits canon, or a writer that reads an unreadable
+   * page as absent, is worse than an error.
+   */
+  tolerateUnreadable?: boolean;
 }
 
 export interface CanonPageReport {
@@ -49,7 +70,10 @@ function markdownFiles(directory: string): string[] {
   return files;
 }
 
-export function listCanonPagesReport(vaultPath: string): CanonPageReport {
+export function listCanonPagesReport(
+  vaultPath: string,
+  opts: CanonPageReadOptions = {},
+): CanonPageReport {
   const pages: CanonPage[] = [];
   const skipped: SkippedPage[] = [];
   const seen = new Map<string, string>();
@@ -60,21 +84,29 @@ export function listCanonPagesReport(vaultPath: string): CanonPageReport {
     try {
       parsed = parseFrontmatter(readFileSync(path, "utf8"));
     } catch (error) {
-      if (error instanceof SyntaxError) {
-        skipped.push({ relPath, reason: error.message });
+      if (
+        error instanceof SyntaxError ||
+        (opts.tolerateUnreadable === true && error instanceof Error)
+      ) {
+        skipped.push({ relPath, kind: "unreadable", reason: error.message });
         continue;
       }
       throw error;
     }
     const id = parsed.data["id"];
     if (typeof id !== "string" || id.length === 0) {
-      skipped.push({ relPath, reason: "id: must be a non-empty string" });
+      skipped.push({
+        relPath,
+        kind: "no-id",
+        reason: "id: must be a non-empty string",
+      });
       continue;
     }
     const first = seen.get(id);
     if (first !== undefined) {
       skipped.push({
         relPath,
+        kind: "duplicate-id",
         reason: `duplicate id "${id}"; first seen at ${first}`,
       });
       continue;

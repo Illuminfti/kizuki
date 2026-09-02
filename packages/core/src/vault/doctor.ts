@@ -17,7 +17,10 @@ export interface DoctorVaultResult {
 }
 
 export function doctorVault(path: string): DoctorVaultResult {
-  const report = listCanonPagesReport(path);
+  // Tolerant on purpose: a note the OS refuses is exactly the kind of broken
+  // vault this verb exists to describe, so it becomes a problem line instead
+  // of an errno that replaces the whole report.
+  const report = listCanonPagesReport(path, { tolerateUnreadable: true });
   const pages: DoctorPageResult[] = [
     ...report.pages.map((page) => ({
       page: page.relPath,

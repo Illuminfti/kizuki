@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { writeFileSync } from "node:fs";
+import { chmodSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   findPageById,
@@ -19,6 +19,10 @@ function vault(): string {
   disposers.push(created.dispose);
   return created.path;
 }
+
+/** `chmod` cannot hide a file from root, so the unreadable case is only
+ *  reachable for an unprivileged user. */
+const UNPRIVILEGED = process.getuid !== undefined && process.getuid() !== 0;
 
 function fact(
   overrides: Record<string, unknown> = {},
@@ -47,6 +51,7 @@ describe("canon page discovery", () => {
     expect(report.skipped).toEqual([
       {
         relPath: "facts/stray.md",
+        kind: "unreadable",
         reason: "frontmatter must begin with an exact --- line",
       },
     ]);
@@ -66,7 +71,11 @@ describe("canon page discovery", () => {
 
     expect(report.pages.map(({ id }) => id)).toEqual(["fact:kettle"]);
     expect(report.skipped).toEqual([
-      { relPath: "facts/noid.md", reason: "id: must be a non-empty string" },
+      {
+        relPath: "facts/noid.md",
+        kind: "no-id",
+        reason: "id: must be a non-empty string",
+      },
     ]);
   });
 
@@ -82,10 +91,57 @@ describe("canon page discovery", () => {
     expect(report.skipped).toEqual([
       {
         relPath: "facts/a.md",
+        kind: "duplicate-id",
         reason: 'duplicate id "fact:dup"; first seen at facts/B.md',
       },
     ]);
     expect(findPageById(path, "fact:dup")?.body).toBe("Kept.\n");
+  });
+
+  test.skipIf(!UNPRIVILEGED)(
+    "reports a file it cannot open only when the caller tolerates it",
+    () => {
+      const path = vault();
+      writeCanon(path, "facts/kettle.md", fact(), "A copper kettle.\n");
+      writeCanon(
+        path,
+        "facts/locked.md",
+        fact({ id: "fact:locked" }),
+        "Locked.\n",
+      );
+      chmodSync(join(path, "facts", "locked.md"), 0o000);
+
+      // The default is fail-loud: a rebuild must not quietly omit canon.
+      expect(() => listCanonPagesReport(path)).toThrow(/EACCES/);
+      const report = listCanonPagesReport(path, { tolerateUnreadable: true });
+      chmodSync(join(path, "facts", "locked.md"), 0o644);
+      expect(report.pages.map(({ relPath }) => relPath)).toEqual([
+        "facts/kettle.md",
+      ]);
+      expect(report.skipped).toHaveLength(1);
+      expect(report.skipped[0]?.relPath).toBe("facts/locked.md");
+      expect(report.skipped[0]?.kind).toBe("unreadable");
+      expect(report.skipped[0]?.reason).toMatch(/EACCES/);
+    },
+  );
+
+  test("names why each page was skipped", () => {
+    const path = vault();
+    writeCanon(path, "facts/B.md", fact(), "First.\n");
+    writeCanon(path, "facts/a.md", fact(), "Duplicate.\n");
+    writeCanon(path, "facts/idless.md", fact({ id: 7 }), "No id.\n");
+    writeFileSync(join(path, "facts", "stray.md"), "just a note\n", "utf8");
+
+    expect(
+      listCanonPagesReport(path).skipped.map(({ relPath, kind }) => [
+        relPath,
+        kind,
+      ]),
+    ).toEqual([
+      ["facts/a.md", "duplicate-id"],
+      ["facts/idless.md", "no-id"],
+      ["facts/stray.md", "unreadable"],
+    ]);
   });
 
   test("listCanonPages and findPageById tolerate a stray note", () => {
