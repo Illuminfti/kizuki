@@ -9,6 +9,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
+import { rowToReceipt } from "./canon/receipts";
+import type { CanonReceiptRow } from "./canon/receipts";
 import { listCheckpoints, listConnections } from "./ledger/connections";
 import { replay } from "./ledger/ledger";
 import { tableExists } from "./ledger/schema";
@@ -43,18 +45,6 @@ interface ProposalRow {
   status: string;
   created_at: string;
   body_hash: string;
-}
-
-interface PromotionRow {
-  receipt_id: string;
-  proposal_id: string;
-  provenance: string;
-  sensitivity: string;
-  page_path: string;
-  kind: string;
-  before_hash: string | null;
-  after_hash: string;
-  at: string;
 }
 
 interface RejectionRow {
@@ -122,15 +112,14 @@ function proposals(db: Database): unknown[] {
     }));
 }
 
-function promotions(db: Database): unknown[] {
-  if (!tableExists(db, "promotions")) return [];
+function receipts(db: Database): unknown[] {
+  if (!tableExists(db, "canon_receipts")) return [];
   return db
-    .query<PromotionRow, []>("SELECT * FROM promotions ORDER BY at, receipt_id")
+    .query<CanonReceiptRow, []>(
+      "SELECT * FROM canon_receipts ORDER BY at, receipt_id",
+    )
     .all()
-    .map((row) => ({
-      ...row,
-      provenance: JSON.parse(row.provenance) as unknown,
-    }));
+    .map(rowToReceipt);
 }
 
 function rejections(db: Database): RejectionRow[] {
@@ -183,7 +172,7 @@ export function exportVault(
       .all(),
   );
   writeJsonl("staging/proposals.jsonl", proposals(db));
-  writeJsonl("staging/promotions.jsonl", promotions(db));
+  writeJsonl("canon/receipts.jsonl", receipts(db));
   writeJsonl("staging/rejections.jsonl", rejections(db));
   writeJsonl(
     "connections.jsonl",

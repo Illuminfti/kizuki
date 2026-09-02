@@ -3,7 +3,6 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -18,7 +17,6 @@ import {
   parseFrontmatter,
   serializePage,
   validatePage,
-  writePage,
 } from "../src/index";
 import type { VaultPage } from "../src/index";
 
@@ -28,6 +26,11 @@ function tempDir(): string {
   const path = mkdtempSync(join(tmpdir(), "kizuki-vault-"));
   tempDirs.push(path);
   return path;
+}
+
+/** Test fixtures land on disk directly; only the receipted writer may do so in product code. */
+function seedPage(path: string, page: VaultPage): void {
+  writeFileSync(path, serializePage(page));
 }
 
 function validData(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -179,7 +182,7 @@ describe("doctorVault", () => {
   test("reports every canon page and counts an invalid seed", () => {
     const vault = tempDir();
     initVault(vault);
-    writePage(join(vault, "entities", "ada.md"), {
+    seedPage(join(vault, "entities", "ada.md"), {
       data: validData(),
       body: "# Ada\n",
     });
@@ -236,7 +239,7 @@ describe("canon page discovery", () => {
   test("lists active canon pages and excludes control and archive files", () => {
     const vault = tempDir();
     initVault(vault);
-    writePage(join(vault, "entities", "ada.md"), {
+    seedPage(join(vault, "entities", "ada.md"), {
       data: validData(),
       body: "Ada body.\n",
     });
@@ -257,7 +260,7 @@ describe("canon page discovery", () => {
   test("finds a canon page by frontmatter id", () => {
     const vault = tempDir();
     initVault(vault);
-    writePage(join(vault, "facts", "engine.md"), {
+    seedPage(join(vault, "facts", "engine.md"), {
       data: validData({ id: "fact:engine", type: "fact", title: "Engine" }),
       body: "A fact.\n",
     });
@@ -269,7 +272,7 @@ describe("canon page discovery", () => {
   test("skips a malformed note without aborting the vault", () => {
     const vault = tempDir();
     initVault(vault);
-    writePage(join(vault, "facts", "good.md"), {
+    seedPage(join(vault, "facts", "good.md"), {
       data: validData({ id: "fact:good", type: "fact", title: "Good" }),
       body: "A good note.\n",
     });
@@ -281,75 +284,5 @@ describe("canon page discovery", () => {
     expect(listCanonPagesReport(vault).skipped.map(({ relPath }) => relPath)).toEqual([
       "facts/bad.md",
     ]);
-  });
-});
-
-describe("writePage", () => {
-  test("refuses clobbers and archives the old content for an explicit revision", () => {
-    const vault = tempDir();
-    initVault(vault);
-    const path = join(vault, "entities", "ada.md");
-    const oldPage: VaultPage = { data: validData(), body: "Old canon.\n" };
-    const newPage: VaultPage = {
-      data: validData({ title: "Ada King, Countess of Lovelace" }),
-      body: "New canon.\n",
-    };
-    const oldContent = serializePage(oldPage);
-    writePage(path, oldPage);
-
-    expect(() => writePage(path, newPage)).toThrow(/refusing to overwrite/i);
-    expect(readFileSync(path, "utf8")).toBe(oldContent);
-
-    writePage(path, newPage, { revision: true });
-
-    expect(readFileSync(path, "utf8")).toBe(serializePage(newPage));
-    const backups = readdirSync(join(vault, "archive")).filter(
-      (name) => name.startsWith("ada.prev-") && name.endsWith(".md"),
-    );
-    expect(backups).toHaveLength(1);
-    expect(readFileSync(join(vault, "archive", backups[0] as string), "utf8")).toBe(
-      oldContent,
-    );
-  });
-
-  test("validates before creating a file", () => {
-    const vault = tempDir();
-    initVault(vault);
-    const path = join(vault, "facts", "invalid.md");
-
-    expect(() =>
-      writePage(path, {
-        data: { id: "fact:invalid" },
-        body: "No policy labels.\n",
-      }),
-    ).toThrow(/invalid page/i);
-    expect(existsSync(path)).toBe(false);
-  });
-
-  test("archives a deleted page in place and preserves the prior revision", () => {
-    const vault = tempDir();
-    initVault(vault);
-    const path = join(vault, "entities", "ada.md");
-    const original = { data: validData(), body: "Former canon.\n" };
-    writePage(path, original);
-
-    // Reconciliation rule 4 keeps the archived page at its canon path.
-    writePage(
-      path,
-      { data: validData({ status: "archived" }), body: "Former canon.\n" },
-      { revision: true },
-    );
-
-    expect(existsSync(path)).toBe(true);
-    const page = parseFrontmatter(readFileSync(path, "utf8"));
-    expect(page.data["status"]).toBe("archived");
-    expect(page.body).toBe("Former canon.\n");
-    const revisions = readdirSync(join(vault, "archive")).filter((name) =>
-      name.startsWith("ada.prev-"),
-    );
-    expect(revisions).toHaveLength(1);
-    expect(readFileSync(join(vault, "archive", revisions[0] as string), "utf8")).toBe(
-      serializePage(original),
-    );
   });
 });
