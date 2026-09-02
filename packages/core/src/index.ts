@@ -342,6 +342,7 @@ export type { InitVaultResult } from "./vault/init";
 export {
   PAGE_SENSITIVITIES,
   PAGE_STATUSES,
+  PAGE_TAINTS,
   PAGE_TYPES,
   validatePage,
 } from "./vault/schema";

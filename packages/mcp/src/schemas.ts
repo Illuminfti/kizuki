@@ -1,4 +1,4 @@
-import { ENVELOPE_SCHEMA, TOOLS } from "@kizuki/core";
+import { AUTHORITY_TIERS, ENVELOPE_SCHEMA, PAGE_TAINTS, TOOLS } from "@kizuki/core";
 import { z } from "zod";
 
 /**
@@ -10,12 +10,21 @@ const SENSITIVITY = z.enum(["public", "personal", "private"]);
 const ID = z.string().min(1).max(64);
 const RFC3339 = z.string().min(20).max(40);
 
+/**
+ * Every field the engine puts on a chunk is described here. zod renders the
+ * object closed, so a field the engine sends and this shape omits makes a
+ * client that listed the tools first reject the whole answer.
+ */
 const CANON_CHUNK = z.object({
   page_id: z.string(),
   path: z.string(),
   title: z.string(),
   type: z.string(),
   sensitivity: SENSITIVITY,
+  taint: z.enum(PAGE_TAINTS),
+  authority: z
+    .enum(Object.keys(AUTHORITY_TIERS) as [string, ...string[]])
+    .nullable(),
   subjects: z.array(z.string()),
   sources: z.array(z.string()),
   excerpt: z.string(),

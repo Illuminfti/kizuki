@@ -56,6 +56,7 @@ describe("public surface", () => {
       "PAGE_CANDIDATE_SCHEMA",
       "PAGE_SENSITIVITIES",
       "PAGE_STATUSES",
+      "PAGE_TAINTS",
       "PAGE_TYPES",
       "PORT_CONTRACTS",
       "PORT_ERROR_CODES",

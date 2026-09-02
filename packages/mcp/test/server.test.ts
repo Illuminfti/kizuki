@@ -2,9 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { TOOLS, listAudit, revokeAgent, setGrant } from "@kizuki/core";
 import type { RetrievalPort, ServeContext } from "@kizuki/core";
 import { listClaims } from "@kizuki/core";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { createServer } from "../src/server";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { call, connectClient, envelopeOf, errorOf, pageIds } from "./client";
+import type { ToolCallResult } from "./client";
 import { mcpFixture } from "./helpers";
 import type { McpFixture } from "./helpers";
 
@@ -23,48 +23,7 @@ function live(): McpFixture {
 }
 
 async function connect(ctx: ServeContext): Promise<Client> {
-  const server = createServer(ctx);
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  const client = new Client({ name: "kizuki-test", version: "0" });
-  await Promise.all([
-    client.connect(clientTransport),
-    server.connect(serverTransport),
-  ]);
-  open.push(async () => {
-    await client.close();
-    await server.close();
-  });
-  return client;
-}
-
-interface ToolCallResult {
-  isError?: boolean;
-  content: { type: string; text: string }[];
-  structuredContent?: Record<string, unknown>;
-}
-
-async function call(
-  client: Client,
-  name: string,
-  args: Record<string, unknown>,
-): Promise<ToolCallResult> {
-  const result: unknown = await client.callTool({ name, arguments: args });
-  return result as ToolCallResult;
-}
-
-function envelopeOf(result: ToolCallResult): Record<string, unknown> {
-  return result.structuredContent ?? {};
-}
-
-function errorOf(result: ToolCallResult): { error?: string } {
-  return JSON.parse(result.content[0]?.text ?? "{}") as { error?: string };
-}
-
-function pageIds(envelope: Record<string, unknown>): string[] {
-  return (envelope["canon"] as { page_id: string }[]).map(
-    (chunk) => chunk.page_id,
-  );
+  return connectClient(ctx, open);
 }
 
 describe("the stdio MCP server over a real client", () => {
