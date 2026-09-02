@@ -135,7 +135,7 @@ interface ResolvedExport {
  * a symlink nor a zip is followed: the owner unzips, and the importer reads
  * exactly what it was pointed at.
  */
-export async function resolveExport(path: string): Promise<ResolvedExport> {
+async function resolveExport(path: string): Promise<ResolvedExport> {
   let info;
   try {
     info = await lstat(path);

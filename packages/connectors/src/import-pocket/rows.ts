@@ -28,7 +28,7 @@ function notPocketExport(where: string, cause?: unknown): KizukiError {
 }
 
 /** The columns a header names, or a refusal naming the file but never a cell. */
-export function pocketColumns(
+function pocketColumns(
   header: readonly string[],
   where: string,
 ): string[] {

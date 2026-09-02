@@ -8,7 +8,7 @@ import { KizukiError } from "../errors";
 
 export type DateOrder = "dmy" | "mdy" | "ymd";
 
-export const DATE_ORDERS: readonly DateOrder[] = ["dmy", "mdy", "ymd"];
+const DATE_ORDERS: readonly DateOrder[] = ["dmy", "mdy", "ymd"];
 
 export function isDateOrder(value: unknown): value is DateOrder {
   return (

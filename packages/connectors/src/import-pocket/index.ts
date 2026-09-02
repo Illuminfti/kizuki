@@ -35,7 +35,7 @@ import type { PocketRow } from "./rows";
 
 export { parseCsv } from "./csv";
 export type { CsvOptions } from "./csv";
-export { parsePocketCsv, pocketColumns, pocketHeaderLine } from "./rows";
+export { parsePocketCsv, pocketHeaderLine } from "./rows";
 export type { PocketRow } from "./rows";
 
 export const POCKET_IMPORT_CONNECTOR_ID = "kizuki.import-pocket" as const;
