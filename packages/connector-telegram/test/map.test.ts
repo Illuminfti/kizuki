@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { validateEventInput } from "@kizuki/core";
+import { isRfc3339, validateEventInput } from "@kizuki/core";
 import type { CaptureEventInput } from "@kizuki/core";
 import { mapMessage } from "../src/map";
 import type { TelegramDialog, TelegramMessage, TelegramUser } from "../src/api";
@@ -228,9 +228,12 @@ test("metadata carries no volatile counters", () => {
   ]);
 });
 
-test("a timestamp no clock can represent is skipped, not thrown over", () => {
-  // The date is copied straight off the wire, and a Date it cannot hold raises
-  // a RangeError that would take down the whole batch rather than one record.
+test("a timestamp the ledger would refuse is skipped, not thrown over", () => {
+  // The date is copied straight off the wire. A Date that cannot hold it
+  // raises a RangeError that would take down the whole batch rather than one
+  // record, and a date outside the four-digit years the ledger accepts would
+  // fail every batch it is in for as long as the backfill lives: the
+  // checkpoint is withheld on an error, so the same page is re-read forever.
   for (const date of [
     Number.NaN,
     Number.POSITIVE_INFINITY,
@@ -238,15 +241,22 @@ test("a timestamp no clock can represent is skipped, not thrown over", () => {
     8.64e15,
     -8.64e15,
     1.5,
+    8_640_000_000_000,
+    300_000_000_000,
+    -8_000_000_000_000,
+    -62_167_219_200,
+    -62_135_596_801,
   ]) {
     expect(mapMessage(message({ date }), PRIVATE, SELF, OBSERVED_AT)).toBeNull();
   }
 });
 
-test("the timestamps a clock can represent still map", () => {
-  for (const date of [0, 1, 2_147_483_647, 8_640_000_000_000]) {
+test("every timestamp that maps is one the ledger accepts", () => {
+  for (const date of [0, 1, 2_147_483_647, 253_402_300_799, -62_135_596_800]) {
     const event = mapMessage(message({ date }), PRIVATE, SELF, OBSERVED_AT);
     expect(event?.occurred_at).toBe(new Date(date * 1000).toISOString());
+    expect(isRfc3339(event?.occurred_at)).toBe(true);
+    expect(validateEventInput(event).ok).toBe(true);
   }
 });
 

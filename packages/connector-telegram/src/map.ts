@@ -1,3 +1,4 @@
+import { isRfc3339 } from "@kizuki/core";
 import type {
   AttachmentRef,
   CaptureEventInput,
@@ -93,15 +94,27 @@ function subjectsFor(
   ];
 }
 
-/** Unix seconds either side of the epoch that a Date can still represent. */
-const TIME_LIMIT = 8_640_000_000_000;
+/**
+ * The instant, or `null` when the ledger would refuse it. Provider dates are
+ * attacker-controlled: a Date cannot hold every number one can carry, and the
+ * ones it can hold reach far past the four-digit years an RFC3339 timestamp
+ * is made of. Either would fail the whole batch it arrived in, and because a
+ * batch with an error withholds its checkpoint, the same page would be re-read
+ * and fail again for as long as the connection lives.
+ */
+function occurredAt(date: number): string | null {
+  if (!Number.isInteger(date)) return null;
+  const instant = new Date(date * 1000);
+  if (Number.isNaN(instant.getTime())) return null;
+  const text = instant.toISOString();
+  return isRfc3339(text) ? text : null;
+}
 
 /**
  * `null` for service messages (joins, pins, title changes): they carry no
  * owner-authored content and would only add noise to the ledger, and for a
- * record whose timestamp is not a time. Provider dates are attacker-controlled
- * and a Date that cannot hold one raises where a whole batch would be lost;
- * one unusable record is dropped instead.
+ * record whose timestamp is not one the ledger accepts. One unusable record is
+ * dropped rather than a whole batch lost.
  */
 export function mapMessage(
   message: TelegramMessage,
@@ -110,12 +123,8 @@ export function mapMessage(
   observed_at: string,
 ): CaptureEventInput | null {
   if (message.service) return null;
-  if (
-    !Number.isInteger(message.date) ||
-    Math.abs(message.date) > TIME_LIMIT
-  ) {
-    return null;
-  }
+  const occurred_at = occurredAt(message.date);
+  if (occurred_at === null) return null;
 
   const attachments: AttachmentRef[] = [];
   if (message.attachment !== undefined) {
@@ -135,7 +144,7 @@ export function mapMessage(
     connector_id: TELEGRAM_CONNECTOR_ID,
     source_record_id: `${message.peer_id}:${message.id}`,
     kind: "message",
-    occurred_at: new Date(message.date * 1000).toISOString(),
+    occurred_at,
     observed_at,
     text: message.text,
     subjects: subjectsFor(message, dialog, self),

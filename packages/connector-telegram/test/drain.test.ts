@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { openLedger, runBackfill, runToCompletion } from "@kizuki/core";
 import { initStaging } from "@kizuki/core/staging";
+import { fixtureAccount } from "../src/fixture";
 import { TELEGRAM_CONNECTOR_ID } from "../src/map";
 import { connected } from "./helpers";
 
@@ -89,4 +90,40 @@ test("a run the provider cuts short reports what it stored and where it is", asy
   // The durable checkpoint is untouched, so the next run resumes rather than
   // starting the account again.
   expect(cut.cursor).toBe(first.cursor);
+});
+
+test("a record with an impossible date does not stall the backfill", async () => {
+  const account = fixtureAccount();
+  account.dialogs = [
+    {
+      peer_id: "1002",
+      peer_type: "user",
+      title: "grace",
+      public: false,
+      top_message_id: 3,
+    },
+  ];
+  account.messages = {
+    "1002": [
+      { peer_id: "1002", id: 1, date: 1767225600, text: "one", out: false, service: false },
+      // Far past the years an RFC3339 timestamp is made of. A batch that
+      // carried it would fail, and a failed batch keeps its old checkpoint, so
+      // the same page would be re-read and fail again on every later run.
+      { peer_id: "1002", id: 2, date: 300_000_000_000, text: "two", out: false, service: false },
+      { peer_id: "1002", id: 3, date: 1767225800, text: "three", out: false, service: false },
+    ],
+  };
+  const built = await connected({ account, now: FEBRUARY });
+  const db = ledger();
+  const result = await runToCompletion(
+    db,
+    built.connector,
+    TELEGRAM_CONNECTOR_ID,
+    SOURCE,
+    "backfill",
+  );
+  expect(result.errors).toEqual([]);
+  expect(result.stored).toBe(2);
+  expect(result.cursor).not.toBeNull();
+  db.close();
 });
