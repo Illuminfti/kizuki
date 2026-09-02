@@ -188,6 +188,7 @@ export class ModelProducer implements ProducerPort {
     const predicates = new Set(input.context.predicates);
     const claims: ClaimDraft[] = [];
     const covered: string[] = [];
+    const truncated = new Set<string>();
     const unknownPredicates = new Set<string>();
     let stop: Stop | null = null;
 
@@ -276,7 +277,10 @@ export class ModelProducer implements ProducerPort {
         unknownPredicates.add(predicate);
       }
       claims.push(...outcome.claims);
-      covered.push(...prompt.event_ids);
+      // Only the events this call carried to their end: a record split across
+      // calls is covered by the last of them, never by the first.
+      covered.push(...prompt.covered_event_ids);
+      for (const id of prompt.truncated_event_ids) truncated.add(id);
     }
 
     // A rejection is scoped to one call (RFC 0002 §4.2). Batches that already
@@ -306,12 +310,20 @@ export class ModelProducer implements ProducerPort {
         detail: { count: unknownPredicates.size },
       });
     }
+    if (truncated.size > 0) {
+      this.context.logger({
+        level: "warn",
+        message: "quoted part of a record that is longer than a run can carry",
+        detail: { count: truncated.size },
+      });
+    }
     return {
       status: "ok",
       claims,
       usage: { ...usage },
       covered_event_ids: covered,
       dropped_predicates: [...unknownPredicates].sort(),
+      truncated_event_ids: [...truncated],
     };
   }
 }

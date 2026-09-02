@@ -34,6 +34,7 @@ describe("the package boundary", () => {
     expect(Object.keys(llm).sort()).toEqual([
       "EXTRACT_BATCH",
       "EXTRACT_INPUT_CHARS",
+      "EXTRACT_MAX_CHUNKS",
       "EXTRACT_PROMPT_OVERHEAD_CHARS",
       "LlmRejection",
       "MODEL_PRODUCER",

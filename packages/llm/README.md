@@ -61,11 +61,20 @@ disable a bound. A pasted key is refused without being echoed.
   contains a fence-looking marker is escaped first: every run of three or more
   openers is broken between each character. An answer that echoes the nonce or
   a marker is `rejected: "fence_leak"`.
-- **A stated size.** One call carries at most eight events and
+- **A stated size.** One call carries at most eight quoted blocks and
   `EXTRACT_INPUT_CHARS` characters of quoted text, plus a declared
   `EXTRACT_PROMPT_OVERHEAD_CHARS` for the task line, the registry, the fenced
   context and the markers. The escaping, the clipping and the context block
-  are all counted against that bound rather than added to it.
+  are all counted against that bound rather than added to it, and a batch that
+  would cross it is a fault rather than a silent clip.
+- **A record is covered when all of it has been sent.** A record too long for
+  one call is quoted across several, and `covered_event_ids` names it only
+  once its last piece has gone out, so a caller never checkpoints past text no
+  call carried. A run whose budget cannot carry all of it covers none of it
+  and says `budget_exhausted`. A record longer than `EXTRACT_MAX_CHUNKS` calls
+  is quoted up to there, covered, and named in `truncated_event_ids`, because
+  coverage has to keep advancing or one oversized record stalls every later
+  one behind it on every pass.
 - **Exact schema.** The answer must be one JSON object matching
   `ExtractResponse`. An extra key, a missing key or a value outside a closed
   set is `rejected: "schema_invalid"`, and so is an answer the endpoint cut
@@ -87,11 +96,11 @@ disable a bound. A pasted key is refused without being echoed.
 - **Silence is not emptiness.** A model that could not be reached returns
   `unavailable`, so the caller leaves its checkpoint where it was. `ok` with
   no claims means the records held nothing durable.
-- **A stop is not a loss.** A run stops at the first batch that fails. The
-  batches that already answered come back as `ok` with `covered_event_ids`,
+- **A stop is not a loss.** A run stops at the first call that fails. The
+  calls that already answered come back as `ok` with `covered_event_ids`,
   which names exactly the events this result accounts for; a caller advances
   its checkpoint that far and re-reads the rest on its next pass. When the
-  first batch is the one that failed, nothing is covered and the failure is
+  first call is the one that failed, nothing is covered and the failure is
   what is returned.
 
 ## Budgets

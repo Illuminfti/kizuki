@@ -104,6 +104,12 @@ export type ProduceResult =
        * (RFC 0002 §4.2). Absent below minor 1. `contract_minor >= 1`.
        */
       dropped_predicates?: string[];
+      /**
+       * Covered events whose text ran past what the producer will quote, so a
+       * caller can see that a claim rests on part of a record rather than all
+       * of it. Absent below minor 1. `contract_minor >= 1`.
+       */
+      truncated_event_ids?: string[];
     }
   | {
       status: "unavailable";

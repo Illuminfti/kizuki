@@ -220,7 +220,7 @@ describe("budgets", () => {
     ]);
   });
 
-  test("an event the prompt had no room for is not covered", async () => {
+  test("an event the call had no room for is carried, not dropped", async () => {
     const built = producer(['{"claims":[]}']);
     const result = ok(
       await built.port.produce(
@@ -232,7 +232,56 @@ describe("budgets", () => {
     );
     // Regression: an event dropped for lack of room left no trace, so the
     // caller advanced over a record the model never saw.
-    expect(result.covered_event_ids).toEqual(["ev-big"]);
+    expect(built.llm.calls).toHaveLength(2);
+    expect(result.covered_event_ids).toEqual(["ev-big", "ev-empty"]);
+  });
+
+  test("escaping cannot make coverage skip a record", async () => {
+    const heavy = "<".repeat(EXTRACT_INPUT_CHARS / 4);
+    const events = Array.from({ length: 9 }, (_, index) =>
+      event(`ev-${index}`, heavy),
+    );
+    const built = producer(['{"claims":[]}']);
+    const result = ok(
+      await built.port.produce(
+        produceInput(events, { max_calls: 32, max_input_tokens: 5_000_000 }),
+      ),
+    );
+    // Regression: batches were budgeted on the raw text while the prompt spent
+    // its budget on the escaped text, so a call quietly dropped the tail of
+    // its batch and the run moved on - ev-8 came back covered while ev-5 to
+    // ev-7 had never been sent, and a caller checkpointing on the last
+    // covered id would have skipped them for good.
+    expect(result.covered_event_ids).toEqual(
+      events.map((item) => item.event_id),
+    );
+  });
+
+  test("an oversized record is covered only once all of it was sent", async () => {
+    const long = "z".repeat(EXTRACT_INPUT_CHARS * 2 + 100);
+    const events = [event("ev-long", long), event("ev-next", "short")];
+    const stopped = producer(['{"claims":[]}']);
+    // Regression: an event longer than one call was clipped to the budget and
+    // still reported covered, so a caller checkpointed past evidence the
+    // model never saw. One call cannot carry it, so it covers nothing.
+    expect(
+      await stopped.port.produce(
+        produceInput(events, { max_calls: 1, max_input_tokens: 5_000_000 }),
+      ),
+    ).toMatchObject({ status: "rejected", reason: "budget_exhausted" });
+
+    const whole = producer(['{"claims":[]}']);
+    const result = ok(
+      await whole.port.produce(
+        produceInput(events, { max_calls: 8, max_input_tokens: 5_000_000 }),
+      ),
+    );
+    expect(result.covered_event_ids).toEqual(["ev-long", "ev-next"]);
+    expect(result.truncated_event_ids).toEqual([]);
+    const sent = whole.llm.calls
+      .map((call) => call.messages[1]?.content ?? "")
+      .join("");
+    expect(sent.split("z").length - 1).toBe(long.length);
   });
 
   test("an input budget smaller than the first call spends nothing", async () => {

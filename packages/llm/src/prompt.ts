@@ -1,8 +1,16 @@
 import type { ClaimSummary, QuotedEvent, SubjectRef } from "@kizuki/core";
+import { configError } from "./errors";
 
-/** RFC 0002 §4.2: one call per batch, bounded by both events and characters. */
+/** RFC 0002 §4.2: one call per batch, bounded by both blocks and characters. */
 export const EXTRACT_BATCH = 8;
 export const EXTRACT_INPUT_CHARS = 24_000;
+/**
+ * Calls one event may be spread over. A record longer than this is quoted up
+ * to here and reported as truncated rather than left uncovered: coverage has
+ * to keep advancing, or one oversized record stalls every later one behind it
+ * on every pass forever.
+ */
+export const EXTRACT_MAX_CHUNKS = 8;
 
 /**
  * Everything one prompt carries that is not quoted capture: the task line,
@@ -54,25 +62,52 @@ export function escapeFence(text: string): string {
 }
 
 /**
- * Clips to UTF-16 units — the same unit the character budget counts — and
- * never leaves half a code point behind.
+ * Clips to UTF-16 units — the same unit the character budget counts — from an
+ * offset, without copying the tail first, so quoting a large note costs one
+ * slice per piece rather than one per remaining character. Never leaves half
+ * a code point behind.
  */
+function clipFrom(
+  text: string,
+  from: number,
+  maxChars: number,
+): { text: string; truncated: boolean } {
+  let end = Math.min(text.length, from + Math.max(0, maxChars));
+  if (end > from) {
+    const last = text.charCodeAt(end - 1);
+    if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  }
+  return { text: text.slice(from, end), truncated: end < text.length };
+}
+
 export function clipText(
   text: string,
   maxChars: number,
 ): { text: string; truncated: boolean } {
-  if (text.length <= maxChars) return { text, truncated: false };
-  let end = Math.max(0, maxChars);
-  const last = text.charCodeAt(end - 1);
-  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
-  return { text: text.slice(0, end), truncated: true };
+  return clipFrom(text, 0, maxChars);
+}
+
+/** One fenced block: a whole event, or a piece of one too long for a call. */
+export interface QuotedChunk {
+  readonly event_id: string;
+  /** Escaped and clipped already: what the prompt fences verbatim. */
+  readonly text: string;
+  /** The event's last piece, so the batch carrying it covers that event. */
+  readonly last: boolean;
+  /** The event ran past what this producer quotes and was cut short. */
+  readonly truncated: boolean;
 }
 
 export interface ExtractPrompt {
   system: string;
   user: string;
   nonce: string;
+  /** Every event quoted here: what a claim from this call may cite. */
   event_ids: string[];
+  /** The events this call carries to their end: what it may cover. */
+  covered_event_ids: string[];
+  /** Covered events whose text ran past what this producer quotes. */
+  truncated_event_ids: string[];
 }
 
 export interface PromptContext {
@@ -82,30 +117,78 @@ export interface PromptContext {
 }
 
 /**
- * Splits the batch so that one call carries at most EXTRACT_BATCH events and
- * at most EXTRACT_INPUT_CHARS characters of quoted text. An event longer than
- * the character budget still travels alone, clipped to it.
+ * The escaped form of as much of `raw` from `offset` as fits in `room`.
+ * Escaping a run of fence openers lengthens it, so the slice is escaped and
+ * shrunk until what would be sent fits: the budget bounds what leaves, not
+ * what was read. Shrinking by the excess at least halves the slice, so this
+ * settles in a handful of passes over at most one call's worth of text.
+ */
+function fitEscaped(
+  raw: string,
+  offset: number,
+  room: number,
+): { text: string; consumed: number } {
+  let take = room;
+  for (;;) {
+    const piece = clipFrom(raw, offset, take);
+    const escaped = escapeFence(piece.text);
+    if (escaped.length <= room) {
+      return { text: escaped, consumed: piece.text.length };
+    }
+    take = Math.max(1, take - (escaped.length - room));
+  }
+}
+
+/**
+ * Splits events into calls: at most EXTRACT_BATCH quoted blocks and at most
+ * EXTRACT_INPUT_CHARS characters of escaped text per call. An event too long
+ * for one call is carried across several, and counts as covered only once its
+ * last piece has been quoted, so a caller never advances over text no call
+ * ever sent. An event longer than EXTRACT_MAX_CHUNKS calls is cut short there
+ * and its last piece says so.
  */
 export function batchEvents(
   events: readonly QuotedEvent[],
-): QuotedEvent[][] {
-  const batches: QuotedEvent[][] = [];
-  let current: QuotedEvent[] = [];
-  let chars = 0;
-  for (const event of events) {
-    const size = Math.min(event.text.length, EXTRACT_INPUT_CHARS);
-    if (
-      current.length > 0 &&
-      (current.length >= EXTRACT_BATCH || chars + size > EXTRACT_INPUT_CHARS)
-    ) {
+): QuotedChunk[][] {
+  const batches: QuotedChunk[][] = [];
+  let current: QuotedChunk[] = [];
+  let used = 0;
+  const flush = (): void => {
+    if (current.length > 0) {
       batches.push(current);
       current = [];
-      chars = 0;
+      used = 0;
     }
-    current.push(event);
-    chars += size;
+  };
+  for (const event of events) {
+    let offset = 0;
+    for (let piece = 1; ; piece += 1) {
+      // A room of one cannot hold a surrogate pair, so the call is closed
+      // rather than left with a piece that could make no progress.
+      if (current.length >= EXTRACT_BATCH || EXTRACT_INPUT_CHARS - used <= 1) {
+        flush();
+      }
+      let fitted = fitEscaped(event.text, offset, EXTRACT_INPUT_CHARS - used);
+      if (offset + fitted.consumed < event.text.length && current.length > 0) {
+        // What is left of this record would be split only because an earlier
+        // one filled this call, and a call of its own may hold it whole.
+        flush();
+        fitted = fitEscaped(event.text, offset, EXTRACT_INPUT_CHARS);
+      }
+      offset += fitted.consumed;
+      used += fitted.text.length;
+      const whole = offset >= event.text.length;
+      const capped = !whole && piece >= EXTRACT_MAX_CHUNKS;
+      current.push({
+        event_id: event.event_id,
+        text: fitted.text,
+        last: whole || capped,
+        truncated: capped,
+      });
+      if (whole || capped) break;
+    }
   }
-  if (current.length > 0) batches.push(current);
+  flush();
   return batches;
 }
 
@@ -173,26 +256,39 @@ function registryLine(predicates: readonly string[]): string {
  * in the task line and never in the request's structure (RFC 0002 §10.2).
  */
 export function buildExtractPrompt(
-  events: readonly QuotedEvent[],
+  batch: readonly QuotedChunk[],
   context: PromptContext,
   nonce: string,
 ): ExtractPrompt {
-  let remaining = EXTRACT_INPUT_CHARS;
+  // The bound is enforced rather than applied: a batch that does not fit is a
+  // fault in whoever built it, and clipping one here would silently drop the
+  // blocks a caller is about to be told this call covered.
+  if (batch.length > EXTRACT_BATCH) {
+    configError(
+      `an extraction prompt carries at most ${EXTRACT_BATCH} quoted blocks`,
+    );
+  }
+  let quoted = 0;
   const blocks: string[] = [];
   const eventIds: string[] = [];
-  // One prompt is one batch. Slicing here is what makes the declared overhead
-  // a bound rather than a description of how the producer happens to call in.
-  for (const event of events.slice(0, EXTRACT_BATCH)) {
-    if (remaining <= 0) break;
-    const escaped = clipText(
-      escapeFence(clipText(event.text, remaining).text),
-      remaining,
-    ).text;
-    remaining -= escaped.length;
-    eventIds.push(event.event_id);
+  const covered: string[] = [];
+  const truncated: string[] = [];
+  for (const chunk of batch) {
+    // Escaping is idempotent, so re-escaping a chunk the batcher prepared
+    // costs nothing and a hand-built one cannot smuggle a marker through.
+    const text = escapeFence(chunk.text);
+    quoted += text.length;
+    if (quoted > EXTRACT_INPUT_CHARS) {
+      configError(
+        `an extraction prompt carries at most ${EXTRACT_INPUT_CHARS} characters of quoted text`,
+      );
+    }
+    if (!eventIds.includes(chunk.event_id)) eventIds.push(chunk.event_id);
+    if (chunk.last) covered.push(chunk.event_id);
+    if (chunk.truncated) truncated.push(chunk.event_id);
     blocks.push(
-      `<<<KZ-QUOTE ${nonce} event:${escapeFence(event.event_id)}>>>\n` +
-        `${escaped}\n` +
+      `<<<KZ-QUOTE ${nonce} event:${escapeFence(chunk.event_id)}>>>\n` +
+        `${text}\n` +
         `<<<KZ-END ${nonce}>>>`,
     );
   }
@@ -200,7 +296,14 @@ export function buildExtractPrompt(
     `${TASK}\n\nregistry: ${registryLine(context.predicates)}\n\n` +
     `<<<KZ-CONTEXT ${nonce}>>>\n${contextBlock(context)}\n<<<KZ-END ${nonce}>>>` +
     (blocks.length > 0 ? `\n\n${blocks.join("\n\n")}` : "");
-  return { system: SYSTEM_PROMPT, user, nonce, event_ids: eventIds };
+  return {
+    system: SYSTEM_PROMPT,
+    user,
+    nonce,
+    event_ids: eventIds,
+    covered_event_ids: covered,
+    truncated_event_ids: truncated,
+  };
 }
 
 /** A model that echoes the fence is a model that was steered by its content. */

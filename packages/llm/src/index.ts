@@ -25,6 +25,7 @@ export {
 export {
   EXTRACT_BATCH,
   EXTRACT_INPUT_CHARS,
+  EXTRACT_MAX_CHUNKS,
   EXTRACT_PROMPT_OVERHEAD_CHARS,
   SYSTEM_PROMPT,
   batchEvents,
@@ -34,7 +35,7 @@ export {
   leaksFence,
   quoteNonce,
 } from "./prompt";
-export type { ExtractPrompt, PromptContext } from "./prompt";
+export type { ExtractPrompt, PromptContext, QuotedChunk } from "./prompt";
 
 export { readChatAnswer } from "./response";
 export type { ProviderAnswer } from "./response";

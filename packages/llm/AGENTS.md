@@ -66,4 +66,7 @@ writes canon; it returns drafts to whoever bound it.
 - A model that did not answer is `unavailable`, not `ok` with no claims. The
   distinction is what stops a caller advancing a checkpoint over lost work,
   and `covered_event_ids` is what tells it how far it may advance when a run
-  stopped part way.
+  stopped part way. Cover an event only once every character this package will
+  ever quote from it has gone out, in input order, so the covered list is
+  always a prefix of the input: a gap in it is a record checkpointed past
+  unread. Where a record is quoted only in part, say so on the result.
