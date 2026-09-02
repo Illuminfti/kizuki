@@ -78,11 +78,16 @@ disable a bound. A pasted key is refused without being echoed.
 - **A record is covered when all of it has been sent.** A record too long for
   one call is quoted across several, and `covered_event_ids` names it only
   once its last piece has gone out, so a caller never checkpoints past text no
-  call carried. A run whose budget cannot carry all of it covers none of it
-  and says `budget_exhausted`. A record longer than `EXTRACT_MAX_CHUNKS` calls
-  is quoted up to there, covered, and named in `truncated_event_ids`, because
+  call carried. Every piece carries at least half a call's room, whatever the
+  escaping costs, so a record advances by call-sized pieces rather than by
+  characters. A run whose budget cannot carry all of it covers none of it and
+  says `budget_exhausted`. A record longer than `EXTRACT_MAX_CHUNKS` calls is
+  quoted up to there, covered, and named in `truncated_event_ids`, because
   coverage has to keep advancing or one oversized record stalls every later
-  one behind it on every pass.
+  one behind it on every pass. The rest of such a record is not quoted on a
+  later pass either, so a claim resting on a truncated record rests on its
+  first `EXTRACT_MAX_CHUNKS * EXTRACT_INPUT_CHARS` characters at most, and no
+  fewer than half of those.
 - **Exact schema.** The answer must be one JSON object matching
   `ExtractResponse`. An extra key, a missing key or a value outside a closed
   set is `rejected: "schema_invalid"`, and so is an answer the endpoint cut

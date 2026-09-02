@@ -198,6 +198,40 @@ describe("bounds", () => {
     expect(chunks.every((chunk) => !chunk.truncated)).toBe(true);
   });
 
+  test("a record made of fence openers is quoted in whole pieces", () => {
+    // Regression: the fit shrank the slice by the escaped excess, which for a
+    // run of openers equals the slice, so a record was quoted one character
+    // per paid call and then reported covered with its tail never sent.
+    const tail = "the tail of the record";
+    const text = `${"<".repeat(30_000)}${tail}`;
+    const chunks = batchEvents([event("ev-runs", text)]).flat();
+    expect(chunks.length).toBeLessThanOrEqual(3);
+    for (const chunk of chunks.slice(0, -1)) {
+      expect(chunk.text.length).toBeGreaterThanOrEqual(EXTRACT_INPUT_CHARS / 2);
+    }
+    expect(chunks.at(-1)?.last).toBe(true);
+    expect(chunks.at(-1)?.truncated).toBe(false);
+    // The escape is the only thing the pieces added, so removing it re-forms
+    // the record: every character of it reached a call.
+    expect(chunks.map((chunk) => chunk.text).join("").replaceAll("\\", "")).toBe(
+      text,
+    );
+  });
+
+  test("even an all-opener record is carried in call-sized pieces", () => {
+    // The floor holds at the size the budget test feeds: a record of nothing
+    // but openers still advances by half a call's room per piece.
+    const chunks = batchEvents([
+      event("ev-runs", "<".repeat(EXTRACT_INPUT_CHARS * 3)),
+    ]).flat();
+    expect(chunks.length).toBeLessThanOrEqual(EXTRACT_MAX_CHUNKS);
+    const carried = chunks
+      .map((chunk) => chunk.text)
+      .join("")
+      .replaceAll("\\", "").length;
+    expect(carried).toBeGreaterThanOrEqual(EXTRACT_INPUT_CHARS);
+  });
+
   test("an event longer than a run can carry is cut short and says so", () => {
     const enormous = "z".repeat(EXTRACT_INPUT_CHARS * (EXTRACT_MAX_CHUNKS + 2));
     const chunks = batchEvents([event("ev-huge", enormous)]).flat();
@@ -271,9 +305,14 @@ describe("bounds", () => {
       const events = Array.from({ length: EXTRACT_BATCH }, (_, index) =>
         event(`ev-${name}-${index}`, text),
       );
-      const prompt = buildExtractPrompt(firstBatch(events), context, quoteNonce());
+      const batch = firstBatch(events);
+      const prompt = buildExtractPrompt(batch, context, quoteNonce());
       expect(prompt.user.split("<<<KZ-QUOTE").length - 1).toBeGreaterThan(0);
       expect(prompt.user.length).toBeLessThanOrEqual(bound);
+      // Under-carrying fails here as loudly as over-carrying: an upper bound
+      // alone passes against a batcher that quotes a single character.
+      const carried = batch.reduce((total, chunk) => total + chunk.text.length, 0);
+      expect(carried).toBeGreaterThanOrEqual(EXTRACT_INPUT_CHARS / 2);
     }
   });
 

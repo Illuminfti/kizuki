@@ -8,7 +8,10 @@ export const EXTRACT_INPUT_CHARS = 24_000;
  * Calls one event may be spread over. A record longer than this is quoted up
  * to here and reported as truncated rather than left uncovered: coverage has
  * to keep advancing, or one oversized record stalls every later one behind it
- * on every pass forever.
+ * on every pass forever. Every piece carries at least half a call's room, so
+ * the cut falls no earlier than `EXTRACT_MAX_CHUNKS * EXTRACT_INPUT_CHARS / 2`
+ * characters into a record and at `EXTRACT_MAX_CHUNKS * EXTRACT_INPUT_CHARS`
+ * for text that needs no escaping.
  */
 export const EXTRACT_MAX_CHUNKS = 8;
 
@@ -120,14 +123,22 @@ export interface PromptContext {
  * The escaped form of as much of `raw` from `offset` as fits in `room`.
  * Escaping a run of fence openers lengthens it, so the slice is escaped and
  * shrunk until what would be sent fits: the budget bounds what leaves, not
- * what was read. Shrinking by the excess at least halves the slice, so this
- * settles in a handful of passes over at most one call's worth of text.
+ * what was read.
+ *
+ * Escaping breaks a maximal run between each character, so it never even
+ * doubles a slice and half the room therefore always fits, whatever the text
+ * holds. The shrink is proportional to the overflow and floored at that half,
+ * so every piece consumes a call's worth of the record rather than collapsing
+ * to a character: subtracting the excess sent `take` to one for a slice that
+ * is all openers, which quoted a whole record eight characters at a time and
+ * then reported it covered.
  */
 function fitEscaped(
   raw: string,
   offset: number,
   room: number,
 ): { text: string; consumed: number } {
+  const least = Math.max(1, Math.floor(room / 2));
   let take = room;
   for (;;) {
     const piece = clipFrom(raw, offset, take);
@@ -135,7 +146,7 @@ function fitEscaped(
     if (escaped.length <= room) {
       return { text: escaped, consumed: piece.text.length };
     }
-    take = Math.max(1, take - (escaped.length - room));
+    take = Math.max(least, Math.floor((take * room) / escaped.length));
   }
 }
 
