@@ -8,6 +8,7 @@ describe("public port surface", () => {
       "PortRegistry",
       "bindFromConfig",
       "connectRemotePort",
+      "createFts5RetrievalPort",
       "createRemoteRetrievalPort",
       "listPorts",
       "registerPort",
