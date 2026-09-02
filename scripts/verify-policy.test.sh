@@ -156,4 +156,27 @@ if (
 fi
 rm -rf -- "$shallow_copy"
 
+restrict_root="$(mktemp -d)"
+git -C "$restrict_root" init -q
+git -C "$restrict_root" config user.name verifier
+git -C "$restrict_root" config user.email verifier@example.invalid
+printf 'keep\n' >"$restrict_root/README.md"
+git -C "$restrict_root" add README.md
+git -C "$restrict_root" commit -q -m 'restrict fixture'
+git -C "$restrict_root" update-ref refs/remotes/origin/main HEAD
+git -C "$restrict_root" update-ref refs/remotes/origin/sibling HEAD
+(
+  cd "$restrict_root"
+  bash "$script_dir/ci-restrict-origin-refs.sh"
+)
+if git -C "$restrict_root" show-ref --verify --quiet refs/remotes/origin/sibling; then
+  printf 'policy test failed: sibling origin ref survived restrict\n' >&2
+  exit 1
+fi
+if ! git -C "$restrict_root" show-ref --verify --quiet refs/remotes/origin/main; then
+  printf 'policy test failed: origin/main was dropped by restrict\n' >&2
+  exit 1
+fi
+rm -rf -- "$restrict_root"
+
 printf 'verification policy tests passed\n'
