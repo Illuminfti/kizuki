@@ -2,7 +2,7 @@ import { SENSITIVITY_ORDER, authorize } from "../agents";
 import type { DenyReason, Grant, Sensitivity, Servable } from "../agents";
 import { readHolds } from "../ledger/purge";
 import { listCanonPagesReport, stringArray } from "../vault/pages";
-import type { CanonPage } from "../vault/pages";
+import type { CanonPage, SkippedPage } from "../vault/pages";
 import type { CanonChunk, ServeContext } from "./types";
 
 export interface CanonIndex {
@@ -28,6 +28,21 @@ function stringField(page: CanonPage, key: string): string | null {
 }
 
 /**
+ * The vault walk reports what it could not use instead of throwing, so the
+ * refusal carries that report: the caller-facing message names nothing, and
+ * the owner's own tooling reads the paths and reasons off the cause.
+ */
+export class CanonUnreadableError extends Error {
+  override name = "CanonUnreadableError";
+  readonly skipped: SkippedPage[];
+
+  constructor(skipped: SkippedPage[]) {
+    super(`canon is not fully readable: ${skipped.length} page(s)`);
+    this.skipped = skipped;
+  }
+}
+
+/**
  * One vault walk and one hold read per served call. A page that cannot be
  * parsed makes the whole read refuse: serving a silently short list would
  * under-report canon without anyone noticing.
@@ -35,9 +50,7 @@ function stringField(page: CanonPage, key: string): string | null {
 export function loadCanon(ctx: ServeContext): CanonIndex {
   const report = listCanonPagesReport(ctx.vaultPath);
   if (report.skipped.length > 0) {
-    throw new Error(
-      `canon is not fully readable: ${report.skipped.length} page(s)`,
-    );
+    throw new CanonUnreadableError(report.skipped);
   }
   const byId = new Map<string, CanonPage>();
   const byPath = new Map<string, CanonPage>();

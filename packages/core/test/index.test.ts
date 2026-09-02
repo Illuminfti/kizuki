@@ -19,6 +19,7 @@ describe("public surface", () => {
       "CONFORMANCE_FAMILIES",
       "CONNECTION_CONFIG_SCHEMA",
       "CONNECTOR_SCHEMA",
+      "CanonUnreadableError",
       "CanonWriteError",
       "ClaimError",
       "ConnectionStateStore",

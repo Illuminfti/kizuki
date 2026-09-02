@@ -8,6 +8,7 @@ import type { ContextPacketArgs } from "../../src/serving/packet";
 import { serveSearch } from "../../src/serving/search";
 import { serveTimeline } from "../../src/serving/timeline";
 import { ServeError } from "../../src/serving/types";
+import { CanonUnreadableError } from "../../src/serving/canon";
 import { page, serveFixture, storeEvent } from "./helpers";
 import type { Fixture } from "./helpers";
 
@@ -169,6 +170,37 @@ describe("serveContextPacket", () => {
     expect(
       refusal(() => serveSearch(live.owner(), { query: "kettle" })).code,
     ).toBe("error");
+  });
+
+  test("a page the walk cannot use is named to the owner's own tooling", () => {
+    const live = newFixture();
+    // A duplicate id is the case the vault walk reports rather than throws,
+    // and the one a hand-authored page reaches by copying another.
+    page(
+      live.vaultPath,
+      "entities/person-ada-copy.md",
+      {
+        id: "person:ada",
+        title: "Ada again",
+        type: "person",
+        status: "active",
+        sensitivity: "public",
+      },
+      "A second page claiming one id.",
+    );
+
+    const error = refusal(() => serveSearch(live.owner(), { query: "kettle" }));
+    expect(error.code).toBe("error");
+    expect(error.message).toBe("serving failed");
+    const cause = error.cause;
+    expect(cause).toBeInstanceOf(CanonUnreadableError);
+    const skipped =
+      cause instanceof CanonUnreadableError ? cause.skipped : [];
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0]?.relPath).toBe("entities/person-ada.md");
+    expect(skipped[0]?.reason).toContain("duplicate id");
+    // The caller still learns nothing about the vault's layout.
+    expect(error.message).not.toContain("person-ada");
   });
 });
 

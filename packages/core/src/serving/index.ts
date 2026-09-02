@@ -7,6 +7,7 @@ export type {
   ServeContext,
 } from "./types";
 
+export { CanonUnreadableError } from "./canon";
 export { gate } from "./gate";
 export type { Served } from "./gate";
 

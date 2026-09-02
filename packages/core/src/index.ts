@@ -529,6 +529,7 @@ export type {
 } from "./agents";
 
 export {
+  CanonUnreadableError,
   ENTITY_TYPES,
   ENVELOPE_SCHEMA,
   ServeError,
