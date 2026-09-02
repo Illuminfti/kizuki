@@ -194,7 +194,6 @@ export class TelegramConnector implements Connector {
     this.#api = api;
     this.#self = me;
     this.#listing = null;
-    this.#revoked = false;
     this.#lastSuccessAt = this.#nowIso();
   }
 

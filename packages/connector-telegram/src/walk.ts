@@ -49,7 +49,7 @@ interface Batch {
   read: number;
 }
 
-export async function listDialogs(
+async function listDialogs(
   api: TelegramApi,
 ): Promise<{ dialogs: TelegramDialog[]; limitReached: boolean }> {
   const dialogs: TelegramDialog[] = [];
@@ -67,7 +67,7 @@ export async function listDialogs(
  * finds that edit. A watermark stamped when the walk ended would sit above
  * every such edit and nothing would look at those messages again.
  */
-export function seedCursor(
+function seedCursor(
   dialogs: TelegramDialog[],
   startedAt: number,
 ): TelegramCursor {
