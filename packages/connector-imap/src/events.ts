@@ -326,6 +326,11 @@ export function messageEvent(input: MessageEventInput): CaptureEventInput {
     );
   const listId = capHeader(headerValue(fields, "list-id"));
 
+  // Collected before the metadata literal: decoding an address phrase can add
+  // a charset fallback, and the label has to travel with the event that needed
+  // it rather than be snapshotted a moment too early.
+  const subjects = collectSubjects(fields, fallbacks);
+
   const metadata: Record<string, unknown> = {
     folder: input.folderDisplay,
     uid: input.uid,
@@ -354,7 +359,7 @@ export function messageEvent(input: MessageEventInput): CaptureEventInput {
     occurred_at: occurredAt,
     observed_at: input.observedAt,
     text,
-    subjects: collectSubjects(fields, fallbacks),
+    subjects,
     sensitivity_hint: "personal",
     deleted: false,
     attachments,

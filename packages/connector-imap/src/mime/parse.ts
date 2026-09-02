@@ -1,6 +1,6 @@
 import { decodeCharset } from "./charset";
 import { headerValue, parseHeaders } from "./headers";
-import type { HeaderField } from "./headers";
+import type { HeaderField, ParsedHeaders } from "./headers";
 import { decodeTransfer } from "./transfer";
 import { decodeEncodedWords } from "./rfc2047";
 
@@ -33,7 +33,6 @@ export interface ParsedMessage {
   root: MimePart;
   headers: HeaderField[];
   headersTruncated: boolean;
-  charsetFallbacks: string[];
 }
 
 function splitParams(value: string): { head: string; params: Record<string, string> } {
@@ -167,6 +166,21 @@ function atLineStart(bytes: Uint8Array, index: number): boolean {
   return index === 0 || bytes[index - 1] === 0x0a;
 }
 
+/**
+ * RFC 2046: a delimiter line ends after the boundary, apart from the closing
+ * `--` and transport padding. Without this check a nested boundary that merely
+ * extends the outer one (`b` and `b1`) splits the message in the wrong places,
+ * and every attachment ref below it names the wrong MIME section.
+ */
+function endsDelimiter(bytes: Uint8Array, index: number): boolean {
+  let cursor = index;
+  if (bytes[cursor] === 0x2d && bytes[cursor + 1] === 0x2d) cursor += 2;
+  while (bytes[cursor] === 0x20 || bytes[cursor] === 0x09) cursor += 1;
+  return (
+    cursor >= bytes.length || bytes[cursor] === 0x0d || bytes[cursor] === 0x0a
+  );
+}
+
 function splitMultipart(body: Uint8Array, boundary: string): Uint8Array[] {
   const marker = new TextEncoder().encode(`--${boundary}`);
   const segments: Uint8Array[] = [];
@@ -175,7 +189,7 @@ function splitMultipart(body: Uint8Array, boundary: string): Uint8Array[] {
   while (cursor < body.length) {
     const found = indexOfSequence(body, marker, cursor);
     if (found === -1) break;
-    if (!atLineStart(body, found)) {
+    if (!atLineStart(body, found) || !endsDelimiter(body, found + marker.length)) {
       cursor = found + 1;
       continue;
     }
@@ -204,9 +218,8 @@ function buildPart(
   path: string,
   depth: number,
   budget: WalkBudget,
-  fallbacks: string[],
+  parsed: ParsedHeaders = parseHeaders(bytes),
 ): MimePart {
-  const parsed = parseHeaders(bytes);
   const contentType = parseContentType(headerValue(parsed.fields, "content-type"));
   const disposition = parseDisposition(
     headerValue(parsed.fields, "content-disposition"),
@@ -233,9 +246,7 @@ function buildPart(
       if (budget.parts >= MAX_MIME_PARTS) return;
       budget.parts += 1;
       const childPath = path.length === 0 ? `${index + 1}` : `${path}.${index + 1}`;
-      part.children.push(
-        buildPart(segment, childPath, depth + 1, budget, fallbacks),
-      );
+      part.children.push(buildPart(segment, childPath, depth + 1, budget));
     });
     return part;
   }
@@ -250,15 +261,12 @@ function buildPart(
 }
 
 export function parseMessage(bytes: Uint8Array): ParsedMessage {
-  const fallbacks: string[] = [];
-  const budget: WalkBudget = { parts: 0 };
-  const root = buildPart(bytes, "", 0, budget, fallbacks);
   const parsed = parseHeaders(bytes);
+  const root = buildPart(bytes, "", 0, { parts: 0 }, parsed);
   return {
     root,
     headers: parsed.fields,
     headersTruncated: parsed.truncated,
-    charsetFallbacks: fallbacks,
   };
 }
 

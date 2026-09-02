@@ -99,6 +99,53 @@ describe("multipart walk", () => {
     expect(leafPaths(message.root)).toEqual(["1.1", "2"]);
   });
 
+  test("an inner boundary that extends the outer one is not a delimiter", () => {
+    const raw = [
+      "Content-Type: multipart/mixed; boundary=b",
+      "",
+      "--b",
+      "Content-Type: multipart/alternative; boundary=b1",
+      "",
+      "--b1",
+      "Content-Type: text/plain",
+      "",
+      "inner plain",
+      "--b1--",
+      "--b",
+      "Content-Type: text/plain; name=note.txt",
+      "",
+      "attached",
+      "--b--",
+      "",
+    ].join("\r\n");
+    expect(leafPaths(parseMessage(encode(raw)).root)).toEqual(["1.1", "2"]);
+  });
+
+  test("a delimiter may carry transport padding but not more text", () => {
+    const raw = [
+      "Content-Type: multipart/mixed; boundary=B",
+      "",
+      "--B  ",
+      "Content-Type: text/plain",
+      "",
+      "one",
+      "--Bx",
+      "still one",
+      "--B",
+      "Content-Type: text/plain",
+      "",
+      "two",
+      "--B--",
+      "",
+    ].join("\r\n");
+    const message = parseMessage(encode(raw));
+    expect(leafPaths(message.root)).toEqual(["1", "2"]);
+    const first = message.root.children[0];
+    expect(first).toBeDefined();
+    if (first === undefined) return;
+    expect(partText(first, [])).toContain("still one");
+  });
+
   test("caps the part count", () => {
     const parts = Array.from(
       { length: MAX_MIME_PARTS + 20 },

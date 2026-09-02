@@ -279,6 +279,21 @@ describe("mapping edges", () => {
     ]);
   });
 
+  test("a charset fallback in an address phrase is recorded too", () => {
+    const event = build(
+      [
+        "From: =?koi8-r?Q?Ada?= <ada@acme.example>",
+        "Subject: Plain",
+        "Content-Type: text/plain; charset=utf-8",
+        "",
+        "body",
+        "",
+      ].join("\r\n"),
+    );
+    expect(event.metadata["charset_fallback"]).toEqual(["koi8-r"]);
+    expect(event.subjects[0]?.subject_id).toBe("email:ada@acme.example");
+  });
+
   test("an out-of-range entity in an html body still yields an event", () => {
     const event = build(
       [
