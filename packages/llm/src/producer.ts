@@ -47,6 +47,19 @@ const MAX_KNOWN_CLAIMS = 256;
 const MAX_PREDICATES = 512;
 const MAX_OUTPUT_TOKENS_PER_CALL = 2_048;
 const CALL_DEADLINE_MS = 60_000;
+const MAX_REASON_CHARS = 200;
+
+/**
+ * The reason travels into a run receipt, and a replaceable port wrote it.
+ * Keep it short and printable rather than trusting whoever implemented it.
+ */
+function scrubReason(error: unknown): string {
+  if (!(error instanceof PortError)) return "the model port failed";
+  return error.message
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+    .slice(0, MAX_REASON_CHARS)
+    .trim();
+}
 
 /** `ModelUsage` is readonly on the wire; this is the tally behind it. */
 interface Tally {
@@ -209,13 +222,7 @@ export class ModelProducer implements ProducerPort {
         }
         // A model that did not answer is not a model that answered nothing:
         // the caller must leave its checkpoint where it was.
-        return {
-          status: "unavailable",
-          reason:
-            error instanceof PortError
-              ? error.message
-              : "the model port failed",
-        };
+        return { status: "unavailable", reason: scrubReason(error) };
       }
 
       // Never under-charge: the estimate paid for the gate above, and an

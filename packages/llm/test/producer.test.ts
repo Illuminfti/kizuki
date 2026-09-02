@@ -85,6 +85,17 @@ describe("the model producer", () => {
     expect(result).toEqual({ status: "unavailable", reason: "no answer" });
   });
 
+  test("an unavailable reason is short and printable", async () => {
+    const noisy = `x${String.fromCharCode(27)}[31m`.repeat(200);
+    const built = producer([new PortError("unavailable", noisy, true)]);
+    const result = await built.port.produce(
+      produceInput([event("ev-1", "hi")]),
+    );
+    if (result.status !== "unavailable") throw new Error("expected unavailable");
+    expect(result.reason.length).toBeLessThanOrEqual(200);
+    expect(result.reason).not.toContain(String.fromCharCode(27));
+  });
+
   test("a refused answer is rejected with its reason and its usage", async () => {
     for (const [error, reason] of [
       [new LlmRejection("tool_call_in_response", "tools"), "tool_call_in_response"],
