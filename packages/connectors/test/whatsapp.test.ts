@@ -267,6 +267,29 @@ test("system notices are skipped and never become events", async () => {
   expect(noticesOnly).toEqual([]);
 });
 
+test("the dates of a notice settle nothing and refuse nothing", async () => {
+  // A notice is dropped, so its date is not evidence for the order and not a
+  // line that can fail under it. An export holding only notices is empty
+  // rather than ambiguous, and a notice a longer export carries cannot refuse
+  // the messages around it.
+  expect(
+    await parse("4/1/26, 09:00 - Messages and calls are end-to-end encrypted."),
+  ).toEqual([]);
+
+  const events = await parse(
+    [
+      "1/13/26, 09:00 - Ada: hello",
+      "31/12/26, 09:01 - Messages and calls are end-to-end encrypted.",
+      "1/14/26, 09:02 - Grace: hi",
+    ].join("\n"),
+  );
+  expect(events.map((event) => event.metadata["sender"])).toEqual([
+    "Ada",
+    "Grace",
+  ]);
+  expect(events[0]?.occurred_at).toBe("2026-01-13T09:00:00.000Z");
+});
+
 test("a file with no timestamped line is refused", async () => {
   const error = await rejected(() => parse("just some prose\nand more prose"));
   expect(error.code).toBe("parse_error");

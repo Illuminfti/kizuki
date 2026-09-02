@@ -45,11 +45,19 @@ const TIMESTAMP_FIELDS = new RegExp(
 
 const LEADING_MARKS = /^[\u200e\u200f]+/;
 
+/** What an export of notices alone is reported as: it dates nothing, so
+ * nothing about it depends on the answer. */
+const DEFAULT_DATE_ORDER: DateOrder = "dmy";
+
 interface StartLine {
   line: number;
   date: RawDate;
   time: RawTime;
-  rest: string;
+  /** `null` for a system notice: a timestamped line with nothing before its
+   * first colon-and-space, so no author and no claim worth writing. */
+  sender: string | null;
+  /** What the message says on its own start line; empty for a notice. */
+  text: string;
 }
 
 function stripLeadingMarks(value: string): string {
@@ -136,11 +144,15 @@ export function splitWhatsAppMessages(
         `export holds more than ${MAX_RECORDS} messages`,
       );
     }
+    const rest = matched[3] ?? "";
+    const cut = rest.indexOf(": ");
+    const sender = cut > 0 ? rest.slice(0, cut).trim() : null;
     starts.push({
       line: index + 1,
       date: stamp.date,
       time: stamp.time,
-      rest: matched[3] ?? "",
+      sender,
+      text: sender === null ? "" : rest.slice(cut + 2),
     });
     current = starts.length - 1;
     currentLine = index + 1;
@@ -155,16 +167,23 @@ export function splitWhatsAppMessages(
     );
   }
 
+  // A notice is dropped before the dates are read, so neither its own date nor
+  // an unparsable one inside it settles or refuses an import of the messages
+  // around it: an export holding nothing but notices is empty, not an error.
+  const dated = starts.filter((start) => start.sender !== null);
   const order =
-    date_order ?? detectDateOrder(starts.map((start) => start.date));
+    date_order ??
+    (dated.length > 0
+      ? detectDateOrder(dated.map((start) => start.date))
+      : DEFAULT_DATE_ORDER);
 
   const messages: ParsedWhatsAppMessage[] = [];
   starts.forEach((start, index) => {
+    const sender = start.sender;
+    if (sender === null) return;
     const stamp = localTimestamp(start.date, start.time, order, start.line);
-    const cut = start.rest.indexOf(": ");
-    if (cut <= 0) return;
     const body = [
-      stripLeadingMarks(start.rest.slice(cut + 2)),
+      stripLeadingMarks(start.text),
       ...(continuations.get(index) ?? []),
     ].join("\n");
     if (Buffer.byteLength(body, "utf8") > MAX_RECORD_BYTES) {
@@ -175,7 +194,6 @@ export function splitWhatsAppMessages(
     }
     // A sender becomes a subject and a display name, so it is a captured
     // field like any other and carries the same bound.
-    const sender = start.rest.slice(0, cut).trim();
     if (Buffer.byteLength(sender, "utf8") > MAX_RECORD_BYTES) {
       throw new KizukiError(
         "parse_error",
