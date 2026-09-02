@@ -5,7 +5,7 @@ import {
   fixtureAccount,
 } from "../src/fixture";
 import type { TelegramDialog } from "../src/api";
-import { connected, drain, harness, stateResolver } from "./helpers";
+import { connected, drain, harness, rejection, stateResolver } from "./helpers";
 
 test("health tracks the connection from unsigned to revoked", async () => {
   const unsigned = harness({ config: {} });
@@ -167,4 +167,39 @@ test("a wait reported by the authorization probe is a pause, not an outage", asy
 
   built.clock.now += 300_000;
   expect((await built.connector.health()).state).toBe("ok");
+});
+
+test("revoke without a live client refuses rather than claiming access ended", async () => {
+  const built = harness();
+
+  // The stored session is still authorized at Telegram; nothing here could
+  // have ended it, so a host must not be handed a revocation to record.
+  const refused = await rejection(() => built.connector.revoke());
+  expect(refused.code).toBe("missing_session");
+  expect(built.api.calls).toEqual([]);
+
+  const report = await built.connector.health();
+  expect(report.state).toBe("unauthenticated");
+  expect(report.detail).toBe("connect() has not been called");
+});
+
+test("a revoked connector reads nothing further", async () => {
+  const built = await connected();
+  const first = await built.connector.backfill(null);
+  await built.connector.revoke();
+  built.api.calls.length = 0;
+
+  for (const attempt of [
+    () => built.connector.backfill(null),
+    () => built.connector.sync(first.cursor),
+    () => built.connector.connect(stateResolver()),
+  ]) {
+    expect((await rejection(attempt)).code).toBe("unauthenticated");
+  }
+  // Not one request was attempted: a revoked instance is finished, not idle.
+  expect(built.api.calls).toEqual([]);
+
+  const report = await built.connector.health();
+  expect(report.state).toBe("unauthenticated");
+  expect(report.detail).toBe("access was revoked");
 });

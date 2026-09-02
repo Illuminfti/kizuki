@@ -140,6 +140,10 @@ export class TelegramConnector implements Connector {
   }
 
   async connect(resolve: SecretResolver): Promise<void> {
+    // Revocation is terminal for the instance, not a state to reconnect out
+    // of: whatever the stored ref still resolves to, this connector was told
+    // its access ended.
+    if (this.#revoked) throw revoked();
     const ref = this.#stateRef;
     if (ref === null) throw notSignedIn();
     let text: string;
@@ -299,10 +303,9 @@ export class TelegramConnector implements Connector {
 
   async revoke(): Promise<void> {
     const api = this.#api;
-    if (api === null) {
-      this.#revoked = true;
-      return;
-    }
+    // Nothing here reached Telegram, so the session is still live there. A
+    // quiet success would have the host record an access that never ended.
+    if (api === null) throw notConnected();
     try {
       await api.logOut();
     } catch (error) {
@@ -317,6 +320,11 @@ export class TelegramConnector implements Connector {
     }
     this.#revoked = true;
     await api.disconnect();
+    // The data path goes with the access: leaving the client in place would
+    // let a later batch keep reading from a connection the owner ended.
+    this.#api = null;
+    this.#self = null;
+    this.#listing = null;
   }
 
   async purgeSource(subject_id: string): Promise<PurgePlan> {
@@ -348,6 +356,7 @@ export class TelegramConnector implements Connector {
     cursor: Cursor | null,
     mode: "backfill" | "sync",
   ): Promise<SyncBatch> {
+    if (this.#revoked) throw revoked();
     const api = this.#api;
     const self = this.#self;
     if (api === null || self === null) throw notConnected();
@@ -418,6 +427,13 @@ function notSignedIn(): TelegramConnectorError {
   return new TelegramConnectorError(
     "missing_session",
     "kizuki.telegram: not signed in; run: kizuki connect telegram",
+  );
+}
+
+function revoked(): TelegramConnectorError {
+  return new TelegramConnectorError(
+    "unauthenticated",
+    "kizuki.telegram: access was revoked; sign in again",
   );
 }
 
