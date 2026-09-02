@@ -305,11 +305,32 @@ test("a directory without a CSV is refused and health says so", async () => {
   await withTempRoot(async (root) => {
     const connector = createPocketImportConnector({ path: root });
     expect((await rejected(() => connector.backfill(null))).message).toContain(
-      "no .csv export in",
+      "no part_*.csv export in",
     );
     const report = await connector.health();
     expect(report.state).toBe("misconfigured");
     expect(report.detail).toContain(root);
+  });
+});
+
+test("only the export's own part names are taken from a directory", async () => {
+  await withTempRoot(async (root) => {
+    // A name from inside an export reaches a refusal and `kizuki doctor`;
+    // anything but the shape the export writes is not read at all.
+    const hostile = "pocket\u0007\u001b[31m.csv";
+    await writeFile(path.join(root, hostile), POCKET_FIXTURE_EXPORT);
+    const connector = createPocketImportConnector({ path: root });
+    const report = await connector.health();
+    expect(report.state).toBe("misconfigured");
+    expect(report.detail).toContain("no part_*.csv export in");
+    expect(report.detail).not.toContain("\u0007");
+    const error = await rejected(() => connector.backfill(null));
+    expect(error.message).not.toContain("\u0007");
+
+    await writeFile(path.join(root, "part_000000.csv"), POCKET_FIXTURE_EXPORT);
+    const found = createPocketImportConnector({ path: root });
+    expect((await found.health()).state).toBe("ok");
+    expect((await found.backfill(null)).events.length).toBe(4);
   });
 });
 

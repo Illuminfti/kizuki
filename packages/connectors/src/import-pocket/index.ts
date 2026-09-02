@@ -56,6 +56,14 @@ const CONFIG_KEYS = ["path"];
 // pipe-separated; column order is not guaranteed, so the parser is
 // header-driven and ignores columns it does not know.
 const REQUIRED_COLUMNS = ["url", "time_added"];
+
+/**
+ * The export names its parts, and only these names are taken from inside a
+ * directory. A file name is attacker-controlled input that ends up in a
+ * refusal and in `kizuki doctor`, and this shape cannot carry a control
+ * character or anything else a terminal would act on.
+ */
+const PART_FILE = /^part_\d+\.csv$/;
 const MAX_URL_LENGTH = 4096;
 
 export const POCKET_FIXTURE_EXPORT = `${[
@@ -296,13 +304,11 @@ async function resolveSources(path: string): Promise<string[]> {
     throw misconfigured(`cannot read ${path}: ${errorMessage(error)}`);
   }
   const files = entries
-    .filter(
-      (entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".csv"),
-    )
+    .filter((entry) => entry.isFile() && PART_FILE.test(entry.name))
     .map((entry) => entry.name)
     .sort(compareStrings);
   if (files.length === 0) {
-    throw misconfigured(`no .csv export in ${path}`);
+    throw misconfigured(`no part_*.csv export in ${path}`);
   }
   return files.map((name) => join(path, name));
 }
