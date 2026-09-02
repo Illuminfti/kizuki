@@ -4,6 +4,7 @@ import {
   MAX_PLAN_IDS,
   ScreenpipeConnector,
 } from "../src";
+import { TRIMMED_CODE_POINTS } from "../src/purge";
 import {
   cleanupFixtureDatabases,
   createFixtureDatabase,
@@ -23,6 +24,53 @@ function digest(path: string): Promise<string> {
 }
 
 describe("ScreenpipeConnector purge planning", () => {
+  test("a frame of non-ASCII whitespace is absent from the plan", async () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    // The walk decides a frame has text with String.prototype.trim, which
+    // removes every Unicode whitespace code point. A plan built on a smaller
+    // set would name rows that never reached the ledger.
+    const blanks = ["\u00a0", "\u3000", "\u2028", "  \ufeff"];
+    blanks.forEach((text, index) => {
+      insertFrame(fixture.writer, {
+        id: index + 1,
+        timestamp: "2026-01-05T09:00:00Z",
+        appName: "Acme Mail",
+        fullText: text,
+      });
+    });
+    insertFrame(fixture.writer, {
+      id: blanks.length + 1,
+      timestamp: "2026-01-05T09:00:00Z",
+      appName: "Acme Mail",
+      fullText: "real text",
+    });
+    const connector = new ScreenpipeConnector(
+      { path: fixture.path, settle_seconds: 0 },
+      fixtureDeps("2026-01-09T00:00:00.000Z"),
+    );
+
+    const batch = await connector.backfill(null);
+    const plan = await connector.purgeSource("screenpipe:app:acme-mail");
+
+    expect(batch.events.map(({ source_record_id }) => source_record_id)).toEqual([
+      `frame:${blanks.length + 1}`,
+    ]);
+    expect(plan.unreachable_source_record_ids).toEqual([
+      `frame:${blanks.length + 1}`,
+    ]);
+    await connector.revoke();
+  });
+
+  test("the plan's blank set is the runtime's own trim set", () => {
+    const runtime: number[] = [];
+    for (let point = 0; point <= 0x10ffff; point += 1) {
+      if (point >= 0xd800 && point <= 0xdfff) continue;
+      if (String.fromCodePoint(point).trim().length === 0) runtime.push(point);
+    }
+
+    expect(TRIMMED_CODE_POINTS).toEqual(runtime);
+  });
+
   test("an app plan lists the frames this connector emitted, nothing under source_record_ids", async () => {
     const fixture = createFixtureDatabase();
     const connector = new ScreenpipeConnector(

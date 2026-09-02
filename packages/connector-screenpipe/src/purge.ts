@@ -5,8 +5,19 @@ import { siteHost, slug } from "./map";
 import { toSafeNumber } from "./read";
 import { normalizeTimestamp } from "./time";
 
-/** ASCII whitespace, the set `trim` removes when it decides a frame has text. */
-const BLANK = "char(9) || char(10) || char(11) || char(12) || char(13) || ' '";
+/**
+ * The code points `String.prototype.trim` removes, spelled out because SQLite's
+ * `trim(X, Y)` takes the set as a string. The walk decides a frame has text with
+ * `trim`, so a plan built on the ASCII subset alone would name rows the walk
+ * skipped; a test pins this list against the runtime's own set.
+ */
+export const TRIMMED_CODE_POINTS: readonly number[] = [
+  0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x20, 0xa0, 0x1680, 0x2000, 0x2001, 0x2002,
+  0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200a, 0x2028,
+  0x2029, 0x202f, 0x205f, 0x3000, 0xfeff,
+];
+
+const BLANK = TRIMMED_CODE_POINTS.map((point) => `char(${point})`).join(" || ");
 
 /** Frames without text are skipped by the walk, so they were never ingested. */
 const FRAME_EMITTED = `full_text IS NOT NULL AND trim(full_text, ${BLANK}) != ''`;
