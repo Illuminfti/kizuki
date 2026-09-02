@@ -45,3 +45,8 @@ separate verification, merge, and post-merge receipts that are all bound to the
 current attempt. It must preserve the fencing protocol, require per-run
 enablement, and use external authorization for merges, releases, account
 actions, or spend.
+
+The separately reviewed phase-2 implementation contract is
+[`EXECUTION_PROTOCOL.md`](EXECUTION_PROTOCOL.md). ADR-001 remains the deployed
+behavior until that contract's applicable real-VPS gates pass; approval of the
+design is not execution enablement.

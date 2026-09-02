@@ -19,6 +19,12 @@ cannot be enabled in `config.json`, and provide no OS sandbox. Real harness
 execution remains disabled until separately reviewed scheduler, sandbox, and
 adapter wiring is merged.
 
+The reviewed phase-2 contract is
+[`EXECUTION_PROTOCOL.md`](EXECUTION_PROTOCOL.md). Its presence does not enable
+execution: the deployed controller remains observer-only until the documented
+schema, containment, identity, egress, GitHub, recovery, and synthetic
+end-to-end gates pass.
+
 The task state machine is sealed at `SUBMITTED` in this bootstrap. A leased
 worker may move only `LEASED -> RUNNING -> SUBMITTED`, or return a submission
 to `CHANGES_REQUESTED`. No caller can reach verification, review, integration,
