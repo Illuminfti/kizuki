@@ -96,8 +96,7 @@ export type TelegramErrorCode =
   | "unauthenticated"
   | "flood_wait"
   | "unreachable"
-  | "parse_error"
-  | "limit_exceeded";
+  | "parse_error";
 
 /**
  * A parser quotes the token it failed on, so an error raised over credential
