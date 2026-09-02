@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
-import { listCanonPages } from "../vault/pages";
+import { stampDerived } from "../derived-meta";
+import { listCanonPagesReport, stringArray } from "../vault/pages";
+import type { SkippedPage } from "../vault/pages";
 import { initGraph } from "./schema";
 
 export type GraphEdgeKind = "wikilink" | "subject" | "source";
@@ -13,18 +15,24 @@ export interface GraphEdge {
 export interface GraphRebuildResult {
   pages: number;
   edges: number;
+  skipped: SkippedPage[];
   rebuilt_at: string;
 }
 
 export interface NeighborOptions {
   depth?: 1 | 2;
   kinds?: GraphEdgeKind[];
+  limit?: number;
 }
 
 export interface NeighborResult {
   id: string;
   edges: GraphEdge[];
+  truncated: boolean;
 }
+
+const DEFAULT_NEIGHBOR_LIMIT = 1000;
+const FRONTIER_CHUNK = 500;
 
 function withoutCodeSpans(body: string): string {
   let result = "";
@@ -101,19 +109,14 @@ function wikilinks(body: string): string[] {
   return targets;
 }
 
-function stringArray(value: unknown): string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string")
-    ? value
-    : [];
-}
-
 export function rebuildGraph(
   db: Database,
   vaultPath: string,
 ): GraphRebuildResult {
   initGraph(db);
-  const pages = listCanonPages(vaultPath);
+  const { pages, skipped } = listCanonPagesReport(vaultPath);
   const rebuiltAt = new Date().toISOString();
+  let edges = 0;
 
   db.transaction(() => {
     db.exec("DELETE FROM graph_edges");
@@ -132,46 +135,67 @@ export function rebuildGraph(
       }
     }
 
-    const edgeCount =
+    edges =
       db
         .query<{ count: number }, []>(
           "SELECT count(*) AS count FROM graph_edges",
         )
         .get()?.count ?? 0;
-    db.query<never, [string, string, number]>(
-      `INSERT INTO derived_meta (layer, rebuilt_at, doc_count)
-       VALUES (?, ?, ?)
-       ON CONFLICT (layer) DO UPDATE SET
-         rebuilt_at = excluded.rebuilt_at,
-         doc_count = excluded.doc_count`,
-    ).run("graph", rebuiltAt, edgeCount);
+    stampDerived(db, "graph", rebuiltAt, edges);
   }).immediate();
 
-  const edges =
-    db.query<{ count: number }, []>("SELECT count(*) AS count FROM graph_edges").get()
-      ?.count ?? 0;
-  return { pages: pages.length, edges, rebuilt_at: rebuiltAt };
+  return { pages: pages.length, edges, skipped, rebuilt_at: rebuiltAt };
 }
 
-function graphEdges(
+function placeholders(count: number): string {
+  return new Array<string>(count).fill("?").join(", ");
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function chunks<T>(items: T[], size: number): T[][] {
+  const result: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    result.push(items.slice(index, index + size));
+  }
+  return result;
+}
+
+function incidentEdges(
   db: Database,
+  ids: string[],
   kinds: GraphEdgeKind[] | undefined,
 ): GraphEdge[] {
-  if (kinds?.length === 0) return [];
-  if (kinds === undefined) {
-    return db
-      .query<GraphEdge, []>(
-        "SELECT src, dst, kind FROM graph_edges ORDER BY src, dst, kind",
-      )
-      .all();
+  if (ids.length === 0 || kinds?.length === 0) return [];
+  const collected: GraphEdge[] = [];
+  for (const group of chunks(ids, FRONTIER_CHUNK)) {
+    const idSlots = placeholders(group.length);
+    const bindings: string[] = [...group, ...group];
+    let kindClause = "";
+    if (kinds !== undefined) {
+      kindClause = ` AND kind IN (${placeholders(kinds.length)})`;
+      bindings.push(...kinds);
+    }
+    collected.push(
+      ...db
+        .query<GraphEdge, string[]>(
+          `SELECT src, dst, kind FROM graph_edges
+           WHERE (src IN (${idSlots}) OR dst IN (${idSlots}))${kindClause}
+           ORDER BY src, dst, kind`,
+        )
+        .all(...bindings),
+    );
   }
-  const slots = new Array<string>(kinds.length).fill("?").join(", ");
-  return db
-    .query<GraphEdge, GraphEdgeKind[]>(
-      `SELECT src, dst, kind FROM graph_edges
-       WHERE kind IN (${slots}) ORDER BY src, dst, kind`,
-    )
-    .all(...kinds);
+  return collected;
+}
+
+function validLimit(limit: number): number {
+  if (!Number.isInteger(limit) || limit < 0) {
+    throw new RangeError("neighbors limit must be a non-negative integer");
+  }
+  return limit;
 }
 
 export function neighbors(
@@ -183,37 +207,43 @@ export function neighbors(
   if (depth !== 1 && depth !== 2) {
     throw new RangeError("neighbors depth must be 1 or 2");
   }
+  const limit = validLimit(opts.limit ?? DEFAULT_NEIGHBOR_LIMIT);
+  if (limit === 0 || opts.kinds?.length === 0) {
+    return { id, edges: [], truncated: false };
+  }
 
-  const available = graphEdges(db, opts.kinds);
   const seenNodes = new Set([id]);
   const seenEdges = new Set<string>();
   const result: GraphEdge[] = [];
-  let frontier = new Set([id]);
+  let frontier = [id];
+  let truncated = false;
 
-  for (let level = 0; level < depth; level += 1) {
-    const next = new Set<string>();
+  for (let level = 0; level < depth && !truncated; level += 1) {
+    const available = incidentEdges(db, frontier, opts.kinds);
+    const next: string[] = [];
     for (const edge of available) {
-      const fromSource = frontier.has(edge.src);
-      const fromDestination = frontier.has(edge.dst);
-      if (!fromSource && !fromDestination) continue;
-
       const key = `${edge.src}\u0000${edge.dst}\u0000${edge.kind}`;
-      if (!seenEdges.has(key)) {
-        seenEdges.add(key);
-        result.push(edge);
+      if (seenEdges.has(key)) continue;
+      seenEdges.add(key);
+      if (result.length === limit) {
+        truncated = true;
+        break;
       }
-      const adjacent = fromSource ? edge.dst : edge.src;
-      if (!seenNodes.has(adjacent)) next.add(adjacent);
+      result.push(edge);
+      const adjacent = frontier.includes(edge.src) ? edge.dst : edge.src;
+      if (!seenNodes.has(adjacent)) {
+        seenNodes.add(adjacent);
+        next.push(adjacent);
+      }
     }
-    for (const node of next) seenNodes.add(node);
     frontier = next;
   }
 
   result.sort(
     (a, b) =>
-      a.src.localeCompare(b.src) ||
-      a.dst.localeCompare(b.dst) ||
-      a.kind.localeCompare(b.kind),
+      compareText(a.src, b.src) ||
+      compareText(a.dst, b.dst) ||
+      compareText(a.kind, b.kind),
   );
-  return { id, edges: result };
+  return { id, edges: result, truncated };
 }

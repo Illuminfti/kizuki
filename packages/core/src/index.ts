@@ -66,8 +66,10 @@ export {
 export type { PageSensitivity, PageStatus, PageType } from "./vault/schema";
 export { writePage } from "./vault/write";
 export type { WritePageOptions } from "./vault/write";
-export { findPageById, listCanonPages } from "./vault/pages";
-export type { CanonPage } from "./vault/pages";
+export { findPageById, listCanonPages, listCanonPagesReport } from "./vault/pages";
+export type { CanonPage, CanonPageReport, SkippedPage } from "./vault/pages";
+export { readDerivedMeta } from "./derived-meta";
+export type { DerivedLayer, DerivedMeta } from "./derived-meta";
 
 export { canonicalSerialize, computeContentHash } from "./util/hash";
 export { isRfc3339 } from "./util/time";
@@ -125,6 +127,7 @@ export {
   toFtsQuery,
 } from "./search";
 export type {
+  DocScope,
   SearchHit,
   SearchOptions,
   SearchRebuildResult,

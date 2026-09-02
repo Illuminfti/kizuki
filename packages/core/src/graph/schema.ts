@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { initDerivedMeta } from "../derived-meta";
 
 const GRAPH_SCHEMA = `
 CREATE TABLE IF NOT EXISTS graph_edges (
@@ -8,13 +9,10 @@ CREATE TABLE IF NOT EXISTS graph_edges (
   PRIMARY KEY (src, dst, kind)
 ) STRICT;
 
-CREATE TABLE IF NOT EXISTS derived_meta (
-  layer TEXT PRIMARY KEY,
-  rebuilt_at TEXT NOT NULL,
-  doc_count INTEGER NOT NULL
-) STRICT;
+CREATE INDEX IF NOT EXISTS graph_edges_dst_idx ON graph_edges (dst);
 `;
 
 export function initGraph(db: Database): void {
   db.exec(GRAPH_SCHEMA);
+  initDerivedMeta(db);
 }

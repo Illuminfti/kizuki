@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
-import type { Sensitivity } from "../staging/promote";
+import { SENSITIVITY_ORDER } from "../agents/types";
+import type { Sensitivity } from "../agents/types";
+import { ceilingSql, instantBound, instantSql } from "./sql";
 
 export interface TimelineOptions {
   day?: string;
@@ -19,6 +21,7 @@ export interface TimelineEntry {
   kind: string;
   subjects: string[];
   sensitivity: string;
+  /** Collapsed whitespace, at most 160 Unicode code points. */
   text_preview: string;
 }
 
@@ -33,32 +36,8 @@ interface TimelineRow {
 }
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
-const CEILING_RANK: Record<Sensitivity, number> = {
-  public: 0,
-  personal: 1,
-  private: 2,
-};
-
-// SQLite's date parser rejects lowercase RFC3339 separators and leap seconds,
-// both of which the frozen event contract accepts. A leap second is mapped to
-// the final representable instant of its stated minute for window membership.
-const OCCURRED_AT_INSTANT = `julianday(
-  replace(
-    replace(
-      CASE
-        WHEN substr(events.occurred_at, 18, 2) = '60' THEN
-          substr(events.occurred_at, 1, 17) || '59.999' ||
-          CASE
-            WHEN lower(substr(events.occurred_at, -1)) = 'z' THEN 'Z'
-            ELSE substr(events.occurred_at, -6)
-          END
-        ELSE events.occurred_at
-      END,
-      't', 'T'
-    ),
-    'z', 'Z'
-  )
-)`;
+const OCCURRED_AT_INSTANT = instantSql("events.occurred_at");
+const PREVIEW_CODE_POINTS = 160;
 
 function dayWindow(day: string): { since: string; until: string } {
   if (!DAY.test(day)) {
@@ -75,7 +54,9 @@ function dayWindow(day: string): { since: string; until: string } {
 }
 
 function preview(text: string): string {
-  return text.replace(/\s+/g, " ").trim().slice(0, 160);
+  return Array.from(text.replace(/\s+/g, " ").trim())
+    .slice(0, PREVIEW_CODE_POINTS)
+    .join("");
 }
 
 function validLimit(limit: number): number {
@@ -104,11 +85,11 @@ export function timeline(
   }
   if (opts.since !== undefined) {
     clauses.push(`${OCCURRED_AT_INSTANT} >= julianday(?)`);
-    bindings.push(opts.since);
+    bindings.push(instantBound(opts.since, "timeline since"));
   }
   if (opts.until !== undefined) {
     clauses.push(`${OCCURRED_AT_INSTANT} < julianday(?)`);
-    bindings.push(opts.until);
+    bindings.push(instantBound(opts.until, "timeline until"));
   }
   if (opts.subject !== undefined) {
     clauses.push(`EXISTS (
@@ -127,15 +108,8 @@ export function timeline(
     bindings.push(opts.kind);
   }
   if (opts.ceiling !== undefined) {
-    clauses.push(`
-      CASE events.sensitivity_hint
-        WHEN 'public' THEN 0
-        WHEN 'personal' THEN 1
-        WHEN 'private' THEN 2
-        ELSE NULL
-      END <= ?
-    `);
-    bindings.push(CEILING_RANK[opts.ceiling]);
+    clauses.push(ceilingSql("events.sensitivity_hint"));
+    bindings.push(SENSITIVITY_ORDER[opts.ceiling]);
   }
   bindings.push(limit);
 
@@ -151,7 +125,7 @@ export function timeline(
          text
        FROM events
        WHERE ${clauses.join(" AND ")}
-       ORDER BY occurred_at, event_id
+       ORDER BY ${OCCURRED_AT_INSTANT}, events.event_id
        LIMIT ?`,
     )
     .all(...bindings);

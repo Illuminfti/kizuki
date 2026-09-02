@@ -49,8 +49,8 @@ describe("timeline", () => {
     });
 
     expect(timeline(db, { day: "2026-06-30" }).map(({ event_id }) => event_id)).toEqual([
-      leap.event_id,
       lowercase.event_id,
+      leap.event_id,
     ]);
   });
 
@@ -164,6 +164,37 @@ describe("timeline", () => {
     const [entry] = timeline(db);
     expect(entry?.text_preview.startsWith("alpha beta xxx")).toBe(true);
     expect(entry?.text_preview).toHaveLength(160);
+  });
+
+  test("orders by instant, not the raw occurred_at string", () => {
+    const db = searchDb();
+    const laterOffset = storedEvent(db, "later-offset", {
+      occurred_at: "2026-02-03T00:00:00-05:00",
+    });
+    const earlierUtc = storedEvent(db, "earlier-utc", {
+      occurred_at: "2026-02-03T03:00:00Z",
+    });
+
+    expect(timeline(db).map(({ event_id }) => event_id)).toEqual([
+      earlierUtc.event_id,
+      laterOffset.event_id,
+    ]);
+  });
+
+  test("rejects a garbage since or until instead of returning an empty window", () => {
+    const db = searchDb();
+    storedEvent(db, "live");
+    expect(() => timeline(db, { since: "garbage" })).toThrow(RangeError);
+    expect(() => timeline(db, { until: "garbage" })).toThrow(RangeError);
+  });
+
+  test("does not split a trailing emoji into a lone UTF-16 surrogate", () => {
+    const db = searchDb();
+    storedEvent(db, "emoji", { text: `${"x".repeat(159)}\u{1F600}` });
+
+    const preview = timeline(db)[0]?.text_preview ?? "";
+    expect(preview.charCodeAt(preview.length - 1)).not.toBe(0xd83d);
+    expect([...preview]).toEqual([...("x".repeat(159) + "\u{1F600}")]);
   });
 
   test("returns subject ids rather than raw subject objects", () => {

@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { rebuildDerived } from "../src/derived";
+import { readDerivedMeta } from "../src/derived-meta";
+import { openLedger } from "../src/ledger/db";
 import { serializePage } from "../src/vault/frontmatter";
 import { searchDb, storedEvent, tempVault } from "./search/helpers";
 
@@ -53,6 +55,14 @@ function derivedCounts(db: ReturnType<typeof searchDb>) {
 }
 
 describe("rebuildDerived", () => {
+  test("derived_meta is created once and read back per layer", () => {
+    const { db, vaultPath } = fixture();
+    expect(readDerivedMeta(openLedger(":memory:"), "search")).toBeNull();
+    rebuildDerived(db, vaultPath);
+    expect(readDerivedMeta(db, "search")?.doc_count).toBe(2);
+    expect(readDerivedMeta(db, "graph")?.doc_count).toBe(3);
+  });
+
   test("rebuilds search and graph in one call", () => {
     const { db, vaultPath } = fixture();
     const result = rebuildDerived(db, vaultPath);
@@ -96,5 +106,21 @@ describe("rebuildDerived", () => {
     expect(second.search.events).toBe(first.search.events);
     expect(second.graph.pages).toBe(first.graph.pages);
     expect(second.graph.edges).toBe(first.graph.edges);
+  });
+
+  test("one malformed note does not abort rebuildSearch or rebuildGraph", () => {
+    const { db, vaultPath } = fixture();
+    writeFileSync(join(vaultPath, "facts", "orphan.md"), "no frontmatter\n");
+
+    const result = rebuildDerived(db, vaultPath);
+    expect(result.search.pages).toBe(1);
+    expect(result.graph.pages).toBe(1);
+    expect(result.graph.edges).toBe(3);
+    expect(result.search.skipped.map(({ relPath }) => relPath)).toEqual([
+      "facts/orphan.md",
+    ]);
+    expect(result.graph.skipped.map(({ relPath }) => relPath)).toEqual([
+      "facts/orphan.md",
+    ]);
   });
 });

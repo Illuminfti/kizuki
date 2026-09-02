@@ -5,7 +5,7 @@ import { initSearch } from "../search/schema";
 import { fileProposal } from "../staging/proposals";
 import { withdrawForTombstone } from "../staging/producers";
 import { ulid } from "../util/ulid";
-import { listCanonPages } from "../vault/pages";
+import { listCanonPagesReport } from "../vault/pages";
 import { tableExists } from "./schema";
 
 export interface PurgeReceipt {
@@ -83,6 +83,12 @@ export function purgeEvents(
   const { where, bindings } = selector(filter);
 
   return db.transaction((): PurgeOutcome => {
+    const report = listCanonPagesReport(vaultPath);
+    if (report.skipped.length > 0) {
+      const relPaths = report.skipped.map(({ relPath }) => relPath).join(", ");
+      throw new Error(`purge refused: cannot read canon page(s) ${relPaths}`);
+    }
+
     const candidates = db
       .query<PurgeCandidate, string[]>(
         `SELECT events.event_id, events.connector_id
@@ -134,7 +140,7 @@ export function purgeEvents(
       "DELETE FROM graph_edges WHERE src = ? OR dst = ?",
     );
     for (const eventId of purgedIds) {
-      removeDoc(db, eventId);
+      removeDoc(db, "ledger", eventId);
       removeGraphEdges.run(eventId, eventId);
     }
 
@@ -148,7 +154,7 @@ export function purgeEvents(
     }
 
     const holds: { page_path: string; proposal_id: string }[] = [];
-    for (const page of listCanonPages(vaultPath)) {
+    for (const page of report.pages) {
       const provenance = pageSources(page.data["sources"])
         .filter((source) => purgedIds.includes(source));
       if (provenance.length === 0) continue;

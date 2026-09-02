@@ -1,13 +1,16 @@
 import type { Database } from "bun:sqlite";
 import type { CaptureEvent } from "../contracts/event";
+import { stampDerived } from "../derived-meta";
 import { replay } from "../ledger/ledger";
-import { listCanonPages } from "../vault/pages";
-import type { CanonPage } from "../vault/pages";
+import { listCanonPagesReport, stringArray } from "../vault/pages";
+import type { CanonPage, SkippedPage } from "../vault/pages";
 import { initSearch } from "./schema";
+
+export type DocScope = "canon" | "ledger";
 
 interface SearchDocument {
   docId: string;
-  scope: "canon" | "ledger";
+  scope: DocScope;
   title: string;
   body: string;
   path: string;
@@ -21,17 +24,12 @@ interface SearchDocument {
 export interface SearchRebuildResult {
   pages: number;
   events: number;
+  skipped: SkippedPage[];
   rebuilt_at: string;
 }
 
 function text(value: unknown): string {
   return typeof value === "string" ? value : "";
-}
-
-function stringArray(value: unknown): string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string")
-    ? value
-    : [];
 }
 
 function pageSensitivity(value: unknown): string {
@@ -63,11 +61,14 @@ function insertDoc(db: Database, doc: SearchDocument): void {
   );
 }
 
-function replacePage(db: Database, page: CanonPage): void {
-  db.query<never, [string]>("DELETE FROM search_docs WHERE doc_id = ?").run(
-    page.id,
-  );
-  insertDoc(db, {
+function deleteDoc(db: Database, scope: DocScope, docId: string): void {
+  db.query<never, [string, string]>(
+    "DELETE FROM search_docs WHERE scope = ? AND doc_id = ?",
+  ).run(scope, docId);
+}
+
+function pageDocument(page: CanonPage): SearchDocument {
+  return {
     docId: page.id,
     scope: "canon",
     title: text(page.data["title"]),
@@ -78,24 +79,11 @@ function replacePage(db: Database, page: CanonPage): void {
     occurredAt: "",
     connectorId: "",
     subjects: stringArray(page.data["subjects"]),
-  });
+  };
 }
 
-function replaceEvent(db: Database, event: CaptureEvent): void {
-  db.query<never, [string]>("DELETE FROM search_docs WHERE doc_id = ?").run(
-    event.event_id,
-  );
-  if (event.deleted) {
-    db.query<never, [string, string]>(
-      `DELETE FROM search_docs
-       WHERE doc_id IN (
-         SELECT event_id FROM events
-         WHERE connector_id = ? AND source_record_id = ?
-       )`,
-    ).run(event.connector_id, event.source_record_id);
-    return;
-  }
-  insertDoc(db, {
+function eventDocument(event: CaptureEvent): SearchDocument {
+  return {
     docId: event.event_id,
     scope: "ledger",
     title: `${event.connector_id} ${event.kind}`,
@@ -106,7 +94,31 @@ function replaceEvent(db: Database, event: CaptureEvent): void {
     occurredAt: event.occurred_at,
     connectorId: event.connector_id,
     subjects: event.subjects.map(({ subject_id }) => subject_id),
-  });
+  };
+}
+
+function recordKey(event: CaptureEvent): string {
+  return `${event.connector_id}\u0000${event.source_record_id}`;
+}
+
+function replacePage(db: Database, page: CanonPage): void {
+  deleteDoc(db, "canon", page.id);
+  insertDoc(db, pageDocument(page));
+}
+
+function replaceEvent(db: Database, event: CaptureEvent): void {
+  deleteDoc(db, "ledger", event.event_id);
+  if (event.deleted) {
+    db.query<never, [string, string]>(
+      `DELETE FROM search_docs
+       WHERE scope = 'ledger' AND doc_id IN (
+         SELECT event_id FROM events
+         WHERE connector_id = ? AND source_record_id = ?
+       )`,
+    ).run(event.connector_id, event.source_record_id);
+    return;
+  }
+  insertDoc(db, eventDocument(event));
 }
 
 export function indexPage(db: Database, page: CanonPage): void {
@@ -117,10 +129,8 @@ export function indexEvent(db: Database, event: CaptureEvent): void {
   db.transaction(() => replaceEvent(db, event)).immediate();
 }
 
-export function removeDoc(db: Database, docId: string): void {
-  db.query<never, [string]>("DELETE FROM search_docs WHERE doc_id = ?").run(
-    docId,
-  );
+export function removeDoc(db: Database, scope: DocScope, docId: string): void {
+  deleteDoc(db, scope, docId);
 }
 
 export function rebuildSearch(
@@ -128,7 +138,7 @@ export function rebuildSearch(
   vaultPath: string,
 ): SearchRebuildResult {
   initSearch(db);
-  const pages = listCanonPages(vaultPath);
+  const { pages, skipped } = listCanonPagesReport(vaultPath);
   const events = [...replay(db, {})];
   const rebuiltAt = new Date().toISOString();
   let pageCount = 0;
@@ -136,8 +146,19 @@ export function rebuildSearch(
 
   db.transaction(() => {
     db.exec("DELETE FROM search_docs");
-    for (const page of pages) replacePage(db, page);
-    for (const event of events) replaceEvent(db, event);
+    for (const page of pages) insertDoc(db, pageDocument(page));
+
+    const latestTombstone = new Map<string, number>();
+    for (const [index, event] of events.entries()) {
+      if (event.deleted) latestTombstone.set(recordKey(event), index);
+    }
+    for (const [index, event] of events.entries()) {
+      if (event.deleted) continue;
+      if (index > (latestTombstone.get(recordKey(event)) ?? -1)) {
+        insertDoc(db, eventDocument(event));
+      }
+    }
+
     const counts = db
       .query<{ scope: string; count: number }, []>(
         "SELECT scope, count(*) AS count FROM search_docs GROUP BY scope",
@@ -145,15 +166,13 @@ export function rebuildSearch(
       .all();
     pageCount = counts.find(({ scope }) => scope === "canon")?.count ?? 0;
     eventCount = counts.find(({ scope }) => scope === "ledger")?.count ?? 0;
-    const docCount = pageCount + eventCount;
-    db.query<never, [string, string, number]>(
-      `INSERT INTO derived_meta (layer, rebuilt_at, doc_count)
-       VALUES (?, ?, ?)
-       ON CONFLICT (layer) DO UPDATE SET
-         rebuilt_at = excluded.rebuilt_at,
-         doc_count = excluded.doc_count`,
-    ).run("search", rebuiltAt, docCount);
+    stampDerived(db, "search", rebuiltAt, pageCount + eventCount);
   }).immediate();
 
-  return { pages: pageCount, events: eventCount, rebuilt_at: rebuiltAt };
+  return {
+    pages: pageCount,
+    events: eventCount,
+    skipped,
+    rebuilt_at: rebuiltAt,
+  };
 }

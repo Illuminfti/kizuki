@@ -1,6 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
-import { join, relative, sep } from "node:path";
-import { parseFrontmatter } from "./frontmatter";
+import { listCanonPagesReport } from "./pages";
 import { validatePage } from "./schema";
 
 export interface DoctorPageResult {
@@ -17,49 +15,22 @@ export interface DoctorVaultResult {
   };
 }
 
-function markdownFiles(path: string): string[] {
-  const files: string[] = [];
-  const entries = readdirSync(path, { withFileTypes: true }).sort((a, b) =>
-    a.name.localeCompare(b.name),
-  );
-
-  for (const entry of entries) {
-    if (entry.name === ".kizuki") continue;
-    const target = join(path, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...markdownFiles(target));
-    } else if (
-      entry.isFile() &&
-      entry.name.endsWith(".md") &&
-      entry.name !== "CANON.md" &&
-      entry.name !== "SCHEMA.md"
-    ) {
-      files.push(target);
-    }
-  }
-
-  return files;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function comparePath(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 export function doctorVault(path: string): DoctorVaultResult {
-  const pages: DoctorPageResult[] = markdownFiles(path)
-    .map((file): DoctorPageResult => {
-      let errors: string[];
-      try {
-        errors = validatePage(parseFrontmatter(readFileSync(file, "utf8")).data);
-      } catch (error) {
-        errors = [`frontmatter: ${errorMessage(error)}`];
-      }
-      return {
-        page: relative(path, file).split(sep).join("/"),
-        errors,
-      };
-    })
-    .sort((a, b) => a.page.localeCompare(b.page));
+  const report = listCanonPagesReport(path);
+  const pages: DoctorPageResult[] = [
+    ...report.pages.map((page) => ({
+      page: page.relPath,
+      errors: validatePage(page.data),
+    })),
+    ...report.skipped.map((skipped) => ({
+      page: skipped.relPath,
+      errors: [`frontmatter: ${skipped.reason}`],
+    })),
+  ].sort((a, b) => comparePath(a.page, b.page));
   const valid = pages.filter(({ errors }) => errors.length === 0).length;
 
   return {

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { Database } from "bun:sqlite";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   PromoteError,
@@ -62,6 +62,14 @@ describe("the owner gate", () => {
 
   test("ownerPromote supplies the owner stamp", () => {
     const id = stage();
+    const receipt = ownerPromote(db, vault.path, id, { sensitivity: "private" });
+    expect(receipt.proposal_id).toBe(id);
+    expect(getProposal(db, id)?.status).toBe("promoted");
+  });
+
+  test("one malformed note does not abort ownerPromote", () => {
+    writeFileSync(join(vault.path, "facts", "orphan.md"), "no frontmatter\n");
+    const id = stage({ target: "fact:new-note" });
     const receipt = ownerPromote(db, vault.path, id, { sensitivity: "private" });
     expect(receipt.proposal_id).toBe(id);
     expect(getProposal(db, id)?.status).toBe("promoted");
