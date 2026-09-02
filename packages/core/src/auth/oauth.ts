@@ -326,6 +326,7 @@ export async function signInWithBrowser(
   const nonce = base64url(randomOf(randomBytes, STATE_BYTES));
 
   const listener = await transport.listen(provider.redirect_path ?? "/callback");
+  let tokens: TokenSet;
   try {
     const url = buildAuthorizationUrl(provider, {
       redirect_uri: listener.redirect_uri,
@@ -334,6 +335,10 @@ export async function signInWithBrowser(
     });
     // Subscribe before the browser opens: a fast provider must not race us.
     const pending = listener.callback();
+    // Nothing observes this promise until the race below reaches it. Closing
+    // the listener on a failure path rejects it, and without a handler that
+    // rejection would kill the process after the caller handled the error.
+    void pending.catch(() => undefined);
     io.notify(
       `Sign in to ${provider.name} in your browser. If it did not open, visit:\n${url}`,
     );
@@ -373,10 +378,15 @@ export async function signInWithBrowser(
       code_verifier: pkce.verifier,
       ...clientSecretForm(provider),
     });
-    return parseTokenResponse(provider, response.status, response.body, now());
-  } finally {
-    await listener.close();
+    tokens = parseTokenResponse(provider, response.status, response.body, now());
+  } catch (error) {
+    // A listener that will not shut down must not displace the failure the
+    // caller has to act on.
+    await listener.close().catch(() => undefined);
+    throw error;
   }
+  await listener.close();
+  return tokens;
 }
 
 export async function refreshTokens(

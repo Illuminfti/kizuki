@@ -28,14 +28,16 @@ export class FakeListener implements LoopbackListener {
   closed = false;
   received: URL | null = null;
   private readonly waiters: Waiter[] = [];
+  private readonly closeError: Error | null;
 
-  constructor(redirectPath: string) {
+  constructor(redirectPath: string, closeError: Error | null = null) {
     this.redirect_uri = `http://127.0.0.1:43210${redirectPath}`;
+    this.closeError = closeError;
   }
 
   callback(): Promise<URL> {
     if (this.closed) {
-      return Promise.reject(new OAuthError("timeout", "fixture"));
+      return Promise.reject(new OAuthError("timeout", "loopback"));
     }
     if (this.received !== null) return Promise.resolve(this.received);
     return new Promise((resolve, reject) => {
@@ -46,8 +48,9 @@ export class FakeListener implements LoopbackListener {
   async close(): Promise<void> {
     this.closed = true;
     for (const waiter of this.waiters.splice(0)) {
-      waiter.reject(new OAuthError("timeout", "fixture"));
+      waiter.reject(new OAuthError("timeout", "loopback"));
     }
+    if (this.closeError !== null) throw this.closeError;
   }
 
   deliver(query: Record<string, string>): void {
@@ -64,13 +67,15 @@ export class FakeTransport implements OAuthTransport {
   readonly posts: RecordedPost[] = [];
   readonly responses: ScriptedResponse[] = [];
   readonly listeners: FakeListener[] = [];
+  /** Set to make every listener this transport hands out fail to shut down. */
+  listenerCloseError: Error | null = null;
 
   constructor(...responses: ScriptedResponse[]) {
     this.responses.push(...responses);
   }
 
   async listen(redirectPath: string): Promise<LoopbackListener> {
-    const listener = new FakeListener(redirectPath);
+    const listener = new FakeListener(redirectPath, this.listenerCloseError);
     this.listeners.push(listener);
     return listener;
   }
