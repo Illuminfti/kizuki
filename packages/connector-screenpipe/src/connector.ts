@@ -209,50 +209,27 @@ export class ScreenpipeConnector implements Connector {
       // for the OCR update the settle window exists for, and holding it would
       // park this walk on its id for as long as the date says.
       const horizon = new Date(now + settleMs).toISOString();
-      const settling = (timestamp: string): boolean =>
-        timestamp > boundary && timestamp <= horizon;
+      const walk: Walk = {
+        observedAt,
+        settling: (timestamp) => timestamp > boundary && timestamp <= horizon,
+      };
       const events: CaptureEventInput[] = [];
 
-      const frames = readFrames(db, current.last_frame_id, BATCH_LIMIT);
-      let frameStopped = false;
-      for (const row of frames) {
-        const timestamp = normalizeTimestamp(row.timestamp);
-        if (timestamp === null) {
-          current.skipped.frames_bad_timestamp += 1;
-          current.last_frame_id = row.id;
+      // An empty batch is the drain signal every caller uses, so the walk
+      // keeps reading pages until it has an event, both tables are exhausted
+      // for this cursor, or the settle window stops it. A page of frames
+      // without text is ordinary screenpipe output, not the end of the data.
+      let framesDone = false;
+      let transcriptionsDone = false;
+      while (
+        events.length < BATCH_LIMIT &&
+        !(framesDone && transcriptionsDone)
+      ) {
+        if (!framesDone) {
+          framesDone = walkFrames(db, current, events, walk);
           continue;
         }
-        if (settling(timestamp)) {
-          frameStopped = true;
-          break;
-        }
-        if (row.full_text === null || row.full_text.trim().length === 0) {
-          current.skipped.frames_without_text += 1;
-          current.last_frame_id = row.id;
-          continue;
-        }
-        events.push(mapFrame(row, observedAt));
-        current.last_frame_id = row.id;
-      }
-
-      if (!(frames.length === BATCH_LIMIT && !frameStopped)) {
-        const remaining = BATCH_LIMIT - events.length;
-        const transcriptions = readTranscriptions(
-          db,
-          current.last_transcription_id,
-          remaining,
-        );
-        for (const row of transcriptions) {
-          const timestamp = normalizeTimestamp(row.timestamp);
-          if (timestamp === null) {
-            current.skipped.transcriptions_bad_timestamp += 1;
-            current.last_transcription_id = row.id;
-            continue;
-          }
-          if (settling(timestamp)) break;
-          events.push(mapTranscription(row, observedAt));
-          current.last_transcription_id = row.id;
-        }
+        transcriptionsDone = walkTranscriptions(db, current, events, walk);
       }
 
       this.#lastSuccessAt = observedAt;
@@ -308,4 +285,61 @@ function skipDelta(
       current.skipped.transcriptions_bad_timestamp -
       before.transcriptions_bad_timestamp,
   };
+}
+
+interface Walk {
+  observedAt: string;
+  settling: (timestamp: string) => boolean;
+}
+
+/** Returns true when the frame walk is finished for this batch. */
+function walkFrames(
+  db: Database,
+  cursor: ScreenpipeCursor,
+  events: CaptureEventInput[],
+  walk: Walk,
+): boolean {
+  const limit = BATCH_LIMIT - events.length;
+  const rows = readFrames(db, cursor.last_frame_id, limit);
+  for (const row of rows) {
+    const timestamp = normalizeTimestamp(row.timestamp);
+    if (timestamp === null) {
+      cursor.skipped.frames_bad_timestamp += 1;
+      cursor.last_frame_id = row.id;
+      continue;
+    }
+    // A settling row is left for the next call so late OCR text is not lost.
+    if (walk.settling(timestamp)) return true;
+    if (row.full_text === null || row.full_text.trim().length === 0) {
+      cursor.skipped.frames_without_text += 1;
+      cursor.last_frame_id = row.id;
+      continue;
+    }
+    events.push(mapFrame(row, walk.observedAt));
+    cursor.last_frame_id = row.id;
+  }
+  return rows.length < limit;
+}
+
+/** Returns true when the transcription walk is finished for this batch. */
+function walkTranscriptions(
+  db: Database,
+  cursor: ScreenpipeCursor,
+  events: CaptureEventInput[],
+  walk: Walk,
+): boolean {
+  const limit = BATCH_LIMIT - events.length;
+  const rows = readTranscriptions(db, cursor.last_transcription_id, limit);
+  for (const row of rows) {
+    const timestamp = normalizeTimestamp(row.timestamp);
+    if (timestamp === null) {
+      cursor.skipped.transcriptions_bad_timestamp += 1;
+      cursor.last_transcription_id = row.id;
+      continue;
+    }
+    if (walk.settling(timestamp)) return true;
+    events.push(mapTranscription(row, walk.observedAt));
+    cursor.last_transcription_id = row.id;
+  }
+  return rows.length < limit;
 }
