@@ -106,4 +106,6 @@ reported spend has already crossed one stops rather than answering `ok`.
 
 `LlmRequest.deadline_ms` bounds the whole call. Every attempt, every retry
 backoff and every wait for the rate window comes out of it, and the call ends
-as `PortError("timeout")` once it is spent.
+as `PortError("timeout")` once it is spent. The producer gives each batch
+sixty seconds, so one `produce` is bounded by its batch count times that
+however the endpoint behaves.

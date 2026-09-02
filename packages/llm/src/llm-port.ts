@@ -63,8 +63,12 @@ export function estimateTokens(chars: number): number {
   return Math.ceil(chars / CHARS_PER_TOKEN);
 }
 
+/**
+ * Monotonic, so a deadline cannot be moved by an NTP correction or a resume
+ * from suspend. Nothing here is persisted or compared with a wall clock.
+ */
 const defaultClock: Clock = {
-  now: () => Date.now(),
+  now: () => performance.now(),
   sleep: (ms) => Bun.sleep(ms),
 };
 
