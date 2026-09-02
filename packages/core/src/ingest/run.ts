@@ -182,10 +182,20 @@ export async function runToCompletion(
   };
   for (let batch = 0; batch < maxBatches; batch += 1) {
     const before = stored();
-    const result =
-      mode === "backfill"
-        ? await runBackfill(db, connector, connector_id, source_key)
-        : await runSync(db, connector, connector_id, source_key);
+    let result: RunResult;
+    try {
+      result =
+        mode === "backfill"
+          ? await runBackfill(db, connector, connector_id, source_key)
+          : await runSync(db, connector, connector_id, source_key);
+    } catch (error) {
+      // The batches before this one are already committed. Letting the throw
+      // out would leave the caller unable to tell a run that did nothing from
+      // one a network fault cut short after a thousand records.
+      total.errors.push(errorText(error));
+      total.cursor = stored();
+      return total;
+    }
     absorb(total, result);
     total.cursor = stored();
     if (result.errors.length > 0) return total;

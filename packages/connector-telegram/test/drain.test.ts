@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { openLedger, runToCompletion } from "@kizuki/core";
+import { openLedger, runBackfill, runToCompletion } from "@kizuki/core";
 import { initStaging } from "@kizuki/core/staging";
 import { TELEGRAM_CONNECTOR_ID } from "../src/map";
 import { connected } from "./helpers";
@@ -64,4 +64,29 @@ test("a scheduled sync of a settled account costs one pass, not the bound", asyn
   expect(counts(built.api.calls, "dialogs")).toBe(1);
   // One new-message read and one edit-window read per dialog, once.
   expect(counts(built.api.calls, "messages")).toBe(6);
+});
+
+test("a run the provider cuts short reports what it stored and where it is", async () => {
+  const built = await connected({ now: FEBRUARY });
+  const db = ledger();
+  const first = await runBackfill(
+    db,
+    built.connector,
+    TELEGRAM_CONNECTOR_ID,
+    SOURCE,
+  );
+  expect(first.stored).toBe(12);
+
+  built.api.disconnectNetwork();
+  const cut = await runToCompletion(
+    db,
+    built.connector,
+    TELEGRAM_CONNECTOR_ID,
+    SOURCE,
+    "sync",
+  );
+  expect(cut.errors).toEqual(["kizuki.telegram: telegram is unreachable"]);
+  // The durable checkpoint is untouched, so the next run resumes rather than
+  // starting the account again.
+  expect(cut.cursor).toBe(first.cursor);
 });

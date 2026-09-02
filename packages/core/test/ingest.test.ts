@@ -422,4 +422,28 @@ describe("runToCompletion", () => {
     expect(result.cursor).toBeNull();
     db.close();
   });
+
+  test("a connector that throws keeps what the earlier batches stored", async () => {
+    const db = database();
+    const connector = new (class extends FixtureConnector {
+      #position = 0;
+
+      override backfill(cursor: string | null): Promise<SyncBatch> {
+        this.backfillCursors.push(cursor);
+        this.#position += 1;
+        if (this.#position > 2) {
+          return Promise.reject(new Error("the source is unreachable"));
+        }
+        return Promise.resolve(page(this.#position, 2));
+      }
+    })({ events: [], cursor: null });
+    const result = await runToCompletion(db, connector, "fixture", "src-1", "backfill");
+    expect(result.stored).toBe(4);
+    expect(result.errors).toEqual(["the source is unreachable"]);
+    // The durable checkpoint is what a caller resumes from, so it is what the
+    // interrupted run reports.
+    expect(result.cursor).toBe("page-2");
+    expect(getCheckpoint(db, "fixture", "src-1")?.cursor).toBe("page-2");
+    db.close();
+  });
 });
