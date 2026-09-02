@@ -148,6 +148,31 @@ describe("backfill and sync", () => {
     ]);
   });
 
+  test("a page re-emitted later is the event backfill already produced", async () => {
+    writeMapping();
+    write("a/note.md", "one\n");
+    write("b/note.md", "two\n");
+    const connector = createLegacyWikiConnector({ path: wiki });
+    const first = await connector.backfill(null);
+    const before = first.events.find((e) => e.source_record_id === "b/note.md");
+    expect(
+      (before?.metadata["page_candidate"] as { target: string }).target,
+    ).toBe("entities/note-2");
+
+    write("b/note.md", "edited\n");
+    const edited = await connector.sync(first.cursor);
+    write("b/note.md", "two\n");
+    const reverted = await connector.sync(edited.cursor);
+    const after = reverted.events.find(
+      (e) => e.source_record_id === "b/note.md",
+    );
+
+    // Same bytes, same mapping, same decision record. The ledger dedupes on a
+    // hash that covers the metadata, so a suffix note that appeared only on
+    // the run that decided it would file the page a second time.
+    expect(after?.metadata).toEqual(before?.metadata as Record<string, unknown>);
+  });
+
   test("a removed page becomes a tombstone with an empty body", async () => {
     seed();
     const connector = createLegacyWikiConnector({ path: wiki });

@@ -483,6 +483,39 @@ describe("determinism and targets", () => {
     expect(report.pages[1]?.notes).toEqual(["target_collision"]);
   });
 
+  test("a pinned page carries the decision a full run would have made", () => {
+    const scan: ScanResult = {
+      files: [
+        { relpath: "a/note.md", content: "one\n", mtimeMs: 1, size: 4 },
+        { relpath: "b/note.md", content: "two\n", mtimeMs: 1, size: 4 },
+      ],
+      skipped: [],
+      truncated: false,
+    };
+    const full = planLegacyWiki(scan, LEGACY_WIKI_FIXTURE.mapping, OPTIONS);
+    // What a sync does when only the second page changed: the other page is
+    // not re-emitted, and this one keeps the target it was staged at.
+    const resumed = planLegacyWiki(
+      { ...scan, files: [scan.files[1] as ScanResult["files"][number]] },
+      LEGACY_WIKI_FIXTURE.mapping,
+      {
+        ...OPTIONS,
+        pinned: { "a/note.md": "entities/note", "b/note.md": "entities/note-2" },
+      },
+    );
+    const before = full.events.find((e) => e.source_record_id === "b/note.md");
+    const after = resumed.events.find(
+      (e) => e.source_record_id === "b/note.md",
+    );
+    // Byte-identical page, byte-identical decision record: the ledger dedupes
+    // on a hash that covers the metadata, so a note that depended on which
+    // run emitted the page would file the same page twice.
+    expect(after).toEqual(before);
+    expect(page(resumed.report, "b/note.md").notes).toEqual([
+      "target_collision",
+    ]);
+  });
+
   test("a collision between two maximum-length leaves still terminates", () => {
     // Both stems slug to the same 64-character leaf, so appending the suffix
     // before slugging truncates it straight back off: the search for a free

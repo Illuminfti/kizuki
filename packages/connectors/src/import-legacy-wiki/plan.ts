@@ -216,8 +216,7 @@ function planPage(
     };
   }
 
-  const target =
-    pinned ?? planTarget(relpath, type, mapping, taken, notes);
+  const target = planTarget(relpath, type, mapping, taken, notes, pinned);
   const points = [...parsed.body];
   const truncated = points.length > MAX_TEXT_LENGTH;
   if (truncated) notes.push("text_truncated");

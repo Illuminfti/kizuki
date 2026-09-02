@@ -191,11 +191,11 @@ function collisionLeaf(leaf: string, suffix: number): string {
   return `${base}${mark}`;
 }
 
-export function planTarget(
+/** Where a page lands before anything else has claimed that path. */
+function deriveTarget(
   relpath: string,
   type: PageType,
   mapping: LegacyWikiMapping,
-  taken: Set<string>,
   notes: string[],
 ): string {
   const directory = mapping.target.directories[type];
@@ -218,6 +218,28 @@ export function planTarget(
     target = `${directory}/${leaf}`;
     notes.push("target: flattened");
   }
+  return target;
+}
+
+export function planTarget(
+  relpath: string,
+  type: PageType,
+  mapping: LegacyWikiMapping,
+  taken: Set<string>,
+  notes: string[],
+  /** The target a previous run already emitted this page with, when there is one. */
+  pinned: string | undefined,
+): string {
+  const target = deriveTarget(relpath, type, mapping, notes);
+  if (pinned !== undefined) {
+    // A page keeps the target it was emitted with, and the record still says
+    // what deriving it now would have said. The decision travels inside the
+    // event, so a note that depended on which run emitted the page would
+    // give two byte-identical copies of it two different content hashes.
+    if (pinned !== target) notes.push("target_collision");
+    taken.add(pinned);
+    return pinned;
+  }
 
   const prefix = target.slice(0, target.lastIndexOf("/") + 1);
   let unique = target;
@@ -225,12 +247,16 @@ export function planTarget(
   // Two suffixes can never produce the same leaf (the suffix is everything
   // after the last "-"), so the loop cannot outlive the set it is avoiding.
   while (taken.has(unique)) {
-    unique = `${prefix}${collisionLeaf(leaf, suffix)}`;
+    unique = `${prefix}${collisionLeaf(leaf(target), suffix)}`;
     suffix += 1;
   }
   if (unique !== target) notes.push("target_collision");
   taken.add(unique);
   return unique;
+}
+
+function leaf(target: string): string {
+  return target.slice(target.lastIndexOf("/") + 1);
 }
 
 export function jsonSafeFrontmatter(
