@@ -144,6 +144,26 @@ describe("graph rebuild", () => {
         .get(),
     ).toEqual({ layer: "graph", doc_count: 1 });
   });
+
+  test("reports skipped pages and counts edges once", () => {
+    const db = new Database(":memory:");
+    const path = vault();
+    writeCanon(path, "linked", "fact:linked", "[[Target]]", {
+      subjects: ["person:ada"],
+    });
+    writeFileSync(join(path, "facts", "stray.md"), "no frontmatter here\n", "utf8");
+
+    const result = rebuildGraph(db, path);
+
+    expect(result.pages).toBe(1);
+    expect(result.edges).toBe(edgeRows(db).length);
+    expect(result.skipped).toEqual([
+      {
+        relPath: "facts/stray.md",
+        reason: "frontmatter must begin with an exact --- line",
+      },
+    ]);
+  });
 });
 
 describe("neighbors", () => {
@@ -237,6 +257,94 @@ describe("neighbors", () => {
     expect(limited.edges).toHaveLength(3);
     expect(neighbors(db, "hub", { limit: 5 }).truncated).toBe(false);
     expect(() => neighbors(db, "hub", { limit: -1 })).toThrow(RangeError);
+    // A zero limit still has to say that the node was under-served.
+    expect(neighbors(db, "hub", { limit: 0 })).toEqual({
+      id: "hub",
+      edges: [],
+      truncated: true,
+    });
+    expect(neighbors(db, "nobody", { limit: 0 })).toEqual({
+      id: "nobody",
+      edges: [],
+      truncated: false,
+    });
+  });
+
+  test("traverses a frontier larger than one chunk", () => {
+    const db = new Database(":memory:");
+    initGraph(db);
+    const insert = db.query<never, [string, string, string]>(
+      "INSERT INTO graph_edges (src, dst, kind) VALUES (?, ?, ?)",
+    );
+    db.transaction(() => {
+      for (let index = 0; index < 1200; index += 1) {
+        const leaf = `leaf-${String(index).padStart(4, "0")}`;
+        insert.run("hub", leaf, "wikilink");
+        insert.run(leaf, `tail-${String(index).padStart(4, "0")}`, "wikilink");
+      }
+    }).immediate();
+
+    // Round two starts from 1200 frontier ids, so the reader has to chunk.
+    const result = neighbors(db, "hub", { depth: 2, limit: 5000 });
+
+    expect(result.truncated).toBe(false);
+    expect(result.edges).toHaveLength(2400);
+    expect(
+      result.edges.filter(({ src }) => src.startsWith("leaf-")),
+    ).toHaveLength(1200);
+    expect(result.edges.at(-1)).toEqual({
+      src: "leaf-1199",
+      dst: "tail-1199",
+      kind: "wikilink",
+    });
+  });
+
+  test("reads no more rows than the limit, whatever the degree", () => {
+    const db = new Database(":memory:");
+    initGraph(db);
+    const insert = db.query<never, [string, string, string]>(
+      "INSERT INTO graph_edges (src, dst, kind) VALUES (?, ?, ?)",
+    );
+    db.transaction(() => {
+      for (let index = 0; index < 5000; index += 1) {
+        insert.run("hub", `leaf-${String(index).padStart(5, "0")}`, "wikilink");
+      }
+    }).immediate();
+
+    const fetched: number[] = [];
+    const select = db.query.bind(db);
+    db.query = ((sql: string) => {
+      const statement = select(sql);
+      if (!sql.includes("FROM graph_edges")) return statement;
+      const all = statement.all.bind(statement);
+      statement.all = ((...args: never[]) => {
+        const rows = all(...args) as unknown[];
+        fetched.push(rows.length);
+        return rows;
+      }) as typeof statement.all;
+      return statement;
+    }) as Database["query"];
+
+    const result = neighbors(db, "hub", { limit: 10 });
+
+    expect(result.edges).toHaveLength(10);
+    expect(result.truncated).toBe(true);
+    expect(fetched).toEqual([11]);
+  });
+
+  test("keeps two edges whose ids differ only where a joined key would not", () => {
+    const db = new Database(":memory:");
+    initGraph(db);
+    const insert = db.query<never, [string, string, string]>(
+      "INSERT INTO graph_edges (src, dst, kind) VALUES (?, ?, ?)",
+    );
+    insert.run("x", "a", "wikilink");
+    insert.run("x", "a\u0000b", "wikilink");
+    insert.run("a", "b\u0000c", "wikilink");
+    insert.run("a\u0000b", "c", "wikilink");
+
+    // The last two are distinct edges that share a NUL-joined key.
+    expect(neighbors(db, "x", { depth: 2 }).edges).toHaveLength(4);
   });
 
   test("orders edges by code point, not locale", () => {

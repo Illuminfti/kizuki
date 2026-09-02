@@ -157,32 +157,40 @@ function chunks<T>(items: T[], size: number): T[][] {
   return result;
 }
 
-function incidentEdges(
+/**
+ * One frontier chunk, capped in SQL. `budget` is `limit + 1` for the whole
+ * call rather than the count still outstanding: only edges already collected
+ * can repeat inside a chunk, so `limit + 1` rows always carry every new edge
+ * the caller still has room for. The cap is what keeps the work proportional
+ * to `limit` instead of to the degree of the node.
+ */
+function incidentChunk(
   db: Database,
   ids: string[],
   kinds: GraphEdgeKind[] | undefined,
+  budget: number,
 ): GraphEdge[] {
-  if (ids.length === 0 || kinds?.length === 0) return [];
-  const collected: GraphEdge[] = [];
-  for (const group of chunks(ids, FRONTIER_CHUNK)) {
-    const idSlots = placeholders(group.length);
-    const bindings: string[] = [...group, ...group];
-    let kindClause = "";
-    if (kinds !== undefined) {
-      kindClause = ` AND kind IN (${placeholders(kinds.length)})`;
-      bindings.push(...kinds);
-    }
-    collected.push(
-      ...db
-        .query<GraphEdge, string[]>(
-          `SELECT src, dst, kind FROM graph_edges
-           WHERE (src IN (${idSlots}) OR dst IN (${idSlots}))${kindClause}
-           ORDER BY src, dst, kind`,
-        )
-        .all(...bindings),
-    );
+  const idSlots = placeholders(ids.length);
+  const bindings: (string | number)[] = [...ids, ...ids];
+  let kindClause = "";
+  if (kinds !== undefined) {
+    kindClause = ` AND kind IN (${placeholders(kinds.length)})`;
+    bindings.push(...kinds);
   }
-  return collected;
+  bindings.push(budget);
+  return db
+    .query<GraphEdge, (string | number)[]>(
+      `SELECT src, dst, kind FROM graph_edges
+       WHERE (src IN (${idSlots}) OR dst IN (${idSlots}))${kindClause}
+       ORDER BY src, dst, kind
+       LIMIT ?`,
+    )
+    .all(...bindings);
+}
+
+/** Injective, so two distinct edges never collapse into one seen key. */
+function edgeKey(edge: GraphEdge): string {
+  return JSON.stringify([edge.src, edge.dst, edge.kind]);
 }
 
 export function neighbors(
@@ -195,42 +203,44 @@ export function neighbors(
     throw new RangeError("neighbors depth must be 1 or 2");
   }
   const limit = validLimit(opts.limit ?? DEFAULT_NEIGHBOR_LIMIT, "neighbors");
-  if (limit === 0 || opts.kinds?.length === 0) {
+  if (opts.kinds?.length === 0) {
     return { id, edges: [], truncated: false };
   }
 
+  // One edge past the cap is what proves truncation, so even a limit of 0
+  // probes for a single adjacent edge instead of reporting a clean envelope.
+  const ceiling = limit + 1;
   const seenNodes = new Set([id]);
   const seenEdges = new Set<string>();
-  const result: GraphEdge[] = [];
-  let frontier = [id];
-  let truncated = false;
+  const collected: GraphEdge[] = [];
+  let frontier = new Set([id]);
 
-  for (let level = 0; level < depth && !truncated; level += 1) {
-    const available = incidentEdges(db, frontier, opts.kinds);
-    const next: string[] = [];
-    for (const edge of available) {
-      const key = `${edge.src}\u0000${edge.dst}\u0000${edge.kind}`;
-      if (seenEdges.has(key)) continue;
-      seenEdges.add(key);
-      if (result.length === limit) {
-        truncated = true;
-        break;
-      }
-      result.push(edge);
-      const adjacent = frontier.includes(edge.src) ? edge.dst : edge.src;
-      if (!seenNodes.has(adjacent)) {
-        seenNodes.add(adjacent);
-        next.push(adjacent);
+  for (let level = 0; level < depth && collected.length < ceiling; level += 1) {
+    const next = new Set<string>();
+    for (const group of chunks([...frontier], FRONTIER_CHUNK)) {
+      if (collected.length >= ceiling) break;
+      for (const edge of incidentChunk(db, group, opts.kinds, ceiling)) {
+        const key = edgeKey(edge);
+        if (seenEdges.has(key)) continue;
+        seenEdges.add(key);
+        collected.push(edge);
+        const adjacent = frontier.has(edge.src) ? edge.dst : edge.src;
+        if (!seenNodes.has(adjacent)) {
+          seenNodes.add(adjacent);
+          next.add(adjacent);
+        }
+        if (collected.length >= ceiling) break;
       }
     }
     frontier = next;
   }
 
-  result.sort(
+  const edges = collected.slice(0, limit);
+  edges.sort(
     (a, b) =>
       compareCodePoints(a.src, b.src) ||
       compareCodePoints(a.dst, b.dst) ||
       compareCodePoints(a.kind, b.kind),
   );
-  return { id, edges: result, truncated };
+  return { id, edges, truncated: collected.length > limit };
 }
