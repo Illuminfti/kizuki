@@ -197,7 +197,10 @@ describe("a sign-in that fails while it is being set up", () => {
     }
   });
 
-  test("a listener that will not shut down keeps the completed grant", async () => {
+  test("a listener that will not shut down fails the sign-in", async () => {
+    // A port still answering on 127.0.0.1 after sign-in returned is an open
+    // door nothing else will close. The grant can be made again; reporting
+    // success and leaving the listener up cannot be undone.
     const transport = new FakeTransport({ status: 200, body: tokenResponse() });
     transport.listenerCloseError = new Error("listener could not be stopped");
     const io = fakeIo();
@@ -207,10 +210,19 @@ describe("a sign-in that fails while it is being set up", () => {
     });
     await io.firstOpen;
     transport.redirect({ code: "SENTINEL-CODE", state: NONCE });
-    await expect(flow).resolves.toMatchObject({
-      access_token: "SENTINEL-ACCESS",
-      refresh_token: "SENTINEL-REFRESH",
-    });
+
+    const error = await flow.then(
+      () => {
+        throw new Error("sign-in was expected to fail");
+      },
+      (reason: unknown) => reason as OAuthError,
+    );
+    expect(error.code).toBe("transport");
+    expect(error.provider).toBe("fixture");
+    for (const text of [error.message, String(error), JSON.stringify(error)]) {
+      expect(text).not.toContain("SENTINEL-ACCESS");
+      expect(text).not.toContain("SENTINEL-CODE");
+    }
   });
 
   test("a listener that will not shut down keeps the real failure", async () => {
@@ -220,7 +232,10 @@ describe("a sign-in that fails while it is being set up", () => {
     const flow = signInWithBrowser(provider(), io, transport, deterministic());
     await io.firstOpen;
     transport.redirect({ code: "SENTINEL-CODE", state: "forged" });
+    // The shutdown failed too, but the forged state is what the owner has to
+    // act on, so it is what surfaces.
     await expect(flow).rejects.toMatchObject({ code: "state_mismatch" });
+    expect(transport.listeners[0]?.closed).toBe(false);
   });
 });
 

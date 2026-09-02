@@ -50,11 +50,14 @@ export class FakeListener implements LoopbackListener {
   }
 
   async close(): Promise<void> {
+    // A listener that cannot be stopped is still listening: it keeps its
+    // waiters and still answers callback(), which is what a real port that
+    // refused to come down would do.
+    if (this.closeError !== null) throw this.closeError;
     this.closed = true;
     for (const waiter of this.waiters.splice(0)) {
       waiter.reject(new OAuthError("timeout", "loopback"));
     }
-    if (this.closeError !== null) throw this.closeError;
   }
 
   deliver(query: Record<string, string>): void {

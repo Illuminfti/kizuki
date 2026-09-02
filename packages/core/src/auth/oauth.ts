@@ -242,6 +242,8 @@ export async function signInWithBrowser(
   const nonce = base64url(randomOf(randomBytes, STATE_BYTES));
 
   const secrets = operationSecrets(provider, pkce.verifier, nonce);
+  /** Set once the flow has succeeded and only the shutdown can still fail. */
+  let closing = false;
 
   const listener = await transport.listen(provider.redirect_path ?? "/callback");
   // The transport chose this URI and the provider is about to be told to send
@@ -306,14 +308,27 @@ export async function signInWithBrowser(
       code_verifier: pkce.verifier,
       ...clientSecretForm(provider),
     });
-    return parseTokenResponse(provider, response.status, response.body, now());
+    const tokens = parseTokenResponse(
+      provider,
+      response.status,
+      response.body,
+      now(),
+    );
+    // A port still answering on 127.0.0.1 after this returns is an open door
+    // on the owner's machine that nothing else will close. The grant can be
+    // made again; the listener cannot be reclaimed by anyone, so a shutdown
+    // that fails has to fail the sign-in with it.
+    closing = true;
+    await listener.close();
+    return tokens;
   } catch (error) {
-    throw withoutSecrets(asOAuthError(error, provider.name), secrets);
-  } finally {
-    // A listener that will not shut down must neither displace the failure the
-    // caller has to act on nor discard a grant the owner already made: the
-    // provider has minted tokens by now and only this process can store them.
-    await listener.close().catch(() => undefined);
+    const failure = closing
+      ? transportError(error, provider.name)
+      : asOAuthError(error, provider.name);
+    // A shutdown that also fails must not displace the failure the caller has
+    // to act on, and it has already been attempted when `closing` is set.
+    if (!closing) await listener.close().catch(() => undefined);
+    throw withoutSecrets(failure, secrets);
   }
 }
 
