@@ -6,7 +6,10 @@ import {
   fixtureDeps,
 } from "./helpers";
 
-const MARKER = "PLANTED-CAPTURE-MARKER";
+// Lower case and separator-safe, so slug() leaves it intact: an upper-case
+// marker would clear the surface checks below through case folding alone,
+// whatever the connector did with the value.
+const MARKER = "planted-capture-marker";
 
 afterEach(cleanupFixtureDatabases);
 
@@ -53,6 +56,17 @@ test("captured values stay out of manifests, health, cursors and errors", async 
   expect(batch.cursor).not.toContain(MARKER);
   expect(parseCursor(batch.cursor).last_frame_id).toBe(8);
 
+  // A subject id is the slug of a captured name by design: the app, the site
+  // host and the audio device are what the owner's world is made of, and the
+  // staging floor mints one entity candidate per distinct id.
+  expect(
+    batch.events.flatMap(({ subjects }) =>
+      subjects.map(({ subject_id }) => subject_id),
+    ),
+  ).toContain(`screenpipe:app:app-${MARKER}`);
+
+  // Every event field that is not text, a display name or a documented
+  // metadata key is connector-authored, so none of it may carry captured text.
   const safeEventSurface = batch.events.map((event) => ({
     schema: event.schema,
     connector_id: event.connector_id,
@@ -60,10 +74,7 @@ test("captured values stay out of manifests, health, cursors and errors", async 
     kind: event.kind,
     occurred_at: event.occurred_at,
     observed_at: event.observed_at,
-    subjects: event.subjects.map(({ subject_id, role }) => ({
-      subject_id,
-      role,
-    })),
+    roles: event.subjects.map(({ role }) => role),
     sensitivity_hint: event.sensitivity_hint,
     deleted: event.deleted,
     attachments: event.attachments,
@@ -91,5 +102,16 @@ test("captured values stay out of manifests, health, cursors and errors", async 
   }
   expect(messages).toHaveLength(2);
   expect(messages.join("\n")).not.toContain(MARKER);
+  // The four surfaces the spec keeps captured text out of, restated together
+  // so a leak into any one of them fails here.
+  expect(
+    [
+      JSON.stringify(manifest),
+      before.detail ?? "",
+      after.detail ?? "",
+      batch.cursor,
+      ...messages,
+    ].some((surface) => surface.includes(MARKER)),
+  ).toBe(false);
   await connector.revoke();
 });
