@@ -77,8 +77,14 @@ export async function main(argv: string[]): Promise<void> {
     principal = resolved;
   }
 
-  await runStdio({ db, vaultPath: options.vault, principal });
-  db.close();
+  // The handle closes on the way out whatever happened: a transport that
+  // fails mid-answer would otherwise leave the database open behind an
+  // unhandled rejection.
+  try {
+    await runStdio({ db, vaultPath: options.vault, principal });
+  } finally {
+    db.close();
+  }
 }
 
 if (import.meta.main) {

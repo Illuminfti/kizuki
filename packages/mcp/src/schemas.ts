@@ -96,7 +96,7 @@ export const PACKET_INPUT = z.strictObject({
   subjects: z.array(ID).max(16).optional(),
   since: RFC3339.optional(),
   until: RFC3339.optional(),
-  budget_tokens: z.int().min(100).max(2000).optional(),
+  budget_tokens: z.int().min(50).max(2000).optional(),
   include: z
     .array(z.enum(["canon", "graph", "timeline"]))
     .max(3)

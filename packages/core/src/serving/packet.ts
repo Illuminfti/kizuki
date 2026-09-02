@@ -22,11 +22,12 @@ export { PACKET_SECTIONS };
 const MAX_QUERY_CHARS = 512;
 const MAX_SUBJECTS = 16;
 /**
- * The packet's own header costs about fifty tokens, and it is not optional:
- * it is what makes the packet identifiable when it later turns up inside a
- * captured transcript. A budget under a hundred buys nothing but the header.
+ * The header is not optional: it is what makes the packet identifiable when
+ * it later turns up inside a captured transcript, and it costs about fifty
+ * tokens. The floor is the spec's, so the smallest legal budget buys the
+ * header and nothing else rather than being refused.
  */
-const MIN_BUDGET = 100;
+const MIN_BUDGET = 50;
 const MAX_BUDGET = 2_000;
 const DEFAULT_BUDGET = 450;
 const DEFAULT_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;

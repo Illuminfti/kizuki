@@ -40,7 +40,7 @@ describe("serveContextPacket", () => {
   test("every budget is respected and the header is always present", () => {
     const live = newFixture();
     for (const ctx of [live.owner(), live.agent("reader-private")]) {
-      for (const budget of [100, 450, 2_000]) {
+      for (const budget of [50, 450, 2_000]) {
         const data = serveContextPacket(ctx, {
           query: "kettle",
           subjects: ["person:ada"],
@@ -185,7 +185,7 @@ describe("serveContextPacket", () => {
   test("a budget outside the range is refused", () => {
     const ctx = newFixture().owner();
     expect(
-      refusal(() => serveContextPacket(ctx, { budget_tokens: 99 })).code,
+      refusal(() => serveContextPacket(ctx, { budget_tokens: 49 })).code,
     ).toBe("invalid_arguments");
     expect(
       refusal(() => serveContextPacket(ctx, { budget_tokens: 2_001 })).code,

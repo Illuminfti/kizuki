@@ -44,10 +44,15 @@ export async function runStdio(ctx: ServeContext): Promise<void> {
   const deliver = transport.onmessage?.bind(transport);
   const send = transport.send.bind(transport);
   transport.send = async (message) => {
-    await send(message);
-    if (isAnswer(message)) {
-      inFlight -= 1;
-      settle();
+    try {
+      await send(message);
+    } finally {
+      // A write that fails still ends the request it was answering; leaving
+      // the count up would wedge the shutdown on work that cannot finish.
+      if (isAnswer(message)) {
+        inFlight -= 1;
+        settle();
+      }
     }
   };
 

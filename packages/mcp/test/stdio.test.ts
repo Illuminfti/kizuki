@@ -91,6 +91,52 @@ describe("the stdio process entry", () => {
     );
   });
 
+  test("a client that stops reading does not wedge the process", async () => {
+    const running = live();
+    writeFileSync(
+      join(running.vaultPath, "facts", "wide.md"),
+      serializePage({
+        data: {
+          id: "fact:wide",
+          title: "A wide kettle note",
+          type: "fact",
+          status: "active",
+          sensitivity: "public",
+          taint: "clean",
+        },
+        body: "the kettle is on. ".repeat(6_000),
+      }),
+      "utf8",
+    );
+    const child = Bun.spawn([process.execPath, BIN, "--vault", running.vaultPath, "--owner"], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    child.stdin.write(
+      [
+        '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}',
+        '{"jsonrpc":"2.0","method":"notifications/initialized"}',
+        '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_page","arguments":{"id":"fact:wide"}}}',
+        "",
+      ].join("\n"),
+    );
+    child.stdin.end();
+    // The reader walks away mid-answer. A write that fails still ends the
+    // request it was answering, or the shutdown waits on it forever.
+    await child.stdout.cancel();
+    void new Response(child.stderr).text();
+
+    const exited = await Promise.race([
+      child.exited,
+      new Promise<"hung">((resolve) => {
+        setTimeout(() => resolve("hung"), 8_000);
+      }),
+    ]);
+    if (exited === "hung") child.kill();
+    expect(exited).not.toBe("hung");
+  }, 20_000);
+
   test("a request answered as the pipe closes is answered in full", async () => {
     const running = live();
     // Big enough that the answer cannot leave the pipe in one turn: a
