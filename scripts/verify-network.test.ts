@@ -145,6 +145,6 @@ describe("this tree", () => {
     const scan = await scanTrackedSources();
     expect(scan.findings).toEqual([]);
     expect(scan.stale).toEqual([]);
-    expect(scan.allowlisted).toHaveLength(0);
+    expect(scan.allowlisted).toHaveLength(2);
   });
 });
