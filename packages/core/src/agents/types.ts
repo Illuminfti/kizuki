@@ -71,7 +71,11 @@ export type DenyReason =
   | "tool_not_granted"
   | "unknown_agent"
   | "rate_limited"
-  | "held";
+  | "held"
+  /** A call refused before any data was read. */
+  | "invalid_arguments"
+  /** The engine failed; the cause never leaves core. */
+  | "error";
 
 export interface Servable {
   id: string;
