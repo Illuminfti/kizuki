@@ -1,11 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { StatePersister } from "../auth/session";
-import {
-  CONCURRENT_CONNECTION_CHANGE,
-  STALE_CONNECTION_SNAPSHOT,
-  type ConnectionStateStore,
-} from "./connection-state";
-import { LedgerError, getConnection, type Connection } from "./connections";
+import type { ConnectionStateStore } from "./connection-state";
+import type { Connection } from "./connections";
 
 export interface StatePersisterHandle {
   /** Serialised: calls run one after another, never concurrently. */
@@ -14,25 +10,17 @@ export interface StatePersisterHandle {
   current(): Connection;
 }
 
-/** A snapshot the row has moved past; the write itself was never attempted. */
-function isBehind(error: unknown): boolean {
-  return (
-    error instanceof LedgerError &&
-    (error.message === STALE_CONNECTION_SNAPSHOT ||
-      error.message === CONCURRENT_CONNECTION_CHANGE)
-  );
-}
-
 /**
  * Lends a connector the ability to persist refreshed state for exactly one
  * connection. Writes are chained because two overlapping refreshes would
  * otherwise collide on the store's single active enrollment per source.
  *
- * One handle per connection per process is the intended shape, but a second
- * run may hold one over the same row. Every rewrite advances `connected_at`,
- * so such a handle is behind from the first write another one commits; it
- * re-reads the row once rather than dying, because a rotated refresh token it
- * cannot write back is a token the next process no longer has.
+ * The handle holds the row it last wrote and offers it to `rewrite` unchanged,
+ * so the store's identity check is what decides every write. A handle another
+ * writer has moved past therefore fails instead of overwriting: the row it
+ * would clobber may belong to a re-sign-in for a different account, and the
+ * owner's newest grant outranks a refresh from a run that no longer describes
+ * the connection.
  */
 export function createStatePersister(
   db: Database,
@@ -42,16 +30,6 @@ export function createStatePersister(
   let current = connection;
   let queue: Promise<void> = Promise.resolve();
   const write = async (bytes: Uint8Array): Promise<void> => {
-    try {
-      current = await store.rewrite(db, current, (writer) => writer.write(bytes));
-      return;
-    } catch (error) {
-      if (!isBehind(error)) throw error;
-      const fresh = getConnection(db, current.connector_id, current.source_key);
-      if (fresh === null) throw error;
-      current = fresh;
-    }
-    // The reread is a snapshot too, so a second loss is the caller's to see.
     current = await store.rewrite(db, current, (writer) => writer.write(bytes));
   };
   const persist: StatePersister = (bytes) => {

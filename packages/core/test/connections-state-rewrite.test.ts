@@ -221,10 +221,15 @@ describe("non-interactive state rewrite", () => {
     const handle = createStatePersister(db, store, connection);
     disconnect(db, connection.connector_id, connection.source_key);
 
+    // The handle's snapshot is now the row before the disconnect, so the
+    // identity check refuses it before the disconnect rule is even reached.
     await expect(
       handle.persist(new TextEncoder().encode("second-envelope")),
-    ).rejects.toThrow("disconnected");
+    ).rejects.toThrow(LedgerError);
     expect(listConnections(db)).toEqual([]);
+    expect(new TextDecoder().decode(store.read(connection) ?? new Uint8Array())).toBe(
+      "first-envelope",
+    );
     db.close();
   });
 
@@ -367,7 +372,7 @@ describe("host-lent state persister", () => {
     db.close();
   });
 
-  test("a handle that fell behind re-reads the row instead of dying", async () => {
+  test("a handle that fell behind refuses rather than overwrite the winner", async () => {
     const directory = temporary();
     const db = openLedger(join(directory, "ledger.sqlite"));
     const store = new ConnectionStateStore(directory);
@@ -385,12 +390,52 @@ describe("host-lent state persister", () => {
     const sync = createStatePersister(db, store, connection);
 
     await backfill.persist(new TextEncoder().encode("second-envelope"));
-    await sync.persist(new TextEncoder().encode("third-envelope"));
+    // The second handle's snapshot is the row the first one moved past.
+    await expect(
+      sync.persist(new TextEncoder().encode("third-envelope")),
+    ).rejects.toThrow(LedgerError);
+    // Refusing costs the writer that is current nothing: it keeps writing.
     await backfill.persist(new TextEncoder().encode("fourth-envelope"));
 
     expect(
       new TextDecoder().decode(store.read(backfill.current()) ?? new Uint8Array()),
     ).toBe("fourth-envelope");
+    expect(listConnections(db)).toHaveLength(1);
+    db.close();
+  });
+
+  test("a re-sign-in for another account is never overwritten by a stale refresh", async () => {
+    const directory = temporary();
+    const db = openLedger(join(directory, "ledger.sqlite"));
+    const store = new ConnectionStateStore(directory);
+    const ada = await enrollConnection(
+      db,
+      store,
+      connector(async (_io, state) => {
+        await state.write(new TextEncoder().encode("ada-envelope"));
+        return { display: "ada" };
+      }),
+      io,
+    );
+    // The connector run that started under ada still holds its persister.
+    const lent = createStatePersister(db, store, ada);
+
+    const grace = await store.replace(
+      db,
+      ada,
+      connector(async (_io, state) => {
+        await state.write(new TextEncoder().encode("grace-envelope"));
+        return { display: "grace" };
+      }),
+      io,
+    );
+
+    await expect(
+      lent.persist(new TextEncoder().encode("ada-refreshed-envelope")),
+    ).rejects.toThrow(LedgerError);
+    expect(
+      new TextDecoder().decode(store.read(grace) ?? new Uint8Array()),
+    ).toBe("grace-envelope");
     expect(listConnections(db)).toHaveLength(1);
     db.close();
   });

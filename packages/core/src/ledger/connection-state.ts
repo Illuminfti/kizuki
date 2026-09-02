@@ -63,10 +63,10 @@ interface ConnectionExpectation {
   disconnected_at: string | null;
 }
 
-/** The caller's snapshot is behind the row: re-read it and try again. */
-export const STALE_CONNECTION_SNAPSHOT = "connection does not match persisted state";
+/** The caller offered a row the store has already moved past. */
+const STALE_CONNECTION_SNAPSHOT = "connection does not match persisted state";
 /** Another writer committed while these bytes were being staged. */
-export const CONCURRENT_CONNECTION_CHANGE =
+const CONCURRENT_CONNECTION_CHANGE =
   "connection changed while its state was being replaced";
 
 type ChunkWriter = (
