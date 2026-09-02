@@ -178,6 +178,52 @@ describe("timeline", () => {
     ]);
   });
 
+  test("orders and windows an offset SQLite cannot parse by its real instant", () => {
+    const db = searchDb();
+    const early = storedEvent(db, "early", {
+      occurred_at: "2026-02-03T01:00:00Z",
+    });
+    const mid = storedEvent(db, "mid", { occurred_at: "2026-02-03T08:00:00Z" });
+    // 2026-02-04T14:00+15:00 is 2026-02-03T23:00Z: the latest of the three,
+    // written with an offset the frozen event contract accepts.
+    const latest = storedEvent(db, "far-offset", {
+      occurred_at: "2026-02-04T14:00:00+15:00",
+    });
+
+    expect(timeline(db).map(({ event_id }) => event_id)).toEqual([
+      early.event_id,
+      mid.event_id,
+      latest.event_id,
+    ]);
+    expect(
+      timeline(db, { day: "2026-02-03" }).map(({ event_id }) => event_id),
+    ).toEqual([early.event_id, mid.event_id, latest.event_id]);
+    expect(
+      timeline(db, { since: "2026-02-03T20:00:00Z" }).map(
+        ({ event_id }) => event_id,
+      ),
+    ).toEqual([latest.event_id]);
+    expect(
+      timeline(db, { until: "2026-02-03T20:00:00Z" }).map(
+        ({ event_id }) => event_id,
+      ),
+    ).toEqual([early.event_id, mid.event_id]);
+  });
+
+  test("compares a fraction finer than a millisecond against the column", () => {
+    const db = searchDb();
+    const stored = storedEvent(db, "sub-milli", {
+      occurred_at: "2026-02-03T12:00:00.1230Z",
+    });
+
+    expect(
+      timeline(db, { until: "2026-02-03T12:00:00.1235Z" }).map(
+        ({ event_id }) => event_id,
+      ),
+    ).toEqual([stored.event_id]);
+    expect(timeline(db, { since: "2026-02-03T12:00:00.1235Z" })).toEqual([]);
+  });
+
   test("rejects a garbage since or until instead of returning an empty window", () => {
     const db = searchDb();
     storedEvent(db, "live");

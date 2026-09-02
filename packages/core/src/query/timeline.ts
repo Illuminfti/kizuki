@@ -1,7 +1,13 @@
 import type { Database } from "bun:sqlite";
 import { SENSITIVITY_ORDER } from "../agents/types";
 import type { Sensitivity } from "../agents/types";
-import { ceilingSql, instantBound, instantSql, validLimit } from "./sql";
+import {
+  ceilingSql,
+  instantBound,
+  instantParam,
+  instantSql,
+  validLimit,
+} from "./sql";
 
 export interface TimelineOptions {
   day?: string;
@@ -81,17 +87,17 @@ export function timeline(
   const bindings: (string | number)[] = [];
   if (day !== undefined) {
     clauses.push(
-      `${OCCURRED_AT_INSTANT} >= julianday(?)`,
-      `${OCCURRED_AT_INSTANT} < julianday(?)`,
+      `${OCCURRED_AT_INSTANT} >= ${instantParam}`,
+      `${OCCURRED_AT_INSTANT} < ${instantParam}`,
     );
     bindings.push(day.since, day.until);
   }
   if (since !== undefined) {
-    clauses.push(`${OCCURRED_AT_INSTANT} >= julianday(?)`);
+    clauses.push(`${OCCURRED_AT_INSTANT} >= ${instantParam}`);
     bindings.push(since);
   }
   if (until !== undefined) {
-    clauses.push(`${OCCURRED_AT_INSTANT} < julianday(?)`);
+    clauses.push(`${OCCURRED_AT_INSTANT} < ${instantParam}`);
     bindings.push(until);
   }
   if (opts.subject !== undefined) {

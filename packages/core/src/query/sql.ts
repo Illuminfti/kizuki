@@ -9,55 +9,65 @@ import { isRfc3339 } from "../util/time";
 
 /**
  * `julianday(...)` over an RFC3339 column normalized the way the frozen event
- * contract allows: lowercase `t`/`z` upper-cased, a leap second `:60` mapped
- * to `:59.999` of its own minute. `column` MUST be a column reference; it is
- * substituted several times, so a `?` placeholder is not allowed here.
+ * contract allows: lowercase `t` upper-cased, a leap second `:60` mapped to
+ * `:59.999` of its own minute, and the UTC offset applied here rather than by
+ * SQLite. `column` MUST be a column reference; it is substituted several
+ * times, so a `?` placeholder is not allowed here — bind through
+ * `instantParam` instead.
+ *
+ * SQLite's date parser rejects any offset past ±14:59, while `isRfc3339` — and
+ * therefore the event contract, and therefore the ledger, which stores
+ * `occurred_at` verbatim — accepts up to ±23:59. Handing it the whole string
+ * evaluates those timestamps to NULL, which drops the event from every window
+ * and sorts it first. Splitting the offset off and subtracting it as minutes
+ * keeps the expression total over every form the contract admits.
  *
  * `agents/time.ts` maps a leap second to the next second for grant windows.
  * This helper maps it to the last representable instant of the stated minute
  * so window membership stays inside the stated second.
  */
 export function instantSql(column: string): string {
-  return `julianday(
-  replace(
-    replace(
-      CASE
-        WHEN substr(${column}, 18, 2) = '60' THEN
-          substr(${column}, 1, 17) || '59.999' ||
-          CASE
-            WHEN lower(substr(${column}, -1)) = 'z' THEN 'Z'
-            ELSE substr(${column}, -6)
-          END
-        ELSE ${column}
-      END,
-      't', 'T'
-    ),
-    'z', 'Z'
-  )
-)`;
+  // A numeric offset is always the trailing `±HH:MM`, and the shortest
+  // contract-valid timestamp is 20 characters, so the sixth character from the
+  // end of a `Z`-terminated one is always a digit or a dot.
+  const zoned = `substr(${column}, -6, 1) IN ('+', '-')`;
+  const civil = `CASE
+      WHEN substr(${column}, 18, 2) = '60'
+        THEN substr(${column}, 1, 17) || '59.999'
+      WHEN ${zoned} THEN substr(${column}, 1, length(${column}) - 6)
+      ELSE substr(${column}, 1, length(${column}) - 1)
+    END`;
+  const offsetMinutes = `CASE
+      WHEN ${zoned} THEN
+        (CASE substr(${column}, -6, 1) WHEN '-' THEN -1 ELSE 1 END) *
+        (CAST(substr(${column}, -5, 2) AS INTEGER) * 60 +
+         CAST(substr(${column}, -2, 2) AS INTEGER))
+      ELSE 0
+    END`;
+  return `(julianday(replace(${civil}, 't', 'T')) - (${offsetMinutes}) / 1440.0)`;
 }
 
-const LEAP_FRACTION = /^\.\d+/;
+/**
+ * `instantSql` over one bound parameter: the value is named once in a
+ * single-row subquery, so a caller binds it once however many times the
+ * expression reads it. Bound and column then run byte-identical SQL, which is
+ * what makes them agree on a fraction finer than the millisecond a `Date`
+ * round-trip can carry, and on an offset SQLite refuses to parse.
+ */
+export const instantParam = `(SELECT ${instantSql("bound.v")} FROM (SELECT ? AS v) AS bound)`;
 
-function normalizeInstant(value: string): string {
-  if (value.slice(17, 19) !== "60") {
-    return value.replace("t", "T").replace(/z$/i, "Z");
-  }
-  // The rewritten `59.999` replaces the whole seconds component, fraction
-  // included: `instantSql`'s CASE branch drops the original fraction too, so
-  // keeping it here would build `23:59:59.999.500Z` and disagree with the
-  // column on a timestamp the frozen contract accepts.
-  const rest = value.slice(19);
-  const fraction = LEAP_FRACTION.exec(rest)?.[0] ?? "";
-  const leap = `${value.slice(0, 17)}59.999${rest.slice(fraction.length)}`;
-  return leap.replace("t", "T").replace(/z$/i, "Z");
-}
-
+/**
+ * Validates a caller-supplied bound with `isRfc3339` (RangeError
+ * `${label} must be an RFC3339 timestamp` otherwise) and returns the text to
+ * bind to `instantParam`. The value is returned unchanged on purpose: the
+ * bound is normalized by the same expression as the column it is compared
+ * against, so no conversion here can disagree with SQLite's own parse.
+ */
 export function instantBound(value: string, label: string): string {
   if (!isRfc3339(value)) {
     throw new RangeError(`${label} must be an RFC3339 timestamp`);
   }
-  return new Date(normalizeInstant(value)).toISOString();
+  return value;
 }
 
 export function ceilingSql(column: string): string {

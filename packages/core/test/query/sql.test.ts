@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { SENSITIVITY_ORDER } from "../../src/agents/types";
-import { ceilingSql, instantBound, instantSql } from "../../src/query/sql";
+import {
+  ceilingSql,
+  instantBound,
+  instantParam,
+  instantSql,
+} from "../../src/query/sql";
 
 const CONTRACT_INSTANTS = [
   "2026-02-02T23:30:00-02:00",
@@ -14,6 +19,16 @@ const CONTRACT_INSTANTS = [
   "2026-06-30t23:59:60.250z",
   "2026-01-01T00:00:00.123456Z",
   "2026-12-31T23:59:59-00:00",
+  // A fraction finer than a millisecond: a `Date` round-trip would truncate
+  // it and land on the other side of the column.
+  "2026-01-01T00:00:00.1235Z",
+  "2026-01-01T00:00:00.9995Z",
+  "2026-01-01T00:00:00.999999+05:30",
+  // Offsets the contract admits and SQLite's own date parser rejects.
+  "2026-02-03T12:00:00+15:00",
+  "2026-02-03T12:00:00+23:59",
+  "2026-02-03T12:00:00-23:59",
+  "2026-06-30t23:59:60.5-18:47",
 ] as const;
 
 describe("instant helpers", () => {
@@ -24,7 +39,9 @@ describe("instant helpers", () => {
     const column = db.query<
       { bound: number | null; column: number | null },
       [string]
-    >(`SELECT julianday(?) AS bound, ${instantSql("t.v")} AS column FROM t`);
+    >(
+      `SELECT ${instantParam} AS bound, ${instantSql("t.v")} AS column FROM t`,
+    );
     for (const value of CONTRACT_INSTANTS) {
       db.exec("DELETE FROM t");
       insert.run(value);
@@ -33,6 +50,21 @@ describe("instant helpers", () => {
       expect(row?.column).not.toBeNull();
       expect(row?.bound).toBe(row?.column);
     }
+  });
+
+  test("instantSql resolves an out-of-range offset to its real UTC instant", () => {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE t (v TEXT)");
+    db.query<never, [string]>("INSERT INTO t (v) VALUES (?)").run(
+      "2026-02-03T12:00:00+15:00",
+    );
+    const row = db
+      .query<{ column: number | null; utc: number | null }, [string]>(
+        `SELECT ${instantSql("t.v")} AS column, julianday(?) AS utc FROM t`,
+      )
+      .get("2026-02-02T21:00:00Z");
+    expect(row?.column).not.toBeNull();
+    expect(row?.column).toBe(row?.utc);
   });
 
   test("instantBound rejects non-RFC3339 input with RangeError", () => {

@@ -4,6 +4,7 @@ import type { Sensitivity } from "../agents/types";
 import {
   ceilingSql,
   instantBound,
+  instantParam,
   instantSql,
   placeholders,
   validLimit,
@@ -140,13 +141,13 @@ export function search(
   }
   if (since !== undefined) {
     clauses.push(
-      `(search_docs.scope = 'canon' OR ${OCCURRED_AT_INSTANT} >= julianday(?))`,
+      `(search_docs.scope = 'canon' OR ${OCCURRED_AT_INSTANT} >= ${instantParam})`,
     );
     bindings.push(since);
   }
   if (until !== undefined) {
     clauses.push(
-      `(search_docs.scope = 'canon' OR ${OCCURRED_AT_INSTANT} < julianday(?))`,
+      `(search_docs.scope = 'canon' OR ${OCCURRED_AT_INSTANT} < ${instantParam})`,
     );
     bindings.push(until);
   }

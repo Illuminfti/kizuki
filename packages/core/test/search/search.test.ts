@@ -576,6 +576,26 @@ describe("search policy and filters", () => {
     ).toContain("canon");
   });
 
+  test("windows an offset SQLite cannot parse by its real instant", () => {
+    const db = searchDb();
+    // 2026-02-03T12:00+15:00 is 2026-02-02T21:00Z.
+    const far = storedEvent(db, "far-offset", {
+      text: "windowword",
+      occurred_at: "2026-02-03T12:00:00+15:00",
+    });
+    indexEvent(db, far);
+
+    expect(
+      search(db, "windowword", {
+        since: "2026-02-02T20:00:00Z",
+        until: "2026-02-02T22:00:00Z",
+      }).map(({ doc_id }) => doc_id),
+    ).toEqual([far.event_id]);
+    expect(
+      search(db, "windowword", { since: "2026-02-03T00:00:00Z" }),
+    ).toEqual([]);
+  });
+
   test("rejects a garbage search time bound instead of matching nothing", () => {
     const db = searchDb();
     indexEvent(db, storedEvent(db, "live", { text: "windowword" }));
