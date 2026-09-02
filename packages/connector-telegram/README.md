@@ -50,11 +50,13 @@ Sign-in asks for three things at most, in this order:
 3. your two-step verification password, if the account has one. The prompt is
    masked, and any hint Telegram supplies is shown once and never stored.
 
-You get two more tries after a wrong code or password. The third rejection
-abandons sign-in and writes nothing. If Telegram asks the client to wait, a
-short wait passes quietly and sign-in continues. A longer one is reported to
-you with the number of seconds, because a silent multi-minute pause looks like
-a hang.
+You get two more tries after a wrong code or password, and the prompt says
+which of the two Telegram refused. The third rejection abandons sign-in and
+writes nothing. Only a credential Telegram named as wrong counts against those
+tries: a wait or a connection fault ends the attempt with its own reason
+instead of being spent as one of them. A short wait passes quietly and sign-in
+continues; a longer one is reported to you with the number of seconds, because
+a silent multi-minute pause looks like a hang.
 
 A number no Telegram account exists for is refused. The library this package
 uses would otherwise register one under a placeholder name and accept

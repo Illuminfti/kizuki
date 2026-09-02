@@ -84,9 +84,9 @@ test("a third rejected code abandons sign-in without writing state", async () =>
   const error = await rejection(() => connector.signIn(io, writer));
   expect(error.code).toBe("sign_in_aborted");
   expect(io.notices).toEqual([
-    "that code/password was not accepted, try again",
-    "that code/password was not accepted, try again",
-    "that code/password was not accepted, try again",
+    "that code was not accepted, try again",
+    "that code was not accepted, try again",
+    "that code was not accepted, try again",
   ]);
   expect(writer.writes).toEqual([]);
   expect(api.calls.map((call) => call.method)).toContain("disconnect");
@@ -196,4 +196,33 @@ test("a name made only of control sequences still labels the account", async () 
     new CapturingWriter(),
   );
   expect(display.display).toBe("user 1001");
+});
+
+test("a refused password is named as a password, not as a code", async () => {
+  const account = fixtureAccount();
+  account.sign_in = { code: "22222", password: "correct horse" };
+  const { connector } = harness({ account, config: {} });
+  const io = new ScriptedIo([PHONE, "22222", "wrong", "wrong", "wrong"]);
+
+  const error = await rejection(() =>
+    connector.signIn(io, new CapturingWriter()),
+  );
+  expect(error.code).toBe("sign_in_aborted");
+  expect(io.notices).toEqual([
+    "that password was not accepted, try again",
+    "that password was not accepted, try again",
+    "that password was not accepted, try again",
+  ]);
+});
+
+test("an answer with nothing in it is asked again rather than sent", async () => {
+  const { connector, api } = harness({ config: {} });
+  const io = new ScriptedIo([PHONE, "   ", "22222"]);
+
+  expect(await connector.signIn(io, new CapturingWriter())).toEqual({
+    display: "@ada",
+  });
+  expect(io.notices).toEqual(["nothing was entered, try again"]);
+  expect(io.prompts).toHaveLength(3);
+  expect(api.calls.filter((call) => call.method === "start")).toHaveLength(1);
 });

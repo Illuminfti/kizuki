@@ -13,7 +13,7 @@ import type {
   TelegramMessage,
   TelegramUser,
 } from "./api";
-import { classify, guarded } from "./guard";
+import { classify, guarded, isRefusedCredential } from "./guard";
 import type { ProviderErrors } from "./guard";
 import { TELEGRAM_CONNECTOR_VERSION } from "./map";
 import { describeMedia } from "./media";
@@ -88,10 +88,7 @@ class RealTelegramApi implements TelegramApi {
             // outbound action, so the branch is refused before either request
             // is sent.
             firstAndLastNames: () => refuseRegistration(refusal),
-            onError: (error) =>
-              refusal.error !== null
-                ? Promise.resolve(true)
-                : flow.onError(rpcName(error, runtime)),
+            onError: (error) => askOrEnd(error, flow, refusal, runtime),
           }),
         runtime,
       );
@@ -229,6 +226,29 @@ class RealTelegramApi implements TelegramApi {
 
 export const createRealApi: TelegramApiFactory = (session, credentials) =>
   new RealTelegramApi(session, credentials);
+
+/**
+ * The library hands every failure inside its sign-in loops to `onError` and
+ * reads a `false` answer as "ask the owner again", so a wait or a socket fault
+ * answered that way is spent as one of their attempts and then abandons a
+ * sign-in that was never refused. Only a credential Telegram named as wrong
+ * is worth another prompt; anything else is recorded and answered with the
+ * stop the library understands, so `start` can throw the real reason.
+ */
+async function askOrEnd(
+  error: unknown,
+  flow: SignInFlow,
+  refusal: { error: TelegramConnectorError | null },
+  runtime: Runtime,
+): Promise<boolean> {
+  if (refusal.error !== null) return true;
+  const name = rpcName(error, runtime);
+  if (runtime.isRpcError(error) && isRefusedCredential(name)) {
+    return flow.onError(name);
+  }
+  refusal.error = classify(error, runtime);
+  return true;
+}
 
 function refuseRegistration(holder: {
   error: TelegramConnectorError | null;

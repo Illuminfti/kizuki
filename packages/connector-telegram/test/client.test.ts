@@ -33,12 +33,15 @@ const pages: {
   invoked: string[];
   /** The number the flow is signing in with has no account behind it. */
   signUpRequired: boolean;
+  /** Raised from inside the library's sign-in loop, one per attempt. */
+  signInErrors: unknown[];
 } = {
   dialogs: async function* () {},
   messages: async function* () {},
   invoke: async () => ({}),
   invoked: [],
   signUpRequired: false,
+  signInErrors: [],
 };
 
 interface StartParams {
@@ -50,19 +53,29 @@ interface StartParams {
 }
 
 class FakeClient {
-  /** The library's own sign-up branch, transcribed from `client/auth.js`. */
+  /**
+   * The library's own sign-in loops, transcribed from `client/auth.js`. Every
+   * failure raised inside them — waits and transport faults included — is
+   * handed to `onError`, and a `false` answer asks the owner again; nothing
+   * escapes `start` on its own.
+   */
   async start(params: StartParams): Promise<void> {
-    if (!pages.signUpRequired) return;
     for (;;) {
       try {
-        let firstName = "first name";
-        if (params.firstAndLastNames !== undefined) {
-          const names = await params.firstAndLastNames();
-          firstName = names[0];
+        if (pages.signUpRequired) {
+          let firstName = "first name";
+          if (params.firstAndLastNames !== undefined) {
+            const names = await params.firstAndLastNames();
+            firstName = names[0];
+          }
+          expect(firstName.length).toBeGreaterThan(0);
+          pages.invoked.push("auth.SignUp");
+          pages.invoked.push("help.AcceptTermsOfService");
+          return;
         }
-        expect(firstName.length).toBeGreaterThan(0);
-        pages.invoked.push("auth.SignUp");
-        pages.invoked.push("help.AcceptTermsOfService");
+        await params.phoneCode();
+        const failure = pages.signInErrors.shift();
+        if (failure !== undefined) throw failure;
         return;
       } catch (error) {
         if (await params.onError(error as Error)) {
@@ -70,6 +83,10 @@ class FakeClient {
         }
       }
     }
+  }
+
+  async getMe(): Promise<unknown> {
+    return pages.invoke({ name: "users.GetFullUser" });
   }
 
   iterDialogs(): AsyncGenerator<unknown> {
@@ -246,5 +263,58 @@ test.skipIf(!OFFLINE)(
     // Registering an account under a placeholder name and accepting the
     // provider's terms on the owner's behalf are both outbound actions.
     expect(pages.invoked).toEqual([]);
+  },
+);
+
+function signInFlow(seen: string[]): SignInFlow {
+  return {
+    phone: "+15551234567",
+    code: async () => "22222",
+    password: async () => "hunter",
+    // The bound `runSignIn` keeps, so a forwarded error cannot loop for ever.
+    onError: async (name) => {
+      seen.push(name);
+      return seen.length >= 3;
+    },
+  };
+}
+
+test.skipIf(!OFFLINE)(
+  "a wait reported while the code is checked is honoured, not counted against the owner",
+  async () => {
+    const seen: string[] = [];
+    pages.signInErrors = [new FloodWaitError(30)];
+    const caught = await thrown(() => api().start(signInFlow(seen)));
+    pages.signInErrors = [];
+
+    expect(caught).toBeInstanceOf(TelegramConnectorError);
+    expect((caught as TelegramConnectorError).code).toBe("flood_wait");
+    expect((caught as TelegramConnectorError).retry_after).toBe(30);
+    // The owner typed the right code. Spending one of their three attempts on
+    // a pause is how a wait becomes an abandoned sign-in.
+    expect(seen).toEqual([]);
+  },
+);
+
+test.skipIf(!OFFLINE)(
+  "a code telegram refused is the one thing the flow is asked about",
+  async () => {
+    const seen: string[] = [];
+    pages.signInErrors = [new RPCError("PHONE_CODE_INVALID")];
+    await api().start(signInFlow(seen));
+    expect(seen).toEqual(["PHONE_CODE_INVALID"]);
+  },
+);
+
+test.skipIf(!OFFLINE)(
+  "a dead session raised during sign-in ends it with the reason",
+  async () => {
+    const seen: string[] = [];
+    pages.signInErrors = [new RPCError("AUTH_KEY_UNREGISTERED")];
+    const caught = await thrown(() => api().start(signInFlow(seen)));
+    pages.signInErrors = [];
+
+    expect((caught as TelegramConnectorError).code).toBe("unauthenticated");
+    expect(seen).toEqual([]);
   },
 );

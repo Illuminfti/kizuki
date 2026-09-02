@@ -42,22 +42,38 @@ export async function runSignIn(
 ): Promise<void> {
   let failures = 0;
   let aborted = false;
+  const reject = (notice: string): boolean => {
+    failures += 1;
+    io.notify(notice);
+    aborted = failures >= MAX_ATTEMPTS;
+    return aborted;
+  };
+  /**
+   * Nothing typed never reaches the provider: the library raises a local fault
+   * for an empty answer, which is not a credential Telegram refused, and would
+   * now end the sign-in rather than ask again.
+   */
+  const ask = async (
+    question: string,
+    opts?: { secret?: boolean },
+  ): Promise<string> => {
+    for (;;) {
+      const value = await io.prompt(question, opts);
+      if (value.trim().length > 0) return value;
+      if (reject("nothing was entered, try again")) return value;
+    }
+  };
   const flow: SignInFlow = {
     phone,
-    code: () => io.prompt("Code Telegram sent you: "),
+    code: () => ask("Code Telegram sent you: "),
     password: (hint) =>
-      io.prompt(
+      ask(
         hint === undefined
           ? "Two-step verification password: "
           : `Two-step verification password (hint: ${terminalSafe(hint)}): `,
         { secret: true },
       ),
-    onError: async () => {
-      failures += 1;
-      io.notify("that code/password was not accepted, try again");
-      aborted = failures >= MAX_ATTEMPTS;
-      return aborted;
-    },
+    onError: async (name) => reject(rejectionNotice(name)),
   };
   let waited = false;
   for (;;) {
@@ -81,4 +97,15 @@ export async function runSignIn(
       await sleep(seconds * 1000);
     }
   }
+}
+
+/**
+ * Telegram names which credential it refused, and saying which one to type
+ * again is the whole use of that name. The vocabulary is a fixed set, so no
+ * provider text reaches the terminal through this.
+ */
+function rejectionNotice(name: string): string {
+  return name.startsWith("PASSWORD")
+    ? "that password was not accepted, try again"
+    : "that code was not accepted, try again";
 }

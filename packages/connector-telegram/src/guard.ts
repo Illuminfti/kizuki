@@ -11,6 +11,23 @@ const DEAD_SESSION = new Set([
 ]);
 
 /**
+ * Provider errors that mean the owner typed something Telegram would not take.
+ * They are the only sign-in failures worth another prompt; every other one,
+ * a wait or a transport fault included, ends the flow with its own reason.
+ */
+const REFUSED_CREDENTIAL = new Set([
+  "PHONE_CODE_INVALID",
+  "PHONE_CODE_EMPTY",
+  "PHONE_CODE_EXPIRED",
+  "PHONE_CODE_HASH_EMPTY",
+  "PASSWORD_HASH_INVALID",
+]);
+
+export function isRefusedCredential(name: string): boolean {
+  return REFUSED_CREDENTIAL.has(name);
+}
+
+/**
  * The two provider predicates the classifier needs. Keeping them behind an
  * interface is what lets the failure paths be exercised without loading the
  * library, which is otherwise reachable only from the manual smoke test.
