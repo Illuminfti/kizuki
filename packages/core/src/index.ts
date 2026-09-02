@@ -78,6 +78,7 @@ export {
   markClaimsPurged,
   reinstateClaim,
   resupersedeClaim,
+  supersedeLiveGroup,
   supersessionsForReceipt,
   normalizeObject,
   predicateIds,
@@ -384,6 +385,27 @@ export type {
   TokenSet,
 } from "./auth";
 export { loopbackTransport } from "./auth/loopback";
+
+export {
+  CORRECTION_MATCH_MIN,
+  CORRECTION_MAX_PAGES,
+  CORRECT_ERROR_CODES,
+  CorrectError,
+  OWNER_CONNECTOR_ID,
+  bumpClaimsEpoch,
+  correct,
+  getClaimsEpoch,
+  initClaimsEpoch,
+  objectFromStatement,
+  sourceRecordId,
+  unifiedDiff,
+} from "./correction";
+export type {
+  CorrectErrorCode,
+  CorrectInput,
+  CorrectIo,
+  CorrectResult,
+} from "./correction";
 
 export { doctorVault } from "./vault/doctor";
 export type { DoctorPageResult, DoctorVaultResult } from "./vault/doctor";

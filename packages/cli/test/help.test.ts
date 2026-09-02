@@ -13,6 +13,7 @@ const IMPLEMENTED_NON_GATE_VERBS = [
   "import",
   "models",
   "audit",
+  "tell",
   "undo",
   "query",
   "doctor",
@@ -74,12 +75,15 @@ describe("help", () => {
     );
   });
 
-  test.todo(
-    "correction and serve-daemon lanes: help exposes the remaining RFC 0002 verbs",
-    () => {
-      throw new Error("pending RFC 0002 CLI lanes");
-    },
-  );
+  test("help exposes the correction RFC 0002 verb", () => {
+    const env = isolatedEnv();
+    const result = runCli(env, "--help");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("tell");
+    expect(runCli(env, "help", "tell").stdout).toContain(
+      'usage: kizuki tell "<statement>" [--about SUBJECT] [--claim CLAIM_ID]',
+    );
+  });
 
   test("help <verb> prints that verb's usage", () => {
     const result = runCli(isolatedEnv(), "help", "connect");

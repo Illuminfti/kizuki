@@ -324,6 +324,12 @@ function prepareRevision(
   data["sensitivity"] = sensitivity;
   data["taint"] = taint;
   data["sources"] = sources;
+  if (
+    decision.action === "supersede" ||
+    claims.some((claim) => claim.authority === "owner_correction")
+  ) {
+    delete data["x-contested"];
+  }
   if (decision.action === "conflict") data["x-ambiguous"] = true;
   return { page: { data, body }, action, taint, sensitivity };
 }

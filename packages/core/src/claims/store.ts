@@ -269,18 +269,42 @@ function resolveProvenance(db: Database, ids: readonly string[]): void {
   }
 }
 
+function eventTaint(
+  connectorId: string,
+  metadataRaw: string,
+): EventFacts["taint"] {
+  if (connectorId === "kizuki.owner") return "owner";
+  try {
+    const parsed: unknown = JSON.parse(metadataRaw);
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      !Array.isArray(parsed) &&
+      (parsed as { taint?: unknown }).taint === "owner"
+    ) {
+      return "owner";
+    }
+  } catch {
+    // Stored metadata is attacker-controlled; treat parse failure as untrusted.
+  }
+  return "untrusted";
+}
+
 function loadEventFacts(db: Database, ids: readonly string[]): EventFacts[] {
   const placeholders = ids.map(() => "?").join(", ");
   return db
-    .query<{ event_id: string; connector_id: string; text: string }, string[]>(
-      `SELECT event_id, connector_id, text FROM events WHERE event_id IN (${placeholders})`,
+    .query<
+      { event_id: string; connector_id: string; text: string; metadata: string },
+      string[]
+    >(
+      `SELECT event_id, connector_id, text, metadata FROM events WHERE event_id IN (${placeholders})`,
     )
     .all(...ids)
     .map((row) => ({
       event_id: row.event_id,
       connector_id: row.connector_id,
       text: row.text,
-      taint: "untrusted" as const,
+      taint: eventTaint(row.connector_id, row.metadata),
     }));
 }
 
@@ -669,6 +693,36 @@ export function resupersedeClaim(
   });
 }
 
+/**
+ * RFC 0002 §6.3 step 4: every remaining live claim in the winner's
+ * `claim_key` group is superseded with R5, including those that would not
+ * have conflicted under §5.2.
+ */
+export function supersedeLiveGroup(
+  db: Database,
+  winner: Claim,
+  at: string,
+): { claim_id: string; claim_key: string; rule: "R5" }[] {
+  if (winner.claim_key === null) return [];
+  const live = liveByKey(db, winner.claim_key).filter(
+    (claim) => claim.claim_id !== winner.claim_id,
+  );
+  const out: { claim_id: string; claim_key: string; rule: "R5" }[] = [];
+  for (const loser of live) {
+    const prior = loser.valid_to;
+    persistClaim(db, {
+      ...loser,
+      status: "superseded",
+      superseded_by: winner.claim_id,
+      retracted_at: at,
+      valid_to: minTimestamp(loser.valid_to, winner.valid_from),
+    });
+    writeSupersession(db, winner.claim_id, loser.claim_id, "R5", prior, at);
+    out.push({ claim_id: loser.claim_id, claim_key: loser.claim_key ?? winner.claim_key, rule: "R5" });
+  }
+  return out;
+}
+
 export function markClaimsPurged(db: Database): string[] {
   if (!tableExists(db, "claims")) return [];
   const live = listClaims(db, { status: "live" });
@@ -797,7 +851,7 @@ export async function insertClaim(
     const structural = structuralCandidates.find((live) =>
       structuralMatch(claim, live),
     );
-    if (structural !== undefined) {
+    if (structural !== undefined && input.intent !== "correct") {
       return {
         outcome: "duplicate",
         claim: corroborate(io.db, structural, claim, at),
