@@ -99,5 +99,11 @@ describe("RFC 2047 encoded words", () => {
     expect(decoded.fallbacks).toEqual(["koi8-r"]);
     expect(decodeEncodedWords("=?utf-8?X?zz?=").text).toBe("=?utf-8?X?zz?=");
     expect(decodeEncodedWords("=?utf-8?B?%%%?=").text).toBe("=?utf-8?B?%%%?=");
+    // A single base64 character carries six bits and encodes no byte, so it
+    // used to decode to nothing and take the whole word with it.
+    expect(decodeEncodedWords("=?utf-8?B?A?=").text).toBe("=?utf-8?B?A?=");
+    expect(decodeEncodedWords("=?utf-8?B?aGVsbG8=A?=").text).toBe(
+      "=?utf-8?B?aGVsbG8=A?=",
+    );
   });
 });

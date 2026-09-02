@@ -13,6 +13,10 @@ function hexValue(character: string): number {
 export function decodeBase64Text(text: string): Uint8Array | null {
   const compact = text.replace(/[\r\n\t ]/g, "");
   const payload = compact.replace(/=+$/, "");
+  // A quantum of one character carries six bits and encodes no byte at all.
+  // Accepting it decoded a truncated word to nothing, and an encoded word
+  // that decodes to nothing disappears from the header it was written in.
+  if (payload.length % 4 === 1) return null;
   const out: number[] = [];
   let bits = 0;
   let accumulator = 0;
