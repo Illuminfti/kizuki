@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { InMemoryLedger } from "../../connectors/src";
+import { computeContentHash } from "@kizuki/core";
 import {
   BATCH_LIMIT,
   ScreenpipeConnector,
@@ -320,7 +320,7 @@ describe("ScreenpipeConnector backfill", () => {
     await connector.revoke();
   });
 
-  test("double backfill through InMemoryLedger is all duplicates", async () => {
+  test("a second backfill from the same cursor is all duplicates", async () => {
     const fixture = createFixtureDatabase();
     const connector = new ScreenpipeConnector(
       { path: fixture.path, settle_seconds: 0 },
@@ -328,16 +328,16 @@ describe("ScreenpipeConnector backfill", () => {
     );
     const first = await connector.backfill(null);
     const second = await connector.backfill(null);
-    const ledger = new InMemoryLedger();
 
-    expect(
-      ledger.acceptMany(first.events).every(({ status }) => status === "stored"),
-    ).toBe(true);
-    expect(
-      ledger
-        .acceptMany(second.events)
-        .every(({ status }) => status === "duplicate"),
-    ).toBe(true);
+    // The ledger deduplicates on (connector_id, source_record_id) and the
+    // content hash, so identical values on both passes are what makes a
+    // repeated sweep idempotent.
+    expect(second.events.map((event) => event.source_record_id)).toEqual(
+      first.events.map((event) => event.source_record_id),
+    );
+    expect(second.events.map(computeContentHash)).toEqual(
+      first.events.map(computeContentHash),
+    );
     await connector.revoke();
   });
 });
