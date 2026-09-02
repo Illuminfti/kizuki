@@ -94,4 +94,12 @@ describe("response tokenizer", () => {
     const reader = new ResponseReader(conn(["* OK {10}\r\nshort"]));
     await expect(reader.next()).rejects.toThrow(KizukiError);
   });
+
+  test("an unterminated final line is read once, then EOF", async () => {
+    const socket = conn(["* OK partial"]);
+    const reader = new ResponseReader(socket);
+    expect((await reader.next())?.text).toBe("OK partial");
+    expect(await reader.next()).toBeNull();
+    expect(await reader.next()).toBeNull();
+  });
 });

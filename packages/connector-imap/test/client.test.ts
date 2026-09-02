@@ -240,6 +240,26 @@ describe("failure handling", () => {
     expect(conn.closed).toBe(true);
   });
 
+  test("a connection dropped mid-line is unreachable, not a response flood", async () => {
+    let calls = 0;
+    let handed = false;
+    const conn: ImapConn = {
+      async send() {},
+      async receive() {
+        calls += 1;
+        if (handed) return null;
+        handed = true;
+        return new TextEncoder().encode("* OK partial");
+      },
+      close() {},
+    };
+    const error = await new ImapClient(conn)
+      .send("NOOP")
+      .catch((caught: unknown) => caught);
+    expect((error as KizukiError).code).toBe("unreachable");
+    expect(calls).toBeLessThan(10);
+  });
+
   test("an EOF mid-command is unreachable", async () => {
     const conn = scripted(() => []);
     const client = new ImapClient(conn, { commandTimeoutMs: 5_000 });

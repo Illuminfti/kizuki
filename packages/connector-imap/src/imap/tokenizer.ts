@@ -73,7 +73,14 @@ export class ResponseReader {
         throw protocolError("response line exceeds bound");
       }
       if (!(await this.pull())) {
-        return this.buffer.length === 0 ? null : latin1(this.buffer);
+        if (this.buffer.length === 0) return null;
+        // The peer closed mid-line. Handing the fragment back without taking
+        // it out of the buffer would re-parse it on every later call, so a
+        // dropped connection would read as a flood of untagged responses
+        // rather than as the peer going away.
+        const line = latin1(this.buffer);
+        this.buffer = new Uint8Array(0);
+        return line;
       }
     }
   }
