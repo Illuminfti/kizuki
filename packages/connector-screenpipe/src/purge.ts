@@ -1,145 +1,134 @@
 import type { Database } from "bun:sqlite";
-import { MAX_PLAN_IDS, PLAN_PAGE } from "./cursor";
+import { MAX_PLAN_IDS, MAX_SUBJECT_CHARS, PLAN_PAGE } from "./cursor";
 import { ScreenpipeConnectorError } from "./errors";
 import { siteHost, slug } from "./map";
 import { toSafeNumber } from "./read";
+import { normalizeTimestamp } from "./time";
 
-export function planSourceRecords(
-  db: Database,
-  subjectId: string,
-): string[] {
+/** ASCII whitespace, the set `trim` removes when it decides a frame has text. */
+const BLANK = "char(9) || char(10) || char(11) || char(12) || char(13) || ' '";
+
+/** Frames without text are skipped by the walk, so they were never ingested. */
+const FRAME_EMITTED = `full_text IS NOT NULL AND trim(full_text, ${BLANK}) != ''`;
+
+export function planSourceRecords(db: Database, subjectId: string): string[] {
   const app = prefixedValue(subjectId, "screenpipe:app:");
   if (app !== null) {
-    const names = distinctText(db, "frames", "app_name").filter(
-      (name) => slug(name) === app,
+    return pagePlan(
+      db,
+      framesBy("app_name"),
+      [],
+      "frame",
+      (value) => value !== null && slug(value) === app,
     );
-    return pageIdsForValues(db, "frames", "app_name", names, "frame");
   }
   const site = prefixedValue(subjectId, "screenpipe:site:");
-  if (site !== null) return pageSiteIds(db, site);
-
+  if (site !== null) {
+    return pagePlan(db, framesBy("browser_url"), [], "frame", (value) => {
+      const host = siteHost(value);
+      return host !== null && slug(host) === site;
+    });
+  }
   const speaker = prefixedValue(subjectId, "screenpipe:speaker:");
   if (speaker !== null && /^[1-9]\d*$/.test(speaker)) {
     const id = Number(speaker);
     if (Number.isSafeInteger(id)) {
-      return pageIds(
+      return pagePlan(
         db,
-        "audio_transcriptions",
-        "speaker_id = ?",
+        transcriptionsBySpeaker(),
         [id],
         "transcription",
+        () => true,
       );
     }
   }
   const device = prefixedValue(subjectId, "screenpipe:audio-device:");
   if (device !== null) {
-    const names = distinctText(
+    return pagePlan(
       db,
-      "audio_transcriptions",
-      "device",
-    ).filter((name) => slug(name) === device);
-    return pageIdsForValues(
-      db,
-      "audio_transcriptions",
-      "device",
-      names,
+      transcriptionsBy("device"),
+      [],
       "transcription",
+      (value) => value !== null && slug(value) === device,
     );
   }
   return [];
 }
 
-function pageSiteIds(db: Database, host: string): string[] {
+interface PlanRow {
+  id: unknown;
+  timestamp: unknown;
+  value: unknown;
+}
+
+/**
+ * The name and the timestamp are provider-controlled and unbounded in the file,
+ * so a page reads only as much of each as the match needs.
+ */
+function matched(column: string, alias: string): string {
+  return `CASE WHEN typeof(${column}) = 'text'
+               THEN substr(${column}, 1, ${MAX_SUBJECT_CHARS})
+               ELSE NULL END AS ${alias}`;
+}
+
+function framesBy(column: "app_name" | "browser_url"): string {
+  return `SELECT id, ${matched("timestamp", "timestamp")}, ${matched(column, "value")}
+            FROM frames
+           WHERE ${column} IS NOT NULL AND ${column} != ''
+             AND ${FRAME_EMITTED} AND id > ?
+           ORDER BY id
+           LIMIT ?`;
+}
+
+function transcriptionsBy(column: "device"): string {
+  return `SELECT id, ${matched("timestamp", "timestamp")}, ${matched(column, "value")}
+            FROM audio_transcriptions
+           WHERE ${column} IS NOT NULL AND ${column} != '' AND id > ?
+           ORDER BY id
+           LIMIT ?`;
+}
+
+function transcriptionsBySpeaker(): string {
+  return `SELECT id, ${matched("timestamp", "timestamp")}, NULL AS value
+            FROM audio_transcriptions
+           WHERE speaker_id = ? AND id > ?
+           ORDER BY id
+           LIMIT ?`;
+}
+
+/**
+ * Every plan walks the primary key in pages and decides one row at a time. How
+ * many distinct names reduce to one subject id is provider-controlled, so it
+ * may never size a query or an allocation.
+ */
+function pagePlan(
+  db: Database,
+  sql: string,
+  bindings: number[],
+  prefix: "frame" | "transcription",
+  matches: (value: string | null) => boolean,
+): string[] {
   const ids: string[] = [];
   let afterId = 0;
   while (ids.length < MAX_PLAN_IDS) {
     const rows = db
-      .query<{ id: unknown; browser_url: unknown }, [number, number]>(
-        `SELECT id, browser_url
-           FROM frames
-          WHERE browser_url IS NOT NULL AND browser_url != '' AND id > ?
-          ORDER BY id
-          LIMIT ?`,
-      )
-      .all(afterId, PLAN_PAGE);
-    if (rows.length === 0) break;
-    for (const row of rows) {
-      const id = planId(row.id);
-      afterId = id;
-      const url = typeof row.browser_url === "string" ? row.browser_url : null;
-      const rowHost = siteHost(url);
-      if (rowHost !== null && slug(rowHost) === host) {
-        ids.push(`frame:${id}`);
-      }
-      if (ids.length === MAX_PLAN_IDS) break;
-    }
-    if (rows.length < PLAN_PAGE) break;
-  }
-  return ids;
-}
-
-function pageIdsForValues(
-  db: Database,
-  table: "frames" | "audio_transcriptions",
-  column: "app_name" | "device",
-  values: string[],
-  prefix: "frame" | "transcription",
-): string[] {
-  if (values.length === 0) return [];
-  const placeholders = values.map(() => "?").join(", ");
-  return pageIds(
-    db,
-    table,
-    `${column} IN (${placeholders})`,
-    values,
-    prefix,
-  );
-}
-
-function pageIds(
-  db: Database,
-  table: "frames" | "audio_transcriptions",
-  condition: string,
-  bindings: Array<string | number>,
-  prefix: "frame" | "transcription",
-): string[] {
-  const ids: string[] = [];
-  let afterId = 0;
-  while (ids.length < MAX_PLAN_IDS) {
-    const rows = db
-      .query<{ id: unknown }, Array<string | number>>(
-        `SELECT id FROM ${table}
-          WHERE ${condition} AND id > ?
-          ORDER BY id
-          LIMIT ?`,
-      )
+      .query<PlanRow, number[]>(sql)
       .all(...bindings, afterId, PLAN_PAGE);
     if (rows.length === 0) break;
     for (const row of rows) {
       const id = planId(row.id);
       afterId = id;
+      // A row the walk would skip never reached the ledger, so naming it here
+      // would overstate what Kizuki holds for this subject.
+      if (normalizeTimestamp(row.timestamp) === null) continue;
+      const value = typeof row.value === "string" ? row.value : null;
+      if (!matches(value)) continue;
       ids.push(`${prefix}:${id}`);
       if (ids.length === MAX_PLAN_IDS) break;
     }
     if (rows.length < PLAN_PAGE) break;
   }
   return ids;
-}
-
-function distinctText(
-  db: Database,
-  table: "frames" | "audio_transcriptions",
-  column: "app_name" | "device",
-): string[] {
-  return db
-    .query<{ value: unknown }, []>(
-      `SELECT DISTINCT ${column} AS value
-         FROM ${table}
-        WHERE ${column} IS NOT NULL`,
-    )
-    .all()
-    .map(({ value }) => value)
-    .filter((value): value is string => typeof value === "string");
 }
 
 function planId(value: unknown): number {

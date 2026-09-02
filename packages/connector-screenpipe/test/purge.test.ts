@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import {
   MAX_PLAN_IDS,
   ScreenpipeConnector,
@@ -22,18 +23,70 @@ function digest(path: string): Promise<string> {
 }
 
 describe("ScreenpipeConnector purge planning", () => {
-  test("an app plan lists every frame of that app under unreachable ids, nothing under source_record_ids", async () => {
+  test("an app plan lists the frames this connector emitted, nothing under source_record_ids", async () => {
     const fixture = createFixtureDatabase();
     const connector = new ScreenpipeConnector(
-      { path: fixture.path },
+      { path: fixture.path, settle_seconds: 0 },
       fixtureDeps("2026-01-09T00:00:00.000Z"),
     );
 
+    // Fixture frames 4 and 5 carry no text and frame 7 carries an unusable
+    // timestamp, so none of them was ever ingested; a plan that named them
+    // would overstate what Kizuki holds.
     expect(await connector.purgeSource("screenpipe:app:acme-mail")).toEqual({
       subject_id: "screenpipe:app:acme-mail",
       source_record_ids: [],
-      unreachable_source_record_ids: ["frame:1", "frame:4", "frame:5"],
+      unreachable_source_record_ids: ["frame:1"],
     });
+    expect(await connector.purgeSource("screenpipe:app:notes")).toEqual({
+      subject_id: "screenpipe:app:notes",
+      source_record_ids: [],
+      unreachable_source_record_ids: ["frame:6"],
+    });
+
+    const ingested = new Set(
+      (await connector.backfill(null)).events.map(
+        ({ source_record_id }) => source_record_id,
+      ),
+    );
+    for (const subject of ["screenpipe:app:acme-mail", "screenpipe:app:notes"]) {
+      for (const planned of (await connector.purgeSource(subject))
+        .unreachable_source_record_ids) {
+        expect(ingested.has(planned)).toBe(true);
+      }
+    }
+    await connector.revoke();
+  });
+
+  test("a plan does not bind one parameter per matching name", async () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    fixture.writer.transaction(() => {
+      for (let id = 1; id <= 64; id += 1) {
+        // Distinct names that all reduce to the same subject id: the count of
+        // colliding names is provider-controlled and must not size the query.
+        insertFrame(fixture.writer, {
+          id,
+          timestamp: "2026-01-01T00:00:00Z",
+          appName: `Bulk${" ".repeat(id)}App`,
+        });
+      }
+    })();
+    const reader = new Database(fixture.path, {
+      readonly: true,
+      safeIntegers: true,
+    });
+    const statements = spyOn(reader, "query");
+    const connector = new ScreenpipeConnector(
+      { path: fixture.path },
+      fixtureDeps("2026-01-09T00:00:00.000Z", () => reader),
+    );
+
+    const plan = await connector.purgeSource("screenpipe:app:bulk-app");
+
+    expect(plan.unreachable_source_record_ids).toHaveLength(64);
+    for (const [sql] of statements.mock.calls) {
+      expect((sql.match(/\?/g) ?? []).length).toBeLessThanOrEqual(4);
+    }
     await connector.revoke();
   });
 
