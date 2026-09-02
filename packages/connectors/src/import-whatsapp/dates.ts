@@ -160,9 +160,19 @@ export function localTimestamp(
 
 const FIXED_OFFSET = /^([+-])(\d{2}):(\d{2})$/;
 
+/**
+ * Keyed by zones that already constructed, so the map cannot grow past the
+ * zones a host accepts. Building the formatter costs more than every
+ * conversion that uses it, and an export converts once per message.
+ */
+const ZONE_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
+
 function zoneFormatter(timeZone: string): Intl.DateTimeFormat {
+  const cached = ZONE_FORMATTERS.get(timeZone);
+  if (cached !== undefined) return cached;
+  let format: Intl.DateTimeFormat;
   try {
-    return new Intl.DateTimeFormat("en-US", {
+    format = new Intl.DateTimeFormat("en-US", {
       timeZone,
       hourCycle: "h23",
       year: "numeric",
@@ -177,6 +187,8 @@ function zoneFormatter(timeZone: string): Intl.DateTimeFormat {
       cause: error,
     });
   }
+  ZONE_FORMATTERS.set(timeZone, format);
+  return format;
 }
 
 export function resolveTimezone(value: string | undefined): string {

@@ -178,3 +178,27 @@ test("a wall-clock hour that never happened shifts forward by the gap", () => {
     "2026-03-29T01:30:00.000Z",
   );
 });
+
+test("a zone builds its formatter once, however many lines use it", () => {
+  const real = Intl.DateTimeFormat;
+  let built = 0;
+  Intl.DateTimeFormat = new Proxy(real, {
+    construct(target, args: [string?, Intl.DateTimeFormatOptions?]) {
+      built += 1;
+      return Reflect.construct(target, args) as Intl.DateTimeFormat;
+    },
+  });
+  try {
+    // A zone this file uses nowhere else, so the first call is the one that
+    // builds it; an export converts once per message, and rebuilding the
+    // formatter each time costs more than the conversion.
+    for (let line = 0; line < 200; line += 1) {
+      expect(localToUtc("2026-07-01T10:00", "Asia/Tokyo")).toBe(
+        "2026-07-01T01:00:00.000Z",
+      );
+    }
+  } finally {
+    Intl.DateTimeFormat = real;
+  }
+  expect(built).toBeLessThanOrEqual(1);
+});
