@@ -203,7 +203,21 @@ export function gate<T>(
   const bag = (): Record<string, unknown> => boundedArguments(args);
 
   const live = liveContext(ctx);
+  // Every refusal writes a row, so the limit is checked before the refusal
+  // is decided. The grant a revoked client connected with is stale, but a
+  // stale limit still bounds it: the alternative is one unmetered row per
+  // call from the identity that has just lost its authority.
+  const limited = (from: ServeContext): void => {
+    const rate = checkRate(from.db, from.principal, tool, at);
+    if (rate.allow) return;
+    auditRefusal(from, tool, bag(), "rate_limited", at);
+    throw new ServeError("rate_limited", "rate limited", {
+      retry_after_seconds: rate.retry_after_seconds,
+    });
+  };
+
   if (live === null) {
+    limited(ctx);
     auditRefusal(ctx, tool, bag(), "unknown_agent", at);
     throw new ServeError("unknown_agent", "unknown agent");
   }
@@ -213,13 +227,7 @@ export function gate<T>(
     throw new ServeError("tool_not_granted", "tool not granted");
   }
 
-  const rate = checkRate(live.db, live.principal, tool, at);
-  if (!rate.allow) {
-    auditRefusal(live, tool, bag(), "rate_limited", at);
-    throw new ServeError("rate_limited", "rate limited", {
-      retry_after_seconds: rate.retry_after_seconds,
-    });
-  }
+  limited(live);
 
   let served: Served<T>;
   try {

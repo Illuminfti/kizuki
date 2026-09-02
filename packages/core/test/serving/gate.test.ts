@@ -254,6 +254,26 @@ describe("authority is re-read on every served call", () => {
     ]);
   });
 
+  test("a revoked session is metered like any other", () => {
+    const ctx = live.agent("slow");
+    revokeAgent(live.db, "slow");
+
+    expect(refusal(() => gate(ctx, "search", {}, emptyRun)).code).toBe(
+      "unknown_agent",
+    );
+    expect(refusal(() => gate(ctx, "search", {}, emptyRun)).code).toBe(
+      "unknown_agent",
+    );
+    // The limit that applied a moment ago still applies: a dead identity is
+    // the last one that should get an unmetered path to the audit table.
+    const third = refusal(() => gate(ctx, "search", {}, emptyRun));
+    expect(third.code).toBe("rate_limited");
+    expect(third.retry_after_seconds ?? 0).toBeGreaterThanOrEqual(1);
+    expect(
+      listAudit(live.db, "slow", { limit: 1 })[0]?.denied,
+    ).toEqual([{ id: "tool:search", reason: "rate_limited" }]);
+  });
+
   test("a grant narrowed mid-session applies to the next call", () => {
     const ctx = live.agent("reader-private");
     expect(gate(ctx, "search", { query: "kettle" }, emptyRun).tool).toBe(
