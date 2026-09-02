@@ -1,5 +1,6 @@
 import { listAgents } from "../agents";
 import type { Sensitivity, Tool } from "../agents";
+import { pendingRetrievalOps } from "../claims/store";
 import { readDerivedMeta } from "../derived-meta";
 import { getCheckpoint, listConnections } from "../ledger/connections";
 import { count } from "../ledger/ledger";
@@ -31,6 +32,12 @@ export interface HealthData {
    * filed claim is live until something of higher authority retires it.
    */
   live_claims: number;
+  /**
+   * Retrieval refreshes a write enqueued and the port has not taken yet
+   * (RFC 0002 §4.6). A number above zero means the index is behind the
+   * store, not that a write was lost.
+   */
+  pending_retrieval_ops: number;
   derived: { search: string | null; graph: string | null };
   connections: {
     connector_id: string;
@@ -130,6 +137,7 @@ export function serveHealth(ctx: ServeContext): Envelope<HealthData> {
           },
           events: count(ctx.db),
           live_claims: liveClaims(ctx),
+          pending_retrieval_ops: pendingRetrievalOps(ctx.db).length,
           derived: {
             search: readDerivedMeta(ctx.db, "search")?.rebuilt_at ?? null,
             graph: readDerivedMeta(ctx.db, "graph")?.rebuilt_at ?? null,

@@ -34,9 +34,11 @@ describe("serveHealth", () => {
       held: 1,
     });
     expect(data?.events).toBe(6);
-    // Nothing has filed one yet: the compatibility rows the fixture leaves
-    // behind are not live claims.
-    expect(data?.live_claims).toBe(0);
+    // The fixture's one promoted page is the only live claim: the receipted
+    // writer keeps a claim row behind every page it materializes.
+    expect(data?.live_claims).toBe(1);
+    // Nothing bound a retrieval port, so nothing is waiting on one.
+    expect(data?.pending_retrieval_ops).toBe(0);
     expect(data?.derived.search).not.toBeNull();
     expect(data?.derived.graph).not.toBeNull();
     expect(data?.agents).toEqual({ total: 11, revoked: 1 });
@@ -50,7 +52,7 @@ describe("serveHealth", () => {
       subjects: ["person:ada"],
       provenance: [fixture.events["public"] as string],
     });
-    expect(serveHealth(fixture.owner()).data?.live_claims).toBe(1);
+    expect(serveHealth(fixture.owner()).data?.live_claims).toBe(2);
   });
 
   test("an agent sees its own grant and its own servable count", () => {

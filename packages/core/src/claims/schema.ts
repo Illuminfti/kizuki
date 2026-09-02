@@ -65,6 +65,17 @@ CREATE TABLE IF NOT EXISTS claim_bindings (
   bound_at TEXT NOT NULL,
   PRIMARY KEY (claim_key, page_id)
 ) STRICT;
+CREATE TABLE IF NOT EXISTS retrieval_ops (
+  op_id TEXT PRIMARY KEY,
+  store TEXT NOT NULL,
+  op TEXT NOT NULL,
+  doc_id TEXT NOT NULL,
+  state TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  done_at TEXT
+) STRICT;
+CREATE INDEX IF NOT EXISTS retrieval_ops_pending
+  ON retrieval_ops(state, created_at);
 `;
 
 const COMPAT_PROPOSALS = `
@@ -289,6 +300,7 @@ function claimsSurfaceReady(db: Database): boolean {
   return (
     tableExists(db, "claim_supersessions") &&
     tableExists(db, "claim_bindings") &&
+    tableExists(db, "retrieval_ops") &&
     tableExists(db, "proposals")
   );
 }

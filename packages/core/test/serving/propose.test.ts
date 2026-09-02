@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { listAudit } from "../../src/agents";
-import { getClaim, listClaims } from "../../src/claims/store";
+import {
+  getClaim,
+  listClaims,
+  pendingRetrievalOps,
+} from "../../src/claims/store";
+import { serveHealth } from "../../src/serving/health";
 import { servePropose } from "../../src/serving/propose";
 import type { ProposeArgs } from "../../src/serving/propose";
 import { ServeError } from "../../src/serving/types";
@@ -99,6 +104,47 @@ describe("servePropose files a claim for the receipted writer", () => {
     // The port the host bound is the one the claim reaches: serving holds it
     // for the process, it does not open its own.
     expect((await port.verifyAbsent([claimId])).found).toEqual([claimId]);
+  });
+
+  test("a refresh that fails degrades the write, it does not fail it", async () => {
+    const live = newFixture();
+    const port = new ReferenceRetrievalPort({
+      vault_path: live.vaultPath,
+      data_dir: join(live.vaultPath, ".kizuki", "retrieval", "flaky"),
+      config: {},
+      secrets: () => Promise.reject(new Error("no secret is needed here")),
+      clock: () => "2026-03-01T00:00:00Z",
+      logger: () => undefined,
+    });
+    const upsert = port.upsert.bind(port);
+    let refuse = true;
+    port.upsert = async (docs) => {
+      if (refuse) throw new Error("the index is down");
+      return upsert(docs);
+    };
+    const ctx = { ...live.agent("reader-private"), retrieval: port };
+
+    const filed = await servePropose(ctx, candidate(live, "The kettle is indexed."));
+    const claimId = filed.data?.claim_id ?? "";
+    // The claim is durable and the call succeeded; only the index is behind.
+    expect(filed.data?.outcome).toBe("stored");
+    expect(getClaim(live.db, claimId)?.status).toBe("live");
+    expect((await port.verifyAbsent([claimId])).found).toEqual([]);
+    expect(pendingRetrievalOps(live.db).map((op) => op.doc_id)).toEqual([
+      claimId,
+    ]);
+    expect(serveHealth(live.owner()).data?.pending_retrieval_ops).toBe(1);
+
+    // The next pass drains it, and the refile that deduped is what triggers
+    // the sweep: a duplicate must not leave the index stale forever.
+    refuse = false;
+    const refiled = await servePropose(
+      ctx,
+      candidate(live, "The kettle is indexed."),
+    );
+    expect(refiled.data?.outcome).toBe("duplicate");
+    expect((await port.verifyAbsent([claimId])).found).toEqual([claimId]);
+    expect(pendingRetrievalOps(live.db)).toEqual([]);
   });
 
   test("refiling the same candidate is a duplicate, not an error", async () => {
