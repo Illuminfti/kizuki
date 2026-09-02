@@ -46,6 +46,11 @@ capability. The engine re-reads the agent row and its grant on every call, so
 revoking an agent or narrowing its grant takes effect on the next tool call
 of an already connected session. Never cache a grant in this package.
 
+One boundary is deliberate and worth knowing: the engine keys that re-read on
+the agent, not on the token, so rotating a token stops the next connection
+rather than the open one. Revocation is the switch that closes a live
+session.
+
 ## Tests
 
 Drive the server through a real client over `InMemoryTransport`, and drive
