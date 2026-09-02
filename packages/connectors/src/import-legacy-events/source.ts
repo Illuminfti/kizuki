@@ -48,17 +48,12 @@ function quoted(identifier: string): string {
   return `"${identifier.replace(/"/g, '""')}"`;
 }
 
-/**
- * Integers arrive as BigInt so a legacy key past 2^53 is not silently rounded;
- * anything the ledger's JSON can hold exactly becomes a number again, and the
- * rest becomes its decimal string.
- */
 interface SafeIntegerStatement {
   safeIntegers(enabled: boolean): unknown;
 }
 
 /**
- * Integers then arrive as BigInt, so a legacy key past 2^53 is not silently
+ * Ask for integers as BigInt, so a legacy key past 2^53 is not silently
  * rounded on its way into a ledger row that has to dedupe exactly. The method
  * is not in the published type surface, so it is probed rather than assumed.
  */
@@ -143,9 +138,6 @@ export function openSqliteSource(path: string, table: string): LegacyRowSource {
 const utf8 = new TextDecoder("utf-8", { fatal: false });
 
 function decodeLine(line: Uint8Array, position: number): LegacyRow {
-  if (line.byteLength > MAX_LINE_BYTES) {
-    return { position, values: null, problem: "line_too_long" };
-  }
   const text = utf8.decode(line).replace(/\r$/, "");
   if (text.trim().length === 0)
     return { position, values: null, problem: "not_an_object" };

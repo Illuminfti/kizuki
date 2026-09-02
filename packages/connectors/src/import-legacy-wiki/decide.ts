@@ -236,12 +236,12 @@ export function jsonSafeFrontmatter(
 ): { frontmatter: Record<string, unknown> } | { omitted: "size" } {
   let serialized: string;
   try {
-    serialized = JSON.stringify(data) ?? "";
+    serialized = JSON.stringify(data);
   } catch {
+    // A frontmatter value the parser built cannot be circular, but metadata
+    // that cannot be serialised must not take the whole run down with it.
     return { omitted: "size" };
   }
-  if (serialized.length === 0 || serialized.length > MAX_METADATA_FRONTMATTER) {
-    return { omitted: "size" };
-  }
+  if (serialized.length > MAX_METADATA_FRONTMATTER) return { omitted: "size" };
   return { frontmatter: JSON.parse(serialized) as Record<string, unknown> };
 }
