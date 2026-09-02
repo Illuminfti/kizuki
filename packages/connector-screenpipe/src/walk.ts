@@ -5,8 +5,16 @@ import {
   TRANSCRIPTION_RESERVE,
   type ScreenpipeCursor,
 } from "./cursor";
+import { ScreenpipeConnectorError } from "./errors";
 import { mapFrame, mapTranscription } from "./map";
-import { readFrames, readTranscriptions } from "./read";
+import {
+  type FrameRow,
+  type TranscriptionRow,
+  mapFrameRow,
+  mapTranscriptionRow,
+  readFramePage,
+  readTranscriptionPage,
+} from "./read";
 import { normalizeTimestamp } from "./time";
 
 export interface WalkWindow {
@@ -24,10 +32,19 @@ export interface WalkWindow {
 
 /**
  * Why one table's walk ended. Only `budget` leaves rows behind that this call
- * could have read; the other two mean the table has nothing more to give right
- * now.
+ * could have read; the others mean the table has nothing more to give now.
  */
-type Stop = "drained" | "settling" | "budget";
+type Stop = "drained" | "settling" | "budget" | "stalled";
+
+export interface Batch {
+  events: CaptureEventInput[];
+  /**
+   * The column whose value stopped a walk short of a row it cannot read, so
+   * `health()` can say the source is stuck instead of reporting `ok` over a
+   * checkpoint that will never move again. Null when nothing stopped one.
+   */
+  stalled: string | null;
+}
 
 /**
  * Fills one batch from both tables, advancing the cursor past every row it
@@ -45,26 +62,26 @@ export function collectEvents(
   db: Database,
   cursor: ScreenpipeCursor,
   window: WalkWindow,
-): CaptureEventInput[] {
-  const events: CaptureEventInput[] = [];
+): Batch {
+  const batch: Batch = { events: [], stalled: null };
   const frames = walkFrames(
     db,
     cursor,
-    events,
+    batch,
     window,
     BATCH_LIMIT - TRANSCRIPTION_RESERVE,
   );
   const transcriptions = walkTranscriptions(
     db,
     cursor,
-    events,
+    batch,
     window,
     BATCH_LIMIT,
   );
   if (frames === "budget" && transcriptions !== "budget") {
-    walkFrames(db, cursor, events, window, BATCH_LIMIT);
+    walkFrames(db, cursor, batch, window, BATCH_LIMIT);
   }
-  return events;
+  return batch;
 }
 
 /**
@@ -75,16 +92,24 @@ export function collectEvents(
 function walkFrames(
   db: Database,
   cursor: ScreenpipeCursor,
-  events: CaptureEventInput[],
+  batch: Batch,
   window: WalkWindow,
   budget: number,
 ): Stop {
+  const events = batch.events;
   while (events.length < budget) {
-    const rows = readFrames(db, cursor.last_frame_id, BATCH_LIMIT);
-    for (const row of rows) {
+    const rows = readFramePage(db, cursor.last_frame_id, BATCH_LIMIT);
+    for (const raw of rows) {
       // The cursor stays short of a row the batch has no room for, so the next
       // call reads it instead.
       if (events.length >= budget) return "budget";
+      let row: FrameRow;
+      try {
+        row = mapFrameRow(raw);
+      } catch (error) {
+        batch.stalled = stallText(error);
+        return "stalled";
+      }
       const timestamp = normalizeTimestamp(row.timestamp);
       if (timestamp === null) {
         cursor.skipped.frames_bad_timestamp += 1;
@@ -117,18 +142,26 @@ function walkFrames(
 function walkTranscriptions(
   db: Database,
   cursor: ScreenpipeCursor,
-  events: CaptureEventInput[],
+  batch: Batch,
   window: WalkWindow,
   budget: number,
 ): Stop {
+  const events = batch.events;
   while (events.length < budget) {
-    const rows = readTranscriptions(
+    const rows = readTranscriptionPage(
       db,
       cursor.last_transcription_id,
       BATCH_LIMIT,
     );
-    for (const row of rows) {
+    for (const raw of rows) {
       if (events.length >= budget) return "budget";
+      let row: TranscriptionRow;
+      try {
+        row = mapTranscriptionRow(raw);
+      } catch (error) {
+        batch.stalled = stallText(error);
+        return "stalled";
+      }
       const timestamp = normalizeTimestamp(row.timestamp);
       if (timestamp === null) {
         cursor.skipped.transcriptions_bad_timestamp += 1;
@@ -146,4 +179,19 @@ function walkTranscriptions(
     if (rows.length < BATCH_LIMIT) return "drained";
   }
   return "budget";
+}
+
+/**
+ * A row this connector cannot read stops its table where it stands, so the
+ * rows already read keep their place in the checkpoint. Anything that is not a
+ * row-level parse failure is a fault of this package and still throws.
+ */
+function stallText(error: unknown): string {
+  if (
+    error instanceof ScreenpipeConnectorError &&
+    error.code === "parse_error"
+  ) {
+    return error.message;
+  }
+  throw error;
 }

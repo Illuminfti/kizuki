@@ -56,6 +56,7 @@ export class ScreenpipeConnector implements Connector {
   #db: Database | null = null;
   #revoked = false;
   #lastSuccessAt: string | undefined;
+  #lastStall: string | null = null;
   #lastSkipped: SkippedCounters = {
     frames_without_text: 0,
     frames_bad_timestamp: 0,
@@ -93,6 +94,19 @@ export class ScreenpipeConnector implements Connector {
           state: "misconfigured",
           checked_at: checkedAt,
           detail: report.detail,
+        });
+      }
+      // A stalled walk cannot pass the row that stopped it, so the checkpoint
+      // will not move again on its own. Reporting `ok` would leave `doctor`
+      // green over a source that stopped taking anything in.
+      if (this.#lastStall !== null) {
+        return new HealthReport({
+          state: "misconfigured",
+          checked_at: checkedAt,
+          detail: this.#lastStall,
+          ...(this.#lastSuccessAt === undefined
+            ? {}
+            : { last_success_at: this.#lastSuccessAt }),
         });
       }
       const badTimestamps =
@@ -210,11 +224,12 @@ export class ScreenpipeConnector implements Connector {
         settling: (timestamp) => timestamp > boundary && timestamp <= horizon,
         beforeSince: (timestamp) => since !== null && timestamp < since,
       };
-      const events = collectEvents(db, current, walk);
+      const batch = collectEvents(db, current, walk);
 
       this.#lastSuccessAt = observedAt;
+      this.#lastStall = batch.stalled;
       this.#lastSkipped = skipDelta(before, current);
-      return { events, cursor: encodeCursor(current) };
+      return { events: batch.events, cursor: encodeCursor(current) };
     });
   }
 

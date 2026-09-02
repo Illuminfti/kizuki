@@ -34,7 +34,7 @@ export interface TranscriptionRow {
   timestamp: string | null;
   transcription: string;
   device: string;
-  is_input_device: boolean;
+  is_input_device: boolean | null;
   speaker_id: number | null;
   speaker_name: string | null;
   transcription_engine: string;
@@ -42,7 +42,7 @@ export interface TranscriptionRow {
   end_time: number | null;
 }
 
-interface RawFrameRow {
+export interface RawFrameRow {
   id: unknown;
   timestamp: unknown;
   app_name: unknown;
@@ -59,7 +59,7 @@ interface RawFrameRow {
   offset_index: unknown;
 }
 
-interface RawTranscriptionRow {
+export interface RawTranscriptionRow {
   id: unknown;
   audio_chunk_id: unknown;
   offset_index: unknown;
@@ -137,11 +137,16 @@ const TRANSCRIPTION_COLUMNS = [
   "t.end_time",
 ].join(", ");
 
-export function readFrames(
+/**
+ * The raw page the walk consumes. Rows are handed over unvalidated on purpose:
+ * validating a whole page before any of it is used lets one unreadable row
+ * abandon every good row in front of it, on this call and on every later one.
+ */
+export function readFramePage(
   db: Database,
   afterId: number,
   limit: number,
-): FrameRow[] {
+): RawFrameRow[] {
   return db
     .query<RawFrameRow, [number, number]>(
       `SELECT ${FRAME_COLUMNS}
@@ -150,15 +155,14 @@ export function readFrames(
         ORDER BY id
         LIMIT ?`,
     )
-    .all(afterId, limit)
-    .map(mapFrameRow);
+    .all(afterId, limit);
 }
 
-export function readTranscriptions(
+export function readTranscriptionPage(
   db: Database,
   afterId: number,
   limit: number,
-): TranscriptionRow[] {
+): RawTranscriptionRow[] {
   return db
     .query<RawTranscriptionRow, [number, number]>(
       `SELECT ${TRANSCRIPTION_COLUMNS}
@@ -168,8 +172,23 @@ export function readTranscriptions(
         ORDER BY t.id
         LIMIT ?`,
     )
-    .all(afterId, limit)
-    .map(mapTranscriptionRow);
+    .all(afterId, limit);
+}
+
+export function readFrames(
+  db: Database,
+  afterId: number,
+  limit: number,
+): FrameRow[] {
+  return readFramePage(db, afterId, limit).map(mapFrameRow);
+}
+
+export function readTranscriptions(
+  db: Database,
+  afterId: number,
+  limit: number,
+): TranscriptionRow[] {
+  return readTranscriptionPage(db, afterId, limit).map(mapTranscriptionRow);
 }
 
 /**
@@ -199,14 +218,14 @@ export function seedAfterIds(
   };
 }
 
-function mapFrameRow(row: RawFrameRow): FrameRow {
+export function mapFrameRow(row: RawFrameRow): FrameRow {
   return {
     id: requiredRowId(row.id),
     timestamp: nullableText(row.timestamp),
     app_name: nullableText(row.app_name),
     window_name: nullableText(row.window_name),
     browser_url: nullableText(row.browser_url),
-    device_name: requiredText(row.device_name, "frames.device_name"),
+    device_name: degradedText(row.device_name),
     focused: nullableBoolean(row.focused),
     full_text: nullableText(row.full_text),
     text_source: nullableText(row.text_source),
@@ -218,7 +237,7 @@ function mapFrameRow(row: RawFrameRow): FrameRow {
   };
 }
 
-function mapTranscriptionRow(
+export function mapTranscriptionRow(
   row: RawTranscriptionRow,
 ): TranscriptionRow {
   const speakerName = nullableText(row.speaker_name);
@@ -231,18 +250,12 @@ function mapTranscriptionRow(
       row.transcription,
       "audio_transcriptions.transcription",
     ),
-    device: requiredText(row.device, "audio_transcriptions.device"),
-    is_input_device: requiredBoolean(
-      row.is_input_device,
-      "audio_transcriptions.is_input_device",
-    ),
+    device: degradedText(row.device),
+    is_input_device: nullableBoolean(row.is_input_device),
     speaker_id: nullablePositiveId(row.speaker_id),
     speaker_name:
       speakerName !== null && speakerName.length > 0 ? speakerName : null,
-    transcription_engine: requiredText(
-      row.transcription_engine,
-      "audio_transcriptions.transcription_engine",
-    ),
+    transcription_engine: degradedText(row.transcription_engine),
     start_time: nullableFiniteNumber(row.start_time),
     end_time: nullableFiniteNumber(row.end_time),
   };
@@ -330,14 +343,18 @@ function requiredText(value: unknown, column: string): string {
   return cutText(value, READ_TEXT_CHARS);
 }
 
-function nullableText(value: unknown): string | null {
-  return typeof value === "string" ? cutText(value, READ_TEXT_CHARS) : null;
+/**
+ * A column the spec declares `NOT NULL` and this connector only carries into
+ * metadata or a subject. Failing on one would stop the table at that row for
+ * good; an unusable value reads as no value, which the subject rules already
+ * treat as no subject.
+ */
+function degradedText(value: unknown): string {
+  return typeof value === "string" ? cutText(value, READ_TEXT_CHARS) : "";
 }
 
-function requiredBoolean(value: unknown, column: string): boolean {
-  const decoded = nullableBoolean(value);
-  if (decoded === null) invalidColumn(column);
-  return decoded;
+function nullableText(value: unknown): string | null {
+  return typeof value === "string" ? cutText(value, READ_TEXT_CHARS) : null;
 }
 
 function nullableBoolean(value: unknown): boolean | null {

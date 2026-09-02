@@ -118,10 +118,16 @@ screenpipe schema older than supported: migration 20260613130000 not applied (ma
   take at most 400 of the 500 places while transcriptions are still behind the
   checkpoint, so a machine in continuous use cannot leave its audio unread;
   when the audio table is caught up, frames take the whole batch.
-- A row whose `offset_index` or `audio_chunk_id` holds something that is not a
-  usable number is read with that field as `0` rather than failing the batch.
-  Those columns position a row inside its capture; the identity columns still
-  fail closed.
+- A column this connector only carries into metadata or a subject degrades
+  rather than failing the batch: `offset_index` and `audio_chunk_id` read as
+  `0`, and a capture device, audio device or engine name that is not stored as
+  text reads as empty. SQLite columns are dynamically typed, so any of these
+  can hold a blob whatever the schema declares.
+- A row whose ID or transcript text cannot be read stops that table where it
+  stands. The rows in front of it are still emitted and still advance the
+  checkpoint, and `health()` then reports `misconfigured` naming the column, so
+  `doctor` goes red rather than staying green over a source that has stopped
+  moving.
 - Restoring or replacing the source database can rewind IDs. The connector does
   not detect that replacement, so build a new source enrollment instead of
   reusing its checkpoint.
