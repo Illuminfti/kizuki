@@ -199,7 +199,7 @@ describe("non-interactive state rewrite", () => {
 
     await expect(
       handle.persist(new TextEncoder().encode("second-envelope")),
-    ).rejects.toThrow(LedgerError);
+    ).rejects.toThrow("disconnected");
     expect(listConnections(db)).toEqual([]);
     db.close();
   });
@@ -339,6 +339,34 @@ describe("host-lent state persister", () => {
     expect(
       new TextDecoder().decode(store.read(handle.current()) ?? new Uint8Array()),
     ).toBe("third-envelope");
+    expect(listConnections(db)).toHaveLength(1);
+    db.close();
+  });
+
+  test("a handle that fell behind re-reads the row instead of dying", async () => {
+    const directory = temporary();
+    const db = openLedger(join(directory, "ledger.sqlite"));
+    const store = new ConnectionStateStore(directory);
+    const connection = await enrollConnection(
+      db,
+      store,
+      connector(async (_io, state) => {
+        await state.write(new TextEncoder().encode("first-envelope"));
+        return { display: "ada" };
+      }),
+      io,
+    );
+    // Two runs in one process — a backfill and a sync — each lent a persister.
+    const backfill = createStatePersister(db, store, connection);
+    const sync = createStatePersister(db, store, connection);
+
+    await backfill.persist(new TextEncoder().encode("second-envelope"));
+    await sync.persist(new TextEncoder().encode("third-envelope"));
+    await backfill.persist(new TextEncoder().encode("fourth-envelope"));
+
+    expect(
+      new TextDecoder().decode(store.read(backfill.current()) ?? new Uint8Array()),
+    ).toBe("fourth-envelope");
     expect(listConnections(db)).toHaveLength(1);
     db.close();
   });
