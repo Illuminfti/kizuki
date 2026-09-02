@@ -604,3 +604,39 @@ describe("the calendar subject always names something", () => {
     expect(events[0]?.metadata).not.toHaveProperty("calendar_name");
   });
 });
+
+describe("truncation marks every instance of the series", () => {
+  test("an override outside the kept window says the series was truncated", () => {
+    const events = mapped([
+      "BEGIN:VEVENT",
+      "UID:daily@acme.example",
+      "DTSTART:20240101T090000Z",
+      "RRULE:FREQ=DAILY",
+      "SUMMARY:Standup",
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      "UID:daily@acme.example",
+      "RECURRENCE-ID:20240102T090000Z",
+      "DTSTART:20240102T110000Z",
+      "SUMMARY:Moved",
+      "END:VEVENT",
+    ]);
+    const moved = events.find((event) => event.text === "Moved");
+    expect(moved?.source_record_id).toBe(
+      "daily@acme.example#20240102T110000",
+    );
+    expect(
+      (moved?.metadata["recurrence"] as Record<string, unknown>)[
+        "recurrence_id"
+      ],
+    ).toBe("20240102T090000");
+    expect(
+      (moved?.metadata["recurrence"] as Record<string, unknown>)["truncated"],
+    ).toBe(true);
+    for (const event of events) {
+      expect(
+        (event.metadata["recurrence"] as Record<string, unknown>)["truncated"],
+      ).toBe(true);
+    }
+  });
+});

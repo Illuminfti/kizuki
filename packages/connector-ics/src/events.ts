@@ -297,6 +297,9 @@ function seriesEvents(
           instance_of: uid,
           recurrence_id: key,
           expanded: true,
+          // The flag belongs to the series, not to the instances that made the
+          // cut, so an override outside the kept window carries it too.
+          ...(expansion.truncated ? { truncated: true } : {}),
         },
       }),
     );
