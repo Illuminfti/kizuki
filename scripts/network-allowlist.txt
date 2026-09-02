@@ -3,3 +3,5 @@
 # packages/, or produces zero findings. Do not add a path until the call exists.
 packages/core/src/contracts/remote.ts:loopback port adapter; TCP is restricted to loopback and Unix sockets stay local
 packages/core/test/contracts/remote-child.ts:loopback child server for remote adapter parity tests
+packages/llm/src/transport.ts:user-configured model endpoint; the single fetch of @kizuki/llm
+packages/llm/test/fake-endpoint.ts:loopback fake model endpoint for tests
