@@ -130,6 +130,17 @@ function frontmatterChars(bag: Record<string, unknown>): number {
   return total;
 }
 
+export const CORRECT_INPUT = z.strictObject({
+  statement: z.string().min(1).max(2000),
+  target: z
+    .strictObject({
+      claim_id: ID.optional(),
+      claim_key: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+      subject: ID.optional(),
+    })
+    .optional(),
+});
+
 export const PROPOSE_INPUT = z.strictObject({
   kind: z.enum(["entity", "claim", "edit", "merge", "deletion"]),
   target: z.string().max(256).nullable().optional(),
@@ -146,6 +157,10 @@ export const PROPOSE_INPUT = z.strictObject({
     )
     .optional(),
   subjects: z.array(ID).max(16).optional(),
+  subject: ID.optional(),
+  predicate: ID.optional(),
+  object: z.string().min(1).max(1024).optional(),
+  polarity: z.enum(["positive", "negative"]).optional(),
   provenance: z.array(ID).min(1).max(64),
   confidence: z.number().min(0).max(1).optional(),
 });

@@ -226,6 +226,7 @@ describe("public surface", () => {
       "search",
       "serializePage",
       "serveContextPacket",
+      "serveCorrect",
       "serveEntities",
       "serveGetPage",
       "serveGraph",

@@ -71,6 +71,8 @@ describe("the stdio process entry", () => {
     expect(parsed.every((message) => message.jsonrpc === "2.0")).toBe(true);
 
     const listed = parsed.find((message) => message.id === 2);
+    // Spelled out rather than read from the engine's own constant: this is
+    // the one assertion that would notice the surface changing under it.
     expect(listed?.result?.tools?.map((tool) => tool.name)).toEqual([
       "search",
       "get_page",
@@ -80,9 +82,10 @@ describe("the stdio process entry", () => {
       "graph_neighbors",
       "system_health",
       "propose",
+      "correct",
     ]);
     expect(result.stderr.trim()).toBe(
-      "kizuki-mcp ready principal=owner tools=8",
+      "kizuki-mcp ready principal=owner tools=9",
     );
   });
 
@@ -120,7 +123,7 @@ describe("the stdio process entry", () => {
     );
     expect(result.code).toBe(0);
     expect(result.stderr.trim()).toBe(
-      "kizuki-mcp ready principal=reader-private tools=8",
+      "kizuki-mcp ready principal=reader-private tools=9",
     );
   });
 

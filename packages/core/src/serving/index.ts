@@ -27,3 +27,5 @@ export { serveContextPacket } from "./packet";
 export type { ContextPacketArgs, ContextPacketData } from "./packet";
 export { servePropose } from "./propose";
 export type { ProposeArgs, ProposeData } from "./propose";
+export { serveCorrect } from "./correct";
+export type { CorrectArgs, CorrectData, CorrectTarget } from "./correct";

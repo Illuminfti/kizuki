@@ -138,6 +138,72 @@ describe("the stdio MCP server over a real client", () => {
     ).toBe(filed[0]?.claim_id);
   });
 
+  test("correct retires the claim it contradicts, over the protocol", async () => {
+    const running = live();
+    const relay = await connect(running.agent("reader-private"));
+    const filed = await call(relay, "propose", {
+      kind: "claim",
+      target: "facts:works-at",
+      body: "Ada works at Acme.",
+      subjects: ["person:ada"],
+      subject: "person:ada",
+      predicate: "employment.works_at",
+      object: "Acme",
+      provenance: [running.eventId],
+    });
+    const claimId = (envelopeOf(filed)["data"] as { claim_id: string })
+      .claim_id;
+
+    const owner = await connect(running.owner());
+    const corrected = await call(owner, "correct", {
+      statement: "Ada left Acme; she is at the workshop now.",
+      target: { claim_id: claimId },
+    });
+    expect(corrected.isError).toBeUndefined();
+    const data = envelopeOf(corrected)["data"] as {
+      superseded: { claim_id: string }[];
+      answer: string;
+    };
+    expect(data.superseded.map((entry) => entry.claim_id)).toEqual([claimId]);
+    expect(data.answer).toContain("retired 1 claim");
+    expect(
+      listClaims(running.db, { status: "superseded" }).map(
+        (claim) => claim.claim_id,
+      ),
+    ).toEqual([claimId]);
+  });
+
+  test("a grant without correct cannot relay one", async () => {
+    const running = live();
+    const client = await connect(running.agent("search-only"));
+    const result = await call(client, "correct", {
+      statement: "Anything at all.",
+      target: { subject: "person:ada" },
+    });
+    expect(result.isError).toBe(true);
+    expect(errorOf(result).error).toBe("tool_not_granted");
+    expect(
+      listAudit(running.db, "search-only", { limit: 1 })[0]?.denied,
+    ).toEqual([{ id: "tool:correct", reason: "tool_not_granted" }]);
+  });
+
+  test("correct refuses a target it cannot resolve", async () => {
+    const running = live();
+    const client = await connect(running.owner());
+    const result = await call(client, "correct", {
+      statement: "Something here is wrong.",
+    });
+    expect(result.isError).toBe(true);
+    expect(errorOf(result).error).toBe("invalid_arguments");
+    expect(
+      running.db
+        .query<{ count: number }, [string]>(
+          "SELECT count(*) AS count FROM events WHERE connector_id = ?",
+        )
+        .get("kizuki.owner")?.count,
+    ).toBe(0);
+  });
+
   test("the owner cannot propose", async () => {
     const running = live();
     const client = await connect(running.owner());

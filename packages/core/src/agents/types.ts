@@ -7,6 +7,7 @@ export const TOOLS = [
   "graph_neighbors",
   "system_health",
   "propose",
+  "correct",
 ] as const;
 export type Tool = (typeof TOOLS)[number];
 
