@@ -3,6 +3,16 @@
 These rules apply under `packages/connectors` in addition to the root
 `AGENTS.md`.
 
+## Binding context
+
+`docs/CURRENT.md`, `docs/decision-log.md` and `rfcs/0002-autonomous-canon.md`
+override this file and the root `AGENTS.md` wherever they conflict. Read them
+before editing anything here. No change in this package may restate or
+reintroduce a superseded policy: owner-invoked promotion or an owner review
+queue or approval step (D9, D10), owner labeling of sensitivity (D11), a
+zero-model floor that writes canon (D12), a SQLite-only rule for derived
+retrieval (D13), or an owner-started daemon (D15).
+
 ## Responsibility
 
 This package adapts owner-authorized sources to the frozen Kizuki ingress. A
@@ -27,6 +37,11 @@ and a similar in-tree connector before editing.
 - Preserve stable provider record identity, original occurrence time,
   observation time, participants or subjects, deletion state, attachments,
   metadata, and provenance.
+- Sensitivity is resolved automatically, never by asking the owner to label
+  (docs/decision-log.md D11, RFC 0002 §8). A manifest declares
+  `default_sensitivity` and `sensitivity_floor`; `sensitivity_hint` is
+  honored only upward; unknown or unparseable resolves to `private`, and
+  anything unlabeled is never served.
 - Backfill and incremental sync must be resumable and idempotent. Advance a
   checkpoint only after the corresponding evidence is durable.
 - Provider deletion must emit a tombstone when the sanctioned API exposes it.

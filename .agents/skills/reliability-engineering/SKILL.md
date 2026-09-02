@@ -21,7 +21,7 @@ description: Design or review Kizuki behavior for retries, partial failure, rest
 - Retried work must not duplicate side effects.
 - Derived state may fail independently and be rebuilt.
 - Liveness should be visible through receipts or health surfaces without leaking private data.
-- Degraded mode should preserve the deterministic floor where possible.
+- Degraded mode should preserve the model-free floor: capture, the ledger, search, timeline, context, audit and undo keep working with no model configured. Canon writing requires a configured model and reports as off without one (docs/decision-log.md D12, RFC 0002 §2.1 invariant 5).
 - Timeouts, retries, queues, recursion, and retained work must be bounded.
 
 ## Verification
