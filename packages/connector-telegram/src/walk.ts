@@ -147,7 +147,7 @@ export async function walk(
     )
     .sort();
   const keys = Object.keys(cursor.dialogs).sort();
-  const resume = mode === "sync" ? cursor.pass?.next_peer ?? null : null;
+  const resume = mode === "sync" ? (cursor.pass?.next_peer ?? null) : null;
   let index = resume === null ? 0 : Math.max(0, keys.indexOf(resume));
   let stoppedAt: string | null = null;
   let floodUntil: number | null = null;
@@ -220,7 +220,9 @@ function boundDialogs(
     cursor.dialogs[peer]?.exhausted === true ? 0 : 1;
   const evictable = Object.keys(cursor.dialogs)
     .filter((peer) => !listed.has(peer))
-    .sort((left, right) => rank(left) - rank(right) || left.localeCompare(right));
+    .sort(
+      (left, right) => rank(left) - rank(right) || left.localeCompare(right),
+    );
   for (const peer of evictable) {
     if (overflow <= 0) return;
     delete cursor.dialogs[peer];
@@ -238,6 +240,17 @@ async function readDialog(
   batch: Batch,
 ): Promise<DialogOutcome> {
   const known = dialogCursor.last_id;
+  // Edits are looked for before anything moves `last_id`. A scan the batch cut
+  // short leaves the dialog where it was, so the next batch re-reads the same
+  // window; a scan run afterwards would resume against the advanced id, step
+  // over the messages in between, and the completed pass would then declare
+  // them clean for good.
+  if (batch.mode === "sync" && known > 0) {
+    if ((await scanEdits(deps, dialog, known, batch)) === "partial") {
+      return "partial";
+    }
+  }
+
   const want = BATCH_LIMIT - batch.events.length;
   let seen = 0;
   for await (const message of deps.api.messages(dialog.peer_id, {
@@ -250,12 +263,19 @@ async function readDialog(
     if (batch.events.length >= BATCH_LIMIT) return "partial";
   }
   if (seen < want) dialogCursor.exhausted = true;
-  if (batch.mode !== "sync" || known === 0) return "complete";
+  return "complete";
+}
 
-  // Edits carry no separate feed: re-read the tail of what we already have and
-  // re-emit only what changed since the last completed pass. The whole window
-  // is read whatever room is left, because a window cut short to fit the batch
-  // would be declared clean and never looked at again.
+/**
+ * Edits carry no separate feed: re-read the tail of what we already have and
+ * re-emit only what changed since the last completed pass.
+ */
+async function scanEdits(
+  deps: WalkDeps,
+  dialog: TelegramDialog,
+  known: number,
+  batch: Batch,
+): Promise<DialogOutcome> {
   for await (const message of deps.api.messages(dialog.peer_id, {
     min_id: Math.max(0, known - EDIT_WINDOW),
     max_id: known + 1,

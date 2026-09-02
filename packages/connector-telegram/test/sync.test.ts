@@ -246,3 +246,37 @@ test("the cursor never tracks more dialogs than a listing may return", async () 
   // And it keeps working: the checkpoint it just wrote is still walkable.
   expect((await built.connector.sync(batch.cursor)).events).toEqual([]);
 });
+
+test("edits are found even when the batch fills before the scan ends", async () => {
+  const account = fixtureAccount();
+  account.dialogs = [
+    {
+      peer_id: "1",
+      peer_type: "user",
+      title: "grace",
+      public: false,
+      top_message_id: 1000,
+    },
+  ];
+  account.messages = { "1": bulk("1", 1, 1000) };
+  const built = await connected({ account, now: FEBRUARY });
+  const drained = await drain(built.connector, "backfill");
+  const first = await built.connector.sync(drained.cursor);
+  expect(first.events).toEqual([]);
+  const watermark = parseCursor(first.cursor as string).edit_watermark;
+
+  // Enough new messages to fill most of the batch, and a full edit window
+  // behind them: the scan cannot finish inside one batch.
+  for (const message of bulk("1", 1001, 1400)) built.api.append("1", message);
+  for (let id = 801; id <= 1000; id += 1) {
+    built.api.edit("1", id, `rewritten ${id}`, watermark + 60);
+  }
+
+  const rest = await drain(built.connector, "sync", first.cursor);
+  const seen = new Set(ids(rest.events));
+  const missing: string[] = [];
+  for (let id = 801; id <= 1000; id += 1) {
+    if (!seen.has(`1:${id}`)) missing.push(`1:${id}`);
+  }
+  expect(missing).toEqual([]);
+});
