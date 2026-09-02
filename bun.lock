@@ -50,6 +50,12 @@
         "@kizuki/core": "workspace:*",
       },
     },
+    "packages/retrieval-pg": {
+      "name": "@kizuki/retrieval-pg",
+      "dependencies": {
+        "@kizuki/core": "workspace:*",
+      },
+    },
     "packages/tui": {
       "name": "@kizuki/tui",
       "dependencies": {
@@ -69,6 +75,8 @@
     "@kizuki/embed-gguf": ["@kizuki/embed-gguf@workspace:packages/embed-gguf"],
 
     "@kizuki/llm": ["@kizuki/llm@workspace:packages/llm"],
+
+    "@kizuki/retrieval-pg": ["@kizuki/retrieval-pg@workspace:packages/retrieval-pg"],
 
     "@kizuki/tui": ["@kizuki/tui@workspace:packages/tui"],
 
