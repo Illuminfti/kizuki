@@ -50,15 +50,16 @@ One Bun workspace. Four packages. There is no MCP package.
   the Markdown vault, FTS search, graph, timeline, purge with receipts, and
   agent identity, grants, and audit.
 - **`@kizuki/cli`** is a thin command-line composition over public core and
-  connector APIs. Verbs on this branch: `init`, `ingest`, `proposals`,
-  `promote`, `reject`, `query`, `doctor`, `version`.
+  connector APIs. Verbs on this branch: `init`, `connect`, `backfill`,
+  `sync`, `import`, `review`, `promote`, `reject`, `query`, `doctor`,
+  `purge`, `export`, `version`.
 - **`@kizuki/connectors`** owns the connector interface, the in-tree
   registry, and the shared conformance suite. Registry today:
   `kizuki.markdown-folder`, `kizuki.import-chatgpt`, `kizuki.import-claude`.
   All three read local files. No sign-in or OAuth connector is built.
 - **`@kizuki/tui`** is the owner review interface: pure state transitions and
-  rendering, with terminal I/O at the edge. The library is tested. The CLI
-  does not open it yet.
+  rendering, with terminal I/O at the edge. The CLI `review` verb opens it
+  when stdin and stdout are a terminal.
 
 ## Data contracts
 
@@ -70,12 +71,14 @@ One Bun workspace. Four packages. There is no MCP package.
   `ownerPromote` writes canon. Agents and automation may propose. They
   cannot put a page.
 - **Derived.** Search (SQLite FTS5) and graph edges rebuild from the ledger
-  plus canon. `rebuildDerived` is the library call. There is no CLI rebuild
-  verb yet.
+  plus canon. `rebuildDerived` is the library call. The CLI indexes search
+  after each ingest and promote; there is no CLI rebuild verb yet, and the
+  graph is not indexed on the write path.
 - **Fail closed.** A missing sensitivity label is not served. Missing
   connector credentials refuse. An unknown agent gets no access.
   Enforcement lives in core authorization and search. The CLI `query` verb
-  on this branch is a substring scan and does not apply that gate yet.
+  searches through core with a `private` ceiling, so unlabeled pages and
+  events are withheld and counted on stderr.
 
 The frozen contracts and invariants are in
 [docs/architecture.md](docs/architecture.md). Merged RFCs under `rfcs/`
@@ -93,26 +96,52 @@ bind only when their status says they do.
   leaves a readable vault.
 - **Nothing writes canon but you.** Agents and automation can only propose.
 
-## Status
+## Try it (pre-alpha)
 
 Pre-alpha. This README claims only what runs on this branch. Nothing is
 packaged or installable. There is no compiled binary and no registry
-release.
+release. Below, `kizuki` stands for `bun packages/cli/src/main.ts` run from
+the tree.
 
-What runs from source:
+Config lives at `$KIZUKI_CONFIG`, else `$XDG_CONFIG_HOME/kizuki/config.toml`,
+else `$HOME/.config/kizuki/config.toml`. Only `default_vault` and named
+`[vaults]` are read. Every verb accepts `--vault <path|name>`.
 
-- Vault init, ingest through the three file connectors, list / promote /
-  reject proposals, substring query, vault doctor, and version.
-- Core library APIs for the ledger, staging, vault, FTS search, graph,
-  purge, and agent grants.
-- The TUI review library. It is not wired to a CLI verb.
+Wave 1 verbs:
+
+- `init` — create a vault and set `default_vault` when none is configured
+- `connect` — enroll a local-folder source as an opaque connection
+- `backfill` — historical sweep for one selected connection
+- `sync` — incremental sweep for one, some, or every active connection
+- `import` — connect plus backfill in one step
+- `review` — list staged proposals, or open the TUI on a terminal
+- `promote` — owner-promote one pending proposal into canon
+- `reject` — reject a pending proposal
+- `query` — full-text search over labeled canon and ledger text
+- `doctor` — report vault, connection, receipt, and hold health
+- `purge` — physically delete matching events, with a receipt
+- `export` — dump vault files and ledger tables to a directory
+- `version` — print the CLI package version
+
+Unlabeled capture is never served by `query`. Sign-in connectors are not
+wired yet.
+
+```
+kizuki init ./vault
+kizuki import markdown-folder --source ./notes
+kizuki review --list
+kizuki promote <id> --sensitivity personal
+kizuki query acme
+kizuki doctor
+kizuki export --out ./export
+```
 
 Designed, not built (see [docs/architecture.md](docs/architecture.md)):
 
 - MCP serving and a standing serve daemon
 - Sign-in and OAuth connectors
 - A compiled binary and an install path
-- A `review` CLI verb that opens the TUI
+- CLI verbs for rebuild, disconnect, timeline, entity, and graph
 
 ## Develop
 

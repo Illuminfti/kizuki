@@ -1,5 +1,6 @@
 {
   "name": "@kizuki/cli",
+  "version": "0.1.0",
   "type": "module",
   "module": "src/main.ts",
   "bin": {
@@ -7,6 +8,7 @@
   },
   "dependencies": {
     "@kizuki/connectors": "workspace:*",
-    "@kizuki/core": "workspace:*"
+    "@kizuki/core": "workspace:*",
+    "@kizuki/tui": "workspace:*"
   }
 }

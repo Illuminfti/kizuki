@@ -1,123 +1,91 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import {
-  existsSync,
-  mkdtempSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { listConnections, openLedger, parseFrontmatter } from "@kizuki/core";
+import { createHelpers } from "./helpers";
 
-const mainPath = resolve(import.meta.dir, "../src/main.ts");
-const temporaryDirectories: string[] = [];
+const { cleanup, runCli, tempVault } = createHelpers();
+afterEach(cleanup);
 
-interface CliResult {
-  exitCode: number;
-  stderr: string;
-  stdout: string;
+function pendingRows(stdout: string): string[] {
+  return stdout
+    .trimEnd()
+    .split("\n")
+    .filter((line) => /^01[A-Z0-9]{24}\s/.test(line));
 }
 
-function runCli(...args: string[]): CliResult {
-  const result = Bun.spawnSync([process.execPath, mainPath, ...args], {
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-  return {
-    exitCode: result.exitCode,
-    stderr: result.stderr.toString(),
-    stdout: result.stdout.toString(),
-  };
-}
-
-afterEach(() => {
-  for (const directory of temporaryDirectories.splice(0)) {
-    rmSync(directory, { force: true, recursive: true });
-  }
-});
-
-describe("kizuki CLI", () => {
-  test("ingests, stages, reviews, queries, and diagnoses a vault", () => {
-    const root = mkdtempSync(join(tmpdir(), "kizuki-cli-"));
-    temporaryDirectories.push(root);
-    const fixture = join(root, "fixture");
-    const vault = join(root, "vault");
-    mkdirSync(fixture);
-    writeFileSync(
-      join(fixture, "alpha.md"),
-      "A celestial-piano phrase unique to the promoted page.\n",
-    );
-    writeFileSync(
-      join(fixture, "beta.md"),
-      "A river-stone phrase unique to the rejected proposal.\n",
-    );
-    writeFileSync(
-      join(fixture, "gamma.md"),
-      "A moth-lantern phrase unique to the withdrawn proposal.\n",
+describe("kizuki CLI stranger loop", () => {
+  test("init, import, review, promote, query, purge, export", () => {
+    const setup = tempVault();
+    expect(setup.env.KIZUKI_CONFIG).toBeDefined();
+    expect(readFileSync(setup.env.KIZUKI_CONFIG ?? "", "utf8")).toContain(
+      "default_vault",
     );
 
-    expect(runCli("init", vault)).toMatchObject({ exitCode: 0 });
-
-    const firstIngest = runCli(
-      "ingest",
-      "kizuki.markdown-folder",
-      "--vault",
-      vault,
+    const imported = runCli(
+      setup.env,
+      "import",
+      "markdown-folder",
       "--source",
-      fixture,
+      setup.notes,
     );
-    expect(firstIngest).toMatchObject({
+    expect(imported).toMatchObject({
       exitCode: 0,
       stdout:
-        "events_stored=3 duplicates=0 proposals_created=3 withdrawn=0 retractions_filed=0\n",
+        "events_stored=3 duplicates=0 proposals_created=3 withdrawn=0 retractions_filed=0 errors=0\n",
     });
 
-    // The checkpoint stored by the first run makes the second an incremental
-    // sync: an unchanged source emits nothing.
-    const secondIngest = runCli(
-      "ingest",
-      "kizuki.markdown-folder",
-      "--vault",
-      vault,
-      "--source",
-      fixture,
+    const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+    let key = "";
+    try {
+      const rows = listConnections(db);
+      expect(rows).toHaveLength(1);
+      const connection = rows[0];
+      expect(connection).toBeDefined();
+      if (connection === undefined) throw new Error("missing connection");
+      expect(connection.config.state_ref_index).toBe(0);
+      expect(connection.secret_refs).toEqual([
+        `file:connections/${connection.source_key}.state`,
+      ]);
+      key = connection.source_key;
+    } finally {
+      db.close();
+    }
+    const statePath = join(
+      setup.vault,
+      ".kizuki",
+      "connections",
+      `${key}.state`,
     );
-    expect(secondIngest).toMatchObject({
-      exitCode: 0,
-      stdout:
-        "events_stored=0 duplicates=0 proposals_created=0 withdrawn=0 retractions_filed=0\n",
-    });
+    expect(statSync(statePath).mode & 0o777).toBe(0o600);
 
-    const proposals = runCli("proposals", "--vault", vault);
-    expect(proposals.exitCode).toBe(0);
-    const rows = proposals.stdout
-      .trimEnd()
-      .split("\n")
-      .filter((line) => /^01[A-Z0-9]{24}\s/.test(line));
+    const unlabeled = runCli(setup.env, "query", "acme");
+    expect(unlabeled.exitCode).toBe(0);
+    expect(unlabeled.stdout).toBe("");
+    expect(unlabeled.stderr).toBe("withheld=1 (no sensitivity label)\n");
+
+    const listed = runCli(setup.env, "review", "--list");
+    expect(listed.exitCode).toBe(0);
+    const rows = pendingRows(listed.stdout);
     expect(rows).toHaveLength(3);
-    const promotedRow = rows.find((line) => line.includes("celestial-piano"));
+    const promotedRow = rows.find((line) => line.includes("acme"));
     const rejectedRow = rows.find((line) => line.includes("river-stone"));
     expect(promotedRow).toBeDefined();
     expect(rejectedRow).toBeDefined();
     const promotedId = promotedRow?.split(/\s+/)[0];
     const rejectedId = rejectedRow?.split(/\s+/)[0];
-    expect(promotedId).toBeDefined();
-    expect(rejectedId).toBeDefined();
     if (promotedId === undefined || rejectedId === undefined) {
       throw new Error("proposal ids were not rendered");
     }
 
-    const unsafePromotion = runCli("promote", promotedId, "--vault", vault);
-    expect(unsafePromotion.exitCode).not.toBe(0);
-    // A targetless capture promotes into captures/; nothing may exist there yet.
-    expect(existsSync(join(vault, "captures"))).toBe(false);
+    const unsafe = runCli(setup.env, "promote", promotedId);
+    expect(unsafe.exitCode).toBe(1);
+    expect(existsSync(join(setup.vault, "captures"))).toBe(false);
 
     const promotion = runCli(
+      setup.env,
       "promote",
       promotedId,
-      "--vault",
-      vault,
       "--sensitivity",
       "personal",
     );
@@ -126,86 +94,157 @@ describe("kizuki CLI", () => {
     const receiptId = promotion.stdout.match(/^receipt_id=(.+)$/m)?.[1];
     expect(pagePath).toBeDefined();
     expect(receiptId).toMatch(/^01[A-Z0-9]{24}$/);
+    expect(promotion.stdout).toContain("kind=claim");
     if (pagePath === undefined) throw new Error("page path was not printed");
     expect(readFileSync(pagePath, "utf8")).toContain('sensitivity: "personal"');
 
-    const query = runCli("query", "celestial-piano", "--vault", vault);
-    expect(query.exitCode).toBe(0);
-    expect(query.stdout).toMatch(/^page\s+\S+\s+\S+.*celestial-piano/m);
+    const labeled = runCli(setup.env, "query", "acme");
+    expect(labeled.exitCode).toBe(0);
+    expect(labeled.stdout).toMatch(/^page\s+\S+\s+\S+\s+personal\s+.*acme/m);
 
     const rejection = runCli(
+      setup.env,
       "reject",
       rejectedId,
-      "--vault",
-      vault,
       "--reason",
       "not canonical",
     );
     expect(rejection.exitCode).toBe(0);
 
-    const doctor = runCli("doctor", "--vault", vault);
-    expect(doctor).toMatchObject({ exitCode: 0 });
-    expect(doctor.stdout).toContain("events=3");
+    const doctor = runCli(setup.env, "doctor");
+    expect(doctor.exitCode).toBe(0);
+    expect(doctor.stdout).toContain("health=ok");
+    expect(doctor.stdout).toContain("connection kizuki.markdown-folder");
 
-    // Source deletions: gamma still has a pending proposal (withdrawn), alpha
-    // was promoted (a deletion proposal reaches the review queue).
-    rmSync(join(fixture, "alpha.md"));
-    rmSync(join(fixture, "gamma.md"));
-    const thirdIngest = runCli(
-      "ingest",
-      "kizuki.markdown-folder",
-      "--vault",
-      vault,
-      "--source",
-      fixture,
-    );
-    expect(thirdIngest).toMatchObject({
-      exitCode: 0,
-      stdout:
-        "events_stored=2 duplicates=0 proposals_created=0 withdrawn=1 retractions_filed=1\n",
-    });
+    rmSync(join(setup.notes, "ada.md"));
+    rmSync(join(setup.notes, "linus.md"));
+    const synced = runCli(setup.env, "sync", "markdown-folder");
+    expect(synced.exitCode).toBe(0);
+    expect(synced.stdout).toContain("withdrawn=1");
+    expect(synced.stdout).toContain("retractions_filed=1");
 
-    const doctorAfterDeletion = runCli("doctor", "--vault", vault);
-    expect(doctorAfterDeletion.exitCode).toBe(0);
-    expect(doctorAfterDeletion.stdout).toMatch(
+    const doctorAfter = runCli(setup.env, "doctor");
+    expect(doctorAfter.exitCode).toBe(0);
+    expect(doctorAfter.stdout).toMatch(
       /^retraction-pending 01[A-Z0-9]{24} page=captures\/01[A-Z0-9]{24}\.md$/m,
     );
 
-    const pendingAfterDeletion = runCli("proposals", "--vault", vault);
-    expect(pendingAfterDeletion.exitCode).toBe(0);
-    const retractionRow = pendingAfterDeletion.stdout
-      .trimEnd()
-      .split("\n")
-      .find((line) => /^01[A-Z0-9]{24}\s+deletion\s/.test(line));
-    expect(retractionRow).toBeDefined();
-    const retractionId = retractionRow?.split(/\s+/)[0];
-    if (retractionId === undefined) {
-      throw new Error("retraction proposal id was not rendered");
+    const deletion = runCli(
+      setup.env,
+      "review",
+      "--list",
+      "--kind",
+      "deletion",
+    );
+    const deletionId = pendingRows(deletion.stdout)[0]?.split(/\s+/)[0];
+    if (deletionId === undefined) {
+      throw new Error("deletion proposal id was not rendered");
     }
+    expect(runCli(setup.env, "promote", deletionId).exitCode).toBe(0);
+    const archived = runCli(setup.env, "query", "acme");
+    expect(archived.stdout).toBe("");
 
-    const retraction = runCli(
+    const sources = parseFrontmatter(readFileSync(pagePath, "utf8")).data[
+      "sources"
+    ];
+    const eventId =
+      Array.isArray(sources) && typeof sources[0] === "string"
+        ? sources[0]
+        : undefined;
+    expect(eventId).toBeDefined();
+    const purged = runCli(
+      setup.env,
+      "purge",
+      "--event",
+      eventId ?? "",
+      "--reason",
+      "test",
+    );
+    expect(purged.exitCode).toBe(0);
+    expect(purged.stdout).toContain("purged=1");
+    expect(purged.stdout).toContain("holds=1");
+    expect(purged.stdout).toMatch(/^receipt 01[A-Z0-9]{24} event=/m);
+    expect(purged.stdout).toMatch(/^hold captures\/01[A-Z0-9]{24}\.md proposal=/m);
+
+    const doctorHold = runCli(setup.env, "doctor");
+    expect(doctorHold.exitCode).toBe(0);
+    expect(doctorHold.stdout).toContain("hold captures/");
+
+    const purgeReview = runCli(
+      setup.env,
+      "review",
+      "--list",
+      "--kind",
+      "purge_review",
+    );
+    const purgeId = pendingRows(purgeReview.stdout)[0]?.split(/\s+/)[0];
+    if (purgeId === undefined) {
+      throw new Error("purge_review proposal id was not rendered");
+    }
+    expect(runCli(setup.env, "promote", purgeId).exitCode).toBe(0);
+    const afterReview = runCli(setup.env, "doctor");
+    expect(afterReview.exitCode).toBe(0);
+    expect(afterReview.stdout).not.toMatch(/^hold /m);
+    // Deletion archived the page; query excludes archived paths even after
+    // the purge-review hold is cleared. Core does not un-archive on promote.
+    const stillArchived = runCli(setup.env, "query", "acme");
+    expect(stillArchived.stdout).toBe("");
+
+    const outDir = join(setup.root, "export");
+    const exported = runCli(setup.env, "export", "--out", outDir);
+    expect(exported.exitCode).toBe(0);
+    expect(exported.stdout).toContain(`manifest=${outDir}/manifest.json`);
+    const manifest = JSON.parse(
+      readFileSync(join(outDir, "manifest.json"), "utf8"),
+    ) as { files: Record<string, { count: number }> };
+    expect(Object.keys(manifest.files).some((key) => key.startsWith("vault/"))).toBe(
+      true,
+    );
+    expect(manifest.files["ledger/events.jsonl"]?.count).toBeGreaterThan(0);
+    expect(manifest.files["connections.jsonl"]?.count).toBe(1);
+    expect(readdirSync(join(outDir, "vault")).length).toBeGreaterThan(0);
+  });
+
+  test("purge_review of an active page returns it to query", () => {
+    const setup = tempVault();
+    expect(
+      runCli(
+        setup.env,
+        "import",
+        "markdown-folder",
+        "--source",
+        setup.notes,
+      ).exitCode,
+    ).toBe(0);
+    const listed = runCli(setup.env, "review", "--list");
+    const id = listed.stdout
+      .split("\n")
+      .find((line) => line.includes("acme"))
+      ?.split(/\s+/)[0];
+    const promoted = runCli(
+      setup.env,
       "promote",
-      retractionId,
-      "--vault",
-      vault,
+      id ?? "",
       "--sensitivity",
       "personal",
     );
-    expect(retraction.exitCode).toBe(0);
-    expect(readFileSync(pagePath, "utf8")).toContain('status: "archived"');
-
-    // Neither the archived page nor the tombstoned record's events are served.
-    const queryAfterRetraction = runCli(
-      "query",
-      "celestial-piano",
-      "--vault",
-      vault,
-    );
-    expect(queryAfterRetraction.exitCode).toBe(0);
-    expect(queryAfterRetraction.stdout).toBe("");
-
-    const finalDoctor = runCli("doctor", "--vault", vault);
-    expect(finalDoctor).toMatchObject({ exitCode: 0 });
-    expect(finalDoctor.stdout).not.toContain("retraction-pending");
+    expect(promoted.exitCode).toBe(0);
+    const pagePath = promoted.stdout.match(/^page_path=(.+)$/m)?.[1];
+    const sources = parseFrontmatter(readFileSync(pagePath ?? "", "utf8")).data[
+      "sources"
+    ];
+    const eventId =
+      Array.isArray(sources) && typeof sources[0] === "string"
+        ? sources[0]
+        : undefined;
+    expect(
+      runCli(setup.env, "purge", "--event", eventId ?? "", "--reason", "test")
+        .exitCode,
+    ).toBe(0);
+    expect(runCli(setup.env, "query", "acme").stdout).toBe("");
+    const review = runCli(setup.env, "review", "--list", "--kind", "purge_review");
+    const purgeId = pendingRows(review.stdout)[0]?.split(/\s+/)[0];
+    expect(runCli(setup.env, "promote", purgeId ?? "").exitCode).toBe(0);
+    expect(runCli(setup.env, "query", "acme").stdout).toMatch(/^page\s+/);
   });
 });
