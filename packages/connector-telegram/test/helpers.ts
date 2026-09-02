@@ -101,7 +101,7 @@ export async function connected(options: Parameters<typeof harness>[0] = {}): Pr
   return built;
 }
 
-/** Repeats one mode until the connector reports nothing left, as the runner does. */
+/** Repeats one mode until the cursor stops moving, exactly as the runner does. */
 export async function drain(
   connector: TelegramConnector,
   mode: "backfill" | "sync",
@@ -111,6 +111,7 @@ export async function drain(
   let current = cursor;
   let batches = 0;
   for (;;) {
+    const before = current;
     const batch = mode === "backfill"
       ? await connector.backfill(current)
       : await connector.sync(current);
@@ -118,7 +119,7 @@ export async function drain(
     events.push(...batch.events);
     if (batch.cursor === null) throw new Error("the walk dropped its cursor");
     current = batch.cursor;
-    if (batch.events.length === 0) return { events, cursor: current, batches };
+    if (current === before) return { events, cursor: current, batches };
     if (batches > 100) throw new Error("the walk did not settle");
   }
 }
