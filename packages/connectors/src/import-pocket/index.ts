@@ -117,6 +117,7 @@ export function pocketEvents(
   observed_at: string,
 ): CaptureEventInput[] {
   const ids = pocketRecordIds(rows);
+  const sensitivity_hint = resolveSensitivity(POCKET_SENSITIVITY);
   return rows.map((row, index) => ({
     schema: "kizuki.event/v1",
     connector_id: POCKET_IMPORT_CONNECTOR_ID,
@@ -126,7 +127,7 @@ export function pocketEvents(
     observed_at,
     text: row.title.length > 0 ? `${row.title}\n${row.url}` : row.url,
     subjects: [{ subject_id: "pocket:self", role: "from" }],
-    sensitivity_hint: resolveSensitivity(POCKET_SENSITIVITY),
+    sensitivity_hint,
     deleted: false,
     attachments: [],
     metadata: {

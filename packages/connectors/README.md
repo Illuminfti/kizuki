@@ -34,12 +34,11 @@ from the tree, as in the repository README.
 
 ## What the command line can pass an importer
 
-One thing: the path to the export. Everything else an importer accepts —
-`date_order`, `timezone`, `self` and `chat` below — is settable only by a
-program that builds the connector itself, because a stored connection holds
-nothing but a path. Where a refusal below asks for one of those keys, that is
-today an ask the command line cannot satisfy; the flag for it is not built
-yet, and this page will say so until it is.
+One thing: the path to the export. A stored connection holds nothing else, so
+the other keys an importer accepts — `date_order`, `timezone`, `self` and
+`chat` below — can be set only by a program that builds the connector itself.
+Where a refusal below asks for one of them, there is no flag to answer it with
+yet, and this page will say so until there is.
 
 ## What a snapshot importer will not do
 

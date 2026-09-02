@@ -127,6 +127,7 @@ export async function omnivoreEvents(
   }
 
   const ids = omnivoreRecordIds(items.map(({ item }) => item.id));
+  const sensitivity_hint = resolveSensitivity(OMNIVORE_SENSITIVITY);
   const events: CaptureEventInput[] = [];
   let textLeft = maxBytes;
   for (const [index, { item, at }] of items.entries()) {
@@ -156,7 +157,7 @@ export async function omnivoreEvents(
       observed_at,
       text,
       subjects: [{ subject_id: "omnivore:self", role: "from" }],
-      sensitivity_hint: resolveSensitivity(OMNIVORE_SENSITIVITY),
+      sensitivity_hint,
       deleted: false,
       attachments:
         content === null

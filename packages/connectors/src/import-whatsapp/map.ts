@@ -87,6 +87,7 @@ export async function parseWhatsAppExport(
 ): Promise<CaptureEventInput[]> {
   const { messages } = splitWhatsAppMessages(text, opts.date_order);
   const seen = new Map<string, number>();
+  const sensitivity_hint = resolveSensitivity(WHATSAPP_SENSITIVITY);
   const events: CaptureEventInput[] = [];
 
   for (const message of messages) {
@@ -122,7 +123,7 @@ export async function parseWhatsAppExport(
           display_name: opts.chat,
         },
       ],
-      sensitivity_hint: resolveSensitivity(WHATSAPP_SENSITIVITY),
+      sensitivity_hint,
       deleted: false,
       attachments,
       metadata: {
