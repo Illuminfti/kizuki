@@ -1,0 +1,35 @@
+{
+  "batchId": "kizuki-waves-20260901",
+  "created": [
+    {
+      "name": "w1",
+      "id": "tsk-0970f3",
+      "status": "pending"
+    },
+    {
+      "name": "w2",
+      "id": "tsk-e5e110",
+      "status": "pending"
+    },
+    {
+      "name": "w3",
+      "id": "tsk-88cdae",
+      "status": "pending"
+    },
+    {
+      "name": "w4",
+      "id": "tsk-92ccb7",
+      "status": "pending"
+    },
+    {
+      "name": "w5",
+      "id": "tsk-563f05",
+      "status": "pending"
+    },
+    {
+      "name": "w6",
+      "id": "tsk-37c80e",
+      "status": "pending"
+    }
+  ]
+}
