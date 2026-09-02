@@ -8,8 +8,8 @@ and it never removes anything at the source.
 
 Every non-service message becomes one `message` event. The sensitivity hint
 follows the chat rather than the words in it: a private chat is `private`, a
-group is `personal`, and a channel is `public` only when it has a public
-handle. Subjects are the sender, the other party, and the chat itself, so a
+group is `personal`, and a channel is `public` only when Telegram still lists
+a live public handle for it. A retired handle counts for nothing. Subjects are the sender, the other party, and the chat itself, so a
 later purge can be aimed at one correspondent.
 
 This is the only package in the repository with a runtime dependency. It uses
@@ -83,17 +83,25 @@ which this connector does not consume, so the manifest declares
 until you purge it.
 
 Edits are caught within a window. Each pass re-reads the last 200 messages per
-dialog and re-emits anything edited since the previous completed pass. An edit
-to something older than that is missed.
+dialog and re-emits anything edited since the previous completed pass. The
+whole window is read even when the batch is nearly full: a dialog whose work
+does not fit stops the pass on itself and the next batch resumes there, so the
+pass only completes, and the watermark only moves, once every dialog in it has
+been read to the end. An edit to something older than 200 messages is missed.
 
 Service messages are skipped: joins, pins and title changes carry no content
-worth keeping.
+worth keeping. So is a message whose timestamp is not a time a clock can hold,
+which is the one record a corrupt page can cost you.
 
 Attachments are recorded by id, media type, filename and size. No file is ever
 downloaded.
 
 A run lists at most 5000 dialogs. Reaching that bound sets health to degraded
-and names the limit, so a truncated view is visible rather than silent.
+and names the limit, so a truncated view is visible rather than silent. A
+dialog that drops out of the listing is skipped rather than written off: its
+entry keeps the id it reached, the backfill stays unfinished, and health names
+the peers the account no longer lists. At the bound, the resume cursor may
+drop such a peer to stay within the same 5000, finished ones first.
 
 Waits are obeyed. When Telegram asks for a pause, the batch ends early with a
 cursor describing exactly the events it returned, and health reports how many
@@ -114,9 +122,11 @@ a truncated plan still removes everything Kizuki holds.
 
 ## Tests
 
-Everything except the client module runs against a scripted in-memory account
-with no network. The one test that reaches Telegram is skipped by default and
-never runs in CI. To run it by hand:
+Everything runs against a scripted in-memory account with no network. The
+module that talks to Telegram is driven against a stand-in for the library, so
+its error handling and its record mapping are covered cold. The one test that
+reaches Telegram itself is skipped by default and never runs in CI. To run it
+by hand:
 
 ```sh
 KIZUKI_TELEGRAM_SMOKE=1 KIZUKI_TELEGRAM_API_ID=… KIZUKI_TELEGRAM_API_HASH=… \
