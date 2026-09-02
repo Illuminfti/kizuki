@@ -59,7 +59,8 @@ export interface LegacyWikiPageReport {
      */
     decision: "labeled" | "unlabeled" | "unmapped_value" | "unreadable";
   };
-  occurred_at: "field" | "mtime";
+  /** `observed` when the file's own mtime is outside the ledger's grammar. */
+  occurred_at: "field" | "mtime" | "observed";
   subjects: number;
   fields: LegacyWikiFieldReport[];
   notes: string[];

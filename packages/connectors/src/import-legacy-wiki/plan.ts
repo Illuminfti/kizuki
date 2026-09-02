@@ -10,6 +10,7 @@ import type { FrontmatterValue } from "@kizuki/core/staging";
 import {
   mappedValue,
   parseLegacyTimestamp,
+  rfc3339From,
   sanitizeLine,
 } from "../legacy/coerce";
 import {
@@ -146,9 +147,17 @@ function planPage(
       mapping.occurred_at.format,
     );
   }
-  const occurredSource: "field" | "mtime" =
-    occurredAt === null ? "mtime" : "field";
-  const occurred = occurredAt ?? new Date(file.mtimeMs).toISOString();
+  // A filesystem stores 64-bit timestamps; the ledger's grammar covers years
+  // 0000..9999. An mtime outside it would make the whole event invalid, and
+  // one invalid event holds the run's cursor back forever — every later run
+  // re-walks the wiki, no snapshot persists, and no deletion is tombstoned.
+  const mtime = rfc3339From(new Date(file.mtimeMs));
+  if (occurredAt === null && mtime === null) {
+    notes.push("occurred_at: unusable_mtime");
+  }
+  const occurredSource: LegacyWikiPageReport["occurred_at"] =
+    occurredAt !== null ? "field" : mtime !== null ? "mtime" : "observed";
+  const occurred = occurredAt ?? mtime ?? opts.observedAt;
 
   const subjects = planSubjects(data, mapping);
   const fields = planFields(data, mapping, slots);

@@ -99,6 +99,29 @@ describe("planLegacyWiki over the fixture wiki", () => {
     ]);
   });
 
+  test("an mtime outside the ledger's grammar still imports the page", () => {
+    const scan: ScanResult = {
+      files: [
+        {
+          relpath: "far.md",
+          content: "body\n",
+          // A 64-bit filesystem timestamp: `Date` renders it with a signed
+          // six-digit year the ledger refuses, and one refused event would
+          // hold the cursor — and therefore every later sync — back forever.
+          mtimeMs: 400_000_000_000_000,
+          size: 5,
+        },
+      ],
+      skipped: [],
+      truncated: false,
+    };
+    const { events, report } = plan(scan);
+    expect(validateEventInput(events[0]).ok).toBe(true);
+    expect(events[0]?.occurred_at).toBe(OPTIONS.observedAt);
+    expect(page(report, "far.md").occurred_at).toBe("observed");
+    expect(page(report, "far.md").notes).toEqual(["occurred_at: unusable_mtime"]);
+  });
+
   test("a page the estate published is raised to the connector floor", () => {
     const { report } = plan();
     // The wiki said `public`; a local estate's floor is `personal`, so the

@@ -193,7 +193,7 @@ export const TIMESTAMP_FORMATS: readonly TimestampFormat[] = [
  * would make the whole event invalid, and an invalid event holds the run's
  * cursor back forever, so every later page of the export is unreachable.
  */
-function rfc3339Or(date: Date): string | null {
+export function rfc3339From(date: Date): string | null {
   if (Number.isNaN(date.getTime())) return null;
   const candidate = date.toISOString();
   return isRfc3339(candidate) ? candidate : null;
@@ -207,7 +207,7 @@ function fromEpoch(raw: unknown, millisPerUnit: number): string | null {
         ? Number(raw.trim())
         : Number.NaN;
   if (!Number.isFinite(numeric)) return null;
-  return rfc3339Or(new Date(numeric * millisPerUnit));
+  return rfc3339From(new Date(numeric * millisPerUnit));
 }
 
 /** Null rather than a guess: an unreadable timestamp is a reported decision. */
@@ -236,7 +236,7 @@ export function parseLegacyTimestamp(
       return fromEpoch(raw, 1);
     case "js_date": {
       if (typeof raw !== "string" && typeof raw !== "number") return null;
-      return rfc3339Or(new Date(raw));
+      return rfc3339From(new Date(raw));
     }
   }
 }
