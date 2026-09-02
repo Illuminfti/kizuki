@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { KizukiError } from "../src/errors";
-import { parseCsv } from "../src/import-pocket/csv";
+import { parseCsv, parseCsvRows } from "../src/import-pocket/csv";
 
 function thrown(body: () => unknown): KizukiError {
   try {
@@ -81,4 +81,16 @@ test("field and row bounds are enforced", () => {
   const tall = thrown(() => parseCsv("a\nb\nc\n", "part.csv", { maxRows: 2 }));
   expect(tall.code).toBe("parse_error");
   expect(tall.message).toContain("more than 2 rows");
+});
+
+test("a row is numbered by the file line it started on", () => {
+  expect(
+    parseCsvRows('a,b\n\n\nc,d\n"two\nlines",e\nf,g\n', "part.csv").map(
+      (row) => row.line,
+    ),
+  ).toEqual([1, 4, 5, 7]);
+  const error = thrown(() =>
+    parseCsv('a,b\n\nc,"unterminated\n', "part.csv"),
+  );
+  expect(error.message).toContain("part.csv row 3");
 });

@@ -6,40 +6,54 @@ export interface CsvOptions {
   maxRows?: number;
 }
 
+export interface CsvRow {
+  cells: string[];
+  /** 1-based line of the file the row started on. */
+  line: number;
+}
+
 /**
  * RFC 4180 with bounds. An export CSV is attacker-controlled the moment the
  * owner downloads it, so a field and a row count are both capped, and every
  * refusal names a position rather than the value that failed.
+ *
+ * The position is the line the row began on, counted in the file. A blank line
+ * between rows is skipped but still consumed, so counting kept rows instead
+ * would send the owner to a line that is not the one that failed.
  */
-export function parseCsv(
+export function parseCsvRows(
   text: string,
   where: string,
   opts: CsvOptions = {},
-): string[][] {
+): CsvRow[] {
   const maxFieldBytes = opts.maxFieldBytes ?? MAX_RECORD_BYTES;
   const maxRows = opts.maxRows ?? MAX_RECORDS;
   const source = text.replace(/\r\n?/g, "\n");
 
-  const rows: string[][] = [];
-  let row: string[] = [];
+  const rows: CsvRow[] = [];
+  let cells: string[] = [];
   let field = "";
   let inQuotes = false;
   let quoteClosed = false;
   let fieldStarted = false;
   let rowStarted = false;
+  let line = 1;
+  let rowLine = 1;
 
   const fail = (detail: string): never => {
-    throw new KizukiError(
-      "parse_error",
-      `${where} row ${rows.length + 1}: ${detail}`,
-    );
+    throw new KizukiError("parse_error", `${where} row ${rowLine}: ${detail}`);
+  };
+
+  const startRow = (): void => {
+    if (!rowStarted) rowLine = line;
+    rowStarted = true;
   };
 
   const endField = (): void => {
     if (Buffer.byteLength(field, "utf8") > maxFieldBytes) {
       fail(`field exceeds ${maxFieldBytes} bytes`);
     }
-    row.push(field);
+    cells.push(field);
     field = "";
     fieldStarted = false;
     quoteClosed = false;
@@ -54,9 +68,9 @@ export function parseCsv(
           `${where}: more than ${maxRows} rows`,
         );
       }
-      rows.push(row);
+      rows.push({ cells, line: rowLine });
     }
-    row = [];
+    cells = [];
     rowStarted = false;
   };
 
@@ -73,6 +87,7 @@ export function parseCsv(
         quoteClosed = true;
         continue;
       }
+      if (character === "\n") line += 1;
       field += character;
       continue;
     }
@@ -86,24 +101,33 @@ export function parseCsv(
       if (fieldStarted) fail("unexpected quote inside an unquoted field");
       inQuotes = true;
       fieldStarted = true;
-      rowStarted = true;
+      startRow();
       continue;
     }
     if (character === ",") {
       endField();
-      rowStarted = true;
+      startRow();
       continue;
     }
     if (character === "\n") {
       endRow();
+      line += 1;
       continue;
     }
     field += character;
     fieldStarted = true;
-    rowStarted = true;
+    startRow();
   }
 
   if (inQuotes) fail("unterminated quote");
   if (rowStarted) endRow();
   return rows;
+}
+
+export function parseCsv(
+  text: string,
+  where: string,
+  opts: CsvOptions = {},
+): string[][] {
+  return parseCsvRows(text, where, opts).map((row) => row.cells);
 }

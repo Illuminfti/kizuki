@@ -148,6 +148,25 @@ test("a malformed row names its position and never its title", () => {
   }
 });
 
+test("a blank line does not shift the line a refusal names", () => {
+  const error = thrown(() =>
+    parsePocketCsv(
+      [
+        HEADER,
+        "A,https://example.com/a,1767225600,,unread",
+        "",
+        "B,https://example.com/b,notanumber,,unread",
+        "",
+      ].join("\n"),
+      "part_000000.csv",
+    ),
+  );
+  expect(error.code).toBe("parse_error");
+  expect(error.message).toBe(
+    "part_000000.csv row 4: invalid unix timestamp",
+  );
+});
+
 test("the same url saved twice is two records, numbered in file order", () => {
   const rows = `${HEADER}\nA,https://example.com/a,1767225600,,unread\nA,https://example.com/a,1767312000,,archive\n`;
   const events = pocketEvents(

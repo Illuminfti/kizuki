@@ -24,7 +24,7 @@ import {
   requirePathConfig,
   unixSecondsToIso,
 } from "../util";
-import { parseCsv } from "./csv";
+import { parseCsv, parseCsvRows } from "./csv";
 import type { CsvOptions } from "./csv";
 
 export { parseCsv } from "./csv";
@@ -123,15 +123,16 @@ export function parsePocketCsv(
 ): PocketRow[] {
   const columns = pocketColumns(text.split("\n", 1)[0] ?? "", where);
 
-  const rows = parseCsv(text, where, opts);
+  const rows = parseCsvRows(text, where, opts);
   const cellOf = (cells: string[], name: string): string => {
     const at = columns.indexOf(name);
     return at === -1 ? "" : (cells[at] ?? "");
   };
 
-  return rows.slice(1).map((cells, index) => {
-    // Row 1 is the header, so the first record is row 2 in the file.
-    const at = `${where} row ${index + 2}`;
+  return rows.slice(1).map(({ cells, line }) => {
+    // The line the row began on, not its position among the rows kept: a
+    // blank line between records would otherwise shift every number after it.
+    const at = `${where} row ${line}`;
     if (cells.length !== columns.length) {
       throw new KizukiError(
         "parse_error",
