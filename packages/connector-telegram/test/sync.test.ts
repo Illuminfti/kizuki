@@ -25,9 +25,14 @@ function ids(events: CaptureEventInput[]): string[] {
 
 test("a sync with nothing new returns an empty batch and keeps its cursor", async () => {
   const { built, cursor } = await caughtUp();
+  // Time has to pass between the two passes: a caught-up account that hands
+  // back a different cursor every quarter of an hour is one a caller draining
+  // until the cursor settles can never finish with.
+  built.clock.now += 900_000;
   const again = await built.connector.sync(cursor);
   expect(again.events).toEqual([]);
   expect(parseCursor(again.cursor as string).pass).toBeNull();
+  expect(again.cursor).toBe(cursor);
 });
 
 test("an edit older than the last completed pass is not re-emitted", async () => {

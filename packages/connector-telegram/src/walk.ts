@@ -45,6 +45,8 @@ interface Batch {
   observedAt: string;
   watermark: number;
   mode: WalkMode;
+  /** Messages this batch read for the first time, skipped ones included. */
+  read: number;
 }
 
 export async function listDialogs(
@@ -136,7 +138,12 @@ export async function walk(
     observedAt: new Date(deps.now()).toISOString(),
     watermark: cursor.edit_watermark,
     mode,
+    read: 0,
   };
+  // A pass split across batches did its work in the earlier ones, so the batch
+  // that closes it counts as progress whatever it found itself.
+  const resuming =
+    stored !== null && stored.pass !== null && stored.pass.next_peer !== null;
   // What this pass would have read had the account still listed it: a finished
   // dialog is only a loss once sync is watching it for new messages.
   const unreadable = Object.keys(cursor.dialogs)
@@ -182,7 +189,13 @@ export async function walk(
 
   if (mode === "sync" && cursor.pass !== null) {
     if (stoppedAt === null) {
-      cursor.edit_watermark = cursor.pass.started_at;
+      // A pass that read nothing new and emitted nothing leaves the watermark
+      // alone. Moving it would hand back a cursor that differs from the last
+      // one for no reason other than the clock, on every scheduled sync of an
+      // account with nothing to report.
+      if (resuming || batch.read > 0 || batch.events.length > 0) {
+        cursor.edit_watermark = cursor.pass.started_at;
+      }
       cursor.pass = null;
     } else {
       cursor.pass = { ...cursor.pass, next_peer: stoppedAt };
@@ -260,6 +273,7 @@ async function readDialog(
       limit: want,
     })) {
       seen += 1;
+      batch.read += 1;
       collect(deps, message, dialog, batch);
       dialogCursor.last_id = Math.max(dialogCursor.last_id, message.id);
       if (batch.events.length >= BATCH_LIMIT) return "partial";
