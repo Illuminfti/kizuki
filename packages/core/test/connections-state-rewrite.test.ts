@@ -196,6 +196,51 @@ describe("non-interactive state rewrite", () => {
     db.close();
   });
 
+  test("a disconnect that lands mid-rewrite is not undone", async () => {
+    const directory = temporary();
+    const { db, store, connection } = await enrolled(directory, "first-envelope");
+
+    await expect(
+      store.rewrite(db, connection, async (writer) => {
+        disconnect(db, connection.connector_id, connection.source_key);
+        await writer.write(new TextEncoder().encode("second-envelope"));
+      }),
+    ).rejects.toThrow(LedgerError);
+
+    expect(listConnections(db)).toEqual([]);
+    expect(new TextDecoder().decode(store.read(connection) ?? new Uint8Array())).toBe(
+      "first-envelope",
+    );
+    expect(readdirSync(store.directory)).toEqual([
+      `${connection.source_key}.state`,
+    ]);
+    db.close();
+  });
+
+  test("a rewrite that lost the race leaves the winner's bytes", async () => {
+    const directory = temporary();
+    const { db, store, connection } = await enrolled(directory, "first-envelope");
+    const competitor = new ConnectionStateStore(directory);
+
+    await expect(
+      store.rewrite(db, connection, async (writer) => {
+        await competitor.rewrite(db, connection, (other) =>
+          other.write(new TextEncoder().encode("winner")),
+        );
+        await writer.write(new TextEncoder().encode("loser"));
+      }),
+    ).rejects.toThrow(LedgerError);
+
+    const current = listConnections(db)[0];
+    expect(
+      new TextDecoder().decode(store.read(current ?? connection) ?? new Uint8Array()),
+    ).toBe("winner");
+    expect(readdirSync(store.directory)).toEqual([
+      `${connection.source_key}.state`,
+    ]);
+    db.close();
+  });
+
   test("a connection that never held state cannot be rewritten", async () => {
     const db = openLedger(":memory:");
     const store = new ConnectionStateStore(temporary());

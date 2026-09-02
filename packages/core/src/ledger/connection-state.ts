@@ -56,6 +56,18 @@ interface ConnectedAtRow {
   connected_at: string;
 }
 
+/** The row a staged swap must still find when it commits. */
+interface ConnectionExpectation {
+  connected_at: string;
+  disconnected_at: string | null;
+}
+
+/** The caller's snapshot is behind the row: re-read it and try again. */
+export const STALE_CONNECTION_SNAPSHOT = "connection does not match persisted state";
+/** Another writer committed while these bytes were being staged. */
+export const CONCURRENT_CONNECTION_CHANGE =
+  "connection changed while its state was being replaced";
+
 type ChunkWriter = (
   fd: number,
   bytes: Uint8Array,
@@ -292,7 +304,17 @@ export class ConnectionStateStore implements ConnectionStateReader {
     }
   }
 
-  save(db: Database, connectorId: string, pending: PendingState): Connection {
+  /**
+   * `expect` is the row the caller validated before it staged bytes. Committing
+   * against it is what keeps a disconnect or a competing rewrite that landed
+   * during the staging window from being silently undone.
+   */
+  save(
+    db: Database,
+    connectorId: string,
+    pending: PendingState,
+    expect?: ConnectionExpectation,
+  ): Connection {
     if (
       !this.handles.has(pending) ||
       !this.minted.has(pending.sourceKey) ||
@@ -340,20 +362,42 @@ export class ConnectionStateStore implements ConnectionStateReader {
         fsyncDirectory(this.directory);
       }
       db.transaction(() => {
-        db.query(
-          `INSERT INTO connections
-             (connector_id, source_key, config, secret_refs, connected_at, disconnected_at)
-           VALUES (?, ?, ?, ?, ?, NULL)
-           ON CONFLICT (connector_id, source_key) DO UPDATE SET
-             config = excluded.config, secret_refs = excluded.secret_refs,
-             connected_at = excluded.connected_at, disconnected_at = NULL`,
-        ).run(
-          connectorId,
-          pending.sourceKey,
-          config,
-          JSON.stringify(refs),
-          connectedAt,
-        );
+        if (expect === undefined) {
+          db.query(
+            `INSERT INTO connections
+               (connector_id, source_key, config, secret_refs, connected_at, disconnected_at)
+             VALUES (?, ?, ?, ?, ?, NULL)
+             ON CONFLICT (connector_id, source_key) DO UPDATE SET
+               config = excluded.config, secret_refs = excluded.secret_refs,
+               connected_at = excluded.connected_at, disconnected_at = NULL`,
+          ).run(
+            connectorId,
+            pending.sourceKey,
+            config,
+            JSON.stringify(refs),
+            connectedAt,
+          );
+          return;
+        }
+        const result = db
+          .query(
+            `UPDATE connections
+                SET config = ?, secret_refs = ?, connected_at = ?, disconnected_at = NULL
+              WHERE connector_id = ? AND source_key = ?
+                AND connected_at = ? AND disconnected_at IS ?`,
+          )
+          .run(
+            config,
+            JSON.stringify(refs),
+            connectedAt,
+            connectorId,
+            pending.sourceKey,
+            expect.connected_at,
+            expect.disconnected_at,
+          );
+        if (result.changes !== 1) {
+          throw new LedgerError(CONCURRENT_CONNECTION_CHANGE);
+        }
       }).immediate();
       committed = true;
       if (backupPath !== null) rmSync(backupPath, { force: true });
@@ -435,7 +479,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
       persisted.secret_refs.length !== connection.secret_refs.length ||
       persisted.secret_refs.some((ref, index) => ref !== connection.secret_refs[index])
     ) {
-      throw new LedgerError("connection does not match persisted state");
+      throw new LedgerError(STALE_CONNECTION_SNAPSHOT);
     }
     if (
       persisted.config.state_ref_index !== 0 ||
@@ -456,7 +500,10 @@ export class ConnectionStateStore implements ConnectionStateReader {
       if (!pending.pending.written) {
         throw new LedgerError(options.missingStateMessage);
       }
-      return this.save(db, persisted.connector_id, pending.pending);
+      return this.save(db, persisted.connector_id, pending.pending, {
+        connected_at: persisted.connected_at,
+        disconnected_at: persisted.disconnected_at,
+      });
     } catch (error) {
       this.discard(pending.pending);
       throw error;
