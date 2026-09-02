@@ -113,6 +113,12 @@ export interface WritePageOptions {
    * refuses when the file changed in between, so a hand edit is never lost.
    */
   expected_hash?: string;
+  /**
+   * RFC 0002 §7.2: undo of a create deletes the file. The capability is
+   * still consumed; the prior bytes are archived so the delete is itself
+   * reversible.
+   */
+  delete?: boolean;
 }
 
 export interface WriteOutcome {
@@ -125,6 +131,9 @@ export interface WriteOutcome {
 export function hashBytes(bytes: Uint8Array): string {
   return new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
 }
+
+/** sha256 of the empty byte string — the after-hash of a deleted page. */
+export const ABSENT_PAGE_HASH = hashBytes(new Uint8Array());
 
 export function hashFile(path: string): string {
   return hashBytes(readFileSync(path));
@@ -191,6 +200,33 @@ function replaceAtomically(path: string, content: string, stamp: string): void {
   }
 }
 
+function deleteExistingPage(path: string, expectedHash: string | undefined): WriteOutcome {
+  if (!existsSync(path)) {
+    throw new CanonWriteRefused("page_missing", `Refusing to delete a missing page: ${path}`);
+  }
+  if (expectedHash === undefined) {
+    throw new CanonWriteRefused(
+      "expected_hash_required",
+      "deleting a page must name the hash of the bytes it read",
+    );
+  }
+  if (hashFile(path) !== expectedHash) {
+    throw new CanonWriteRefused(
+      "page_changed",
+      `Refusing to delete a page that changed since it was read: ${path}`,
+    );
+  }
+  const vault = findVaultRoot(path);
+  mkdirSync(join(vault, "archive"), { recursive: true });
+  const archive = nextArchivePath(vault, path);
+  copyFileSync(path, archive);
+  unlinkSync(path);
+  return {
+    archive_path: relative(vault, archive).split(sep).join("/"),
+    after_hash: ABSENT_PAGE_HASH,
+  };
+}
+
 /**
  * The single byte path into canon. Everything above it goes through
  * `applyCanonWrite`, which mints the capability, and every write is
@@ -204,6 +240,14 @@ export function writePage(
 ): WriteOutcome {
   consume(cap);
 
+  if (isSymlink(path)) {
+    throw new CanonWriteRefused("symlink", `Refusing to write through a symlink: ${path}`);
+  }
+
+  if (opts.delete === true) {
+    return deleteExistingPage(path, opts.expected_hash);
+  }
+
   const errors = validatePage(page.data);
   if (errors.length > 0) {
     throw new CanonWriteRefused(
@@ -212,9 +256,6 @@ export function writePage(
     );
   }
   const content = serializePage(page);
-  if (isSymlink(path)) {
-    throw new CanonWriteRefused("symlink", `Refusing to write through a symlink: ${path}`);
-  }
   const exists = existsSync(path);
 
   if (exists && opts.revision !== true) {

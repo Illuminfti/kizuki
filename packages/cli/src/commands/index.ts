@@ -1,3 +1,4 @@
+import { auditCommand } from "./audit";
 import { backfillCommand } from "./backfill";
 import { connectCommand } from "./connect";
 import { doctorCommand } from "./doctor";
@@ -10,6 +11,7 @@ import { queryCommand } from "./query";
 import { rejectCommand } from "./reject";
 import { reviewCommand } from "./review";
 import { syncCommand } from "./sync";
+import { undoCommand } from "./undo";
 import { versionCommand } from "./version";
 
 export interface CliIo {
@@ -34,6 +36,8 @@ export const COMMANDS: readonly Command[] = [
   backfillCommand,
   syncCommand,
   importCommand,
+  auditCommand,
+  undoCommand,
   reviewCommand,
   promoteCommand,
   rejectCommand,

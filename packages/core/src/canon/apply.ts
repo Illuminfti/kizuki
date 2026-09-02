@@ -479,3 +479,44 @@ export function applyCanonWrite(
   );
   return receipt;
 }
+
+interface RevertWriteInput {
+  receipt_id: string;
+  rel_path: string;
+  expected_hash: string | null;
+  page: VaultPage | null;
+}
+
+interface RevertWriteOutcome {
+  archive_path: string | null;
+  after_hash: string;
+}
+
+/**
+ * The only revert byte path. Mints a `writer: "revert"` capability and
+ * calls `writePage` in this same function so the capability scan still
+ * holds. `page === null` deletes (undo of a create).
+ */
+export function applyRevertWrite(
+  io: CanonIo,
+  input: RevertWriteInput,
+): RevertWriteOutcome {
+  const cap = grantCanonWrite("revert", input.receipt_id);
+  const path = join(io.vault_path, input.rel_path);
+  if (input.page === null) {
+    if (input.expected_hash === null) {
+      throw new CanonWriteError("page_missing", `page ${input.rel_path} is already gone`);
+    }
+    return writePage(cap, path, { data: {}, body: "" }, {
+      delete: true,
+      expected_hash: input.expected_hash,
+    });
+  }
+  if (input.expected_hash === null) {
+    return writePage(cap, path, input.page);
+  }
+  return writePage(cap, path, input.page, {
+    revision: true,
+    expected_hash: input.expected_hash,
+  });
+}

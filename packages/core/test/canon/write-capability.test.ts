@@ -193,8 +193,10 @@ describe("canon write capability", () => {
 
   test("the public core surface exports applyCanonWrite and not writePage", () => {
     expect(Object.keys(core)).toContain("applyCanonWrite");
+    expect(Object.keys(core)).toContain("undoReceipt");
     expect(Object.keys(core)).not.toContain("writePage");
     expect(Object.keys(core)).not.toContain("grantCanonWrite");
+    expect(Object.keys(core)).not.toContain("applyRevertWrite");
     expect(Object.keys(contracts)).not.toContain("writePage");
     expect(Object.keys(staging)).not.toContain("writePage");
     expect(Object.keys(staging)).not.toContain("grantCanonWrite");

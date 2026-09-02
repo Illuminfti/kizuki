@@ -1,5 +1,4 @@
-// packages/tui has no package exports on this revision.
-import { sanitize } from "../../tui/src/index";
+import { sanitize } from "@kizuki/tui";
 import type { RunResult } from "@kizuki/core";
 
 export function clean(text: string): string {

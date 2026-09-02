@@ -14,6 +14,7 @@ import { ulid } from "../util/ulid";
 import { parseFrontmatter } from "../vault/frontmatter";
 import type { VaultPage } from "../vault/frontmatter";
 import { listCanonPagesReport } from "../vault/pages";
+import type { RetrievalPort } from "../contracts/retrieval";
 import { hashBytes, hashFile } from "../vault/write";
 import { RECEIPTS_PATH, latestReceiptForPage } from "./receipts";
 import type { CanonReceipt } from "./receipts";
@@ -37,6 +38,11 @@ export interface CanonIo {
    * receipt names the upsert the refresh stage will perform (§4.6).
    */
   readonly retrieval_store?: string;
+  /**
+   * Bound retrieval port used to reverse `retrieval_ops` on undo. Optional:
+   * a vault with no retrieval still undoes bytes and claims.
+   */
+  readonly retrieval?: RetrievalPort;
 }
 
 export function nowOf(io: CanonIo): string {
@@ -171,6 +177,22 @@ export function pagesForSubject(db: Database, subjectKey: string): PageIndexEntr
       "SELECT * FROM page_index WHERE subject_key = ? ORDER BY page_id LIMIT 64",
     )
     .all(subjectKey);
+}
+
+export function markReceiptReverted(
+  db: Database,
+  receiptId: string,
+  revertedBy: string,
+): void {
+  db.query("UPDATE canon_receipts SET reverted_by = ? WHERE receipt_id = ?").run(
+    revertedBy,
+    receiptId,
+  );
+}
+
+export function deletePageIndex(db: Database, relPath: string): void {
+  if (!tableExists(db, "page_index")) return;
+  db.query("DELETE FROM page_index WHERE rel_path = ?").run(relPath);
 }
 
 function subjectKeyOf(data: Record<string, unknown>): string | null {

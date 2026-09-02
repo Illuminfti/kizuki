@@ -5,8 +5,7 @@ import {
 } from "@kizuki/core/staging";
 import type { ProposalKind } from "@kizuki/core";
 import type { StagingStatus } from "@kizuki/core/staging";
-// packages/tui has no package exports on this revision.
-import { runReview } from "../../../tui/src/index";
+import { runAudit } from "@kizuki/tui";
 import { UsageError, parseArguments } from "../args";
 import { withVault } from "../context";
 import { indexPromotedSince } from "../derived";
@@ -17,7 +16,7 @@ export const reviewCommand: Command = {
   name: "review",
   usage:
     "review [--list] [--batch] [--status pending|promoted|rejected|withdrawn] [--kind K] [--json]",
-  summary: "open the review TUI, or list staged proposals",
+  summary: "open the audit TUI, or list leftover staged proposals",
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, {
       options: ["--status", "--kind"],
@@ -46,16 +45,12 @@ export const reviewCommand: Command = {
     return withVault(io, async (ctx) => {
       if (interactive) {
         const startedAt = new Date().toISOString();
-        const batch = parsed.flags.has("--batch");
-        const summary = await runReview({
+        const summary = await runAudit({
           db: ctx.db,
           vaultPath: ctx.vaultPath,
-          ...(batch ? { batch: true } : {}),
         });
         indexPromotedSince(ctx.db, ctx.vaultPath, startedAt);
-        io.out(
-          `session promoted=${summary.promoted} rejected=${summary.rejected}`,
-        );
+        io.out(`session undone=${summary.undone}`);
         return 0;
       }
 

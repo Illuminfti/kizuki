@@ -1,9 +1,8 @@
-import type { ProposalKind } from "@kizuki/core";
 import { COLOR, padEnd, sanitize, stringWidth, truncate, wrap } from "./ansi";
 import type { Paint } from "./ansi";
 import { diffLines } from "./diff";
-import { KIND_LABEL, batchEligible, currentItem, cursorRow } from "./model";
-import type { ReviewItem, ReviewState } from "./model";
+import { currentItem, cursorRow } from "./model";
+import type { AuditItem, AuditState } from "./model";
 
 export interface RenderOptions {
   cols: number;
@@ -22,34 +21,17 @@ const MIN_ROWS = 8;
 const MIN_COLS = 40;
 const SPLIT_AT = 96;
 
-const BADGE: Record<ProposalKind, string> = {
-  purge_review: "PRG",
-  deletion: "DEL",
+const ACTION_BADGE = {
+  create: "NEW",
   edit: "EDT",
-  merge: "MRG",
-  claim: "CAP",
-  entity: "ENT",
-};
-
-const BADGE_COLOR: Record<ProposalKind, number> = {
-  purge_review: COLOR.purge,
-  deletion: COLOR.deletion,
-  edit: COLOR.edit,
-  merge: COLOR.merge,
-  claim: COLOR.capture,
-  entity: COLOR.entity,
-};
-
-const LABEL_COLOR = {
-  public: COLOR.ok,
-  personal: COLOR.warn,
-  private: COLOR.danger,
+  archive: "ARC",
 } as const;
 
 export function layout(cols: number, rows: number): Layout {
   const bodyRows = Math.max(1, rows - 4);
-  if (cols < SPLIT_AT)
+  if (cols < SPLIT_AT) {
     return { split: false, listWidth: cols, detailWidth: cols, bodyRows };
+  }
   const listWidth = Math.min(60, Math.max(34, Math.floor(cols * 0.42)));
   return {
     split: true,
@@ -63,80 +45,50 @@ function rule(width: number, p: Paint): string {
   return p.fg(COLOR.rule, "─".repeat(Math.max(0, width)));
 }
 
-function producerTag(item: ReviewItem): string {
-  const producer = item.proposal.producer;
-  if (producer === "deterministic")
-    return `${Math.round(item.proposal.confidence * 100)}%`;
-  if (producer === "llm") return "llm";
-  return `ag:${producer.slice("agent:".length)}`;
+function shortHash(hash: string | null): string {
+  if (hash === null) return "—";
+  return hash.slice(0, 8);
 }
 
-function header(state: ReviewState, cols: number, p: Paint): string {
+function header(state: AuditState, cols: number, p: Paint): string {
   const counts = state.groups.map((g) => `${g.count} ${g.label}`).join(", ");
-  const pending = `${state.items.length} pending${state.filter ? ` (filter: ${sanitize(state.filter)})` : ""}`;
-  const left = [
-    p.fgBold(COLOR.accent, "kizuki review"),
-    sanitize(state.vaultName),
-    state.today,
-    pending,
-  ]
+  const listed = `${state.items.length} write${state.items.length === 1 ? "" : "s"}${state.filter ? ` (filter: ${sanitize(state.filter)})` : ""}`;
+  const left = [p.fgBold(COLOR.accent, "kizuki audit"), sanitize(state.vaultName), state.today, listed]
     .concat(counts.length > 0 ? [p.dim(counts)] : [])
     .join(p.dim(" · "));
-  const session =
-    state.session.promoted + state.session.rejected > 0
-      ? p.dim(`session +${state.session.promoted} −${state.session.rejected}`)
-      : "";
+  const session = state.session.undone > 0 ? p.dim(`session undo ${state.session.undone}`) : "";
   const gap = cols - stringWidth(left) - stringWidth(session);
   if (gap >= 2) return left + " ".repeat(gap) + session;
-  return truncate(
-    sanitize(`kizuki review · ${state.vaultName} · ${pending}`),
-    cols,
-  );
+  return truncate(sanitize(`kizuki audit · ${state.vaultName} · ${listed}`), cols);
 }
 
-function listLines(
-  state: ReviewState,
-  width: number,
-  rows: number,
-  p: Paint,
-): string[] {
+function listLines(state: AuditState, width: number, rows: number, p: Paint): string[] {
   if (state.items.length === 0) {
-    const message = state.filter
-      ? "no proposals match the filter"
-      : "queue is empty — nothing waiting on you";
+    const message = state.filter ? "no receipts match the filter" : "no writes yet";
     return [p.dim(truncate(message, width))];
   }
   const all: string[] = [];
   let index = 0;
   for (const group of state.groups) {
-    all.push(
-      p.fg(
-        COLOR.meta,
-        truncate(`${group.label.toUpperCase()} · ${group.count}`, width),
-      ),
-    );
+    all.push(p.fg(COLOR.meta, truncate(`${group.label.toUpperCase()} · ${group.count}`, width)));
     for (let i = 0; i < group.count; i += 1, index += 1) {
       const item = state.items[index];
       if (item === undefined) break;
       const selected = index === state.cursor;
-      const tag = producerTag(item);
+      const badge = ACTION_BADGE[item.receipt.page_action];
+      const flags = [
+        item.receipt.reverted_by !== null ? "rev" : "",
+        item.receipt.ambiguous ? "amb" : "",
+        item.receipt.contested ? "con" : "",
+      ]
+        .filter((flag) => flag.length > 0)
+        .join(" ");
+      const tag = flags.length > 0 ? flags : shortHash(item.receipt.after_hash);
       const titleWidth = Math.max(4, width - 2 - 3 - 1 - stringWidth(tag) - 1);
-      const title = padEnd(truncate(item.title, titleWidth), titleWidth);
+      const title = padEnd(truncate(sanitize(item.title), titleWidth), titleWidth);
       const marker = selected ? "▸ " : "  ";
-      if (selected) {
-        all.push(
-          p.inverse(
-            padEnd(
-              `${marker}${BADGE[item.proposal.kind]} ${title} ${tag}`,
-              width,
-            ),
-          ),
-        );
-      } else {
-        all.push(
-          `${marker}${p.fg(BADGE_COLOR[item.proposal.kind], BADGE[item.proposal.kind])} ${title} ${p.dim(tag)}`,
-        );
-      }
+      const line = `${marker}${badge} ${title} ${tag}`;
+      all.push(selected ? p.inverse(padEnd(line, width)) : `${marker}${p.fg(COLOR.edit, badge)} ${title} ${p.dim(tag)}`);
     }
   }
   return all.slice(state.listScroll, state.listScroll + rows);
@@ -146,83 +98,68 @@ function metaLine(label: string, value: string, p: Paint): string {
   return `${p.dim(label)} ${value}`;
 }
 
-function bodyLines(item: ReviewItem, width: number, p: Paint): string[] {
-  const kind = item.proposal.kind;
-  const proposed = sanitize(item.proposal.body);
-  if (kind === "deletion" && item.currentBody !== null) {
-    return [
-      p.fg(COLOR.danger, "page will be archived; current content:"),
-      "",
-    ].concat(wrap(sanitize(item.currentBody), width).map((l) => p.dim(l)));
+function bodyLines(item: AuditItem, width: number, p: Paint): string[] {
+  const before = item.priorBody === null ? "" : sanitize(item.priorBody);
+  const after = item.currentBody === null ? "" : sanitize(item.currentBody);
+  if (before.length === 0 && after.length === 0) {
+    return [p.dim("no page bytes on disk for this receipt")];
   }
-  if (
-    (kind === "edit" || kind === "merge" || kind === "purge_review") &&
-    item.currentBody !== null
-  ) {
-    const after =
-      kind === "merge"
-        ? `${sanitize(item.currentBody)}\n\n${proposed}`
-        : proposed;
-    const lines: string[] = [];
-    for (const d of diffLines(sanitize(item.currentBody), after)) {
-      const prefix = d.op === "add" ? "+" : d.op === "del" ? "-" : " ";
-      for (const piece of wrap(d.text, Math.max(1, width - 2))) {
-        const text = `${prefix} ${piece}`;
-        lines.push(
-          d.op === "add"
-            ? p.fg(COLOR.ok, text)
-            : d.op === "del"
-              ? p.fg(COLOR.danger, text)
-              : p.dim(text),
-        );
-      }
+  const lines: string[] = [];
+  for (const d of diffLines(before, after)) {
+    const prefix = d.op === "add" ? "+" : d.op === "del" ? "-" : " ";
+    for (const piece of wrap(d.text, Math.max(1, width - 2))) {
+      const text = `${prefix} ${piece}`;
+      lines.push(
+        d.op === "add" ? p.fg(COLOR.ok, text) : d.op === "del" ? p.fg(COLOR.danger, text) : p.dim(text),
+      );
     }
-    return lines;
   }
-  return wrap(proposed, width);
+  return lines;
 }
 
-function detailLines(state: ReviewState, width: number, p: Paint): string[] {
+function detailLines(state: AuditState, width: number, p: Paint): string[] {
   const item = currentItem(state);
-  if (item === null) return [p.dim("select a proposal to see it here")];
-  const proposal = item.proposal;
-  const created = proposal.created_at.slice(0, 16).replace("T", " ");
-  const label = item.currentLabel;
+  if (item === null) return [p.dim("select a write to see it here")];
+  const receipt = item.receipt;
+  const created = receipt.at.slice(0, 16).replace("T", " ");
   const lines: string[] = [
-    p.bold(truncate(item.title, width)),
+    p.bold(truncate(sanitize(item.title), width)),
     p.dim(
       truncate(
-        `${KIND_LABEL[proposal.kind]} · ${proposal.producer} · ${Math.round(proposal.confidence * 100)}% · ${created}`,
+        `${receipt.page_action} · ${receipt.writer} · ${receipt.producer} · ${created}`,
         width,
       ),
     ),
+    metaLine("receipt", truncate(sanitize(receipt.receipt_id), width - 8), p),
+    metaLine("page", truncate(sanitize(receipt.page_path), width - 5), p),
+    metaLine(
+      "hashes",
+      truncate(`${shortHash(receipt.before_hash)} → ${shortHash(receipt.after_hash)}`, width - 7),
+      p,
+    ),
   ];
-  if (item.targetPath !== null) {
-    lines.push(
-      metaLine("page", truncate(sanitize(item.targetPath), width - 5), p),
-    );
-  } else if (proposal.target !== null) {
-    lines.push(
-      metaLine("new page", truncate(sanitize(proposal.target), width - 9), p),
-    );
-  } else {
-    lines.push(metaLine("new page", "captures/", p));
+  if (receipt.reverted_by !== null) {
+    lines.push(metaLine("reverted", truncate(sanitize(receipt.reverted_by), width - 9), p));
   }
-  if (proposal.subjects.length > 0) {
-    lines.push(
-      metaLine(
-        "subjects",
-        truncate(sanitize(proposal.subjects.join(", ")), width - 9),
-        p,
-      ),
-    );
+  if (receipt.reverts !== null) {
+    lines.push(metaLine("reverts", truncate(sanitize(receipt.reverts), width - 8), p));
   }
-  const provenance = `${proposal.provenance.length} event${proposal.provenance.length === 1 ? "" : "s"}`;
-  const labelText =
-    label === null ? p.dim("none yet") : p.fg(LABEL_COLOR[label], label);
-  lines.push(
-    `${p.dim("provenance")} ${provenance}   ${p.dim("sensitivity")} ${labelText}`,
-  );
+  const flags = [
+    `confidence ${receipt.confidence}`,
+    receipt.sensitivity,
+    receipt.taint,
+    receipt.ambiguous ? "ambiguous" : "",
+    receipt.contested ? "contested" : "",
+  ]
+    .filter((flag) => flag.length > 0)
+    .join(" · ");
+  lines.push(p.dim(truncate(flags, width)));
+  if (item.evidence.length > 0) {
+    lines.push(metaLine("evidence", `${item.evidence.length}`, p));
+    for (const quote of item.evidence) {
+      lines.push(p.dim(truncate(sanitize(quote), width)));
+    }
+  }
   lines.push(rule(width, p));
   lines.push(...bodyLines(item, width, p));
   return lines;
@@ -233,54 +170,33 @@ const HELP = [
   "",
   "j / k        move           J / K   page",
   "g / G        first / last   tab     switch pane",
-  "p            promote        e       edit in $EDITOR, then promote",
-  "m            merge into the existing page",
-  "r            reject with a reason",
-  "a            batch-promote deterministic new pages (needs --batch)",
+  "u            undo the selected write (type yes)",
+  "o / enter    open the page",
   "/            filter          ?       this help",
   "q            quit",
   "",
-  "sensitivity  1 public  2 personal  3 private  enter keeps the current label",
-  "",
-  "Every promotion writes a receipt; nothing here is undoable by design.",
+  "Every write is receipted. Undo restores the prior bytes from the archive.",
 ];
 
-function footer(state: ReviewState, cols: number, p: Paint): string {
+function footer(state: AuditState, cols: number, p: Paint): string {
   const mode = state.mode;
   const cursor = p.dim("▏");
-  if (mode.name === "filter")
+  if (mode.name === "filter") {
     return truncate(`filter: ${sanitize(mode.text)}`, cols - 1) + cursor;
-  if (mode.name === "reason")
-    return truncate(`reject reason: ${sanitize(mode.text)}`, cols - 1) + cursor;
-  if (mode.name === "batch-confirm") {
+  }
+  if (mode.name === "confirm") {
     return (
       truncate(
-        `batch-promote ${mode.ids.length} as ${mode.sensitivity} — type yes then enter: ${sanitize(mode.text)}`,
+        `undo ${mode.receiptId} — type yes then enter: ${sanitize(mode.text)}`,
         cols - 1,
       ) + cursor
     );
   }
-  if (mode.name === "sensitivity") {
-    const keep = mode.keep === null ? "" : `  enter keep ${mode.keep}`;
-    const what =
-      mode.action === "batch" ? `batch of ${mode.ids.length}` : mode.action;
-    return truncate(
-      `${what} · sensitivity  1 public  2 personal  3 private${keep}  esc cancel`,
-      cols,
-    );
-  }
   if (mode.name === "help") return truncate("any key closes help", cols);
-  const eligible = state.batchEnabled ? batchEligible(state).length : 0;
-  const batch = state.batchEnabled ? `  a batch(${eligible})` : "";
-  return p.dim(
-    truncate(
-      `j/k move  p promote  e edit  m merge  r reject${batch}  / filter  tab pane  ? help  q quit`,
-      cols,
-    ),
-  );
+  return p.dim(truncate("j/k move  u undo  o open  / filter  tab pane  ? help  q quit", cols));
 }
 
-function noticeLine(state: ReviewState, cols: number, p: Paint): string {
+function noticeLine(state: AuditState, cols: number, p: Paint): string {
   if (state.notice === null) return "";
   const text = truncate(sanitize(state.notice.text), cols);
   if (state.notice.tone === "ok") return p.fg(COLOR.ok, text);
@@ -295,14 +211,10 @@ function fit(lines: string[], rows: number, width: number): string[] {
 }
 
 /** Renders exactly `rows` lines, each exactly `cols` cells wide. */
-export function render(state: ReviewState, opts: RenderOptions): string[] {
+export function render(state: AuditState, opts: RenderOptions): string[] {
   const { cols, rows, paint: p } = opts;
   if (rows < MIN_ROWS || cols < MIN_COLS) {
-    return fit(
-      [truncate(`kizuki review needs at least ${MIN_COLS}×${MIN_ROWS}`, cols)],
-      rows,
-      cols,
-    );
+    return fit([truncate(`kizuki audit needs at least ${MIN_COLS}×${MIN_ROWS}`, cols)], rows, cols);
   }
   const l = layout(cols, rows);
   const listRows = state.focus === "list" || l.split ? l.bodyRows : 0;
@@ -313,26 +225,16 @@ export function render(state: ReviewState, opts: RenderOptions): string[] {
 
   let body: string[];
   if (l.split) {
-    const left = fit(
-      listLines(state, l.listWidth, listRows, p),
-      l.bodyRows,
-      l.listWidth,
-    );
+    const left = fit(listLines(state, l.listWidth, listRows, p), l.bodyRows, l.listWidth);
     const right = fit(detailContent, l.bodyRows, l.detailWidth);
-    body = left.map(
-      (line, i) => `${line}${p.fg(COLOR.rule, "│")}${right[i] ?? ""}`,
-    );
+    body = left.map((line, i) => `${line}${p.fg(COLOR.rule, "│")}${right[i] ?? ""}`);
   } else if (state.focus === "list" && state.mode.name !== "help") {
     body = fit(listLines(state, cols, l.bodyRows, p), l.bodyRows, cols);
   } else {
     body = fit(detailContent, l.bodyRows, cols);
   }
 
-  const cursorHint = l.split
-    ? ""
-    : state.focus === "list"
-      ? " list"
-      : " detail";
+  const cursorHint = l.split ? "" : state.focus === "list" ? " list" : " detail";
   const lines = [
     padEnd(header(state, cols, p), cols),
     padEnd(rule(cols - stringWidth(cursorHint), p) + p.dim(cursorHint), cols),
@@ -343,7 +245,6 @@ export function render(state: ReviewState, opts: RenderOptions): string[] {
   return fit(lines, rows, cols);
 }
 
-/** Row budget the reducer needs to keep the cursor on screen. */
 export function viewportFor(
   cols: number,
   rows: number,
