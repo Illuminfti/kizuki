@@ -121,6 +121,18 @@ test("tags are split on the pipe and trimmed", () => {
   expect(rows[0]?.tags).toEqual(["software", "reading"]);
 });
 
+test("a blank line before the header does not hide the export", async () => {
+  const text = `\n${POCKET_FIXTURE_EXPORT}`;
+  expect(parsePocketCsv(text, "part_000000.csv").length).toBe(4);
+  await withTempRoot(async (root) => {
+    const file = path.join(root, "pocket.csv");
+    await writeFile(file, text);
+    const connector = createPocketImportConnector({ path: file });
+    expect((await connector.health()).state).toBe("ok");
+    expect((await connector.backfill(null)).events.length).toBe(4);
+  });
+});
+
 test("a CSV without the required columns is not a Pocket export", () => {
   for (const text of [
     "title,tags,status\nA,b,unread\n",

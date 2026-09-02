@@ -230,9 +230,13 @@ export async function readBoundedUtf8(
 /** Enough for any header line an export could honestly carry. */
 const MAX_HEADER_BYTES = 64 * 1024;
 
+const UTF8_BOM = Buffer.from([0xef, 0xbb, 0xbf]);
+
 /**
- * The first line of a file, for a health check that has to prove the file
- * opens and says what it claims to be without paying for the whole export.
+ * The first line of a file that carries something, for a health check that has
+ * to prove the file opens and says what it claims to be without paying for the
+ * whole export. A byte-order mark and leading blank lines are skipped, because
+ * the row readers skip them too and health must agree with the import.
  */
 export async function readFirstLine(
   path: string,
@@ -268,8 +272,12 @@ export async function readFirstLine(
   }
   // A line feed can never be part of a multi-byte sequence, so cutting at one
   // leaves whole characters; without one the window is only decodable when it
-  // is the entire file.
-  const cut = window.indexOf(0x0a);
+  // is the entire file. Everything skipped below is a mark or a line break, so
+  // the cut still lands between characters.
+  let start = 0;
+  if (window.subarray(0, 3).equals(UTF8_BOM)) start = 3;
+  while (window[start] === 0x0a || window[start] === 0x0d) start += 1;
+  const cut = window.indexOf(0x0a, start);
   if (cut === -1 && !complete) {
     throw new KizukiError(
       "parse_error",
@@ -279,7 +287,7 @@ export async function readFirstLine(
   let text: string;
   try {
     text = new TextDecoder("utf-8", { fatal: true }).decode(
-      cut === -1 ? window : window.subarray(0, cut),
+      window.subarray(start, cut === -1 ? window.length : cut),
     );
   } catch (error) {
     throw new KizukiError(
@@ -288,8 +296,7 @@ export async function readFirstLine(
       { cause: error },
     );
   }
-  const withoutBom = text.startsWith("\uFEFF") ? text.slice(1) : text;
-  return withoutBom.replace(/\r$/, "");
+  return text.replace(/\r$/, "");
 }
 
 /**

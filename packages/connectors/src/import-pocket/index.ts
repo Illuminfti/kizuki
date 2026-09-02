@@ -100,20 +100,27 @@ function notPocketExport(where: string, cause?: unknown): KizukiError {
   );
 }
 
-/** The header line's columns, or a refusal naming the file but never a cell. */
-export function pocketColumns(headerLine: string, where: string): string[] {
-  let columns: string[];
-  try {
-    columns = (parseCsv(headerLine, where)[0] ?? []).map((name) =>
-      name.trim().toLowerCase(),
-    );
-  } catch (error) {
-    throw notPocketExport(where, error);
-  }
+/** The columns a header names, or a refusal naming the file but never a cell. */
+export function pocketColumns(
+  header: readonly string[],
+  where: string,
+): string[] {
+  const columns = header.map((name) => name.trim().toLowerCase());
   if (!REQUIRED_COLUMNS.every((name) => columns.includes(name))) {
     throw notPocketExport(where);
   }
   return columns;
+}
+
+/** The same check from one line, for a health probe that reads no further. */
+export function pocketHeaderLine(line: string, where: string): string[] {
+  let header: string[];
+  try {
+    header = parseCsv(line, where)[0] ?? [];
+  } catch (error) {
+    throw notPocketExport(where, error);
+  }
+  return pocketColumns(header, where);
 }
 
 export function parsePocketCsv(
@@ -121,9 +128,11 @@ export function parsePocketCsv(
   where: string,
   opts: CsvOptions = {},
 ): PocketRow[] {
-  const columns = pocketColumns(text.split("\n", 1)[0] ?? "", where);
-
+  // The header comes out of the reader, not out of a separate split: the
+  // reader skips a blank line before it, and a header taken from the raw
+  // first line would call such an export "not a Pocket CSV export".
   const rows = parseCsvRows(text, where, opts);
+  const columns = pocketColumns(rows[0]?.cells ?? [], where);
   const cellOf = (cells: string[], name: string): string => {
     const at = columns.indexOf(name);
     return at === -1 ? "" : (cells[at] ?? "");
@@ -313,7 +322,7 @@ export class PocketImportConnector implements Connector {
       const first = sources[0];
       if (first !== undefined) {
         const header = await readFirstLine(first, POCKET_IMPORT_CONNECTOR_ID);
-        pocketColumns(header, basename(first));
+        pocketHeaderLine(header, basename(first));
       }
       return new HealthReport({ state: "ok", checked_at });
     } catch (error) {
