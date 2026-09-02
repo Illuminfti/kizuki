@@ -185,5 +185,8 @@ describe("openLedger migrations", () => {
 
   test.todo(
     "claims-core and canon-writer lanes: v2 proposals and legacy receipts migrate to RFC 0002 storage",
+    () => {
+      throw new Error("pending claims-core and canon-writer lanes");
+    },
   );
 });

@@ -59,6 +59,9 @@ describe("help", () => {
 
   test.todo(
     "canon-writer, correction, undo-audit, and serve-daemon lanes: help exposes the RFC 0002 verb set",
+    () => {
+      throw new Error("pending RFC 0002 CLI lanes");
+    },
   );
 
   test("help <verb> prints that verb's usage", () => {

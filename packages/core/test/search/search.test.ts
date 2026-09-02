@@ -342,6 +342,11 @@ describe("search policy and filters", () => {
 
   test.todo(
     "retrieval-fts5 lane: owner search excludes documents without sensitivity",
+    () => {
+      expect(
+        search(policyDb(), "shared").map(({ doc_id }) => doc_id),
+      ).not.toContain("fact:unlabeled");
+    },
   );
 
   test("scope, type, and excluded-path filters compose", () => {

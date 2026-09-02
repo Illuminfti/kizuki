@@ -92,6 +92,19 @@ describe("timeline", () => {
 
   test.todo(
     "sensitivity lane: owner timeline excludes events without sensitivity",
+    () => {
+      const db = searchDb();
+      const event = storedEvent(db, "unlabeled", {
+        occurred_at: "2026-03-01T00:00:00Z",
+      });
+      db.query(
+        "UPDATE events SET sensitivity_hint = NULL WHERE event_id = ?",
+      ).run(event.event_id);
+
+      expect(timeline(db).map(({ event_id }) => event_id)).not.toContain(
+        event.event_id,
+      );
+    },
   );
 
   test("filters connector, kind, since, and until together", () => {
