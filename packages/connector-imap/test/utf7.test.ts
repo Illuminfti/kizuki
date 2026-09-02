@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { decodeModifiedUtf7, encodeModifiedUtf7 } from "../src/imap/utf7";
+import { decodeModifiedUtf7 } from "../src/imap/utf7";
 
 describe("modified UTF-7 mailbox names", () => {
   test.each([
@@ -17,11 +17,4 @@ describe("modified UTF-7 mailbox names", () => {
   test.each(["&AOk", "&!!-", "&"])("leaves the malformed run %s verbatim", (wire) => {
     expect(decodeModifiedUtf7(wire)).toBe(wire);
   });
-
-  test.each(["INBOX", "é", "日本語", "Sent & Drafts", "Café notes"])(
-    "round-trips %s",
-    (display) => {
-      expect(decodeModifiedUtf7(encodeModifiedUtf7(display))).toBe(display);
-    },
-  );
 });

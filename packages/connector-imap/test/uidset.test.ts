@@ -4,7 +4,6 @@ import {
   chunk,
   countUids,
   formatSet,
-  hasUid,
   parseSet,
   removeUid,
   uids,
@@ -58,8 +57,7 @@ describe("sequence sets", () => {
   test("iterates and counts", () => {
     expect([...uids(parseSet("1:3,5"))]).toEqual([1, 2, 3, 5]);
     expect(countUids(parseSet("1:3,5"))).toBe(4);
-    expect(hasUid(parseSet("1:3,5"), 2)).toBe(true);
-    expect(hasUid(parseSet("1:3,5"), 4)).toBe(false);
+    expect(countUids([])).toBe(0);
   });
 
   test("chunks a set into wire-form pieces of a bounded size", () => {

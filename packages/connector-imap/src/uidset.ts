@@ -93,10 +93,7 @@ export function removeUid(ranges: UidRange[], uid: number): UidRange[] {
   return result;
 }
 
-export function hasUid(ranges: UidRange[], uid: number): boolean {
-  return ranges.some((range) => uid >= range.first && uid <= range.last);
-}
-
+/** Used to bound the retry list a folder cursor may carry. */
 export function countUids(ranges: UidRange[]): number {
   return normalize(ranges).reduce(
     (total, range) => total + (range.last - range.first + 1),

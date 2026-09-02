@@ -18,22 +18,6 @@ function decodeChunk(chunk: string): string | null {
   return String.fromCharCode(...units);
 }
 
-function encodeChunk(units: number[]): string {
-  let bits = 0;
-  let accumulator = 0;
-  let out = "";
-  for (const unit of units) {
-    accumulator = (accumulator << 16) | unit;
-    bits += 16;
-    while (bits >= 6) {
-      bits -= 6;
-      out += BASE64[(accumulator >> bits) & 0x3f];
-    }
-  }
-  if (bits > 0) out += BASE64[(accumulator << (6 - bits)) & 0x3f];
-  return out;
-}
-
 /**
  * RFC 3501 modified UTF-7. A malformed run is left verbatim: a mailbox name
  * the server chose is not the connector's to reject.
@@ -60,31 +44,5 @@ export function decodeModifiedUtf7(wire: string): string {
     }
     index = end + 1;
   }
-  return out;
-}
-
-export function encodeModifiedUtf7(display: string): string {
-  let out = "";
-  let pending: number[] = [];
-  const flush = (): void => {
-    if (pending.length === 0) return;
-    out += `&${encodeChunk(pending)}-`;
-    pending = [];
-  };
-  for (let index = 0; index < display.length; index += 1) {
-    const code = display.charCodeAt(index);
-    if (code === 0x26) {
-      flush();
-      out += "&-";
-      continue;
-    }
-    if (code >= 0x20 && code <= 0x7e) {
-      flush();
-      out += display[index];
-      continue;
-    }
-    pending.push(code);
-  }
-  flush();
   return out;
 }

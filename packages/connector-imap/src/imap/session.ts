@@ -21,7 +21,6 @@ export interface MailboxEntry {
 export interface MailboxStatus {
   uidvalidity: number;
   uidnext: number;
-  exists: number;
 }
 
 export interface MessageSummary {
@@ -176,17 +175,7 @@ export class ImapSession {
     if (uidvalidity === null || uidnext === null) {
       throw protocolError("mailbox did not report UIDVALIDITY and UIDNEXT");
     }
-    let exists = 0;
-    for (const response of result.untagged) {
-      if (tokenText(response.items[1]).toUpperCase() === "EXISTS") {
-        exists = Number(tokenText(response.items[0]));
-      }
-    }
-    return {
-      uidvalidity,
-      uidnext,
-      exists: Number.isFinite(exists) ? exists : 0,
-    };
+    return { uidvalidity, uidnext };
   }
 
   async fetchSummaries(set: string): Promise<MessageSummary[]> {

@@ -60,7 +60,7 @@ export {
   tokenText,
 } from "./imap/tokenizer";
 export type { ImapResponse, Token } from "./imap/tokenizer";
-export { decodeModifiedUtf7, encodeModifiedUtf7 } from "./imap/utf7";
+export { decodeModifiedUtf7 } from "./imap/utf7";
 export { dialTls, hostnameMatches } from "./transport";
 export type {
   DialOptions,
@@ -73,7 +73,6 @@ export {
   chunk,
   countUids,
   formatSet,
-  hasUid,
   normalize,
   parseSet,
   removeUid,
