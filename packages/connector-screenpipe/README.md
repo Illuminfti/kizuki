@@ -93,9 +93,10 @@ screenpipe schema older than supported: migration 20260613130000 not applied (ma
 - A row timestamped more than `settle_seconds` ahead of your clock cannot be
   waiting for that update, so it is read straight away rather than holding the
   walk on it. Its `occurred_at` keeps the timestamp the source gave it.
-- A row whose timestamp cannot be parsed, or whose instant falls outside the
-  years RFC3339 covers, is skipped and counted in the checkpoint rather than
-  emitted with a fabricated time.
+- A row whose timestamp is not stored as text, cannot be parsed, or whose
+  instant falls outside the years RFC3339 covers, is skipped and counted in the
+  checkpoint rather than emitted with a fabricated time. One such row never
+  holds up the rows behind it.
 - Screen text and transcripts longer than 65,536 UTF-16 code units are cut on a
   code point boundary and marked with `metadata.text_truncated: true`. Every
   other string read from the database is bounded the same way and counted in the

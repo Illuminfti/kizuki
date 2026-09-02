@@ -62,7 +62,8 @@ export function insertFrame(
   writer: Database,
   values: {
     id?: number | bigint;
-    timestamp: string;
+    /** A number stands in for the NUMERIC affinity the column actually has. */
+    timestamp: string | number;
     fullText?: string | null;
     appName?: string | null;
     browserUrl?: string | null;
@@ -94,7 +95,7 @@ export function insertTranscription(
   writer: Database,
   values: {
     id?: number | bigint;
-    timestamp: string;
+    timestamp: string | number;
     transcription?: string;
     device?: string;
     speakerId?: number | null;

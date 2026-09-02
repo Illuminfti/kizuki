@@ -189,7 +189,7 @@ function snapshotAttachments(snapshotPath: string | null): AttachmentRef[] {
   ];
 }
 
-function requiredTimestamp(raw: string, rowKind: string): string {
+function requiredTimestamp(raw: string | null, rowKind: string): string {
   const timestamp = normalizeTimestamp(raw);
   if (timestamp === null) {
     throw new ScreenpipeConnectorError(

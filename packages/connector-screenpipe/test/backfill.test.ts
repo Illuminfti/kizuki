@@ -369,6 +369,55 @@ describe("ScreenpipeConnector backfill", () => {
     await connector.revoke();
   });
 
+  test("a timestamp stored as a number is skipped, not fatal", async () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    // The column is declared TIMESTAMP, which SQLite gives NUMERIC affinity, so
+    // an older screenpipe or a restored dump can store a numeric-looking value
+    // as an INTEGER. Failing the read would abandon every row behind it for
+    // good: the runner keeps the checkpoint whenever a batch reports an error.
+    insertFrame(fixture.writer, {
+      id: 1,
+      timestamp: 20260105,
+      fullText: "ahead of the good row",
+    });
+    insertFrame(fixture.writer, {
+      id: 2,
+      timestamp: "2026-01-01T00:00:00Z",
+      fullText: "behind it",
+    });
+    insertTranscription(fixture.writer, {
+      id: 1,
+      timestamp: 20260106,
+      transcription: "spoken ahead of the good row",
+    });
+    insertTranscription(fixture.writer, {
+      id: 2,
+      timestamp: "2026-01-01T00:01:00Z",
+      transcription: "behind it",
+    });
+    const connector = new ScreenpipeConnector(
+      { path: fixture.path, settle_seconds: 0 },
+      fixtureDeps("2026-01-09T00:00:00.000Z"),
+    );
+
+    const batch = await connector.backfill(null);
+
+    expect(batch.events.map(({ source_record_id }) => source_record_id)).toEqual([
+      "frame:2",
+      "transcription:2",
+    ]);
+    if (batch.cursor === null) throw new Error("expected a screenpipe cursor");
+    expect(parseCursor(batch.cursor).skipped).toEqual({
+      frames_without_text: 0,
+      frames_bad_timestamp: 1,
+      transcriptions_bad_timestamp: 1,
+    });
+    const health = await connector.health();
+    expect(health.state).toBe("ok");
+    expect(health.detail).toContain("2 unparsable timestamps");
+    await connector.revoke();
+  });
+
   test("a second backfill from the same cursor is all duplicates", async () => {
     const fixture = createFixtureDatabase();
     const connector = new ScreenpipeConnector(

@@ -5,7 +5,14 @@ import { cutText } from "./text";
 
 export interface FrameRow {
   id: number;
-  timestamp: string;
+  /**
+   * Raw column text. The column is declared `TIMESTAMP`, which SQLite gives
+   * NUMERIC affinity, so a numeric-looking value written by an older
+   * screenpipe or restored by a dump lands here as an INTEGER. Reading that as
+   * `null` hands the row to the walk's counted skip instead of failing the
+   * batch, which would abandon every row behind it for good.
+   */
+  timestamp: string | null;
   app_name: string | null;
   window_name: string | null;
   browser_url: string | null;
@@ -24,7 +31,7 @@ export interface TranscriptionRow {
   id: number;
   audio_chunk_id: number;
   offset_index: number;
-  timestamp: string;
+  timestamp: string | null;
   transcription: string;
   device: string;
   is_input_device: boolean;
@@ -188,7 +195,7 @@ export function seedAfterIds(
 function mapFrameRow(row: RawFrameRow): FrameRow {
   return {
     id: requiredRowId(row.id),
-    timestamp: requiredText(row.timestamp, "frames.timestamp"),
+    timestamp: nullableText(row.timestamp),
     app_name: nullableText(row.app_name),
     window_name: nullableText(row.window_name),
     browser_url: nullableText(row.browser_url),
@@ -212,10 +219,7 @@ function mapTranscriptionRow(
     id: requiredRowId(row.id),
     audio_chunk_id: degradedOffset(row.audio_chunk_id),
     offset_index: degradedOffset(row.offset_index),
-    timestamp: requiredText(
-      row.timestamp,
-      "audio_transcriptions.timestamp",
-    ),
+    timestamp: nullableText(row.timestamp),
     transcription: requiredText(
       row.transcription,
       "audio_transcriptions.transcription",
