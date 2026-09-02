@@ -111,6 +111,11 @@ export interface CalendarMapping {
    * not read their absence from the mapping as a deletion.
    */
   unreadableUids: string[];
+  /**
+   * UIDs whose expansion hit the instance cap. Their kept window slides as
+   * the clock moves, so an id dropping out of it is not a deletion either.
+   */
+  truncatedUids: string[];
 }
 
 interface SeriesContext {
@@ -120,6 +125,7 @@ interface SeriesContext {
   calendarName: string | null;
   windowEnd: LocalDateTime;
   duplicates: Set<string>;
+  truncated: Set<string>;
 }
 
 /** Turns a parsed calendar into the events the ledger stores. */
@@ -141,6 +147,7 @@ export function calendarEvents(
     calendarName,
     windowEnd: msToLocal(opts.now.getTime() + WINDOW_DAYS * 86_400_000),
     duplicates,
+    truncated: new Set<string>(),
   };
   const events: CaptureEventInput[] = [];
   const unreadableUids: string[] = [];
@@ -165,7 +172,12 @@ export function calendarEvents(
         ? 1
         : 0,
   );
-  return { events, skipped: unreadableUids.length, unreadableUids };
+  return {
+    events,
+    skipped: unreadableUids.length,
+    unreadableUids,
+    truncatedUids: [...context.truncated],
+  };
 }
 
 function seriesEvents(
@@ -270,6 +282,8 @@ function seriesEvents(
           rdates,
           maxSteps: MAX_STEPS,
         });
+
+  if (expansion.truncated) context.truncated.add(uid);
 
   const overrideByStart = new Map<string, RawVEvent>();
   for (const override of entry.overrides) {

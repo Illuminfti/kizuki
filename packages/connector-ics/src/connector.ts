@@ -86,6 +86,8 @@ interface Snapshot {
   events: CaptureEventInput[];
   /** UIDs the calendar still carries but this run could not read. */
   unreadableUids: string[];
+  /** UIDs whose expansion hit the instance cap on this run. */
+  truncatedUids: string[];
   etag: string | null;
   lastModified: string | null;
   unchanged: boolean;
@@ -231,6 +233,7 @@ export class IcsConnector implements Connector {
       return {
         events: mapping.events,
         unreadableUids: mapping.unreadableUids,
+        truncatedUids: mapping.truncatedUids,
         etag: null,
         lastModified: null,
         unchanged: false,
@@ -252,6 +255,7 @@ export class IcsConnector implements Connector {
       return {
         events: [],
         unreadableUids: [],
+        truncatedUids: [],
         etag: response.etag,
         lastModified: response.last_modified,
         unchanged: true,
@@ -266,6 +270,7 @@ export class IcsConnector implements Connector {
     return {
       events: mapping.events,
       unreadableUids: mapping.unreadableUids,
+      truncatedUids: mapping.truncatedUids,
       etag: response.etag,
       lastModified: response.last_modified,
       unchanged: false,
@@ -334,14 +339,19 @@ export class IcsConnector implements Connector {
       snapshot.events.map((event) => [event.source_record_id, event]),
     );
     // An entry the calendar still carries but this run could not read is not
-    // a deletion; its ids keep their ledger rows until it parses again.
-    const unreadable = new Set(snapshot.unreadableUids);
+    // a deletion; its ids keep their ledger rows until it parses again. The
+    // same holds for a series whose kept window slid past an id: the meeting
+    // is still on the calendar, only outside the thousand instances kept.
+    const stillOnTheCalendar = new Set([
+      ...snapshot.unreadableUids,
+      ...snapshot.truncatedUids,
+    ]);
     const tombstones: CaptureEventInput[] = [];
     for (const id of Object.keys(previous.records)) {
       if (present.has(id)) continue;
       const [encoded = id, recurrenceId] = id.split("#");
       const uid = decodeUid(encoded);
-      if (unreadable.has(uid)) continue;
+      if (stillOnTheCalendar.has(uid)) continue;
       tombstones.push(
         tombstone(
           id,

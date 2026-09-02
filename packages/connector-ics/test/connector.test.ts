@@ -187,6 +187,33 @@ describe("file mode", () => {
     expect(third.events[0]?.deleted).toBe(true);
   });
 
+  test("a series past the instance cap does not tombstone its own tail", async () => {
+    const path = await writeCalendar(
+      [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "BEGIN:VEVENT",
+        "UID:standup@acme.example",
+        "DTSTART:20220101T090000Z",
+        "RRULE:FREQ=DAILY",
+        "SUMMARY:Standup",
+        "END:VEVENT",
+        "END:VCALENDAR",
+        "",
+      ].join("\r\n"),
+    );
+    let clock = FIXTURE_NOW;
+    const connector = createIcsConnector({ path }, { now: () => clock });
+    const first = await connector.backfill(null);
+    expect(first.events).toHaveLength(1_000);
+
+    // The file never changes; only the clock does, which slides the kept
+    // window and drops the oldest instance out of the snapshot.
+    clock = new Date(FIXTURE_NOW.getTime() + 86_400_000);
+    const second = await connector.sync(first.cursor);
+    expect(second.events.filter((event) => event.deleted)).toEqual([]);
+  });
+
   test("a truncated file refuses the sync instead of tombstoning everything", async () => {
     const path = await writeCalendar(SMALL);
     const connector = createIcsConnector({ path }, { now: NOW });
