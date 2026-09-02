@@ -7,6 +7,7 @@ import type {
 import type { TelegramDialog, TelegramMessage, TelegramUser } from "./api";
 
 export const TELEGRAM_CONNECTOR_ID = "kizuki.telegram" as const;
+export const TELEGRAM_CONNECTOR_VERSION = "0.1.0" as const;
 
 /** Terminal label for an account: handle first, then name, then bare id. */
 export function userDisplay(user: TelegramUser): string {

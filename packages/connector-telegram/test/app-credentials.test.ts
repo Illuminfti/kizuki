@@ -5,6 +5,29 @@ import {
   requireAppCredentials,
 } from "../src/app-credentials";
 import { TelegramConnectorError } from "../src/api";
+import { TelegramConnector } from "../src/connector";
+import { ScriptedTelegramApi, fixtureAccount } from "../src/scripted";
+import {
+  CapturingWriter,
+  STATE_REF,
+  ScriptedIo,
+  rejection,
+  stateResolver,
+} from "./helpers";
+
+function unbuilt(config: { state_ref?: string }): {
+  connector: TelegramConnector;
+  api: ScriptedTelegramApi;
+} {
+  const api = new ScriptedTelegramApi(fixtureAccount());
+  return {
+    connector: new TelegramConnector(config, {
+      api: () => api,
+      credentials: () => null,
+    }),
+    api,
+  };
+}
 
 test("placeholder values yield no credentials", () => {
   expect(appCredentials({ api_id: "0", api_hash: "" })).toBeNull();
@@ -43,4 +66,22 @@ test("requiring credentials fails closed with the documented message", () => {
   expect((thrown as TelegramConnectorError).message).toBe(
     PLACEHOLDER_CREDENTIALS_MESSAGE,
   );
+});
+
+test("sign-in refuses before a single prompt when credentials are placeholders", async () => {
+  const { connector, api } = unbuilt({});
+  const io = new ScriptedIo(["+15551234567"]);
+  const error = await rejection(() => connector.signIn(io, new CapturingWriter()));
+  expect(error.code).toBe("placeholder_credentials");
+  expect(error.message).toBe(PLACEHOLDER_CREDENTIALS_MESSAGE);
+  expect(io.prompts).toEqual([]);
+  expect(api.calls).toEqual([]);
+});
+
+test("connect refuses without reaching the provider when credentials are placeholders", async () => {
+  const { connector, api } = unbuilt({ state_ref: STATE_REF });
+  const error = await rejection(() => connector.connect(stateResolver()));
+  expect(error.code).toBe("placeholder_credentials");
+  expect(error.message).toBe(PLACEHOLDER_CREDENTIALS_MESSAGE);
+  expect(api.calls).toEqual([]);
 });
