@@ -36,11 +36,12 @@ export function quoteNonce(): string {
 
 /**
  * Captured text can contain anything, including something that looks like a
- * fence. Breaking every `<<<` run makes a closing marker unconstructible
- * while leaving the text readable.
+ * fence. Every run of three or more openers is broken between each character,
+ * so no marker survives and no substitution can re-form one: the replacement
+ * of a maximal run neither starts nor ends next to another opener.
  */
 export function escapeFence(text: string): string {
-  return text.replaceAll("<<<", "<<\\<");
+  return text.replace(/<{3,}/g, (run) => run.split("").join("\\"));
 }
 
 /** Surrogate-safe clip that never walks more of the string than it must. */

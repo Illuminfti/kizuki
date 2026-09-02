@@ -58,7 +58,8 @@ describe("a captured note that tries to give orders", () => {
     const nonce = /<<<KZ-QUOTE ([0-9a-f]{32})/.exec(user)?.[1] ?? "";
     expect(nonce).toHaveLength(32);
     expect(user.split(`<<<KZ-END ${nonce}>>>`)).toHaveLength(2);
-    expect(user).toContain("<<\\<KZ-END 000000");
+    expect(user).toContain("<\\<\\<KZ-END 000000");
+    expect(user.split("<<<KZ-END")).toHaveLength(2);
   });
 
   test("an answer that echoes the fence is discarded", async () => {
