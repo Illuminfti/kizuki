@@ -104,6 +104,7 @@ describe("the stdio process entry", () => {
           type: "fact",
           status: "active",
           sensitivity: "public",
+          taint: "clean",
         },
         body: "the kettle is on. ".repeat(6_000),
       }),

@@ -65,6 +65,8 @@ export const OWNER: Principal = {
 
 export type DenyReason =
   | "missing_sensitivity"
+  /** RFC 0002 §10.5: a page with no taint stamp is capture until proven otherwise. */
+  | "missing_taint"
   | "above_ceiling"
   | "type_out_of_scope"
   | "subject_out_of_scope"

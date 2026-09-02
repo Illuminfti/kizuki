@@ -49,6 +49,8 @@ const CANON: CanonChunk = {
   title: "Ada",
   type: "person",
   sensitivity: "public",
+  taint: "clean",
+  authority: null,
   subjects: ["person:ada"],
   sources: [],
   excerpt: "Ada keeps the kettle warm.",

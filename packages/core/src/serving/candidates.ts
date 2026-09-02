@@ -29,8 +29,13 @@ const CANDIDATE_LIMIT = 20;
 const GRAPH_ROOTS = 5;
 const GRAPH_CHUNKS = 10;
 
+/**
+ * A packet is read as text, so the stamps travel inline: flattening the
+ * envelope to prose must not flatten the trust it carries (RFC 0002 §10.6).
+ */
 function canonBlock(chunk: CanonChunk): string {
-  return `### ${chunk.title} (${chunk.path}, ${chunk.sensitivity}) [page:${chunk.page_id}]\n${chunk.excerpt}\n`;
+  const stamps = `s=${chunk.sensitivity} taint=${chunk.taint} auth=${chunk.authority ?? "none"}`;
+  return `### ${chunk.title} (${chunk.path}, ${stamps}) [page:${chunk.page_id}]\n${chunk.excerpt}\n`;
 }
 
 function quotedBlock(chunk: QuotedChunk): string {
@@ -109,7 +114,7 @@ export function collectPieces(
       if (!decision.allow) continue;
       packed.add(page.id);
       const { excerpt, truncated } = excerptOf(page.body, CANON_EXCERPT);
-      const chunk = canonChunk(page, decision.sensitivity, excerpt, truncated);
+      const chunk = canonChunk(index, page, decision, excerpt, truncated);
       pieces.push({
         section: "canon",
         heading: "## canon",
@@ -144,12 +149,7 @@ export function collectPieces(
           collapseWhitespace(target.body),
           RELATED_EXCERPT,
         );
-        const chunk = canonChunk(
-          target,
-          decision.sensitivity,
-          excerpt,
-          truncated,
-        );
+        const chunk = canonChunk(index, target, decision, excerpt, truncated);
         pieces.push({
           section: "graph",
           heading: "## related",

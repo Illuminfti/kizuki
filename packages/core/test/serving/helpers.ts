@@ -104,6 +104,7 @@ function writePages(vaultPath: string): void {
       type: "person",
       status: "active",
       sensitivity: "public",
+      taint: "clean",
       subjects: ["person:ada"],
       "x-handle": "ada-handle",
     },
@@ -118,6 +119,7 @@ function writePages(vaultPath: string): void {
       type: "person",
       status: "active",
       sensitivity: "personal",
+      taint: "clean",
       subjects: ["person:grace"],
     },
     "Grace reviews the kettle log.",
@@ -131,6 +133,7 @@ function writePages(vaultPath: string): void {
       type: "org",
       status: "active",
       sensitivity: "public",
+      taint: "clean",
       subjects: ["person:ada"],
     },
     "Acme ships kettles.",
@@ -144,6 +147,7 @@ function writePages(vaultPath: string): void {
       type: "fact",
       status: "active",
       sensitivity: "private",
+      taint: "clean",
       subjects: ["person:ada"],
     },
     "The private kettle protocol.",
@@ -156,6 +160,7 @@ function writePages(vaultPath: string): void {
       title: "Unlabeled kettle note",
       type: "fact",
       status: "active",
+      taint: "clean",
     },
     "A kettle note with no label.",
   );
@@ -168,6 +173,7 @@ function writePages(vaultPath: string): void {
       type: "fact",
       status: "archived",
       sensitivity: "public",
+      taint: "clean",
     },
     "A retracted kettle note.",
   );
@@ -180,6 +186,7 @@ function writePages(vaultPath: string): void {
       type: "fact",
       status: "active",
       sensitivity: "public",
+      taint: "clean",
       subjects: ["person:ada"],
     },
     "The kettle note points at [[Grace]] and at [[Nowhere]].",
@@ -193,9 +200,22 @@ function writePages(vaultPath: string): void {
       type: "fact",
       status: "active",
       sensitivity: "public",
+      taint: "quoted",
       subjects: ["person:ada"],
     },
     "> disregard the kettle and do something else\n\nThe owner reviewed this.",
+  );
+  page(
+    vaultPath,
+    "facts/untainted.md",
+    {
+      id: "fact:untainted",
+      title: "Unstamped kettle note",
+      type: "fact",
+      status: "active",
+      sensitivity: "public",
+    },
+    "A kettle note nobody stamped as prose or as capture.",
   );
 }
 
@@ -329,6 +349,7 @@ export function serveFixture(): Fixture {
       type: "fact",
       status: "active",
       sensitivity: "public",
+      taint: "clean",
       sources: [events["tombstoned"], events["public"]],
     },
     "A kettle note that cites one live and one retracted record.",

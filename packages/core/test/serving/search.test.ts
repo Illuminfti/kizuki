@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { serveGetPage } from "../../src/serving/page";
 import { serveSearch } from "../../src/serving/search";
 import { ServeError } from "../../src/serving/types";
 import type { Envelope } from "../../src/serving/types";
@@ -175,11 +176,32 @@ describe("serveSearch enforces the grant below the prompt layer", () => {
     expect(envelope.denied).toEqual([]);
   });
 
-  test("taint is by provenance: a canon page quoting capture stays canon", () => {
+  test("a page carrying capture is served as canon, stamped as capture", () => {
     const envelope = serveSearch(fixture.agent("reader-public"), {
       query: "disregard",
     });
+    // The page is produced canon that quotes a record, so it stays in the
+    // canon field; the stamp is what tells a reader the body holds capture.
     expect(pageIds(envelope)).toEqual(["fact:quoted"]);
+    expect(envelope.canon[0]?.taint).toBe("quoted");
     expect(envelope.quoted).toEqual([]);
+
+    const prose = serveSearch(fixture.agent("reader-public"), {
+      query: "kettles",
+    });
+    expect(pageIds(prose)).toEqual(["org:acme"]);
+    expect(prose.canon[0]?.taint).toBe("clean");
+  });
+
+  test("a page with no taint stamp is served to nobody, the owner included", () => {
+    for (const ctx of [fixture.owner(), fixture.agent("reader-private")]) {
+      const envelope = serveSearch(ctx, { query: "nobody stamped" });
+      expect(pageIds(envelope)).toEqual([]);
+      expect(envelope.denied).toEqual([{ reason: "missing_taint", count: 1 }]);
+    }
+    // Named directly it is withheld too, and the reason is the missing stamp.
+    expect(
+      serveGetPage(fixture.owner(), { id: "fact:untainted" }).denied,
+    ).toEqual([{ reason: "missing_taint", count: 1 }]);
   });
 });

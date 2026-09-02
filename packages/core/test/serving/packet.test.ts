@@ -260,6 +260,7 @@ describe("serveContextPacket", () => {
         type: "person",
         status: "active",
         sensitivity: "public",
+        taint: "clean",
       },
       "A second page claiming one id.",
     );
@@ -329,6 +330,7 @@ describe("the packet is scoped by the grant, not by the request", () => {
           type: "fact",
           status: "active",
           sensitivity: "public",
+          taint: "clean",
         },
         `Filler kettle prose number ${index}.`,
       );
@@ -345,6 +347,8 @@ describe("the packet is scoped by the grant, not by the request", () => {
     expect(packet.canon.length).toBeGreaterThan(0);
     expect(packet.canon.every((chunk) => chunk.type === "person")).toBe(true);
     expect(packet.data?.packet_md).toContain("[page:person:ada]");
+    // Flattened to text, a chunk still says what it is and where it came from.
+    expect(packet.data?.packet_md).toContain("taint=clean auth=none");
   });
 
   test("the rendered header carries the envelope instant", () => {

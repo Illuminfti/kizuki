@@ -4,7 +4,7 @@ import { readDerivedMeta } from "../derived-meta";
 import { getCheckpoint, listConnections } from "../ledger/connections";
 import { count } from "../ledger/ledger";
 import { tableExists } from "../ledger/schema";
-import { asSensitivity, eligible, loadCanon, pageDecision } from "./canon";
+import { asSensitivity, asTaint, eligible, loadCanon, pageDecision } from "./canon";
 import { auditArguments, gate, principalName } from "./gate";
 import type { Served } from "./gate";
 import type { Envelope, ServeContext } from "./types";
@@ -20,6 +20,8 @@ export interface HealthData {
     total: number;
     active: number;
     labeled: number;
+    /** Pages carrying a taint stamp: an unstamped page is served to nobody. */
+    stamped: number;
     servable: number;
     held: number;
   };
@@ -69,9 +71,11 @@ export function serveHealth(ctx: ServeContext): Envelope<HealthData> {
 
       let active = 0;
       let labeled = 0;
+      let stamped = 0;
       let servable = 0;
       for (const page of index.pages) {
         if (asSensitivity(page.data["sensitivity"]) !== null) labeled += 1;
+        if (asTaint(page.data["taint"]) !== null) stamped += 1;
         if (!eligible(page)) continue;
         active += 1;
         if (pageDecision(index, grant, page).allow) servable += 1;
@@ -119,6 +123,7 @@ export function serveHealth(ctx: ServeContext): Envelope<HealthData> {
             total: index.pages.length,
             active,
             labeled,
+            stamped,
             servable,
             held: index.pages.filter((page) => index.holds.has(page.relPath))
               .length,

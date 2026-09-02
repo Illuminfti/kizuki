@@ -1,8 +1,13 @@
 import { SENSITIVITY_ORDER, authorize } from "../agents";
 import type { DenyReason, Grant, Sensitivity, Servable } from "../agents";
+import type { AuthorityTier } from "../contracts/proposal";
+import { isAuthorityTier } from "../contracts/proposal";
 import { readHolds } from "../ledger/purge";
+import { tableExists } from "../ledger/schema";
 import { listCanonPagesReport, stringArray } from "../vault/pages";
 import type { CanonPage, SkippedPage } from "../vault/pages";
+import { PAGE_TAINTS } from "../vault/schema";
+import type { PageTaint } from "../vault/schema";
 import type { CanonChunk, ServeContext } from "./types";
 
 export interface CanonIndex {
@@ -13,6 +18,8 @@ export interface CanonIndex {
   /** Lower-cased title, for resolving wikilink text. */
   byTitle: Map<string, CanonPage[]>;
   holds: Set<string>;
+  /** Authority of the newest receipt per page path; absent when unwritten. */
+  authority: Map<string, AuthorityTier>;
 }
 
 export function asSensitivity(value: unknown): Sensitivity | null {
@@ -25,6 +32,35 @@ export function asSensitivity(value: unknown): Sensitivity | null {
 function stringField(page: CanonPage, key: string): string | null {
   const value = page.data[key];
   return typeof value === "string" ? value : null;
+}
+
+/** RFC 0002 §10.5: a page carries `clean` produced prose or `quoted` capture. */
+export function asTaint(value: unknown): PageTaint | null {
+  return typeof value === "string" &&
+    (PAGE_TAINTS as readonly string[]).includes(value)
+    ? (value as PageTaint)
+    : null;
+}
+
+/**
+ * One query for the whole call: the authority a chunk carries is the tier of
+ * the newest receipt that wrote its page. A page no receipt covers — an
+ * imported vault, a page the owner wrote by hand — reports none rather than
+ * borrowing a tier it never earned.
+ */
+function readAuthority(ctx: ServeContext): Map<string, AuthorityTier> {
+  const byPath = new Map<string, AuthorityTier>();
+  if (!tableExists(ctx.db, "canon_receipts")) return byPath;
+  const rows = ctx.db
+    .query<{ page_path: string; authority: string }, []>(
+      `SELECT page_path, authority FROM canon_receipts
+        ORDER BY at ASC, receipt_id ASC`,
+    )
+    .all();
+  for (const row of rows) {
+    if (isAuthorityTier(row.authority)) byPath.set(row.page_path, row.authority);
+  }
+  return byPath;
 }
 
 /**
@@ -69,6 +105,7 @@ export function loadCanon(ctx: ServeContext): CanonIndex {
     byPath,
     byTitle,
     holds: new Set(readHolds(ctx.db).map((hold) => hold.page_path)),
+    authority: readAuthority(ctx),
   };
 }
 
@@ -93,16 +130,19 @@ export function pageDecision(
   grant: Grant,
   page: CanonPage,
 ):
-  | { allow: true; sensitivity: Sensitivity }
+  | { allow: true; sensitivity: Sensitivity; taint: PageTaint }
   | { allow: false; reason: DenyReason } {
-  // The label is read first so the served chunk carries a narrowed type
-  // instead of a cast: an unlabeled page is withheld from everyone, the
-  // owner included.
+  // Both labels are read first so the served chunk carries narrowed types
+  // instead of casts. A page missing either is withheld from everyone, the
+  // owner included: an unstamped page may be verbatim capture, and serving
+  // it as canon would hand a reader capture dressed as produced prose.
   const label = asSensitivity(page.data["sensitivity"]);
   if (label === null) return { allow: false, reason: "missing_sensitivity" };
+  const taint = asTaint(page.data["taint"]);
+  if (taint === null) return { allow: false, reason: "missing_taint" };
   const decision = authorize(grant, pageServable(index, page));
   return decision.allow
-    ? { allow: true, sensitivity: label }
+    ? { allow: true, sensitivity: label, taint }
     : { allow: false, reason: decision.reason };
 }
 
@@ -123,8 +163,9 @@ export function resolveLink(
 }
 
 export function canonChunk(
+  index: CanonIndex,
   page: CanonPage,
-  sensitivity: Sensitivity,
+  decision: { sensitivity: Sensitivity; taint: PageTaint },
   excerpt: string,
   truncated: boolean,
 ): CanonChunk {
@@ -133,7 +174,9 @@ export function canonChunk(
     path: page.relPath,
     title: stringField(page, "title") ?? "",
     type: stringField(page, "type") ?? "",
-    sensitivity,
+    sensitivity: decision.sensitivity,
+    taint: decision.taint,
+    authority: index.authority.get(page.relPath) ?? null,
     subjects: stringArray(page.data["subjects"]),
     sources: stringArray(page.data["sources"]),
     excerpt,

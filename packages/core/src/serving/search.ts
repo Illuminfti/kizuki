@@ -82,7 +82,7 @@ function classify(
       }
       if (collect) {
         result.canon.push(
-          canonChunk(page, decision.sensitivity, hit.snippet, false),
+          canonChunk(index, page, decision, hit.snippet, false),
         );
       }
       continue;

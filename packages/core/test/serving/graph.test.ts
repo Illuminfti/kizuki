@@ -152,6 +152,7 @@ describe("serveGraph", () => {
           type: "fact",
           status: "active",
           sensitivity: "public",
+          taint: "clean",
         },
         body: links,
       }),

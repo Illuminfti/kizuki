@@ -26,9 +26,10 @@ describe("serveHealth", () => {
       tools: [...OWNER.grant.tools],
     });
     expect(data?.pages).toEqual({
-      total: 10,
-      active: 9,
-      labeled: 9,
+      total: 11,
+      active: 10,
+      labeled: 10,
+      stamped: 10,
       servable: 7,
       held: 1,
     });

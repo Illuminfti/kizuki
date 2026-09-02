@@ -94,7 +94,7 @@ export function serveEntities(ctx: ServeContext, args: EntitiesArgs): Envelope {
           collapseWhitespace(page.body),
           EXCERPT_CHARS,
         );
-        canon.push(canonChunk(page, decision.sensitivity, excerpt, truncated));
+        canon.push(canonChunk(index, page, decision, excerpt, truncated));
       }
 
       return { canon, quoted: [], withheld };

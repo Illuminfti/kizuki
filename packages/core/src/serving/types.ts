@@ -1,6 +1,8 @@
 import type { Database } from "bun:sqlite";
 import type { DenyReason, Principal, Sensitivity, Tool } from "../agents";
+import type { AuthorityTier } from "../contracts/proposal";
 import type { RetrievalPort } from "../contracts/retrieval";
+import type { PageTaint } from "../vault/schema";
 
 export const ENVELOPE_SCHEMA = "kizuki.envelope/v1" as const;
 
@@ -30,6 +32,10 @@ export interface CanonChunk {
   title: string;
   type: string;
   sensitivity: Sensitivity;
+  /** `quoted` means the body carries verbatim capture inside blockquotes. */
+  taint: PageTaint;
+  /** The tier of the receipt that last wrote the page; null when unwritten. */
+  authority: AuthorityTier | null;
   subjects: string[];
   sources: string[];
   excerpt: string;

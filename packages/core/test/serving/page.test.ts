@@ -2,6 +2,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { serveGetPage } from "../../src/serving/page";
+import { ownerPromote } from "../../src/staging/promote";
+import { fileProposal } from "../../src/staging/proposals";
 import type { GetPageArgs } from "../../src/serving/page";
 import { ServeError } from "../../src/serving/types";
 import { serializePage } from "../../src/vault/frontmatter";
@@ -110,6 +112,7 @@ describe("serveGetPage", () => {
           type: "fact",
           status: "active",
           sensitivity: "public",
+          taint: "clean",
         },
         body,
       }),
@@ -120,6 +123,34 @@ describe("serveGetPage", () => {
     expect(chunk?.truncated).toBe(true);
     expect(Array.from(chunk?.excerpt ?? "")).toHaveLength(65_536);
     expect(chunk?.excerpt.endsWith("\u{1F600}")).toBe(true);
+  });
+
+  test("a chunk names the tier of the receipt that wrote its page", () => {
+    const filed = fileProposal(fixture.db, {
+      kind: "entity",
+      target: "facts:receipted",
+      body: "A kettle page the receipted writer produced.",
+      frontmatter: { type: "fact", title: "Receipted kettle note" },
+      provenance: [fixture.events["public"] as string],
+      subjects: ["person:linus"],
+      producer: "deterministic",
+      confidence: 1,
+    });
+    if (filed.outcome !== "stored") throw new Error(filed.outcome);
+    const receipt = ownerPromote(
+      fixture.db,
+      fixture.vaultPath,
+      filed.proposal.proposal_id,
+      { sensitivity: "public" },
+    );
+
+    const written = serveGetPage(fixture.owner(), { path: receipt.page_path });
+    expect(receipt.page_path).toBe("facts/receipted.md");
+    expect(written.canon[0]?.authority).toBe("connector_evidence");
+    // A hand-authored page no receipt covers borrows no tier.
+    expect(
+      serveGetPage(fixture.owner(), { id: "person:ada" }).canon[0]?.authority,
+    ).toBeNull();
   });
 });
 
