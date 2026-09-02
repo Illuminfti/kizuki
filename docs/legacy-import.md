@@ -310,14 +310,13 @@ A wiki page whose mapping produced no label is staged unlabeled. Promote
 refuses to write it to canon without an explicit sensitivity, and the serving
 layer never returns an unlabeled page to any principal.
 
-For a large migration, labelling one page at a time is the wrong shape. The
-TUI review library (`packages/tui`) has a batch path that applies one label
-to every deterministic new-page proposal in view — which is exactly what a
-migration produces. On this revision that is a library, not a CLI verb: no
-command opens the TUI yet.
+For a large migration, labelling one page at a time is the wrong shape.
+`kizuki review --batch` applies one label to every deterministic new-page
+proposal in view, which is exactly what a migration produces: two keystrokes
+for a whole group.
 
-Every migrated page carries `x-legacy-sensitivity` when the mapping did read
-a label, so a mixed import can be reviewed in groups.
+Every migrated page also carries `x-legacy-sensitivity` when the mapping did
+read a label, so a mixed import can be reviewed in groups.
 
 ## Honest limits
 
@@ -341,19 +340,19 @@ a label, so a mixed import can be reviewed in groups.
 
 ## Running an import
 
-With the verbs on this revision:
-
 ```sh
-kizuki init ~/vault
-kizuki ingest kizuki.import-legacy-wiki --vault ~/vault --source ~/wiki
-kizuki proposals --vault ~/vault
-kizuki promote <proposal-id> --vault ~/vault --sensitivity personal
+kizuki init ./vault
+kizuki import import-legacy-wiki --source ./wiki --vault ./vault
+kizuki review --list --vault ./vault
+kizuki promote <proposal-id> --sensitivity personal --vault ./vault
+kizuki sync import-legacy-wiki --vault ./vault
 ```
 
-The first run backfills; later runs resume from the stored checkpoint, so a
-page deleted from the wiki arrives as a tombstone and withdraws its pending
-proposal. The events importer reads one bounded page of rows per run, so call
-it repeatedly until it stops storing events.
+`import` enrolls the source and backfills it in one step; `sync` runs the
+incremental sweep afterwards, so a page deleted from the wiki arrives as a
+tombstone and withdraws its pending proposal. The events importer reads one
+bounded page of rows per run, so call `sync` repeatedly until it stops
+storing events.
 
-A CLI lane in flight renames `ingest` to `import`; the connector ids and the
-mapping-file convention are the same either way.
+Both connector ids also answer to their short form: `import-legacy-wiki` and
+`import-legacy-events`.

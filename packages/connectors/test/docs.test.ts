@@ -66,13 +66,19 @@ describe("docs/legacy-import.md", () => {
   });
 
   test("the doc claims no command the CLI on this revision does not have", () => {
-    const verbs = readFileSync(
-      join(ROOT, "packages", "cli", "src", "main.ts"),
+    const registry = readFileSync(
+      join(ROOT, "packages", "cli", "src", "commands", "index.ts"),
       "utf8",
     );
-    for (const command of [...DOC.matchAll(/^kizuki ([a-z-]+)/gm)]) {
-      expect(verbs).toContain(`verb === "${command[1] as string}"`);
-    }
+    const verbs = [...registry.matchAll(/^  (\w+)Command,$/gm)].map(
+      (entry) => entry[1] as string,
+    );
+    expect(verbs.length).toBeGreaterThan(5);
+    const used = [...DOC.matchAll(/^kizuki ([a-z-]+)/gm)].map(
+      (entry) => entry[1] as string,
+    );
+    expect(used.length).toBeGreaterThan(0);
+    for (const verb of used) expect(verbs).toContain(verb);
   });
 
   test("the README points at the doc without claiming more than it does", () => {
