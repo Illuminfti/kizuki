@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { serializePage } from "@kizuki/core";
 import { mcpFixture } from "./helpers";
 import type { McpFixture } from "./helpers";
 
@@ -87,6 +89,54 @@ describe("the stdio process entry", () => {
     expect(result.stderr.trim()).toBe(
       "kizuki-mcp ready principal=owner tools=9",
     );
+  });
+
+  test("a request answered as the pipe closes is answered in full", async () => {
+    const running = live();
+    // Big enough that the answer cannot leave the pipe in one turn: a
+    // shutdown that does not wait for the write loses the tail of it.
+    writeFileSync(
+      join(running.vaultPath, "facts", "long.md"),
+      serializePage({
+        data: {
+          id: "fact:long",
+          title: "A long kettle note",
+          type: "fact",
+          status: "active",
+          sensitivity: "public",
+        },
+        body: "the kettle is on. ".repeat(6_000),
+      }),
+      "utf8",
+    );
+    const work = [
+      '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}',
+      '{"jsonrpc":"2.0","method":"notifications/initialized"}',
+      '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_page","arguments":{"id":"fact:long"}}}',
+      "",
+    ].join("\n");
+
+    // Written and closed in the same turn, which is what a harness does.
+    // Repeated because a shutdown that races the answer loses it only
+    // sometimes.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const result = await run(
+        ["--vault", running.vaultPath, "--owner"],
+        work,
+      );
+      expect(result.code).toBe(0);
+      const answers = result.stdout
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { id?: number; result?: unknown });
+      const answered = answers.find((message) => message.id === 2);
+      const payload = answered?.result as
+        | { structuredContent?: { canon?: { excerpt?: string }[] } }
+        | undefined;
+      expect(payload?.structuredContent?.canon?.[0]?.excerpt?.length).toBe(
+        65_536,
+      );
+    }
   });
 
   test("an unset token variable refuses without starting the server", async () => {
