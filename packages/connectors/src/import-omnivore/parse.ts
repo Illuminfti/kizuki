@@ -5,6 +5,7 @@ import type { CaptureEventInput } from "@kizuki/core";
 import { KizukiError } from "../errors";
 import {
   MAX_RECORDS,
+  MAX_RECORD_BYTES,
   compareStrings,
   errorMessage,
   isoToRfc3339,
@@ -203,6 +204,17 @@ export async function fsOmnivoreFiles(dir: string): Promise<OmnivoreFiles> {
   if (names.length === 0) {
     throw misconfigured(`no metadata_*.json in ${dir}`);
   }
+  // A directory entry carries its own type, so a symlink reads as a symlink
+  // here and never as the directory it points at: an export whose
+  // `highlights` is a link elsewhere has no highlights rather than a route
+  // out of the export folder.
+  const realDirectory = (name: string): string | null =>
+    entries.some((entry) => entry.name === name && entry.isDirectory())
+      ? join(dir, name)
+      : null;
+  const highlightsDir = realDirectory("highlights");
+  const contentDir = realDirectory("content");
+
   const metadata = [];
   for (const name of names) {
     metadata.push({
@@ -216,20 +228,22 @@ export async function fsOmnivoreFiles(dir: string): Promise<OmnivoreFiles> {
   return {
     metadata,
     highlight: async (slug) => {
-      if (!SLUG.test(slug)) return null;
-      try {
-        return await readBoundedUtf8(
-          join(dir, "highlights", `${slug}.md`),
-          OMNIVORE_IMPORT_CONNECTOR_ID,
-        );
-      } catch {
-        // Absent, a symlink, or unreadable: the item simply has no highlights.
-        return null;
-      }
+      if (highlightsDir === null || !SLUG.test(slug)) return null;
+      const file = join(highlightsDir, `${slug}.md`);
+      // Absence, a symlink and a directory are honestly "no highlights". A
+      // file that is there but unreadable, oversize or not UTF-8 is a
+      // refusal instead: an item stored without the owner's notes would be
+      // indistinguishable from an item that never had any.
+      if ((await statRegularFile(file)) === null) return null;
+      return readBoundedUtf8(
+        file,
+        OMNIVORE_IMPORT_CONNECTOR_ID,
+        MAX_RECORD_BYTES,
+      );
     },
     content: async (slug) => {
-      if (!SLUG.test(slug)) return null;
-      return statRegularFile(join(dir, "content", `${slug}.html`));
+      if (contentDir === null || !SLUG.test(slug)) return null;
+      return statRegularFile(join(contentDir, `${slug}.html`));
     },
   };
 }

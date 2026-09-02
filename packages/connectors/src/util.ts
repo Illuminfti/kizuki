@@ -1,9 +1,14 @@
-import { lstat, readFile, stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open, readFile, stat } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { basename } from "node:path";
 import { HealthReport, isPlainObject } from "@kizuki/core";
 import { KizukiError } from "./errors";
 
-export function requirePathConfig(config: unknown, connectorId: string): string {
+export function requirePathConfig(
+  config: unknown,
+  connectorId: string,
+): string {
   if (!isPlainObject(config) || typeof config["path"] !== "string") {
     throw new KizukiError(
       "misconfigured",
@@ -41,7 +46,10 @@ export async function pathHealth(
   }
 }
 
-export async function readUtf8(path: string, connectorId: string): Promise<string> {
+export async function readUtf8(
+  path: string,
+  connectorId: string,
+): Promise<string> {
   try {
     return await readFile(path, "utf8");
   } catch (error) {
@@ -125,38 +133,64 @@ export function isoToRfc3339(value: unknown, where: string): string {
   throw new KizukiError("parse_error", `${where}: invalid timestamp`);
 }
 
+function notARegularFile(path: string, connectorId: string): KizukiError {
+  return new KizukiError(
+    "misconfigured",
+    `${connectorId}: not a regular file: ${path}`,
+  );
+}
+
+function isErrno(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: unknown }).code === code
+  );
+}
+
 /**
  * Reads an export file the way the importers need it: size-checked before a
  * byte is read, never through a symlink, strictly UTF-8, newline-normalized.
+ *
+ * One descriptor serves the type check, the size check and the read, so the
+ * file cannot be swapped for another between them. `O_NOFOLLOW` makes the
+ * kernel refuse a symlink instead of the caller noticing afterwards, and
+ * `O_NONBLOCK` keeps a pipe planted in an export folder from hanging the
+ * import before its file type is even known.
  */
 export async function readBoundedUtf8(
   path: string,
   connectorId: string,
   maxBytes = MAX_EXPORT_BYTES,
 ): Promise<string> {
-  let info;
+  let handle: FileHandle;
   try {
-    info = await lstat(path);
+    handle = await open(
+      path,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
   } catch (error) {
+    if (isErrno(error, "ELOOP")) throw notARegularFile(path, connectorId);
     throw new KizukiError(
       "misconfigured",
       `${connectorId}: cannot read ${path}: ${errorMessage(error)}`,
       { cause: error },
     );
   }
-  if (!info.isFile()) {
-    throw new KizukiError(
-      "misconfigured",
-      `${connectorId}: not a regular file: ${path}`,
-    );
+  let bytes: Buffer;
+  try {
+    const info = await handle.stat();
+    if (!info.isFile()) throw notARegularFile(path, connectorId);
+    if (info.size > maxBytes) {
+      throw new KizukiError(
+        "misconfigured",
+        `${connectorId}: ${path} exceeds the ${maxBytes} byte import limit`,
+      );
+    }
+    bytes = await handle.readFile();
+  } finally {
+    await handle.close();
   }
-  if (info.size > maxBytes) {
-    throw new KizukiError(
-      "misconfigured",
-      `${connectorId}: ${path} exceeds the ${maxBytes} byte import limit`,
-    );
-  }
-  const bytes = await readFile(path);
   let text: string;
   try {
     text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);

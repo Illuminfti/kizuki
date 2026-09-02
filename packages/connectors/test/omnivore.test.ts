@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { validateEventInput } from "@kizuki/core";
 import { KizukiError } from "../src/errors";
-import { FIXTURE_OBSERVED_AT } from "../src/util";
+import { FIXTURE_OBSERVED_AT, MAX_RECORD_BYTES } from "../src/util";
 import {
   OMNIVORE_FIXTURE_FILES,
   OMNIVORE_IMPORT_CONNECTOR_ID,
@@ -225,6 +225,60 @@ test("a slug that is not a bare name reaches no file at all", async () => {
       expect(event.metadata["has_highlights"]).toBe(false);
       expect(event.attachments).toEqual([]);
     }
+  });
+});
+
+test("a symlinked highlights or content directory reaches nothing", async () => {
+  await withTempRoot(async (root) => {
+    const canary = "canary-quartz-heron";
+    const outside = path.join(root, "outside");
+    await mkdir(outside);
+    await writeFile(path.join(outside, "linked.md"), canary);
+    await writeFile(path.join(outside, "linked.html"), canary);
+    const exportDir = path.join(root, "export");
+    await writeExport(
+      exportDir,
+      metadataFile([
+        { id: "1", slug: "linked", savedAt: "2026-01-01T09:00:00Z" },
+      ]),
+    );
+    await symlink(outside, path.join(exportDir, "highlights"));
+    await symlink(outside, path.join(exportDir, "content"));
+    const events = await omnivoreEvents(
+      await fsOmnivoreFiles(exportDir),
+      FIXTURE_OBSERVED_AT,
+    );
+    expect(events.length).toBe(1);
+    expect(events[0]?.text).not.toContain(canary);
+    expect(events[0]?.metadata["has_highlights"]).toBe(false);
+    expect(events[0]?.attachments).toEqual([]);
+  });
+});
+
+test("a highlights file that is present but unreadable refuses the import", async () => {
+  await withTempRoot(async (root) => {
+    const exportDir = path.join(root, "export");
+    await writeExport(exportDir, {
+      ...metadataFile([
+        { id: "1", slug: "notes", savedAt: "2026-01-01T09:00:00Z" },
+      ]),
+      "highlights/keep.md": "kept",
+    });
+    const file = path.join(exportDir, "highlights", "notes.md");
+
+    await writeFile(file, Buffer.from([0x41, 0xff, 0x42]));
+    const invalid = await rejected(async () =>
+      omnivoreEvents(await fsOmnivoreFiles(exportDir), FIXTURE_OBSERVED_AT),
+    );
+    expect(invalid.code).toBe("parse_error");
+    expect(invalid.message).toContain("not valid UTF-8");
+
+    await writeFile(file, "x".repeat(MAX_RECORD_BYTES + 1));
+    const oversize = await rejected(async () =>
+      omnivoreEvents(await fsOmnivoreFiles(exportDir), FIXTURE_OBSERVED_AT),
+    );
+    expect(oversize.code).toBe("misconfigured");
+    expect(oversize.message).toContain("import limit");
   });
 });
 
