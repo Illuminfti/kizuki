@@ -103,6 +103,7 @@ main() {
   bun test
   bash scripts/verify-policy.test.sh
   bun run scripts/verify-network.ts
+  bun run scripts/verify-docs.ts
 
   assert_no_match "phone-home dependency" git grep -I -n -E "$dependency_re" -- ':(glob)**/package.json'
   assert_safe_tracked_paths "$forbidden_identifier_re|$attributed_identifier_re"

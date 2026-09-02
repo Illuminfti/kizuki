@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
+  CHECKED_EXTENSION,
+  EXCLUDED_PREFIXES,
   HONESTY_FILES,
   STATUS_HEADINGS,
   checkDocument,
   checkProof,
   parseProofTokens,
+  verifyDocs,
 } from "./verify-docs";
 import type { DocsContext } from "./verify-docs";
 
@@ -247,5 +250,37 @@ describe("fences", () => {
     expect(
       REASONS(checkDocument("docs/x.md", "```ts\nconst a = 1;\n", ctx)),
     ).toContain("unclosed");
+  });
+});
+
+describe("verifyDocs over this repository", () => {
+  const report = verifyDocs(new URL("..", import.meta.url).pathname);
+
+  test("every checked document passes", () => {
+    expect(
+      report.problems
+        .map((problem) => `${problem.file}:${problem.line}: ${problem.reason}`)
+        .join("\n"),
+    ).toBe("");
+  });
+
+  test("the shipped Markdown carries real proofs and real diagrams", () => {
+    expect(report.files.length).toBeGreaterThanOrEqual(12);
+    expect(report.proofs).toBeGreaterThanOrEqual(30);
+    expect(report.mermaid).toBeGreaterThanOrEqual(4);
+    expect(report.links).toBeGreaterThanOrEqual(20);
+  });
+
+  test("checks Markdown only, and not the frozen wave-1 spec archive", () => {
+    expect(report.files.every((file) => file.endsWith(CHECKED_EXTENSION))).toBe(
+      true,
+    );
+    expect(
+      report.files.some((file) =>
+        EXCLUDED_PREFIXES.some((prefix) => file.startsWith(prefix)),
+      ),
+    ).toBe(false);
+    expect(report.files).toContain("README.md");
+    expect(report.files).toContain("SECURITY.md");
   });
 });
