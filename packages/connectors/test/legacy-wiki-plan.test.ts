@@ -13,7 +13,10 @@ import {
   fixtureScan,
 } from "../src/import-legacy-wiki/fixture";
 import { planLegacyWiki } from "../src/import-legacy-wiki/plan";
-import { parseLegacyWikiMapping } from "../src/import-legacy-wiki/mapping";
+import {
+  DEFAULT_DIRECTORIES,
+  parseLegacyWikiMapping,
+} from "../src/import-legacy-wiki/mapping";
 import type { LegacyWikiMapping } from "../src/import-legacy-wiki/mapping";
 import { renderLegacyWikiReport } from "../src/import-legacy-wiki/report";
 import type { LegacyWikiReport } from "../src/import-legacy-wiki/report";
@@ -547,5 +550,73 @@ describe("a legacy value named after an Object member", () => {
     const { events, report } = plan(pageWith("__proto__"), mapping);
     expect(page(report, "a.md").type.mapped).toBe("person");
     expect(events[0]?.sensitivity_hint).toBe("private");
+  });
+});
+
+describe("the candidate the floor will actually accept", () => {
+  function pageWithKeys(frontmatter: string): ScanResult {
+    return {
+      files: [
+        {
+          relpath: "a.md",
+          content: `---\ntitle: A\n${frontmatter}\n---\nbody\n`,
+          mtimeMs: 1,
+          size: 20,
+        },
+      ],
+      skipped: [],
+      truncated: false,
+    };
+  }
+
+  test("a legacy key with a dot mints a name core's grammar allows", () => {
+    const { events, report } = plan(pageWithKeys("date.created: 2026-01-01"));
+    const extensions = candidate(events[0] as CaptureEventInput)[
+      "extensions"
+    ] as Record<string, unknown>;
+    expect(Object.keys(extensions)).toContain("x-date-created");
+    expect(page(report, "a.md").fields).toContainEqual({
+      key: "date.created",
+      outcome: "renamed",
+      to: "x-date-created",
+    });
+    const checked = validatePageCandidate(
+      (events[0] as CaptureEventInput).metadata,
+    );
+    expect(checked !== null && checked.ok).toBe(true);
+  });
+
+  test("keys that differ only outside the grammar collide, once", () => {
+    const { report } = plan(pageWithKeys("date.created: 1\ndate-created: 2"));
+    const outcomes = page(report, "a.md").fields.map(
+      (field) => `${field.key}:${field.outcome}`,
+    );
+    expect(outcomes).toContain("date-created:dropped");
+  });
+
+  test("a candidate the floor would refuse is reported, not emitted", () => {
+    // A directory past the segment limit can only come from a mapping that
+    // never went through the parser, which is exactly the case where a silent
+    // downgrade to a capture note would be hardest to explain.
+    const mapping: LegacyWikiMapping = {
+      ...LEGACY_WIKI_FIXTURE.mapping,
+      target: {
+        mode: "flat",
+        directories: { ...DEFAULT_DIRECTORIES, topic: "x".repeat(65) },
+      },
+    };
+    const { events, report } = plan(pageWithKeys("note: kept"), mapping);
+    const entry = page(report, "a.md");
+    expect(entry.outcome).toBe("imported");
+    expect(entry.target).toBeNull();
+    expect(entry.kind).toBeNull();
+    expect(entry.notes).toContain("candidate_rejected");
+    expect(events).toHaveLength(1);
+    expect(PAGE_CANDIDATE_KEY in (events[0] as CaptureEventInput).metadata).toBe(
+      false,
+    );
+    expect(validatePageCandidate((events[0] as CaptureEventInput).metadata)).toBe(
+      null,
+    );
   });
 });

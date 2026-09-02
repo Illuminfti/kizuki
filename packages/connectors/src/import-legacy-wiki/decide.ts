@@ -4,6 +4,7 @@ import type { FrontmatterValue } from "@kizuki/core/staging";
 import {
   sanitizeLine,
   slug,
+  slugName,
   subjectId,
   toFrontmatterValue,
 } from "../legacy/coerce";
@@ -123,7 +124,7 @@ export function planFields(
       continue;
     }
     const name =
-      explicit ?? (EXTENSION_NAME.test(key) ? key : `x-${slug(key)}`);
+      explicit ?? (EXTENSION_NAME.test(key) ? key : `x-${slugName(key)}`);
     if (taken.has(name)) {
       reports.push({
         key: label,
@@ -209,7 +210,9 @@ export function planTarget(
     else notes.push("target: flattened");
   }
   if (targetProblem(target) !== null) {
-    // Unreachable by construction; a wrong path is a bug, not a page loss.
+    // `slug` builds usable segments, so only a directory the mapping type
+    // asserts past the parser gets here; the planner still checks the whole
+    // candidate before emitting it.
     target = `${directory}/${leaf}`;
     notes.push("target: flattened");
   }

@@ -59,6 +59,22 @@ export function slug(value: string, max = 64): string {
 }
 
 /**
+ * A name core's `x-*` extension grammar accepts. `slug` keeps "." because a
+ * path segment may hold one; an extension key may not, and a name the floor
+ * refuses costs the page its type, title and target without saying so.
+ */
+export function slugName(value: string, max = 64): string {
+  const flattened = value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^[^a-z0-9]+/, "");
+  const truncated = [...flattened].slice(0, max).join("");
+  return truncated.length === 0 ? "field" : truncated;
+}
+
+/**
  * A subject id in the connector's own namespace. Wiki link syntax and its
  * `|alias` display suffix are stripped first: `[[Ada|Ada L.]]` and `Ada` are
  * the same person, and an id that kept the brackets would never merge.

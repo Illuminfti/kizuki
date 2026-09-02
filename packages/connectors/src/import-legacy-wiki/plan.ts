@@ -1,7 +1,9 @@
 import {
   ENTITY_PAGE_TYPES,
+  PAGE_CANDIDATE_KEY,
   PAGE_CANDIDATE_SCHEMA,
   PAGE_TYPES,
+  validatePageCandidate,
 } from "@kizuki/core";
 import type { CaptureEventInput, PageSensitivity, PageType } from "@kizuki/core";
 import type { FrontmatterValue } from "@kizuki/core/staging";
@@ -182,14 +184,32 @@ function planPage(
   }
   if (label !== null) extensions["x-legacy-sensitivity"] = label;
 
+  const candidate = {
+    schema: PAGE_CANDIDATE_SCHEMA,
+    type,
+    title: title.title,
+    target,
+    extensions,
+    confidence,
+  };
+  // The floor validates a candidate before it stages one and silently falls
+  // back to a blockquoted capture note when it fails. A page that would lose
+  // its type, title and target that way is a reported decision here, not a
+  // surprise three layers down.
+  const checked = validatePageCandidate({ [PAGE_CANDIDATE_KEY]: candidate });
+  const usable = checked !== null && checked.ok;
+  if (!usable) notes.push("candidate_rejected");
+
   const report: LegacyWikiPageReport = {
     ...base,
-    target,
+    target: usable ? target : null,
     // The floor decides the proposal kind from the same list, so the
     // report cannot disagree with what staging actually files.
-    kind: (ENTITY_PAGE_TYPES as readonly string[]).includes(type)
-      ? "entity"
-      : "claim",
+    kind: !usable
+      ? null
+      : (ENTITY_PAGE_TYPES as readonly string[]).includes(type)
+        ? "entity"
+        : "claim",
     notes,
   };
   const { relpath: _relpath, ...migration } = report;
@@ -218,14 +238,7 @@ function planPage(
           ? { frontmatter: frontmatter.frontmatter }
           : { frontmatter_omitted: frontmatter.omitted }),
         ...(truncated ? { text_truncated: true } : {}),
-        page_candidate: {
-          schema: PAGE_CANDIDATE_SCHEMA,
-          type,
-          title: title.title,
-          target,
-          extensions,
-          confidence,
-        },
+        ...(usable ? { [PAGE_CANDIDATE_KEY]: candidate } : {}),
         // The decision record travels with the evidence, so a page reviewed
         // months later still says what the migration did to it.
         migration,
