@@ -44,6 +44,8 @@ export class OAuthError extends Error {
   override name = "OAuthError";
   readonly code: OAuthErrorCode;
   readonly provider: string;
+  /** The sanitised fragment in the message, kept so a relabel can carry it. */
+  readonly detail: string | undefined;
 
   constructor(code: OAuthErrorCode, provider: string, detail?: string) {
     const safe = sanitizeDetail(detail);
@@ -54,6 +56,7 @@ export class OAuthError extends Error {
     );
     this.code = code;
     this.provider = provider;
+    this.detail = safe;
   }
 }
 
@@ -272,6 +275,24 @@ function clientSecretForm(provider: OAuthProvider): Record<string, string> {
 }
 
 /**
+ * A transport reports failures in its own terms and labels them with its own
+ * name; callers branch on `OAuthError.provider`, so every error leaving this
+ * module names the provider the caller asked for.
+ */
+function asOAuthError(error: unknown, provider: string): OAuthError {
+  if (error instanceof OAuthError) {
+    return error.provider === provider
+      ? error
+      : new OAuthError(error.code, provider, error.detail);
+  }
+  return new OAuthError(
+    "transport",
+    provider,
+    error instanceof Error ? error.name : typeof error,
+  );
+}
+
+/**
  * Provider-controlled text may echo back the very secrets the request carried.
  * A detail holding one is dropped whole rather than truncated.
  */
@@ -308,12 +329,7 @@ async function postForm(
   try {
     return await transport.postForm(url, form);
   } catch (error) {
-    if (error instanceof OAuthError) throw error;
-    throw new OAuthError(
-      "transport",
-      provider.name,
-      error instanceof Error ? error.name : typeof error,
-    );
+    throw asOAuthError(error, provider.name);
   }
 }
 
@@ -380,7 +396,9 @@ export async function signInWithBrowser(
       pending,
       opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       provider.name,
-    );
+    ).catch((error: unknown) => {
+      throw asOAuthError(error, provider.name);
+    });
 
     const returned = landed.searchParams.get("state");
     if (

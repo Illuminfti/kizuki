@@ -148,3 +148,37 @@ describe("a sign-in that fails while it is being set up", () => {
     await expect(flow).rejects.toMatchObject({ code: "state_mismatch" });
   });
 });
+
+describe("errors leaving the module", () => {
+  test("a transport failure names the provider, not the transport", async () => {
+    const transport = new FakeTransport(
+      new OAuthError("transport", "loopback", "response exceeded the size cap"),
+    );
+    const io = fakeIo();
+    const flow = signInWithBrowser(provider(), io, transport, deterministic());
+    await io.firstOpen;
+    transport.redirect({ code: "SENTINEL-CODE", state: NONCE });
+    const error = await flow.then(
+      () => {
+        throw new Error("sign-in was expected to fail");
+      },
+      (reason: unknown) => reason as OAuthError,
+    );
+    expect(error.provider).toBe("fixture");
+    expect(error.code).toBe("transport");
+    expect(error.message).toContain("response exceeded the size cap");
+  });
+
+  test("a closed listener reports the provider the caller asked for", async () => {
+    const transport = new FakeTransport();
+    const io = fakeIo();
+    const flow = signInWithBrowser(provider(), io, transport, {
+      ...deterministic(),
+      timeoutMs: 5,
+    });
+    await expect(flow).rejects.toMatchObject({
+      code: "timeout",
+      provider: "fixture",
+    });
+  });
+});
