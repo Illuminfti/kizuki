@@ -39,6 +39,22 @@ describe("normalizeTimestamp", () => {
     );
   });
 
+  test("rejects an instant outside the years RFC3339 covers", () => {
+    // The value parses, but its UTC instant leaves the four-digit year range,
+    // and the runtime writes an expanded year for it. An event carrying that
+    // string fails validateEventInput, and the ingest runner keeps the previous
+    // checkpoint on any error, so one such row would wedge the source for good.
+    for (const value of [
+      "9999-12-31T23:00:00-05:00",
+      "0001-01-01T00:00:00+05:00",
+    ]) {
+      expect(normalizeTimestamp(value)).toBeNull();
+    }
+    expect(normalizeTimestamp("9999-12-31T23:00:00Z")).toBe(
+      "9999-12-31T23:00:00.000Z",
+    );
+  });
+
   test("rejects garbage, bare dates and month 13", () => {
     for (const value of [
       "yesterday",

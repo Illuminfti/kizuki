@@ -20,7 +20,13 @@ export function normalizeTimestamp(raw: unknown): string | null {
   }
 
   try {
-    return new Date(normalized).toISOString();
+    const iso = new Date(normalized).toISOString();
+    // A value can be well-formed and still leave the years RFC3339 covers once
+    // it is in UTC, and the runtime writes an expanded year for it. The event
+    // contract rejects that string, and the ingest runner keeps the previous
+    // checkpoint whenever a batch reports an error, so one such row would stop
+    // the source from ever advancing. Null routes it to the counted skip path.
+    return isRfc3339(iso) ? iso : null;
   } catch {
     return null;
   }

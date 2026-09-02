@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { computeContentHash } from "@kizuki/core";
+import { computeContentHash, validateEventInput } from "@kizuki/core";
 import {
   BATCH_LIMIT,
   ScreenpipeConnector,
@@ -317,6 +317,55 @@ describe("ScreenpipeConnector backfill", () => {
     );
     if (batch.cursor === null) throw new Error("expected a screenpipe cursor");
     expect(parseCursor(batch.cursor).last_frame_id).toBe(2);
+    await connector.revoke();
+  });
+
+  test("a timestamp outside RFC3339 range is skipped, not emitted", async () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    // Valid RFC3339 in the file, but its UTC instant leaves the four-digit
+    // year range. Emitting it would fail validateEventInput, and the ingest
+    // runner keeps the previous checkpoint whenever a batch reports an error,
+    // so this one row would stop the source from ever advancing again.
+    insertFrame(fixture.writer, {
+      id: 1,
+      timestamp: "9999-12-31T23:00:00-05:00",
+      fullText: "beyond the last representable year",
+    });
+    insertFrame(fixture.writer, {
+      id: 2,
+      timestamp: "2026-01-01T00:00:00Z",
+      fullText: "behind it",
+    });
+    insertTranscription(fixture.writer, {
+      id: 1,
+      timestamp: "0001-01-01T00:00:00+05:00",
+      transcription: "before the first representable year",
+    });
+    insertTranscription(fixture.writer, {
+      id: 2,
+      timestamp: "2026-01-01T00:01:00Z",
+      transcription: "behind it",
+    });
+    const connector = new ScreenpipeConnector(
+      { path: fixture.path, settle_seconds: 0 },
+      fixtureDeps("2026-01-09T00:00:00.000Z"),
+    );
+
+    const batch = await connector.backfill(null);
+
+    expect(batch.events.map(({ source_record_id }) => source_record_id)).toEqual([
+      "frame:2",
+      "transcription:2",
+    ]);
+    expect(batch.events.every((event) => validateEventInput(event).ok)).toBe(
+      true,
+    );
+    if (batch.cursor === null) throw new Error("expected a screenpipe cursor");
+    expect(parseCursor(batch.cursor).skipped).toEqual({
+      frames_without_text: 0,
+      frames_bad_timestamp: 1,
+      transcriptions_bad_timestamp: 1,
+    });
     await connector.revoke();
   });
 
