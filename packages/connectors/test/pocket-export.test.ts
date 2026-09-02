@@ -123,6 +123,23 @@ test("a directory without a CSV is refused and health says so", async () => {
   });
 });
 
+test("a renamed CSV in a folder is refused with the way to import it", async () => {
+  await withTempRoot(async (root) => {
+    // Only the export's own part names are taken from a directory, so a
+    // renamed export has to be named rather than found. The refusal has to
+    // say so, or a readable export looks unreadable.
+    const renamed = path.join(root, "pocket.csv");
+    await writeFile(renamed, POCKET_FIXTURE_EXPORT);
+    const folder = createPocketImportConnector({ path: root });
+    const error = await rejected(() => folder.backfill(null));
+    expect(error.message).toBe(
+      `kizuki.import-pocket: no part_*.csv export in ${root}; pass the .csv file path`,
+    );
+    const named = createPocketImportConnector({ path: renamed });
+    expect((await named.backfill(null)).events.length).toBe(4);
+  });
+});
+
 test("only the export's own part names are taken from a directory", async () => {
   await withTempRoot(async (root) => {
     // A name from inside an export reaches a refusal and `kizuki doctor`;

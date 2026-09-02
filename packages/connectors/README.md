@@ -47,9 +47,13 @@ as one.
 Absence is not deletion. A record in one export and missing from the next may
 have been deleted at the source, or the second export may simply cover a
 shorter range, a different device, or omit media. The importer cannot tell, so
-re-importing a smaller export stores nothing, withdraws nothing, and files no
-retraction. Removing imported data stays the owner's decision, made with
-`kizuki purge --event`, `--subject` or `--connector`, which deletes the rows
+re-importing a smaller export withdraws nothing and files no retraction. It
+stores nothing new either, save for one case each importer states in its own
+limits: where an export saved the same url or item id twice, the repeats are
+numbered by their position in the file, so an export that dropped the earlier
+save re-stores the later one under the bare id. Removing imported data stays
+the owner's decision, made with `kizuki purge --event`, `--subject` or
+`--connector`, which deletes the rows
 physically and leaves a receipt. An importer's purge plan only reports which
 records such a purge would reach; the export file itself is yours and is never
 modified.
@@ -128,6 +132,10 @@ Known limits:
 Pocket closed in 2025 and left a data export: one or more
 `part_NNNNNN.csv` files with the header `title,url,time_added,tags,status`.
 Unzip it and point the importer at the folder or at a single `.csv`.
+
+Only `part_NNNNNN.csv` is picked up from a folder, because a file name found
+inside an export is not something Kizuki will repeat back to you in an error.
+A CSV you renamed still imports: pass the file itself instead of its folder.
 
 ```
 kizuki import import-pocket --vault VAULT --source EXPORT.csv

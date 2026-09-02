@@ -190,7 +190,12 @@ async function resolveSources(path: string): Promise<string[]> {
     .map((entry) => entry.name)
     .sort(compareStrings);
   if (files.length === 0) {
-    throw misconfigured(`no part_*.csv export in ${path}`);
+    // A CSV under any other name is still importable; it just has to be named
+    // rather than found, because only the export's own part names are safe to
+    // take from inside a directory.
+    throw misconfigured(
+      `no part_*.csv export in ${path}; pass the .csv file path`,
+    );
   }
   return files.map((name) => join(path, name));
 }
