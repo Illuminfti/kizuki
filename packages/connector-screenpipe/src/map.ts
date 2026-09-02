@@ -1,5 +1,5 @@
-import path from "node:path";
 import type {
+  AttachmentRef,
   CaptureEventInput,
   SubjectRef,
 } from "@kizuki/core";
@@ -59,7 +59,6 @@ export function mapFrame(
     });
   }
 
-  const snapshot = row.snapshot_path;
   return {
     schema: "kizuki.event/v1",
     connector_id: SCREENPIPE_CONNECTOR_ID,
@@ -71,16 +70,7 @@ export function mapFrame(
     subjects,
     sensitivity_hint: "private",
     deleted: false,
-    attachments:
-      snapshot !== null && snapshot.length > 0
-        ? [
-            {
-              attachment_id: "snapshot",
-              media_type: "image/jpeg",
-              filename: path.basename(snapshot),
-            },
-          ]
-        : [],
+    attachments: snapshotAttachments(row.snapshot_path),
     metadata: {
       frame_id: row.id,
       device_name: row.device_name,
@@ -150,6 +140,25 @@ export function mapTranscription(
       text_truncated: truncated,
     },
   };
+}
+
+function snapshotAttachments(snapshotPath: string | null): AttachmentRef[] {
+  if (snapshotPath === null || snapshotPath.length === 0) return [];
+  // A database copied from another platform carries that platform's separator,
+  // which the host's basename does not split on, so the whole captured path
+  // would travel as the filename.
+  const cut = Math.max(
+    snapshotPath.lastIndexOf("/"),
+    snapshotPath.lastIndexOf("\\"),
+  );
+  const filename = snapshotPath.slice(cut + 1);
+  return [
+    {
+      attachment_id: "snapshot",
+      media_type: "image/jpeg",
+      ...(filename.length > 0 ? { filename } : {}),
+    },
+  ];
 }
 
 function cutText(text: string): string {

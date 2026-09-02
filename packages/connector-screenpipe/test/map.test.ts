@@ -113,6 +113,27 @@ describe("screenpipe mapping", () => {
     ]);
   });
 
+  test("a snapshot path from another platform keeps only its last component", () => {
+    expect(
+      mapFrame(
+        frame({
+          snapshot_path: "C:\\Users\\ada\\.screenpipe\\data\\shot.jpg",
+        }),
+        OBSERVED_AT,
+      ).attachments,
+    ).toEqual([
+      {
+        attachment_id: "snapshot",
+        media_type: "image/jpeg",
+        filename: "shot.jpg",
+      },
+    ]);
+    expect(
+      mapFrame(frame({ snapshot_path: "/home/ada/data/" }), OBSERVED_AT)
+        .attachments,
+    ).toEqual([{ attachment_id: "snapshot", media_type: "image/jpeg" }]);
+  });
+
   test("long text is cut at MAX_TEXT_CHARS and flagged", () => {
     const event = mapFrame(
       frame({ full_text: "x".repeat(MAX_TEXT_CHARS + 20) }),
