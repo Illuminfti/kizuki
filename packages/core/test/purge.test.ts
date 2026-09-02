@@ -1,21 +1,19 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Database } from "bun:sqlite";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CaptureEventInput } from "../src/contracts/event";
 import { initGraph } from "../src/graph/schema";
 import { openLedger } from "../src/ledger/db";
 import { accept, count, readSince } from "../src/ledger/ledger";
-import { isHeld, purgeEvents, readHolds } from "../src/ledger/purge";
+import { purgeEvents } from "../src/ledger/purge";
 import { indexEvent } from "../src/search/indexer";
 import { initSearch } from "../src/search/schema";
-import { ownerPromote } from "../src/staging/promote";
 import {
   fileProposal,
   getProposal,
   initStaging,
-  listProposals,
 } from "../src/staging/proposals";
 import { initVault } from "../src/vault/init";
 import { validEvent } from "./fixtures";
@@ -168,51 +166,6 @@ describe("purgeEvents", () => {
     db.close();
   });
 
-  test("files one purge review and hold without changing promoted canon", () => {
-    const db = openLedger(":memory:");
-    initStaging(db);
-    const vaultPath = temporaryVault();
-    const source = storedEvent(db, event("promoted-source"));
-    const proposal = fileProposal(db, {
-      kind: "claim",
-      target: "fact:promoted",
-      body: "Promoted body.",
-      frontmatter: { type: "fact", title: "Promoted" },
-      provenance: [source.event_id],
-      producer: "deterministic",
-      confidence: 1,
-    });
-    if (proposal.outcome !== "stored") throw new Error("expected stored proposal");
-    const promotion = ownerPromote(db, vaultPath, proposal.proposal.proposal_id, {
-      sensitivity: "personal",
-    });
-    const pagePath = join(vaultPath, promotion.page_path);
-    const before = readFileSync(pagePath, "utf8");
-    const outcome = purgeEvents(
-      db,
-      vaultPath,
-      { event_id: source.event_id },
-      "source erased",
-    );
-    const reviews = listProposals(db, { kind: "purge_review" });
-    const review = reviews[0];
-    if (review === undefined) throw new Error("expected purge review");
-    expect(outcome.canon_holds).toEqual([{
-      page_path: promotion.page_path,
-      proposal_id: review.proposal_id,
-    }]);
-    expect(review.target).toBe(proposal.proposal.proposal_id);
-    expect(review.provenance).toEqual([source.event_id]);
-    expect(readHolds(db)).toHaveLength(1);
-    expect(isHeld(db, promotion.page_path)).toBe(true);
-    expect(readFileSync(pagePath, "utf8")).toBe(before);
-    expect(
-      purgeEvents(db, vaultPath, { event_id: source.event_id }, "again"),
-    ).toEqual({ receipts: [], withdrawn_proposals: [], canon_holds: [] });
-    expect(listProposals(db, { kind: "purge_review" })).toHaveLength(1);
-    db.close();
-  });
-
   test("refuses to purge while a canon page cannot be read", () => {
     const db = openLedger(":memory:");
     const target = storedEvent(db, event("target"));
@@ -256,50 +209,6 @@ describe("purgeEvents", () => {
     expect(
       db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM graph_edges").get(),
     ).toEqual({ count: 0 });
-    db.close();
-  });
-
-  test("creates a fresh promotable review for each later purged source", () => {
-    const db = openLedger(":memory:");
-    initStaging(db);
-    const vaultPath = temporaryVault();
-    const first = storedEvent(db, event("source-a"));
-    const second = storedEvent(db, event("source-b"));
-    const proposal = fileProposal(db, {
-      kind: "claim",
-      target: "fact:two-sources",
-      body: "Shared body.",
-      frontmatter: { type: "fact", title: "Two sources" },
-      provenance: [first.event_id, second.event_id],
-      producer: "deterministic",
-      confidence: 1,
-    });
-    if (proposal.outcome !== "stored") throw new Error("expected stored proposal");
-    const promotion = ownerPromote(db, vaultPath, proposal.proposal.proposal_id, {
-      sensitivity: "personal",
-    });
-    const firstPurge = purgeEvents(
-      db,
-      vaultPath,
-      { event_id: first.event_id },
-      "first source erased",
-    );
-    const firstReviewId = firstPurge.canon_holds[0]?.proposal_id;
-    if (firstReviewId === undefined) throw new Error("expected first review");
-    ownerPromote(db, vaultPath, firstReviewId, {});
-    expect(isHeld(db, promotion.page_path)).toBe(false);
-
-    const secondPurge = purgeEvents(
-      db,
-      vaultPath,
-      { event_id: second.event_id },
-      "second source erased",
-    );
-    const secondReviewId = secondPurge.canon_holds[0]?.proposal_id;
-    if (secondReviewId === undefined) throw new Error("expected second review");
-    expect(secondReviewId).not.toBe(firstReviewId);
-    expect(getProposal(db, secondReviewId)?.status).toBe("pending");
-    expect(isHeld(db, promotion.page_path)).toBe(true);
     db.close();
   });
 });

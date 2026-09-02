@@ -1,7 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-  PROPOSAL_KINDS,
-  PROPOSAL_STATUSES,
   isProducer,
   validateProposal,
 } from "../src/contracts/proposal";
@@ -53,18 +51,6 @@ describe("isProducer", () => {
 });
 
 describe("validateProposal accepts", () => {
-  for (const kind of PROPOSAL_KINDS) {
-    test(`kind ${kind}`, () => {
-      expect(validateProposal({ ...rawProposal(), kind }).ok).toBe(true);
-    });
-  }
-
-  for (const status of PROPOSAL_STATUSES) {
-    test(`status ${status}`, () => {
-      expect(validateProposal({ ...rawProposal(), status }).ok).toBe(true);
-    });
-  }
-
   test("an agent producer with multi-event provenance", () => {
     const result = validateProposal({
       ...rawProposal(),

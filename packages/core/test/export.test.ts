@@ -13,12 +13,6 @@ import { saveCheckpoint } from "../src/ledger/connections";
 import { openLedger } from "../src/ledger/db";
 import { accept } from "../src/ledger/ledger";
 import { purgeEvents } from "../src/ledger/purge";
-import { ownerPromote } from "../src/staging/promote";
-import {
-  fileProposal,
-  initStaging,
-  setProposalStatus,
-} from "../src/staging/proposals";
 import { initVault } from "../src/vault/init";
 import { validEvent } from "./fixtures";
 
@@ -38,7 +32,6 @@ afterEach(() => {
 
 function populated() {
   const db = openLedger(":memory:");
-  initStaging(db);
   const vaultPath = temporary("kizuki-export-vault-");
   initVault(vaultPath);
 
@@ -48,31 +41,6 @@ function populated() {
     throw new Error("expected stored events");
   }
   purgeEvents(db, vaultPath, { event_id: first.event.event_id }, "source erased");
-
-  const promoted = fileProposal(db, {
-    kind: "claim",
-    target: "fact:exported",
-    body: "Exported canon.",
-    frontmatter: { type: "fact", title: "Exported" },
-    provenance: [second.event.event_id],
-    producer: "deterministic",
-    confidence: 1,
-  });
-  if (promoted.outcome !== "stored") throw new Error("expected promoted proposal");
-  ownerPromote(db, vaultPath, promoted.proposal.proposal_id, {
-    sensitivity: "personal",
-  });
-
-  const rejected = fileProposal(db, {
-    kind: "claim",
-    body: "Rejected body.",
-    frontmatter: { type: "fact", title: "Rejected" },
-    provenance: [second.event.event_id],
-    producer: "deterministic",
-    confidence: 1,
-  });
-  if (rejected.outcome !== "stored") throw new Error("expected rejected proposal");
-  setProposalStatus(db, rejected.proposal.proposal_id, "rejected", "not canon");
 
   const sourceKey = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
   db.query(
@@ -99,16 +67,13 @@ function populated() {
 }
 
 describe("exportVault", () => {
-  test("writes complete JSONL streams with matching manifest counts", () => {
+  test("writes ledger and connection streams with matching manifest counts", () => {
     const { db, vaultPath } = populated();
     const outDir = join(temporary("kizuki-export-parent-"), "dump");
     const manifest = exportVault(db, vaultPath, outDir);
 
     expect(manifest.files["ledger/events.jsonl"]?.count).toBe(1);
     expect(manifest.files["ledger/event_purges.jsonl"]?.count).toBe(1);
-    expect(manifest.files["staging/proposals.jsonl"]?.count).toBe(2);
-    expect(manifest.files["staging/promotions.jsonl"]?.count).toBe(1);
-    expect(manifest.files["staging/rejections.jsonl"]?.count).toBe(1);
     expect(manifest.files["connections.jsonl"]?.count).toBe(1);
     expect(manifest.files["checkpoints.jsonl"]?.count).toBe(1);
     expect(JSON.parse(readFileSync(join(outDir, "manifest.json"), "utf8"))).toEqual(

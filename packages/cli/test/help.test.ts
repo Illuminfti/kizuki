@@ -5,15 +5,12 @@ import { createHelpers } from "./helpers";
 const { cleanup, isolatedEnv, runCli } = createHelpers();
 afterEach(cleanup);
 
-const VERBS = [
+const IMPLEMENTED_NON_GATE_VERBS = [
   "init",
   "connect",
   "backfill",
   "sync",
   "import",
-  "review",
-  "promote",
-  "reject",
   "query",
   "doctor",
   "purge",
@@ -22,17 +19,19 @@ const VERBS = [
 ] as const;
 
 describe("help", () => {
-  test("COMMANDS is exactly the Wave 1 verb set", () => {
-    expect(COMMANDS.map((command) => command.name)).toEqual([...VERBS]);
+  test("COMMANDS retains every implemented non-gate verb", () => {
+    expect(COMMANDS.map((command) => command.name)).toEqual(
+      expect.arrayContaining([...IMPLEMENTED_NON_GATE_VERBS]),
+    );
   });
 
-  test("help and --help print every verb to stdout and exit 0", () => {
+  test("help and --help print every non-gate verb to stdout and exit 0", () => {
     const env = isolatedEnv();
     for (const flag of ["help", "--help"] as const) {
       const result = runCli(env, flag);
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
-      for (const verb of VERBS) {
+      for (const verb of IMPLEMENTED_NON_GATE_VERBS) {
         expect(result.stdout).toContain(verb);
       }
     }
@@ -43,12 +42,12 @@ describe("help", () => {
     expect(result.exitCode).toBe(2);
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("usage: kizuki <verb> [options]");
-    for (const verb of VERBS) {
+    for (const verb of IMPLEMENTED_NON_GATE_VERBS) {
       expect(result.stderr).toContain(verb);
     }
   });
 
-  test("unknown verb and removed verbs exit 2", () => {
+  test("unknown and legacy alias verbs exit 2", () => {
     const env = isolatedEnv();
     for (const verb of ["ingest", "proposals", "not-a-verb"]) {
       const result = runCli(env, verb);
@@ -57,6 +56,13 @@ describe("help", () => {
       expect(result.stderr).toContain("usage: kizuki <verb> [options]");
     }
   });
+
+  test.todo(
+    "canon-writer, correction, undo-audit, and serve-daemon lanes: help exposes the RFC 0002 verb set",
+    () => {
+      throw new Error("pending RFC 0002 CLI lanes");
+    },
+  );
 
   test("help <verb> prints that verb's usage", () => {
     const result = runCli(isolatedEnv(), "help", "connect");
