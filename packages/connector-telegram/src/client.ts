@@ -17,6 +17,7 @@ import { classify, guarded } from "./guard";
 import type { ProviderErrors } from "./guard";
 import { TELEGRAM_CONNECTOR_VERSION } from "./map";
 import { describeMedia } from "./media";
+import { hasPublicHandle } from "./peer";
 
 /** Telegram's own ceiling for one history page. */
 const MAX_PAGE = 500;
@@ -216,15 +217,6 @@ function mapDialog(dialog: Dialog, runtime: Runtime): TelegramDialog | null {
     public: hasPublicHandle(entity),
     top_message_id: dialog.message?.id ?? 0,
   };
-}
-
-function hasPublicHandle(entity: unknown): boolean {
-  if (typeof entity !== "object" || entity === null) return false;
-  const record = entity as { username?: unknown; usernames?: unknown };
-  if (typeof record.username === "string" && record.username.length > 0) {
-    return true;
-  }
-  return Array.isArray(record.usernames) && record.usernames.length > 0;
 }
 
 function mapMessageRecord(

@@ -108,3 +108,22 @@ test("a socket fault while paging history is reported as unreachable", async () 
   const thrown = await drain(api().messages("1002", { min_id: 0, limit: 10 }));
   expect((thrown as TelegramConnectorError).code).toBe("unreachable");
 });
+
+test("a channel with only inactive aliases is not treated as public", async () => {
+  pages.dialogs = async function* () {
+    yield {
+      entity: { id: "-100777", usernames: [{ username: "acme", active: false }] },
+      isUser: false,
+      isGroup: false,
+      message: { id: 4 },
+    };
+    yield {
+      entity: { id: "-100888", usernames: [{ username: "acme2", active: true }] },
+      isUser: false,
+      isGroup: false,
+      message: { id: 9 },
+    };
+  };
+  const listed = (await drain(api().dialogs(10))) as { public: boolean }[];
+  expect(listed.map((dialog) => dialog.public)).toEqual([false, true]);
+});
