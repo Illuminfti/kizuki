@@ -112,10 +112,12 @@ export interface CalendarMapping {
    */
   unreadableUids: string[];
   /**
-   * UIDs whose expansion hit the instance cap. Their kept window slides as
-   * the clock moves, so an id dropping out of it is not a deletion either.
+   * For a series whose expansion hit the instance cap, the key of the oldest
+   * instance still kept, or null when nothing was kept at all. An id below it
+   * left because the kept window slid forward, not because the calendar
+   * dropped it; an id inside the window that is gone really is gone.
    */
-  truncatedUids: string[];
+  truncatedFrom: Record<string, string | null>;
 }
 
 interface SeriesContext {
@@ -125,7 +127,7 @@ interface SeriesContext {
   calendarName: string | null;
   windowEnd: LocalDateTime;
   duplicates: Set<string>;
-  truncated: Set<string>;
+  truncated: Map<string, string | null>;
 }
 
 /** Turns a parsed calendar into the events the ledger stores. */
@@ -147,7 +149,7 @@ export function calendarEvents(
     calendarName,
     windowEnd: msToLocal(opts.now.getTime() + WINDOW_DAYS * 86_400_000),
     duplicates,
-    truncated: new Set<string>(),
+    truncated: new Map<string, string | null>(),
   };
   const events: CaptureEventInput[] = [];
   const unreadableUids: string[] = [];
@@ -176,7 +178,7 @@ export function calendarEvents(
     events,
     skipped: unreadableUids.length,
     unreadableUids,
-    truncatedUids: [...context.truncated],
+    truncatedFrom: Object.fromEntries(context.truncated),
   };
 }
 
@@ -302,7 +304,17 @@ function seriesEvents(
           maxSteps: MAX_STEPS,
         });
 
-  if (expansion.truncated) context.truncated.add(uid);
+  if (expansion.truncated) {
+    const oldest = expansion.instances[0];
+    context.truncated.set(
+      uid,
+      oldest === undefined
+        ? null
+        : start.kind === "date"
+          ? formatLocalDate(oldest)
+          : formatLocal(oldest),
+    );
+  }
 
   const overrideByStart = new Map<string, RawVEvent>();
   for (const override of entry.overrides) {

@@ -115,8 +115,10 @@ The cursor holds a hash per record. On sync, a record that vanished or turned
 an unchanged record produces nothing.
 
 Two absences are not deletions and produce no tombstone: an entry the
-calendar still carries but this run could not read, and an instance that fell
-outside the kept window of a capped series as the clock moved. A document
+calendar still carries but this run could not read, and an instance of a
+capped series that is older than the oldest one this run kept, which left
+because the window slid rather than because the meeting was cancelled. An
+instance inside that window that disappeared is tombstoned like any other. A document
 whose components do not balance — a half-downloaded feed — is a `parse_error`
 before any cursor is written, rather than an empty snapshot that would
 tombstone the whole calendar.

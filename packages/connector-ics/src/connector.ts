@@ -86,8 +86,8 @@ interface Snapshot {
   events: CaptureEventInput[];
   /** UIDs the calendar still carries but this run could not read. */
   unreadableUids: string[];
-  /** UIDs whose expansion hit the instance cap on this run. */
-  truncatedUids: string[];
+  /** Per capped series, the oldest instance key still kept (null: none). */
+  truncatedFrom: Record<string, string | null>;
   etag: string | null;
   lastModified: string | null;
   unchanged: boolean;
@@ -233,7 +233,7 @@ export class IcsConnector implements Connector {
       return {
         events: mapping.events,
         unreadableUids: mapping.unreadableUids,
-        truncatedUids: mapping.truncatedUids,
+        truncatedFrom: mapping.truncatedFrom,
         etag: null,
         lastModified: null,
         unchanged: false,
@@ -255,7 +255,7 @@ export class IcsConnector implements Connector {
       return {
         events: [],
         unreadableUids: [],
-        truncatedUids: [],
+        truncatedFrom: {},
         etag: response.etag,
         lastModified: response.last_modified,
         unchanged: true,
@@ -270,7 +270,7 @@ export class IcsConnector implements Connector {
     return {
       events: mapping.events,
       unreadableUids: mapping.unreadableUids,
-      truncatedUids: mapping.truncatedUids,
+      truncatedFrom: mapping.truncatedFrom,
       etag: response.etag,
       lastModified: response.last_modified,
       unchanged: false,
@@ -346,19 +346,24 @@ export class IcsConnector implements Connector {
       snapshot.events.map((event) => [event.source_record_id, event]),
     );
     // An entry the calendar still carries but this run could not read is not
-    // a deletion; its ids keep their ledger rows until it parses again. The
-    // same holds for a series whose kept window slid past an id: the meeting
-    // is still on the calendar, only outside the thousand instances kept.
-    const stillOnTheCalendar = new Set([
-      ...snapshot.unreadableUids,
-      ...snapshot.truncatedUids,
-    ]);
+    // a deletion; its ids keep their ledger rows until it parses again.
+    const unreadable = new Set(snapshot.unreadableUids);
     const tombstones: CaptureEventInput[] = [];
     for (const id of Object.keys(previous.records)) {
       if (present.has(id)) continue;
       const [encoded = id, recurrenceId] = id.split("#");
       const uid = decodeUid(encoded);
-      if (stillOnTheCalendar.has(uid)) continue;
+      if (unreadable.has(uid)) continue;
+      // A capped series keeps its most recent instances, so one below the
+      // oldest still kept left because the window slid, not because the
+      // meeting was cancelled. An instance inside that window really is gone.
+      const keptFrom = snapshot.truncatedFrom[uid];
+      if (
+        keptFrom !== undefined &&
+        (keptFrom === null || (recurrenceId ?? "") < keptFrom)
+      ) {
+        continue;
+      }
       tombstones.push(
         tombstone(
           id,

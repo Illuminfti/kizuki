@@ -255,6 +255,44 @@ describe("file mode", () => {
     expect(second.events.filter((event) => event.deleted)).toEqual([]);
   });
 
+  test("a capped series still tombstones an instance it kept and lost", async () => {
+    const lines = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      "UID:standup@acme.example",
+      "DTSTART:20220101T090000Z",
+      "RRULE:FREQ=DAILY",
+      "SUMMARY:Standup",
+      "END:VEVENT",
+      "END:VCALENDAR",
+      "",
+    ];
+    const path = await writeCalendar(lines.join("\r\n"));
+    const connector = createIcsConnector({ path }, { now: NOW });
+    const first = await connector.backfill(null);
+    expect(first.events).toHaveLength(1_000);
+    const target = first.events[500]?.source_record_id ?? "";
+    expect(target).toContain("#");
+
+    await Bun.write(
+      path,
+      lines
+        .flatMap((line) =>
+          line === "SUMMARY:Standup"
+            ? [line, `EXDATE:${target.split("#")[1] ?? ""}Z`]
+            : [line],
+        )
+        .join("\r\n"),
+    );
+    const second = await connector.sync(first.cursor);
+    // The occurrence was inside the window this run kept, so its absence is a
+    // cancellation, not the cap sliding past it.
+    expect(
+      second.events.filter((event) => event.deleted).map((event) => event.source_record_id),
+    ).toEqual([target]);
+  });
+
   test("a truncated file refuses the sync instead of tombstoning everything", async () => {
     const path = await writeCalendar(SMALL);
     const connector = createIcsConnector({ path }, { now: NOW });
