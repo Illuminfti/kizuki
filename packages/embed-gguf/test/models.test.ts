@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 import { PortError } from "@kizuki/core";
@@ -6,11 +6,12 @@ import {
   GGUF_MODEL_CATALOG,
   fixtureSpaceId,
   installGgufModel,
+  installPartialPath,
   sha256File,
   vaultModelsDir,
   writeFixtureGguf,
 } from "../src/index";
-import { temporaryEmbed } from "./helpers";
+import { temporaryEmbed, writeTempGguf } from "./helpers";
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {
@@ -90,4 +91,71 @@ describe("local GGUF model install", () => {
       expect((error as PortError).code).toBe("config_invalid");
     }
   });
+
+  test("each install gets a unique exclusive partial path", () => {
+    const dest = "/tmp/kizuki-models/model.gguf";
+    const first = installPartialPath(dest);
+    const second = installPartialPath(dest);
+    expect(first).not.toBe(second);
+    expect(first).not.toBe(`${dest}.partial`);
+    expect(second).not.toBe(`${dest}.partial`);
+  });
+
+  test("concurrent same-basename installs report their own source hash", async () => {
+    const temporary = temporaryEmbed();
+    cleanups.push(temporary.cleanup);
+    const destDir = vaultModelsDir(temporary.vault);
+    const alpha = writeTempGguf(join(temporary.root, "alpha"), {
+      name: "alpha-embed",
+    });
+    const beta = writeTempGguf(join(temporary.root, "beta"), {
+      name: "beta-embed",
+    });
+    const [alphaResult, betaResult] = await Promise.all([
+      runInstallOnce(alpha, destDir),
+      runInstallOnce(beta, destDir),
+    ]);
+    expect(alphaResult.exit).toBe(0);
+    expect(betaResult.exit).toBe(0);
+    expect(alphaResult.stderr).toBe("");
+    expect(betaResult.stderr).toBe("");
+    const alphaOut = JSON.parse(alphaResult.stdout) as {
+      sha256: string;
+      space: string;
+    };
+    const betaOut = JSON.parse(betaResult.stdout) as {
+      sha256: string;
+      space: string;
+    };
+    expect(alphaOut.sha256).toBe(sha256File(alpha));
+    expect(betaOut.sha256).toBe(sha256File(beta));
+    expect(alphaOut.sha256).not.toBe(betaOut.sha256);
+    expect(alphaOut.space).toBe("gguf:alpha-embed@8");
+    expect(betaOut.space).toBe("gguf:beta-embed@8");
+    expect(
+      readdirSync(destDir).filter((name) => name.endsWith(".partial")),
+    ).toEqual([]);
+  });
 });
+
+async function runInstallOnce(
+  source: string,
+  destDir: string,
+): Promise<{ exit: number; stdout: string; stderr: string }> {
+  const proc = Bun.spawn({
+    cmd: [process.execPath, join(import.meta.dir, "install-once.ts")],
+    env: {
+      ...process.env,
+      KIZUKI_GGUF_SOURCE: source,
+      KIZUKI_GGUF_DEST: destDir,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [exit, stdout, stderr] = await Promise.all([
+    proc.exited,
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  return { exit, stdout, stderr };
+}

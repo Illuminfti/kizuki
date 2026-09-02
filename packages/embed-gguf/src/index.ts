@@ -32,6 +32,7 @@ export {
 export {
   GGUF_MODEL_CATALOG,
   installGgufModel,
+  installPartialPath,
   sha256File,
   vaultModelsDir,
 } from "./models";

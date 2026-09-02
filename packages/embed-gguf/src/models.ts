@@ -1,10 +1,14 @@
+import { randomBytes } from "node:crypto";
 import {
+  closeSync,
   copyFileSync,
   mkdirSync,
+  openSync,
   readFileSync,
   renameSync,
   statSync,
-  writeFileSync,
+  unlinkSync,
+  writeSync,
 } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
 import { PortError } from "@kizuki/core";
@@ -49,6 +53,18 @@ function invalid(message: string): never {
 
 function unavailable(message: string): never {
   throw new PortError("unavailable", message, false);
+}
+
+function errnoCode(error: unknown): string | undefined {
+  if (
+    error !== null &&
+    typeof error === "object" &&
+    "code" in error &&
+    typeof error.code === "string"
+  ) {
+    return error.code;
+  }
+  return undefined;
 }
 
 export function sha256File(path: string): string {
@@ -99,12 +115,21 @@ export function installGgufModel(
     invalid("GGUF source filename is invalid");
   }
   const dest = join(input.dest_dir, filename);
-  const temp = `${dest}.partial`;
-  writeFileSync(temp, bytes, { mode: 0o600 });
+  const temp = writeExclusivePartial(dest, bytes);
   try {
-    renameSync(temp, dest);
-  } catch {
-    copyFileSync(temp, dest);
+    try {
+      renameSync(temp, dest);
+    } catch {
+      copyFileSync(temp, dest);
+      unlinkSync(temp);
+    }
+  } catch (error) {
+    try {
+      unlinkSync(temp);
+    } catch (cleanupError) {
+      if (errnoCode(cleanupError) !== "ENOENT") throw cleanupError;
+    }
+    throw error;
   }
 
   return Object.freeze({
@@ -113,4 +138,27 @@ export function installGgufModel(
     sha256,
     space,
   });
+}
+
+export function installPartialPath(dest: string): string {
+  return `${dest}.${process.pid}.${randomBytes(8).toString("hex")}.partial`;
+}
+
+function writeExclusivePartial(dest: string, bytes: Uint8Array): string {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const temp = installPartialPath(dest);
+    try {
+      const fd = openSync(temp, "wx", 0o600);
+      try {
+        writeSync(fd, bytes);
+      } finally {
+        closeSync(fd);
+      }
+      return temp;
+    } catch (error) {
+      if (errnoCode(error) === "EEXIST") continue;
+      throw error;
+    }
+  }
+  unavailable("could not create an exclusive GGUF install temporary");
 }
