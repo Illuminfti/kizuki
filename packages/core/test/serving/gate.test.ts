@@ -1,7 +1,16 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { listAudit } from "../../src/agents";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+} from "bun:test";
+import { listAudit, revokeAgent, setGrant } from "../../src/agents";
 import type { AuditDenial } from "../../src/agents";
 import { gate } from "../../src/serving/gate";
+import { serveSearch } from "../../src/serving/search";
 import type { Served } from "../../src/serving/gate";
 import { ServeError } from "../../src/serving/types";
 import type { CanonChunk, QuotedChunk } from "../../src/serving/types";
@@ -213,5 +222,78 @@ describe("the serving gate", () => {
       { id: "more:25", reason: "above_ceiling" },
       { id: "more:25", reason: "missing_sensitivity" },
     ]);
+  });
+});
+
+describe("authority is re-read on every served call", () => {
+  let live: Fixture;
+
+  beforeEach(() => {
+    live = serveFixture();
+  });
+
+  afterEach(() => {
+    live.dispose();
+  });
+
+  test("a session started before revocation is refused on its next call", () => {
+    const ctx = live.agent("reader-private");
+    expect(gate(ctx, "search", { query: "kettle" }, emptyRun).canon).toEqual(
+      [],
+    );
+
+    revokeAgent(live.db, "reader-private");
+
+    const error = refusal(() =>
+      gate(ctx, "search", { query: "kettle" }, emptyRun),
+    );
+    expect(error.code).toBe("unknown_agent");
+    const row = listAudit(live.db, "reader-private", { limit: 1 })[0];
+    expect(row?.denied).toEqual([
+      { id: "tool:search", reason: "unknown_agent" },
+    ]);
+  });
+
+  test("a grant narrowed mid-session applies to the next call", () => {
+    const ctx = live.agent("reader-private");
+    expect(gate(ctx, "search", { query: "kettle" }, emptyRun).tool).toBe(
+      "search",
+    );
+
+    setGrant(live.db, "reader-private", { tools: ["timeline"] });
+
+    expect(
+      refusal(() => gate(ctx, "search", { query: "kettle" }, emptyRun)).code,
+    ).toBe("tool_not_granted");
+  });
+
+  test("a ceiling narrowed mid-session narrows what the same context reads", () => {
+    const ctx = live.agent("reader-private");
+    const ids = (): string[] =>
+      serveSearch(ctx, { query: "kettle" }).canon.map((chunk) => chunk.page_id);
+    expect(ids()).toContain("fact:kettle");
+
+    setGrant(live.db, "reader-private", { ceiling: "public" });
+
+    expect(ids()).not.toContain("fact:kettle");
+  });
+
+  test("a refused call cannot grow its audit row without bound", () => {
+    const ctx = live.agent("search-only");
+    const frontmatter: Record<string, string> = {};
+    for (let index = 0; index < 1_000; index += 1) {
+      frontmatter[`key-${index}`] = "x";
+    }
+    expect(
+      refusal(() =>
+        gate(ctx, "propose", { frontmatter, provenance: [] }, emptyRun),
+      ).code,
+    ).toBe("tool_not_granted");
+
+    const row = listAudit(live.db, "search-only", { limit: 1 })[0];
+    const shaped = row?.query_shape["frontmatter"] as Record<string, unknown>;
+    expect(Object.keys(shaped)).toHaveLength(33);
+    expect(shaped["+truncated"]).toBe(968);
+    expect(JSON.stringify(row?.query_shape).length).toBeLessThan(4_096);
   });
 });

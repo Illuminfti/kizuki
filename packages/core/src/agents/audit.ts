@@ -111,6 +111,10 @@ export function checkRate(
   };
 }
 
+/**
+ * `at` is a parameter, like `checkRate`'s `now`, so one served call can stamp
+ * its row, its envelope and anything it renders with the same instant.
+ */
 export function recordAudit(
   db: Database,
   principal: Principal,
@@ -118,6 +122,7 @@ export function recordAudit(
   args: Record<string, unknown>,
   served: AuditItem[],
   denied: AuditDenial[],
+  at: string = new Date().toISOString(),
 ): string {
   assertTool(tool);
   const auditId = ulid();
@@ -133,7 +138,7 @@ export function recordAudit(
     JSON.stringify(shapeArguments(args)),
     JSON.stringify(served),
     JSON.stringify(denied),
-    new Date().toISOString(),
+    at,
   );
   return auditId;
 }

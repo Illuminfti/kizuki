@@ -59,7 +59,7 @@ export function serveHealth(ctx: ServeContext): Envelope<HealthData> {
     ctx,
     "system_health",
     auditArguments({}),
-    (): Served<HealthData> => {
+    ({ ctx }): Served<HealthData> => {
       const grant = ctx.principal.grant;
       const index = loadCanon(ctx);
 

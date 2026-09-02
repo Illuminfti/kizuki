@@ -53,7 +53,7 @@ export function serveEntities(ctx: ServeContext, args: EntitiesArgs): Envelope {
     ctx,
     "query_entities",
     auditArguments(args),
-    (): Served<undefined> => {
+    ({ ctx }): Served<undefined> => {
       const type =
         args.type === undefined
           ? undefined

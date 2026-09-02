@@ -102,7 +102,7 @@ function classify(
 }
 
 export function serveSearch(ctx: ServeContext, args: SearchArgs): Envelope {
-  return gate(ctx, "search", auditArguments(args), (): Served<undefined> => {
+  return gate(ctx, "search", auditArguments(args), ({ ctx }): Served<undefined> => {
     const grant = ctx.principal.grant;
     const query = text("query", args.query, MAX_QUERY_CHARS);
     const scope =

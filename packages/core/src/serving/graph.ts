@@ -76,7 +76,7 @@ export function serveGraph(
     ctx,
     "graph_neighbors",
     auditArguments(args),
-    (): Served<GraphData> => {
+    ({ ctx }): Served<GraphData> => {
       const grant: Grant = ctx.principal.grant;
       const id = identifier("id", args.id);
       const depth = depthOf(args.depth);

@@ -103,7 +103,7 @@ export function serveContextPacket(
     ctx,
     "context_packet",
     auditArguments(args),
-    (): Served<ContextPacketData> => {
+    ({ ctx, at }): Served<ContextPacketData> => {
       const grant = ctx.principal.grant;
       const budget = range(
         "budget_tokens",
@@ -133,8 +133,6 @@ export function serveContextPacket(
       const requestedUntil =
         args.until === undefined ? undefined : rfc3339("until", args.until);
 
-      const now = new Date();
-      const at = now.toISOString();
       const header = `# kizuki context (principal: ${principalName(ctx.principal)}, at: ${at})\n`;
       const empty = (): Served<ContextPacketData> => ({
         canon: [],
@@ -157,7 +155,7 @@ export function serveContextPacket(
           since:
             requestedSince ??
             grant.since ??
-            new Date(now.getTime() - DEFAULT_WINDOW_MS).toISOString(),
+            new Date(Date.parse(at) - DEFAULT_WINDOW_MS).toISOString(),
           until: requestedUntil ?? grant.until ?? at,
         });
       } catch {

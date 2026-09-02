@@ -144,7 +144,7 @@ export function servePropose(
   ctx: ServeContext,
   args: ProposeArgs,
 ): Envelope<ProposeData> {
-  return gate(ctx, "propose", auditArguments(args), (): Served<ProposeData> => {
+  return gate(ctx, "propose", auditArguments(args), ({ ctx }): Served<ProposeData> => {
     const principal = ctx.principal;
     // A proposal has to carry a distinct identity in `producer`: the owner
     // reviews and promotes, agents propose.

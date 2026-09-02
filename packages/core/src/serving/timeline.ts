@@ -34,7 +34,7 @@ export interface TimelineArgs {
 }
 
 export function serveTimeline(ctx: ServeContext, args: TimelineArgs): Envelope {
-  return gate(ctx, "timeline", auditArguments(args), (): Served<undefined> => {
+  return gate(ctx, "timeline", auditArguments(args), ({ ctx }): Served<undefined> => {
     const grant = ctx.principal.grant;
     const window = scopedWindow(
       grant,

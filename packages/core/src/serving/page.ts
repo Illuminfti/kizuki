@@ -17,7 +17,7 @@ const MAX_BODY_CHARS = 65_536;
 export type GetPageArgs = { id: string } | { path: string };
 
 export function serveGetPage(ctx: ServeContext, args: GetPageArgs): Envelope {
-  return gate(ctx, "get_page", auditArguments(args), (): Served<undefined> => {
+  return gate(ctx, "get_page", auditArguments(args), ({ ctx }): Served<undefined> => {
     const bag: Record<string, unknown> = { ...args };
     const wantsId = bag["id"] !== undefined;
     const wantsPath = bag["path"] !== undefined;

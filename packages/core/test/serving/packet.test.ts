@@ -145,3 +145,19 @@ describe("serveContextPacket", () => {
     ).toBe("error");
   });
 });
+
+describe("the packet header", () => {
+  test("the rendered header carries the envelope instant", () => {
+    // Repeated because a second clock read only strays across a millisecond
+    // boundary: one call would agree by luck, a hundred will not.
+    const ctx = newFixture().owner();
+    const drifted: string[] = [];
+    for (let index = 0; index < 100; index += 1) {
+      const envelope = serveContextPacket(ctx, { query: "kettle" });
+      if (!(envelope.data?.packet_md ?? "").includes(`at: ${envelope.at})`)) {
+        drifted.push(envelope.at);
+      }
+    }
+    expect(drifted).toEqual([]);
+  });
+});

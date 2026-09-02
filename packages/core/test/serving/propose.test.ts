@@ -41,7 +41,7 @@ function candidate(live: Fixture, body: string): ProposeArgs {
   };
 }
 
-describe("servePropose is the only write", () => {
+describe("servePropose files a claim for the receipted writer", () => {
   test("a stored proposal carries the agent identity and stays pending", () => {
     const live = newFixture();
     const envelope = servePropose(
@@ -79,15 +79,17 @@ describe("servePropose is the only write", () => {
     ).toBe(first.data?.outcome === "stored" ? first.data.proposal_id : "");
   });
 
-  test("a candidate the owner rejected before is suppressed", () => {
+  test("a refile is never poisoned by an earlier terminal status", () => {
     const live = newFixture();
     const ctx = live.agent("reader-private");
     const args = candidate(live, "The kettle boiled at dawn.");
     const stored = servePropose(ctx, args).data;
-    const proposalId =
-      stored?.outcome === "stored" ? stored.proposal_id : undefined;
-    setProposalStatus(live.db, proposalId as string, "rejected", "not useful");
-    expect(servePropose(ctx, args).data).toEqual({ outcome: "suppressed" });
+    const proposalId = stored?.outcome === "stored" ? stored.proposal_id : "";
+    setProposalStatus(live.db, proposalId, "rejected", "not useful");
+    expect(servePropose(ctx, args).data).toEqual({
+      outcome: "duplicate",
+      proposal_id: proposalId,
+    });
   });
 
   test("the owner cannot propose and purge reviews cannot be filed", () => {
