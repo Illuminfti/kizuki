@@ -82,7 +82,16 @@ Known limits:
 
 - System notices, the lines with a timestamp but no sender, are skipped. They
   have no author and make no claim worth writing, so a capture note for each
-  would be noise rather than evidence. They are not counted anywhere.
+  would be noise rather than evidence. They are not counted anywhere. A notice
+  is recognized by having nothing before its first colon-and-space, so a notice
+  that contains one — a subject change, which reads `Ada changed the subject
+  to: …` — is indistinguishable from a message and is captured as one, with
+  the text before the colon standing in for a sender.
+- A placeholder for a message that was deleted at the source stays ordinary
+  text: nothing is withdrawn and no deletion is inferred. It is recognized by
+  its bracketed shape, which is also the shape of "media omitted", so such a
+  message is recorded as having had media left out of the export. The text
+  itself is exact; the media note beside it is not.
 - A message continues onto the following lines until the next timestamped
   line. A continuation line that itself starts with something shaped like a
   timestamp splits the message. Every parser of this format shares that limit.
