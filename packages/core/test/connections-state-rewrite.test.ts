@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { Database } from "bun:sqlite";
 import type {
   Connector,
@@ -275,6 +275,60 @@ describe("non-interactive state rewrite", () => {
     expect(readdirSync(store.directory)).toEqual([
       `${connection.source_key}.state`,
     ]);
+    db.close();
+  });
+
+  test("a staging file swept from under a writer becomes a ledger error", async () => {
+    const directory = temporary();
+    const db = openLedger(join(directory, "ledger.sqlite"));
+    const store = new ConnectionStateStore(directory);
+    let raised: unknown;
+    try {
+      await enrollConnection(
+        db,
+        store,
+        connector(async (_io, state) => {
+          await state.write(new TextEncoder().encode("first-envelope"));
+          // What a recovery sweep in another process does to a staging file
+          // it cannot know is still owned.
+          for (const name of readdirSync(store.directory)) {
+            if (!name.endsWith(".tmp")) continue;
+            rmSync(join(store.directory, name), { force: true });
+          }
+          return { display: "ada" };
+        }),
+        io,
+      );
+    } catch (error) {
+      raised = error;
+    }
+
+    expect(raised).toBeInstanceOf(LedgerError);
+    // A caller of this store never receives a filesystem path.
+    expect((raised as Error).message).toBe("connection state staging is missing");
+    expect((raised as Error).message).not.toContain(directory);
+    expect(readdirSync(store.directory)).toEqual([]);
+    db.close();
+  });
+
+  test("recovery leaves a staging file young enough to still have an owner", async () => {
+    const directory = temporary();
+    const { db, store, connection } = await enrolled(directory, "first-envelope");
+    const staged = join(
+      store.directory,
+      `${connection.source_key}.state.01ARZ3NDEKTSV4RRFFQ69G5FAV.tmp`,
+    );
+    writeFileSync(staged, "SENTINEL-REFRESH", { mode: 0o600 });
+    // Longer than a whole browser sign-in may take, and still inside the
+    // window a writer in another process can hold one open.
+    const recent = new Date(Date.now() - 600_000);
+    utimesSync(staged, recent, recent);
+
+    new ConnectionStateStore(directory).recover(db);
+
+    expect(readdirSync(store.directory).sort()).toEqual(
+      [`${connection.source_key}.state`, basename(staged)].sort(),
+    );
     db.close();
   });
 

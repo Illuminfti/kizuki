@@ -86,8 +86,10 @@ const STAGING_NAME = new RegExp(
 /**
  * A staging file younger than this may belong to a writer another process is
  * running right now; only an older one is certainly the debris of a crash.
+ * The bound is well past the five minutes a browser sign-in is given, because
+ * sweeping a live writer's file costs the owner a grant they already made.
  */
-const ABANDONED_STAGING_MS = 60_000;
+const ABANDONED_STAGING_MS = 1_800_000;
 
 const CORE_ULID = new RegExp(`^${CORE_ULID_PATTERN}$`);
 
@@ -397,11 +399,21 @@ export class ConnectionStateStore implements ConnectionStateReader {
         );
         fsyncDirectory(this.directory);
         if (backupPath !== null) renameSync(pending.finalPath, backupPath);
-        if (pending.temporaryPath === null) {
+        const staging = pending.temporaryPath;
+        if (staging === null) {
           throw new LedgerError("connection state staging is missing");
         }
-        renameSync(pending.temporaryPath, pending.finalPath);
-        this.staging.delete(pending.temporaryPath);
+        try {
+          renameSync(staging, pending.finalPath);
+        } catch (error) {
+          // A recovery sweep in another process can remove a staging file this
+          // one still owns. The raw failure names the control directory, and a
+          // caller of this store never receives a filesystem path.
+          throw new LedgerError("connection state staging is missing", {
+            cause: error,
+          });
+        }
+        this.staging.delete(staging);
         pending.temporaryPath = null;
         swapped = true;
         fsyncDirectory(this.directory);
