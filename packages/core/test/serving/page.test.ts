@@ -122,3 +122,24 @@ describe("serveGetPage", () => {
     expect(chunk?.excerpt.endsWith("\u{1F600}")).toBe(true);
   });
 });
+
+describe("serveGetPage validates before it reads", () => {
+  test("a malformed selector is refused without walking the vault", () => {
+    const ctx = {
+      ...fixture.owner(),
+      vaultPath: join(fixture.vaultPath, "gone"),
+    };
+
+    expect(refusal(() => serveGetPage(ctx, { path: "../escape.md" })).code).toBe(
+      "invalid_arguments",
+    );
+    expect(refusal(() => serveGetPage(ctx, { id: "" })).code).toBe(
+      "invalid_arguments",
+    );
+    // The same unreadable vault does fail once the selector is usable, which
+    // is what makes the refusal above evidence and not a coincidence.
+    expect(refusal(() => serveGetPage(ctx, { id: "person:ada" })).code).toBe(
+      "error",
+    );
+  });
+});

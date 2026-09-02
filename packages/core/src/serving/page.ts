@@ -28,10 +28,17 @@ export function serveGetPage(ctx: ServeContext, args: GetPageArgs): Envelope {
       );
     }
 
+    // The selector is validated before the vault is touched, so a malformed
+    // argument answers `invalid_arguments` instead of surfacing as an engine
+    // failure when the walk is what fails first.
+    const selector = wantsId
+      ? text("id", bag["id"], MAX_ID_CHARS)
+      : relPath("path", bag["path"]);
+
     const index = loadCanon(ctx);
     const page = wantsId
-      ? index.byId.get(text("id", bag["id"], MAX_ID_CHARS))
-      : index.byPath.get(relPath("path", bag["path"]));
+      ? index.byId.get(selector)
+      : index.byPath.get(selector);
 
     // Absent or retracted answers the same way: existence is neither
     // confirmed nor denied to a caller who guessed an id.
