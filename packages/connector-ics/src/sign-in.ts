@@ -1,4 +1,3 @@
-import { KizukiError } from "@kizuki/core";
 import type {
   ConnectionStateWriter,
   SignInDisplay,
