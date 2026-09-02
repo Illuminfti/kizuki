@@ -1,0 +1,29 @@
+{
+  "id": "tsk-0970f3",
+  "sourceTaskId": "tsk-0970f3",
+  "sourceType": "task-close",
+  "title": "Kizuki Wave 1: spine (contracts, ledger, vault, staging, promote, CLI, e2e stranger loop)",
+  "reason": "Wave 1 spine merged on main (contracts, ledger, vault, staging, connectors, CLI, TUI); 515 tests green at 76930db",
+  "keywords": [
+    "kizuki",
+    "wave",
+    "spine",
+    "contracts",
+    "ledger",
+    "vault",
+    "staging",
+    "promote",
+    "cli",
+    "e2e",
+    "stranger",
+    "loop",
+    "merged",
+    "main",
+    "connectors",
+    "tui",
+    "tests",
+    "green",
+    "76930db"
+  ],
+  "capturedAt": "2026-09-01T23:27:01.150Z"
+}
