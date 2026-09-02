@@ -123,6 +123,32 @@ function personSubject(
   };
 }
 
+/**
+ * One person listed twice, or under two spellings of the same address, is one
+ * subject: a duplicate would otherwise become a second identical proposal.
+ */
+class SubjectList {
+  private readonly byKey = new Map<string, SubjectRef>();
+
+  add(subject: SubjectRef | null): void {
+    if (subject === null) return;
+    const key = `${subject.subject_id}\u0000${subject.role}`;
+    const existing = this.byKey.get(key);
+    if (existing === undefined) {
+      this.byKey.set(key, subject);
+      return;
+    }
+    // A later line may be the one that carries a usable name.
+    if (existing.display_name === undefined && subject.display_name !== undefined) {
+      this.byKey.set(key, subject);
+    }
+  }
+
+  all(): SubjectRef[] {
+    return [...this.byKey.values()];
+  }
+}
+
 function hintFor(event: RawVEvent): SensitivityHint {
   const klass = (firstValue(event, "CLASS")?.value ?? "").trim().toUpperCase();
   if (klass === "PUBLIC") return "public";
@@ -220,17 +246,13 @@ export function emit(input: EmitInput): CaptureEventInput {
         ? new Date(durationEndMs).toISOString()
         : null;
 
-  const subjects: SubjectRef[] = [];
+  const subjects = new SubjectList();
   const organizer = firstValue(input.event, "ORGANIZER");
-  if (organizer !== undefined) {
-    const subject = personSubject(organizer, "from");
-    if (subject !== null) subjects.push(subject);
-  }
+  if (organizer !== undefined) subjects.add(personSubject(organizer, "from"));
   for (const attendee of allValues(input.event, "ATTENDEE")) {
-    const subject = personSubject(attendee, "to");
-    if (subject !== null) subjects.push(subject);
+    subjects.add(personSubject(attendee, "to"));
   }
-  subjects.push({
+  subjects.add({
     subject_id: `calendar:${input.calendarSlug}`,
     role: "about",
   });
@@ -263,7 +285,7 @@ export function emit(input: EmitInput): CaptureEventInput {
     occurred_at: converted.iso,
     observed_at: input.opts.observedAt,
     text: textFor(input.event),
-    subjects,
+    subjects: subjects.all(),
     sensitivity_hint: hintFor(input.event),
     deleted: false,
     attachments: attachmentsFor(input.event),

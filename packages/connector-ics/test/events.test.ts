@@ -640,3 +640,63 @@ describe("truncation marks every instance of the series", () => {
     }
   });
 });
+
+describe("subjects are deduplicated per event", () => {
+  test("one attendee listed twice becomes one subject", () => {
+    const events = mapped([
+      "BEGIN:VEVENT",
+      "UID:one@acme.example",
+      "DTSTART:20260301T100000Z",
+      "SUMMARY:One",
+      "ORGANIZER;CN=Ada:mailto:ada@acme.example",
+      "ATTENDEE;CN=Grace:mailto:grace@acme.example",
+      "ATTENDEE;CN=Grace M:mailto:GRACE@acme.example",
+      "ATTENDEE:mailto:linus@example.org",
+      "END:VEVENT",
+    ]);
+    expect(events[0]?.subjects).toEqual([
+      { subject_id: "email:ada@acme.example", role: "from", display_name: "Ada" },
+      {
+        subject_id: "email:grace@acme.example",
+        role: "to",
+        display_name: "Grace",
+      },
+      { subject_id: "email:linus@example.org", role: "to" },
+      { subject_id: "calendar:acme-team", role: "about" },
+    ]);
+  });
+
+  test("the first usable display name wins over a blank earlier one", () => {
+    const events = mapped([
+      "BEGIN:VEVENT",
+      "UID:one@acme.example",
+      "DTSTART:20260301T100000Z",
+      "SUMMARY:One",
+      "ATTENDEE:mailto:grace@acme.example",
+      "ATTENDEE;CN=Grace:mailto:grace@acme.example",
+      "END:VEVENT",
+    ]);
+    expect(events[0]?.subjects[0]).toEqual({
+      subject_id: "email:grace@acme.example",
+      role: "to",
+      display_name: "Grace",
+    });
+  });
+
+  test("the same person as organizer and attendee keeps both roles", () => {
+    const events = mapped([
+      "BEGIN:VEVENT",
+      "UID:one@acme.example",
+      "DTSTART:20260301T100000Z",
+      "SUMMARY:One",
+      "ORGANIZER:mailto:ada@acme.example",
+      "ATTENDEE:mailto:ada@acme.example",
+      "END:VEVENT",
+    ]);
+    expect(events[0]?.subjects.map((subject) => subject.role)).toEqual([
+      "from",
+      "to",
+      "about",
+    ]);
+  });
+});
