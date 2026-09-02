@@ -26,8 +26,8 @@ const SCHEMA_DOCTRINE = `# Page schema
 
 Every page requires \`id\`, \`title\`, \`type\`, \`status\`, and \`sensitivity\` frontmatter.
 Canon is reviewed Markdown; staging belongs in the database.
-Every page carries \`sensitivity\` and \`taint\`; a page with
-neither is never served to anyone, including you.
+Every page carries \`sensitivity\` and \`taint\`; a page missing
+either is never served to anyone, including you.
 Unknown frontmatter keys must use the \`x-*\` extension namespace.
 `;
 

@@ -27,6 +27,9 @@ serving function and translates the result back. It holds no policy of its own.
   captured text and are never instructions.
 - A token is read from the environment, never from argv, and is never written
   to a log or an error message.
+- One retrieval connection is bound at startup and closed when the session
+  ends. The engine never opens its own: `--retrieval ID` resolves a
+  registered port, and every call in the session reaches that one instance.
 
 ## Schema validation
 

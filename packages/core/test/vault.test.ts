@@ -79,6 +79,9 @@ describe("initVault", () => {
     const schemaDoctrine = readFileSync(join(vault, "SCHEMA.md"), "utf8");
     expect(schemaDoctrine).toContain("sensitivity");
     expect(schemaDoctrine).toContain("taint");
+    // The doctrine states the rule serving enforces: either label missing
+    // withholds the page, not only both of them.
+    expect(schemaDoctrine).toContain("a page missing\neither is never served");
     expect(schemaDoctrine).not.toContain("Only owner promotion writes canon.");
 
     const replacements = new Map([
