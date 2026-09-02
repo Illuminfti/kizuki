@@ -97,7 +97,10 @@ of dates.
 
 Expansion runs from `DTSTART` to one year from now, capped at 1000 instances.
 When the cap bites, the most recent 1000 are kept and every emitted instance
-carries `metadata.recurrence.truncated: true`.
+carries `metadata.recurrence.truncated: true`. A series that begins past the
+window still yields its first instance, so a conference booked two years out
+is captured rather than dropped. An `RDATE`-only series obeys the same window
+and the same cap.
 
 ## Change detection
 
@@ -105,8 +108,17 @@ The cursor holds a hash per record. On sync, a record that vanished or turned
 `CANCELLED` produces a tombstone; a record whose hash changed is re-emitted;
 an unchanged record produces nothing.
 
+Two absences are not deletions and produce no tombstone: an entry the
+calendar still carries but this run could not read, and an instance that fell
+outside the kept window of a capped series as the clock moved. A document
+whose components do not balance — a half-downloaded feed — is a `parse_error`
+before any cursor is written, rather than an empty snapshot that would
+tombstone the whole calendar.
+
 In URL mode the cursor also carries `ETag` and `Last-Modified`, and the next
-fetch is conditional. A `304` costs one request and emits nothing.
+fetch is conditional. A `304` costs one request and emits nothing. A fresh
+`200` replaces the validators with exactly what it returned, so one that the
+server stopped sending is dropped rather than kept.
 
 ## Bounds
 
