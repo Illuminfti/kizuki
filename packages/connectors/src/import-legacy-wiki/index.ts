@@ -56,7 +56,8 @@ interface LegacyWikiCursor {
   schema: typeof LEGACY_WIKI_CURSOR_SCHEMA;
   mapping_hash: string;
   /** Relpath to a content hash, so an edited page is re-emitted and a copied
-   * wiki with fresh mtimes is not. */
+   * wiki with fresh mtimes is not. Only pages this import actually emitted:
+   * a page the mapping excludes has no ledger record to retract later. */
   files: Record<string, string>;
 }
 
@@ -64,16 +65,45 @@ function contentHash(content: string): string {
   return new Bun.CryptoHasher("sha256").update(content).digest("hex");
 }
 
-function encodeCursor(scan: ScanResult, mappingHash: string): Cursor {
+function encodeCursor(
+  scan: ScanResult,
+  events: CaptureEventInput[],
+  mappingHash: string,
+): Cursor {
+  const hashes = new Map(
+    scan.files.map((file) => [file.relpath, contentHash(file.content)]),
+  );
   const files: Record<string, string> = {};
-  for (const file of scan.files)
-    files[file.relpath] = contentHash(file.content);
+  for (const event of events) {
+    const hash = hashes.get(event.source_record_id);
+    if (hash !== undefined) files[event.source_record_id] = hash;
+  }
   const cursor: LegacyWikiCursor = {
     schema: LEGACY_WIKI_CURSOR_SCHEMA,
     mapping_hash: mappingHash,
     files,
   };
   return JSON.stringify(cursor);
+}
+
+/**
+ * The snapshot entries this scan proves are gone. A page the scan could not
+ * read — unreadable, not UTF-8, oversized, ignored, past the depth limit — is
+ * missing information, not a deletion, and a truncated walk never saw the rest
+ * of the wiki at all. Absence has to be conclusive before the ledger is told a
+ * source record was removed.
+ */
+export function goneFromSnapshot(
+  previous: Record<string, string>,
+  scan: ScanResult,
+): string[] {
+  if (scan.truncated) return [];
+  const seen = new Set<string>();
+  for (const file of scan.files) seen.add(file.relpath);
+  for (const entry of scan.skipped) seen.add(entry.relpath);
+  return Object.keys(previous)
+    .filter((relpath) => !seen.has(relpath))
+    .sort(compareStrings);
 }
 
 function decodeCursor(cursor: Cursor): LegacyWikiCursor {
@@ -168,7 +198,7 @@ export class LegacyWikiConnector implements Connector {
     // A backfill is always a full walk; the snapshot is still returned so a
     // later sync knows what the wiki held.
     const { scan, events } = await this.#run([]);
-    return { events, cursor: encodeCursor(scan, this.mappingHash) };
+    return { events, cursor: encodeCursor(scan, events, this.mappingHash) };
   }
 
   async sync(cursor: Cursor | null): Promise<SyncBatch> {
@@ -189,13 +219,12 @@ export class LegacyWikiConnector implements Connector {
             previous.files[event.source_record_id],
         );
 
-    const present = new Set(scan.files.map((file) => file.relpath));
     const observedAt = new Date().toISOString();
-    for (const relpath of Object.keys(previous.files)) {
-      if (!present.has(relpath)) kept.push(tombstone(relpath, observedAt));
+    for (const relpath of goneFromSnapshot(previous.files, scan)) {
+      kept.push(tombstone(relpath, observedAt));
     }
     kept.sort((a, b) => compareStrings(a.source_record_id, b.source_record_id));
-    return { events: kept, cursor: encodeCursor(scan, this.mappingHash) };
+    return { events: kept, cursor: encodeCursor(scan, events, this.mappingHash) };
   }
 
   async revoke(): Promise<void> {}

@@ -286,7 +286,7 @@ function skippedPage(
   entry: ScanResult["skipped"][number],
 ): LegacyWikiPageReport {
   return {
-    relpath: entry.relpath,
+    relpath: sanitizeLine(entry.relpath, 200),
     outcome: "skipped",
     skip_reason: entry.reason,
     target: null,

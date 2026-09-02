@@ -17,9 +17,11 @@ import { InMemoryLedger } from "../src/ledger";
 import {
   LEGACY_WIKI_CONNECTOR_ID,
   createLegacyWikiConnector,
+  goneFromSnapshot,
 } from "../src/import-legacy-wiki";
 import { LEGACY_WIKI_FIXTURE } from "../src/import-legacy-wiki/fixture";
 import type { LegacyWikiReport } from "../src/import-legacy-wiki/report";
+import type { ScanResult } from "../src/import-legacy-wiki/scan";
 
 const SENTINEL = "a-secret-outside-the-wiki";
 
@@ -154,6 +156,34 @@ describe("backfill and sync", () => {
         metadata: { relpath: "notes/plan.md" },
       },
     ]);
+  });
+
+  test("a page the scan could not read is not reported deleted", async () => {
+    seed();
+    const connector = createLegacyWikiConnector({ path: wiki });
+    const first = await connector.backfill(null);
+    // Still on disk, no longer decodable: a skip is missing information, and
+    // a tombstone would withdraw the page's proposals on the strength of it.
+    writeFileSync(join(wiki, "people/ada.md"), Buffer.from([0xff, 0xfe, 0x00]));
+    const second = await connector.sync(first.cursor);
+    expect(second.events).toEqual([]);
+    expect(
+      connector
+        .lastReport()
+        ?.pages.find((entry) => entry.relpath === "people/ada.md"),
+    ).toMatchObject({ outcome: "skipped", skip_reason: "not_utf8" });
+  });
+
+  test("a page the mapping excludes is never tombstoned", async () => {
+    seed();
+    const connector = createLegacyWikiConnector({ path: wiki });
+    const first = await connector.backfill(null);
+    const snapshot = JSON.parse(first.cursor ?? "{}") as {
+      files: Record<string, string>;
+    };
+    expect(Object.keys(snapshot.files)).not.toContain("templates/person.md");
+    rmSync(join(wiki, "templates/person.md"));
+    expect((await connector.sync(first.cursor)).events).toEqual([]);
   });
 
   test("a changed mapping re-emits every page and the report says why", async () => {
@@ -332,5 +362,45 @@ describe("the report file", () => {
     await connector.backfill(null);
     expect(connector.lastReport()).not.toBeNull();
     expect(readdirSync(root)).toEqual(["wiki"]);
+  });
+});
+
+describe("what counts as gone from a snapshot", () => {
+  const snapshot = { "a.md": "hash" };
+  const scanned = (over: Partial<ScanResult> = {}): ScanResult => ({
+    files: [],
+    skipped: [],
+    truncated: false,
+    ...over,
+  });
+
+  test("a relpath this walk never saw is gone", () => {
+    expect(goneFromSnapshot(snapshot, scanned())).toEqual(["a.md"]);
+  });
+
+  test("a relpath this walk read is still here", () => {
+    const files = [{ relpath: "a.md", content: "x", mtimeMs: 1, size: 1 }];
+    expect(goneFromSnapshot(snapshot, scanned({ files }))).toEqual([]);
+  });
+
+  test("a relpath this walk skipped proves nothing either way", () => {
+    const reasons = [
+      "symlink",
+      "not_utf8",
+      "too_large",
+      "unreadable",
+      "ignored",
+      "depth",
+    ] as const;
+    for (const reason of reasons) {
+      const skipped = [{ relpath: "a.md", reason }];
+      expect(goneFromSnapshot(snapshot, scanned({ skipped }))).toEqual([]);
+    }
+  });
+
+  test("a truncated walk never saw the rest of the wiki", () => {
+    expect(goneFromSnapshot(snapshot, scanned({ truncated: true }))).toEqual(
+      [],
+    );
   });
 });

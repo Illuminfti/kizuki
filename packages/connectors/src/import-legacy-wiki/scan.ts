@@ -2,7 +2,7 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { KizukiError } from "../errors";
 import { compareStrings, errorMessage } from "../util";
-import { matchesGlob, sanitizeLine } from "../legacy/coerce";
+import { matchesGlob } from "../legacy/coerce";
 import { LEGACY_WIKI_CONNECTOR_ID } from "./mapping";
 
 /**
@@ -51,8 +51,10 @@ function relative(root: string, absolute: string): string {
 }
 
 function skip(walk: Walk, relpath: string, reason: SkipReason): void {
-  // File names come from the source and are shown in a report and a terminal.
-  walk.skipped.push({ relpath: sanitizeLine(relpath, 200), reason });
+  // The raw relpath: a caller has to be able to match a skip against a cursor
+  // snapshot exactly. The report layer is what makes a hostile name safe to
+  // print.
+  walk.skipped.push({ relpath, reason });
 }
 
 async function readEntry(
