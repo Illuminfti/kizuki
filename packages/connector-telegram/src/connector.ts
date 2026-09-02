@@ -11,21 +11,22 @@ import type {
   SignInIo,
   SyncBatch,
 } from "@kizuki/core";
-import { TelegramConnectorError, redactedCause } from "./api";
-import type { AppCredentials, TelegramApi, TelegramApiFactory, TelegramUser } from "./api";
-import { appCredentials, requireAppCredentials } from "./app-credentials";
+import { TelegramConnectorError } from "./api";
+import type { TelegramApi, TelegramUser } from "./api";
+import { appCredentials } from "./app-credentials";
 import { createRealApi } from "./client";
 import {
   TELEGRAM_CONNECTOR_ID,
   TELEGRAM_CONNECTOR_VERSION,
   mapMessage,
-  userDisplay,
 } from "./map";
 import { degradedDetail } from "./degraded";
 import { PurgeIndex } from "./plan";
 import { FIXTURE_OBSERVED_AT, fixtureAccount } from "./fixture";
-import { PHONE_FORMAT, runSignIn, terminalSafe, waitSeconds } from "./sign-in";
-import { TELEGRAM_STATE_SCHEMA, encodeState, parseState } from "./state";
+import { notConnected, notSignedIn, revoked } from "./refusals";
+import { disconnectQuietly, openSession } from "./session";
+import type { SessionDeps } from "./session";
+import { enroll, waitSeconds } from "./sign-in";
 import { walk } from "./walk";
 import type { DialogListing } from "./walk";
 
@@ -39,9 +40,7 @@ export interface TelegramConnectorConfig {
   state_ref?: string;
 }
 
-export interface TelegramDeps {
-  api: TelegramApiFactory;
-  credentials: () => AppCredentials | null;
+export interface TelegramDeps extends SessionDeps {
   now: () => number;
   sleep: (ms: number) => Promise<void>;
 }
@@ -94,48 +93,8 @@ export class TelegramConnector implements Connector {
     return MANIFEST;
   }
 
-  async signIn(
-    io: SignInIo,
-    state: ConnectionStateWriter,
-  ): Promise<SignInDisplay> {
-    const credentials = requireAppCredentials(this.#deps.credentials);
-    const phone = (
-      await io.prompt(
-        "Telegram phone number (international format, e.g. +15551234567): ",
-      )
-    ).trim();
-    if (!PHONE_FORMAT.test(phone)) {
-      throw new TelegramConnectorError(
-        "invalid_phone",
-        "kizuki.telegram: phone number must be in international format",
-      );
-    }
-    const api = this.#deps.api("", credentials);
-    await api.connect();
-    let me: TelegramUser;
-    try {
-      await runSignIn(api, io, phone, this.#deps.sleep);
-      // Only once the account is known: a state blob without a confirmed
-      // identity could not be checked against the session on the next connect.
-      me = await api.me();
-      await state.write(
-        encodeState({
-          schema: TELEGRAM_STATE_SCHEMA,
-          user_id: me.id,
-          session: api.saveSession(),
-        }),
-      );
-    } catch (error) {
-      await this.#disconnectQuietly(api);
-      throw error;
-    }
-    // The session is written and the account is signed in; a socket that will
-    // not close is no reason to fail a sign-in the host would then discard.
-    await this.#disconnectQuietly(api);
-    // The label is printed, so it is sanitised; the same name reaches the
-    // ledger through the mapper untouched, where it is evidence.
-    const label = terminalSafe(userDisplay(me));
-    return { display: label.length === 0 ? `user ${me.id}` : label };
+  signIn(io: SignInIo, state: ConnectionStateWriter): Promise<SignInDisplay> {
+    return enroll(this.#deps, io, state);
   }
 
   async connect(resolve: SecretResolver): Promise<void> {
@@ -145,54 +104,16 @@ export class TelegramConnector implements Connector {
     if (this.#revoked) throw revoked();
     const ref = this.#stateRef;
     if (ref === null) throw notSignedIn();
-    let text: string;
-    try {
-      text = await resolve(ref);
-    } catch (error) {
-      // The resolver failed over the state file, so its own report may name
-      // the bytes it was reading. Only the shape of that failure is safe to
-      // carry.
-      throw new TelegramConnectorError(
-        "missing_session",
-        "kizuki.telegram: not signed in; run: kizuki connect telegram",
-        { cause: redactedCause(error) },
-      );
-    }
-    const state = parseState(text);
-    const credentials = requireAppCredentials(this.#deps.credentials);
-    const api = this.#deps.api(state.session, credentials);
-    let me: TelegramUser;
-    try {
-      await api.connect();
-      if (!(await api.isAuthorized())) {
-        throw new TelegramConnectorError(
-          "unauthenticated",
-          "kizuki.telegram: the stored session is no longer authorized; sign in again",
-        );
-      }
-      me = await api.me();
-      if (me.id !== state.user_id) {
-        throw new TelegramConnectorError(
-          "identity_mismatch",
-          "kizuki.telegram: signed-in account does not match the stored connection",
-        );
-      }
-    } catch (error) {
-      // Nothing the replacement did is worth the connection already in hand:
-      // a reconnect that could not prove itself leaves the working client in
-      // place rather than trading it for none at all.
-      await this.#disconnectQuietly(api);
-      throw error;
-    }
+    const opened = await openSession(this.#deps, ref, resolve);
     // Re-authentication keeps the same connection, so a second connect
     // supersedes the first: hand its client back rather than abandon a live
     // one for the life of the process. Only once the replacement is proven.
     const superseded = this.#api;
-    if (superseded !== null && superseded !== api) {
-      await this.#disconnectQuietly(superseded);
+    if (superseded !== null && superseded !== opened.api) {
+      await disconnectQuietly(superseded);
     }
-    this.#api = api;
-    this.#self = me;
+    this.#api = opened.api;
+    this.#self = opened.self;
     this.#listing = null;
     this.#lastSuccessAt = this.#nowIso();
   }
@@ -312,7 +233,7 @@ export class TelegramConnector implements Connector {
         error.code !== "unauthenticated"
       ) {
         // Access did not end; do not let the host believe it did.
-        await this.#disconnectQuietly(api);
+        await disconnectQuietly(api);
         throw error;
       }
     }
@@ -324,7 +245,7 @@ export class TelegramConnector implements Connector {
     this.#api = null;
     this.#self = null;
     this.#listing = null;
-    await this.#disconnectQuietly(api);
+    await disconnectQuietly(api);
   }
 
   async purgeSource(subject_id: string): Promise<PurgePlan> {
@@ -414,15 +335,6 @@ export class TelegramConnector implements Connector {
   #nowIso(): string {
     return new Date(this.#deps.now()).toISOString();
   }
-
-  /** The sign-in or connect failure is the useful one; a teardown fault must not mask it. */
-  async #disconnectQuietly(api: TelegramApi): Promise<void> {
-    try {
-      await api.disconnect();
-    } catch {
-      return;
-    }
-  }
 }
 
 export function createTelegramConnector(
@@ -447,25 +359,4 @@ function parseStateRef(config: TelegramConnectorConfig): string | null {
     );
   }
   return ref;
-}
-
-function notSignedIn(): TelegramConnectorError {
-  return new TelegramConnectorError(
-    "missing_session",
-    "kizuki.telegram: not signed in; run: kizuki connect telegram",
-  );
-}
-
-function revoked(): TelegramConnectorError {
-  return new TelegramConnectorError(
-    "unauthenticated",
-    "kizuki.telegram: access was revoked; sign in again",
-  );
-}
-
-function notConnected(): TelegramConnectorError {
-  return new TelegramConnectorError(
-    "missing_session",
-    "kizuki.telegram: connect() has not been called",
-  );
 }

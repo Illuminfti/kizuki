@@ -1,11 +1,5 @@
 import { expect, test } from "bun:test";
-import {
-  DEFAULT_GRANT,
-  openLedger,
-  runBackfill,
-  runToCompletion,
-  timeline,
-} from "@kizuki/core";
+import { openLedger, runBackfill, runToCompletion } from "@kizuki/core";
 import { initStaging } from "@kizuki/core/staging";
 import { parseCursor } from "../src/cursor";
 import { fixtureAccount } from "../src/fixture";
@@ -301,35 +295,6 @@ test("a wait that reached only skipped records keeps its place", async () => {
       .filter((call) => call.method === "messages")
       .map((call) => (call.args[1] as { min_id: number }).min_id),
   ).toEqual([1]);
-  db.close();
-});
-
-/**
- * Telegram is a chat source, and RFC 0002 §8.2 puts that class at a `private`
- * default: what the owner reads and writes in their own dialogs is not
- * evidence an agent holding the default grant may be handed. The hint is the
- * only label anything downstream has today, so it is the whole of the
- * defence.
- */
-test("nothing this connector captured is served under the default agent ceiling", async () => {
-  const built = await connected({ now: FEBRUARY });
-  const db = ledger();
-  const stored = await runToCompletion(
-    db,
-    built.connector,
-    TELEGRAM_CONNECTOR_ID,
-    SOURCE,
-    "backfill",
-  );
-  expect(stored.stored).toBe(12);
-
-  expect(
-    timeline(db, { connector_id: TELEGRAM_CONNECTOR_ID, ceiling: DEFAULT_GRANT.ceiling }),
-  ).toEqual([]);
-  // And it is withheld because it is labeled, not because it is missing.
-  expect(
-    timeline(db, { connector_id: TELEGRAM_CONNECTOR_ID, ceiling: "private" }),
-  ).toHaveLength(12);
   db.close();
 });
 

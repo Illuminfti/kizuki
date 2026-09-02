@@ -1,6 +1,15 @@
-import type { SignInIo } from "@kizuki/core";
+import type {
+  ConnectionStateWriter,
+  SignInDisplay,
+  SignInIo,
+} from "@kizuki/core";
 import { TelegramConnectorError, safeCause } from "./api";
-import type { SignInFlow, TelegramApi } from "./api";
+import type { SignInFlow, TelegramApi, TelegramUser } from "./api";
+import { requireAppCredentials } from "./app-credentials";
+import { userDisplay } from "./map";
+import { disconnectQuietly } from "./session";
+import type { SessionDeps } from "./session";
+import { TELEGRAM_STATE_SCHEMA, encodeState } from "./state";
 
 /** Rejected codes or passwords tolerated before sign-in is abandoned. */
 const MAX_ATTEMPTS = 3;
@@ -127,4 +136,59 @@ function rejectionNotice(name: string): string {
   return name.startsWith("PASSWORD")
     ? "that password was not accepted, try again"
     : "that code was not accepted, try again";
+}
+
+/** What enrolling needs on top of opening a session: a wait it can sit out. */
+export interface EnrollDeps extends SessionDeps {
+  sleep: (ms: number) => Promise<void>;
+}
+
+/**
+ * The whole of what the owner does to connect an account. Nothing durable is
+ * written here: core lends the one-shot writer, and on any throw it discards
+ * what was pending, so a half-finished sign-in leaves no session behind.
+ */
+export async function enroll(
+  deps: EnrollDeps,
+  io: SignInIo,
+  state: ConnectionStateWriter,
+): Promise<SignInDisplay> {
+  const credentials = requireAppCredentials(deps.credentials);
+  const phone = (
+    await io.prompt(
+      "Telegram phone number (international format, e.g. +15551234567): ",
+    )
+  ).trim();
+  if (!PHONE_FORMAT.test(phone)) {
+    throw new TelegramConnectorError(
+      "invalid_phone",
+      "kizuki.telegram: phone number must be in international format",
+    );
+  }
+  const api = deps.api("", credentials);
+  await api.connect();
+  let me: TelegramUser;
+  try {
+    await runSignIn(api, io, phone, deps.sleep);
+    // Only once the account is known: a state blob without a confirmed
+    // identity could not be checked against the session on the next connect.
+    me = await api.me();
+    await state.write(
+      encodeState({
+        schema: TELEGRAM_STATE_SCHEMA,
+        user_id: me.id,
+        session: api.saveSession(),
+      }),
+    );
+  } catch (error) {
+    await disconnectQuietly(api);
+    throw error;
+  }
+  // The session is written and the account is signed in; a socket that will
+  // not close is no reason to fail a sign-in the host would then discard.
+  await disconnectQuietly(api);
+  // The label is printed, so it is sanitised; the same name reaches the ledger
+  // through the mapper untouched, where it is evidence.
+  const label = terminalSafe(userDisplay(me));
+  return { display: label.length === 0 ? `user ${me.id}` : label };
 }
