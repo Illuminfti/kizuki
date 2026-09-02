@@ -49,7 +49,7 @@ graph are disposable. They rebuild from the ledger plus canon.
 
 ## Packages
 
-One Bun workspace. Four packages. There is no MCP package.
+One Bun workspace. Five packages. There is no MCP package.
 
 - **`@kizuki/core`** owns the durable contracts and policy boundary: event
   ingest, the append-only ledger, connection state, claims, the receipted
@@ -68,6 +68,10 @@ One Bun workspace. Four packages. There is no MCP package.
   `kizuki.import-claude`. All four read local files: three read a folder or an
   export archive, and `kizuki.screenpipe` reads screenpipe's own SQLite file
   read-only rather than its HTTP API. No sign-in or OAuth connector is built.
+- **`@kizuki/connector-screenpipe`** is the read-only adapter over screenpipe's
+  own SQLite file, in its own workspace package so the registry can depend on
+  it. It carries no runtime dependency beyond `@kizuki/core` and reads the file
+  through `bun:sqlite`.
 - **`@kizuki/tui`** is the audit and undo interface: pure state transitions and
   rendering, with terminal I/O at the edge. The leftover CLI `review` verb
   still opens it when stdin and stdout are a terminal.
