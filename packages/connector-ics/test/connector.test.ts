@@ -422,6 +422,32 @@ describe("url mode", () => {
     expect((await connector.health()).state).toBe("disabled");
   });
 
+  test("a 200 without validators clears the ones the cursor held", async () => {
+    const conditionals: { etag?: string; last_modified?: string }[] = [];
+    let etag: string | null = '"v1"';
+    const connector = createIcsConnector(
+      { secret_ref: REF },
+      {
+        fetch: async (_url, conditional) => {
+          conditionals.push(conditional);
+          return okResult(SMALL, etag);
+        },
+        now: NOW,
+      },
+    );
+    await connector.connect(resolver);
+    const first = await connector.backfill(null);
+    const second = await connector.sync(first.cursor);
+    expect(conditionals.at(-1)).toEqual({ etag: '"v1"' });
+
+    // The server stopped sending a validator. Keeping the old one would let
+    // it answer 304 against a version it no longer has.
+    etag = null;
+    const third = await connector.sync(second.cursor);
+    await connector.sync(third.cursor);
+    expect(conditionals.at(-1)).toEqual({});
+  });
+
   test("backfill re-emits the snapshot even when the cursor could 304", async () => {
     const conditionals: { etag?: string; last_modified?: string }[] = [];
     const connector = createIcsConnector(

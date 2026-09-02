@@ -298,8 +298,15 @@ export class IcsConnector implements Connector {
         }
       }
     }
-    const etag = snapshot.etag ?? previous.etag;
-    const lastModified = snapshot.lastModified ?? previous.last_modified;
+    // A fresh body carries its own validators or none. Keeping the previous
+    // ones would let a later conditional GET be answered 304 against a
+    // version the server no longer has, and the change would be missed.
+    const etag = snapshot.unchanged
+      ? (snapshot.etag ?? previous.etag)
+      : snapshot.etag;
+    const lastModified = snapshot.unchanged
+      ? (snapshot.lastModified ?? previous.last_modified)
+      : snapshot.lastModified;
     return {
       schema: "kizuki.ics-cursor/v1",
       records,
