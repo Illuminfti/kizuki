@@ -21,8 +21,8 @@ import {
   excerptOf,
   loadCanon,
   pageDecision,
+  resolveLink,
 } from "./canon";
-import type { CanonIndex } from "./canon";
 import { ENTITY_TYPES } from "./entities";
 import { auditArguments, gate, principalName } from "./gate";
 import type { Served } from "./gate";
@@ -74,14 +74,6 @@ function canonBlock(chunk: CanonChunk): string {
 
 function quotedBlock(chunk: QuotedChunk): string {
   return `> ${chunk.text} (ev:${chunk.event_id} ${chunk.connector_id} ${chunk.kind} ${chunk.occurred_at})\n`;
-}
-
-function resolveLink(index: CanonIndex, target: string): CanonPage | undefined {
-  return (
-    index.byId.get(target) ??
-    index.byPath.get(`${target}.md`) ??
-    index.byTitle.get(target.toLowerCase())?.[0]
-  );
 }
 
 interface Piece {

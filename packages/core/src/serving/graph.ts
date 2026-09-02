@@ -1,10 +1,8 @@
 import type { AuditDenial, Grant } from "../agents";
 import { neighbors } from "../graph/graph";
 import type { GraphEdge, GraphEdgeKind } from "../graph/graph";
-import type { CanonPage } from "../vault/pages";
 import { enumOf, identifier } from "./arguments";
-import { eligible, loadCanon, pageDecision } from "./canon";
-import type { CanonIndex } from "./canon";
+import { eligible, loadCanon, pageDecision, resolveLink } from "./canon";
 import { auditArguments, gate } from "./gate";
 import type { Served } from "./gate";
 import { eventDecision, readEventFacts } from "./ledger";
@@ -57,15 +55,6 @@ function kindsOf(
     );
   }
   return kinds;
-}
-
-/** Wikilink text names a page by id, by path, or by title, in that order. */
-function resolveLink(index: CanonIndex, target: string): CanonPage | undefined {
-  return (
-    index.byId.get(target) ??
-    index.byPath.get(`${target}.md`) ??
-    index.byTitle.get(target.toLowerCase())?.[0]
-  );
 }
 
 export function serveGraph(

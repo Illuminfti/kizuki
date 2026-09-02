@@ -93,6 +93,22 @@ export function pageDecision(
     : { allow: false, reason: decision.reason };
 }
 
+/**
+ * Wikilink text names a page by id, by path, or by title, in that order. The
+ * packet's related section and the graph tool must resolve a link the same
+ * way, so the precedence lives with the index it reads.
+ */
+export function resolveLink(
+  index: CanonIndex,
+  target: string,
+): CanonPage | undefined {
+  return (
+    index.byId.get(target) ??
+    index.byPath.get(`${target}.md`) ??
+    index.byTitle.get(target.toLowerCase())?.[0]
+  );
+}
+
 export function canonChunk(
   page: CanonPage,
   sensitivity: Sensitivity,
