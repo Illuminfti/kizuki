@@ -7,6 +7,7 @@ import type {
   ClaimDraft,
   LlmPort,
   LlmResponse,
+  LlmSpend,
   PortContext,
   PortDescriptor,
   PortFactory,
@@ -16,7 +17,7 @@ import type {
   ProducerPort,
   RejectReason,
 } from "@kizuki/core";
-import { rejectionOf } from "./errors";
+import { rejectionOf, spendOf } from "./errors";
 import { parseExtractResponse } from "./extract";
 import type { ExtractOutcome } from "./extract";
 import { validateInput } from "./produce-input";
@@ -52,6 +53,16 @@ export const MODEL_PRODUCER: PortDescriptor = validatePortDescriptor({
 const LLM_ATTEMPTS_MINOR = 1;
 const LLM_LAGS =
   "the model port reports no attempts, so a retried call is charged as one request";
+
+/**
+ * What a failed call is charged when the port it came from reports nothing:
+ * a call the endpoint never answered still reached it at least once.
+ */
+const UNREPORTED_FAILURE: LlmSpend = {
+  attempts: 1,
+  input_tokens: 0,
+  output_tokens: 0,
+};
 
 const MAX_OUTPUT_TOKENS_PER_CALL = 2_048;
 const MAX_DROPPED_PREDICATES = 32;
@@ -189,11 +200,15 @@ export class ModelProducer implements ProducerPort {
         MAX_OUTPUT_TOKENS_PER_CALL,
         input.budget.max_output_tokens - usage.output_tokens,
       );
-      if (
-        usage.calls >= input.budget.max_calls ||
-        usage.input_tokens + reserved > input.budget.max_input_tokens ||
-        outputAllowance < 1
-      ) {
+      // A retry sends the same prompt again, so the input left over bounds
+      // how many requests this call may make, not only how many calls remain.
+      const allowance = Math.min(
+        input.budget.max_calls - usage.calls,
+        Math.floor(
+          (input.budget.max_input_tokens - usage.input_tokens) / reserved,
+        ),
+      );
+      if (allowance < 1 || outputAllowance < 1) {
         stop = { status: "rejected", reason: "budget_exhausted" };
         break;
       }
@@ -208,11 +223,16 @@ export class ModelProducer implements ProducerPort {
           max_output_tokens: outputAllowance,
           deadline_ms: CALL_DEADLINE_MS,
           // Retries are requests too: the budget counts what goes on the wire.
-          max_attempts: input.budget.max_calls - usage.calls,
+          max_attempts: allowance,
         });
       } catch (error) {
-        // A call the endpoint never answered still reached it at least once.
-        usage.calls += 1;
+        // What the port says the failed call put on the wire. Charging one
+        // request for it would under-report a call that retried, and the
+        // spend a run reports is the spend a receipt records.
+        const spent = spendOf(error) ?? UNREPORTED_FAILURE;
+        usage.calls += spent.attempts;
+        usage.input_tokens += spent.input_tokens;
+        usage.output_tokens += spent.output_tokens;
         stop = stopFor(error);
         break;
       }
@@ -264,7 +284,7 @@ export class ModelProducer implements ProducerPort {
     // advances exactly that far and re-reads the rest on its next pass.
     if (stop !== null && covered.length === 0) {
       return stop.status === "unavailable"
-        ? { status: "unavailable", reason: stop.reason }
+        ? { status: "unavailable", reason: stop.reason, usage: { ...usage } }
         : { status: "rejected", reason: stop.reason, usage: { ...usage } };
     }
     if (stop !== null) {

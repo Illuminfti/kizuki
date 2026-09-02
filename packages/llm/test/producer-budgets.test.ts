@@ -123,6 +123,83 @@ describe("budgets", () => {
     expect(result.status).toBe("unavailable");
   });
 
+  test("a failed call is charged every request it put on the wire", async () => {
+    const refused = chatCompletion('{"claims":[]}') as {
+      choices: { message: Record<string, unknown> }[];
+    };
+    refused.choices[0]!.message["tool_calls"] = [{ id: "c", function: {} }];
+    endpoint = startFakeEndpoint((count) =>
+      count < 2
+        ? { status: 503, headers: { "retry-after": "0" } }
+        : { body: refused },
+    );
+    const built = portContext(MODEL_PRODUCER, {
+      base_url: `${endpoint.url}/v1`,
+      model: "m",
+    });
+    cleanups.push(built.cleanup);
+    const port = new ModelProducer(
+      built.ctx,
+      new OpenAiCompatibleLlm(built.ctx),
+    );
+    const result = await port.produce(produceInput([event("ev-1", "hi")]));
+    // Regression: the failure path charged exactly one call however many
+    // requests the port had already made, and threw away the tokens the
+    // endpoint had reported, so a receipt under-reported what a run spent.
+    expect(endpoint.requests).toHaveLength(3);
+    expect(result).toMatchObject({
+      status: "rejected",
+      reason: "tool_call_in_response",
+    });
+    if (result.status !== "rejected") throw new Error("not rejected");
+    expect(result.usage.calls).toBe(3);
+    expect(result.usage.input_tokens).toBeGreaterThan(0);
+  });
+
+  test("an outage reports what the run had already spent", async () => {
+    endpoint = startFakeEndpoint(() => ({
+      status: 503,
+      headers: { "retry-after": "0" },
+    }));
+    const built = portContext(MODEL_PRODUCER, {
+      base_url: `${endpoint.url}/v1`,
+      model: "m",
+    });
+    cleanups.push(built.cleanup);
+    const port = new ModelProducer(
+      built.ctx,
+      new OpenAiCompatibleLlm(built.ctx),
+    );
+    const result = await port.produce(produceInput([event("ev-1", "hi")]));
+    // Regression: three requests were served and the result carried no usage
+    // at all, so the run receipt showed an outage that had cost nothing.
+    expect(endpoint.requests).toHaveLength(3);
+    if (result.status !== "unavailable") throw new Error("expected an outage");
+    expect(result.usage?.calls).toBe(3);
+    expect(result.usage?.input_tokens).toBeGreaterThan(0);
+  });
+
+  test("the input budget bounds the requests one call may make", async () => {
+    const input = produceInput([event("ev-1", "hi")]);
+    const probe = producer([claimsPayload()]);
+    await probe.port.produce(input);
+    const sent =
+      probe.llm.calls[0]?.messages.reduce(
+        (total, message) => total + message.content.length,
+        0,
+      ) ?? 0;
+    expect(sent).toBeGreaterThan(0);
+    const built = producer([claimsPayload()]);
+    await built.port.produce({
+      ...input,
+      budget: { ...input.budget, max_calls: 8, max_input_tokens: sent * 2 + 1 },
+    });
+    // Regression: the allowance handed to the port was the remaining call
+    // budget alone, so a call could retry the same prompt until the input
+    // budget it was reserved against had been overrun several times.
+    expect(built.llm.calls[0]?.max_attempts).toBe(2);
+  });
+
   test("a batch that fails keeps what earlier batches produced", async () => {
     const events = Array.from({ length: EXTRACT_BATCH + 1 }, (_, index) =>
       event(`ev-${index}`, "short"),

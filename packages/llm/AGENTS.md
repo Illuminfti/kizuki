@@ -53,7 +53,16 @@ writes canon; it returns drafts to whoever bound it.
   A stated bound is a bound on what is sent, after escaping and clipping.
 - Budgets bound what goes on the wire, not what was intended: `max_calls`
   counts requests including retries, and tokens are reserved before a call at
-  the most conservative ratio and charged at what the endpoint reported.
+  the most conservative ratio and charged at what the endpoint reported. A
+  failure is charged too. The port attaches the requests a failed call had
+  already made to the error it throws, and the producer charges that rather
+  than the single request it could infer; a receipt that under-reports a run
+  is a receipt nobody can audit a bill against.
+- A `PortError` code says what kind of failure it is, not which one.
+  `not_supported` is reserved for calling a capability a port never declared,
+  which RFC 0002 §3.3 calls a bug in core, so a provider answer this package
+  refuses travels as an unretryable `unavailable` and its `reason` is the
+  discriminator a producer switches on.
 - A model that did not answer is `unavailable`, not `ok` with no claims. The
   distinction is what stops a caller advancing a checkpoint over lost work,
   and `covered_event_ids` is what tells it how far it may advance when a run

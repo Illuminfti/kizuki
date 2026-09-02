@@ -9,6 +9,7 @@ import type {
   LlmPort,
   LlmRequest,
   LlmResponse,
+  LlmSpend,
   PortContext,
   PortDescriptor,
   PortFactory,
@@ -16,8 +17,9 @@ import type {
 } from "@kizuki/core";
 import { MAX_DEADLINE_MS, readLlmPortConfig } from "./config";
 import type { LlmPortConfig } from "./config";
-import { configError } from "./errors";
+import { LlmFailure, configError, refusedAfter } from "./errors";
 import { readChatAnswer } from "./response";
+import type { ProviderAnswer } from "./response";
 import { fetchTransport } from "./transport";
 import type {
   ChatMessage,
@@ -51,6 +53,13 @@ export interface LlmPortOverrides {
   transport?: ChatTransport;
   clock?: Clock;
 }
+
+/** Nothing reached the endpoint, so the call owes nothing for it. */
+const NOTHING_SPEND: LlmSpend = {
+  attempts: 0,
+  input_tokens: 0,
+  output_tokens: 0,
+};
 
 const RATE_WINDOW_MS = 60_000;
 const RETRY_STATUSES = new Set([429, 502, 503, 504]);
@@ -169,40 +178,82 @@ export class OpenAiCompatibleLlm implements LlmPort {
         : {}),
     };
 
+    const inputChars = messages.reduce(
+      (total, message) => total + message.content.length,
+      0,
+    );
+
     let used = 0;
     for (;;) {
-      if (this.clock.now() >= deadline) throw this.deadlineError();
-      const result = await this.send(chat, deadline);
+      if (this.clock.now() >= deadline) {
+        throw this.deadlineError(this.unanswered(used, inputChars));
+      }
+      const result = await this.send(chat, deadline, used, inputChars);
       used += 1;
       if (result.ok) {
-        const answer = readChatAnswer(result.body);
-        const inputChars = messages.reduce(
-          (total, message) => total + message.content.length,
-          0,
-        );
+        let answer: ProviderAnswer;
+        try {
+          answer = readChatAnswer(result.body);
+        } catch (error) {
+          // A refused answer still cost what the endpoint served to produce
+          // it, so the refusal carries the spend rather than dropping it.
+          throw refusedAfter(error, this.answered(null, used, inputChars));
+        }
+        const spend = this.answered(answer, used, inputChars);
         return {
           text: answer.text,
           model: answer.model ?? this.config.model,
           usage: {
-            input_tokens: answer.input_tokens ?? estimateTokens(inputChars),
-            output_tokens:
-              answer.output_tokens ?? estimateTokens(answer.text.length),
+            input_tokens: spend.input_tokens,
+            output_tokens: spend.output_tokens,
           },
           attempts: used,
         };
       }
+      const spend = this.unanswered(used, inputChars);
       const retryable =
         "retry_after_ms" in result && RETRY_STATUSES.has(result.status);
       if (!retryable || used >= allowance) {
-        throw this.transportError(result);
+        throw this.transportError(result, spend);
       }
       const wait = Math.min(
         result.retry_after_ms ?? DEFAULT_RETRY_MS,
         MAX_RETRY_MS,
       );
-      if (this.clock.now() + wait >= deadline) throw this.transportError(result);
+      if (this.clock.now() + wait >= deadline) {
+        throw this.transportError(result, spend);
+      }
       await this.clock.sleep(wait);
     }
+  }
+
+  /**
+   * What a call that reached an answer spent. A retry sends the same prompt
+   * again, so the input is charged once per request that went out, while the
+   * output is charged once: only the answered request produced any.
+   */
+  private answered(
+    answer: ProviderAnswer | null,
+    attempts: number,
+    inputChars: number,
+  ): LlmSpend {
+    const input = answer?.input_tokens ?? estimateTokens(inputChars);
+    const output =
+      answer === null ? 0 : (answer.output_tokens ?? estimateTokens(answer.text.length));
+    return {
+      attempts,
+      input_tokens: input * attempts,
+      output_tokens: output,
+    };
+  }
+
+  /** What a call that never reached an answer had already put on the wire. */
+  private unanswered(attempts: number, inputChars: number): LlmSpend {
+    return {
+      attempts,
+      input_tokens: estimateTokens(inputChars) * attempts,
+      output_tokens: 0,
+    };
   }
 
   private validate(request: LlmRequest): ChatMessage[] {
@@ -254,16 +305,17 @@ export class OpenAiCompatibleLlm implements LlmPort {
     return messages;
   }
 
-  private async apiKey(): Promise<string | null> {
+  private async apiKey(spend: LlmSpend = NOTHING_SPEND): Promise<string | null> {
     if (this.config.secret_ref === null) return null;
     let value: string;
     try {
       value = await this.context.secrets(this.config.secret_ref);
     } catch (cause) {
-      throw new PortError(
+      throw new LlmFailure(
         "unavailable",
         "the configured model credential could not be resolved",
         false,
+        spend,
         { cause },
       );
     }
@@ -281,7 +333,10 @@ export class OpenAiCompatibleLlm implements LlmPort {
   private async send(
     request: ChatRequest,
     deadline: number,
+    used: number,
+    inputChars: number,
   ): Promise<TransportResult> {
+    const spend = this.unanswered(used, inputChars);
     this.prune();
     const oldest = this.window[0];
     if (
@@ -294,15 +349,15 @@ export class OpenAiCompatibleLlm implements LlmPort {
       );
       // Waiting out the rate window is part of the call, so it is spent from
       // the same deadline rather than added on top of it.
-      if (this.clock.now() + wait > deadline) throw this.deadlineError();
+      if (this.clock.now() + wait > deadline) throw this.deadlineError(spend);
       await this.clock.sleep(wait);
       this.prune();
     }
     // Resolve the credential first: a request that fails closed here never
     // happened, so it must not consume a slot in the rate window either.
-    const key = await this.apiKey();
+    const key = await this.apiKey(spend);
     const remaining = deadline - this.clock.now();
-    if (remaining <= 0) throw this.deadlineError();
+    if (remaining <= 0) throw this.deadlineError(spend);
     this.window.push(this.clock.now());
     this.physicalAttempts += 1;
     return await this.transport(request, {
@@ -313,11 +368,12 @@ export class OpenAiCompatibleLlm implements LlmPort {
     });
   }
 
-  private deadlineError(): PortError {
-    return new PortError(
+  private deadlineError(spend: LlmSpend): PortError {
+    return new LlmFailure(
       "timeout",
       `${new URL(this.url).host} did not answer within its deadline`,
       true,
+      spend,
     );
   }
 
@@ -328,51 +384,52 @@ export class OpenAiCompatibleLlm implements LlmPort {
     }
   }
 
-  private transportError(result: TransportResult): PortError {
+  private transportError(result: TransportResult, spend: LlmSpend): PortError {
     const host = new URL(this.url).host;
+    const failed = (
+      code: "timeout" | "unavailable",
+      message: string,
+      retryable: boolean,
+    ): PortError => new LlmFailure(code, message, retryable, spend);
     if ("failure" in result) {
       switch (result.failure) {
         case "timeout":
-          return new PortError(
+          return failed(
             "timeout",
             `${host} did not answer within its deadline`,
             true,
           );
         case "redirect":
-          return new PortError(
+          return failed(
             "unavailable",
             "the endpoint redirected; captured text is never sent to a second host",
             false,
           );
         case "too_large":
-          return new PortError(
+          return failed(
             "unavailable",
             `${host} answered with more than ${this.config.max_response_bytes} bytes`,
             false,
           );
         case "not_json":
-          return new PortError(
+          return failed(
             "unavailable",
             `${host} answered with a body that is not JSON`,
             false,
           );
         default:
-          return new PortError(
-            "unavailable",
-            `${host} could not be reached`,
-            true,
-          );
+          return failed("unavailable", `${host} could not be reached`, true);
       }
     }
     const status = "status" in result ? result.status : 0;
     if (status === 401 || status === 403) {
-      return new PortError(
+      return failed(
         "unavailable",
         `${host} refused the configured credential; check ports.llm.secret_ref`,
         false,
       );
     }
-    return new PortError(
+    return failed(
       "unavailable",
       `${host} answered ${status}`,
       RETRY_STATUSES.has(status),

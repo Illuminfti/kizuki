@@ -91,7 +91,13 @@ describe("the model producer", () => {
     const result = await built.port.produce(
       produceInput([event("ev-1", "hi")]),
     );
-    expect(result).toEqual({ status: "unavailable", reason: "no answer" });
+    // The outage carries what the run had already spent: a call that failed
+    // still cost, and a receipt that cannot see it under-reports the run.
+    expect(result).toEqual({
+      status: "unavailable",
+      reason: "no answer",
+      usage: { calls: 1, input_tokens: 0, output_tokens: 0 },
+    });
   });
 
   test("an unavailable reason is short and printable", async () => {

@@ -100,13 +100,15 @@ disable a bound. A pasted key is refused without being echoed.
 
 | Line                | What it counts                                                                      |
 | ------------------- | ----------------------------------------------------------------------------------- |
-| `max_calls`         | Requests put on the wire, retries included. The remaining allowance is passed to the model port as `max_attempts`, and the port reports what it used. |
-| `max_input_tokens`  | Reserved before a call at one token per character of the messages — the only ratio that holds for every tokenizer — then charged at what the endpoint says it counted. |
-| `max_output_tokens` | Capped per call by `max_tokens` on the request and charged at what the endpoint reports. |
+| `max_calls`         | Requests put on the wire, retries included. What a call may spend on retries is the smaller of the calls left and the input left divided by the prompt, passed to the model port as `max_attempts`; the port reports what it used. |
+| `max_input_tokens`  | Reserved before a call at one token per character of the messages — the only ratio that holds for every tokenizer — then charged at what the endpoint says it counted, once per request that went out. |
+| `max_output_tokens` | Capped per call by `max_tokens` on the request and charged at what the endpoint reports for the request that answered. |
 
 A run that would cross a line does not start the next call, and a run whose
 reported spend has already crossed one stops rather than answering `ok`.
-`usage` always reports the true spend, including a call that failed.
+`usage` always reports the true spend, including a call that failed: the port
+attaches what a failed call had already put on the wire to the error it
+throws, and an outage carries the usage the run accrued before it.
 
 `LlmRequest.deadline_ms` bounds the whole call. Every attempt, every retry
 backoff and every wait for the rate window comes out of it, and the call ends

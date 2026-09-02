@@ -105,7 +105,16 @@ export type ProduceResult =
        */
       dropped_predicates?: string[];
     }
-  | { status: "unavailable"; reason: string }
+  | {
+      status: "unavailable";
+      reason: string;
+      /**
+       * What the run spent before the model stopped answering. A failed call
+       * still costs, and a receipt that cannot see it under-reports the run.
+       * Absent below minor 1. `contract_minor >= 1`.
+       */
+      usage?: ModelUsage;
+    }
   | {
       status: "rejected";
       reason: RejectReason;
