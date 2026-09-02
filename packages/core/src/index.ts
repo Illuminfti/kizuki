@@ -332,6 +332,8 @@ export type {
 } from "./contracts/conformance";
 export { KizukiError } from "./contracts/errors";
 export type { KizukiErrorCode } from "./contracts/errors";
+export { KizukiError } from "./errors";
+export type { KizukiErrorCode } from "./errors";
 
 export { doctorVault } from "./vault/doctor";
 export type { DoctorPageResult, DoctorVaultResult } from "./vault/doctor";
