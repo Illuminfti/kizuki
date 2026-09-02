@@ -22,7 +22,7 @@ export type {
 } from "./resolve";
 export {
   SENSITIVITY_SCHEMA_VERSION,
-  applySensitivityV5,
+  applySensitivityV6,
   initSensitivity,
 } from "./schema";
 export {
