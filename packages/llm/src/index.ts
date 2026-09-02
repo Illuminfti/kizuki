@@ -16,3 +16,13 @@ export {
 export type { LlmConfig, UnlabeledMode } from "./config";
 
 export { resolveApiKey } from "./secrets";
+
+export { fetchTransport } from "./transport";
+export type {
+  ChatMessage,
+  ChatRequest,
+  ChatTransport,
+  TransportFailure,
+  TransportOptions,
+  TransportResult,
+} from "./transport";

@@ -1,0 +1,4 @@
+# The only tracked files under packages/ that may touch the network (invariant 6).
+# Format: <repo-relative path>:<reason>. A stale line fails verification.
+packages/llm/src/transport.ts:user-configured model endpoint; the single fetch call of @kizuki/llm
+packages/llm/test/fake-endpoint.ts:loopback fake model endpoint for tests (127.0.0.1, ephemeral port)
