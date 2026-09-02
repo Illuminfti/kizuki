@@ -57,6 +57,20 @@ test("a quote inside an unquoted field is refused", () => {
   expect(error.message).toContain("part.csv row 1");
 });
 
+test("text after a closing quote is refused, never appended", () => {
+  for (const text of ['"a"b,c\n', '"a" ,b\n', '"a"x']) {
+    const error = thrown(() => parseCsv(text, "part.csv"));
+    expect(error.code).toBe("parse_error");
+    expect(error.message).toContain("part.csv row 1");
+    expect(error.message).toContain("after a closing quote");
+  }
+  expect(parseCsv('"a",b\n"c"\n"d"', "part.csv")).toEqual([
+    ["a", "b"],
+    ["c"],
+    ["d"],
+  ]);
+});
+
 test("field and row bounds are enforced", () => {
   const wide = thrown(() =>
     parseCsv("aaaa,b\n", "part.csv", { maxFieldBytes: 2 }),

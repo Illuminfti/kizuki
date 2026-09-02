@@ -24,6 +24,7 @@ export function parseCsv(
   let row: string[] = [];
   let field = "";
   let inQuotes = false;
+  let quoteClosed = false;
   let fieldStarted = false;
   let rowStarted = false;
 
@@ -41,6 +42,7 @@ export function parseCsv(
     row.push(field);
     field = "";
     fieldStarted = false;
+    quoteClosed = false;
   };
 
   const endRow = (): void => {
@@ -68,10 +70,17 @@ export function parseCsv(
           continue;
         }
         inQuotes = false;
+        quoteClosed = true;
         continue;
       }
       field += character;
       continue;
+    }
+    // Only a delimiter, a newline or the end of the input may follow a
+    // closing quote. Appending whatever came after it would rewrite the
+    // owner's evidence in silence, so it is a named refusal instead.
+    if (quoteClosed && character !== "," && character !== "\n") {
+      fail("unexpected text after a closing quote");
     }
     if (character === '"') {
       if (fieldStarted) fail("unexpected quote inside an unquoted field");
