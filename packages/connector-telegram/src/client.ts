@@ -73,16 +73,35 @@ class RealTelegramApi implements TelegramApi {
 
   async start(flow: SignInFlow): Promise<void> {
     const runtime = await this.#load();
-    await this.#guard(
-      () =>
-        runtime.client.start({
-          phoneNumber: flow.phone,
-          phoneCode: () => flow.code(),
-          password: (hint) => flow.password(hint),
-          onError: (error) => flow.onError(rpcName(error, runtime)),
-        }),
-      runtime,
-    );
+    const refusal: { error: TelegramConnectorError | null } = { error: null };
+    try {
+      await this.#guard(
+        () =>
+          runtime.client.start({
+            phoneNumber: flow.phone,
+            phoneCode: () => flow.code(),
+            password: (hint) => flow.password(hint),
+            // A number with no account behind it sends the library down its
+            // sign-up branch, which registers one under a placeholder name and
+            // accepts the provider's terms on the owner's behalf. This
+            // connector signs in to an account that exists and takes no
+            // outbound action, so the branch is refused before either request
+            // is sent.
+            firstAndLastNames: () => refuseRegistration(refusal),
+            onError: (error) =>
+              refusal.error !== null
+                ? Promise.resolve(true)
+                : flow.onError(rpcName(error, runtime)),
+          }),
+        runtime,
+      );
+    } catch (error) {
+      // The library reports the refusal as its own cancellation; the reason it
+      // was cancelled is the useful one.
+      const refused = refusal.error;
+      if (refused !== null) throw refused;
+      throw error;
+    }
   }
 
   async me(): Promise<TelegramUser> {
@@ -210,6 +229,17 @@ class RealTelegramApi implements TelegramApi {
 
 export const createRealApi: TelegramApiFactory = (session, credentials) =>
   new RealTelegramApi(session, credentials);
+
+function refuseRegistration(holder: {
+  error: TelegramConnectorError | null;
+}): never {
+  const refused = new TelegramConnectorError(
+    "sign_in_aborted",
+    "kizuki.telegram: that number has no telegram account; this connector signs in to one, it never creates one",
+  );
+  holder.error = refused;
+  throw refused;
+}
 
 function rpcName(error: unknown, runtime: Runtime): string {
   return runtime.isRpcError(error) ? error.errorMessage : "UNKNOWN";

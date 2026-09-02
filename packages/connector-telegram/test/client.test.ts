@@ -1,5 +1,6 @@
 import { expect, mock, test } from "bun:test";
 import { TelegramConnectorError } from "../src/api";
+import type { SignInFlow } from "../src/api";
 import {
   FIXTURE_CREDENTIALS,
 } from "../src/fixture";
@@ -30,14 +31,47 @@ const pages: {
   messages: () => AsyncGenerator<unknown>;
   invoke: (request: unknown) => Promise<unknown>;
   invoked: string[];
+  /** The number the flow is signing in with has no account behind it. */
+  signUpRequired: boolean;
 } = {
   dialogs: async function* () {},
   messages: async function* () {},
   invoke: async () => ({}),
   invoked: [],
+  signUpRequired: false,
 };
 
+interface StartParams {
+  phoneNumber: string;
+  phoneCode: () => Promise<string>;
+  password: (hint?: string) => Promise<string>;
+  firstAndLastNames?: () => Promise<[string, string?]>;
+  onError: (error: Error) => Promise<boolean>;
+}
+
 class FakeClient {
+  /** The library's own sign-up branch, transcribed from `client/auth.js`. */
+  async start(params: StartParams): Promise<void> {
+    if (!pages.signUpRequired) return;
+    for (;;) {
+      try {
+        let firstName = "first name";
+        if (params.firstAndLastNames !== undefined) {
+          const names = await params.firstAndLastNames();
+          firstName = names[0];
+        }
+        expect(firstName.length).toBeGreaterThan(0);
+        pages.invoked.push("auth.SignUp");
+        pages.invoked.push("help.AcceptTermsOfService");
+        return;
+      } catch (error) {
+        if (await params.onError(error as Error)) {
+          throw new Error("AUTH_USER_CANCEL");
+        }
+      }
+    }
+  }
+
   iterDialogs(): AsyncGenerator<unknown> {
     return pages.dialogs();
   }
@@ -191,5 +225,26 @@ test.skipIf(!OFFLINE)(
     // The provider never answered; reporting a revoked sign-in would send the
     // owner to authenticate again over a connection that is merely down.
     expect((caught as TelegramConnectorError).code).toBe("unreachable");
+  },
+);
+
+test.skipIf(!OFFLINE)(
+  "sign-in refuses to register the account the number has none of",
+  async () => {
+    const flow: SignInFlow = {
+      phone: "+15551234567",
+      code: async () => "22222",
+      password: async () => "hunter",
+      onError: async () => false,
+    };
+    pages.signUpRequired = true;
+    pages.invoked = [];
+    const caught = await thrown(() => api().start(flow));
+    pages.signUpRequired = false;
+    expect(caught).toBeInstanceOf(TelegramConnectorError);
+    expect((caught as TelegramConnectorError).code).toBe("sign_in_aborted");
+    // Registering an account under a placeholder name and accepting the
+    // provider's terms on the owner's behalf are both outbound actions.
+    expect(pages.invoked).toEqual([]);
   },
 );
