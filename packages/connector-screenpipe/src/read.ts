@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { MAX_TEXT_CHARS } from "./cursor";
+import { MAX_METADATA_CHARS, MAX_TEXT_CHARS } from "./cursor";
 import { ScreenpipeConnectorError } from "./errors";
 import { cutText } from "./text";
 
@@ -83,15 +83,26 @@ export interface RawTranscriptionRow {
 const READ_TEXT_CHARS = MAX_TEXT_CHARS + 2;
 
 /**
+ * The same two units of headroom for every string that is not the event's own
+ * text, so mapping can still tell a value that filled the bound from one that
+ * was cut at it.
+ */
+const READ_METADATA_CHARS = MAX_METADATA_CHARS + 2;
+
+/**
  * Every TEXT column here is provider-controlled and unbounded in the file, so
  * the value is cut in SQLite rather than read whole and cut afterwards. A
  * column holding something other than text is passed through unchanged so it
  * still fails its own validation. SQLite counts code points here, so the
  * readers cut again in code units — the unit every bound downstream counts.
  */
-function bounded(column: string, alias = column): string {
+function bounded(
+  column: string,
+  alias = column,
+  limit = READ_METADATA_CHARS,
+): string {
   return `CASE WHEN typeof(${column}) = 'text'
-               THEN substr(${column}, 1, ${READ_TEXT_CHARS})
+               THEN substr(${column}, 1, ${limit})
                ELSE ${column} END AS ${alias}`;
 }
 
@@ -113,7 +124,7 @@ const FRAME_COLUMNS = [
   bounded("browser_url"),
   bounded("device_name"),
   "focused",
-  bounded("full_text"),
+  bounded("full_text", "full_text", READ_TEXT_CHARS),
   bounded("text_source"),
   bounded("capture_trigger"),
   bounded("snapshot_path"),
@@ -127,7 +138,7 @@ const TRANSCRIPTION_COLUMNS = [
   "t.audio_chunk_id",
   "t.offset_index",
   bounded("t.timestamp", "timestamp"),
-  bounded("t.transcription", "transcription"),
+  bounded("t.transcription", "transcription", READ_TEXT_CHARS),
   bounded("t.device", "device"),
   "t.is_input_device",
   "t.speaker_id",
@@ -227,7 +238,7 @@ export function mapFrameRow(row: RawFrameRow): FrameRow {
     browser_url: nullableText(row.browser_url),
     device_name: degradedText(row.device_name),
     focused: nullableBoolean(row.focused),
-    full_text: nullableText(row.full_text),
+    full_text: nullableText(row.full_text, READ_TEXT_CHARS),
     text_source: nullableText(row.text_source),
     capture_trigger: nullableText(row.capture_trigger),
     snapshot_path: nullableText(row.snapshot_path),
@@ -350,11 +361,14 @@ function requiredText(value: unknown, column: string): string {
  * treat as no subject.
  */
 function degradedText(value: unknown): string {
-  return typeof value === "string" ? cutText(value, READ_TEXT_CHARS) : "";
+  return typeof value === "string" ? cutText(value, READ_METADATA_CHARS) : "";
 }
 
-function nullableText(value: unknown): string | null {
-  return typeof value === "string" ? cutText(value, READ_TEXT_CHARS) : null;
+function nullableText(
+  value: unknown,
+  limit = READ_METADATA_CHARS,
+): string | null {
+  return typeof value === "string" ? cutText(value, limit) : null;
 }
 
 function nullableBoolean(value: unknown): boolean | null {

@@ -31,6 +31,17 @@ export const MAX_TEXT_CHARS = 65_536;
  * rather than the whole provider-controlled column.
  */
 export const MAX_SUBJECT_CHARS = 1_024;
+/**
+ * Characters of a metadata or display string that reach an event. Only `text`
+ * carries a whole screen; a window title, a URL, a device name or a path does
+ * not, and reading them at the text bound lets one batch carry hundreds of
+ * megabytes of them while every event's own text is a few characters. Never
+ * below `MAX_SUBJECT_CHARS`, or the walk and the purge plan would derive
+ * different subject ids from the same row.
+ */
+export const MAX_METADATA_CHARS = MAX_SUBJECT_CHARS;
+/** Characters of a snapshot's basename that reach an attachment reference. */
+export const MAX_FILENAME_CHARS = 255;
 export const DEFAULT_SETTLE_SECONDS = 300;
 export const MAX_PLAN_IDS = 10_000;
 export const PLAN_PAGE = 5_000;

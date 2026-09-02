@@ -4,7 +4,12 @@ import type {
   SubjectRef,
 } from "@kizuki/core";
 import { SCREENPIPE_CONNECTOR_ID } from "./config";
-import { MAX_SUBJECT_CHARS, MAX_TEXT_CHARS } from "./cursor";
+import {
+  MAX_FILENAME_CHARS,
+  MAX_METADATA_CHARS,
+  MAX_SUBJECT_CHARS,
+  MAX_TEXT_CHARS,
+} from "./cursor";
 import { ScreenpipeConnectorError } from "./errors";
 import type { FrameRow, TranscriptionRow } from "./read";
 import { cutText } from "./text";
@@ -106,7 +111,7 @@ export function mapFrame(
       subjects.push({
         subject_id: `screenpipe:app:${appSlug}`,
         role: "about",
-        display_name: row.app_name,
+        display_name: cutText(row.app_name, MAX_SUBJECT_CHARS),
       });
     }
   }
@@ -138,17 +143,27 @@ export function mapFrame(
     attachments: snapshotAttachments(row.snapshot_path),
     metadata: {
       frame_id: row.id,
-      device_name: row.device_name,
-      app_name: row.app_name,
-      window_name: row.window_name,
-      browser_url: row.browser_url,
-      document_path: row.document_path,
+      device_name: cutMetadata(row.device_name),
+      app_name: cutMetadata(row.app_name),
+      window_name: cutMetadata(row.window_name),
+      browser_url: cutMetadata(row.browser_url),
+      document_path: cutMetadata(row.document_path),
       focused: row.focused,
-      capture_trigger: row.capture_trigger,
-      text_source: row.text_source,
+      capture_trigger: cutMetadata(row.capture_trigger),
+      text_source: cutMetadata(row.text_source),
       video_chunk_id: row.video_chunk_id,
       offset_index: row.offset_index,
       text_truncated: truncated,
+      metadata_truncated: anyCut([
+        row.device_name,
+        row.app_name,
+        row.window_name,
+        row.browser_url,
+        row.document_path,
+        row.capture_trigger,
+        row.text_source,
+        row.snapshot_path,
+      ]),
     },
   };
 }
@@ -165,7 +180,7 @@ export function mapTranscription(
       subject_id: `screenpipe:speaker:${row.speaker_id}`,
       role: "from",
       ...(row.speaker_name !== null
-        ? { display_name: row.speaker_name }
+        ? { display_name: cutText(row.speaker_name, MAX_SUBJECT_CHARS) }
         : {}),
     });
   }
@@ -175,7 +190,7 @@ export function mapTranscription(
       subjects.push({
         subject_id: `screenpipe:audio-device:${deviceSlug}`,
         role: "about",
-        display_name: row.device,
+        display_name: cutText(row.device, MAX_SUBJECT_CHARS),
       });
     }
   }
@@ -198,13 +213,14 @@ export function mapTranscription(
       transcription_id: row.id,
       audio_chunk_id: row.audio_chunk_id,
       offset_index: row.offset_index,
-      device: row.device,
+      device: cutMetadata(row.device),
       is_input_device: row.is_input_device,
-      transcription_engine: row.transcription_engine,
+      transcription_engine: cutMetadata(row.transcription_engine),
       start_time: row.start_time,
       end_time: row.end_time,
       speaker_id: row.speaker_id,
       text_truncated: truncated,
+      metadata_truncated: anyCut([row.device, row.transcription_engine]),
     },
   };
 }
@@ -219,13 +235,36 @@ function snapshotAttachments(snapshotPath: string | null): AttachmentRef[] {
     snapshotPath.lastIndexOf("\\"),
   );
   const filename = snapshotPath.slice(cut + 1);
+  // A path the read had to cut has no last component left to read, and a name
+  // no filesystem could hold is not one either. The reference stands either
+  // way: what it points at is the row, not the name.
+  const named =
+    snapshotPath.length <= MAX_METADATA_CHARS &&
+    filename.length > 0 &&
+    filename.length <= MAX_FILENAME_CHARS;
   return [
     {
       attachment_id: "snapshot",
       media_type: "image/jpeg",
-      ...(filename.length > 0 ? { filename } : {}),
+      ...(named ? { filename } : {}),
     },
   ];
+}
+
+/**
+ * Metadata is provider-controlled and travels with every event, so it is cut
+ * to its own bound rather than the text bound: one batch's non-text payload
+ * has to stay a constant, not five hundred times the largest window title an
+ * application can set.
+ */
+function cutMetadata(value: string | null): string | null {
+  return value === null ? null : cutText(value, MAX_METADATA_CHARS);
+}
+
+function anyCut(values: readonly (string | null)[]): boolean {
+  return values.some(
+    (value) => value !== null && value.length > MAX_METADATA_CHARS,
+  );
 }
 
 function requiredTimestamp(raw: string | null, rowKind: string): string {

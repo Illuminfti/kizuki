@@ -98,9 +98,18 @@ screenpipe schema older than supported: migration 20260613130000 not applied (ma
   checkpoint rather than emitted with a fabricated time. One such row never
   holds up the rows behind it.
 - Screen text and transcripts longer than 65,536 UTF-16 code units are cut on a
-  code point boundary and marked with `metadata.text_truncated: true`. Every
-  other string read from the database is bounded the same way and counted in the
-  same units, including the display names that reach subjects.
+  code point boundary and marked with `metadata.text_truncated: true`.
+- Every other captured string is bounded at 1,024 UTF-16 code units, counted
+  the same way and cut the same way: the window title, application name, URL,
+  document path, device names, capture trigger and text source that travel in
+  `metadata`, and the display names that reach subjects. A cut there is marked
+  with `metadata.metadata_truncated: true`. The bounds are separate because
+  only the text is a screenful; one batch of 500 events would otherwise carry
+  megabytes of window titles around events whose own text is a line long.
+- A snapshot attachment carries the last component of `snapshot_path` as its
+  filename when that component is at most 255 code units and the path itself
+  was not cut. Otherwise the reference stands without a filename: what it
+  points at is the row, not the name.
 - The optional `since` setting excludes every row dated before it. The cutoff is
   compared against each row's own timestamp, so it holds even where ID order and
   timestamp order disagree, which is ordinary for `audio_transcriptions`. It
