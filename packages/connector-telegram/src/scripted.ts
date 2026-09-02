@@ -26,6 +26,7 @@ export class ScriptedTelegramApi implements TelegramApi {
   readonly #hidden: TelegramDialog[] = [];
   #floodFired = false;
   #signInFloods = 0;
+  #listingFlood: number | null = null;
 
   constructor(account: ScriptedAccount, session: string = FIXTURE_SESSION) {
     this.#account = account;
@@ -86,6 +87,11 @@ export class ScriptedTelegramApi implements TelegramApi {
     this.#record("dialogs", [limit]);
     this.#assertReachable();
     this.#assertAuthorized();
+    const listingFlood = this.#listingFlood;
+    if (listingFlood !== null) {
+      this.#listingFlood = null;
+      throw waitError(listingFlood);
+    }
     for (const dialog of this.#account.dialogs.slice(0, limit)) {
       yield dialog;
     }
@@ -172,6 +178,11 @@ export class ScriptedTelegramApi implements TelegramApi {
   /** Puts back everything `hideDialog` took out, in its original order. */
   showDialogs(): void {
     this.#account.dialogs.push(...this.#hidden.splice(0));
+  }
+
+  /** Arms one wait report on the next dialog listing. */
+  floodListing(seconds: number): void {
+    this.#listingFlood = seconds;
   }
 
   /** Arms one wait report `calls` further `messages()` calls from now. */

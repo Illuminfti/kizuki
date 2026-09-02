@@ -116,6 +116,7 @@ test("a pass interrupted by a reported wait resumes at the dialog it stopped on"
   expect(stopped.pass?.next_peer).toBe("-42");
 
   built.api.calls.length = 0;
+  built.clock.now += 5_000;
   const finished = await built.connector.sync(partial.cursor);
   expect(parseCursor(finished.cursor as string).pass).toBeNull();
   const visited = built.api.calls

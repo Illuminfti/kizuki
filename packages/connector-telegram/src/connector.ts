@@ -324,6 +324,12 @@ export class TelegramConnector implements Connector {
     const api = this.#api;
     const self = this.#self;
     if (api === null || self === null) throw notConnected();
+    if (this.#deps.now() < this.#floodUntil) {
+      // Telegram asked for a pause. Spending a request to be told so again is
+      // how a wait becomes a longer one, so the cursor comes back untouched
+      // and the caller resumes once the pause has lapsed.
+      return { events: [], cursor };
+    }
     const result = await walk(cursor, mode, {
       api,
       self,

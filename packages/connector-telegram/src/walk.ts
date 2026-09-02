@@ -108,7 +108,22 @@ export async function walk(
   let dialogs: TelegramDialog[];
   let limitReached: boolean | null = null;
   if (carried === null) {
-    const listed = await listDialogs(deps.api);
+    let listed: { dialogs: TelegramDialog[]; limitReached: boolean };
+    try {
+      listed = await listDialogs(deps.api);
+    } catch (error) {
+      const seconds = waitSeconds(error);
+      if (seconds === null) throw error;
+      // The listing is the first request a walk makes and the likeliest place
+      // on a large account to be told to wait. Raising it here would leave the
+      // wait unrecorded, health calling the connection healthy, and the
+      // caller's cursor lost along with the batch.
+      return {
+        batch: { events: [], cursor: cursorText },
+        floodUntil: deps.now() + seconds * 1000,
+        listing: null,
+      };
+    }
     dialogs = listed.dialogs;
     limitReached = listed.limitReached;
   } else {

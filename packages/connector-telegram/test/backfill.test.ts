@@ -95,6 +95,15 @@ test("resuming after a reported wait replays nothing and misses nothing", async 
   expect(stopped.dialogs["-100777"]?.last_id).toBe(20);
   expect(stopped.dialogs["-42"]?.last_id).toBe(0);
 
+  // Inside the wait the connector spends nothing: asking again is how a pause
+  // becomes a longer one.
+  built.api.calls.length = 0;
+  const early = await built.connector.backfill(first.cursor);
+  expect(early.events).toEqual([]);
+  expect(early.cursor).toBe(first.cursor);
+  expect(built.api.calls).toEqual([]);
+
+  built.clock.now += 5_000;
   const rest = await drain(built.connector, "backfill", first.cursor);
   const ids = [...first.events, ...rest.events].map(
     (event) => event.source_record_id,

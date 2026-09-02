@@ -131,3 +131,22 @@ test("a pass cut short by a wait is not recorded as a success", async () => {
   expect(recovered.state).toBe("ok");
   expect(recovered.last_success_at).toBe("2026-01-01T00:01:45.000Z");
 });
+
+test("a wait reported while listing dialogs is recorded, not raised", async () => {
+  const built = await connected();
+  built.api.floodListing(300);
+
+  // The first request of a fresh backfill is the listing, and it is the one
+  // most likely to be told to wait on a large account.
+  const batch = await built.connector.backfill(null);
+  expect(batch.events).toEqual([]);
+  expect(batch.cursor).toBeNull();
+
+  const report = await built.connector.health();
+  expect(report.state).toBe("rate_limited");
+  expect(report.detail).toBe("retry after 300s");
+
+  built.clock.now += 300_000;
+  const resumed = await built.connector.backfill(null);
+  expect(resumed.events).toHaveLength(12);
+});
