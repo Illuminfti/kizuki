@@ -37,6 +37,16 @@ export interface LegacyEventsCursor {
 }
 
 const POSITION = /^(?:0|[1-9]\d{0,29})$/;
+/** A tally names one kind per mapped value; a cursor claiming more is not ours. */
+const MAX_TALLIED_KINDS = 256;
+
+function malformed(cause?: unknown): KizukiError {
+  return new KizukiError(
+    "parse_error",
+    `${LEGACY_EVENTS_CONNECTOR_ID}: malformed cursor`,
+    cause === undefined ? undefined : { cause },
+  );
+}
 
 export function emptyTotals(from: bigint): RunTotals {
   return {
@@ -63,36 +73,29 @@ function decodeTotals(raw: unknown, from: bigint): RunTotals {
     !isPlainObject(counts) ||
     !Array.isArray(skipped)
   ) {
-    throw new KizukiError(
-      "parse_error",
-      `${LEGACY_EVENTS_CONNECTOR_ID}: malformed cursor`,
-    );
+    throw malformed();
   }
   const totals = emptyTotals(BigInt(raw["from_position"]));
-  for (const key of ["rows", "events", "tombstones", "skipped", "blobs_dropped"] as const) {
+  const measures = [
+    "rows",
+    "events",
+    "tombstones",
+    "skipped",
+    "blobs_dropped",
+  ] as const;
+  for (const key of measures) {
     const value = counts[key];
     if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
-      throw new KizukiError(
-        "parse_error",
-        `${LEGACY_EVENTS_CONNECTOR_ID}: malformed cursor`,
-      );
+      throw malformed();
     }
     totals.counts[key] = value;
   }
   const kinds = counts["kinds"];
-  if (!isPlainObject(kinds)) {
-    throw new KizukiError(
-      "parse_error",
-      `${LEGACY_EVENTS_CONNECTOR_ID}: malformed cursor`,
-    );
-  }
-  for (const [kind, count] of Object.entries(kinds)) {
-    if (typeof count !== "number") {
-      throw new KizukiError(
-        "parse_error",
-        `${LEGACY_EVENTS_CONNECTOR_ID}: malformed cursor`,
-      );
-    }
+  if (!isPlainObject(kinds)) throw malformed();
+  const tallied = Object.entries(kinds);
+  if (tallied.length > MAX_TALLIED_KINDS) throw malformed();
+  for (const [kind, count] of tallied) {
+    if (typeof count !== "number") throw malformed();
     totals.counts.kinds[kind] = count;
   }
   for (const skip of skipped.slice(0, MAX_REPORTED_SKIPS)) {
@@ -102,10 +105,7 @@ function decodeTotals(raw: unknown, from: bigint): RunTotals {
       !POSITION.test(skip["position"]) ||
       typeof skip["reason"] !== "string"
     ) {
-      throw new KizukiError(
-        "parse_error",
-        `${LEGACY_EVENTS_CONNECTOR_ID}: malformed cursor`,
-      );
+      throw malformed();
     }
     totals.skipped.push({
       position: skip["position"],
@@ -120,11 +120,7 @@ export function decodeCursor(cursor: Cursor): LegacyEventsCursor {
   try {
     parsed = JSON.parse(cursor) as unknown;
   } catch (error) {
-    throw new KizukiError(
-      "parse_error",
-      `${LEGACY_EVENTS_CONNECTOR_ID}: malformed cursor`,
-      { cause: error },
-    );
+    throw malformed(error);
   }
   if (
     !isPlainObject(parsed) ||
@@ -134,10 +130,7 @@ export function decodeCursor(cursor: Cursor): LegacyEventsCursor {
     !POSITION.test(parsed["position"]) ||
     typeof parsed["done"] !== "boolean"
   ) {
-    throw new KizukiError(
-      "parse_error",
-      `${LEGACY_EVENTS_CONNECTOR_ID}: malformed cursor`,
-    );
+    throw malformed();
   }
   const position = BigInt(parsed["position"]);
   return {

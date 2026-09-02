@@ -27,8 +27,9 @@ export function raiseSensitivity(
   left: SensitivityHint,
   right: SensitivityHint,
 ): SensitivityHint {
-  const rank = SENSITIVITY_HINTS.indexOf(left) >= SENSITIVITY_HINTS.indexOf(right);
-  return rank ? left : right;
+  return SENSITIVITY_HINTS.indexOf(left) >= SENSITIVITY_HINTS.indexOf(right)
+    ? left
+    : right;
 }
 
 export interface SubjectRef {
