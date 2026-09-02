@@ -120,6 +120,28 @@ if (
   exit 1
 fi
 
+tls_disable_re='rejectUnauthorized[[:space:]]*:[[:space:]]*(false|0)'
+printf 'const socket = connect({ tls: { rejectUnauthorized: true } });\n' \
+  >"$fixture_root/packages/tls.ts"
+git -C "$fixture_root" add packages/tls.ts
+(
+  cd "$fixture_root"
+  assert_no_match "tls verification disabled" \
+    git grep -I -n -E "$tls_disable_re" -- ':(glob)**/*.ts'
+)
+printf 'const socket = connect({ tls: { rejectUnauthorized: false } });\n' \
+  >"$fixture_root/packages/tls.ts"
+git -C "$fixture_root" add packages/tls.ts
+if (
+  cd "$fixture_root"
+  assert_no_match "tls verification disabled" \
+    git grep -I -n -E "$tls_disable_re" -- ':(glob)**/*.ts'
+) >/dev/null 2>&1; then
+  printf 'policy test failed: disabled TLS verification passed\n' >&2
+  exit 1
+fi
+git -C "$fixture_root" rm -q -f packages/tls.ts
+
 printf 'export const marker = "x";\n' >"$fixture_root/packages/scannable.ts"
 git -C "$fixture_root" add packages/scannable.ts
 (

@@ -13,9 +13,10 @@ import {
   KizukiError,
   enrollConnection,
   openLedger,
+  runBackfill,
 } from "@kizuki/core";
 import type { SignInIo } from "@kizuki/core";
-import { createImapConnector } from "../src/connector";
+import { IMAP_CONNECTOR_ID, createImapConnector } from "../src/connector";
 import { parseImapState } from "../src/state";
 import { FakeImapServer } from "../src/testing/fake-imap";
 import { memoryDialer } from "../src/testing/memory-dialer";
@@ -270,5 +271,38 @@ describe("interactive sign-in", () => {
     const raw = readFileSync(dbPath);
     expect(raw.includes(Buffer.from(FIXTURE_PASSWORD))).toBe(false);
     expect(raw.includes(Buffer.from("mail.acme.example"))).toBe(false);
+  });
+
+  test("a run keeps the credential out of SQLite but does store folder names", async () => {
+    const directory = temporary();
+    const dbPath = join(directory, "ledger.sqlite");
+    const db = openLedger(dbPath);
+    const store = new ConnectionStateStore(directory);
+    const fake = server();
+    const enroller = createImapConnector({}, { dial: memoryDialer(fake) });
+
+    const saved = await enrollConnection(db, store, enroller, scriptedIo(HAPPY));
+    const ref = saved.secret_refs[0] ?? "";
+    const bytes = store.read(saved) ?? new Uint8Array();
+    const connector = createImapConnector(
+      { secret_ref: ref },
+      { dial: memoryDialer(fake) },
+    );
+    await connector.connect(async () => new TextDecoder().decode(bytes));
+    const result = await runBackfill(db, connector, IMAP_CONNECTOR_ID, saved.source_key);
+    expect(result.errors).toEqual([]);
+    expect(result.stored).toBeGreaterThan(0);
+    const connections = db
+      .query("select config, secret_refs from connections")
+      .all();
+    expect(JSON.stringify(connections)).not.toContain(FIXTURE_USERNAME);
+    db.close();
+
+    const raw = readFileSync(dbPath);
+    expect(raw.includes(Buffer.from(FIXTURE_PASSWORD))).toBe(false);
+    expect(raw.includes(Buffer.from("mail.acme.example"))).toBe(false);
+    // The README says so plainly: the checkpoint cursor is keyed by folder and
+    // every event carries metadata.folder, so folder names are not a secret.
+    expect(raw.includes(Buffer.from("Archive/2026"))).toBe(true);
   });
 });

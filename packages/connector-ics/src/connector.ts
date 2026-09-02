@@ -114,7 +114,7 @@ export class IcsConnector implements Connector {
     if (this.secretRef === null) {
       throw new KizukiError(
         "missing_secret",
-        "kizuki.ics: sign in first (kizuki connect ics)",
+        "kizuki.ics: not signed in; enroll this connection first",
       );
     }
     let text: string;
@@ -215,7 +215,7 @@ export class IcsConnector implements Connector {
     if (this.state === null) {
       throw new KizukiError(
         "missing_secret",
-        "kizuki.ics: sign in first (kizuki connect ics)",
+        "kizuki.ics: not signed in; enroll this connection first",
       );
     }
     const response = await this.fetcher(this.state.url, {

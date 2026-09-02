@@ -12,7 +12,7 @@ are all in this package.
 **File.** Point it at an `.ics` file:
 
 ```
-kizuki ingest kizuki.ics --vault ~/vault --source /path/to/team.ics
+kizuki import kizuki.ics --vault ~/vault --source /path/to/team.ics
 ```
 
 Nothing is persisted beyond the path. No credential is involved.
@@ -24,9 +24,10 @@ one question:
 Calendar URL (https:// or webcal://): https://calendar.example.org/private/...
 ```
 
-The CLI verb that drives an interactive sign-in is owned by a CLI lane and is
-not on `main` yet; today the walk-through runs through `enrollConnection` from
-`@kizuki/core`.
+No CLI verb drives an interactive sign-in yet: `kizuki connect` enrolls a
+none-mode source from a path. Today the walk-through runs through
+`enrollConnection` from `@kizuki/core`, which is what
+`packages/connector-ics/test/connector.test.ts` exercises.
 
 `webcal://` is rewritten to `https://`. Plain `http://` is refused. The URL is
 fetched and parsed once before anything is written, so a wrong address fails
@@ -115,12 +116,15 @@ File mode runs end to end through the CLI today:
 
 ```
 bun run packages/cli/src/main.ts init /tmp/vault
-bun run packages/cli/src/main.ts ingest kizuki.ics \
+bun run packages/cli/src/main.ts import kizuki.ics \
   --vault /tmp/vault --source /path/to/your.ics
+bun run packages/cli/src/main.ts sync kizuki.ics --vault /tmp/vault
 ```
 
-It prints an `events_stored=` line. Running it again resumes from the stored
-checkpoint and emits nothing at all while the file is unchanged.
+`import` connects the file and backfills it in one step, printing
+`events_stored=1 duplicates=0 …` for a one-event calendar. The `sync` that
+follows resumes from the stored checkpoint and prints `events_stored=0
+duplicates=0 …` while the file is unchanged.
 
 For URL mode, enroll the connection through `enrollConnection` and confirm
 `health()` reports `ok`; `packages/connector-ics/test/connector.test.ts` does

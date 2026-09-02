@@ -99,7 +99,7 @@ export class ImapConnector implements Connector {
     if (typeof ref !== "string" || !ref.startsWith("file:")) {
       throw new KizukiError(
         "missing_secret",
-        "kizuki.imap: sign in first (kizuki connect imap)",
+        "kizuki.imap: not signed in; enroll this connection first",
       );
     }
     let text: string;
@@ -128,7 +128,7 @@ export class ImapConnector implements Connector {
     if (this.state === null) {
       throw new KizukiError(
         "missing_secret",
-        "kizuki.imap: sign in first (kizuki connect imap)",
+        "kizuki.imap: not signed in; enroll this connection first",
       );
     }
     return this.state;

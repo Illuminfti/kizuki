@@ -52,9 +52,15 @@ password, an unreadable folder or a folder name that is not on the server
 fails the sign-in and leaves no state behind.
 
 Everything you typed is then handed to Kizuki as opaque bytes and stored in
-`~/.kizuki/connections/<id>.state`, mode 0600. None of it — host, username,
-folder list, least of all the password — is ever written to SQLite; the
-ledger's CHECK constraints refuse to hold it.
+`~/.kizuki/connections/<id>.state`, mode 0600. The host, the username and the
+password never reach SQLite: the ledger's CHECK constraints allow a connection
+row to hold only a core-minted source key, a fixed config literal and one
+`file:connections/<id>.state` reference.
+
+Folder names are not secret and are not hidden. The checkpoint cursor is keyed
+by folder, and every event carries `metadata.folder`, so both are in the
+ledger. `packages/connector-imap/test/sign-in.test.ts` asserts exactly that
+split against a real database file.
 
 To change the folder list, run the sign-in again through
 `ConnectionStateStore.replace`. The connection keeps its identity and the
@@ -78,7 +84,8 @@ disconnects the source.
 
 - Certificates are verified. A server whose certificate the system trust store
   does not accept is unsupported. There is no insecure switch: nothing in this
-  tree can turn certificate verification off, and CI greps for the attempt.
+  tree can turn certificate verification off, and `scripts/verify.sh` fails the
+  build on a tracked file that tries.
 - The hostname is checked against the certificate by this package, because the
   runtime does not fail the handshake on a mismatch. Not one byte is written
   before both checks pass.

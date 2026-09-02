@@ -221,6 +221,10 @@ main() {
 
   assert_no_match "phone-home dependency" git grep -I -n -E "$dependency_re" -- ':(glob)**/package.json'
   gate phone-home
+  assert_no_match "tls verification disabled" \
+    git grep -I -n -E 'rejectUnauthorized[[:space:]]*:[[:space:]]*(false|0)' -- \
+    ':(glob)**/*.ts' ':(glob)**/*.js' ':(glob)**/*.json'
+  gate tls
   assert_scannable_tracked_text
   assert_safe_tracked_paths "$forbidden_identifier_re|$attributed_identifier_re"
   assert_no_match "forbidden identifier in tracked text" git grep -I -n -i -E "$forbidden_identifier_re"
