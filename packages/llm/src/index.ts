@@ -75,3 +75,11 @@ export {
   targetRelPath,
 } from "./drafts";
 export type { DraftContext } from "./drafts";
+
+export { initLlm, lastRun, listRuns } from "./schema";
+export type {
+  EnrichmentOutcome,
+  EnrichmentRecord,
+  LlmRun,
+  StopReason,
+} from "./schema";
