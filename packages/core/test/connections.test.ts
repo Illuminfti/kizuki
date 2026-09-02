@@ -10,9 +10,9 @@ import {
 import { join } from "node:path";
 import {
   ConnectionStateStore,
-  enrollConnection,
   writeAll,
 } from "../src/ledger/connection-state";
+import { enrollConnection } from "../src/ledger/enroll";
 import {
   LedgerError,
   getConnection,

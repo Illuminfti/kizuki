@@ -2,10 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { openLedger } from "../src/ledger/db";
-import {
-  ConnectionStateStore,
-  enrollConnection,
-} from "../src/ledger/connection-state";
+import { ConnectionStateStore } from "../src/ledger/connection-state";
+import { enrollConnection } from "../src/ledger/enroll";
 import { createStatePersister } from "../src/ledger/state-persister";
 import {
   LedgerError,

@@ -475,11 +475,11 @@ export {
 export type { Checkpoint, Connection, ConnectionConfig } from "./ledger/connections";
 export {
   ConnectionStateStore,
-  enrollConnection,
   CONNECTION_CONFIG_SCHEMA,
   MAX_CONNECTION_STATE_BYTES,
 } from "./ledger/connection-state";
 export type { ConnectionStateReader } from "./ledger/connection-state";
+export { enrollConnection } from "./ledger/enroll";
 export { createStatePersister } from "./ledger/state-persister";
 export type { StatePersisterHandle } from "./ledger/state-persister";
 export { isSecretRef, parseSecretRef } from "./contracts/secret-ref";

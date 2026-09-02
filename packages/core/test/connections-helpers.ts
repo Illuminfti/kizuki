@@ -7,10 +7,8 @@ import type {
   Connector,
   SignInIo,
 } from "../src/contracts/connector";
-import {
-  ConnectionStateStore,
-  enrollConnection,
-} from "../src/ledger/connection-state";
+import { ConnectionStateStore } from "../src/ledger/connection-state";
+import { enrollConnection } from "../src/ledger/enroll";
 import type { Connection } from "../src/ledger/connections";
 import { openLedger } from "../src/ledger/db";
 

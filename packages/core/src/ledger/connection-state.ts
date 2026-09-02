@@ -1,27 +1,40 @@
 import type { Database } from "bun:sqlite";
 import {
   chmodSync,
-  closeSync,
   existsSync,
-  fsyncSync,
   mkdirSync,
-  openSync,
   readFileSync,
   readdirSync,
-  renameSync,
   rmSync,
-  statSync,
-  writeSync,
 } from "node:fs";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, join } from "node:path";
 import type {
   ConnectionStateWriter,
   Connector,
   SignInIo,
 } from "../contracts/connector";
 import { ulid } from "../util/ulid";
-import { isRfc3339 } from "../util/time";
+import {
+  clearSwapDebris,
+  connectionStatePath,
+  fsyncDirectory,
+  isCoreUlid,
+  restoreStateFile,
+  stateRefFor,
+  sweepAbandonedStaging,
+  swapStateFile,
+  writeDurableFile,
+} from "./connection-state-files";
+import { repairSwap, type SwapJournal } from "./connection-state-journal";
+import {
+  commitConnectionRow,
+  nextConnectedAt,
+  writeLocked,
+  type ConnectionExpectation,
+} from "./connection-state-rows";
 import { LedgerError, getConnection, type Connection } from "./connections";
+
+export { writeAll } from "./connection-state-files";
 
 export const CONNECTION_CONFIG_SCHEMA = "kizuki.connection-config/v1" as const;
 export const NULL_CONNECTION_CONFIG =
@@ -44,168 +57,8 @@ interface PendingState {
   completed: boolean;
 }
 
-interface SwapJournal {
-  schema: "kizuki.connection-state-swap/v1";
-  connector_id: string;
-  source_key: string;
-  connected_at: string;
-  final_name: string;
-  backup_name: string | null;
-}
-
-interface ConnectedAtRow {
-  connected_at: string;
-}
-
-/** The row a staged swap must still find when it commits. */
-interface ConnectionExpectation {
-  connected_at: string;
-  disconnected_at: string | null;
-}
-
 /** The caller offered a row the store has already moved past. */
 const STALE_CONNECTION_SNAPSHOT = "connection does not match persisted state";
-/** Another writer committed while these bytes were being staged. */
-const CONCURRENT_CONNECTION_CHANGE =
-  "connection changed while its state was being replaced";
-/** A writer in another process holds the lock this one has to swap under. */
-const LOCKED_CONTROL_STORE = "connection state is locked by another writer";
-
-type ChunkWriter = (
-  fd: number,
-  bytes: Uint8Array,
-  offset: number,
-  length: number,
-) => number;
-
-const writeChunk: ChunkWriter = (fd, bytes, offset, length) =>
-  writeSync(fd, bytes, offset, length);
-
-const CORE_ULID_PATTERN = "[0-9A-HJKMNPQRSTVWXYZ]{26}";
-const STAGING_NAME = new RegExp(
-  `^${CORE_ULID_PATTERN}\\.state\\.${CORE_ULID_PATTERN}\\.tmp$`,
-);
-/**
- * A staging file younger than this may belong to a writer another process is
- * running right now; only an older one is certainly the debris of a crash.
- * The bound is well past the five minutes a browser sign-in is given, because
- * sweeping a live writer's file costs the owner a grant they already made.
- */
-const ABANDONED_STAGING_MS = 1_800_000;
-
-const CORE_ULID = new RegExp(`^${CORE_ULID_PATTERN}$`);
-
-function isCoreUlid(value: string): boolean {
-  return CORE_ULID.test(value);
-}
-
-function stateRefFor(sourceKey: string): string {
-  return `file:connections/${sourceKey}.state`;
-}
-
-function connectionStatePath(directory: string, ref: string): string {
-  if (!ref.startsWith("file:connections/") || !ref.endsWith(".state")) {
-    throw new LedgerError("connection state ref is invalid");
-  }
-  const path = resolve(dirname(directory), ref.slice("file:".length));
-  if (dirname(path) !== resolve(directory) || relative(directory, path).startsWith("..")) {
-    throw new LedgerError("connection state ref escapes the store");
-  }
-  return path;
-}
-
-/** Internal test seam; this module is not re-exported from the public package. */
-export function writeAll(
-  fd: number,
-  bytes: Uint8Array,
-  writer: ChunkWriter = writeChunk,
-): void {
-  let offset = 0;
-  while (offset < bytes.byteLength) {
-    const written = writer(fd, bytes, offset, bytes.byteLength - offset);
-    if (written <= 0) {
-      throw new LedgerError("connection state write made no progress");
-    }
-    offset += written;
-  }
-}
-
-function writeDurableFile(path: string, bytes: Uint8Array): void {
-  let fd: number | undefined;
-  try {
-    fd = openSync(path, "wx", 0o600);
-    writeAll(fd, bytes);
-    fsyncSync(fd);
-  } catch (error) {
-    if (fd !== undefined) {
-      closeSync(fd);
-      fd = undefined;
-    }
-    rmSync(path, { force: true });
-    throw error;
-  } finally {
-    if (fd !== undefined) closeSync(fd);
-  }
-}
-
-function fsyncDirectory(directory: string): void {
-  const fd = openSync(directory, "r");
-  try {
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-}
-
-function isLockedDatabase(error: unknown): boolean {
-  if (!(error instanceof Error) || !("code" in error)) return false;
-  const code = error.code;
-  return (
-    typeof code === "string" &&
-    (code.startsWith("SQLITE_BUSY") || code.startsWith("SQLITE_LOCKED"))
-  );
-}
-
-/**
- * The durable swap and the row that names it have to land together. A writer
- * in another process that renamed its own file between this one's rename and
- * its commit would leave the row naming bytes this one's rollback then took
- * away, and a recovery running at the same moment would read a live swap as
- * crash debris. The database's write lock is the only lock both processes
- * already share, so every file move happens while it is held.
- */
-function writeLocked(db: Database, work: () => void): void {
-  try {
-    db.transaction(work).immediate();
-  } catch (error) {
-    if (isLockedDatabase(error)) {
-      throw new LedgerError(LOCKED_CONTROL_STORE, { cause: error });
-    }
-    throw error;
-  }
-}
-
-function nextConnectedAt(
-  db: Database,
-  connectorId: string,
-  sourceKey: string,
-): string {
-  const previous = db
-    .query<ConnectedAtRow, [string, string]>(
-      "SELECT connected_at FROM connections WHERE connector_id = ? AND source_key = ?",
-    )
-    .get(connectorId, sourceKey);
-  const previousMillis = previous === null ? Number.NEGATIVE_INFINITY : Date.parse(previous.connected_at);
-  if (previous !== null && !Number.isFinite(previousMillis)) {
-    throw new LedgerError("stored connection timestamp is invalid");
-  }
-  const millis = Math.max(Date.now(), previousMillis + 1);
-  const connectedAt = new Date(millis).toISOString();
-  if (!isRfc3339(connectedAt)) {
-    throw new LedgerError("core generated an invalid connection timestamp");
-  }
-  return connectedAt;
-}
 
 /**
  * Core-owned opaque-state store. Connector code gets only a one-shot writer;
@@ -305,90 +158,13 @@ export class ConnectionStateStore implements ConnectionStateReader {
       // A journal is only crash debris once no writer is standing over it, and
       // the write lock is what tells the two apart across processes.
       writeLocked(db, () => {
-        for (const name of journals) this.repairSwap(db, name);
+        for (const name of journals) repairSwap(db, this.directory, name);
       });
     }
-    this.sweepStaging();
+    sweepAbandonedStaging(this.directory, this.staging);
   }
 
-  private repairSwap(db: Database, name: string): void {
-    const journalPath = join(this.directory, name);
-    let journal: SwapJournal;
-    try {
-      journal = JSON.parse(readFileSync(journalPath, "utf8")) as SwapJournal;
-    } catch {
-      throw new LedgerError("connection state swap journal is unreadable");
-    }
-    if (
-      journal.schema !== "kizuki.connection-state-swap/v1" ||
-      typeof journal.connector_id !== "string" ||
-      journal.connector_id.length === 0 ||
-      !isCoreUlid(journal.source_key) ||
-      !isRfc3339(journal.connected_at) ||
-      journal.final_name !== `${journal.source_key}.state` ||
-      (journal.backup_name !== null &&
-        (basename(journal.backup_name) !== journal.backup_name ||
-          !journal.backup_name.startsWith(`${journal.final_name}.`) ||
-          !journal.backup_name.endsWith(".rollback")))
-    ) {
-      throw new LedgerError("connection state swap journal is invalid");
-    }
-    const finalPath = join(this.directory, journal.final_name);
-    const backupPath = journal.backup_name === null
-      ? null
-      : join(this.directory, journal.backup_name);
-    const row = db
-      .query<ConnectedAtRow, [string, string]>(
-        "SELECT connected_at FROM connections WHERE connector_id = ? AND source_key = ?",
-      )
-      .get(journal.connector_id, journal.source_key);
-    if (row?.connected_at === journal.connected_at) {
-      if (!existsSync(finalPath)) {
-        throw new LedgerError("committed connection state is missing");
-      }
-      if (backupPath !== null) rmSync(backupPath, { force: true });
-    } else if (backupPath !== null && existsSync(backupPath)) {
-      rmSync(finalPath, { force: true });
-      renameSync(backupPath, finalPath);
-    } else if (backupPath !== null) {
-      if (!existsSync(finalPath)) {
-        throw new LedgerError("connection state and rollback are both missing");
-      }
-      // The journal was durable before the first rename. The original final
-      // file is therefore still authoritative when its planned backup does
-      // not exist and the database row was not committed.
-    } else {
-      rmSync(finalPath, { force: true });
-    }
-    rmSync(journalPath, { force: true });
-    fsyncDirectory(this.directory);
-  }
 
-  /**
-   * Staging files hold the same plaintext the durable file does. A writer that
-   * was killed between its write and its swap leaves one behind, and nothing
-   * else in the tree ever removes it.
-   */
-  private sweepStaging(): void {
-    const now = Date.now();
-    let removed = false;
-    for (const name of readdirSync(this.directory)) {
-      if (!STAGING_NAME.test(name)) continue;
-      const path = join(this.directory, name);
-      if (this.staging.has(path)) continue;
-      let age: number;
-      try {
-        age = now - statSync(path).mtimeMs;
-      } catch {
-        // Swapped or swept by another writer between the listing and this stat.
-        continue;
-      }
-      if (age < ABANDONED_STAGING_MS) continue;
-      rmSync(path, { force: true });
-      removed = true;
-    }
-    if (removed) fsyncDirectory(this.directory);
-  }
 
   /**
    * `expect` is the row the caller validated before it staged bytes. Committing
@@ -420,16 +196,14 @@ export class ConnectionStateStore implements ConnectionStateReader {
             "existing connection state cannot be cleared implicitly",
           );
         }
-        const refs = pending.written ? [pending.ref] : [];
-        const config = pending.written
-          ? STATE_CONNECTION_CONFIG
-          : NULL_CONNECTION_CONFIG;
         const connectedAt = nextConnectedAt(db, connectorId, pending.sourceKey);
         backupPath = existing ? `${pending.finalPath}.${ulid()}.rollback` : null;
-        journalPath = pending.written
-          ? `${pending.finalPath}.${ulid()}.journal`
-          : null;
-        if (journalPath !== null) {
+        const staging = pending.temporaryPath;
+        if (pending.written) {
+          if (staging === null) {
+            throw new LedgerError("connection state staging is missing");
+          }
+          journalPath = `${pending.finalPath}.${ulid()}.journal`;
           const journal: SwapJournal = {
             schema: "kizuki.connection-state-swap/v1",
             connector_id: connectorId,
@@ -438,91 +212,44 @@ export class ConnectionStateStore implements ConnectionStateReader {
             final_name: basename(pending.finalPath),
             backup_name: backupPath === null ? null : basename(backupPath),
           };
-          writeDurableFile(
+          swapStateFile(this.directory, {
+            finalPath: pending.finalPath,
+            stagingPath: staging,
+            backupPath,
             journalPath,
-            new TextEncoder().encode(JSON.stringify(journal)),
-          );
-          fsyncDirectory(this.directory);
-          if (backupPath !== null) renameSync(pending.finalPath, backupPath);
-          const staging = pending.temporaryPath;
-          if (staging === null) {
-            throw new LedgerError("connection state staging is missing");
-          }
-          try {
-            renameSync(staging, pending.finalPath);
-          } catch (error) {
-            // A recovery sweep in another process can remove a staging file
-            // this one still owns. The raw failure names the control
-            // directory, and a caller of this store never receives a path.
-            throw new LedgerError("connection state staging is missing", {
-              cause: error,
-            });
-          }
+            journalBytes: new TextEncoder().encode(JSON.stringify(journal)),
+          });
           this.staging.delete(staging);
           pending.temporaryPath = null;
           swapped = true;
-          fsyncDirectory(this.directory);
         }
-        if (expect === undefined) {
-          db.query(
-            `INSERT INTO connections
-               (connector_id, source_key, config, secret_refs, connected_at, disconnected_at)
-             VALUES (?, ?, ?, ?, ?, NULL)
-             ON CONFLICT (connector_id, source_key) DO UPDATE SET
-               config = excluded.config, secret_refs = excluded.secret_refs,
-               connected_at = excluded.connected_at, disconnected_at = NULL`,
-          ).run(
-            connectorId,
-            pending.sourceKey,
-            config,
-            JSON.stringify(refs),
-            connectedAt,
-          );
-          return;
-        }
-        const result = db
-          .query(
-            `UPDATE connections
-                SET config = ?, secret_refs = ?, connected_at = ?, disconnected_at = NULL
-              WHERE connector_id = ? AND source_key = ?
-                AND connected_at = ? AND disconnected_at IS ?`,
-          )
-          .run(
-            config,
-            JSON.stringify(refs),
-            connectedAt,
-            connectorId,
-            pending.sourceKey,
-            expect.connected_at,
-            expect.disconnected_at,
-          );
-        if (result.changes !== 1) {
-          throw new LedgerError(CONCURRENT_CONNECTION_CHANGE);
-        }
+        commitConnectionRow(db, {
+          connectorId,
+          sourceKey: pending.sourceKey,
+          config: pending.written
+            ? STATE_CONNECTION_CONFIG
+            : NULL_CONNECTION_CONFIG,
+          secretRefs: pending.written ? [pending.ref] : [],
+          connectedAt,
+          expect,
+        });
       });
       committed = true;
-      if (backupPath !== null) rmSync(backupPath, { force: true });
-      if (journalPath !== null) rmSync(journalPath, { force: true });
-      if (journalPath !== null || backupPath !== null) {
-        fsyncDirectory(this.directory);
-      }
+      clearSwapDebris(this.directory, { backupPath, journalPath });
     } catch (error) {
       if (!committed) {
-        if (swapped) {
-          rmSync(pending.finalPath, { force: true });
-          if (backupPath !== null && existsSync(backupPath)) {
-            renameSync(backupPath, pending.finalPath);
-          }
-        } else if (backupPath !== null && existsSync(backupPath)) {
-          renameSync(backupPath, pending.finalPath);
-        }
-        if (pending.temporaryPath !== null) {
-          this.staging.delete(pending.temporaryPath);
-          rmSync(pending.temporaryPath, { force: true });
+        const staging = pending.temporaryPath;
+        if (staging !== null) {
+          this.staging.delete(staging);
           pending.temporaryPath = null;
         }
-        if (journalPath !== null) rmSync(journalPath, { force: true });
-        fsyncDirectory(this.directory);
+        restoreStateFile(this.directory, {
+          finalPath: pending.finalPath,
+          stagingPath: staging,
+          backupPath,
+          journalPath,
+          swapped,
+        });
       }
       throw error;
     }
@@ -659,26 +386,5 @@ export class ConnectionStateStore implements ConnectionStateReader {
       missingStateMessage: "state rewrite did not provide connection state",
       refuseDisconnected: true,
     });
-  }
-}
-
-/** Runs an interactive sign-in and persists only host-minted opaque state. */
-export async function enrollConnection(
-  db: Database,
-  store: ConnectionStateStore,
-  connector: Connector,
-  io: SignInIo,
-): Promise<Connection> {
-  if (typeof connector.signIn !== "function") {
-    throw new LedgerError("connector does not implement interactive sign-in");
-  }
-  store.recover(db);
-  const pending = store.begin();
-  try {
-    await connector.signIn(io, pending.writer);
-    return store.save(db, connector.manifest().connector_id, pending.pending);
-  } catch (error) {
-    store.discard(pending.pending);
-    throw error;
   }
 }
