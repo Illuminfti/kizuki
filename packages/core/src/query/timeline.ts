@@ -42,6 +42,9 @@ interface TimelineRow {
 }
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
+// SQLite orders NULL first, so a row whose instant the expression cannot
+// evaluate would head the page it can never belong to. The order is made
+// total instead: such a row sorts last, behind every instant that resolved.
 const OCCURRED_AT_INSTANT = instantSql("events.occurred_at");
 const PREVIEW_CODE_POINTS = 160;
 
@@ -134,7 +137,7 @@ export function timeline(
          text
        FROM events
        WHERE ${clauses.join(" AND ")}
-       ORDER BY ${OCCURRED_AT_INSTANT}, events.event_id
+       ORDER BY ${OCCURRED_AT_INSTANT} IS NULL, ${OCCURRED_AT_INSTANT}, events.event_id
        LIMIT ?`,
     )
     .all(...bindings);

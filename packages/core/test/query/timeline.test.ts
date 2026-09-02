@@ -224,6 +224,35 @@ describe("timeline", () => {
     expect(timeline(db, { since: "2026-02-03T12:00:00.1235Z" })).toEqual([]);
   });
 
+  test("sorts an instant it cannot evaluate last, not first", () => {
+    const db = searchDb();
+    const first = storedEvent(db, "first", {
+      occurred_at: "2026-02-03T01:00:00Z",
+    });
+    // Written past the contract on purpose: `accept` refuses this, so the row
+    // is inserted directly. The order still has to be total.
+    db.query<never, []>(
+      `INSERT INTO events (
+         event_id, connector_id, source_record_id, kind, occurred_at,
+         observed_at, text, subjects, sensitivity_hint, deleted, attachments,
+         metadata, content_hash, accepted_at
+       ) VALUES ('E${"0".repeat(25)}', 'acme', 'unparsable', 'message',
+                'not-a-timestamp', '2026-02-03T00:00:00Z', 'body', '[]',
+                'personal', 0, '[]', '{}', '${"h".repeat(64)}',
+                '2026-02-03T00:00:00Z')`,
+    ).run();
+
+    expect(timeline(db).map(({ event_id }) => event_id)).toEqual([
+      first.event_id,
+      `E${"0".repeat(25)}`,
+    ]);
+    expect(
+      timeline(db, { since: "2020-01-01T00:00:00Z" }).map(
+        ({ event_id }) => event_id,
+      ),
+    ).toEqual([first.event_id]);
+  });
+
   test("rejects a garbage since or until instead of returning an empty window", () => {
     const db = searchDb();
     storedEvent(db, "live");
