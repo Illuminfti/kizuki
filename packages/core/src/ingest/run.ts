@@ -17,11 +17,14 @@ import { isPlainObject } from "../util/validate";
 export interface SourcePolicy extends ProducerGrants {
   /** RFC 0002 §8.2: no hint from this source may resolve below this label. */
   sensitivity_floor: SensitivityHint | null;
+  /** What a record from this source is when it carries no hint of its own. */
+  default_sensitivity: SensitivityHint | null;
 }
 
 const CLOSED_POLICY: SourcePolicy = {
   page_candidates: false,
   sensitivity_floor: null,
+  default_sensitivity: null,
 };
 
 export function sourcePolicy(manifest: Manifest): SourcePolicy {
@@ -30,22 +33,31 @@ export function sourcePolicy(manifest: Manifest): SourcePolicy {
     sensitivity_floor: isSensitivityHint(manifest.sensitivity_floor)
       ? manifest.sensitivity_floor
       : null,
+    default_sensitivity: isSensitivityHint(manifest.default_sensitivity)
+      ? manifest.default_sensitivity
+      : null,
   };
 }
 
 /**
- * RFC 0002 §8.1 at the ledger door: a hint below the source's floor is raised,
- * an absent one becomes the floor, and one the grammar refuses is left exactly
- * as it arrived so `accept` refuses the event rather than laundering it.
+ * RFC 0002 §8.1 at the ledger door: `max(floor, default, hint)`. A hint below
+ * the source's floor is raised, an absent one resolves to the source's own
+ * default, and one the grammar refuses is left exactly as it arrived so
+ * `accept` refuses the event rather than laundering it.
  */
-function atFloor(input: unknown, floor: SensitivityHint | null): unknown {
-  if (floor === null || !isPlainObject(input)) return input;
+function atFloor(input: unknown, policy: SourcePolicy): unknown {
+  const floor = policy.sensitivity_floor;
+  const fallback = policy.default_sensitivity;
+  if ((floor === null && fallback === null) || !isPlainObject(input)) {
+    return input;
+  }
   const hint = input["sensitivity_hint"];
   if (hint !== undefined && !isSensitivityHint(hint)) return input;
+  const declared = hint ?? fallback ?? (floor as SensitivityHint);
   return {
     ...input,
     sensitivity_hint:
-      hint === undefined ? floor : raiseSensitivity(floor, hint),
+      floor === null ? declared : raiseSensitivity(floor, declared),
   };
 }
 
@@ -79,7 +91,7 @@ function processEvent(
       withdrawn: 0,
       retractions_filed: 0,
     };
-    const accepted = accept(db, atFloor(input, policy.sensitivity_floor));
+    const accepted = accept(db, atFloor(input, policy));
     if (accepted.status === "error") {
       result.errors.push(accepted.error);
       return result;

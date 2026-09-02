@@ -314,8 +314,10 @@ no table to name.
 Both importers keep a report of the run. Pass `report` in the connector
 config to write it to a file: a `.json` suffix writes JSON, anything else
 writes Markdown. The file is written to a temporary name and renamed into
-place, owner-readable only, and a path inside the source is refused — a
-report written into the wiki would be imported as a page on the next run.
+place, owner-readable only. A path inside the source is refused — a report
+written into the wiki would be imported as a page on the next run — and so is
+a path inside a vault: canon is written by the receipted writer, and a
+Markdown file no receipt covers has no business in it.
 
 The wiki report (`kizuki.legacy-wiki-report/v1`) lists, for every file: the
 target path, the page kind, whether the frontmatter parsed and which rule
@@ -336,9 +338,7 @@ to fix the mapping.
 
 ## Labels the mapping could not read
 
-Every imported page carries a label. A page whose own label the mapping could
-not read carries `sensitivity.default` instead, and the report says which of
-the three happened:
+Every imported page carries a label, and the report says how it was decided:
 
 | decision | meaning |
 | --- | --- |

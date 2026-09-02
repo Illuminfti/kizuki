@@ -19,6 +19,11 @@ import {
 import { listProposals, initStaging } from "../src/staging/proposals";
 import { validEvent } from "./fixtures";
 
+type SourceClass = Pick<
+  Manifest,
+  "default_sensitivity" | "sensitivity_floor"
+>;
+
 class FixtureConnector implements Connector {
   readonly backfillCursors: (string | null)[] = [];
   readonly syncCursors: (string | null)[] = [];
@@ -26,6 +31,7 @@ class FixtureConnector implements Connector {
   constructor(
     private readonly backfillBatch: SyncBatch,
     private readonly syncBatch: SyncBatch = { events: [], cursor: null },
+    private readonly sourceClass: SourceClass = {},
   ) {}
 
   manifest(): Manifest {
@@ -44,6 +50,7 @@ class FixtureConnector implements Connector {
       required_secrets: [],
       emits_sensitivity_hint: true,
       auth_modes: ["none"],
+      ...this.sourceClass,
     };
   }
 
@@ -80,6 +87,17 @@ class FixtureConnector implements Connector {
   fixture(): Promise<CaptureEventInput[]> {
     return Promise.resolve(this.backfillBatch.events);
   }
+}
+
+/** An event carrying exactly the hint given, valid or not — or none at all. */
+function hinted(id: string, hint: string | null): CaptureEventInput {
+  const event: Record<string, unknown> = {
+    ...validEvent(),
+    source_record_id: id,
+  };
+  if (hint === null) delete event["sensitivity_hint"];
+  else event["sensitivity_hint"] = hint;
+  return event as CaptureEventInput;
 }
 
 function database() {
@@ -190,6 +208,63 @@ describe("connector runs", () => {
     expect(second.duplicates).toBe(1);
     expect(second.proposals_created).toBe(0);
     expect(listProposals(db)).toHaveLength(2);
+    db.close();
+  });
+
+  test("a declared floor raises every hint the source emits", async () => {
+    const db = database();
+    const events: CaptureEventInput[] = [
+      hinted("a", "public"),
+      hinted("b", null),
+      hinted("c", "private"),
+    ];
+    const connector = new FixtureConnector({ events, cursor: null }, undefined, {
+      default_sensitivity: "private",
+      sensitivity_floor: "personal",
+    });
+    const result = await runBackfill(db, connector, "fixture", "/source/a");
+    expect(result.errors).toEqual([]);
+    const stored = db
+      .query("SELECT source_record_id, sensitivity_hint FROM events ORDER BY source_record_id")
+      .all() as { source_record_id: string; sensitivity_hint: string }[];
+    // max(floor, default, hint): the source's `public` is ignored, an absent
+    // hint takes the source's own default, and a private one stands.
+    expect(stored).toEqual([
+      { source_record_id: "a", sensitivity_hint: "personal" },
+      { source_record_id: "b", sensitivity_hint: "private" },
+      { source_record_id: "c", sensitivity_hint: "private" },
+    ]);
+    db.close();
+  });
+
+  test("a source that declares no class keeps the hint it emitted", async () => {
+    const db = database();
+    const events: CaptureEventInput[] = [
+      hinted("a", "public"),
+      hinted("b", null),
+    ];
+    const connector = new FixtureConnector({ events, cursor: null });
+    await runBackfill(db, connector, "fixture", "/source/a");
+    const stored = db
+      .query("SELECT source_record_id, sensitivity_hint FROM events ORDER BY source_record_id")
+      .all() as { source_record_id: string; sensitivity_hint: string | null }[];
+    expect(stored).toEqual([
+      { source_record_id: "a", sensitivity_hint: "public" },
+      { source_record_id: "b", sensitivity_hint: null },
+    ]);
+    db.close();
+  });
+
+  test("a hint the grammar refuses is refused, not raised", async () => {
+    const db = database();
+    const events: CaptureEventInput[] = [hinted("a", "secret")];
+    const connector = new FixtureConnector({ events, cursor: null }, undefined, {
+      default_sensitivity: "private",
+      sensitivity_floor: "personal",
+    });
+    const result = await runBackfill(db, connector, "fixture", "/source/a");
+    expect(result.stored).toBe(0);
+    expect(result.errors.join(" ")).toContain("sensitivity_hint");
     db.close();
   });
 
