@@ -10,7 +10,12 @@ import type {
 import type { CaptureEventInput } from "../src/contracts/event";
 import { getCheckpoint } from "../src/ledger/connections";
 import { openLedger } from "../src/ledger/db";
-import { runBackfill, runBatch, runSync } from "../src/ingest/run";
+import {
+  runBackfill,
+  runBatch,
+  runSync,
+  runToCompletion,
+} from "../src/ingest/run";
 import { listProposals, initStaging } from "../src/staging/proposals";
 import { validEvent } from "./fixtures";
 
@@ -253,6 +258,112 @@ describe("connector runs", () => {
     expect(getCheckpoint(db, "fixture", "/source/a")?.cursor).toBe(
       "after-tombstone",
     );
+    db.close();
+  });
+});
+
+/** A connector whose batches are scripted, the way a paging source behaves. */
+class ScriptedConnector extends FixtureConnector {
+  readonly cursors: (string | null)[] = [];
+  #position = 0;
+
+  constructor(private readonly batches: SyncBatch[]) {
+    super({ events: [], cursor: null });
+  }
+
+  override backfill(cursor: string | null): Promise<SyncBatch> {
+    this.cursors.push(cursor);
+    const batch = this.batches[this.#position] ?? { events: [], cursor };
+    this.#position += 1;
+    return Promise.resolve(batch);
+  }
+}
+
+function page(index: number, count: number): SyncBatch {
+  const events: CaptureEventInput[] = [];
+  for (let position = 0; position < count; position += 1) {
+    events.push({
+      ...validEvent(),
+      source_record_id: `page-${index}-rec-${position}`,
+    });
+  }
+  return { events, cursor: `page-${index}` };
+}
+
+describe("runToCompletion", () => {
+  test("drains every batch and saves the last cursor", async () => {
+    const db = database();
+    const connector = new ScriptedConnector([
+      page(1, 2),
+      page(2, 2),
+      page(3, 1),
+      { events: [], cursor: "page-3" },
+    ]);
+    const result = await runToCompletion(db, connector, "fixture", "src-1", "backfill");
+    expect(result.stored).toBe(5);
+    expect(result.errors).toEqual([]);
+    expect(result.cursor).toBe("page-3");
+    expect(connector.cursors).toEqual([null, "page-1", "page-2", "page-3"]);
+    expect(getCheckpoint(db, "fixture", "src-1")?.cursor).toBe("page-3");
+    db.close();
+  });
+
+  test("stops on the first failing batch and keeps the earlier checkpoint", async () => {
+    const db = database();
+    const broken: SyncBatch = {
+      events: [{ ...validEvent(), occurred_at: "not-a-time" }],
+      cursor: "page-2",
+    };
+    const connector = new ScriptedConnector([page(1, 1), broken, page(3, 1)]);
+    const result = await runToCompletion(db, connector, "fixture", "src-1", "backfill");
+    expect(result.stored).toBe(1);
+    expect(result.errors).toHaveLength(1);
+    expect(result.cursor).toBe("page-1");
+    expect(getCheckpoint(db, "fixture", "src-1")?.cursor).toBe("page-1");
+    expect(connector.cursors).toEqual([null, "page-1"]);
+    db.close();
+  });
+
+  test("a non-empty batch that does not move the cursor is an error", async () => {
+    const db = database();
+    const connector = new ScriptedConnector([
+      page(1, 1),
+      { ...page(2, 1), cursor: "page-1" },
+    ]);
+    const result = await runToCompletion(db, connector, "fixture", "src-1", "backfill");
+    expect(result.errors).toEqual(["run made no progress"]);
+    expect(result.stored).toBe(2);
+    db.close();
+  });
+
+  test("a run that will not settle stops at the stated bound", async () => {
+    const db = database();
+    const batches: SyncBatch[] = [];
+    for (let index = 1; index <= 6; index += 1) batches.push(page(index, 1));
+    const connector = new ScriptedConnector(batches);
+    const result = await runToCompletion(
+      db,
+      connector,
+      "fixture",
+      "src-1",
+      "backfill",
+      { maxBatches: 3 },
+    );
+    expect(result.errors).toEqual(["run did not complete within 3 batches"]);
+    expect(result.stored).toBe(3);
+    expect(result.cursor).toBe("page-3");
+    db.close();
+  });
+
+  test("a connector that exhausts itself with a null cursor stops there", async () => {
+    const db = database();
+    const connector = new ScriptedConnector([
+      page(1, 1),
+      { events: [{ ...validEvent(), source_record_id: "last" }], cursor: null },
+    ]);
+    const result = await runToCompletion(db, connector, "fixture", "src-1", "backfill");
+    expect(result.stored).toBe(2);
+    expect(result.cursor).toBeNull();
     db.close();
   });
 });
