@@ -7,6 +7,7 @@
   },
   "dependencies": {
     "@kizuki/connector-screenpipe": "workspace:*",
+    "@kizuki/connector-telegram": "workspace:*",
     "@kizuki/core": "workspace:*"
   }
 }

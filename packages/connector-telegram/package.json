@@ -1,0 +1,12 @@
+{
+  "name": "@kizuki/connector-telegram",
+  "type": "module",
+  "module": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@kizuki/core": "workspace:*",
+    "telegram": "2.26.22"
+  }
+}

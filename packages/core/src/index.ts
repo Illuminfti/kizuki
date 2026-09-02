@@ -438,8 +438,14 @@ export {
 export type { ConnectionStateReader } from "./ledger/connection-state";
 export { isSecretRef, parseSecretRef } from "./contracts/secret-ref";
 export type { SecretRef, SecretRefScheme } from "./contracts/secret-ref";
-export type { RunResult } from "./ingest/run";
-export { runBackfill, runBatch, runSync } from "./ingest/run";
+export type { RunResult, RunToCompletionOptions } from "./ingest/run";
+export {
+  DEFAULT_MAX_BATCHES,
+  runBackfill,
+  runBatch,
+  runSync,
+  runToCompletion,
+} from "./ingest/run";
 export { exportVault } from "./export";
 export type { ExportManifest, ExportManifestEntry } from "./export";
 
