@@ -51,6 +51,206 @@ export type {
   SyncBatch,
 } from "./contracts/connector";
 
+export {
+  PORT_CONTRACTS,
+  PORT_ERROR_CODES,
+  PORT_KINDS,
+  PortError,
+  assertPortContract,
+  isPortErrorCode,
+  isPortKind,
+  requirePortCapability,
+  validatePortDescriptor,
+} from "./contracts/ports";
+export type {
+  Port,
+  PortContext,
+  PortDescriptor,
+  PortErrorCode,
+  PortFactory,
+  PortHealth,
+  PortKind,
+  PortLogLine,
+} from "./contracts/ports";
+export {
+  PortRegistry,
+  bindFromConfig,
+  bindManyFromConfig,
+  listPorts,
+  registerPort,
+  resolvePort,
+} from "./contracts/registry";
+export type {
+  PortRegistration,
+  PortSelection,
+  PortsConfig,
+} from "./contracts/registry";
+export {
+  MAX_RETRIEVAL_LIMIT,
+  RETRIEVAL_CAPABILITIES,
+  RETRIEVAL_CONTRACT,
+  RETRIEVAL_CONTRACT_MINOR,
+  RETRIEVAL_DOC_KINDS,
+  requireRetrievalCapability,
+  validateAbsenceProof,
+  validateGraphResult,
+  validateRetrievalDoc,
+  validateRetrievalMutationReport,
+  validateRetrievalQuery,
+  validateRetrievalResult,
+} from "./contracts/retrieval";
+export type {
+  AbsenceProof,
+  EntityRef,
+  GraphEdge as RetrievalGraphEdge,
+  GraphQueryOptions,
+  GraphResult,
+  RetrievalAuthority,
+  RetrievalCapability,
+  RetrievalDoc,
+  RetrievalDocKind,
+  RetrievalHit,
+  RetrievalMutationReport,
+  RetrievalPort,
+  RetrievalQuery,
+  RetrievalResult,
+  RetrievalScope,
+} from "./contracts/retrieval";
+export {
+  EMBEDDING_CAPABILITIES,
+  EMBEDDING_CONTRACT,
+  EMBEDDING_CONTRACT_MINOR,
+} from "./contracts/embedding";
+export type {
+  Chunk,
+  EmbeddingCapability,
+  EmbeddingPort,
+  EmbeddingSpace,
+} from "./contracts/embedding";
+export {
+  LLM_CAPABILITIES,
+  LLM_CONTRACT,
+  LLM_CONTRACT_MINOR,
+} from "./contracts/llm";
+export type {
+  LlmCapability,
+  LlmMessage,
+  LlmPort,
+  LlmRequest,
+  LlmResponse,
+  LlmUsage,
+} from "./contracts/llm";
+export {
+  PRODUCER_CAPABILITIES,
+  PRODUCER_CONTRACT,
+  PRODUCER_CONTRACT_MINOR,
+  PRODUCER_REJECT_REASONS,
+} from "./contracts/producer";
+export type {
+  ClaimDraft,
+  ClaimDraftKind,
+  ClaimSummary,
+  ExtractResponse,
+  ModelUsage,
+  ProduceInput,
+  ProduceResult,
+  ProducerCapability,
+  ProducerPort,
+  QuotedEvent,
+  RejectReason,
+} from "./contracts/producer";
+export {
+  NOTIFIER_CAPABILITIES,
+  NOTIFIER_CONTRACT,
+  NOTIFIER_CONTRACT_MINOR,
+} from "./contracts/notifier";
+export type {
+  Notification,
+  NotificationReceipt,
+  NotifierCapability,
+  NotifierPort,
+} from "./contracts/notifier";
+export {
+  CANON_STORE_CONTRACT,
+  JOURNAL_STORE_CONTRACT,
+  LEDGER_STORE_CONTRACT,
+  STORAGE_CAPABILITIES,
+  STORAGE_CONTRACT_MINOR,
+} from "./contracts/storage";
+export type {
+  CanonStoreEntry,
+  CanonStorePort,
+  CanonStoreWrite,
+  CanonStoreWriteResult,
+  JournalRecord,
+  JournalStorePort,
+  LedgerAppendResult,
+  LedgerStorePort,
+  StorageCapability,
+  StoragePort,
+  StoreAbsenceProof,
+  StoreMutationReport,
+} from "./contracts/storage";
+export {
+  SURFACE_CAPABILITIES,
+  SURFACE_CONTRACT,
+  SURFACE_CONTRACT_MINOR,
+} from "./contracts/surface";
+export type {
+  SurfaceCapability,
+  SurfacePort,
+  SurfacePrincipal,
+  SurfaceRequest,
+  SurfaceResponse,
+} from "./contracts/surface";
+export {
+  RemotePortClient,
+  connectRemotePort,
+  createRemoteRetrievalPort,
+  decodeRemoteValue,
+  encodeRemoteValue,
+  remoteDescribePath,
+  remoteMethodPath,
+  remoteMethodPrefix,
+} from "./contracts/remote";
+export type {
+  RemoteEndpoint,
+  RemotePortOptions,
+} from "./contracts/remote";
+export {
+  CONFORMANCE_FAMILIES,
+  conformanceContext,
+  runContractConformance,
+  runDrivenConformance,
+  runEmbeddingConformance,
+  runLlmConformance,
+  runNotifierConformance,
+  runProducerConformance,
+  runRetrievalConformance,
+  runStorageConformance,
+  runSurfaceConformance,
+} from "./contracts/conformance";
+export type {
+  ConformanceContext,
+  ConformanceDeletionProof,
+  ConformanceDriver,
+  ConformanceFamily,
+  ConformanceFamilyStatus,
+  ConformanceFixtures,
+  ConformanceHarness,
+  ConformanceReport,
+  ContractConformanceDefinition,
+  DrivenConformanceHarness,
+  EmbeddingConformanceHarness,
+  LlmConformanceHarness,
+  NotifierConformanceHarness,
+  ProducerConformanceHarness,
+  RetrievalConformanceFixtures,
+  RetrievalConformanceHarness,
+  StorageConformanceHarness,
+  SurfaceConformanceHarness,
+} from "./contracts/conformance";
+
 export { doctorVault } from "./vault/doctor";
 export type { DoctorPageResult, DoctorVaultResult } from "./vault/doctor";
 export { parseFrontmatter, serializePage } from "./vault/frontmatter";
