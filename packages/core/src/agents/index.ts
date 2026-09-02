@@ -34,4 +34,5 @@ export {
   listAudit,
   recordAudit,
   shapeArguments,
+  updateAudit,
 } from "./audit";

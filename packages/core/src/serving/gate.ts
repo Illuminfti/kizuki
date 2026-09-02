@@ -1,4 +1,10 @@
-import { checkRate, listAgents, recordAudit, toolAllowed } from "../agents";
+import {
+  checkRate,
+  listAgents,
+  recordAudit,
+  toolAllowed,
+  updateAudit,
+} from "../agents";
 import type {
   AuditDenial,
   AuditItem,
@@ -197,6 +203,53 @@ function servedItems(canon: CanonChunk[], quoted: QuotedChunk[]): AuditItem[] {
   ];
 }
 
+/** The reserved row a call fills in, or the refusal that took its place. */
+type Reservation =
+  | { kind: "reserved"; audit_id: string }
+  | { kind: "rate_limited"; retry_after_seconds: number };
+
+/**
+ * The rolling count and the row it produces are one transaction. Checking the
+ * limit and only recording the row after the tool has run leaves a window in
+ * which every concurrent call reads the same count and every one of them
+ * passes: for the write tools, which await a claim store, that window is the
+ * whole call.
+ */
+function reserve(
+  live: ServeContext,
+  tool: Tool,
+  bag: () => Record<string, unknown>,
+  at: string,
+): Reservation {
+  return live.db.transaction((): Reservation => {
+    const rate = checkRate(live.db, live.principal, tool, at);
+    if (!rate.allow) {
+      recordAudit(
+        live.db,
+        live.principal,
+        tool,
+        bag(),
+        [],
+        [{ id: `tool:${tool}`, reason: "rate_limited" }],
+        at,
+      );
+      return {
+        kind: "rate_limited",
+        retry_after_seconds: rate.retry_after_seconds,
+      };
+    }
+    return {
+      kind: "reserved",
+      audit_id: recordAudit(live.db, live.principal, tool, bag(), [], [], at),
+    };
+  })();
+}
+
+interface Entered {
+  live: ServeContext;
+  audit_id: string;
+}
+
 /**
  * The single enforcement point below the prompt layer: current authority,
  * then tool allowlist, then rate limit. Every path out of here — served,
@@ -207,7 +260,7 @@ function enter(
   tool: Tool,
   args: Record<string, unknown>,
   at: string,
-): ServeContext {
+): Entered {
   // Only a refusal audits the raw bag; a served call audits it with the ids
   // the call created merged in, so the shaping happens once either way.
   const bag = (): Record<string, unknown> => boundedArguments(args);
@@ -217,18 +270,16 @@ function enter(
   // is decided. The grant a revoked client connected with is stale, but a
   // stale limit still bounds it: the alternative is one unmetered row per
   // call from the identity that has just lost its authority.
-  const limited = (from: ServeContext): void => {
-    const rate = checkRate(from.db, from.principal, tool, at);
-    if (rate.allow) return;
-    auditRefusal(from, tool, bag(), "rate_limited", at);
-    throw new ServeError("rate_limited", "rate limited", {
-      retry_after_seconds: rate.retry_after_seconds,
-    });
-  };
-
   if (live === null) {
-    limited(ctx);
-    auditRefusal(ctx, tool, bag(), "unknown_agent", at);
+    const metered = reserve(ctx, tool, bag, at);
+    if (metered.kind === "rate_limited") {
+      throw new ServeError("rate_limited", "rate limited", {
+        retry_after_seconds: metered.retry_after_seconds,
+      });
+    }
+    updateAudit(ctx.db, metered.audit_id, bag(), [], [
+      { id: `tool:${tool}`, reason: "unknown_agent" },
+    ]);
     throw new ServeError("unknown_agent", "unknown agent");
   }
 
@@ -237,8 +288,13 @@ function enter(
     throw new ServeError("tool_not_granted", "tool not granted");
   }
 
-  limited(live);
-  return live;
+  const metered = reserve(live, tool, bag, at);
+  if (metered.kind === "rate_limited") {
+    throw new ServeError("rate_limited", "rate limited", {
+      retry_after_seconds: metered.retry_after_seconds,
+    });
+  }
+  return { live, audit_id: metered.audit_id };
 }
 
 /** Whatever `run` threw becomes an audited refusal with a stable message. */
@@ -246,23 +302,26 @@ function failed(
   live: ServeContext,
   tool: Tool,
   args: Record<string, unknown>,
-  at: string,
+  auditId: string,
   error: unknown,
 ): never {
   const bag = boundedArguments(args);
+  const record = (reason: DenyReason): void => {
+    updateAudit(live.db, auditId, bag, [], [{ id: `tool:${tool}`, reason }]);
+  };
   if (error instanceof ServeError) {
-    auditRefusal(live, tool, bag, error.code, at);
+    record(error.code);
     throw error;
   }
   if (error instanceof RangeError) {
-    auditRefusal(live, tool, bag, "invalid_arguments", at);
+    record("invalid_arguments");
     throw new ServeError(
       "invalid_arguments",
       "invalid arguments: request out of range",
       { cause: error },
     );
   }
-  auditRefusal(live, tool, bag, "error", at);
+  record("error");
   throw new ServeError("error", "serving failed", { cause: error });
 }
 
@@ -271,16 +330,15 @@ function envelopeOf<T>(
   tool: Tool,
   args: Record<string, unknown>,
   at: string,
+  auditId: string,
   served: Served<T>,
 ): Envelope<T> {
-  recordAudit(
+  updateAudit(
     live.db,
-    live.principal,
-    tool,
+    auditId,
     boundedArguments({ ...args, ...served.audit_ids }),
     servedItems(served.canon, served.quoted),
     boundedForAudit(served.withheld),
-    at,
   );
 
   const data = served.data;
@@ -303,14 +361,14 @@ export function gate<T>(
   run: (call: ServeCall) => Served<T>,
 ): Envelope<T> {
   const at = new Date().toISOString();
-  const live = enter(ctx, tool, args, at);
+  const { live, audit_id } = enter(ctx, tool, args, at);
   let served: Served<T>;
   try {
     served = run({ ctx: live, at });
   } catch (error) {
-    failed(live, tool, args, at, error);
+    failed(live, tool, args, audit_id, error);
   }
-  return envelopeOf(live, tool, args, at, served);
+  return envelopeOf(live, tool, args, at, audit_id, served);
 }
 
 /**
@@ -325,12 +383,12 @@ export async function gateAsync<T>(
   run: (call: ServeCall) => Promise<Served<T>>,
 ): Promise<Envelope<T>> {
   const at = new Date().toISOString();
-  const live = enter(ctx, tool, args, at);
+  const { live, audit_id } = enter(ctx, tool, args, at);
   let served: Served<T>;
   try {
     served = await run({ ctx: live, at });
   } catch (error) {
-    failed(live, tool, args, at, error);
+    failed(live, tool, args, audit_id, error);
   }
-  return envelopeOf(live, tool, args, at, served);
+  return envelopeOf(live, tool, args, at, audit_id, served);
 }

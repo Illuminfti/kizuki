@@ -9,7 +9,9 @@ import {
 } from "bun:test";
 import { listAudit, revokeAgent, setGrant } from "../../src/agents";
 import type { AuditDenial } from "../../src/agents";
+import { listClaims } from "../../src/claims/store";
 import { gate } from "../../src/serving/gate";
+import { servePropose } from "../../src/serving/propose";
 import { serveSearch } from "../../src/serving/search";
 import type { Served } from "../../src/serving/gate";
 import { ServeError } from "../../src/serving/types";
@@ -272,6 +274,36 @@ describe("authority is re-read on every served call", () => {
     expect(
       listAudit(live.db, "slow", { limit: 1 })[0]?.denied,
     ).toEqual([{ id: "tool:search", reason: "rate_limited" }]);
+  });
+
+  test("concurrent write calls are metered, not counted after the fact", async () => {
+    const ctx = live.agent("slow");
+    const calls = Array.from({ length: 8 }, (_, index) =>
+      servePropose(ctx, {
+        kind: "claim",
+        target: `facts:burst-${index}`,
+        body: `A concurrent kettle candidate ${index}.`,
+        subjects: ["person:ada"],
+        provenance: [live.events["public"] as string],
+      }).then(
+        () => "ok" as const,
+        (error: unknown) =>
+          error instanceof ServeError ? error.code : "unexpected",
+      ),
+    );
+    const outcomes = await Promise.all(calls);
+
+    // The claim store is awaited inside the call, so a limit checked before
+    // the work and recorded after it would let all eight through.
+    expect(outcomes.filter((outcome) => outcome === "ok")).toHaveLength(2);
+    expect(
+      outcomes.filter((outcome) => outcome === "rate_limited"),
+    ).toHaveLength(6);
+    expect(
+      listClaims(live.db, { status: "live" }).filter((claim) =>
+        claim.body.startsWith("A concurrent kettle candidate"),
+      ),
+    ).toHaveLength(2);
   });
 
   test("a grant narrowed mid-session applies to the next call", () => {
