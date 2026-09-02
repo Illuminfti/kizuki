@@ -5,9 +5,10 @@ import {
   isPlainObject,
 } from "@kizuki/core";
 import type { PageSensitivity, PageType, SubjectRole } from "@kizuki/core";
-import { KizukiError } from "../errors";
 import { TIMESTAMP_FORMATS, vocabularyMap } from "../legacy/coerce";
 import type { TimestampFormat } from "../legacy/coerce";
+import { mappingRules } from "../legacy/mapping-parse";
+import type { MappingRules } from "../legacy/mapping-parse";
 
 export const LEGACY_WIKI_CONNECTOR_ID = "kizuki.import-legacy-wiki" as const;
 export const LEGACY_WIKI_MAPPING_SCHEMA =
@@ -65,25 +66,10 @@ export const DEFAULT_DIRECTORIES: Record<PageType, string> = {
   rollup: "dashboards",
 };
 
-function fail(path: string, rule: string): never {
-  throw new KizukiError(
-    "misconfigured",
-    `${LEGACY_WIKI_CONNECTOR_ID}: ${path}: ${rule}`,
-  );
-}
-
-/** Unknown keys are refused: an owner's typo must not change the outcome. */
-function objectAt(
-  raw: unknown,
-  path: string,
-  allowed: readonly string[],
-): Record<string, unknown> {
-  if (!isPlainObject(raw)) fail(path, "must be an object");
-  for (const key of Object.keys(raw)) {
-    if (!allowed.includes(key)) fail(path, `unknown key ${key}`);
-  }
-  return raw;
-}
+const rules = mappingRules(LEGACY_WIKI_CONNECTOR_ID);
+const fail: MappingRules["fail"] = rules.fail;
+const objectAt: MappingRules["objectAt"] = rules.objectAt;
+const enumValue: MappingRules["enumValue"] = rules.enumValue;
 
 function fieldName(raw: unknown, path: string): string {
   if (
@@ -94,17 +80,6 @@ function fieldName(raw: unknown, path: string): string {
     fail(path, `must be a field name of 1..${MAX_FIELD_NAME} characters`);
   }
   return raw;
-}
-
-function enumValue<T extends string>(
-  raw: unknown,
-  path: string,
-  values: readonly T[],
-): T {
-  if (typeof raw !== "string" || !(values as readonly string[]).includes(raw)) {
-    fail(path, `must be one of ${values.join(" | ")}`);
-  }
-  return raw as T;
 }
 
 function stringMap(raw: unknown, path: string): Record<string, unknown> {

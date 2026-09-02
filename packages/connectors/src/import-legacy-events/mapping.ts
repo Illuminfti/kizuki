@@ -1,8 +1,9 @@
 import { PAGE_SENSITIVITIES, SUBJECT_ROLES, isPlainObject } from "@kizuki/core";
 import type { PageSensitivity, SubjectRole } from "@kizuki/core";
-import { KizukiError } from "../errors";
 import { TIMESTAMP_FORMATS, vocabularyMap } from "../legacy/coerce";
 import type { TimestampFormat } from "../legacy/coerce";
+import { mappingRules } from "../legacy/mapping-parse";
+import type { MappingRules } from "../legacy/mapping-parse";
 
 export const LEGACY_EVENTS_CONNECTOR_ID =
   "kizuki.import-legacy-events" as const;
@@ -65,24 +66,10 @@ export interface LegacyEventsMapping {
   metadata: { columns: "rest" | string[] };
 }
 
-function fail(path: string, rule: string): never {
-  throw new KizukiError(
-    "misconfigured",
-    `${LEGACY_EVENTS_CONNECTOR_ID}: ${path}: ${rule}`,
-  );
-}
-
-function objectAt(
-  raw: unknown,
-  path: string,
-  allowed: readonly string[],
-): Record<string, unknown> {
-  if (!isPlainObject(raw)) fail(path, "must be an object");
-  for (const key of Object.keys(raw)) {
-    if (!allowed.includes(key)) fail(path, `unknown key ${key}`);
-  }
-  return raw;
-}
+const rules = mappingRules(LEGACY_EVENTS_CONNECTOR_ID);
+const fail: MappingRules["fail"] = rules.fail;
+const objectAt: MappingRules["objectAt"] = rules.objectAt;
+const enumValue: MappingRules["enumValue"] = rules.enumValue;
 
 function column(raw: unknown, path: string): string {
   if (typeof raw !== "string" || !IDENTIFIER.test(raw)) {
@@ -90,17 +77,6 @@ function column(raw: unknown, path: string): string {
   }
   if (raw === ROWID_ALIAS) fail(path, `must not be ${ROWID_ALIAS}`);
   return raw;
-}
-
-function enumValue<T extends string>(
-  raw: unknown,
-  path: string,
-  values: readonly T[],
-): T {
-  if (typeof raw !== "string" || !(values as readonly string[]).includes(raw)) {
-    fail(path, `must be one of ${values.join(" | ")}`);
-  }
-  return raw as T;
 }
 
 function kindName(raw: unknown, path: string): string {

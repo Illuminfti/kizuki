@@ -12,6 +12,7 @@ import {
   parseLegacyTimestamp,
   sanitizeLine,
 } from "../legacy/coerce";
+import { compareStrings } from "../util";
 import {
   MAX_EXTENSIONS,
   jsonSafeFrontmatter,
@@ -256,10 +257,6 @@ function planPage(
   };
 }
 
-function compare(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
-}
-
 function emptyCounts(): LegacyWikiCounts {
   const types = {} as Record<PageType, number>;
   for (const type of PAGE_TYPES) types[type] = 0;
@@ -341,16 +338,16 @@ export function planLegacyWiki(
 
   // Relpath order, whatever the caller handed over: collision suffixes and
   // therefore page paths would otherwise depend on directory read order.
-  const files = [...scan.files].sort((a, b) => compare(a.relpath, b.relpath));
+  const files = [...scan.files].sort((a, b) =>
+    compareStrings(a.relpath, b.relpath),
+  );
   for (const file of files) {
     const draft = planPage(file, mapping, opts, taken);
     pages.push(draft.report);
     if (draft.event !== null) events.push(draft.event);
   }
   for (const entry of scan.skipped) pages.push(skippedPage(entry));
-  pages.sort((a, b) =>
-    a.relpath < b.relpath ? -1 : a.relpath > b.relpath ? 1 : 0,
-  );
+  pages.sort((a, b) => compareStrings(a.relpath, b.relpath));
 
   const counts = emptyCounts();
   for (const page of pages) tally(counts, page);
