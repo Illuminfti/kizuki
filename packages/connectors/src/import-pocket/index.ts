@@ -179,28 +179,26 @@ export function pocketEvents(
   rows: readonly PocketRow[],
   observed_at: string,
 ): CaptureEventInput[] {
-  return rows.map((row) => {
-    return {
-      schema: "kizuki.event/v1",
-      connector_id: POCKET_IMPORT_CONNECTOR_ID,
-      source_record_id: pocketRecordId(row),
-      kind: "bookmark",
-      occurred_at: row.occurred_at,
-      observed_at,
-      text: row.title.length > 0 ? `${row.title}\n${row.url}` : row.url,
-      subjects: [{ subject_id: "pocket:self", role: "from" }],
-      // A reading list is about the owner, not a secret.
-      sensitivity_hint: "personal",
-      deleted: false,
-      attachments: [],
-      metadata: {
-        title: row.title,
-        url: row.url,
-        tags: row.tags,
-        status: row.status,
-      },
-    };
-  });
+  return rows.map((row) => ({
+    schema: "kizuki.event/v1",
+    connector_id: POCKET_IMPORT_CONNECTOR_ID,
+    source_record_id: pocketRecordId(row),
+    kind: "bookmark",
+    occurred_at: row.occurred_at,
+    observed_at,
+    text: row.title.length > 0 ? `${row.title}\n${row.url}` : row.url,
+    subjects: [{ subject_id: "pocket:self", role: "from" }],
+    // A reading list is about the owner, not a secret.
+    sensitivity_hint: "personal",
+    deleted: false,
+    attachments: [],
+    metadata: {
+      title: row.title,
+      url: row.url,
+      tags: row.tags,
+      status: row.status,
+    },
+  }));
 }
 
 export interface PocketReadLimits {

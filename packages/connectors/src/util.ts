@@ -207,7 +207,7 @@ export async function readBoundedUtf8(
 }
 
 /** Enough for any header line an export could honestly carry. */
-export const MAX_HEADER_BYTES = 64 * 1024;
+const MAX_HEADER_BYTES = 64 * 1024;
 
 /**
  * The first line of a file, for a health check that has to prove the file
