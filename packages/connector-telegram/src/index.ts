@@ -25,5 +25,6 @@ export {
   parseCursor,
 } from "./cursor";
 export type { DialogCursor, SyncPass, TelegramCursor } from "./cursor";
+export { TELEGRAM_CONNECTOR_ID, mapMessage, userDisplay } from "./map";
 export { TELEGRAM_STATE_SCHEMA, encodeState, parseState } from "./state";
 export type { TelegramState } from "./state";
