@@ -157,6 +157,73 @@ describe("interactive sign-in", () => {
     ]);
   });
 
+  test("adds INBOX when the owner named only other folders", async () => {
+    const connector = createImapConnector({}, { dial: memoryDialer(server()) });
+    let bytes: Uint8Array = new Uint8Array();
+    await connector.signIn(
+      scriptedIo([
+        "mail.acme.example",
+        "993",
+        FIXTURE_USERNAME,
+        FIXTURE_PASSWORD,
+        "Archive/2026",
+      ]),
+      {
+        write: async (written) => {
+          bytes = written;
+        },
+      },
+    );
+    // The connector syncs INBOX plus the owner's picks; a state holding only
+    // a custom folder would sync neither what was asked for nor what was said.
+    expect(parseImapState(new TextDecoder().decode(bytes)).folders).toEqual([
+      "INBOX",
+      "Archive/2026",
+    ]);
+  });
+
+  test("a server without an INBOX is refused", async () => {
+    const fake = new FakeImapServer(
+      fixtureMailbox().filter((folder) => folder.wire !== "INBOX"),
+      { username: FIXTURE_USERNAME, password: FIXTURE_PASSWORD },
+    );
+    const connector = createImapConnector({}, { dial: memoryDialer(fake) });
+    const written: Uint8Array[] = [];
+    const error = await connector
+      .signIn(scriptedIo(HAPPY), {
+        write: async (bytes) => {
+          written.push(bytes);
+        },
+      })
+      .catch((caught: unknown) => caught);
+    expect((error as KizukiError).code).toBe("misconfigured");
+    expect((error as KizukiError).message).toContain("lists no INBOX");
+    expect(written).toEqual([]);
+  });
+
+  test("state that does not list INBOX first is refused", () => {
+    const error = ((): unknown => {
+      try {
+        return parseImapState(
+          JSON.stringify({
+            schema: "kizuki.imap-state/v1",
+            host: "mail.acme.example",
+            port: 993,
+            username: FIXTURE_USERNAME,
+            password: FIXTURE_PASSWORD,
+            folders: ["Archive/2026"],
+            max_message_bytes: 2_097_152,
+          }),
+        );
+      } catch (caught: unknown) {
+        return caught;
+      }
+    })();
+    expect(error).toBeInstanceOf(KizukiError);
+    expect((error as KizukiError).code).toBe("misconfigured");
+    expect((error as KizukiError).message).toContain("must list INBOX first");
+  });
+
   test("a wrong password fails unauthenticated and writes nothing", async () => {
     const fake = server({ password: "the-real-one" });
     const db = openLedger(":memory:");

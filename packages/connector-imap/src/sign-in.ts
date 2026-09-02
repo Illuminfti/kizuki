@@ -90,8 +90,17 @@ export async function signInImap(
             .map((piece) => piece.trim())
             .filter((piece) => piece.length > 0);
 
+    // INBOX is not one of the choices; it is the floor the choices add to,
+    // so it is seeded first and the owner's picks follow it.
+    const inbox = entries.find((candidate) => matches(candidate, "INBOX"));
+    if (inbox === undefined) {
+      throw new KizukiError(
+        "misconfigured",
+        "kizuki.imap: the server lists no INBOX",
+      );
+    }
     const unknown: string[] = [];
-    const wire: string[] = [];
+    const wire: string[] = [inbox.wire];
     for (const name of wanted) {
       const entry = entries.find((candidate) => matches(candidate, name));
       if (entry === undefined) {
@@ -107,11 +116,6 @@ export async function signInImap(
       );
     }
 
-    const inboxIndex = wire.findIndex((name) => name.toUpperCase() === "INBOX");
-    if (inboxIndex > 0) {
-      const [inbox] = wire.splice(inboxIndex, 1);
-      if (inbox !== undefined) wire.unshift(inbox);
-    }
     for (const name of wire) await session.examine(name);
     folders = wire;
     await session.logout();

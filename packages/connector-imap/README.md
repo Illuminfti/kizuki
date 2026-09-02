@@ -61,10 +61,12 @@ Folders on the server: INBOX, Archive, Sent, Lists/dev
 Folders to sync [INBOX]: INBOX, Archive
 ```
 
-The host and port are validated before anything is dialled. The credentials
-are proved against the real server before anything is written: a wrong app
-password, an unreadable folder or a folder name that is not on the server
-fails the sign-in and leaves no state behind.
+The host and port are validated before anything is dialled. INBOX is always
+synced and is always first, whether or not you name it, so the answer above
+adds Archive to it. The credentials are proved against the real server before
+anything is written: a wrong app password, an unreadable folder, a folder
+name that is not on the server, or a server that lists no INBOX at all fails
+the sign-in and leaves no state behind.
 
 Everything you typed is then handed to Kizuki as opaque bytes and stored in
 `~/.kizuki/connections/<id>.state`, mode 0600. The host, the username and the

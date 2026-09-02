@@ -73,6 +73,12 @@ function validateFolders(raw: unknown): string[] {
     if (folders.includes(folder)) refuse("folders", "must not repeat a mailbox");
     folders.push(folder);
   }
+  // The connector syncs INBOX plus whatever else the owner picked. A state
+  // without it would quietly sync neither, and the owner would have no way to
+  // tell that from an empty mailbox.
+  if ((folders[0] ?? "").toUpperCase() !== "INBOX") {
+    refuse("folders", "must list INBOX first");
+  }
   return folders;
 }
 
