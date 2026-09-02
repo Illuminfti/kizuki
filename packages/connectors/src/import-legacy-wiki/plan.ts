@@ -1,4 +1,8 @@
-import { PAGE_TYPES, PAGE_CANDIDATE_SCHEMA } from "@kizuki/core";
+import {
+  ENTITY_PAGE_TYPES,
+  PAGE_CANDIDATE_SCHEMA,
+  PAGE_TYPES,
+} from "@kizuki/core";
 import type { CaptureEventInput, PageSensitivity, PageType } from "@kizuki/core";
 import type { FrontmatterValue } from "@kizuki/core/staging";
 import { parseLegacyTimestamp, sanitizeLine } from "../legacy/coerce";
@@ -31,7 +35,6 @@ import type { ScanResult } from "./scan";
 export const MAX_TEXT_LENGTH = 262_144;
 const MAX_VOCABULARY = 64;
 const IDENTITY_SENSITIVITIES = ["public", "personal", "private"] as const;
-const ENTITY_TYPES = ["person", "org", "project", "place", "topic"] as const;
 
 export interface PlanOptions {
   observedAt: string;
@@ -178,7 +181,9 @@ function planPage(
   const report: LegacyWikiPageReport = {
     ...base,
     target,
-    kind: (ENTITY_TYPES as readonly string[]).includes(type)
+    // The floor decides the proposal kind from the same list, so the
+    // report cannot disagree with what staging actually files.
+    kind: (ENTITY_PAGE_TYPES as readonly string[]).includes(type)
       ? "entity"
       : "claim",
     notes,
