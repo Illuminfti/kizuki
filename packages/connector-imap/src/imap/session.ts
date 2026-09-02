@@ -6,7 +6,7 @@ import { secretSpellings } from "./codes";
 import type { ClientOptions } from "./client";
 import { tokenText } from "./tokenizer";
 import type { ImapResponse, Token } from "./tokenizer";
-import { folderLabel } from "../events";
+import { folderLabel, parseInternalDate } from "../events";
 
 export const MAX_BODY_FETCH = 20;
 
@@ -86,12 +86,42 @@ function codeNumber(responses: ImapResponse[], name: string): number | null {
   return null;
 }
 
-function integer(token: Token | undefined, what: string): number {
-  const value = Number(tokenText(token));
-  if (!Number.isInteger(value) || value < 0) {
+/**
+ * Every requested field has to arrive. A missing one used to read as
+ * `Number("")`, so a reply that answered `UID FETCH` with nothing but a UID
+ * produced a message of size zero dated the empty string: a size policy
+ * decided on a fabricated number, and a fabricated fact in the ledger.
+ */
+function requiredInteger(
+  fields: Map<string, Token>,
+  key: string,
+  what: string,
+  minimum: number,
+): number {
+  const token = fields.get(key);
+  if (token === undefined) throw protocolError(`server omitted the ${what}`);
+  const text = tokenText(token).trim();
+  const value = Number(text);
+  if (
+    !/^\d+$/.test(text) ||
+    !Number.isSafeInteger(value) ||
+    value < minimum
+  ) {
     throw protocolError(`server sent a malformed ${what}`);
   }
   return value;
+}
+
+function requiredInternalDate(fields: Map<string, Token>): string {
+  const token = fields.get("INTERNALDATE");
+  if (token === undefined) throw protocolError("server omitted the internaldate");
+  const text = tokenText(token);
+  // `occurred_at` falls back to this value, so an unreadable one would put a
+  // guessed date in the ledger instead of the date the message actually has.
+  if (parseInternalDate(text) === null) {
+    throw protocolError("server sent a malformed internaldate");
+  }
+  return text;
 }
 
 /**
@@ -188,14 +218,21 @@ export class ImapSession {
       atom("(UID INTERNALDATE RFC822.SIZE)"),
     ]);
     const summaries: MessageSummary[] = [];
+    const seen = new Set<number>();
     for (const items of fetchLists(result.untagged)) {
       const fields = fetchFields(items);
-      const uidToken = fields.get("UID");
-      if (uidToken === undefined) continue;
+      // A FETCH answering something other than a UID FETCH has no UID; the
+      // reply to this command must carry one for every message it lists.
+      if (!fields.has("UID")) continue;
+      const uid = requiredInteger(fields, "UID", "uid", 1);
+      // Two rows for one UID cannot both be true, and taking either would make
+      // the walk's accounting depend on which the server sent first.
+      if (seen.has(uid)) throw protocolError("server listed a uid twice");
+      seen.add(uid);
       summaries.push({
-        uid: integer(uidToken, "uid"),
-        internaldate: tokenText(fields.get("INTERNALDATE")),
-        size: integer(fields.get("RFC822.SIZE"), "size"),
+        uid,
+        internaldate: requiredInternalDate(fields),
+        size: requiredInteger(fields, "RFC822.SIZE", "size", 0),
       });
     }
     return summaries.sort((a, b) => a.uid - b.uid);
@@ -214,14 +251,19 @@ export class ImapSession {
       atom(uids.join(",")),
       atom(`(BODY.PEEK[${section}])`),
     ]);
+    const wanted = new Set(uids);
     for (const items of fetchLists(result.untagged)) {
       const fields = fetchFields(items);
-      const uidToken = fields.get("UID");
-      if (uidToken === undefined) continue;
+      if (!fields.has("UID")) continue;
+      const uid = requiredInteger(fields, "UID", "uid", 1);
       const body = bodyField(fields, section);
       if (body === undefined) continue;
+      // A body for a message nobody asked about would be stored under a record
+      // id the walk never scanned, so it is refused rather than kept.
+      if (!wanted.has(uid)) throw protocolError("server sent an unrequested body");
+      if (bodies.has(uid)) throw protocolError("server sent a body twice");
       bodies.set(
-        integer(uidToken, "uid"),
+        uid,
         body.kind === "literal"
           ? body.bytes
           : new TextEncoder().encode(tokenText(body)),
