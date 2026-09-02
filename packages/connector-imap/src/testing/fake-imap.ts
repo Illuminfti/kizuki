@@ -28,6 +28,8 @@ export interface FakeImapOptions {
   password?: string;
   /** Response code the server attaches when LOGIN is refused, e.g. `LIMIT`. */
   loginFailureCode?: string | null;
+  /** Quotes the submitted credentials back in the refusal, as a hostile one would. */
+  echoCredentialsOnFailure?: boolean;
   preauth?: boolean;
   delimiter?: string;
   /** Names the fetched section `BODY[]<0>`, as some real servers do. */
@@ -58,6 +60,7 @@ export class FakeImapServer {
       username: options.username ?? "ada@acme.example",
       password: options.password ?? "app-password",
       loginFailureCode: options.loginFailureCode ?? null,
+      echoCredentialsOnFailure: options.echoCredentialsOnFailure ?? false,
       preauth: options.preauth ?? false,
       delimiter: options.delimiter ?? "/",
       decorateBodySection: options.decorateBodySection ?? false,
@@ -230,7 +233,10 @@ export class FakeImapServer {
       this.options.loginFailureCode === null
         ? ""
         : `[${this.options.loginFailureCode}] `;
-    return [ascii(`${tag} NO ${code}Invalid credentials\r\n`)];
+    const text = this.options.echoCredentialsOnFailure
+      ? `rejected ${username ?? ""} ${password ?? ""}`
+      : "Invalid credentials";
+    return [ascii(`${tag} NO ${code}${text}\r\n`)];
   }
 
   private list(tag: string): Uint8Array[] {

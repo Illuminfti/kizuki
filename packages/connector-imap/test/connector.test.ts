@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { KizukiError } from "@kizuki/core";
 import type { SecretResolver } from "@kizuki/core";
 import { createImapConnector } from "../src/connector";
+import { secretSpellings } from "../src/imap/codes";
 import { serializeImapState } from "../src/state";
 import type { ImapState } from "../src/state";
 import { FakeImapServer } from "../src/testing/fake-imap";
@@ -308,6 +309,32 @@ describe("revocation and redaction", () => {
       expect(detail).not.toContain(FIXTURE_PASSWORD);
       expect(detail).not.toContain(FIXTURE_USERNAME);
       expect(detail).not.toContain("mail.acme.example");
+    }
+  });
+
+  test("a server that quotes the credentials back cannot leak them", async () => {
+    const fake = server({
+      password: "different",
+      loginFailureCode: "AUTHENTICATIONFAILED",
+      echoCredentialsOnFailure: true,
+    });
+    const connector = createImapConnector(
+      { secret_ref: REF },
+      { dial: memoryDialer(fake) },
+    );
+    const failure = (await connector
+      .connect(resolverFor(fixtureState()))
+      .catch((caught: unknown) => caught)) as KizukiError;
+    expect(failure.code).toBe("unauthenticated");
+    const detail = (await connector.health()).detail ?? "";
+    for (const text of [failure.message, detail]) {
+      expect(text).not.toContain(FIXTURE_PASSWORD);
+      expect(text).not.toContain(FIXTURE_USERNAME);
+      // The wire is read as latin-1, so the mangled spelling of a non-ASCII
+      // password is just as readable and must go the same way.
+      for (const spelling of secretSpellings(FIXTURE_PASSWORD)) {
+        expect(text).not.toContain(spelling);
+      }
     }
   });
 

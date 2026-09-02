@@ -2,6 +2,7 @@ import { KizukiError } from "@kizuki/core";
 import type { ImapDialer, DialOptions } from "../transport";
 import type { ImapState } from "../state";
 import { ImapClient, atom, str } from "./client";
+import { secretSpellings } from "./codes";
 import type { ClientOptions } from "./client";
 import { tokenText } from "./tokenizer";
 import type { ImapResponse, Token } from "./tokenizer";
@@ -111,12 +112,14 @@ export class ImapSession {
       ...(options.ca !== undefined ? { ca: options.ca } : {}),
     };
     const conn = await dial(state.host, state.port, dialOptions);
-    const client = new ImapClient(
-      conn,
-      options.commandTimeoutMs !== undefined
+    const client = new ImapClient(conn, {
+      ...(options.commandTimeoutMs !== undefined
         ? { commandTimeoutMs: options.commandTimeoutMs }
-        : {},
-    );
+        : {}),
+      // A refusal is server-authored text; these two strings must never be
+      // able to ride back out inside one.
+      secrets: [state.username, state.password].flatMap(secretSpellings),
+    });
     const greeting = await client.greeting();
     const status = (greeting.text.split(/\s+/)[0] ?? "").toUpperCase();
     if (status !== "OK" && status !== "PREAUTH") {

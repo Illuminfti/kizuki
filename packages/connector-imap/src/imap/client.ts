@@ -25,6 +25,11 @@ export interface CommandResult {
 
 export interface ClientOptions {
   commandTimeoutMs?: number;
+  /**
+   * Strings the server must never be able to quote back into an error. The
+   * session passes the account name and the app password.
+   */
+  secrets?: readonly string[];
 }
 
 type Piece = { text: string } | { literal: Uint8Array };
@@ -71,10 +76,12 @@ function asciiBytes(text: string): Uint8Array {
 function refusal(
   response: ImapResponse,
   options: { login?: boolean },
+  secrets: readonly string[],
 ): KizukiError {
   const status = response.text.split(/\s+/)[0] ?? "";
   return failureFor(response.text.slice(status.length).trim(), {
     login: options.login === true,
+    secrets,
   });
 }
 
@@ -85,6 +92,7 @@ function refusal(
 export class ImapClient {
   private readonly reader: ResponseReader;
   private readonly timeoutMs: number;
+  private readonly secrets: readonly string[];
   private counter = 0;
   private closed = false;
 
@@ -94,6 +102,7 @@ export class ImapClient {
   ) {
     this.reader = new ResponseReader(conn);
     this.timeoutMs = options.commandTimeoutMs ?? COMMAND_TIMEOUT_MS;
+    this.secrets = options.secrets ?? [];
   }
 
   close(): void {
@@ -186,7 +195,7 @@ export class ImapClient {
     for (;;) {
       const response = await this.read(deadline);
       if (response.tag === "+") return;
-      if (response.tag !== "*") throw refusal(response, options);
+      if (response.tag !== "*") throw refusal(response, options, this.secrets);
       this.collect(untagged, response);
     }
   }
@@ -230,7 +239,7 @@ export class ImapClient {
         continue;
       }
       if (/^OK\b/i.test(response.text)) return { untagged, tagged: response };
-      throw refusal(response, options);
+      throw refusal(response, options, this.secrets);
     }
   }
 }
