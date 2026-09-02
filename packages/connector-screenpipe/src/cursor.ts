@@ -18,6 +18,13 @@ export interface ScreenpipeCursor {
 }
 
 export const BATCH_LIMIT = 500;
+/**
+ * Row pages one `backfill`/`sync` call may read before it returns. Frames
+ * without text are ordinary screenpipe output, so a call keeps paging until it
+ * has an event; this is the bound that keeps that walk from turning a single
+ * call into a full-table scan.
+ */
+export const MAX_PAGES_PER_CALL = 20;
 export const MAX_TEXT_CHARS = 65_536;
 export const DEFAULT_SETTLE_SECONDS = 300;
 export const MAX_PLAN_IDS = 10_000;

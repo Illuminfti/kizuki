@@ -95,9 +95,11 @@ screenpipe schema older than supported: migration 20260613130000 not applied (ma
   clock's settle horizon, so one row carrying a corrupt or clock-skewed date
   cannot pull the whole history back in; a row dated beyond that horizon is
   skipped by `since` rather than seeding from it.
-- A call emits at most 500 events. Within one call the connector reads as many
-  row pages as it needs to produce an event, so a long run of frames without
-  text costs extra reads instead of cutting the import short.
+- A call emits at most 500 events and reads at most 20 pages of 500 rows.
+  Within that bound the connector keeps reading until it has an event, so a
+  long run of frames without text costs extra reads instead of cutting the
+  import short. A run longer than the bound ends the call with no events and an
+  advanced checkpoint, and the next call resumes behind it.
 - Restoring or replacing the source database can rewind IDs. The connector does
   not detect that replacement, so build a new source enrollment instead of
   reusing its checkpoint.

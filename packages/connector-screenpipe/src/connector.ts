@@ -18,6 +18,7 @@ import {
 } from "./config";
 import {
   BATCH_LIMIT,
+  MAX_PAGES_PER_CALL,
   encodeCursor,
   initialCursor,
   parseCursor,
@@ -221,12 +222,18 @@ export class ScreenpipeConnector implements Connector {
       // keeps reading pages until it has an event, both tables are exhausted
       // for this cursor, or the settle window stops it. A page of frames
       // without text is ordinary screenpipe output, not the end of the data.
+      // MAX_PAGES_PER_CALL bounds that retry: a run of skipped rows longer
+      // than the bound returns an advanced cursor and no events, and the next
+      // call resumes behind it rather than scanning the table in one go.
       let framesDone = false;
       let transcriptionsDone = false;
+      let pages = 0;
       while (
         events.length < BATCH_LIMIT &&
-        !(framesDone && transcriptionsDone)
+        !(framesDone && transcriptionsDone) &&
+        pages < MAX_PAGES_PER_CALL
       ) {
+        pages += 1;
         if (!framesDone) {
           framesDone = walkFrames(db, current, events, walk);
           continue;
@@ -294,16 +301,23 @@ interface Walk {
   settling: (timestamp: string) => boolean;
 }
 
-/** Returns true when the frame walk is finished for this batch. */
+/**
+ * Returns true when the frame walk is finished for this batch. Every page is a
+ * full one: sizing it by the remaining event budget collapses to one statement
+ * per row as soon as a batch is nearly full, and a run of skipped rows behind
+ * it then costs one round trip each.
+ */
 function walkFrames(
   db: Database,
   cursor: ScreenpipeCursor,
   events: CaptureEventInput[],
   walk: Walk,
 ): boolean {
-  const limit = BATCH_LIMIT - events.length;
-  const rows = readFrames(db, cursor.last_frame_id, limit);
+  const rows = readFrames(db, cursor.last_frame_id, BATCH_LIMIT);
   for (const row of rows) {
+    // The cursor stays short of a row the batch has no room for, so the next
+    // call reads it instead.
+    if (events.length >= BATCH_LIMIT) return true;
     const timestamp = normalizeTimestamp(row.timestamp);
     if (timestamp === null) {
       cursor.skipped.frames_bad_timestamp += 1;
@@ -320,7 +334,7 @@ function walkFrames(
     events.push(mapFrame(row, walk.observedAt));
     cursor.last_frame_id = row.id;
   }
-  return rows.length < limit;
+  return rows.length < BATCH_LIMIT;
 }
 
 /** Returns true when the transcription walk is finished for this batch. */
@@ -330,9 +344,9 @@ function walkTranscriptions(
   events: CaptureEventInput[],
   walk: Walk,
 ): boolean {
-  const limit = BATCH_LIMIT - events.length;
-  const rows = readTranscriptions(db, cursor.last_transcription_id, limit);
+  const rows = readTranscriptions(db, cursor.last_transcription_id, BATCH_LIMIT);
   for (const row of rows) {
+    if (events.length >= BATCH_LIMIT) return true;
     const timestamp = normalizeTimestamp(row.timestamp);
     if (timestamp === null) {
       cursor.skipped.transcriptions_bad_timestamp += 1;
@@ -343,5 +357,5 @@ function walkTranscriptions(
     events.push(mapTranscription(row, walk.observedAt));
     cursor.last_transcription_id = row.id;
   }
-  return rows.length < limit;
+  return rows.length < BATCH_LIMIT;
 }
