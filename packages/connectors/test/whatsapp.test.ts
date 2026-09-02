@@ -11,6 +11,7 @@ import {
   readBoundedUtf8,
 } from "../src/util";
 import {
+  MESSAGE_START,
   WHATSAPP_FIXTURE_FILES,
   WHATSAPP_FIXTURE_TIMEZONE,
   WHATSAPP_IMPORT_CONNECTOR_ID,
@@ -205,6 +206,34 @@ test("newlines at the end of a file do not change the last message", async () =>
     expect(await parse(`${chat}${suffix}`, { date_order: "mdy" })).toEqual(
       bare,
     );
+  }
+});
+
+test("a message start is every shape the two apps write, and nothing else", () => {
+  const rest = "Ada: hi";
+  for (const line of [
+    "1/4/26, 9:15 AM - Ada: hi",
+    "13.01.2026, 18:05 - Ada: hi",
+    "2026-01-13, 18:05 - Ada: hi",
+    "1/13/26, 6:05\u202FPM - Ada: hi",
+    "1/4/26, 9:15\u00a0a.m. - Ada: hi",
+    "1/4/26, 9:15 p. m. - Ada: hi",
+  ]) {
+    const matched = MESSAGE_START.exec(line);
+    expect(matched?.[2]).toBe(line.slice(0, line.indexOf(" - ")));
+    expect(matched?.[3]).toBe(rest);
+  }
+  const bracketed = MESSAGE_START.exec("[04/01/2026, 09:15:00] Ada: hi");
+  expect(bracketed?.[1]).toBe("04/01/2026, 09:15:00");
+  expect(bracketed?.[3]).toBe(rest);
+  for (const line of [
+    "- venue",
+    "just some prose",
+    "9:15 - Ada: hi",
+    " 1/4/26, 9:15 AM - Ada: hi",
+    "1/4/26 - Ada: hi",
+  ]) {
+    expect(MESSAGE_START.exec(line)).toBeNull();
   }
 });
 
