@@ -325,8 +325,13 @@ export class TelegramConnector implements Connector {
     });
     // A pass that listed nothing says nothing about the account's dialogs.
     if (result.listing !== null) this.#listing = result.listing;
-    if (result.floodUntil !== null) this.#floodUntil = result.floodUntil;
-    this.#lastSuccessAt = this.#nowIso();
+    if (result.floodUntil === null) {
+      this.#lastSuccessAt = this.#nowIso();
+    } else {
+      // The pass stopped where the provider told it to, not where it meant to:
+      // that instant is the last failure, not the last success.
+      this.#floodUntil = result.floodUntil;
+    }
     return result.batch;
   }
 

@@ -108,3 +108,24 @@ test("health names the dialogs the account stopped listing", async () => {
   await built.connector.sync(drained.cursor);
   expect((await built.connector.health()).state).toBe("ok");
 });
+
+test("a pass cut short by a wait is not recorded as a success", async () => {
+  const account = fixtureAccount();
+  account.flood = { after_calls: 0, seconds: 45 };
+  const built = await connected({ account });
+  const connectedAt = (await built.connector.health()).last_success_at;
+  expect(connectedAt).toBe("2026-01-01T00:00:00.000Z");
+
+  built.clock.now += 60_000;
+  await built.connector.backfill(null);
+  const limited = await built.connector.health();
+  expect(limited.state).toBe("rate_limited");
+  // The instant the wait was reported is not a time anything succeeded at.
+  expect(limited.last_success_at).toBe(connectedAt);
+
+  built.clock.now += 45_000;
+  await built.connector.backfill(null);
+  const recovered = await built.connector.health();
+  expect(recovered.state).toBe("ok");
+  expect(recovered.last_success_at).toBe("2026-01-01T00:01:45.000Z");
+});
