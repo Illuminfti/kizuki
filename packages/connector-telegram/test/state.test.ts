@@ -44,9 +44,34 @@ test("anything but a well-formed blob is corrupt state", () => {
   );
 });
 
-test("the corruption message never repeats the session", () => {
-  const message = corruption(
-    JSON.stringify({ ...STATE, schema: "wrong" }),
-  ).message;
-  expect(message).not.toContain(STATE.session);
+test("nothing the corruption carries repeats the session", () => {
+  // A rendered error shows its causes too, so `.message` alone is not the
+  // boundary: the parser quotes the token it choked on, and in a state blob
+  // that lost its quoting the token is the credential itself.
+  const opaque = "AQBANOTEwODIzNDU2Nzg5MEFCQ0RFRg";
+  const unquoted = `{"schema":"${TELEGRAM_STATE_SCHEMA}","session":${opaque}}`;
+  const cases: [Uint8Array | string, string][] = [
+    [unquoted, opaque],
+    [new TextEncoder().encode(unquoted), opaque],
+    [`{"schema":"${TELEGRAM_STATE_SCHEMA}","session":"${opaque}`, opaque],
+    [JSON.stringify({ ...STATE, schema: "wrong" }), STATE.session],
+  ];
+  for (const [value, secret] of cases) {
+    const error = corruption(value);
+    expect(error.message).not.toContain(secret);
+    expect(Bun.inspect(error, { depth: 10 })).not.toContain(secret);
+    expect(rendered(error)).not.toContain(secret);
+  }
 });
+
+/** Walks the cause chain the way a log line or a crash report would. */
+function rendered(error: unknown): string {
+  const parts: string[] = [];
+  let current: unknown = error;
+  for (let depth = 0; depth < 10 && current instanceof Error; depth += 1) {
+    parts.push(current.name, current.message, current.stack ?? "");
+    current = current.cause;
+  }
+  parts.push(String(current));
+  return parts.join("\n");
+}

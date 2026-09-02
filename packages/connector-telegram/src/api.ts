@@ -100,6 +100,16 @@ export type TelegramErrorCode =
   | "limit_exceeded";
 
 /**
+ * A parser quotes the token it failed on, so an error raised over credential
+ * bytes carries them into every rendered cause chain. Only the failure's shape
+ * may cross that boundary.
+ */
+export function redactedCause(error: unknown): Error {
+  const shape = error instanceof Error ? error.name : typeof error;
+  return new Error(`kizuki.telegram: ${shape} (details withheld)`);
+}
+
+/**
  * Declared here rather than reusing `KizukiError`: `@kizuki/connectors` depends
  * on this package for its registry entry, so importing back would be a cycle.
  * No message may carry captured text, a phone number, a code or the session.

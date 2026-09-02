@@ -14,12 +14,26 @@ import {
 const PHONE = "+15550009876";
 const CODE = "22222";
 const PASSWORD = "correct horse";
-const SECRETS = [FIXTURE_SESSION, PHONE, CODE, PASSWORD];
+/** Shaped like a saved session: one opaque run with nothing to break it up. */
+const OPAQUE_SESSION = "AQBANOTEwODIzNDU2Nzg5MEFCQ0RFRg";
+const SECRETS = [FIXTURE_SESSION, OPAQUE_SESSION, PHONE, CODE, PASSWORD];
 
 function assertClean(label: string, text: string): void {
   for (const secret of SECRETS) {
     expect(`${label}: ${text}`).not.toContain(secret);
   }
+}
+
+/** What a log line or a crash report would render, causes included. */
+function chain(error: unknown): string {
+  const parts: string[] = [];
+  let current: unknown = error;
+  for (let depth = 0; depth < 10 && current instanceof Error; depth += 1) {
+    parts.push(current.name, current.message);
+    current = current.cause;
+  }
+  parts.push(String(current));
+  return parts.join("\n");
 }
 
 test("the manifest carries nothing the owner typed", async () => {
@@ -43,48 +57,34 @@ test("no health report leaks the session or the sign-in answers", async () => {
   }
 });
 
-test("no thrown message repeats a credential", async () => {
+test("nothing a thrown error carries repeats a credential", async () => {
   const account = fixtureAccount();
   account.sign_in = { code: CODE, password: PASSWORD, password_hint: "the usual" };
-  const messages: string[] = [];
-
-  messages.push(
-    (
-      await rejection(() =>
-        harness({ config: {} }).connector.signIn(
-          new ScriptedIo(["5551234"]),
-          new CapturingWriter(),
-        ),
-      )
-    ).message,
-  );
-  messages.push(
-    (
-      await rejection(() =>
-        harness({ account, config: {} }).connector.signIn(
-          new ScriptedIo([PHONE, "11111", "11111", "11111"]),
-          new CapturingWriter(),
-        ),
-      )
-    ).message,
-  );
-  messages.push(
-    (
-      await rejection(() => harness({ config: {} }).connector.connect(stateResolver()))
-    ).message,
-  );
-  messages.push(
-    (
-      await rejection(() =>
-        harness().connector.connect(stateResolver(stateText("2002"))),
-      )
-    ).message,
-  );
-  messages.push(
-    (await rejection(() => harness().connector.connect(async () => "{}"))).message,
-  );
-  for (const message of messages) {
-    assertClean("error", message);
+  const failures = [
+    () =>
+      harness({ config: {} }).connector.signIn(
+        new ScriptedIo(["5551234"]),
+        new CapturingWriter(),
+      ),
+    () =>
+      harness({ account, config: {} }).connector.signIn(
+        new ScriptedIo([PHONE, "11111", "11111", "11111"]),
+        new CapturingWriter(),
+      ),
+    () => harness({ config: {} }).connector.connect(stateResolver()),
+    () => harness().connector.connect(stateResolver(stateText("2002"))),
+    () => harness().connector.connect(async () => "{}"),
+    // A state blob that lost its quoting: the parser would otherwise quote the
+    // session straight into the cause it hands back.
+    () =>
+      harness().connector.connect(
+        async () => `{"schema":"kizuki.telegram-state/v1","session":${OPAQUE_SESSION}}`,
+      ),
+  ];
+  for (const failure of failures) {
+    const error = await rejection(failure);
+    assertClean("error", error.message);
+    assertClean("cause chain", chain(error));
   }
 });
 

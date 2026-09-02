@@ -1,5 +1,5 @@
 import { isPlainObject } from "@kizuki/core";
-import { TelegramConnectorError } from "./api";
+import { TelegramConnectorError, redactedCause } from "./api";
 
 export const TELEGRAM_STATE_SCHEMA = "kizuki.telegram-state/v1" as const;
 
@@ -61,6 +61,6 @@ function corruptState(cause?: unknown): TelegramConnectorError {
   return new TelegramConnectorError(
     "corrupt_state",
     "kizuki.telegram: stored connection state is unreadable; sign in again",
-    cause === undefined ? undefined : { cause },
+    cause === undefined ? undefined : { cause: redactedCause(cause) },
   );
 }
