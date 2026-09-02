@@ -355,6 +355,23 @@ describe("runToCompletion", () => {
     db.close();
   });
 
+  test("a bound that cannot stop a run is refused before one starts", async () => {
+    const db = database();
+    const connector = new ScriptedConnector([page(1, 1)]);
+    for (const maxBatches of [0, -1, 1.5, Number.NaN, 2 ** 53]) {
+      await expect(
+        runToCompletion(db, connector, "fixture", "src-1", "backfill", {
+          maxBatches,
+        }),
+      ).rejects.toBeInstanceOf(TypeError);
+    }
+    // A bound that would never be reached is worse than no bound at all, so
+    // the run does not begin and no checkpoint is touched.
+    expect(connector.cursors).toEqual([]);
+    expect(getCheckpoint(db, "fixture", "src-1")).toBeNull();
+    db.close();
+  });
+
   test("an empty batch ends the run even when the cursor moved", async () => {
     const db = database();
     // A connector says it has nothing left to give by returning an empty
