@@ -1,6 +1,6 @@
 import { constants } from "node:fs";
 import type { Dirent } from "node:fs";
-import { open, readdir, stat } from "node:fs/promises";
+import { open, readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { KizukiError } from "../errors";
 import { compareStrings, errorMessage } from "../util";
@@ -151,6 +151,28 @@ async function readEntry(
   walk.files.push({ relpath, ...result.file });
 }
 
+/**
+ * Where a directory entry really is, or null when that is outside the wiki.
+ * The listing's entry type is a snapshot: between `readdir` and the call that
+ * enters a subdirectory, the entry can be replaced by a link, and every open
+ * below it would then be relative to a tree the walk never agreed to read.
+ * Descending the resolved path means each level was checked as it was taken.
+ */
+export async function confinedDirectory(
+  root: string,
+  absolute: string,
+): Promise<string | null> {
+  let resolved: string;
+  try {
+    resolved = await realpath(absolute);
+  } catch {
+    return null;
+  }
+  return resolved === root || resolved.startsWith(`${root}${path.sep}`)
+    ? resolved
+    : null;
+}
+
 async function walkDirectory(
   walk: Walk,
   directory: string,
@@ -196,7 +218,12 @@ async function walkDirectory(
         skip(walk, relpath, "ignored", "directory");
         continue;
       }
-      await walkDirectory(walk, absolute, depth + 1);
+      const inside = await confinedDirectory(walk.root, absolute);
+      if (inside === null) {
+        skip(walk, relpath, "symlink", "directory");
+        continue;
+      }
+      await walkDirectory(walk, inside, depth + 1);
       continue;
     }
     if (!entry.isFile() || !MARKDOWN.test(entry.name)) continue;
@@ -213,6 +240,8 @@ export async function scanLegacyWiki(
   ignore: string[],
 ): Promise<ScanResult> {
   const walk: Walk = {
+    // Canonical, so containment below is decided against where the wiki
+    // really is rather than against the name the owner typed.
     root,
     ignore,
     files: [],
@@ -228,7 +257,8 @@ export async function scanLegacyWiki(
         `${LEGACY_WIKI_CONNECTOR_ID}: path is not a directory: ${root}`,
       );
     }
-    await walkDirectory(walk, root, 0);
+    walk.root = await realpath(root);
+    await walkDirectory(walk, walk.root, 0);
   } catch (error) {
     if (error instanceof KizukiError) throw error;
     throw new KizukiError(

@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { isPlainObject } from "@kizuki/core";
+import { initVault, isPlainObject } from "@kizuki/core";
 import type { CaptureEventInput } from "@kizuki/core";
 import { KizukiError } from "../src/errors";
 import { InMemoryLedger } from "../src/ledger";
@@ -23,7 +23,10 @@ import {
 } from "../src/import-legacy-wiki";
 import { LEGACY_WIKI_FIXTURE } from "../src/import-legacy-wiki/fixture";
 import type { LegacyWikiReport } from "../src/import-legacy-wiki/report";
-import { readWikiFile } from "../src/import-legacy-wiki/scan";
+import {
+  confinedDirectory,
+  readWikiFile,
+} from "../src/import-legacy-wiki/scan";
 import type { ScanResult } from "../src/import-legacy-wiki/scan";
 
 const SENTINEL = "a-secret-outside-the-wiki";
@@ -89,6 +92,36 @@ describe("construction", () => {
         report: join(wiki, "report.md"),
       }),
     ).toThrow(/report path must be outside the source/);
+  });
+
+  test("a report inside a vault is refused, symlinked parent included", () => {
+    writeMapping();
+    const vault = join(root, "vault");
+    initVault(vault);
+    for (const report of [
+      join(vault, "entities", "injected.md"),
+      join(vault, "report.json"),
+    ]) {
+      expect(() =>
+        createLegacyWikiConnector({ path: wiki, report }),
+      ).toThrow(/report path must be outside the vault/);
+    }
+
+    // The canon tree reached through a link outside it is still the canon
+    // tree: a Markdown file no receipt covers must not land in it.
+    symlinkSync(join(vault, "entities"), join(root, "entities-link"));
+    expect(() =>
+      createLegacyWikiConnector({
+        path: wiki,
+        report: join(root, "entities-link", "injected.md"),
+      }),
+    ).toThrow(/report path must be outside the vault/);
+
+    const outside = createLegacyWikiConnector({
+      path: wiki,
+      report: join(root, "report.json"),
+    });
+    expect(outside.reportPath).toBe(join(root, "report.json"));
   });
 
   test("the manifest declares an unauthenticated page importer", () => {
@@ -317,6 +350,40 @@ describe("hostile files", () => {
     expect(JSON.stringify(batch.events)).not.toContain(SENTINEL);
     expect(connector.lastReport()?.pages).toContainEqual(
       expect.objectContaining({ relpath: "linked.md", skip_reason: "symlink" }),
+    );
+  });
+
+  test("a directory that resolves outside the wiki is not entered", async () => {
+    seed();
+    const outside = join(root, "outside");
+    mkdirSync(join(outside, "secrets"), { recursive: true });
+    writeFileSync(join(outside, "secrets", "leak.md"), "SENTINEL-OUTSIDE\n");
+
+    // The listing's entry type is a snapshot; the walk decides containment
+    // against where the directory really is, and descends that path.
+    expect(await confinedDirectory(wiki, join(wiki, "people"))).toBe(
+      join(wiki, "people"),
+    );
+    symlinkSync(join(outside, "secrets"), join(root, "escape"));
+    expect(await confinedDirectory(wiki, join(root, "escape"))).toBeNull();
+    expect(await confinedDirectory(wiki, join(wiki, "absent"))).toBeNull();
+
+    const batch = await createLegacyWikiConnector({ path: wiki }).backfill(null);
+    expect(JSON.stringify(batch.events)).not.toContain("SENTINEL-OUTSIDE");
+  });
+
+  test("a wiki reached through a symlinked root still scans", async () => {
+    seed();
+    const link = join(root, "wiki-link");
+    symlinkSync(wiki, link);
+    const viaLink = await createLegacyWikiConnector({ path: link }).backfill(
+      null,
+    );
+    const direct = await createLegacyWikiConnector({ path: wiki }).backfill(
+      null,
+    );
+    expect(viaLink.events.map((event) => event.source_record_id)).toEqual(
+      direct.events.map((event) => event.source_record_id),
     );
   });
 
