@@ -741,6 +741,67 @@ describe("truncation marks every instance of the series", () => {
   });
 });
 
+describe("an override carries its own length", () => {
+  const series = (overrideEnd: string[]): string[] => [
+    "BEGIN:VEVENT",
+    "UID:s@acme.example",
+    "DTSTART:20260302T090000Z",
+    "DTEND:20260302T100000Z",
+    "RRULE:FREQ=WEEKLY;COUNT=3",
+    "SUMMARY:Weekly",
+    "END:VEVENT",
+    "BEGIN:VEVENT",
+    "UID:s@acme.example",
+    "RECURRENCE-ID:20260309T090000Z",
+    "DTSTART:20260309T110000Z",
+    ...overrideEnd,
+    "SUMMARY:Moved",
+    "END:VEVENT",
+  ];
+
+  test("an override with its own DTEND is not resized to the master", () => {
+    const moved = mapped(series(["DTEND:20260309T130000Z"]))[1];
+    expect(moved?.text).toBe("Moved");
+    expect(moved?.metadata["ends_at"]).toBe("2026-03-09T13:00:00.000Z");
+    expect(moved?.metadata["duration"]).toBe(7_200);
+  });
+
+  test("an override with its own DURATION is not resized to the master", () => {
+    const moved = mapped(series(["DURATION:PT90M"]))[1];
+    expect(moved?.metadata["ends_at"]).toBe("2026-03-09T12:30:00.000Z");
+    expect(moved?.metadata["duration"]).toBe(5_400);
+  });
+
+  test("an override that declares neither keeps the master's length", () => {
+    const moved = mapped(series([]))[1];
+    expect(moved?.metadata["ends_at"]).toBe("2026-03-09T12:00:00.000Z");
+    expect(moved?.metadata["duration"]).toBe(3_600);
+  });
+
+  test("an all-day override keeps its own end date", () => {
+    const events = mapped([
+      "BEGIN:VEVENT",
+      "UID:allday@acme.example",
+      "DTSTART;VALUE=DATE:20260302",
+      "DTEND;VALUE=DATE:20260303",
+      "RRULE:FREQ=WEEKLY;COUNT=2",
+      "SUMMARY:Offsite",
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      "UID:allday@acme.example",
+      "RECURRENCE-ID;VALUE=DATE:20260309",
+      "DTSTART;VALUE=DATE:20260309",
+      "DTEND;VALUE=DATE:20260311",
+      "SUMMARY:Offsite, two days",
+      "END:VEVENT",
+    ]);
+    const moved = events[1];
+    expect(moved?.metadata["all_day"]).toBe(true);
+    expect(moved?.metadata["ends_on"]).toBe("20260311");
+    expect(moved?.metadata["duration"]).toBe(2 * 86_400);
+  });
+});
+
 describe("two entries can never share one record id", () => {
   test("a UID carrying the instance separator is escaped, not collided", () => {
     const events = mapped([

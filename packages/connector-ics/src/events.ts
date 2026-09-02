@@ -9,7 +9,7 @@ import {
   parseDateTime,
   toUtc,
 } from "./datetime";
-import type { IcsInstant, LocalDateTime } from "./datetime";
+import type { IcsInstant, LocalDateTime, ZoneResolver } from "./datetime";
 import {
   emit,
   instantOf,
@@ -180,6 +180,28 @@ export function calendarEvents(
   };
 }
 
+/**
+ * How long the entry itself says it lasts: its own DURATION, else the gap to
+ * its own DTEND, else nothing. An override carries its own length, so reading
+ * it off the master would move a rescheduled meeting and then resize it.
+ */
+function durationOf(
+  event: RawVEvent,
+  start: IcsInstant,
+  parsed: ParsedCalendar,
+  zones: ZoneResolver,
+): number | null {
+  const durationLine = firstValue(event, "DURATION");
+  if (durationLine !== undefined) return parseDuration(durationLine.value);
+  const dtend = instantOf(firstValue(event, "DTEND"));
+  if (dtend === null) return null;
+  return Math.round(
+    (Date.parse(toUtc(dtend, zones, parsed.zones).iso) -
+      Date.parse(toUtc(start, zones, parsed.zones).iso)) /
+      1_000,
+  );
+}
+
 function seriesEvents(
   uid: string,
   entry: Series,
@@ -198,19 +220,8 @@ function seriesEvents(
     (firstValue(master, "UID")?.value ?? "").trim().length === 0;
   const duplicate = duplicates.has(uid);
 
-  const durationLine = firstValue(master, "DURATION");
-  const dtend = instantOf(firstValue(master, "DTEND"));
   const zones = opts.zones ?? intlZones;
-  const duration =
-    durationLine !== undefined
-      ? parseDuration(durationLine.value)
-      : dtend !== null
-        ? Math.round(
-            (Date.parse(toUtc(dtend, zones, parsed.zones).iso) -
-              Date.parse(toUtc(start, zones, parsed.zones).iso)) /
-              1_000,
-          )
-        : null;
+  const duration = durationOf(master, start, parsed, zones);
 
   const rruleLine = firstValue(master, "RRULE");
   const rdates = rdateLocals(master);
@@ -228,7 +239,7 @@ function seriesEvents(
   if (rruleLine === undefined && rdates.length === 0) {
     if (!isCancelled(master)) events.push(emit({ ...common, event: master, start }));
     for (const override of entry.overrides) {
-      pushOverride(events, override, common);
+      pushOverride(events, override, common, parsed, zones);
     }
     return events;
   }
@@ -305,11 +316,18 @@ function seriesEvents(
       override === undefined
         ? null
         : instantOf(firstValue(override, "DTSTART"));
+    const instanceStartInstant = overrideStart ?? instanceStart(start, instance);
+    const instanceDuration =
+      override === undefined
+        ? duration
+        : (durationOf(override, instanceStartInstant, parsed, zones) ??
+          duration);
     events.push(
       emit({
         ...common,
+        duration: instanceDuration,
         event: source,
-        start: overrideStart ?? instanceStart(start, instance),
+        start: instanceStartInstant,
         ...(override !== undefined ? { suffixKey: key } : {}),
         recurrence: {
           rrule: rruleLine?.value ?? null,
@@ -327,6 +345,8 @@ function seriesEvents(
     events.push(
       emit({
         ...common,
+        duration:
+          durationOf(override, overrideStart, parsed, zones) ?? duration,
         event: override,
         start: overrideStart,
         recurrence: {
@@ -348,6 +368,8 @@ function pushOverride(
   events: CaptureEventInput[],
   override: RawVEvent,
   common: Omit<EmitInput, "event" | "start" | "recurrence">,
+  parsed: ParsedCalendar,
+  zones: ZoneResolver,
 ): void {
   if (isCancelled(override)) return;
   const start = instantOf(firstValue(override, "DTSTART"));
@@ -356,6 +378,7 @@ function pushOverride(
   events.push(
     emit({
       ...common,
+      duration: durationOf(override, start, parsed, zones) ?? common.duration,
       event: override,
       start,
       recurrence: {
