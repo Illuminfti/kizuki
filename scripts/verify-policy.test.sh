@@ -120,6 +120,30 @@ if (
   exit 1
 fi
 
+printf 'export const marker = "x";\n' >"$fixture_root/packages/scannable.ts"
+git -C "$fixture_root" add packages/scannable.ts
+(
+  cd "$fixture_root"
+  assert_scannable_tracked_text
+)
+
+printf 'export const marker = "\0%s";\n' "$exact_name" >"$fixture_root/packages/unscannable.ts"
+git -C "$fixture_root" add packages/unscannable.ts
+(
+  cd "$fixture_root"
+  assert_no_match \
+    "attributed identifier outside public documentation" \
+    git grep -I -n -i -E "$name_re" -- packages/unscannable.ts
+)
+if (
+  cd "$fixture_root"
+  assert_scannable_tracked_text
+) >/dev/null 2>&1; then
+  printf 'policy test failed: NUL-bearing tracked source passed\n' >&2
+  exit 1
+fi
+git -C "$fixture_root" rm -q -f packages/unscannable.ts
+
 mkdir -p "$fixture_root/packages/phone"
 printf '{"dependencies":{"@datadog/browser-rum":"1.0.0"}}\n' >"$fixture_root/packages/phone/package.json"
 git -C "$fixture_root" add packages/phone/package.json
