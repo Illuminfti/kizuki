@@ -5,8 +5,10 @@ import {
 } from "../src/fixture";
 
 /**
- * The library stands in for GramJS so the one file that talks to Telegram can
- * be driven cold. Only the shapes `client.ts` actually touches are modelled.
+ * A stand-in for GramJS so the one file that talks to Telegram can be driven
+ * cold, modelling only the shapes `client.ts` touches. The substitution is
+ * process wide, which is safe because nothing else in the tree loads the
+ * library: `client.ts` imports it lazily and no other module imports it at all.
  */
 class FloodWaitError extends Error {
   constructor(readonly seconds: number) {
