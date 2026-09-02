@@ -479,7 +479,7 @@ describe("one unreadable entry costs only itself", () => {
   });
 
   test("a readable calendar reports nothing skipped", () => {
-    expect(mapAll(bad.slice(0, 6)).skipped).toBe(0);
+    expect(mapAll(bad.slice(0, 5)).skipped).toBe(0);
   });
 });
 

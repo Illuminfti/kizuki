@@ -194,6 +194,20 @@ export function parseIcs(text: string): ParsedCalendar {
           "kizuki.ics: calendar has too many components",
         );
       }
+      // A document with content outside one VCALENDAR root, or with a second
+      // root, is not a calendar this connector can read as authoritative.
+      if (stack.length === 0 && component !== "VCALENDAR") {
+        throw new KizukiError(
+          "parse_error",
+          "kizuki.ics: no VCALENDAR component around the calendar content",
+        );
+      }
+      if (stack.length === 0 && sawCalendar) {
+        throw new KizukiError(
+          "parse_error",
+          "kizuki.ics: more than one VCALENDAR component",
+        );
+      }
       stack.push({ name: component, lines: [] });
       if (stack.length > MAX_NESTING) {
         throw new KizukiError(
@@ -216,9 +230,16 @@ export function parseIcs(text: string): ParsedCalendar {
     }
 
     if (line.name === "END") {
-      const frame = stack.pop();
       const component = line.value.trim().toUpperCase();
-      if (frame === undefined) continue;
+      const frame = stack.pop();
+      // An END that names something other than the open component means the
+      // document is torn; reading past it would invent a calendar.
+      if (frame === undefined || frame.name !== component) {
+        throw new KizukiError(
+          "parse_error",
+          "kizuki.ics: calendar components are not balanced",
+        );
+      }
       if (component === "VEVENT") events.push({ lines: frame.lines });
       if (component === "VTIMEZONE" && zone !== null) {
         if (zone.tzid.length > 0) zones.set(zone.tzid, zone);
@@ -259,6 +280,15 @@ export function parseIcs(text: string): ParsedCalendar {
 
   if (!sawCalendar) {
     throw new KizukiError("parse_error", "kizuki.ics: no VCALENDAR component");
+  }
+  // A half-downloaded feed ends mid-component. Accepting it would report a
+  // truncated calendar as an authoritative snapshot, and every event the
+  // truncation cut off would be tombstoned on the next sync.
+  if (stack.length > 0) {
+    throw new KizukiError(
+      "parse_error",
+      "kizuki.ics: calendar ends inside a component",
+    );
   }
   return { calendar, zones, events };
 }

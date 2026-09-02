@@ -152,6 +152,22 @@ describe("file mode", () => {
     expect(edited?.text).toBe("One (edited)");
   });
 
+  test("a truncated file refuses the sync instead of tombstoning everything", async () => {
+    const path = await writeCalendar(SMALL);
+    const connector = createIcsConnector({ path }, { now: NOW });
+    const first = await connector.backfill(null);
+
+    // What a half-written or half-downloaded calendar looks like: the last
+    // component never closes. Read as an empty snapshot it would tombstone
+    // every event the owner still has.
+    await Bun.write(path, SMALL.slice(0, SMALL.indexOf("UID:two")));
+    const error = await connector
+      .sync(first.cursor)
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(KizukiError);
+    expect((error as KizukiError).code).toBe("parse_error");
+  });
+
   test("sync emits nothing when the file is unchanged", async () => {
     const path = await writeCalendar(SMALL);
     const connector = createIcsConnector({ path }, { now: NOW });

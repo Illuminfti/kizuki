@@ -154,6 +154,47 @@ describe("component walk", () => {
     );
   });
 
+  test("refuses a document that ends inside a component", () => {
+    const truncated = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      "UID:one@acme.example",
+      "DTSTART:20260301T100000Z",
+      "",
+    ].join("\r\n");
+    expect(() => parseIcs(truncated)).toThrow(/ends inside a component/);
+  });
+
+  test("refuses an END that does not name the open component", () => {
+    const torn = [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:one@acme.example",
+      "END:VCALENDAR",
+      "END:VEVENT",
+      "",
+    ].join("\r\n");
+    expect(() => parseIcs(torn)).toThrow(/not balanced/);
+  });
+
+  test("refuses an END with nothing open", () => {
+    expect(() =>
+      parseIcs("BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\nEND:VEVENT\r\n"),
+    ).toThrow(/not balanced/);
+  });
+
+  test("refuses a second VCALENDAR root", () => {
+    const two = [
+      "BEGIN:VCALENDAR",
+      "END:VCALENDAR",
+      "BEGIN:VCALENDAR",
+      "END:VCALENDAR",
+      "",
+    ].join("\r\n");
+    expect(() => parseIcs(two)).toThrow(/more than one VCALENDAR/);
+  });
+
   test("refuses too many components", () => {
     const body = Array.from(
       { length: MAX_COMPONENTS + 5 },
