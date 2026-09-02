@@ -51,6 +51,11 @@ export function encodeOAuthState(state: OAuthState): Uint8Array {
   if (bytes.byteLength > MAX_CONNECTION_STATE_BYTES) {
     throw new RangeError("oauth state exceeds the maximum connection state size");
   }
+  // The one writer of durable connection state must not emit bytes its own
+  // reader refuses: that connection is dead from the next process on, and only
+  // a fresh sign-in can revive it. Reading the bytes back is what keeps the two
+  // ends from drifting apart.
+  parseOAuthState(bytes, state.provider);
   return bytes;
 }
 
@@ -91,6 +96,7 @@ export function parseOAuthState(
   const invalid = (): never => {
     throw new OAuthError("invalid_state", provider);
   };
+  if (!isNonEmptyString(provider)) return invalid();
   let text: string;
   if (typeof source === "string") {
     text = source;

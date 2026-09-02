@@ -95,6 +95,27 @@ describe("oauth state envelope", () => {
     expect(parseOAuthState(encodeOAuthState(state), "fixture")).toEqual(state);
   });
 
+  test.each([
+    ["an account the owner cannot recognise", { account: { id: "acct-ada", display: "" } }],
+    ["an account without a provider-stable id", { account: { id: "", display: "ada" } }],
+    ["a written_at no reader can order", { written_at: "just now" }],
+  ])("refuses to encode %s", (_label, overrides) => {
+    const state = oauthState(overrides);
+    expect(() => encodeOAuthState(state)).toThrow(OAuthError);
+    try {
+      encodeOAuthState(state);
+    } catch (error) {
+      expect((error as OAuthError).code).toBe("invalid_state");
+    }
+  });
+
+  test("refuses to encode an expiry its own reader would refuse", () => {
+    const state = oauthState({
+      tokens: { ...oauthState().tokens, expires_at: "+033714-11-26T11:46:40.000Z" },
+    });
+    expect(() => encodeOAuthState(state)).toThrow(OAuthError);
+  });
+
   test("refuses to encode more than the store will hold", () => {
     const state = oauthState({
       account: {
