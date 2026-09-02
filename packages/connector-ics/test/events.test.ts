@@ -631,6 +631,55 @@ describe("the calendar subject always names something", () => {
   });
 });
 
+describe("an RDATE-only series obeys the same bounds", () => {
+  const rdate = (index: number): string => {
+    const day = new Date(Date.UTC(2026, 2, 2) + index * 86_400_000);
+    return `RDATE:${day.toISOString().slice(0, 10).replace(/-/g, "")}T090000Z`;
+  };
+
+  test("dates past the window are left out and the cap still bites", () => {
+    const result = mapAll([
+      "BEGIN:VEVENT",
+      "UID:rdates@acme.example",
+      "DTSTART:20260302T090000Z",
+      ...Array.from({ length: 1_001 }, (_unused, index) => rdate(index)),
+      "SUMMARY:Listed dates",
+      "END:VEVENT",
+    ]);
+    const last = result.events.at(-1);
+    expect(result.events.length).toBeLessThanOrEqual(1_000);
+    // now + 365 days, from the fixture clock at 2026-03-01.
+    expect(Date.parse(last?.occurred_at ?? "")).toBeLessThanOrEqual(
+      FIXTURE_NOW.getTime() + 365 * 86_400_000,
+    );
+  });
+
+  test("more listed dates than the cap keeps the most recent and says so", () => {
+    const hourly = (index: number): string => {
+      const at = new Date(Date.UTC(2026, 2, 2, 9) + index * 3_600_000);
+      return `RDATE:${at.toISOString().replace(/[-:]/g, "").slice(0, 15)}Z`;
+    };
+    const result = mapAll([
+      "BEGIN:VEVENT",
+      "UID:many@acme.example",
+      "DTSTART:20260302T090000Z",
+      ...Array.from({ length: 1_100 }, (_unused, index) => hourly(index + 1)),
+      "SUMMARY:Listed dates",
+      "END:VEVENT",
+    ]);
+    expect(result.events).toHaveLength(1_000);
+    expect(
+      result.events.every(
+        (event) =>
+          (event.metadata["recurrence"] as { truncated?: boolean }).truncated ===
+          true,
+      ),
+    ).toBe(true);
+    // Keeping the tail means the earliest listed dates are the ones dropped.
+    expect(result.events[0]?.occurred_at).not.toBe("2026-03-02T09:00:00.000Z");
+  });
+});
+
 describe("a series that starts past the window is still captured", () => {
   test("the first instance of a future series reaches the ledger", () => {
     const result = mapAll([

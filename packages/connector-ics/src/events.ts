@@ -257,7 +257,12 @@ function seriesEvents(
     parsedRule === null
       ? // RFC 5545 §3.8.5.2: RDATE adds to the recurrence set, which always
         // contains DTSTART.
-        { instances: withStart(dtstartLocal, rdates, exdateKeys(master)), truncated: false }
+        withStart(
+          dtstartLocal,
+          rdates,
+          exdateKeys(master),
+          seriesWindowEnd,
+        )
       : expand(parsedRule.rule, dtstartLocal, {
           windowEnd: seriesWindowEnd,
           maxInstances: MAX_INSTANCES,
@@ -351,18 +356,29 @@ function pushOverride(
   );
 }
 
+/**
+ * An RDATE-only series is a recurrence set like any other, so it obeys the
+ * same window and the same instance cap; a calendar listing thousands of
+ * dates must not be able to buy unbounded ledger rows.
+ */
 function withStart(
   dtstart: LocalDateTime,
   rdates: LocalDateTime[],
   exdates: Set<string>,
-): LocalDateTime[] {
+  windowEnd: LocalDateTime,
+): { instances: LocalDateTime[]; truncated: boolean } {
+  const limitMs = localToMs(windowEnd);
   const byKey = new Map<string, LocalDateTime>();
   for (const local of [dtstart, ...rdates]) {
     const key = formatLocal(local);
     if (exdates.has(key)) continue;
+    if (localToMs(local) > limitMs) continue;
     if (!byKey.has(key)) byKey.set(key, local);
   }
-  return [...byKey.values()].sort((a, b) => localToMs(a) - localToMs(b));
+  const sorted = [...byKey.values()].sort((a, b) => localToMs(a) - localToMs(b));
+  return sorted.length > MAX_INSTANCES
+    ? { instances: sorted.slice(-MAX_INSTANCES), truncated: true }
+    : { instances: sorted, truncated: false };
 }
 
 function instanceStart(master: IcsInstant, local: LocalDateTime): IcsInstant {
