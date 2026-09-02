@@ -6,12 +6,15 @@ import {
   refreshTokens,
   signInWithBrowser,
 } from "../../src/auth/oauth";
+import { OAuthSession } from "../../src/auth/session";
+import { isRfc3339 } from "../../src/util/time";
 import {
   FakeTransport,
   NOW,
   base64url,
   countingRandom,
   fakeIo,
+  oauthState,
   provider,
   tokenResponse,
   tokenSet,
@@ -66,6 +69,7 @@ describe("a hostile token response", () => {
   test.each([
     ["a lifetime past the representable range", 1e18],
     ["a lifetime one second past the range", 8.64e15],
+    ["a lifetime that outruns a four-digit year", 2.52e11],
   ])("refuses %s", (_label, expiresIn) => {
     expect(() =>
       parseTokenResponse(
@@ -97,6 +101,41 @@ describe("a hostile token response", () => {
         tokenSet(),
       ),
     ).toThrow(OAuthError);
+  });
+
+  test("every accepted lifetime yields an expiry the envelope can hold", () => {
+    for (const expiresIn of [1, 3600, 2.4e11, 2.516e11]) {
+      const parsed = parseTokenResponse(
+        provider(),
+        200,
+        tokenResponse({ expires_in: expiresIn }),
+        NOW,
+      );
+      expect(isRfc3339(parsed.expires_at)).toBe(true);
+    }
+  });
+
+  test("a lifetime the envelope cannot hold never displaces durable state", async () => {
+    const written: Uint8Array[] = [];
+    const session = new OAuthSession({
+      provider: provider(),
+      state: oauthState({
+        tokens: tokenSet({ expires_at: "2026-03-01T10:00:30.000Z" }),
+      }),
+      transport: new FakeTransport({
+        status: 200,
+        body: tokenResponse({ access_token: "SENTINEL-SECOND", expires_in: 1e12 }),
+      }),
+      persist: async (bytes) => {
+        written.push(bytes);
+      },
+      now: () => NOW,
+    });
+    await expect(session.accessToken()).rejects.toMatchObject({
+      code: "invalid_token_response",
+    });
+    expect(written).toEqual([]);
+    expect(session.tokens().access_token).toBe("SENTINEL-ACCESS");
   });
 
   test("a refresh that omits the scope keeps the scope the owner granted", async () => {

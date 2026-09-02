@@ -1,4 +1,5 @@
 import type { SignInIo } from "../contracts/connector";
+import { isRfc3339 } from "../util/time";
 import { isNonEmptyString, isPlainObject } from "../util/validate";
 import { OAuthError, asOAuthError, withoutSecrets } from "./oauth-error";
 import { base64url, buildPkce, defaultRandomBytes, randomOf } from "./pkce";
@@ -159,15 +160,19 @@ export function parseTokenResponse(
     return invalid();
   }
 
-  // A lifetime large enough to leave the ECMAScript time range would make
-  // toISOString throw past this module's error contract.
+  // A lifetime past the ECMAScript time range would make toISOString throw,
+  // and one merely past year 9999 makes it emit the expanded form the envelope
+  // reader refuses; either way the durable state would be unreadable, so the
+  // refusal belongs here rather than a process later.
   const expiresAt = new Date(now.getTime() + expiresIn * 1000);
   if (Number.isNaN(expiresAt.getTime())) return invalid();
+  const expiresAtText = expiresAt.toISOString();
+  if (!isRfc3339(expiresAtText)) return invalid();
 
   return {
     access_token: accessToken,
     refresh_token: refreshToken,
-    expires_at: expiresAt.toISOString(),
+    expires_at: expiresAtText,
     // A refresh that omits the scope granted the same scope as before; falling
     // back to the requested scopes would record a grant the owner never made.
     scope: grantedScope ?? previous?.scope ?? provider.scopes.join(" "),
