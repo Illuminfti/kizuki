@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
-  mkdtempSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -8,13 +7,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type {
-  Connector,
-  ConnectionStateWriter,
-  SignInIo,
-} from "../src/contracts/connector";
 import {
   ConnectionStateStore,
   enrollConnection,
@@ -26,64 +19,11 @@ import {
   listConnections,
 } from "../src/ledger/connections";
 import { openLedger } from "../src/ledger/db";
+import { connector, io, temporaryDirectories } from "./connections-helpers";
 
-const directories: string[] = [];
+const { temporary, cleanup } = temporaryDirectories("kizuki-connection-state-");
 
-function temporary(): string {
-  const directory = mkdtempSync(join(tmpdir(), "kizuki-connection-state-"));
-  directories.push(directory);
-  return directory;
-}
-
-afterEach(() => {
-  for (const directory of directories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-function connector(
-  signIn: (io: SignInIo, state: ConnectionStateWriter) => Promise<unknown>,
-): Connector {
-  return {
-    manifest: () => ({
-      schema: "kizuki.connector/v1",
-      connector_id: "fixture",
-      version: "1",
-      kinds: ["message"],
-      capabilities: {
-        backfill: false,
-        sync: false,
-        tombstones: false,
-        purge: false,
-        fixture: false,
-      },
-      required_secrets: [],
-      emits_sensitivity_hint: false,
-      auth_modes: ["sign_in"],
-    }),
-    health: async () => {
-      throw new Error("unused");
-    },
-    connect: async () => undefined,
-    backfill: async () => ({ events: [], cursor: null }),
-    sync: async () => ({ events: [], cursor: null }),
-    revoke: async () => undefined,
-    signIn: async (io, state) =>
-      signIn(io, state) as Promise<{ display: string }>,
-    purgeSource: async () => ({
-      subject_id: "",
-      source_record_ids: [],
-      unreachable_source_record_ids: [],
-    }),
-    fixture: async () => [],
-  };
-}
-
-const io: SignInIo = {
-  prompt: async () => "",
-  notify: () => undefined,
-  openUrl: async () => undefined,
-};
+afterEach(cleanup);
 
 describe("complete durable writes", () => {
   test("retries short writes until every byte is copied", () => {
