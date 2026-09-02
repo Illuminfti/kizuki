@@ -7,7 +7,7 @@ import {
   getCanonReceipt,
   resolveTarget,
 } from "../../src/canon";
-import { DEFAULT_GRANT, listAudit } from "../../src/agents";
+import { DEFAULT_GRANT, listAudit, setGrant } from "../../src/agents";
 import {
   getClaim,
   insertClaim,
@@ -504,6 +504,27 @@ describe("serveCorrect retires what the owner says is wrong", () => {
     const filed = getClaim(live.db, relayed.data?.claim_id ?? "");
     expect(filed?.authority).toBe("owner_authored");
     expect(filed?.frontmatter["x-relayed-by"]).toBe("agent:downgraded");
+  });
+
+  test("a relay withdrawn after the session opened files one tier down", async () => {
+    const live = newFixture();
+    const wrong = await fileClaim(
+      live,
+      "Ada works at Acme.",
+      "employment.works_at",
+      "Acme",
+    );
+    // The grant is read from the store on every call, so the withdrawal has
+    // to survive the write that made it, not only the object it returned.
+    setGrant(live.db, "reader-private", { relay_owner_corrections: false });
+
+    const relayed = await serveCorrect(live.agent("reader-private"), {
+      statement: "Ada left Acme.",
+      target: { claim_id: wrong },
+    });
+    expect(
+      getClaim(live.db, relayed.data?.claim_id ?? "")?.authority,
+    ).toBe("owner_authored");
   });
 
   test("a rehearsal names what it would retire and writes nothing", async () => {

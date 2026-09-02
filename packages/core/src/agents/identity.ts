@@ -293,11 +293,12 @@ export function setGrant(
     const grant = mergeGrant(rowGrant(row), patch);
     db.query<
       never,
-      [string, string | null, string | null, string | null, string | null, string, number, string, string]
+      [string, string | null, string | null, string | null, string | null, string, number, number, string, string]
     >(
       `UPDATE agent_grants
           SET ceiling = ?, types = ?, subjects = ?, since = ?, until = ?,
-              tools = ?, rate_limit_per_minute = ?, updated_at = ?
+              tools = ?, rate_limit_per_minute = ?,
+              relay_owner_corrections = ?, updated_at = ?
         WHERE agent_id = ?`,
     ).run(
       grant.ceiling,
@@ -307,6 +308,7 @@ export function setGrant(
       grant.until,
       JSON.stringify(grant.tools),
       grant.rate_limit_per_minute,
+      grant.relay_owner_corrections ? 1 : 0,
       new Date().toISOString(),
       row.agent_id,
     );

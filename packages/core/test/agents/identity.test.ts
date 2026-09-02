@@ -232,6 +232,24 @@ describe("grants", () => {
     db.close();
   });
 
+  test("persists a withdrawn owner-correction relay", () => {
+    const db = agentsDb();
+    const { token } = addAgent(db, "reader-1");
+
+    expect(
+      setGrant(db, "reader-1", { relay_owner_corrections: false })
+        .relay_owner_corrections,
+    ).toBe(false);
+    // Re-read through the seam a live session uses: a grant that only looks
+    // withdrawn in the returned object still speaks at the owner's tier.
+    expect(authenticate(db, token)?.grant.relay_owner_corrections).toBe(false);
+    expect(listAgents(db)[0]?.grant.relay_owner_corrections).toBe(false);
+
+    setGrant(db, "reader-1", { relay_owner_corrections: true });
+    expect(authenticate(db, token)?.grant.relay_owner_corrections).toBe(true);
+    db.close();
+  });
+
   const invalidPatches: [string, Partial<Grant>][] = [
     ["ceiling", { ceiling: "secret" as Grant["ceiling"] }],
     ["tool", { tools: ["write_page" as (typeof TOOLS)[number]] }],
