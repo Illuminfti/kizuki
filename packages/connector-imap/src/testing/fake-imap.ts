@@ -22,6 +22,8 @@ export interface FakeImapOptions {
   loginFailureCode?: string | null;
   preauth?: boolean;
   delimiter?: string;
+  /** Names the fetched section `BODY[]<0>`, as some real servers do. */
+  decorateBodySection?: boolean;
 }
 
 interface Range {
@@ -103,6 +105,7 @@ export class FakeImapServer {
   private pendingDelayMs = 0;
   private pendingOversizedLiteral = false;
   private pendingBye = false;
+  private readonly withheld = new Set<string>();
 
   constructor(folders: FakeFolder[], options: FakeImapOptions = {}) {
     this.folders = folders;
@@ -112,6 +115,7 @@ export class FakeImapServer {
       loginFailureCode: options.loginFailureCode ?? null,
       preauth: options.preauth ?? false,
       delimiter: options.delimiter ?? "/",
+      decorateBodySection: options.decorateBodySection ?? false,
     };
     this.authenticated = this.options.preauth;
   }
@@ -161,6 +165,12 @@ export class FakeImapServer {
     folder.uidnext += 1;
     folder.messages.push({ uid, internaldate, raw: encoder.encode(raw) });
     return uid;
+  }
+
+  /** Answers a body fetch for this UID with no body, the way a server does
+   * when the message went away between the two fetches of one page. */
+  withholdBody(wire: string, uid: number): void {
+    this.withheld.add(`${wire}\u0001${uid}`);
   }
 
   /** Re-numbers a mailbox the way a restored server does. */
@@ -317,18 +327,25 @@ export class FakeImapServer {
       .sort((a, b) => a.uid - b.uid);
 
     const lines: string[] = [];
+    const decoration = this.options.decorateBodySection ? "<0>" : "";
     selected.forEach((message, index) => {
       const sequence = index + 1;
+      const bodyWanted =
+        items.includes("BODY.PEEK[HEADER]") || items.includes("BODY.PEEK[]");
+      if (bodyWanted && this.withheld.has(`${folder.wire}\u0001${message.uid}`)) {
+        lines.push(`* ${sequence} FETCH (UID ${message.uid})\r\n`);
+        return;
+      }
       if (items.includes("BODY.PEEK[HEADER]")) {
         const header = headerBytes(message.raw);
         lines.push(
-          `* ${sequence} FETCH (UID ${message.uid} BODY[HEADER] {${header.length}}\r\n${decoder.decode(header)})\r\n`,
+          `* ${sequence} FETCH (UID ${message.uid} BODY[HEADER]${decoration} {${header.length}}\r\n${decoder.decode(header)})\r\n`,
         );
         return;
       }
       if (items.includes("BODY.PEEK[]")) {
         lines.push(
-          `* ${sequence} FETCH (UID ${message.uid} BODY[] {${message.raw.length}}\r\n${decoder.decode(message.raw)})\r\n`,
+          `* ${sequence} FETCH (UID ${message.uid} BODY[]${decoration} {${message.raw.length}}\r\n${decoder.decode(message.raw)})\r\n`,
         );
         return;
       }

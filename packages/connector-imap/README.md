@@ -30,6 +30,11 @@ could be read (or the raw bytes when nothing could) and carries
 than silently empty. A charset this platform has no decoder for is recorded
 the same way in `metadata.charset_fallback`.
 
+When a server answers a body fetch without the body — the message was
+expunged between the two fetches of one page, say — that UID is left out of
+the batch and out of the checkpoint's seen set, and the run's health report
+says `message bodies not returned: <folder> (<n>)` once.
+
 IMAP flags are captured nowhere. A `\Seen` toggle is not a change to the
 message, and recording it would fork a ledger row every time the mailbox was
 re-observed.

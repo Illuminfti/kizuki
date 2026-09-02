@@ -49,6 +49,22 @@ function fetchFields(items: Token[]): Map<string, Token> {
   return fields;
 }
 
+/**
+ * A server may answer `BODY[]` with an origin suffix such as `BODY[]<0>`, so
+ * the section is matched rather than compared: an exact-key lookup would drop
+ * every message of such a server without a word.
+ */
+function bodyField(
+  fields: Map<string, Token>,
+  section: "" | "HEADER",
+): Token | undefined {
+  const wanted = `BODY[${section}]`;
+  for (const [key, value] of fields) {
+    if (key === wanted || key.startsWith(`${wanted}<`)) return value;
+  }
+  return undefined;
+}
+
 function fetchLists(responses: ImapResponse[]): Token[][] {
   const lists: Token[][] = [];
   for (const response of responses) {
@@ -210,7 +226,7 @@ export class ImapSession {
       const fields = fetchFields(items);
       const uidToken = fields.get("UID");
       if (uidToken === undefined) continue;
-      const body = fields.get(`BODY[${section}]`);
+      const body = bodyField(fields, section);
       if (body === undefined) continue;
       bodies.set(
         integer(uidToken, "uid"),

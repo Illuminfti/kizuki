@@ -150,6 +150,21 @@ describe("health", () => {
     expect((await connector.health()).state).toBe("ok");
   });
 
+  test("a withheld body makes the run read degraded", async () => {
+    const fake = server();
+    const { connector, resolve } = connectorFor(fake);
+    await connector.connect(resolve);
+    fake.withholdBody("INBOX", 1);
+
+    const batch = await connector.backfill(null);
+    expect(batch.events.some((event) => event.metadata["uid"] === 1)).toBe(
+      false,
+    );
+    const report = await connector.health();
+    expect(report.state).toBe("degraded");
+    expect(report.detail).toBe("message bodies not returned: INBOX (1)");
+  });
+
   test("maps a refused LOGIN, a rate limit and a BYE", async () => {
     const refused = createImapConnector(
       { secret_ref: REF },

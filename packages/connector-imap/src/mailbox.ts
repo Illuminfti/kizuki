@@ -143,7 +143,7 @@ export async function walkMailboxes(
           folderTombstones,
         );
       } else {
-        await pageFolder(
+        const withheld = await pageFolder(
           session,
           plan,
           deps.state.max_message_bytes,
@@ -151,6 +151,11 @@ export async function walkMailboxes(
           events.length + folderTombstones.length,
           folderEvents,
         );
+        // A body the server did not hand over leaves a hole in the ledger, so
+        // the run says so rather than reading as a clean page.
+        if (withheld > 0) {
+          notes.push(`message bodies not returned: ${display} (${withheld})`);
+        }
       }
 
       cursor.folders[wire] = plan.entry;
@@ -172,8 +177,9 @@ async function pageFolder(
   observedAt: string,
   alreadyEmitted: number,
   into: CaptureEventInput[],
-): Promise<void> {
+): Promise<number> {
   const entry = plan.entry;
+  let withheld = 0;
   while (!entry.done && alreadyEmitted + into.length < BATCH) {
     const windowEnd = Math.min(entry.scan_from + WINDOW - 1, entry.uidnext - 1);
     // `n:*` is never used for scanning: a server answers it with the last
@@ -188,7 +194,12 @@ async function pageFolder(
 
     for (const summary of selected) {
       const body = bodies.get(summary.uid);
-      if (body === undefined) continue;
+      if (body === undefined) {
+        // The UID stays out of `known`: nothing was emitted for it, so a later
+        // sync must not tombstone a message the ledger never saw.
+        withheld += 1;
+        continue;
+      }
       into.push(
         messageEvent({
           folderWire: plan.wire,
@@ -211,8 +222,9 @@ async function pageFolder(
         ? lastSelected.uid + 1
         : windowEnd + 1;
     entry.done = entry.scan_from >= entry.uidnext;
-    if (truncated) return;
+    if (truncated) return withheld;
   }
+  return withheld;
 }
 
 /**

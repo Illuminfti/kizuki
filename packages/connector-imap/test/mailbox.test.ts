@@ -208,6 +208,37 @@ describe("sync", () => {
     expect(second.notes).toEqual(["uidvalidity changed: INBOX"]);
   });
 
+  test("a body the server withholds is reported, not silently dropped", async () => {
+    const server = new FakeImapServer([folder("INBOX", 3)]);
+    const walkDeps = deps(server, state(["INBOX"]));
+    server.withholdBody("INBOX", 2);
+
+    const first = await walkMailboxes(walkDeps, null, "backfill");
+    expect(uidsOf(first.batch.events)).toEqual([1, 3]);
+    expect(first.notes).toEqual(["message bodies not returned: INBOX (1)"]);
+
+    // The UID never entered `known`, so no tombstone claims it was deleted.
+    expect(decodeCursor(first.batch.cursor ?? "").folders["INBOX"]?.known).toBe(
+      "1,3",
+    );
+    const second = await walkMailboxes(walkDeps, first.batch.cursor, "sync");
+    expect(second.batch.events).toEqual([]);
+    expect(second.notes).toEqual([]);
+  });
+
+  test("a decorated body section is still read as the body", async () => {
+    const server = new FakeImapServer([folder("INBOX", 2)], {
+      decorateBodySection: true,
+    });
+    const result = await walkMailboxes(
+      deps(server, state(["INBOX"])),
+      null,
+      "backfill",
+    );
+    expect(uidsOf(result.batch.events)).toEqual([1, 2]);
+    expect(result.notes).toEqual([]);
+  });
+
   test("a bulk expunge is paged like everything else", async () => {
     const server = new FakeImapServer([folder("INBOX", 300)]);
     const walkDeps = deps(server, state(["INBOX"]));
