@@ -43,8 +43,16 @@ export function spaceFromTable(table: EmbeddingTable): EmbeddingSpace {
   });
 }
 
+function replaceLiteral(
+  template: string,
+  token: string,
+  value: string,
+): string {
+  return template.split(token).join(value);
+}
+
 export function formatQuery(text: string, space: EmbeddingSpace): string {
-  return space.prompt_query.replaceAll("{q}", text);
+  return replaceLiteral(space.prompt_query, "{q}", text);
 }
 
 export function formatDoc(
@@ -52,7 +60,9 @@ export function formatDoc(
   text: string,
   space: EmbeddingSpace,
 ): string {
-  return space.prompt_doc
-    .replaceAll("{title}", title)
-    .replaceAll("{text}", text);
+  return replaceLiteral(
+    replaceLiteral(space.prompt_doc, "{title}", title),
+    "{text}",
+    text,
+  );
 }

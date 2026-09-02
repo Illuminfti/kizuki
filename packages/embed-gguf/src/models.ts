@@ -13,7 +13,12 @@ import {
 import { basename, isAbsolute, join } from "node:path";
 import { PortError } from "@kizuki/core";
 import type { EmbeddingSpace } from "@kizuki/core";
-import { loadEmbeddingTable, parseGguf, TABLE_ARCHITECTURE } from "./gguf";
+import {
+  assertGgufFileSize,
+  loadEmbeddingTable,
+  parseGguf,
+  TABLE_ARCHITECTURE,
+} from "./gguf";
 import { spaceFromTable } from "./space";
 
 export interface GgufModelCatalogEntry {
@@ -93,6 +98,7 @@ export function installGgufModel(
     unavailable(`GGUF source is missing: ${input.source_path}`);
   }
   if (!stat.isFile()) unavailable("GGUF source is not a file");
+  assertGgufFileSize(stat.size);
 
   const bytes = readFileSync(input.source_path);
   const table = loadEmbeddingTable(parseGguf(bytes));

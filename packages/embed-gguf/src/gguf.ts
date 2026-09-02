@@ -18,7 +18,8 @@ export const UNSUPPORTED_TRANSFORMER_ARCHITECTURES = Object.freeze([
   "nomic-bert",
 ] as const);
 
-const MAX_FILE_BYTES = 64 * 1024 * 1024;
+export const MAX_GGUF_FILE_BYTES = 64 * 1024 * 1024;
+const MAX_FILE_BYTES = MAX_GGUF_FILE_BYTES;
 const MAX_METADATA = 256;
 const MAX_TENSORS = 32;
 const MAX_STRING = 4096;
@@ -72,6 +73,12 @@ export interface EmbeddingTable {
 
 function fail(message: string): never {
   throw new PortError("config_invalid", message, false);
+}
+
+export function assertGgufFileSize(size: number): void {
+  if (size <= 0 || size > MAX_GGUF_FILE_BYTES) {
+    fail("GGUF model size is outside the supported bound");
+  }
 }
 
 function unavailable(message: string): never {
@@ -358,9 +365,7 @@ export function readGgufFile(path: string): GgufFile {
     unavailable(`GGUF model is missing: ${path}`);
   }
   if (!stat.isFile()) unavailable(`GGUF model is not a file: ${path}`);
-  if (stat.size <= 0 || stat.size > MAX_FILE_BYTES) {
-    fail("GGUF model size is outside the supported bound");
-  }
+  assertGgufFileSize(stat.size);
   return parseGguf(readFileSync(path));
 }
 

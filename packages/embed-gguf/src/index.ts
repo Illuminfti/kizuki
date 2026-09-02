@@ -50,7 +50,9 @@ export {
   writeFixtureGguf,
 } from "./fixture";
 export {
+  MAX_GGUF_FILE_BYTES,
   TABLE_ARCHITECTURE,
+  assertGgufFileSize,
   isTransformerArchitecture,
   loadEmbeddingTable,
   parseGguf,

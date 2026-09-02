@@ -1,7 +1,15 @@
-import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  ftruncateSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 import { PortError } from "@kizuki/core";
+import { MAX_GGUF_FILE_BYTES } from "../src/gguf";
 import {
   GGUF_MODEL_CATALOG,
   fixtureSpaceId,
@@ -73,6 +81,31 @@ describe("local GGUF model install", () => {
       expect(error).toBeInstanceOf(PortError);
       expect((error as PortError).code).toBe("unavailable");
     }
+  });
+
+  test("oversized source fails closed before the file is read", () => {
+    const temporary = temporaryEmbed();
+    cleanups.push(temporary.cleanup);
+    const source = join(temporary.root, "huge.gguf");
+    const fd = openSync(source, "w", 0o600);
+    try {
+      ftruncateSync(fd, MAX_GGUF_FILE_BYTES + 1);
+    } finally {
+      closeSync(fd);
+    }
+    const started = performance.now();
+    try {
+      installGgufModel({
+        source_path: source,
+        dest_dir: vaultModelsDir(temporary.vault),
+      });
+      throw new Error("expected oversized source refusal");
+    } catch (error) {
+      expect(error).toBeInstanceOf(PortError);
+      expect((error as PortError).code).toBe("config_invalid");
+      expect((error as PortError).message).toContain("size is outside");
+    }
+    expect(performance.now() - started).toBeLessThan(250);
   });
 
   test("refuses a relative source path", () => {
