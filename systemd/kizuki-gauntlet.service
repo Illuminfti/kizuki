@@ -23,7 +23,6 @@ ProtectClock=yes
 ProtectHostname=yes
 ReadWritePaths=/home/ubuntu/.local/state/kizuki-gauntlet
 ReadOnlyPaths=/home/ubuntu/LifeOS/operations/kizuki-gauntlet
-CapabilityBoundingSet=
 AmbientCapabilities=
 RestrictSUIDSGID=yes
 LockPersonality=yes
