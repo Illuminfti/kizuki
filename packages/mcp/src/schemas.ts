@@ -110,11 +110,19 @@ const FRONTMATTER_VALUE = z.union([
   z.array(z.string().max(4096)),
 ]);
 
+const MAX_FRONTMATTER_KEYS = 32;
+
 export const PROPOSE_INPUT = z.strictObject({
   kind: z.enum(["entity", "claim", "edit", "merge", "deletion"]),
   target: z.string().max(256).nullable().optional(),
   body: z.string().min(1).max(65536),
-  frontmatter: z.record(z.string().max(64), FRONTMATTER_VALUE).optional(),
+  frontmatter: z
+    .record(z.string().max(64), FRONTMATTER_VALUE)
+    .refine(
+      (bag) => Object.keys(bag).length <= MAX_FRONTMATTER_KEYS,
+      `must hold at most ${MAX_FRONTMATTER_KEYS} keys`,
+    )
+    .optional(),
   subjects: z.array(ID).max(16).optional(),
   provenance: z.array(ID).min(1).max(64),
   confidence: z.number().min(0).max(1).optional(),

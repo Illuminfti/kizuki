@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { TOOLS, listAudit } from "@kizuki/core";
+import { TOOLS, listAudit, revokeAgent, setGrant } from "@kizuki/core";
 import type { ServeContext } from "@kizuki/core";
 import { listProposals } from "@kizuki/core/staging";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -210,6 +210,73 @@ describe("the stdio MCP server over a real client", () => {
     expect(payload.error).toBe("rate_limited");
     expect(payload.retry_after_seconds ?? 0).toBeGreaterThanOrEqual(1);
     expect(listAudit(running.db, "slow", { limit: 10 })).toHaveLength(3);
+  });
+
+  test("a connected session loses its authority the moment it is revoked", async () => {
+    const running = live();
+    const client = await connect(running.agent("reader-private"));
+    const first = await call(client, "search", { query: "kettle" });
+    expect(first.isError).toBeUndefined();
+
+    revokeAgent(running.db, "reader-private");
+
+    const second = await call(client, "search", { query: "kettle" });
+    expect(second.isError).toBe(true);
+    expect(errorOf(second).error).toBe("unknown_agent");
+    // Still a live process, not a session that fell over.
+    const third = await call(client, "system_health", {});
+    expect(errorOf(third).error).toBe("unknown_agent");
+    expect(
+      listAudit(running.db, "reader-private", { limit: 2 }).map(
+        (row) => row.denied,
+      ),
+    ).toEqual([
+      [{ id: "tool:system_health", reason: "unknown_agent" }],
+      [{ id: "tool:search", reason: "unknown_agent" }],
+    ]);
+  });
+
+  test("a connected session picks up a narrowed grant", async () => {
+    const running = live();
+    const client = await connect(running.agent("reader-private"));
+    expect((await call(client, "search", { query: "kettle" })).isError).
+      toBeUndefined();
+
+    setGrant(running.db, "reader-private", { tools: ["timeline"] });
+
+    const refused = await call(client, "search", { query: "kettle" });
+    expect(errorOf(refused).error).toBe("tool_not_granted");
+  });
+
+  test("a refusal payload never repeats an identifier the caller supplied", async () => {
+    const running = live();
+    const client = await connect(running.agent("reader-private"));
+    const marker = "01JKETTLECODE4711SECRETXYZ";
+    const result = await call(client, "propose", {
+      kind: "claim",
+      body: "A candidate naming a record that does not exist.",
+      provenance: [marker],
+    });
+    expect(result.isError).toBe(true);
+    expect(errorOf(result).error).toBe("invalid_arguments");
+    expect(result.content[0]?.text ?? "").not.toContain(marker);
+  });
+
+  test("an oversized frontmatter bag is stopped by the advertised bound", async () => {
+    const running = live();
+    const client = await connect(running.agent("reader-private"));
+    const frontmatter: Record<string, string> = {};
+    for (let index = 0; index < 1_000; index += 1) {
+      frontmatter[`x-key-${index}`] = "x";
+    }
+    const result = await call(client, "propose", {
+      kind: "claim",
+      body: "A candidate with too much frontmatter.",
+      provenance: [running.eventId],
+      frontmatter,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain("Input validation error");
   });
 
   test("a refusal payload carries no cause, path or captured text", async () => {
