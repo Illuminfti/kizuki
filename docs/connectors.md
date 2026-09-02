@@ -83,7 +83,7 @@ ledger until the owner purges them. `tombstones: false` says exactly this.
 **Never captured.** Attachments, images, and anything the export omits.
 
 **Purge.** No purge plan: the export file is the owner's, and there is no
-source side to call. `kizuki` purge operates on the ledger.
+source side to call. `kizuki purge` deletes from the ledger instead.
 
 **Limits.** Whatever the export format contains on the day it was produced,
 parsed by `parseChatGptExport`.
