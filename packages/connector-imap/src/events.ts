@@ -123,6 +123,14 @@ function walkParts(part: MimePart, into: MimePart[] = []): MimePart[] {
 
 function isAttachment(part: MimePart): boolean {
   if (part.disposition?.type === "attachment") return true;
+  // An enclosed message is an attachment whatever it claims: the walk never
+  // recurses into one, so anything else would drop it from the event entirely.
+  if (
+    part.contentType.type === "message" &&
+    part.contentType.subtype === "rfc822"
+  ) {
+    return true;
+  }
   const named =
     part.disposition?.params["filename"] ?? part.contentType.params["name"];
   return named !== undefined && part.contentType.type !== "text";

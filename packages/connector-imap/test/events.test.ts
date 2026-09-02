@@ -355,6 +355,35 @@ describe("mapping edges", () => {
     ]);
   });
 
+  test("a bare message/rfc822 part is still an attachment", () => {
+    const event = build(
+      [
+        "Subject: forwarded",
+        "Content-Type: multipart/mixed; boundary=B",
+        "",
+        "--B",
+        "Content-Type: text/plain",
+        "",
+        "see below",
+        "--B",
+        "Content-Type: message/rfc822",
+        "",
+        "From: linus@example.org",
+        "Subject: inner",
+        "",
+        "inner body",
+        "--B--",
+        "",
+      ].join("\r\n"),
+    );
+    // No disposition and no filename: the walk never goes into it, so
+    // anything other than an attachment ref would drop it from the event.
+    expect(event.text).toBe("forwarded\n\nsee below");
+    expect(event.attachments).toEqual([
+      { attachment_id: "2", media_type: "message/rfc822", byte_size: 53 },
+    ]);
+  });
+
   test("strips path separators out of a filename", () => {
     const event = build(
       [
