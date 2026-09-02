@@ -5,6 +5,7 @@ import {
   createFixtureDatabase,
   fixtureDeps,
   insertFrame,
+  insertTranscription,
 } from "./helpers";
 
 afterEach(cleanupFixtureDatabases);
@@ -70,7 +71,81 @@ describe("ScreenpipeConnector since", () => {
     await connector.revoke();
   });
 
-  test("a row dated past the clock does not drag the seed to the head", async () => {
+  test("a row dated before the cutoff is never emitted, whatever its id", async () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    // screenpipe stamps a transcription when it finishes transcribing, not when
+    // the audio was captured, so id order is not timestamp order there in
+    // ordinary operation. A seed alone therefore cannot enforce the cutoff.
+    insertFrame(fixture.writer, {
+      id: 1,
+      timestamp: "2026-02-01T00:00:00Z",
+      fullText: "dated after the cutoff",
+    });
+    insertFrame(fixture.writer, {
+      id: 2,
+      timestamp: "2026-01-01T00:00:00Z",
+      fullText: "dated before the cutoff",
+    });
+    insertTranscription(fixture.writer, {
+      id: 1,
+      timestamp: "2026-02-02T00:00:00Z",
+      transcription: "spoken after the cutoff",
+    });
+    insertTranscription(fixture.writer, {
+      id: 2,
+      timestamp: "2026-01-02T00:00:00Z",
+      transcription: "spoken before the cutoff",
+    });
+    const connector = new ScreenpipeConnector(
+      {
+        path: fixture.path,
+        since: "2026-01-15T00:00:00Z",
+        settle_seconds: 0,
+      },
+      fixtureDeps("2026-03-01T00:00:00.000Z"),
+    );
+
+    const batch = await connector.backfill(null);
+
+    expect(batch.events.map(({ source_record_id }) => source_record_id)).toEqual([
+      "frame:1",
+      "transcription:1",
+    ]);
+    await connector.revoke();
+  });
+
+  test("a clock behind the source keeps the history the cutoff allows", async () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    for (const [id, timestamp] of [
+      [1, "2026-03-01T12:00:00Z"],
+      [2, "2026-03-01T12:30:00Z"],
+      [3, "2026-03-01T13:00:00Z"],
+    ] as const) {
+      insertFrame(fixture.writer, { id, timestamp, fullText: `frame ${id}` });
+    }
+    // A host whose clock trails the capture machine sees every row dated ahead
+    // of it. Seeding past them would discard the whole database, and the
+    // persisted cursor would keep it discarded after the clock is corrected.
+    const behind = new ScreenpipeConnector(
+      {
+        path: fixture.path,
+        since: "2026-01-01T00:00:00Z",
+        settle_seconds: 300,
+      },
+      fixtureDeps("2026-03-01T11:00:00.000Z"),
+    );
+
+    const batch = await behind.backfill(null);
+
+    expect(batch.events.map(({ source_record_id }) => source_record_id)).toEqual([
+      "frame:1",
+      "frame:2",
+      "frame:3",
+    ]);
+    await behind.revoke();
+  });
+
+  test("a row dated past the clock does not pull in the rows before the cutoff", async () => {
     const fixture = createFixtureDatabase({ rows: false });
     const seedRows = (firstTimestamp: string): void => {
       fixture.writer.query("DELETE FROM frames").run();
@@ -101,11 +176,13 @@ describe("ScreenpipeConnector since", () => {
     seedRows("2026-05-01T00:00:00Z");
     expect(await emitted()).toEqual(["frame:4", "frame:5"]);
 
-    // A clock step or a corrupt row can date an early row years ahead. Such a
-    // row sorts after the cutoff under both encodings, and seeding from it
-    // would import the whole table the owner asked to skip.
+    // A clock step or a corrupt row can date an early row years ahead. Seeding
+    // from it starts the walk at the head of the table, which is why the cutoff
+    // is a predicate on every row: the rows before it stay out either way. The
+    // skewed row itself is dated after the cutoff, so it is read like any other
+    // row past the settle horizon.
     seedRows("2035-01-01T00:00:00Z");
-    expect(await emitted()).toEqual(["frame:4", "frame:5"]);
+    expect(await emitted()).toEqual(["frame:1", "frame:4", "frame:5"]);
 
     seedRows("yesterday");
     expect(await emitted()).toEqual(["frame:4", "frame:5"]);

@@ -203,18 +203,18 @@ export class ScreenpipeConnector implements Connector {
       // for the OCR update the settle window exists for, and holding it would
       // park this walk on its id for as long as the date says.
       const horizon = new Date(now + settleMs).toISOString();
+      const since = this.#config.since;
       const current =
         cursor === null
           ? initialCursor(
-              this.#config.since === null
-                ? undefined
-                : seedAfterIds(db, this.#config.since, horizon),
+              since === null ? undefined : seedAfterIds(db, since),
             )
           : parseCursor(cursor);
       const before = { ...current.skipped };
       const walk: Walk = {
         observedAt,
         settling: (timestamp) => timestamp > boundary && timestamp <= horizon,
+        beforeSince: (timestamp) => since !== null && timestamp < since,
       };
       const events: CaptureEventInput[] = [];
 
@@ -304,6 +304,14 @@ function skipDelta(
 interface Walk {
   observedAt: string;
   settling: (timestamp: string) => boolean;
+  /**
+   * `since` is enforced here rather than by the cursor seed alone. A row's id
+   * does not follow its timestamp — screenpipe stamps a transcription when it
+   * finishes transcribing, and a clock step reorders frames — so a single row
+   * dated inside the window can seed the walk at the head of the table and
+   * every older row behind it would be read.
+   */
+  beforeSince: (timestamp: string) => boolean;
 }
 
 /**
@@ -326,6 +334,14 @@ function walkFrames(
     const timestamp = normalizeTimestamp(row.timestamp);
     if (timestamp === null) {
       cursor.skipped.frames_bad_timestamp += 1;
+      cursor.last_frame_id = row.id;
+      continue;
+    }
+    // A row the owner asked to skip is dropped before the settle window, which
+    // exists to give late OCR a chance at a row that would be emitted. It is
+    // not counted: the cursor's counters record rows dropped despite being in
+    // scope, and configuration is not a skip of that kind.
+    if (walk.beforeSince(timestamp)) {
       cursor.last_frame_id = row.id;
       continue;
     }
@@ -359,6 +375,10 @@ function walkTranscriptions(
     const timestamp = normalizeTimestamp(row.timestamp);
     if (timestamp === null) {
       cursor.skipped.transcriptions_bad_timestamp += 1;
+      cursor.last_transcription_id = row.id;
+      continue;
+    }
+    if (walk.beforeSince(timestamp)) {
       cursor.last_transcription_id = row.id;
       continue;
     }

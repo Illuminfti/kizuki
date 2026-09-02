@@ -156,35 +156,31 @@ export function readTranscriptions(
     .map(mapTranscriptionRow);
 }
 
+/**
+ * A day, subtracted from the cutoff before it is compared against raw column
+ * text. A row written with its own zone offset sorts by local time, which can
+ * put a row that is at or after the cutoff in UTC below the cutoff's own text.
+ * Every offset RFC3339 allows is inside this slack.
+ */
+const PROBE_SLACK_MS = 86_400_000;
+
 export function seedAfterIds(
   db: Database,
   since: string,
-  notAfter: string,
 ): { frame: number; transcription: number } {
-  // Rows carry either the RFC3339 encoding sqlx writes today or the legacy
-  // space-separated one, and the two do not sort against each other. The seed
-  // is therefore taken from the first row that could be at or after `since`
-  // under either encoding: re-reading a few older rows costs one deduplicated
-  // ledger write each, while a row seeded past is never read again.
+  // The walk applies `since` to every row it reads, so this seed only has to be
+  // conservative: starting earlier than necessary costs a few reads, starting
+  // later loses history for good. It is an index probe for the common case
+  // where id order follows timestamp order, never the guarantee.
   //
-  // The window is closed at the top for the same reason it is opened at the
-  // bottom. A clock step, a corrupt value or an unparsable string sorts above
-  // every real row, and an unbounded predicate would seed from it — one such
-  // row anywhere in the table would silently import the whole history the
-  // owner asked to skip.
-  const bounds: TimestampWindow = {
-    isoFrom: new Date(since).toISOString(),
-    isoTo: new Date(notAfter).toISOString(),
-  };
+  // Rows carry either the RFC3339 encoding sqlx writes today or the legacy
+  // space-separated one, and the two do not sort against each other, so the
+  // probe asks both.
+  const probe = new Date(Date.parse(since) - PROBE_SLACK_MS).toISOString();
   return {
-    frame: seedBefore(db, "frames", bounds),
-    transcription: seedBefore(db, "audio_transcriptions", bounds),
+    frame: seedBefore(db, "frames", probe),
+    transcription: seedBefore(db, "audio_transcriptions", probe),
   };
-}
-
-interface TimestampWindow {
-  isoFrom: string;
-  isoTo: string;
 }
 
 function mapFrameRow(row: RawFrameRow): FrameRow {
@@ -242,22 +238,18 @@ function mapTranscriptionRow(
 function seedBefore(
   db: Database,
   table: "frames" | "audio_transcriptions",
-  bounds: TimestampWindow,
+  probe: string,
 ): number {
   const first = db
-    .query<{ id: unknown }, [string, string, string, string]>(
+    .query<{ id: unknown }, [string, string]>(
       `SELECT COALESCE(MIN(id), 0) AS id FROM ${table}
-        WHERE (timestamp >= ? AND timestamp <= ?)
-           OR (timestamp >= ? AND timestamp <= ?)`,
+        WHERE timestamp >= ? OR timestamp >= ?`,
     )
-    .get(
-      bounds.isoFrom,
-      bounds.isoTo,
-      legacyForm(bounds.isoFrom),
-      legacyForm(bounds.isoTo),
-    );
+    .get(probe, legacyForm(probe));
   const firstAfter = requiredCursorId(first?.id);
   if (firstAfter > 0) return firstAfter - 1;
+  // No row can be at or after the cutoff under either encoding, so every row
+  // the walk would read is older than it and the table can be seeded past.
   return maxId(db, table);
 }
 

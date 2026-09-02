@@ -92,12 +92,14 @@ screenpipe schema older than supported: migration 20260613130000 not applied (ma
 - Screen text and transcripts longer than 65,536 code units are cut on a code
   point boundary and marked with `metadata.text_truncated: true`. Every other
   string read from the database is cut at the same length.
-- The optional `since` setting is approximate at its boundary second. It must be
-  a timestamp the runtime can represent, which excludes the leap second RFC3339
-  otherwise allows. Seeding looks only at rows dated between `since` and your
-  clock's settle horizon, so one row carrying a corrupt or clock-skewed date
-  cannot pull the whole history back in; a row dated beyond that horizon is
-  skipped by `since` rather than seeding from it.
+- The optional `since` setting excludes every row dated before it. The cutoff is
+  compared against each row's own timestamp, so it holds even where ID order and
+  timestamp order disagree, which is ordinary for `audio_transcriptions`. It
+  must be a timestamp the runtime can represent, which excludes the leap second
+  RFC3339 otherwise allows. The starting ID is still probed through the
+  timestamp index and is approximate at the boundary second and for legacy
+  encodings; the probe only ever starts earlier than it needs to, so the
+  approximation costs a few reads rather than history.
 - A call emits at most 500 events and reads at most 20 pages of 500 rows from
   each of the two tables.
   Within that bound the connector keeps reading until it has an event, so a
@@ -172,7 +174,7 @@ database crate and migrations at
 | Concurrency | The database runs in WAL mode behind screenpipe's write queue, so a reader can run while screenpipe records. This package reads without a transaction and never checkpoints or vacuums the file. |
 | Owner steps | Point the connector at `db.sqlite`, backfill until a call reports no new events, then sync on whatever schedule the owner wants. |
 | Secret custody | No token or client secret exists for this connector, and nothing is persisted through a secret reference. |
-| History and backfill | Every physically retained row of a compatible schema is visible. Kizuki pages them in 500-event batches; an optional initial `since` skips older IDs approximately. |
+| History and backfill | Every physically retained row of a compatible schema is visible. Kizuki pages them in 500-event batches; an optional `since` excludes every row dated before it. |
 | Incremental behavior | Each sweep resumes from the checkpointed frame and transcription IDs. There is no webhook and no network cursor; later row updates, hard deletions, and database ID rewinds are not detected. |
 | Edits and deletions | Late OCR is covered by the settle window. Redaction overwrites the text columns in place and stamps `*_redacted_at`; those rows are not re-read. Media eviction empties `file_path` and keeps the row. Retention and range deletion leave no deletion log suitable for tombstones. |
 | Approval, billing, and review | The connector itself has no provider approval or billing gate. Screenpipe's own plan can govern supported history and query-time privacy features; direct file access does not reproduce those gates. These are provider-side gates only; Kizuki itself has no owner review or approval gate (`docs/decision-log.md` D10). |
