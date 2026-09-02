@@ -93,9 +93,11 @@ a dialog before it reads anything newer, and re-emits whatever changed since
 the previous completed pass. Reading the window first is what makes it whole:
 a dialog whose work does not fit stops the pass on itself, and because nothing
 has moved on yet, the next batch re-reads the same window rather than one
-shifted past it. The pass completes, and the watermark moves, only once every
-dialog in it has been read to the end. An edit to something older than 200
-messages is missed.
+shifted past it. The watermark a completed pass leaves behind is the moment
+that pass began, never the moment it ended, so an edit made to an
+already-read dialog while the rest of the account was still being read is
+still found afterwards. An edit to something older than 200 messages is
+missed.
 
 Service messages are skipped: joins, pins and title changes carry no content
 worth keeping. So is a message whose timestamp is not a date the ledger

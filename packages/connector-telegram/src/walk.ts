@@ -58,7 +58,17 @@ export async function listDialogs(
   return { dialogs, limitReached: dialogs.length >= MAX_DIALOGS };
 }
 
-export function seedCursor(dialogs: TelegramDialog[]): TelegramCursor {
+/**
+ * `startedAt` is when the walk began, and it is the watermark the finished
+ * walk keeps: an edit made to an already-read dialog while the rest of the
+ * account was still being read is newer than it, so the first sync afterwards
+ * finds that edit. A watermark stamped when the walk ended would sit above
+ * every such edit and nothing would look at those messages again.
+ */
+export function seedCursor(
+  dialogs: TelegramDialog[],
+  startedAt: number,
+): TelegramCursor {
   const entries: Record<string, DialogCursor> = {};
   for (const dialog of dialogs) {
     entries[dialog.peer_id] = {
@@ -71,7 +81,7 @@ export function seedCursor(dialogs: TelegramDialog[]): TelegramCursor {
     schema: TELEGRAM_CURSOR_SCHEMA,
     dialogs: entries,
     phase: "backfill",
-    edit_watermark: 0,
+    edit_watermark: startedAt,
     pass: null,
   };
 }
@@ -127,7 +137,7 @@ export async function walk(
   } else {
     dialogs = carried;
   }
-  const cursor = stored ?? seedCursor(dialogs);
+  const cursor = stored ?? seedCursor(dialogs, Math.floor(deps.now() / 1000));
   const byPeer = new Map(
     dialogs.map((dialog) => [dialog.peer_id, dialog] as const),
   );
@@ -210,8 +220,9 @@ export async function walk(
     mode === "backfill" &&
     Object.values(cursor.dialogs).every((entry) => entry.exhausted)
   ) {
+    // The watermark the seed set stands: it names when this walk began, and
+    // every edit made while it ran is later than that.
     cursor.phase = "synced";
-    cursor.edit_watermark = Math.floor(deps.now() / 1000);
   }
   return {
     batch: { events: batch.events, cursor: encodeCursor(cursor) },

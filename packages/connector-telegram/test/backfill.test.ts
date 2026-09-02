@@ -255,3 +255,36 @@ test("continuing a walk costs one dialog listing, not one per batch", async () =
     1,
   );
 });
+
+test("an edit made while the backfill ran is still re-emitted after it", async () => {
+  const account = fixtureAccount();
+  account.dialogs = [
+    { peer_id: "1", peer_type: "user", title: "grace", public: false, top_message_id: 400 },
+    { peer_id: "2", peer_type: "user", title: "linus", public: false, top_message_id: 600 },
+  ];
+  account.messages = { "1": crowd("1", 400), "2": crowd("2", 600) };
+  const built = await connected({ account });
+
+  const first = await built.connector.backfill(null);
+  expect(first.events).toHaveLength(BATCH_LIMIT);
+  expect(parseCursor(first.cursor as string).dialogs["1"]).toEqual({
+    peer_type: "user",
+    last_id: 400,
+    exhausted: true,
+  });
+
+  // Half an hour into a walk that is still running, the owner corrects a
+  // message in a dialog it has already read to the end.
+  built.clock.now += 1_800_000;
+  built.api.edit("1", 300, "corrected", Math.floor(built.clock.now / 1000));
+
+  const rest = await drain(built.connector, "backfill", first.cursor);
+  expect(parseCursor(rest.cursor).phase).toBe("synced");
+
+  // A watermark stamped when the walk finished would sit above that edit and
+  // nothing would look at the message again.
+  const synced = await drain(built.connector, "sync", rest.cursor);
+  expect(synced.events.map((event) => event.source_record_id)).toContain(
+    "1:300",
+  );
+});
