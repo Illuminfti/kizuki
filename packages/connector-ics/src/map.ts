@@ -250,6 +250,10 @@ export function emit(input: EmitInput): CaptureEventInput {
     MAX_METADATA_VALUE_CHARS,
   );
   const sequence = Number(firstValue(input.event, "SEQUENCE")?.value ?? "0");
+  const calendarName = sanitize(
+    input.calendarName ?? "",
+    MAX_METADATA_VALUE_CHARS,
+  );
 
   return {
     schema: "kizuki.event/v1",
@@ -294,9 +298,7 @@ export function emit(input: EmitInput): CaptureEventInput {
         ? { last_modified: toUtc(lastModified, zones, input.parsed.zones).iso }
         : {}),
       ...(url.length > 0 ? { url } : {}),
-      ...(input.calendarName !== null
-        ? { calendar_name: sanitize(input.calendarName, MAX_METADATA_VALUE_CHARS) }
-        : {}),
+      ...(calendarName.length > 0 ? { calendar_name: calendarName } : {}),
       ...(input.synthesized ? { uid_synthesized: true } : {}),
       ...(input.duplicate ? { duplicate_uid: true } : {}),
     },

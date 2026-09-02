@@ -26,6 +26,8 @@ import type { ParsedCalendar, RawVEvent } from "./parse";
 import { expand, parseRrule } from "./rrule";
 
 export const MAX_INSTANCES = 1_000;
+/** Used only when neither the calendar nor its source yields a usable slug. */
+export const FALLBACK_SLUG = "unnamed";
 export const MAX_STEPS = 100_000;
 export const WINDOW_DAYS = 365;
 
@@ -123,11 +125,10 @@ export function calendarEvents(
   const duplicates = new Set<string>();
   const series = seriesByUid(parsed, duplicates);
   const calendarName = parsed.calendar.name;
-  const calendarSlug = slugify(
-    calendarName !== null && calendarName.length > 0
-      ? calendarName
-      : opts.slugSource,
-  );
+  // Emptiness is decided after sanitising: a name of nothing but spaces would
+  // otherwise slug to "" and collapse every such calendar onto one identity.
+  const calendarSlug =
+    slugify(calendarName ?? "") || slugify(opts.slugSource) || FALLBACK_SLUG;
   const context: SeriesContext = {
     parsed,
     opts,

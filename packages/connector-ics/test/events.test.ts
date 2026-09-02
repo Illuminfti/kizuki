@@ -558,3 +558,49 @@ describe("hostile metadata is bounded", () => {
     ).toBe(MAX_METADATA_VALUE_CHARS);
   });
 });
+
+describe("the calendar subject always names something", () => {
+  test("a blank calendar name falls back to the file or host label", () => {
+    const events = mapped(
+      [
+        "X-WR-CALNAME:   ",
+        "BEGIN:VEVENT",
+        "UID:one@acme.example",
+        "DTSTART:20260301T100000Z",
+        "SUMMARY:One",
+        "END:VEVENT",
+      ],
+      "team",
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0]?.subjects).toContainEqual({
+      subject_id: "calendar:team",
+      role: "about",
+    });
+  });
+
+  test("an unusable name and an unusable source still name a calendar", () => {
+    const events = calendarEvents(
+      parseIcs(
+        [
+          "BEGIN:VCALENDAR",
+          "VERSION:2.0",
+          "X-WR-CALNAME:   ",
+          "BEGIN:VEVENT",
+          "UID:one@acme.example",
+          "DTSTART:20260301T100000Z",
+          "SUMMARY:One",
+          "END:VEVENT",
+          "END:VCALENDAR",
+          "",
+        ].join("\r\n"),
+      ),
+      { slugSource: "   ", observedAt: "2026-03-01T00:00:00.000Z", now: FIXTURE_NOW },
+    ).events;
+    expect(events[0]?.subjects).toContainEqual({
+      subject_id: "calendar:unnamed",
+      role: "about",
+    });
+    expect(events[0]?.metadata).not.toHaveProperty("calendar_name");
+  });
+});
