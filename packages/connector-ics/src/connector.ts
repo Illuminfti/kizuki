@@ -30,7 +30,7 @@ import { calendarEvents } from "./events";
 import { fetchIcs } from "./fetch";
 import type { IcsFetcher } from "./fetch";
 import { fixtureIcsEvents } from "./fixture";
-import { ICS_CONNECTOR_ID, tombstone } from "./map";
+import { ICS_CONNECTOR_ID, decodeUid, tombstone } from "./map";
 import { parseIcs } from "./parse";
 import { parseIcsState } from "./state";
 import type { IcsState } from "./state";
@@ -319,7 +319,8 @@ export class IcsConnector implements Connector {
     const tombstones: CaptureEventInput[] = [];
     for (const id of Object.keys(previous.records)) {
       if (present.has(id)) continue;
-      const [uid = id, recurrenceId] = id.split("#");
+      const [encoded = id, recurrenceId] = id.split("#");
+      const uid = decodeUid(encoded);
       tombstones.push(
         tombstone(
           id,

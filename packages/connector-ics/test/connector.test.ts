@@ -176,6 +176,36 @@ describe("file mode", () => {
     expect(second.events).toEqual([]);
   });
 
+  test("a crafted UID does not re-emit an edit on every sync", async () => {
+    const path = await writeCalendar(
+      [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "BEGIN:VEVENT",
+        "UID:series",
+        "DTSTART:20260302T090000Z",
+        "RRULE:FREQ=DAILY;COUNT=2",
+        "SUMMARY:Standup",
+        "END:VEVENT",
+        "BEGIN:VEVENT",
+        "UID:series#20260302T090000",
+        "DTSTART:20260401T120000Z",
+        "SUMMARY:Impostor",
+        "END:VEVENT",
+        "END:VCALENDAR",
+        "",
+      ].join("\r\n"),
+    );
+    const connector = createIcsConnector({ path }, { now: NOW });
+    let cursor: Cursor | null = (await connector.backfill(null)).cursor;
+    for (let round = 0; round < 3; round += 1) {
+      const batch: Awaited<ReturnType<typeof connector.sync>> =
+        await connector.sync(cursor);
+      expect(batch.events).toEqual([]);
+      cursor = batch.cursor;
+    }
+  });
+
   test("a missing file is misconfigured, not a crash", async () => {
     const connector = createIcsConnector(
       { path: join(temporary(), "gone.ics") },

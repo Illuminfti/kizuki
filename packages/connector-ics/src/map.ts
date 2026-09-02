@@ -62,6 +62,23 @@ export function slugify(name: string): string {
     .slice(0, MAX_SLUG_CHARS);
 }
 
+/**
+ * `#` separates a UID from an instance start in `source_record_id`, so a UID
+ * that carries one is escaped first. Without this a crafted UID collides with
+ * a generated instance of another series and the two share one ledger row.
+ */
+export function encodeUid(uid: string): string {
+  return uid.replace(/[%#]/g, (character) =>
+    character === "#" ? "%23" : "%25",
+  );
+}
+
+export function decodeUid(value: string): string {
+  return value.replace(/%(23|25)/g, (_match, code: string) =>
+    code === "23" ? "#" : "%",
+  );
+}
+
 export function synthesizeUid(dtstart: string, summary: string): string {
   return new Bun.CryptoHasher("sha256")
     .update(`${dtstart}\n${summary}`)
@@ -295,7 +312,7 @@ export function emit(input: EmitInput): CaptureEventInput {
   return {
     schema: "kizuki.event/v1",
     connector_id: ICS_CONNECTOR_ID,
-    source_record_id: `${input.uid}${suffix}`,
+    source_record_id: `${encodeUid(input.uid)}${suffix}`,
     kind: "calendar_event",
     occurred_at: converted.iso,
     observed_at: input.opts.observedAt,

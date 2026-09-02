@@ -5,6 +5,8 @@ import { calendarEvents } from "../src/events";
 import type { CalendarMapping } from "../src/events";
 import {
   MAX_METADATA_VALUE_CHARS,
+  decodeUid,
+  encodeUid,
   parseDuration,
   slugify,
   synthesizeUid,
@@ -638,6 +640,35 @@ describe("truncation marks every instance of the series", () => {
         (event.metadata["recurrence"] as Record<string, unknown>)["truncated"],
       ).toBe(true);
     }
+  });
+});
+
+describe("two entries can never share one record id", () => {
+  test("a UID carrying the instance separator is escaped, not collided", () => {
+    const events = mapped([
+      "BEGIN:VEVENT",
+      "UID:series",
+      "DTSTART:20260302T090000Z",
+      "RRULE:FREQ=DAILY;COUNT=2",
+      "SUMMARY:Real series instance",
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      "UID:series#20260302T090000",
+      "DTSTART:20260401T120000Z",
+      "SUMMARY:Impostor with a crafted UID",
+      "END:VEVENT",
+    ]);
+    expect(events.map((event) => event.source_record_id)).toEqual([
+      "series#20260302T090000",
+      "series#20260303T090000",
+      "series%2320260302T090000",
+    ]);
+    // The metadata still names the UID the calendar actually carried.
+    expect(events[2]?.metadata["uid"]).toBe("series#20260302T090000");
+  });
+
+  test("the escape survives a round trip through a percent sign", () => {
+    expect(decodeUid(encodeUid("a%23b#c"))).toBe("a%23b#c");
   });
 });
 
