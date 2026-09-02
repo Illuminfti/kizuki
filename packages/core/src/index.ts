@@ -405,6 +405,14 @@ export type {
   UndoReceiptOptions,
 } from "./canon";
 export { findPageById, listCanonPages, listCanonPagesReport } from "./vault/pages";
+export type { PageSensitivity, PageStatus, PageType } from "./vault/schema";
+export { writePage } from "./vault/write";
+export type { WritePageOptions } from "./vault/write";
+export {
+  findPageById,
+  listCanonPages,
+  listCanonPagesReport,
+} from "./vault/pages";
 export type { CanonPage, CanonPageReport, SkippedPage } from "./vault/pages";
 export { readDerivedMeta } from "./derived-meta";
 export type { DerivedLayer, DerivedMeta } from "./derived-meta";
@@ -440,7 +448,11 @@ export {
   listConnections,
   saveCheckpoint,
 } from "./ledger/connections";
-export type { Checkpoint, Connection, ConnectionConfig } from "./ledger/connections";
+export type {
+  Checkpoint,
+  Connection,
+  ConnectionConfig,
+} from "./ledger/connections";
 export {
   ConnectionStateStore,
   enrollConnection,
@@ -525,3 +537,37 @@ export type {
   Servable,
   Tool,
 } from "./agents";
+
+export {
+  ENTITY_TYPES,
+  ENVELOPE_SCHEMA,
+  ServeError,
+  gate,
+  serveContextPacket,
+  serveEntities,
+  serveGetPage,
+  serveGraph,
+  serveHealth,
+  servePropose,
+  serveSearch,
+  serveTimeline,
+} from "./serving";
+export type {
+  CanonChunk,
+  ContextPacketArgs,
+  ContextPacketData,
+  Denied,
+  EntitiesArgs,
+  Envelope,
+  GetPageArgs,
+  GraphArgs,
+  GraphData,
+  HealthData,
+  ProposeArgs,
+  ProposeData,
+  QuotedChunk,
+  SearchArgs,
+  ServeContext,
+  Served,
+  TimelineArgs,
+} from "./serving";
