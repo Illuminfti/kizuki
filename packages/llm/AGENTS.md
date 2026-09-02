@@ -30,13 +30,28 @@ writes canon; it returns drafts to whoever bound it.
   network call site anywhere fails `bun run verify`.
 - A provider answer is attacker-controlled input. Validate it against a closed
   key set before reading a value out of it; a tool call, a non-text content
-  part or an unknown key is a rejection, never a warning.
-- Captured text goes only in the user role, only inside the nonce fence, and
-  never into the request's structure.
+  part or an unknown key is a rejection, never a warning. A key that is
+  allowlisted must also be read: a stop reason and a refusal decide whether
+  there is an answer at all.
+- Every string that came from a record goes only in the user role, only inside
+  a nonce fence, and never into the request's structure. That includes the
+  context block: a subject id comes from a connector and a known claim's
+  object came out of an earlier model answer. Only the predicate registry,
+  which this repository owns, may sit outside a fence.
 - Credentials are `secret_ref` URIs resolved through `ctx.secrets` at call
   time. Never read a key from the environment here, never store one, never let
-  one reach a message, a log line or a test fixture.
+  one reach a message, a log line or a test fixture. A reference this package
+  cannot resolve is refused at config time without echoing the value.
+- Provider and model text never reaches `ctx.logger`. Log a count, or a value
+  from a closed set this package defines. A model can reproduce captured text,
+  and the logger is stderr or the service journal.
 - Bound every allocation the endpoint or the capture can drive: response
-  bytes, prompt characters, claim counts, retries and waits.
+  bytes, prompt characters, context length, claim counts, retries and waits.
+  A stated bound is a bound on what is sent, after escaping and clipping.
+- Budgets bound what goes on the wire, not what was intended: `max_calls`
+  counts requests including retries, and tokens are reserved before a call at
+  the most conservative ratio and charged at what the endpoint reported.
 - A model that did not answer is `unavailable`, not `ok` with no claims. The
-  distinction is what stops a caller advancing a checkpoint over lost work.
+  distinction is what stops a caller advancing a checkpoint over lost work,
+  and `covered_event_ids` is what tells it how far it may advance when a run
+  stopped part way.
