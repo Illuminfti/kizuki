@@ -36,14 +36,47 @@ function decodeEntities(text: string): string {
 
 const BLOCK_END = /<\s*\/\s*(p|div|li|tr|h[1-6])\s*>/gi;
 const LINE_BREAK = /<\s*br\s*\/?\s*>/gi;
-const DROPPED = /<\s*(script|style)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi;
+const DROPPED_OPEN = /<\s*(script|style)\b/gi;
+const DROPPED_CLOSE = {
+  script: /<\s*\/\s*script\s*>/gi,
+  style: /<\s*\/\s*style\s*>/gi,
+};
+
+/**
+ * A forward scan, not a paired pattern. One regex spanning an open and its
+ * close backtracks to the end of the document for every open tag that has no
+ * close, which is quadratic in the length of a message any stranger can send.
+ * Each character here is looked at a fixed number of times instead.
+ */
+function stripDropped(html: string): string {
+  DROPPED_OPEN.lastIndex = 0;
+  let out = "";
+  let cursor = 0;
+  for (
+    let open = DROPPED_OPEN.exec(html);
+    open !== null;
+    open = DROPPED_OPEN.exec(html)
+  ) {
+    const name = (open[1] ?? "").toLowerCase();
+    const close = name === "style" ? DROPPED_CLOSE.style : DROPPED_CLOSE.script;
+    close.lastIndex = DROPPED_OPEN.lastIndex;
+    const end = close.exec(html);
+    out += `${html.slice(cursor, open.index)} `;
+    // An element nobody closed swallows the rest of the document, the way a
+    // browser reads it; scanning on would put script source into capture.
+    if (end === null) return out;
+    cursor = end.index + end[0].length;
+    DROPPED_OPEN.lastIndex = cursor;
+  }
+  return out + html.slice(cursor);
+}
 
 /**
  * A readable-text approximation, not a renderer: enough to make an HTML-only
  * message searchable without pulling a DOM into the tree.
  */
 export function htmlToText(html: string): string {
-  const withoutDropped = html.replace(DROPPED, " ");
+  const withoutDropped = stripDropped(html);
   const withBreaks = withoutDropped
     .replace(LINE_BREAK, "\n")
     .replace(BLOCK_END, "\n");

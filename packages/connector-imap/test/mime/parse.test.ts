@@ -195,6 +195,9 @@ describe("html to text", () => {
     ["a<br>b", "a\nb"],
     ["<script>alert(1)</script>kept", "kept"],
     ["<style>p{}</style>kept", "kept"],
+    ["<SCRIPT >a</ SCRIPT >kept", "kept"],
+    ["before<script>alert(1)", "before"],
+    ["<script>a</script>mid<script>b</script>end", "mid end"],
     ["&amp;&lt;&gt;&quot;&#39;&apos;&nbsp;x", "&<>\"'' x"],
     ["&#65;&#x42;", "AB"],
     ["<div>a</div><div></div><div></div><div>b</div>", "a\n\nb"],
@@ -211,6 +214,16 @@ describe("html to text", () => {
   ])("renders %s", (html, expected) => {
     expect(htmlToText(html)).toBe(expected);
   });
+
+  test("an unclosed element costs the same as a closed one", () => {
+    // The paired pattern this replaced backtracked to the end of the document
+    // once per unclosed open tag, so one html-only message from any stranger
+    // blocked the ingest loop for minutes.
+    const hostile = "<script>x".repeat(20_000) + "y".repeat(200_000);
+    const started = Bun.nanoseconds();
+    expect(htmlToText(hostile)).toBe("");
+    expect((Bun.nanoseconds() - started) / 1e6).toBeLessThan(1_000);
+  }, 2_000);
 
   test("a hostile entity cannot abort the capture of a whole page", () => {
     expect(htmlToText("<p>before</p><p>&#1114112;</p><p>after</p>")).toBe(
