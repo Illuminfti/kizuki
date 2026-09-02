@@ -1,9 +1,11 @@
 import {
   AUTH_MODES,
   CONNECTOR_SCHEMA,
+  SENSITIVITY_ORDER,
   isAuthMode,
   isSecretRef,
   isPlainObject,
+  isSensitivity,
   validateEventInput,
 } from "@kizuki/core";
 import type {
@@ -297,6 +299,14 @@ function parseManifest(raw: unknown, failures: string[]): Manifest | undefined {
     failures.push(
       `manifest.auth_modes: must be a non-empty array of ${AUTH_MODES.join(" | ")}`,
     );
+  }
+  // Sensitivity is resolved from the source class rather than from an owner
+  // label, so a manifest that cannot state its class is not usable.
+  const levels = Object.keys(SENSITIVITY_ORDER).join(" | ");
+  for (const field of ["default_sensitivity", "sensitivity_floor"] as const) {
+    if (!isSensitivity(raw[field])) {
+      failures.push(`manifest.${field}: must be one of ${levels}`);
+    }
   }
 
   if (failures.length > 0) return undefined;

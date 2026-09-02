@@ -17,6 +17,10 @@ export const SENSITIVITY_ORDER = {
 } as const;
 export type Sensitivity = keyof typeof SENSITIVITY_ORDER;
 
+export function isSensitivity(v: unknown): v is Sensitivity {
+  return typeof v === "string" && v in SENSITIVITY_ORDER;
+}
+
 export interface Grant {
   ceiling: Sensitivity;
   types: string[] | null;

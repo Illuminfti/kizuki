@@ -60,6 +60,8 @@ function connector(
       required_secrets: [],
       emits_sensitivity_hint: false,
       auth_modes: ["sign_in"],
+      default_sensitivity: "private",
+      sensitivity_floor: "personal",
     }),
     health: async () => {
       throw new Error("unused");

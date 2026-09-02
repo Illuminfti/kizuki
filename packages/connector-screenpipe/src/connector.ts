@@ -52,6 +52,8 @@ const MANIFEST: Manifest = {
   required_secrets: [],
   emits_sensitivity_hint: true,
   auth_modes: ["none"],
+  default_sensitivity: "private",
+  sensitivity_floor: "personal",
 };
 
 export class ScreenpipeConnector implements Connector {

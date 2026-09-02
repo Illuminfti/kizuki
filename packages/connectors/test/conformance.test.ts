@@ -14,7 +14,7 @@ import {
   runConformance,
   seedFixtureDatabase,
 } from "../src";
-import type { Connector } from "@kizuki/core";
+import type { Connector, Sensitivity } from "@kizuki/core";
 
 test("all registry connectors pass conformance", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-conformance-"));
@@ -100,5 +100,47 @@ test("required_secrets rejects malformed references", async () => {
   expect(result.pass).toBe(false);
   expect(result.failures).toContain(
     "manifest.required_secrets: must contain secret_ref URIs",
+  );
+});
+
+test("a manifest without sensitivity defaults fails closed", async () => {
+  const base = getConnector(CHATGPT_IMPORT_CONNECTOR_ID, {
+    path: "fixture.json",
+  });
+  const {
+    default_sensitivity: _default,
+    sensitivity_floor: _floor,
+    ...withoutSensitivity
+  } = base.manifest();
+  const undeclared: Connector = {
+    ...base,
+    manifest: () => withoutSensitivity as ReturnType<Connector["manifest"]>,
+  };
+  const result = await runConformance(undeclared);
+  expect(result.pass).toBe(false);
+  expect(result.failures).toEqual([
+    "manifest.default_sensitivity: must be one of public | personal | private",
+    "manifest.sensitivity_floor: must be one of public | personal | private",
+  ]);
+});
+
+test("a manifest with an unknown sensitivity level fails closed", async () => {
+  const base = getConnector(CHATGPT_IMPORT_CONNECTOR_ID, {
+    path: "fixture.json",
+  });
+  // Widened so the invalid level survives to the runtime check the manifest
+  // parser performs on a manifest the type system never saw.
+  const level: string = "secret";
+  const invalid: Connector = {
+    ...base,
+    manifest: () => ({
+      ...base.manifest(),
+      default_sensitivity: level as Sensitivity,
+    }),
+  };
+  const result = await runConformance(invalid);
+  expect(result.pass).toBe(false);
+  expect(result.failures).toContain(
+    "manifest.default_sensitivity: must be one of public | personal | private",
   );
 });

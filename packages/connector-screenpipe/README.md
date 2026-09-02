@@ -12,6 +12,11 @@ That column holds accessibility text, OCR text, or both. Each
 Subjects identify an app, an HTTP(S) site host, a speaker, or an audio device
 when that information is present.
 
+Screen text and audio transcription are a local-capture source class, so the
+manifest declares `default_sensitivity: private` and `sensitivity_floor:
+personal`. Sensitivity is resolved from that class and from the event hint;
+nobody is asked to label anything.
+
 screenpipe stores the database at `~/.screenpipe/db.sqlite` by default and keeps
 media separately under `~/.screenpipe/data/`.
 

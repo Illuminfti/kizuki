@@ -1,4 +1,5 @@
 import type { CaptureEventInput } from "./event";
+import type { Sensitivity } from "../agents/types";
 import { isRfc3339 } from "../util/time";
 
 export const CONNECTOR_SCHEMA = "kizuki.connector/v1" as const;
@@ -57,6 +58,14 @@ export interface Manifest {
   emits_sensitivity_hint: boolean;
   /** Non-empty; `sign_in`/`oauth` require a `signIn` implementation. */
   auth_modes: AuthMode[];
+  /**
+   * What a record from this source is, absent any other signal. Sensitivity is
+   * resolved from the source class, never by asking the owner to label
+   * (RFC 0002 §8.2).
+   */
+  default_sensitivity: Sensitivity;
+  /** The lowest label anything from this source may carry. */
+  sensitivity_floor: Sensitivity;
 }
 
 /** Terminal-facing prompts the CLI lends a connector during `signIn`. */
