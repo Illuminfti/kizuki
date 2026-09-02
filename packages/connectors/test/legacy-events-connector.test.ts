@@ -10,7 +10,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { initVault, openLedger, runSync } from "@kizuki/core";
+import { initVault, openLedger, runBackfill, runSync } from "@kizuki/core";
+import { getCheckpoint } from "@kizuki/core";
 import { initStaging, listProposals } from "@kizuki/core/staging";
 import { KizukiError } from "../src/errors";
 import { InMemoryLedger } from "../src/ledger";
@@ -276,6 +277,56 @@ describe("the run through a real ledger", () => {
       );
       expect(second.stored).toBe(1);
       expect(second.withdrawn).toBeGreaterThan(0);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("a row the ledger would refuse", () => {
+  test("is skipped by position so the cursor still advances", async () => {
+    // Date renders this epoch as a six-digit year; the ledger refuses the
+    // string. Emitting it would fail the batch and hold the cursor at null,
+    // making every later row unreachable however often the owner re-runs.
+    writeFileSync(
+      jsonlPath,
+      [
+        { id: "r1", type: "note", ts: 1_767_225_600, body: "first" },
+        { id: "r2", type: "note", ts: 8_640_000_000_000, body: "unusable" },
+        { id: "r3", type: "note", ts: 1_767_225_601, body: "last" },
+      ]
+        .map((row) => `${JSON.stringify(row)}\n`)
+        .join(""),
+    );
+    writeMapping(jsonlPath, {
+      table: null,
+      kind: { column: "type", values: { note: "note" }, default: null },
+      subjects: [],
+      sensitivity_hint: null,
+      deleted: null,
+      text: { column: "body" },
+    });
+
+    const vault = join(root, "vault");
+    initVault(vault);
+    const db = openLedger(join(vault, ".kizuki", "kizuki.db"));
+    initStaging(db);
+    try {
+      const connector = createLegacyEventsConnector({ path: jsonlPath });
+      const run = await runBackfill(
+        db,
+        connector,
+        LEGACY_EVENTS_CONNECTOR_ID,
+        jsonlPath,
+      );
+      expect(run.errors).toEqual([]);
+      expect(run.stored).toBe(2);
+      expect(connector.lastReport()?.skipped).toEqual([
+        { position: 120, reason: "occurred_at_invalid" },
+      ]);
+      expect(
+        getCheckpoint(db, LEGACY_EVENTS_CONNECTOR_ID, jsonlPath)?.cursor,
+      ).not.toBeNull();
     } finally {
       db.close();
     }

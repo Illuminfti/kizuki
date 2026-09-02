@@ -187,6 +187,18 @@ export const TIMESTAMP_FORMATS: readonly TimestampFormat[] = [
   "js_date",
 ];
 
+/**
+ * `Date` formats years outside 0000..9999 with a sign and six digits, which
+ * the ledger's own grammar refuses. Returning one would not skip a row: it
+ * would make the whole event invalid, and an invalid event holds the run's
+ * cursor back forever, so every later page of the export is unreachable.
+ */
+function rfc3339Or(date: Date): string | null {
+  if (Number.isNaN(date.getTime())) return null;
+  const candidate = date.toISOString();
+  return isRfc3339(candidate) ? candidate : null;
+}
+
 function fromEpoch(raw: unknown, millisPerUnit: number): string | null {
   const numeric =
     typeof raw === "number"
@@ -195,8 +207,7 @@ function fromEpoch(raw: unknown, millisPerUnit: number): string | null {
         ? Number(raw.trim())
         : Number.NaN;
   if (!Number.isFinite(numeric)) return null;
-  const date = new Date(numeric * millisPerUnit);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  return rfc3339Or(new Date(numeric * millisPerUnit));
 }
 
 /** Null rather than a guess: an unreadable timestamp is a reported decision. */
@@ -225,8 +236,7 @@ export function parseLegacyTimestamp(
       return fromEpoch(raw, 1);
     case "js_date": {
       if (typeof raw !== "string" && typeof raw !== "number") return null;
-      const date = new Date(raw);
-      return Number.isNaN(date.getTime()) ? null : date.toISOString();
+      return rfc3339Or(new Date(raw));
     }
   }
 }

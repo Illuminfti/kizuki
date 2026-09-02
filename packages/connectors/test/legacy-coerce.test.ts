@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { targetProblem } from "@kizuki/core";
+import { isRfc3339, targetProblem } from "@kizuki/core";
 import {
+  TIMESTAMP_FORMATS,
   matchesGlob,
   parseLegacyTimestamp,
   sanitizeLine,
@@ -206,6 +207,41 @@ describe("parseLegacyTimestamp", () => {
 
   test("a date field is not silently accepted in another format's slot", () => {
     expect(parseLegacyTimestamp("2026-01-01", "rfc3339")).toBeNull();
+  });
+
+  test("an epoch outside the ledger's own grammar is a refusal, not a date", () => {
+    // Date happily formats these; `kizuki.event/v1` rejects the string, and a
+    // rejected event stalls the run's cursor instead of skipping one row.
+    for (const raw of [8_640_000_000_000, 253_402_300_800, -62_167_219_201]) {
+      expect(parseLegacyTimestamp(raw, "unix_seconds")).toBeNull();
+    }
+    expect(parseLegacyTimestamp(-62_167_219_201_000, "unix_millis")).toBeNull();
+    expect(parseLegacyTimestamp("0000-01-01T00:00:00Z", "js_date")).toBeNull();
+    expect(parseLegacyTimestamp("+010000-01-01T00:00:00Z", "js_date")).toBeNull();
+  });
+
+  test("every value it does return satisfies the spine's grammar", () => {
+    const raws: unknown[] = [
+      0,
+      -1,
+      1_767_225_600,
+      8_640_000_000_000,
+      253_402_300_800,
+      -62_167_219_201,
+      "1767225600",
+      "2026-01-01",
+      "2026-01-01 10:30:00",
+      "2026-01-01T00:00:00Z",
+      "0000-01-01",
+      "soon",
+      null,
+    ];
+    for (const raw of raws) {
+      for (const format of TIMESTAMP_FORMATS) {
+        const parsed = parseLegacyTimestamp(raw, format);
+        if (parsed !== null) expect(isRfc3339(parsed)).toBe(true);
+      }
+    }
   });
 });
 
