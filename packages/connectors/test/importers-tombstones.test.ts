@@ -305,3 +305,51 @@ test("an edited record is a new version, never a deletion", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("a repeat's number is a position, and a subset renumbers it", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-tombstone-"));
+  const db = openVault();
+  try {
+    // A repeated url is numbered by where it sits in the export, which is the
+    // only thing the file offers: the two saves are otherwise the same record
+    // saved twice. An export that dropped the earlier save therefore hands the
+    // bare id to the later one, which the ledger keeps as another version of
+    // that record. Nothing is deleted, withdrawn or retracted; there is one
+    // extra row. This is the documented edge of "a smaller export stores
+    // nothing", and the page states it for both importers that number repeats.
+    const file = path.join(root, "pocket.csv");
+    const lines = POCKET_FIXTURE_EXPORT.trimEnd().split("\n");
+    const connector = createPocketImportConnector({ path: file });
+    const id = connector.manifest().connector_id;
+
+    await writeFile(file, POCKET_FIXTURE_EXPORT);
+    expect((await runBackfill(db, connector, id, SOURCE_KEY)).stored).toBe(4);
+    expect(stored(db).map((event) => event.source_record_id)).toContain(
+      "https://example.com/heron#2",
+    );
+
+    // The later of the two saves of one url, alone.
+    await writeFile(file, `${[lines[0], lines[4]].join("\n")}\n`);
+    const smaller = await runSync(db, connector, id, SOURCE_KEY);
+    expect(smaller).toMatchObject({
+      stored: 1,
+      duplicates: 0,
+      withdrawn: 0,
+      retractions_filed: 0,
+    });
+
+    const rows = stored(db);
+    expect(rows.length).toBe(5);
+    expect(rows.some((event) => event.deleted)).toBe(false);
+    // The row the full export stored under the bare id is untouched: the new
+    // one is a version beside it, not a replacement of it.
+    expect(
+      rows.filter(
+        (event) => event.source_record_id === "https://example.com/heron",
+      ).length,
+    ).toBe(2);
+  } finally {
+    db.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
