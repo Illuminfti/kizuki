@@ -1,3 +1,7 @@
+> **Superseded owner-gate framing, 2026-09-02.** Importers emit evidence.
+> They do not feed an owner review queue. See
+> `rfcs/0002-autonomous-canon.md`.
+
 # Lane: importers-exports — WhatsApp chat export, Pocket CSV, Omnivore export folder as three `auth_modes: ["none"]` importers
 
 Reconciled against `main` @ `76930db` (2026-09-02; `bun test` = 515 pass /
@@ -78,12 +82,12 @@ text, subjects, deleted, metadata` and excludes `observed_at`,
   `subject_id` (page `type: "person"`, `title = display_name ?? handleOf(id)`
   where `handleOf` takes the text after the LAST `:`) plus one `claim`
   capture note quoting the text as a blockquote. Consequence: every
-  subject an importer emits becomes a person-candidate in the review queue,
+  subject an importer emits becomes a person-candidate claim,
   so subjects are people (or the chat) only — never URLs, domains or labels.
 - `cascadeTombstone` withdraws pending proposals of the record and files a
   `deletion` proposal per promoted page citing it. A wrongly emitted
-  tombstone therefore reaches the owner's review queue as a retraction
-  request — the concrete harm §0.3 prevents.
+  tombstone therefore reaches the receipted writer as a retraction
+  claim — the concrete harm §0.3 prevents.
 - The CLI on main is the pre-alpha single file `packages/cli/src/main.ts`:
   `ingest <connector_id> --vault PATH --source PATH` builds
   `getConnector(id, { path: resolve(--source) })`, calls `connect` with a

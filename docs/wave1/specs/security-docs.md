@@ -1,3 +1,7 @@
+> **VOID as written, 2026-09-02.** Owner-gated canon, `kizuki review` /
+> `promote` as the daily path, and the tension paragraph are dead. Reissue
+> against `rfcs/0002-autonomous-canon.md` and `docs/CURRENT.md`.
+
 # Lane: security-docs — README rewrite, SECURITY.md, CONTRIBUTING.md, docs/connectors.md, and a docs gate that keeps every claim traceable
 
 Reconciled against `main` @ `76930db` (2026-09-02; `bun test` = 515 pass /

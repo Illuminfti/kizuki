@@ -1,9 +1,8 @@
 # Current direction (2026-09-02)
 
 Binding intent is RFC 0002 — Autonomous canon (`rfcs/0002-autonomous-canon.md`).
-It is DRAFT until that file is merged. After merge it binds and amends
-`docs/architecture.md` invariants 3, 5, 9, RFC 0000, `AGENTS.md`,
-`docs/product-context.md`, and the README.
+It is BINDING. It amends `docs/architecture.md` invariants 3, 5, 9, RFC 0000,
+`AGENTS.md`, `docs/product-context.md`, and the README.
 
 ## What the product is
 
@@ -20,8 +19,9 @@ MCP `correct`) is the update path a person actually uses.
 
 Owner-only promote, `kizuki review` as the 1.0 daily surface, and
 "nothing writes canon except an owner-invoked promote".
-`docs/wave1/specs/llm-producer.md` and `docs/wave1/specs/serve-daemon.md`
-are VOID as written.
+`docs/wave1/specs/llm-producer.md`, `docs/wave1/specs/serve-daemon.md`,
+`docs/wave1/specs/stranger-proof.md`, and
+`docs/wave1/specs/security-docs.md` are VOID as written.
 
 ## What still holds
 

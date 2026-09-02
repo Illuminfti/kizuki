@@ -1,6 +1,7 @@
 # RFC 0001 — deep-model review: arbitration
 
-Status: DRAFT (binds only when merged). Arbitrates the external deep-model
+Status: DRAFT (binds only when merged). Owner-gate items below are
+superseded by BINDING RFC 0002. Arbitrates the external deep-model
 review received 2026-09-01 (ten risks, ten proposed deltas, a schema
 skeleton for an evidence-to-world-model layer) against
 docs/architecture.md and RFC 0000. Each item is accepted, adapted, or

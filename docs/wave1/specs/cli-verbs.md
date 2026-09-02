@@ -1,3 +1,7 @@
+> **Superseded owner-gate framing, 2026-09-02.** This lane shipped. `review`
+> / `promote` / `reject` remain leftover implemented verbs. They are not
+> the product gate. See `rfcs/0002-autonomous-canon.md`.
+
 # Lane: cli-verbs — Wave 1 verb set, config, command modules, opaque connections
 
 Package: `packages/cli` (plus `packages/cli/package.json` and the README

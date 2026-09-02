@@ -20,11 +20,15 @@ product: "your life, queryable as a CLI and MCP". Read these first, in order:
   `node:path`, `Bun.*` APIs.
 - **No network calls anywhere** in product code. Nothing may `fetch`,
   open sockets, or read remote URLs. (Invariant 6: zero phone-home.)
-- **Nothing writes canon except owner promote** (invariant 3). Do not add any
-  code path that writes `.md` files into the vault outside
-  `packages/core/src/staging/promote.ts` and `packages/core/src/vault/write.ts`.
-  The invariants test in `packages/core/test/staging/invariants.test.ts`
-  enforces this; keep it green.
+- **Canon is written by the receipted writer** (architecture invariant 3,
+  RFC 0002). Do not add a client, CLI verb, TUI key, or scheduled path that
+  writes `.md` files into the vault outside the single receipted writer.
+  Today that writer is still `packages/core/src/staging/promote.ts` plus
+  `packages/core/src/vault/write.ts`. The accepted design moves it to
+  `packages/core/src/canon/`. There is no owner review queue and no owner
+  approval step. The invariants test in
+  `packages/core/test/staging/invariants.test.ts` still scans the public
+  write seam; keep it green and do not add a second door.
 - **Fail closed**: missing sensitivity label → not served; unknown agent → no
   access; missing credentials → refuse.
 - **No fake surfaces**: no CLI verb, registry entry, README claim or doc line

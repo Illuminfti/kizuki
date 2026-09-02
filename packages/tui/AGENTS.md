@@ -4,22 +4,24 @@ These rules apply under `packages/tui` in addition to the root `AGENTS.md`.
 
 ## Responsibility
 
-The TUI is the owner's review surface. Its state machine and renderer should be
-pure; terminal I/O, editor launches, and persistence belong at explicit edges.
+The TUI is the audit and undo interface. Its state machine and renderer should
+be pure; terminal I/O, editor launches, and persistence belong at explicit
+edges. It has no accept/reject path. `undo` is its only effect, and undo goes
+through the core receipt reverser.
 
 ## Rules
 
 - Every key path must be testable without a real TTY.
-- Treat proposal titles, diffs, source text, filenames, and editor output as
+- Treat titles, diffs, source text, filenames, and editor output as
   hostile. Strip control and escape sequences before rendering.
 - Rendering must not execute markup, terminal control, links, or captured
   instructions.
-- Preserve explicit owner confirmation for promotion, merge, edit, deletion,
-  purge review, and batch operations.
-- A batch action must show and bind the exact selected items. Changes in queue
-  state invalidate stale confirmation.
-- Never write canon or the database directly. Invoke the public review and
-  promotion APIs.
+- Show receipts, diffs, taint, and provenance. Do not invent an owner
+  approval step.
+- A batch undo must show and bind the exact selected receipts. Changes in
+  receipt state invalidate stale confirmation.
+- Never write canon or the database directly. The only effect the reducer
+  may emit is `undo`.
 - Keep wide and narrow layouts usable, deterministic, and bounded. Truncate
   safely without splitting escape handling or hiding the action being
   confirmed.
@@ -29,6 +31,6 @@ pure; terminal I/O, editor launches, and persistence belong at explicit edges.
 ## Tests
 
 Exercise reducer transitions, rendering, sanitization, small terminal sizes,
-large and malformed input, editor round trips, stale selections, two-step
-confirmation, cancellation, failure cleanup, and every proposal kind. Then run
-TUI tests, typecheck, and the full repository gate.
+large and malformed input, editor round trips, stale selections,
+cancellation, failure cleanup, and proof that the reducer emits only `undo`.
+Then run TUI tests, typecheck, and the full repository gate.

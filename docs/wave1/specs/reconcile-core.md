@@ -1,3 +1,7 @@
+> **Superseded owner-gate framing, 2026-09-02.** This lane shipped. Promote
+> kinds remain leftover implementation. They are not the product gate. See
+> `rfcs/0002-autonomous-canon.md`.
+
 # Lane: reconcile-core — land lane/core-spine on top of main
 
 You are in the worktree for branch `lane/core-spine`. Read CONVENTIONS.md

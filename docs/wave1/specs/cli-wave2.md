@@ -1,3 +1,8 @@
+> **Superseded owner-gate framing, 2026-09-02.** Do not wire `review` /
+> `promote` / `reject` as the owner path. Accepted design verbs are `audit`,
+> `tell`, `undo`, `context`, `timeline`, `rebuild`, `models`, `serve`. See
+> `rfcs/0002-autonomous-canon.md`.
+
 # Lane: cli-wave2 — serving verbs, agent verbs, `mcp`, and the interactive sign-in path on the CLI
 
 Package: `packages/cli` (plus `README.md`) and two small additive seams in

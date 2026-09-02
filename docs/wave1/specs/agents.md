@@ -1,3 +1,7 @@
+> **Superseded owner-gate framing, 2026-09-02.** Propose-only writes are
+> incomplete. RFC 0002 adds MCP `correct`. Reissue `TOOLS` against
+> `rfcs/0002-autonomous-canon.md`.
+
 # Lane: agents — identity, grants, audit, enforcement
 
 Package: `packages/core` only, new directory `src/agents/`. Read
@@ -46,7 +50,7 @@ CREATE INDEX IF NOT EXISTS agent_audit_by_agent ON agent_audit(agent_id, at);
 ## 2. API (`src/agents/`)
 
 ```ts
-export const TOOLS = ['search','get_page','query_entities','timeline','context_packet','graph_neighbors','system_health','propose'] as const
+export const TOOLS = ['search','get_page','query_entities','timeline','context_packet','graph_neighbors','system_health','propose','correct'] as const
 export type Tool = typeof TOOLS[number]
 export const SENSITIVITY_ORDER = { public: 0, personal: 1, private: 2 } as const
 export interface Grant { ceiling: Sensitivity; types: string[] | null; subjects: string[] | null; since: string | null; until: string | null; tools: Tool[]; rate_limit_per_minute: number }

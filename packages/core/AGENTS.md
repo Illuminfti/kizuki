@@ -5,7 +5,7 @@ These rules apply under `packages/core` in addition to the root `AGENTS.md`.
 ## Responsibility
 
 Core owns the durable contracts and policy boundaries: event acceptance,
-ledger and connection state, proposal staging and promotion, vault writes,
+ledger and connection state, claims, the receipted canon writer, undo, vault writes,
 query policy, agent identities and grants, audit, purge, and rebuildable
 derived projections. Changes here can invalidate every other package.
 
@@ -14,12 +14,15 @@ Read the relevant contract under `src/contracts`, its public export from
 
 ## Rules
 
-- Do not change `kizuki.event/v1`, `kizuki.proposal/v1`, connector contracts,
-  vault frontmatter, or exported types casually. A contract change needs an
-  explicit task, compatibility analysis, and any required RFC.
+- Do not change `kizuki.event/v1`, `kizuki.proposal/v1` / `kizuki.claim/v1`,
+  connector contracts, vault frontmatter, or exported types casually. A
+  contract change needs an explicit task, compatibility analysis, and any
+  required RFC. RFC 0002 is the binding change for claims and the receipted
+  writer; do not invent a third write path.
 - Keep the ledger append-only. Do not update an accepted event to simulate
   correction or deletion.
-- Canon mutation remains reachable only through owner-invoked promotion.
+- Canon mutation remains reachable only through the receipted writer.
+  Agents propose claims and relay corrections; no client writes a page.
   Tests must scan the public write seam, not just one call site.
 - Enforce identity, grant, sensitivity, scope, rate, and audit policy below
   adapters and prompts.
