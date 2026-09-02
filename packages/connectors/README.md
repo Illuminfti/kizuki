@@ -5,6 +5,11 @@ evidence. Nothing here writes canon: events land in the append-only ledger,
 where the receipted writer picks them up. The owner's leverage over what is
 written is correction and undo.
 
+Sensitivity is assigned, never asked for. Every importer here declares the
+label its records carry and the least sensitive label they may ever carry, so
+a record whose sensitivity cannot be worked out is treated as private rather
+than left unlabeled.
+
 Two kinds of adapter live in this package:
 
 - A **live source** is re-read at its own pace. It can see that a record is
@@ -59,7 +64,8 @@ them.
 kizuki import import-whatsapp --vault VAULT --source EXPORT_DIR
 ```
 
-Each message becomes one `message` event, hinted `private`. Its subjects are
+Each message becomes one `message` event, labeled `private` by the importer's
+own policy, never by you. Its subjects are
 the sender and the chat. The importer references media without opening or
 copying it: a file present beside the chat is recorded by name, type and size.
 
@@ -99,7 +105,7 @@ Unzip it and point the importer at the folder or at a single `.csv`.
 kizuki import import-pocket --vault VAULT --source EXPORT.csv
 ```
 
-Each row becomes one `bookmark` event, hinted `personal`, identified by the url
+Each row becomes one `bookmark` event, labeled `personal`, identified by the url
 it saved, with the tags and status kept as metadata.
 
 Known limits:
@@ -125,7 +131,7 @@ Unzip it and point the importer at the folder.
 kizuki import import-omnivore --vault VAULT --source EXPORT_DIR
 ```
 
-Each item becomes one `bookmark` event, hinted `personal`, whose text is the
+Each item becomes one `bookmark` event, labeled `personal`, whose text is the
 title, url, description and highlights of that item.
 
 Known limits:

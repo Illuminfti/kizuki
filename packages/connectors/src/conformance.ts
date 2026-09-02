@@ -1,6 +1,7 @@
 import {
   AUTH_MODES,
   CONNECTOR_SCHEMA,
+  SENSITIVITY_HINTS,
   isAuthMode,
   isSecretRef,
   isPlainObject,
@@ -288,6 +289,7 @@ function parseManifest(raw: unknown, failures: string[]): Manifest | undefined {
   if (typeof raw["emits_sensitivity_hint"] !== "boolean") {
     failures.push("manifest.emits_sensitivity_hint: must be boolean");
   }
+  inspectSensitivity(raw, failures);
   const authModes = raw["auth_modes"];
   if (
     !Array.isArray(authModes) ||
@@ -301,6 +303,42 @@ function parseManifest(raw: unknown, failures: string[]): Manifest | undefined {
 
   if (failures.length > 0) return undefined;
   return raw as unknown as Manifest;
+}
+
+/**
+ * A sensitivity policy is declared as a pair or not at all: a default with no
+ * floor would let a source talk its own records down, and a floor with no
+ * default would leave an unhinted record unlabeled. A floor stricter than the
+ * default is a policy that can never be met.
+ */
+function inspectSensitivity(
+  raw: Record<string, unknown>,
+  failures: string[],
+): void {
+  const declared = ["default_sensitivity", "sensitivity_floor"] as const;
+  const present = declared.filter((field) => raw[field] !== undefined);
+  if (present.length === 0) return;
+  if (present.length !== declared.length) {
+    failures.push(
+      "manifest.default_sensitivity: must be declared together with sensitivity_floor",
+    );
+    return;
+  }
+  for (const field of declared) {
+    if (!(SENSITIVITY_HINTS as readonly unknown[]).includes(raw[field])) {
+      failures.push(
+        `manifest.${field}: must be one of ${SENSITIVITY_HINTS.join(" | ")}`,
+      );
+      return;
+    }
+  }
+  const rank = (value: unknown): number =>
+    (SENSITIVITY_HINTS as readonly unknown[]).indexOf(value);
+  if (rank(raw["sensitivity_floor"]) > rank(raw["default_sensitivity"])) {
+    failures.push(
+      "manifest.sensitivity_floor: must not be stricter than default_sensitivity",
+    );
+  }
 }
 
 function inspectBatch(

@@ -1,5 +1,6 @@
 import type { AttachmentRef, CaptureEventInput } from "@kizuki/core";
-import { mediaTypeFor, subjectSlug } from "../util";
+import { mediaTypeFor, resolveSensitivity, subjectSlug } from "../util";
+import type { SensitivityPolicy } from "../util";
 import { localToUtc } from "./dates";
 import type { DateOrder } from "./dates";
 import { splitWhatsAppMessages } from "./grammar";
@@ -8,6 +9,16 @@ import { detectMedia } from "./media";
 import type { MediaLookup } from "./media";
 
 export const WHATSAPP_IMPORT_CONNECTOR_ID = "kizuki.import-whatsapp" as const;
+
+/**
+ * A personal chat, and an export cannot tell a group from a direct
+ * conversation, so the stricter label wins. Nothing in a chat export is
+ * public, so the floor is the label a shared reading list would get.
+ */
+export const WHATSAPP_SENSITIVITY: SensitivityPolicy = {
+  default_sensitivity: "private",
+  sensitivity_floor: "personal",
+};
 
 export interface WhatsAppParseOptions {
   date_order?: DateOrder;
@@ -110,9 +121,7 @@ export async function parseWhatsAppExport(
           display_name: opts.chat,
         },
       ],
-      // A personal chat, and an export cannot tell a group from a direct
-      // conversation, so the stricter label wins.
-      sensitivity_hint: "private",
+      sensitivity_hint: resolveSensitivity(WHATSAPP_SENSITIVITY),
       deleted: false,
       attachments,
       metadata: {

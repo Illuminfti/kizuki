@@ -44,6 +44,7 @@ import { FIXTURE_ICS, memoryFetcher, okResult } from "@kizuki/connector-ics/test
 const REGISTRY_IDS = Object.keys(REGISTRY);
 
 const TELEGRAM_STATE_REF = "file:connections/01JJ0000000000000000000000.state";
+import type { Connector, Manifest, SensitivityHint } from "@kizuki/core";
 
 interface Layout {
   markdown: string;
@@ -335,4 +336,44 @@ test("the registry builds the interactive telegram connector", () => {
   expect(manifest.auth_modes).toEqual(["sign_in"]);
   expect(typeof connector.signIn).toBe("function");
   expect(manifest.required_secrets).toEqual([]);
+test("every importer of this lane declares its sensitivity policy", () => {
+  for (const [id, expected] of [
+    [WHATSAPP_IMPORT_CONNECTOR_ID, ["private", "personal"]],
+    [POCKET_IMPORT_CONNECTOR_ID, ["personal", "public"]],
+    [OMNIVORE_IMPORT_CONNECTOR_ID, ["personal", "public"]],
+  ] as const) {
+    const manifest = getConnector(id, { path: "/nonexistent" }).manifest();
+    expect([
+      manifest.default_sensitivity,
+      manifest.sensitivity_floor,
+    ]).toEqual([...expected]);
+  }
+});
+
+test("a half-declared or unreachable sensitivity policy fails conformance", async () => {
+  const base = getConnector(POCKET_IMPORT_CONNECTOR_ID, {
+    path: "fixture.csv",
+  });
+  const cases: [SensitivityHint | undefined, string][] = [
+    [
+      undefined,
+      "manifest.default_sensitivity: must be declared together with sensitivity_floor",
+    ],
+    [
+      "not-a-label" as SensitivityHint,
+      "manifest.sensitivity_floor: must be one of public | personal | private",
+    ],
+    [
+      "private",
+      "manifest.sensitivity_floor: must not be stricter than default_sensitivity",
+    ],
+  ];
+  for (const [floor, failure] of cases) {
+    const manifest: Manifest = { ...base.manifest() };
+    if (floor === undefined) delete manifest.sensitivity_floor;
+    else manifest.sensitivity_floor = floor;
+    const result = await runConformance({ ...base, manifest: () => manifest });
+    expect(result.pass).toBe(false);
+    expect(result.failures).toContain(failure);
+  }
 });

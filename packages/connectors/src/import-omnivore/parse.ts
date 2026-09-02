@@ -13,10 +13,18 @@ import {
   isoToRfc3339,
   parseJsonArray,
   readBoundedUtf8File,
+  resolveSensitivity,
   statRegularFile,
 } from "../util";
+import type { SensitivityPolicy } from "../util";
 
 export const OMNIVORE_IMPORT_CONNECTOR_ID = "kizuki.import-omnivore" as const;
+
+/** A reading list is about the owner, not a secret, and not public either. */
+export const OMNIVORE_SENSITIVITY: SensitivityPolicy = {
+  default_sensitivity: "personal",
+  sensitivity_floor: "public",
+};
 
 export interface OmnivoreItem {
   id: string;
@@ -249,7 +257,7 @@ export async function omnivoreEvents(
       observed_at,
       text,
       subjects: [{ subject_id: "omnivore:self", role: "from" }],
-      sensitivity_hint: "personal",
+      sensitivity_hint: resolveSensitivity(OMNIVORE_SENSITIVITY),
       deleted: false,
       attachments:
         content === null

@@ -10,6 +10,7 @@ import {
   readBoundedUtf8File,
   readFirstLine,
   requireKnownKeys,
+  resolveSensitivity,
   safeFilename,
   statRegularFile,
   subjectSlug,
@@ -220,4 +221,29 @@ test("a bounded read reports the bytes it cost, not the bytes it kept", async ()
       Buffer.byteLength(read.text, "utf8"),
     );
   });
+});
+
+test("a source's own sensitivity claim is honored only upward", () => {
+  const policy = {
+    default_sensitivity: "personal",
+    sensitivity_floor: "personal",
+  } as const;
+  // No hint, and a hint that is not a label at all, take the default.
+  for (const hint of [undefined, null, "", "secret", 3]) {
+    expect(resolveSensitivity(policy, hint)).toBe("personal");
+  }
+  expect(resolveSensitivity(policy, "private")).toBe("private");
+  // Below the floor: raised to it rather than believed.
+  expect(resolveSensitivity(policy, "public")).toBe("personal");
+  expect(
+    resolveSensitivity(
+      { default_sensitivity: "personal", sensitivity_floor: "public" },
+      "public",
+    ),
+  ).toBe("public");
+});
+
+test("a source with no policy at all is private, not unlabeled", () => {
+  expect(resolveSensitivity({})).toBe("private");
+  expect(resolveSensitivity({}, "public")).toBe("private");
 });

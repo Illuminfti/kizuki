@@ -22,8 +22,10 @@ import {
   readFirstLine,
   requireKnownKeys,
   requirePathConfig,
+  resolveSensitivity,
   unixSecondsToIso,
 } from "../util";
+import type { SensitivityPolicy } from "../util";
 import { parseCsv, parseCsvRows } from "./csv";
 import type { CsvOptions } from "./csv";
 
@@ -31,6 +33,12 @@ export { parseCsv } from "./csv";
 export type { CsvOptions } from "./csv";
 
 export const POCKET_IMPORT_CONNECTOR_ID = "kizuki.import-pocket" as const;
+
+/** A reading list is about the owner, not a secret, and not public either. */
+export const POCKET_SENSITIVITY: SensitivityPolicy = {
+  default_sensitivity: "personal",
+  sensitivity_floor: "public",
+};
 
 export interface PocketImportConfig {
   path: string;
@@ -90,6 +98,7 @@ const MANIFEST: Manifest = {
   },
   required_secrets: [],
   emits_sensitivity_hint: true,
+  ...POCKET_SENSITIVITY,
   auth_modes: ["none"],
 };
 
@@ -217,8 +226,7 @@ export function pocketEvents(
     observed_at,
     text: row.title.length > 0 ? `${row.title}\n${row.url}` : row.url,
     subjects: [{ subject_id: "pocket:self", role: "from" }],
-    // A reading list is about the owner, not a secret.
-    sensitivity_hint: "personal",
+    sensitivity_hint: resolveSensitivity(POCKET_SENSITIVITY),
     deleted: false,
     attachments: [],
     metadata: {
