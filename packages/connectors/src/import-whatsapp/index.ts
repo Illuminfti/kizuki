@@ -12,11 +12,11 @@ import type {
   SyncBatch,
 } from "@kizuki/core";
 import { KizukiError } from "../errors";
+import { readBoundedUtf8 } from "../read";
 import {
   FIXTURE_OBSERVED_AT,
   compareStrings,
   errorMessage,
-  readBoundedUtf8,
   requireKnownKeys,
   requirePathConfig,
 } from "../util";

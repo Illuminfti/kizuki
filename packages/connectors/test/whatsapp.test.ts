@@ -5,7 +5,8 @@ import path from "node:path";
 import { validateEventInput } from "@kizuki/core";
 import type { CaptureEventInput } from "@kizuki/core";
 import { KizukiError } from "../src/errors";
-import { FIXTURE_OBSERVED_AT, readBoundedUtf8 } from "../src/util";
+import { readBoundedUtf8 } from "../src/read";
+import { FIXTURE_OBSERVED_AT } from "../src/util";
 import {
   MESSAGE_START,
   WHATSAPP_FIXTURE_FILES,

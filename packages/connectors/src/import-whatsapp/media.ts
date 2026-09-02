@@ -1,5 +1,6 @@
 import { join } from "node:path";
-import { safeFilename, statRegularFile } from "../util";
+import { statRegularFile } from "../read";
+import { safeFilename } from "../util";
 
 /**
  * Media in a chat export is a line of text plus, for a "with media" export,

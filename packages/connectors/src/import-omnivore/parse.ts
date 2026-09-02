@@ -3,14 +3,13 @@ import { lstat, readdir } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import type { CaptureEventInput } from "@kizuki/core";
 import { KizukiError } from "../errors";
+import { readBoundedUtf8File, statRegularFile } from "../read";
 import {
   MAX_EXPORT_BYTES,
   MAX_RECORDS,
   MAX_RECORD_BYTES,
   compareStrings,
   errorMessage,
-  readBoundedUtf8File,
-  statRegularFile,
 } from "../util";
 import { bounded, parseOmnivoreMetadata } from "./metadata";
 import type { OmnivoreItem } from "./metadata";
