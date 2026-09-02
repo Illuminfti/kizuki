@@ -102,8 +102,9 @@ screenpipe schema older than supported: migration 20260613130000 not applied (ma
 - Every other captured string is bounded at 1,024 UTF-16 code units, counted
   the same way and cut the same way: the window title, application name, URL,
   document path, device names, capture trigger and text source that travel in
-  `metadata`, and the display names that reach subjects. A cut there is marked
-  with `metadata.metadata_truncated: true`. The bounds are separate because
+  `metadata`, and the display names that reach subjects. A cut in any of them,
+  or in the snapshot path below, is marked with
+  `metadata.metadata_truncated: true`. The bounds are separate because
   only the text is a screenful; one batch of 500 events would otherwise carry
   megabytes of window titles around events whose own text is a line long.
 - A snapshot attachment carries the last component of `snapshot_path` as its
