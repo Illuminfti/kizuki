@@ -221,6 +221,7 @@ export type {
   LlmUsage,
 } from "./contracts/llm";
 export {
+  DROPPED_DRAFT_REASONS,
   PRODUCER_CAPABILITIES,
   PRODUCER_CONTRACT,
   PRODUCER_CONTRACT_MINOR,
@@ -230,6 +231,8 @@ export type {
   ClaimDraft,
   ClaimDraftKind,
   ClaimSummary,
+  DroppedDraft,
+  DroppedDraftReason,
   ExtractResponse,
   ModelUsage,
   ProduceInput,
@@ -239,6 +242,27 @@ export type {
   QuotedEvent,
   RejectReason,
 } from "./contracts/producer";
+export {
+  EXTRACTION_SYSTEM_PROMPT,
+  EXTRACT_BATCH,
+  EXTRACT_INPUT_CHARS,
+  MODEL_PRODUCER_DESCRIPTOR,
+  MODEL_PRODUCER_ID,
+  buildExtractionMessages,
+  createModelProducerPort,
+  escapeFenceText,
+  hasFenceLeak,
+  newFenceNonce,
+  parseExtractResponse,
+  registerModelProducerPort,
+} from "./producer";
+export type {
+  ExtractionBatch,
+  ModelProducerConfig,
+  ModelProducerOptions,
+  ModelProducerPort,
+  ParseExtractResult,
+} from "./producer";
 export {
   NOTIFIER_CAPABILITIES,
   NOTIFIER_CONTRACT,
