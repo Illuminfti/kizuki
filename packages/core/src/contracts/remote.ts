@@ -610,6 +610,14 @@ export class RemotePortClient {
       });
       const timer = setTimeout(() => {
         timedOut = true;
+        finish({
+          ok: false,
+          error: new PortError(
+            "timeout",
+            "remote port deadline exceeded",
+            true,
+          ),
+        });
         request.destroy();
       }, timeoutMs);
       request.on("error", (cause) => {
