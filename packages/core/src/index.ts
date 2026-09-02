@@ -180,6 +180,13 @@ export type {
   RetrievalScope,
 } from "./contracts/retrieval";
 export {
+  FTS5_RETRIEVAL_DESCRIPTOR,
+  FTS5_RETRIEVAL_ID,
+  Fts5RetrievalPort,
+  createFts5RetrievalPort,
+  registerFts5RetrievalPort,
+} from "./retrieval";
+export {
   EMBEDDING_CAPABILITIES,
   EMBEDDING_CONTRACT,
   EMBEDDING_CONTRACT_MINOR,
