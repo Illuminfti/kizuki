@@ -73,10 +73,24 @@ function operationSecrets(
   return secrets;
 }
 
-export function buildAuthorizationUrl(
-  provider: OAuthProvider,
-  params: { redirect_uri: string; state: string; code_challenge: string },
-): string {
+/**
+ * Refusing a parameter name is not enough: a secret carried as somebody else's
+ * value, or in the endpoint's own userinfo or path, reaches the same browser
+ * history, referrer headers and provider access log.
+ */
+function refuseSecret(
+  secret: string | undefined,
+  text: string,
+  where: string,
+): void {
+  if (secret === undefined || secret.length === 0) return;
+  if (text.includes(secret)) {
+    throw new TypeError(`${where} may not carry the client secret`);
+  }
+}
+
+/** Everything a browser URL can be judged on before the listener exists. */
+function assertBrowserSafeProvider(provider: OAuthProvider): void {
   const url = new URL(provider.authorization_url);
   // A query already on the endpoint is a parameter nobody reviewed.
   if (url.search.length > 0 || url.hash.length > 0) {
@@ -84,13 +98,14 @@ export function buildAuthorizationUrl(
       "authorization_url may not carry a query or a fragment; put provider extras in extra_authorization_params",
     );
   }
-  url.searchParams.set("response_type", "code");
-  url.searchParams.set("client_id", provider.client_id);
-  url.searchParams.set("redirect_uri", params.redirect_uri);
-  url.searchParams.set("scope", provider.scopes.join(" "));
-  url.searchParams.set("state", params.state);
-  url.searchParams.set("code_challenge", params.code_challenge);
-  url.searchParams.set("code_challenge_method", "S256");
+  if (url.username.length > 0 || url.password.length > 0) {
+    throw new TypeError("authorization_url may not carry userinfo credentials");
+  }
+  refuseSecret(
+    provider.client_secret,
+    provider.authorization_url,
+    "authorization_url",
+  );
   for (const [key, value] of Object.entries(
     provider.extra_authorization_params ?? {},
   )) {
@@ -104,9 +119,37 @@ export function buildAuthorizationUrl(
         `extra_authorization_params may not put the credential ${key} in a browser URL`,
       );
     }
+    refuseSecret(
+      provider.client_secret,
+      value,
+      `extra_authorization_params.${key}`,
+    );
+  }
+}
+
+export function buildAuthorizationUrl(
+  provider: OAuthProvider,
+  params: { redirect_uri: string; state: string; code_challenge: string },
+): string {
+  assertBrowserSafeProvider(provider);
+  const url = new URL(provider.authorization_url);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("client_id", provider.client_id);
+  url.searchParams.set("redirect_uri", params.redirect_uri);
+  url.searchParams.set("scope", provider.scopes.join(" "));
+  url.searchParams.set("state", params.state);
+  url.searchParams.set("code_challenge", params.code_challenge);
+  url.searchParams.set("code_challenge_method", "S256");
+  for (const [key, value] of Object.entries(
+    provider.extra_authorization_params ?? {},
+  )) {
     url.searchParams.set(key, value);
   }
-  return url.toString();
+  const built = url.toString();
+  // The redirect URI is the transport's, so the finished URL is judged once
+  // more rather than trusted a piece at a time.
+  refuseSecret(provider.client_secret, built, "the authorization URL");
+  return built;
 }
 
 function bodyError(body: unknown): string | undefined {
@@ -254,6 +297,9 @@ export async function signInWithBrowser(
   if (provider.client_id.length === 0) {
     throw new TypeError("OAuth provider is missing a client_id");
   }
+  // Judged before anything is opened: a provider the owner cannot be sent to
+  // must not cost a listener, a browser tab or a consent screen.
+  assertBrowserSafeProvider(provider);
   const randomBytes = opts.randomBytes ?? defaultRandomBytes;
   const now = opts.now ?? ((): Date => new Date());
   const pkce = buildPkce(randomBytes);

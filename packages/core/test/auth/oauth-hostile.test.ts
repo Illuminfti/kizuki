@@ -63,6 +63,58 @@ describe("a hostile authorization URL", () => {
       ),
     ).toThrow(TypeError);
   });
+
+  test("refuses an endpoint that carries userinfo credentials", () => {
+    expect(() =>
+      buildAuthorizationUrl(
+        provider({
+          authorization_url:
+            "https://ada:SENTINEL-PASSWORD@provider.invalid/authorize",
+        }),
+        urlParams,
+      ),
+    ).toThrow(TypeError);
+  });
+
+  test("refuses an extra whose value is the installed-app secret", () => {
+    expect(() =>
+      buildAuthorizationUrl(
+        provider({
+          client_secret: "SENTINEL-SECRET",
+          extra_authorization_params: { login_hint: "SENTINEL-SECRET" },
+        }),
+        urlParams,
+      ),
+    ).toThrow(TypeError);
+  });
+
+  test("refuses an endpoint whose own path carries the secret", () => {
+    expect(() =>
+      buildAuthorizationUrl(
+        provider({
+          client_secret: "SENTINEL-SECRET",
+          authorization_url: "https://provider.invalid/SENTINEL-SECRET/authorize",
+        }),
+        urlParams,
+      ),
+    ).toThrow(TypeError);
+  });
+
+  test("a sign-in refuses such an endpoint before it opens a listener", async () => {
+    const transport = new FakeTransport();
+    await expect(
+      signInWithBrowser(
+        provider({
+          authorization_url:
+            "https://ada:SENTINEL-PASSWORD@provider.invalid/authorize",
+        }),
+        fakeIo(),
+        transport,
+        { ...deterministic(), timeoutMs: 10 },
+      ),
+    ).rejects.toThrow(TypeError);
+    expect(transport.listeners).toEqual([]);
+  });
 });
 
 describe("a hostile token response", () => {
