@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { PortError } from "@kizuki/core";
+import { LlmRejection } from "../src/errors";
 import { OpenAiCompatibleLlm } from "../src/llm-port";
 import { MODEL_PRODUCER, ModelProducer } from "../src/producer";
 import { EXTRACT_BATCH, EXTRACT_INPUT_CHARS } from "../src/prompt";
+import { estimateTokens, requestTokens } from "../src/spend";
 import { chatCompletion, startFakeEndpoint } from "./fake-endpoint";
 import type { FakeEndpoint } from "./fake-endpoint";
 import {
@@ -12,6 +14,7 @@ import {
   ok,
   portContext,
   produceInput,
+  replyingLlm,
 } from "./helpers";
 import type { ProducerHarness } from "./helpers";
 
@@ -31,6 +34,12 @@ function producer(
   const built = modelProducerFor(script, usage);
   cleanups.push(built.cleanup);
   return built;
+}
+
+/** What the producer reserved for the first call a harness recorded. */
+function reservedFor(harness: ProducerHarness): number {
+  const messages = harness.llm.calls[0]?.messages ?? [];
+  return requestTokens(...messages.map((message) => message.content));
 }
 
 describe("budgets", () => {
@@ -59,28 +68,46 @@ describe("budgets", () => {
     expect(built.llm.calls[0]?.max_attempts).toBe(3);
   });
 
-  test("an input budget is reserved at one character per token", async () => {
+  test("an input budget is reserved in the unit the charge uses", async () => {
     const input = produceInput([event("ev-1", "hi")]);
     const spender = producer([claimsPayload()]);
     await spender.port.produce(input);
-    const sent =
-      spender.llm.calls[0]?.messages.reduce(
-        (total, message) => total + message.content.length,
-        0,
-      ) ?? 0;
-    expect(sent).toBeGreaterThan(0);
-    // Regression: the gate reserved four characters per token, so a call much
-    // larger than the budget was started and only priced afterwards.
-    const built = producer([claimsPayload()]);
-    const result = await built.port.produce({
-      ...input,
-      budget: { ...input.budget, max_input_tokens: sent - 1 },
+    const reserved = reservedFor(spender);
+    expect(reserved).toBeGreaterThan(0);
+    // A budget one token under what the call is expected to cost does not
+    // start it: the gate is checked before anything reaches the wire.
+    const refused = producer([claimsPayload()]);
+    expect(
+      await refused.port.produce({
+        ...input,
+        budget: { ...input.budget, max_input_tokens: reserved - 1 },
+      }),
+    ).toMatchObject({ status: "rejected", reason: "budget_exhausted" });
+    expect(refused.llm.calls).toHaveLength(0);
+    // Regression: the reservation counted characters while the charge counted
+    // the endpoint's tokens, so a budget four times the call's real cost was
+    // refused for a call it could comfortably have paid for.
+    const paid = producer([claimsPayload()], {
+      input_tokens: reserved,
+      output_tokens: 5,
+      attempts: 1,
     });
-    expect(result).toMatchObject({
-      status: "rejected",
-      reason: "budget_exhausted",
-    });
-    expect(built.llm.calls).toHaveLength(0);
+    expect(
+      await paid.port.produce({
+        ...input,
+        budget: { ...input.budget, max_input_tokens: reserved },
+      }),
+    ).toMatchObject({ status: "ok" });
+    expect(paid.llm.calls).toHaveLength(1);
+  });
+
+  test("a prompt outside Latin script is reserved above its bytes", () => {
+    // A byte-fallback tokenizer emits a token per UTF-8 byte it has no piece
+    // for, so a character count under-reserves for these two by three and
+    // four times over.
+    for (const text of ["\u4eac".repeat(1_000), "\u{1f600}".repeat(1_000)]) {
+      expect(requestTokens(text)).toBeGreaterThan(estimateTokens(text.length));
+    }
   });
 
   test("an endpoint that charges past the budget never answers ok", async () => {
@@ -184,16 +211,16 @@ describe("budgets", () => {
     const input = produceInput([event("ev-1", "hi")]);
     const probe = producer([claimsPayload()]);
     await probe.port.produce(input);
-    const sent =
-      probe.llm.calls[0]?.messages.reduce(
-        (total, message) => total + message.content.length,
-        0,
-      ) ?? 0;
-    expect(sent).toBeGreaterThan(0);
+    const reserved = reservedFor(probe);
+    expect(reserved).toBeGreaterThan(0);
     const built = producer([claimsPayload()]);
     await built.port.produce({
       ...input,
-      budget: { ...input.budget, max_calls: 8, max_input_tokens: sent * 2 + 1 },
+      budget: {
+        ...input.budget,
+        max_calls: 8,
+        max_input_tokens: reserved * 2 + 1,
+      },
     });
     // Regression: the allowance handed to the port was the remaining call
     // budget alone, so a call could retry the same prompt until the input
@@ -266,6 +293,96 @@ describe("budgets", () => {
     expect(result.claims.map((claim) => claim.event_ids)).toEqual([
       ["ev-short"],
     ]);
+  });
+
+  test("a full batch's honest answer is not cut off at the output limit", async () => {
+    const events = Array.from({ length: EXTRACT_BATCH }, (_, index) =>
+      event(`ev-${index}`, "short"),
+    );
+    // One full-size draft per record: what this reader accepts at its own
+    // ceilings, which is the largest honest answer a full batch can have.
+    const reply = JSON.stringify({
+      claims: events.map((item) => ({
+        kind: "claim",
+        subject: "person:ada",
+        predicate: "employment.works_at",
+        object: "acme",
+        polarity: "positive",
+        body: "s".repeat(1_200),
+        valid_from: null,
+        valid_to: null,
+        confidence: 0.6,
+        sensitivity: "personal",
+        event_ids: [item.event_id],
+      })),
+    });
+    const built = portContext(MODEL_PRODUCER);
+    cleanups.push(built.cleanup);
+    const port = new ModelProducer(
+      built.ctx,
+      replyingLlm((request) => {
+        // The endpoint honours what it was granted: a longer answer stops at
+        // the limit, which this package refuses as a malformed answer.
+        if (estimateTokens(reply.length) > request.max_output_tokens) {
+          throw new LlmRejection(
+            "schema_invalid",
+            "the endpoint stopped before it finished a usable answer",
+          );
+        }
+        return reply;
+      }),
+    );
+    // Regression: a fixed 2048-token ceiling was smaller than an honest answer
+    // for a full batch, so the reply was cut off, refused as malformed, and
+    // the same batch was refused the same way on every later pass.
+    const result = ok(await port.produce(produceInput(events)));
+    expect(result.claims).toHaveLength(EXTRACT_BATCH);
+    expect(result.covered_event_ids).toHaveLength(EXTRACT_BATCH);
+  });
+
+  test("a batch this reader refuses is put back split in two", async () => {
+    const events = Array.from({ length: EXTRACT_BATCH }, (_, index) =>
+      event(`ev-${index}`, "short"),
+    );
+    const built = portContext(MODEL_PRODUCER);
+    cleanups.push(built.cleanup);
+    const llm = replyingLlm((request) => {
+      const blocks =
+        (request.messages[1]?.content.split("<<<KZ-QUOTE").length ?? 1) - 1;
+      // An endpoint whose answer for a full batch this reader will not take,
+      // and whose answer for a smaller one it will.
+      return blocks > EXTRACT_BATCH / 2
+        ? '{"claims":[],"surprise":1}'
+        : '{"claims":[]}';
+    });
+    const port = new ModelProducer(built.ctx, llm);
+    const result = ok(await port.produce(produceInput(events)));
+    // Regression: a refused batch stopped the run for good, so the same batch
+    // was refused the same way on every later pass and no record behind it
+    // was ever extracted.
+    expect(result.stopped).toBeNull();
+    expect(result.covered_event_ids).toEqual(
+      events.map((item) => item.event_id),
+    );
+    expect(llm.calls).toHaveLength(3);
+  });
+
+  test("splitting a batch gives up rather than halving forever", async () => {
+    const events = Array.from({ length: EXTRACT_BATCH }, (_, index) =>
+      event(`ev-${index}`, "short"),
+    );
+    const built = portContext(MODEL_PRODUCER);
+    cleanups.push(built.cleanup);
+    const llm = replyingLlm(() => '{"claims":[],"surprise":1}');
+    const port = new ModelProducer(built.ctx, llm);
+    expect(await port.produce(produceInput(events, { max_calls: 64 }))).toMatchObject({
+      status: "rejected",
+      reason: "schema_invalid",
+    });
+    // A run that keeps splitting spends a paid call on every half, so the
+    // retries are counted and the run stops rather than paying its way down
+    // to single records.
+    expect(llm.calls.length).toBeLessThanOrEqual(6);
   });
 
   test("a run that worked through every record stopped at nothing", async () => {

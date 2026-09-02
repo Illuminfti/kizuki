@@ -201,6 +201,35 @@ export function answeringLlm(answer: unknown): ScriptedLlm {
   };
 }
 
+/**
+ * A model port whose answer depends on the request, so a test can stand in for
+ * an endpoint that honours what it was granted rather than one that always
+ * answers the same thing.
+ */
+export function replyingLlm(
+  reply: (request: LlmRequest) => string,
+): ScriptedLlm {
+  const calls: LlmRequest[] = [];
+  return {
+    descriptor: OPENAI_COMPATIBLE_LLM,
+    model_ref: "kizuki.llm.fake:m@127.0.0.1",
+    calls,
+    async complete(request: LlmRequest): Promise<LlmResponse> {
+      calls.push(request);
+      return {
+        text: reply(request),
+        model: "m",
+        usage: { input_tokens: 10, output_tokens: 5 },
+        attempts: 1,
+      };
+    },
+    async health(): Promise<PortHealth> {
+      return { status: "ready", detail: {} };
+    },
+    async close(): Promise<void> {},
+  };
+}
+
 export interface ProducerHarness {
   port: ModelProducer;
   llm: ScriptedLlm;

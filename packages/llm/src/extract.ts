@@ -18,13 +18,32 @@ const CLAIM_KEYS = new Set([
 const KINDS = new Set<string>(["entity", "claim", "edit", "merge", "deletion"]);
 const SENSITIVITIES = new Set<string>(["public", "personal", "private"]);
 
-const MAX_CLAIMS = 64;
+export const MAX_CLAIMS = 64;
 const MAX_SUBJECT_CHARS = 200;
 const MAX_PREDICATE_CHARS = 100;
 const MAX_OBJECT_CHARS = 400;
 const MAX_BODY_CHARS = 1200;
 const MAX_EVENT_IDS = 32;
 const MAX_UNKNOWN_PREDICATES = 16;
+
+/**
+ * Keys, quoting, the two timestamps, the numbers and a few citations: what a
+ * draft costs beyond the fields this reader bounds by length.
+ */
+const CLAIM_ENVELOPE_CHARS = 512;
+
+/**
+ * The characters one accepted draft can cost as JSON, every bounded field at
+ * its ceiling. A caller sizes what it lets a call generate from this, so an
+ * answer this reader would accept is never cut off at the token limit and
+ * refused as malformed instead.
+ */
+export const MAX_CLAIM_CHARS =
+  MAX_SUBJECT_CHARS +
+  MAX_PREDICATE_CHARS +
+  MAX_OBJECT_CHARS +
+  MAX_BODY_CHARS +
+  CLAIM_ENVELOPE_CHARS;
 
 /**
  * A candidate for the registry is an identifier in the shape of RFC 0002

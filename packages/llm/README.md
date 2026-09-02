@@ -122,7 +122,11 @@ disable a bound. A pasted key is refused without being echoed.
   for; a caller advances its checkpoint that far and re-reads the rest on its
   next pass. Every claim on the result cites only covered events: a draft from
   the first half of a record whose later call never went out is dropped, so no
-  claim rests on evidence the run did not finish sending. `stopped` says why it went no further, or is `null` when it
+  claim rests on evidence the run did not finish sending. A batch whose answer
+  is refused as malformed is put back split in two first, a bounded number of
+  times per run — a reply cut off at the token limit reads exactly like a
+  malformed one, and without the split the same batch is refused the same way
+  on every later pass and the records behind it are never extracted. `stopped` says why it went no further, or is `null` when it
   worked through everything, so an outage can still be counted and the rail
   still reported degraded. When the first call is the one that failed, nothing
   is covered and the failure is what is returned.
@@ -134,8 +138,8 @@ disable a bound. A pasted key is refused without being echoed.
 | Line                | What it counts                                                                      |
 | ------------------- | ----------------------------------------------------------------------------------- |
 | `max_calls`         | Requests put on the wire, retries included. What a call may spend on retries is the smaller of the calls left and the input left divided by the prompt, passed to the model port as `max_attempts`; the port reports what it used. |
-| `max_input_tokens`  | Reserved before a call at one token per character of the messages — the only ratio that holds for every tokenizer — then charged at what the endpoint says it counted, once per request that went out. |
-| `max_output_tokens` | Capped per call by `max_tokens` on the request and charged at what the endpoint reports for the request that answered. |
+| `max_input_tokens`  | Reserved before a call at what the messages are expected to cost — their UTF-8 bytes at the same four-to-one ratio the charge uses, plus a per-message allowance for the chat template — then charged at what the endpoint says it counted, once per request that went out. No tokenizer-free package can prove a bound here: one token per character over-reserves about fourfold for Latin prose and refuses affordable calls, while a byte-fallback tokenizer can exceed it outside Latin script. The line itself is enforced against reported usage after every call, and a run that crosses it stops there. |
+| `max_output_tokens` | Capped per call by `max_tokens` on the request, and charged at what the endpoint reports for the request that answered. The cap is what a legal answer for that call can need — four drafts per quoted block at the reader's own field ceilings — up to 8192 tokens, and never more than the budget has left. A fixed 2048 was smaller than an honest answer for a full batch: the reply came back cut off at the limit, which is refused as malformed, and the same batch was refused the same way on every later pass. |
 
 A run that would cross a line does not start the next call, and a run whose
 reported spend has already crossed one stops rather than answering `ok`.
