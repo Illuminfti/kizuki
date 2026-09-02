@@ -30,6 +30,27 @@ export type {
   ScreenpipeDeps,
 } from "@kizuki/connector-screenpipe";
 export {
+  FIXTURE_ACCOUNT,
+  FIXTURE_SESSION,
+  ScriptedTelegramApi,
+  TELEGRAM_CONNECTOR_ID,
+  TelegramConnector,
+  TelegramConnectorError,
+  createTelegramConnector,
+  scriptedDeps,
+} from "@kizuki/connector-telegram";
+export type {
+  TelegramApi,
+  TelegramApiFactory,
+  TelegramConnectorConfig,
+  TelegramCursor,
+  TelegramDeps,
+  TelegramDialog,
+  TelegramMessage,
+  TelegramState,
+  TelegramUser,
+} from "@kizuki/connector-telegram";
+export {
   MARKDOWN_FOLDER_CONNECTOR_ID,
   MarkdownFolderConnector,
   createMarkdownFolderConnector,

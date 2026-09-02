@@ -10,11 +10,17 @@ import {
   CLAUDE_IMPORT_CONNECTOR_ID,
   MARKDOWN_FOLDER_CONNECTOR_ID,
   SCREENPIPE_CONNECTOR_ID,
+  TELEGRAM_CONNECTOR_ID,
+  TelegramConnector,
   getConnector,
   runConformance,
+  scriptedDeps,
   seedFixtureDatabase,
 } from "../src";
+import { encodeState } from "@kizuki/connector-telegram";
 import type { Connector } from "@kizuki/core";
+
+const TELEGRAM_STATE_REF = "file:connections/01JJ0000000000000000000000.state";
 
 test("all registry connectors pass conformance", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-conformance-"));
@@ -42,6 +48,20 @@ test("all registry connectors pass conformance", async () => {
     const markdown = getConnector(MARKDOWN_FOLDER_CONNECTOR_ID, {
       path: markdownRoot,
     });
+    const telegram = new TelegramConnector(
+      { state_ref: TELEGRAM_STATE_REF },
+      scriptedDeps(),
+    );
+    await telegram.connect(async (ref) => {
+      expect(ref).toBe(TELEGRAM_STATE_REF);
+      return new TextDecoder().decode(
+        encodeState({
+          schema: "kizuki.telegram-state/v1",
+          user_id: "1001",
+          session: "fixture-session-token-not-a-real-credential",
+        }),
+      );
+    });
     const results = await Promise.all([
       runConformance(markdown, {
         tombstone: {
@@ -61,9 +81,11 @@ test("all registry connectors pass conformance", async () => {
           settle_seconds: 0,
         }),
       ),
+      runConformance(telegram),
     ]);
 
     expect(results).toEqual([
+      { pass: true, failures: [] },
       { pass: true, failures: [] },
       { pass: true, failures: [] },
       { pass: true, failures: [] },
@@ -101,4 +123,13 @@ test("required_secrets rejects malformed references", async () => {
   expect(result.failures).toContain(
     "manifest.required_secrets: must contain secret_ref URIs",
   );
+});
+
+test("the registry builds the interactive telegram connector", () => {
+  const connector = getConnector(TELEGRAM_CONNECTOR_ID, {});
+  const manifest = connector.manifest();
+  expect(manifest.connector_id).toBe("kizuki.telegram");
+  expect(manifest.auth_modes).toEqual(["sign_in"]);
+  expect(typeof connector.signIn).toBe("function");
+  expect(manifest.required_secrets).toEqual([]);
 });
