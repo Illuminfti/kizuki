@@ -84,7 +84,7 @@ function readMappingFile(path: string, connectorId: string): unknown {
 }
 
 export function loadMapping(
-  mapping: string | Record<string, unknown> | undefined,
+  mapping: string | object | undefined,
   fallbackPath: string,
   connectorId: string,
 ): LoadedMapping {
