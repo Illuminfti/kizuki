@@ -68,13 +68,14 @@ export function asOAuthError(error: unknown, provider: string): OAuthError {
 
 /**
  * Provider-controlled text may echo back the very secrets the request carried.
- * A detail holding one is dropped whole rather than truncated.
+ * A detail holding one is dropped whole rather than truncated. The argument is
+ * already normalised, so nothing an untrusted collaborator authored can leave
+ * an operation by skipping this pass.
  */
 export function withoutSecrets(
-  error: unknown,
+  error: OAuthError,
   secrets: readonly string[],
-): unknown {
-  if (!(error instanceof OAuthError)) return error;
+): OAuthError {
   for (const secret of secrets) {
     if (secret.length > 0 && error.message.includes(secret)) {
       return new OAuthError(error.code, error.provider);

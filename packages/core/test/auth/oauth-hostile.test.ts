@@ -20,6 +20,7 @@ import {
   tokenSet,
 } from "./helpers";
 
+const VERIFIER = base64url(new Uint8Array(32).fill(1));
 const NONCE = base64url(new Uint8Array(32).fill(2));
 
 function deterministic(): { randomBytes: (length: number) => Uint8Array } {
@@ -219,13 +220,39 @@ describe("a sign-in that fails while it is being set up", () => {
       };
       await expect(
         signInWithBrowser(provider(), io, new FakeTransport(), deterministic()),
-      ).rejects.toThrow("terminal went away");
+      ).rejects.toMatchObject({ code: "transport", provider: "fixture" });
       // Two drains: the listener rejects its waiter inside close().
       await Promise.resolve();
       await new Promise((resolve) => setTimeout(resolve, 5));
       expect(unhandled).toEqual([]);
     } finally {
       process.off("unhandledRejection", record);
+    }
+  });
+
+  test("a notifier that throws its own text leaks neither URL nor nonce", async () => {
+    const io = fakeIo();
+    io.notify = (text: string): void => {
+      throw new Error(text);
+    };
+    const failure = await signInWithBrowser(
+      provider(),
+      io,
+      new FakeTransport(),
+      deterministic(),
+    ).then(
+      () => {
+        throw new Error("sign-in was expected to fail");
+      },
+      (reason: unknown) => reason,
+    );
+    expect(failure).toBeInstanceOf(OAuthError);
+    const error = failure as OAuthError;
+    expect(error.code).toBe("transport");
+    for (const text of [error.message, String(error), JSON.stringify(error)]) {
+      expect(text).not.toContain(NONCE);
+      expect(text).not.toContain(VERIFIER);
+      expect(text).not.toContain("provider.invalid");
     }
   });
 

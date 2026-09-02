@@ -332,9 +332,7 @@ export async function signInWithBrowser(
       pending,
       opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       provider.name,
-    ).catch((error: unknown) => {
-      throw asOAuthError(error, provider.name);
-    });
+    );
 
     const returned = landed.searchParams.get("state");
     if (
@@ -364,7 +362,7 @@ export async function signInWithBrowser(
     });
     return parseTokenResponse(provider, response.status, response.body, now());
   } catch (error) {
-    throw withoutSecrets(error, secrets);
+    throw withoutSecrets(asOAuthError(error, provider.name), secrets);
   } finally {
     // A listener that will not shut down must neither displace the failure the
     // caller has to act on nor discard a grant the owner already made: the
@@ -408,7 +406,7 @@ export async function refreshTokens(
       tokens,
     );
   } catch (error) {
-    throw withoutSecrets(error, secrets);
+    throw withoutSecrets(asOAuthError(error, provider.name), secrets);
   }
 }
 
@@ -439,6 +437,6 @@ export async function revokeToken(
       bodyError(response.body),
     );
   } catch (error) {
-    throw withoutSecrets(error, secrets);
+    throw withoutSecrets(asOAuthError(error, provider.name), secrets);
   }
 }
