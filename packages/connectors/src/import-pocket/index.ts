@@ -19,6 +19,7 @@ import {
   MAX_RECORDS,
   compareStrings,
   errorMessage,
+  numberRepeats,
   requireKnownKeys,
   requirePathConfig,
 } from "../util";
@@ -83,32 +84,13 @@ function misconfigured(detail: string): KizukiError {
   );
 }
 
-/**
- * A bookmark is the url it saved. The same url saved twice is two records,
- * numbered in file order, so a doubled export cannot collapse two saves into
- * one. A url that already ends in the suffix a repeat would take keeps its own
- * identity: the number moves on rather than renaming a record that exists.
- */
-function pocketRecordIds(rows: readonly PocketRow[]): string[] {
-  const taken = new Set(rows.map((row) => row.url));
-  const seen = new Map<string, number>();
-  return rows.map((row) => {
-    const count = (seen.get(row.url) ?? 0) + 1;
-    seen.set(row.url, count);
-    if (count === 1) return row.url;
-    let suffix = count;
-    while (taken.has(`${row.url}#${suffix}`)) suffix += 1;
-    const id = `${row.url}#${suffix}`;
-    taken.add(id);
-    return id;
-  });
-}
-
 export function pocketEvents(
   rows: readonly PocketRow[],
   observed_at: string,
 ): CaptureEventInput[] {
-  const ids = pocketRecordIds(rows);
+  // A bookmark is the url it saved, and the same url saved twice is two
+  // records rather than one overwritten.
+  const ids = numberRepeats(rows.map((row) => row.url));
   return rows.map((row, index) => ({
     schema: "kizuki.event/v1",
     connector_id: POCKET_IMPORT_CONNECTOR_ID,

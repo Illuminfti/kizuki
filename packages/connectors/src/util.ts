@@ -174,6 +174,28 @@ export function subjectSlug(name: string): string {
 }
 
 /**
+ * Record ids for a list that may repeat one of them. The first entry keeps the
+ * plain id and every repeat is numbered, so a doubled export cannot collapse
+ * two records into one. An id that already ends in the suffix a repeat would
+ * take keeps its own identity: the number moves on rather than renaming a
+ * record that exists.
+ */
+export function numberRepeats(ids: readonly string[]): string[] {
+  const taken = new Set(ids);
+  const seen = new Map<string, number>();
+  return ids.map((id) => {
+    const count = (seen.get(id) ?? 0) + 1;
+    seen.set(id, count);
+    if (count === 1) return id;
+    let suffix = count;
+    while (taken.has(`${id}#${suffix}`)) suffix += 1;
+    const numbered = `${id}#${suffix}`;
+    taken.add(numbered);
+    return numbered;
+  });
+}
+
+/**
  * Config is host-authored, but a typo must not silently become a default: an
  * unrecognized key fails construction rather than quietly changing behavior.
  */

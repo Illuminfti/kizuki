@@ -10,6 +10,7 @@ import {
   MAX_RECORD_BYTES,
   compareStrings,
   errorMessage,
+  numberRepeats,
 } from "../util";
 import { bounded, parseOmnivoreMetadata } from "./metadata";
 import type { OmnivoreItem } from "./metadata";
@@ -77,27 +78,6 @@ async function highlightsOf(
 }
 
 /**
- * A doubled export must not collapse two entries into one record, so the
- * second and later entries carrying one provider id are numbered in export
- * order. An id that already ends in the suffix a repeat would take keeps its
- * own identity: the number moves on rather than renaming a record that exists.
- */
-function omnivoreRecordIds(ids: readonly string[]): string[] {
-  const taken = new Set(ids);
-  const seen = new Map<string, number>();
-  return ids.map((id) => {
-    const count = (seen.get(id) ?? 0) + 1;
-    seen.set(id, count);
-    if (count === 1) return id;
-    let suffix = count;
-    while (taken.has(`${id}#${suffix}`)) suffix += 1;
-    const numbered = `${id}#${suffix}`;
-    taken.add(numbered);
-    return numbered;
-  });
-}
-
-/**
  * Highlights are shared: every item naming one slug carries that file's text.
  * The metadata budget therefore does not bound what the batch weighs, so the
  * assembled records are counted on their own before any of them is returned.
@@ -120,7 +100,7 @@ export async function omnivoreEvents(
     );
   }
 
-  const ids = omnivoreRecordIds(items.map(({ item }) => item.id));
+  const ids = numberRepeats(items.map(({ item }) => item.id));
   const events: CaptureEventInput[] = [];
   let textLeft = maxBytes;
   for (const [index, { item, at }] of items.entries()) {
