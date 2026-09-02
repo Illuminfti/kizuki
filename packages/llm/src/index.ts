@@ -35,3 +35,12 @@ export type {
   ClientCounters,
   Clock,
 } from "./client";
+
+export {
+  LLM_INPUT_SCHEMA,
+  PRODUCERS,
+  PROMPT_VERSION,
+  systemPrompt,
+  wrapEvent,
+} from "./prompt";
+export type { ProducerName, WrappedEvent, WrappedInput } from "./prompt";
