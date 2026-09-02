@@ -251,19 +251,32 @@ async function readDialog(
     }
   }
 
-  const want = BATCH_LIMIT - batch.events.length;
-  let seen = 0;
-  for await (const message of deps.api.messages(dialog.peer_id, {
-    min_id: known,
-    limit: want,
-  })) {
-    seen += 1;
-    collect(deps, message, dialog, batch);
-    dialogCursor.last_id = Math.max(dialogCursor.last_id, message.id);
-    if (batch.events.length >= BATCH_LIMIT) return "partial";
+  for (;;) {
+    const from = dialogCursor.last_id;
+    const want = BATCH_LIMIT - batch.events.length;
+    let seen = 0;
+    for await (const message of deps.api.messages(dialog.peer_id, {
+      min_id: from,
+      limit: want,
+    })) {
+      seen += 1;
+      collect(deps, message, dialog, batch);
+      dialogCursor.last_id = Math.max(dialogCursor.last_id, message.id);
+      if (batch.events.length >= BATCH_LIMIT) return "partial";
+    }
+    if (seen < want) {
+      dialogCursor.exhausted = true;
+      return "complete";
+    }
+    // A full page can hold nothing this connector emits: only service messages,
+    // or records with a timestamp the ledger will not take. Handing that back
+    // as the batch would tell a caller the source is drained while its history
+    // is still unread, so the page after it is read instead. Once anything has
+    // been collected the ordinary one-page rhythm resumes.
+    if (batch.events.length > 0 || dialogCursor.last_id <= from) {
+      return "complete";
+    }
   }
-  if (seen < want) dialogCursor.exhausted = true;
-  return "complete";
 }
 
 /**

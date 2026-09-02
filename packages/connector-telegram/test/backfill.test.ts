@@ -178,7 +178,7 @@ test("a dialog the account stopped listing does not finish the backfill", async 
   expect((await recovered.health()).state).toBe("ok");
 });
 
-test("a page of service messages moves the cursor without emitting anything", async () => {
+test("a page holding only skipped records never looks like a drained source", async () => {
   const account = fixtureAccount();
   const messages: TelegramMessage[] = [];
   for (let id = 1; id <= BATCH_LIMIT; id += 1) {
@@ -214,17 +214,18 @@ test("a page of service messages moves the cursor without emitting anything", as
 
   const built = await connected({ account });
   const first = await built.connector.backfill(null);
-  expect(first.events).toEqual([]);
-  // Empty is not the same as finished: the runner has to look at the cursor.
+  // An empty batch is how this connector says it has nothing left to give, so
+  // a page it emits nothing from has to be read past rather than returned.
+  expect(first.events).toHaveLength(3);
   expect(parseCursor(first.cursor as string).dialogs["-42"]).toEqual({
     peer_type: "group",
-    last_id: BATCH_LIMIT,
-    exhausted: false,
+    last_id: BATCH_LIMIT + 3,
+    exhausted: true,
   });
+  expect(parseCursor(first.cursor as string).phase).toBe("synced");
 
   const rest = await drain(built.connector, "backfill", first.cursor);
-  expect(rest.events).toHaveLength(3);
-  expect(parseCursor(rest.cursor).phase).toBe("synced");
+  expect(rest.events).toEqual([]);
 });
 
 test("continuing a walk costs one dialog listing, not one per batch", async () => {
