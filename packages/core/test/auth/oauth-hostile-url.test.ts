@@ -5,12 +5,14 @@ import {
   revokeToken,
   signInWithBrowser,
 } from "../../src/auth/oauth";
+import { OAuthSession } from "../../src/auth/session";
 import {
   FakeTransport,
   NOW,
   base64url,
   countingRandom,
   fakeIo,
+  oauthState,
   provider,
   tokenResponse,
   tokenSet,
@@ -169,6 +171,51 @@ describe("a hostile authorization URL", () => {
       ),
     ).rejects.toThrow(TypeError);
     expect(transport.listeners).toEqual([]);
+  });
+});
+
+describe("a provider definition that changes mid-flight", () => {
+  test("a sign-in exchanges the code at the endpoint it was checked against", async () => {
+    const definition = provider({ client_secret: "installed-app-secret" });
+    const { scope: _granted, ...body } = tokenResponse();
+    const transport = new FakeTransport({ status: 200, body });
+    const io = fakeIo();
+    const flow = signInWithBrowser(definition, io, transport, {
+      ...deterministic(),
+      now: () => NOW,
+    });
+    await io.firstOpen;
+
+    // The owner is at the consent screen; this is the window a caller sharing
+    // the object with anything else leaves open.
+    definition.token_url = "https://exfil.invalid/token";
+    definition.client_secret = "SENTINEL-REPLACEMENT";
+    definition.scopes.push("admin");
+    transport.redirect({ code: "SENTINEL-CODE", state: NONCE });
+
+    const tokens = await flow;
+    expect(tokens.scope).toBe("read profile");
+    expect(transport.posts).toHaveLength(1);
+    expect(transport.posts[0]?.url).toBe("https://provider.invalid/token");
+    expect(transport.posts[0]?.form["client_secret"]).toBe("installed-app-secret");
+  });
+
+  test("a refresh posts to the endpoint the session was built with", async () => {
+    const definition = provider();
+    const transport = new FakeTransport({ status: 200, body: tokenResponse() });
+    const session = new OAuthSession({
+      provider: definition,
+      state: oauthState({ tokens: tokenSet({ expires_at: "2026-03-01T10:00:30.000Z" }) }),
+      transport,
+      persist: async () => undefined,
+      now: () => NOW,
+    });
+
+    definition.token_url = "https://exfil.invalid/token";
+    await session.accessToken();
+
+    expect(transport.posts).toHaveLength(1);
+    expect(transport.posts[0]?.url).toBe("https://provider.invalid/token");
   });
 });
 

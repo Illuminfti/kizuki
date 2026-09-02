@@ -197,6 +197,86 @@ function assertProviderEndpoints(provider: OAuthProvider): void {
   }
 }
 
+function text(value: unknown, field: string): string {
+  if (typeof value !== "string") {
+    throw new TypeError(`${field} must be a string`);
+  }
+  return value;
+}
+
+function requiredText(value: unknown, field: string): string {
+  const found = text(value, field);
+  if (found.length === 0) {
+    throw new TypeError(`${field} must not be empty`);
+  }
+  return found;
+}
+
+function optionalText(value: unknown, field: string): string | undefined {
+  return value === undefined ? undefined : text(value, field);
+}
+
+/**
+ * The provider object belongs to the caller, and a sign-in reads it again after
+ * awaiting a browser interaction that can last minutes. A mutation in that
+ * window would send the authorization code, the PKCE verifier and a
+ * replacement secret to an endpoint no guard ever saw. Every operation
+ * therefore works from its own copy, taken before the first check runs, and
+ * every field is what its type claims before anything reads it.
+ */
+export function snapshotProvider(provider: OAuthProvider): OAuthProvider {
+  if (provider === null || typeof provider !== "object") {
+    throw new TypeError("OAuth provider must be an object");
+  }
+  const scopes = [...requiredArray(provider.scopes, "scopes")];
+  const extras = copyExtras(provider.extra_authorization_params);
+  const revocationUrl = optionalText(provider.revocation_url, "revocation_url");
+  // Empty is a public client spelling "none" the long way; the token form
+  // already drops it, so it is a legal value rather than a missing one.
+  const clientSecret = optionalText(provider.client_secret, "client_secret");
+  const redirectPath = optionalText(provider.redirect_path, "redirect_path");
+  const snapshot: OAuthProvider = {
+    name: requiredText(provider.name, "name"),
+    authorization_url: requiredText(
+      provider.authorization_url,
+      "authorization_url",
+    ),
+    token_url: requiredText(provider.token_url, "token_url"),
+    // An empty client id has its own refusal in signInWithBrowser, which says
+    // what an owner has to do about it.
+    client_id: text(provider.client_id, "client_id"),
+    scopes,
+    ...(revocationUrl === undefined ? {} : { revocation_url: revocationUrl }),
+    ...(clientSecret === undefined ? {} : { client_secret: clientSecret }),
+    ...(extras === undefined ? {} : { extra_authorization_params: extras }),
+    ...(redirectPath === undefined ? {} : { redirect_path: redirectPath }),
+  };
+  Object.freeze(scopes);
+  if (extras !== undefined) Object.freeze(extras);
+  return Object.freeze(snapshot);
+}
+
+function requiredArray(value: unknown, field: string): string[] {
+  if (!Array.isArray(value)) {
+    throw new TypeError(`${field} must be an array of strings`);
+  }
+  return value.map((entry, index) => text(entry, `${field}[${index}]`));
+}
+
+function copyExtras(
+  value: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || typeof value !== "object") {
+    throw new TypeError("extra_authorization_params must be an object");
+  }
+  const copy: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    copy[key] = text(entry, `extra_authorization_params.${key}`);
+  }
+  return copy;
+}
+
 /** Every provider-authored value that reaches the browser URL verbatim. */
 function browserVisibleFields(provider: OAuthProvider): [string, string][] {
   const fields: [string, string][] = [

@@ -5,6 +5,7 @@ import {
   type OAuthTransport,
   type TokenSet,
 } from "./oauth";
+import { snapshotProvider } from "./provider-guard";
 import { encodeOAuthState, type OAuthState } from "./state";
 
 /** Hands refreshed state back to the trusted host; the session owns no store. */
@@ -55,12 +56,15 @@ export class OAuthSession {
   private forgotten = false;
 
   constructor(init: OAuthSessionInit) {
+    // A session outlives the call that built it, so the provider it refreshes
+    // against is its own copy rather than an object the caller still holds.
+    const definition = snapshotProvider(init.provider);
     // Two identities that disagree would post one provider's refresh token to
     // the other's token endpoint.
-    if (init.state.provider !== init.provider.name) {
-      throw new OAuthError("invalid_state", init.provider.name);
+    if (init.state.provider !== definition.name) {
+      throw new OAuthError("invalid_state", definition.name);
     }
-    this.definition = init.provider;
+    this.definition = definition;
     this.transport = init.transport;
     this.persist = init.persist;
     this.now = init.now ?? ((): Date => new Date());
