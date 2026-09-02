@@ -10,14 +10,18 @@ test.skipIf(process.env.KIZUKI_TELEGRAM_SMOKE !== "1")(
   "the real client signs in and lists one dialog",
   async () => {
     const credentials = appCredentials();
-    expect(credentials).not.toBeNull();
-    const api = createRealApi("", credentials as NonNullable<typeof credentials>);
+    if (credentials === null) {
+      throw new Error("build with KIZUKI_TELEGRAM_API_ID and _API_HASH set");
+    }
+    const phone = process.env.KIZUKI_TELEGRAM_SMOKE_PHONE;
+    if (phone === undefined) {
+      throw new Error("set KIZUKI_TELEGRAM_SMOKE_PHONE to the account number");
+    }
+    const api = createRealApi("", credentials);
     await api.connect();
     try {
-      const phone = process.env.KIZUKI_TELEGRAM_SMOKE_PHONE;
-      expect(typeof phone).toBe("string");
       await api.start({
-        phone: phone as string,
+        phone,
         code: async () => prompt("code: ") ?? "",
         password: async () => prompt("password: ") ?? "",
         onError: async (name) => {
