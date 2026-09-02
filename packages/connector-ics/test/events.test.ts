@@ -252,6 +252,105 @@ describe("mapping edges", () => {
     ]);
   });
 
+  test("a malformed percent escape in ATTACH keeps the raw segment", () => {
+    const events = mapped([
+      "BEGIN:VEVENT",
+      "UID:standup@acme.example",
+      "DTSTART:20260302T090000Z",
+      "SUMMARY:Standup",
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      "UID:hostile@acme.example",
+      "DTSTART:20260302T100000Z",
+      "ATTACH:https://files.example.org/invoice%zz.pdf",
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      "UID:trailing@acme.example",
+      "DTSTART:20260302T110000Z",
+      "ATTACH:https://files.example.org/report%",
+      "END:VEVENT",
+    ]);
+    expect(events.map((event) => event.source_record_id)).toEqual([
+      "hostile@acme.example",
+      "standup@acme.example",
+      "trailing@acme.example",
+    ]);
+    expect(events[0]?.attachments).toEqual([
+      {
+        attachment_id: "attach-1",
+        media_type: "application/octet-stream",
+        filename: "invoice%zz.pdf",
+      },
+    ]);
+    expect(events[2]?.attachments).toEqual([
+      {
+        attachment_id: "attach-1",
+        media_type: "application/octet-stream",
+        filename: "report%",
+      },
+    ]);
+  });
+
+  test("an override before its master still reschedules its instance", () => {
+    const master = [
+      "BEGIN:VEVENT",
+      "UID:weekly@acme.example",
+      "DTSTART:20260301T090000Z",
+      "SUMMARY:Weekly",
+      "RRULE:FREQ=WEEKLY;COUNT=3",
+      "END:VEVENT",
+    ];
+    const override = [
+      "BEGIN:VEVENT",
+      "UID:weekly@acme.example",
+      "RECURRENCE-ID:20260308T090000Z",
+      "DTSTART:20260308T110000Z",
+      "SUMMARY:Moved",
+      "END:VEVENT",
+    ];
+    for (const body of [[...master, ...override], [...override, ...master]]) {
+      const events = mapped(body);
+      expect(events.map((event) => event.occurred_at)).toEqual([
+        "2026-03-01T09:00:00.000Z",
+        "2026-03-08T11:00:00.000Z",
+        "2026-03-15T09:00:00.000Z",
+      ]);
+      expect(events[1]?.text.split("\n")[0]).toBe("Moved");
+      for (const event of events) {
+        expect(event.metadata["duplicate_uid"]).toBeUndefined();
+      }
+    }
+  });
+
+  test("RDATE adds to the start rather than replacing it", () => {
+    const events = mapped([
+      "BEGIN:VEVENT",
+      "UID:rdate@acme.example",
+      "DTSTART:20260301T090000Z",
+      "SUMMARY:Office hours",
+      "RDATE:20260302T090000Z",
+      "END:VEVENT",
+    ]);
+    expect(events.map((event) => event.source_record_id)).toEqual([
+      "rdate@acme.example#20260301T090000",
+      "rdate@acme.example#20260302T090000",
+    ]);
+  });
+
+  test("an out-of-range duration leaves the end unknown", () => {
+    const events = mapped([
+      "BEGIN:VEVENT",
+      "UID:huge@acme.example",
+      "DTSTART:20260301T090000Z",
+      "DURATION:P99999999999W",
+      "SUMMARY:Huge",
+      "END:VEVENT",
+    ]);
+    expect(events[0]?.metadata["ends_at"]).toBeNull();
+    expect(events[0]?.metadata["duration"]).toBeUndefined();
+    expect(validateEventInput(events[0] as CaptureEventInput).ok).toBe(true);
+  });
+
   test("events come back sorted by source record id", () => {
     const events = mapped([
       "BEGIN:VEVENT",
@@ -282,5 +381,7 @@ describe("small helpers", () => {
     expect(parseDuration("P2W")).toBe(1_209_600);
     expect(parseDuration("-PT15M")).toBe(-900);
     expect(parseDuration("nonsense")).toBeNull();
+    expect(parseDuration("P99999999999W")).toBeNull();
+    expect(parseDuration("-P4000D")).toBeNull();
   });
 });

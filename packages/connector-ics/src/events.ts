@@ -54,11 +54,16 @@ interface Series {
   overrides: RawVEvent[];
 }
 
+/**
+ * RFC 5545 imposes no order on the components of a calendar, so the master and
+ * its overrides are classified by RECURRENCE-ID rather than by which one the
+ * file happens to list first.
+ */
 function seriesByUid(
   parsed: ParsedCalendar,
   duplicates: Set<string>,
 ): Map<string, Series> {
-  const series = new Map<string, Series>();
+  const buckets = new Map<string, { masters: RawVEvent[]; overrides: RawVEvent[] }>();
   for (const event of parsed.events) {
     const uidLine = firstValue(event, "UID");
     const summary = unescapeText(firstValue(event, "SUMMARY")?.value ?? "");
@@ -67,21 +72,29 @@ function seriesByUid(
       uidLine === undefined || uidLine.value.trim().length === 0
         ? synthesizeUid(dtstart, summary)
         : uidLine.value.trim();
-    const existing = series.get(uid);
-    const isOverride = firstValue(event, "RECURRENCE-ID") !== undefined;
-    if (existing === undefined) {
-      // An override with no master of its own stands in as the master; it is
-      // emitted as its own instance rather than dropped.
-      series.set(uid, { master: event, overrides: [] });
-      continue;
+    const bucket = buckets.get(uid) ?? { masters: [], overrides: [] };
+    if (firstValue(event, "RECURRENCE-ID") !== undefined) {
+      bucket.overrides.push(event);
+    } else {
+      bucket.masters.push(event);
     }
-    if (isOverride) {
-      existing.overrides.push(event);
-      continue;
-    }
+    buckets.set(uid, bucket);
+  }
+
+  const series = new Map<string, Series>();
+  for (const [uid, bucket] of buckets) {
     // Two masters under one id: the later definition is the live one.
-    duplicates.add(uid);
-    existing.master = event;
+    if (bucket.masters.length > 1) duplicates.add(uid);
+    const last = bucket.masters.at(-1);
+    if (last !== undefined) {
+      series.set(uid, { master: last, overrides: bucket.overrides });
+      continue;
+    }
+    // An override with no master of its own stands in as the master; it is
+    // emitted as its own instance rather than dropped.
+    const first = bucket.overrides[0];
+    if (first === undefined) continue;
+    series.set(uid, { master: first, overrides: bucket.overrides.slice(1) });
   }
   return series;
 }
@@ -169,7 +182,9 @@ export function calendarEvents(
     const dtstartLocal = localOf(start);
     const expansion =
       parsedRule === null
-        ? { instances: rdates, truncated: false }
+        ? // RFC 5545 §3.8.5.2: RDATE adds to the recurrence set, which always
+          // contains DTSTART.
+          { instances: withStart(dtstartLocal, rdates, exdateKeys(master)), truncated: false }
         : expand(parsedRule.rule, dtstartLocal, {
             windowEnd,
             maxInstances: MAX_INSTANCES,
@@ -269,6 +284,20 @@ function pushOverride(
   );
 }
 
+function withStart(
+  dtstart: LocalDateTime,
+  rdates: LocalDateTime[],
+  exdates: Set<string>,
+): LocalDateTime[] {
+  const byKey = new Map<string, LocalDateTime>();
+  for (const local of [dtstart, ...rdates]) {
+    const key = formatLocal(local);
+    if (exdates.has(key)) continue;
+    if (!byKey.has(key)) byKey.set(key, local);
+  }
+  return [...byKey.values()].sort((a, b) => localToMs(a) - localToMs(b));
+}
+
 function instanceStart(master: IcsInstant, local: LocalDateTime): IcsInstant {
   if (master.kind === "date")
     return { kind: "date", date: formatLocalDate(local) };
@@ -280,4 +309,3 @@ function instanceStart(master: IcsInstant, local: LocalDateTime): IcsInstant {
   }
   return { kind: "utc", iso: new Date(localToMs(local)).toISOString() };
 }
-

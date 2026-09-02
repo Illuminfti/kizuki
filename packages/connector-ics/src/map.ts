@@ -67,6 +67,9 @@ export function synthesizeUid(dtstart: string, summary: string): string {
 const DURATION =
   /^([+-])?P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/;
 
+/** A decade: past this a DURATION is hostile input, not a meeting length. */
+export const MAX_DURATION_SECONDS = 10 * 365 * 86_400;
+
 export function parseDuration(value: string): number | null {
   const match = DURATION.exec(value.trim().toUpperCase());
   if (match === null) return null;
@@ -77,7 +80,19 @@ export function parseDuration(value: string): number | null {
     Number(match[4] ?? 0) * 3_600 +
     Number(match[5] ?? 0) * 60 +
     Number(match[6] ?? 0);
+  if (!Number.isSafeInteger(seconds) || seconds > MAX_DURATION_SECONDS) {
+    return null;
+  }
   return sign * seconds;
+}
+
+/** A URI segment may carry a broken escape; the raw text beats an exception. */
+function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
 }
 
 function mailtoAddress(value: string): string | null {
@@ -117,7 +132,7 @@ function attachmentsFor(event: RawVEvent): AttachmentRef[] {
     const filename = inline
       ? ""
       : sanitize(
-          decodeURIComponent(
+          decodeSegment(
             (line.value.split("?")[0] ?? "").split("/").pop() ?? "",
           ).replace(/[/\\]/g, ""),
           255,
@@ -191,11 +206,13 @@ export function emit(input: EmitInput): CaptureEventInput {
   const allDay = input.start.kind === "date";
   const startMs = Date.parse(converted.iso);
   const endInstant = instantOf(firstValue(input.event, "DTEND"));
+  const durationEndMs =
+    input.duration === null ? null : startMs + input.duration * 1_000;
   const endsAt =
     endInstant !== null && input.recurrence === undefined
       ? toUtc(endInstant, zones, input.parsed.zones).iso
-      : input.duration !== null
-        ? new Date(startMs + input.duration * 1_000).toISOString()
+      : durationEndMs !== null && Number.isFinite(new Date(durationEndMs).getTime())
+        ? new Date(durationEndMs).toISOString()
         : null;
 
   const subjects: SubjectRef[] = [];
