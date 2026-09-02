@@ -76,15 +76,20 @@ interface RawTranscriptionRow {
 
 /**
  * Every TEXT column here is provider-controlled and unbounded in the file, so
- * the value is cut in SQLite rather than read whole and cut afterwards. One
- * character past the event limit is kept so truncation is still detectable,
- * and a column holding something other than text is passed through unchanged
- * so it still fails its own validation. SQLite counts code points here, so the
+ * the value is cut in SQLite rather than read whole and cut afterwards. A
+ * column holding something other than text is passed through unchanged so it
+ * still fails its own validation. SQLite counts code points here, so the
  * readers cut again in code units — the unit every bound downstream counts.
+ *
+ * Two units past the event limit are kept, not one: dropping a split surrogate
+ * pair costs a unit, so a single spare unit lets astral text arrive at exactly
+ * the limit and read as untruncated while half of it was thrown away.
  */
+const READ_TEXT_CHARS = MAX_TEXT_CHARS + 2;
+
 function bounded(column: string, alias = column): string {
   return `CASE WHEN typeof(${column}) = 'text'
-               THEN substr(${column}, 1, ${MAX_TEXT_CHARS + 1})
+               THEN substr(${column}, 1, ${READ_TEXT_CHARS})
                ELSE ${column} END AS ${alias}`;
 }
 
@@ -320,11 +325,11 @@ function nullablePositiveId(value: unknown): number | null {
 
 function requiredText(value: unknown, column: string): string {
   if (typeof value !== "string") invalidColumn(column);
-  return cutText(value, MAX_TEXT_CHARS + 1);
+  return cutText(value, READ_TEXT_CHARS);
 }
 
 function nullableText(value: unknown): string | null {
-  return typeof value === "string" ? cutText(value, MAX_TEXT_CHARS + 1) : null;
+  return typeof value === "string" ? cutText(value, READ_TEXT_CHARS) : null;
 }
 
 function requiredBoolean(value: unknown, column: string): boolean {

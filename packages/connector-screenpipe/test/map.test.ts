@@ -199,6 +199,19 @@ describe("screenpipe mapping", () => {
     expect(utf8RoundTrip(spoken.text)).toBe(spoken.text);
   });
 
+  test("text one unit past the bound ending in a pair is flagged", () => {
+    // The narrowest case the flag has to survive: the cut lands between the
+    // halves of the last pair, so the kept text is shorter than the bound
+    // while the row was still longer than it.
+    const event = mapFrame(
+      frame({ full_text: `${"a".repeat(MAX_TEXT_CHARS - 1)}\u{1f600}` }),
+      OBSERVED_AT,
+    );
+
+    expect(event.text).toHaveLength(MAX_TEXT_CHARS - 1);
+    expect(event.metadata["text_truncated"]).toBe(true);
+  });
+
   test("transcription occurred_at adds start_time", () => {
     const event = mapTranscription(transcription(), OBSERVED_AT);
     expect(event.occurred_at).toBe("2026-01-06T10:00:12.500Z");
