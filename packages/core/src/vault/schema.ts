@@ -23,8 +23,12 @@ export type PageSensitivity = (typeof PAGE_SENSITIVITIES)[number];
 export const PAGE_STATUSES = ["draft", "active", "archived"] as const;
 export type PageStatus = (typeof PAGE_STATUSES)[number];
 
+/** RFC 0002 §10.5: set by the writer; `quoted` means the body carries capture. */
+export const PAGE_TAINTS = ["clean", "quoted"] as const;
+export type PageTaint = (typeof PAGE_TAINTS)[number];
+
 const REQUIRED_KEYS = ["id", "title", "type", "status", "sensitivity"] as const;
-const KNOWN_KEYS = new Set<string>([...REQUIRED_KEYS, "sources"]);
+const KNOWN_KEYS = new Set<string>([...REQUIRED_KEYS, "sources", "taint"]);
 
 function hasOwn(data: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(data, key);
@@ -59,6 +63,7 @@ export function validatePage(data: Record<string, unknown>): string[] {
   validateEnum(data, "type", PAGE_TYPES, errors);
   validateEnum(data, "status", PAGE_STATUSES, errors);
   validateEnum(data, "sensitivity", PAGE_SENSITIVITIES, errors);
+  validateEnum(data, "taint", PAGE_TAINTS, errors);
 
   if (hasOwn(data, "sources")) {
     const sources = data["sources"];

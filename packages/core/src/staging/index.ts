@@ -36,7 +36,6 @@ export {
   pageRelPath,
   readPromotion,
   readReceiptsLog,
-  renderPage,
 } from "./promote";
 export type {
   OwnerPromoteOptions,

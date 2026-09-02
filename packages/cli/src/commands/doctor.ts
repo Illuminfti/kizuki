@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   count,
   doctorVault,
+  getCanonReceipt,
   getCheckpoint,
   readHolds,
 } from "@kizuki/core";
@@ -132,9 +133,8 @@ async function collect(
   const log = readReceiptsLog(vaultPath);
   const orphans: string[] = [];
   for (const receipt of log) {
-    const promotion = readPromotion(ctx.db, receipt.proposal_id);
-    if (promotion === null || promotion.receipt_id !== receipt.receipt_id) {
-      orphans.push(`orphan receipt ${receipt.receipt_id} (no promotions row)`);
+    if (getCanonReceipt(ctx.db, receipt.receipt_id) === null) {
+      orphans.push(`orphan receipt ${receipt.receipt_id} (no canon_receipts row)`);
     }
   }
 

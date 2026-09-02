@@ -322,9 +322,56 @@ export {
   PAGE_TYPES,
   validatePage,
 } from "./vault/schema";
-export type { PageSensitivity, PageStatus, PageType } from "./vault/schema";
-export { writePage } from "./vault/write";
-export type { WritePageOptions } from "./vault/write";
+export type {
+  PageSensitivity,
+  PageStatus,
+  PageTaint,
+  PageType,
+} from "./vault/schema";
+export { WRITERS, isWriter } from "./vault/write";
+export type { CanonWriteCapability, Writer } from "./vault/write";
+
+export {
+  BudgetExhausted,
+  CANON_SCHEMA_VERSION,
+  CANON_WRITE_BUDGETS,
+  CanonWriteError,
+  PAGE_ACTIONS,
+  RECEIPTS_PATH,
+  RECEIPT_KINDS,
+  applyCanonV4,
+  applyCanonWrite,
+  chooseCandidate,
+  createBudgetTracker,
+  getCanonReceipt,
+  initCanon,
+  latestReceiptForPage,
+  listCanonReceipts,
+  ownerEdited,
+  pageRelPath,
+  parseReceiptLine,
+  readReceiptsLog,
+  rebuildPageIndex,
+  receiptsForClaim,
+  resolveTarget,
+} from "./canon";
+export type {
+  ApplyCanonWriteOptions,
+  BudgetLimits,
+  BudgetTracker,
+  BudgetUsage,
+  CanonIo,
+  CanonReceipt,
+  CanonWriteBudget,
+  CanonWriteErrorCode,
+  EditReason,
+  PageAction,
+  PageCandidate,
+  PageIndexEntry,
+  ReceiptKind,
+  RetrievalOpRef,
+  TargetDecision,
+} from "./canon";
 export { findPageById, listCanonPages, listCanonPagesReport } from "./vault/pages";
 export type { CanonPage, CanonPageReport, SkippedPage } from "./vault/pages";
 export { readDerivedMeta } from "./derived-meta";

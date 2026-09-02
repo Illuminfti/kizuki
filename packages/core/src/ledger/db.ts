@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { applyCanonV4 } from "../canon/schema";
 import { applyClaimsV3 } from "../claims/schema";
 
 interface Migration {
@@ -128,6 +129,10 @@ const MIGRATIONS: readonly Migration[] = [
   {
     version: 3,
     apply: applyClaimsV3,
+  },
+  {
+    version: 4,
+    apply: applyCanonV4,
   },
 ];
 

@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SENSITIVITY_LEVELS, ownerPromote } from "@kizuki/core/staging";
 import type { OwnerPromoteOptions, Sensitivity } from "@kizuki/core/staging";
@@ -7,15 +6,17 @@ import { withVault } from "../context";
 import { indexPagePath } from "../derived";
 import type { CliIo, Command } from "./index";
 
+/**
+ * Leftover Wave 1 verb, not the product gate. It routes through the receipted
+ * writer (`writer: "import"`); hand-edited prose is owner-authored evidence,
+ * not promote input, so there is no body override here.
+ */
 export const promoteCommand: Command = {
   name: "promote",
-  usage:
-    "promote <proposal_id> [--sensitivity public|personal|private] [--body-file PATH]",
-  summary: "owner-promote one pending proposal into canon",
+  usage: "promote <proposal_id> [--sensitivity public|personal|private]",
+  summary: "write one pending proposal into canon through the receipted writer",
   async run(io: CliIo, args: string[]): Promise<number> {
-    const parsed = parseArguments(args, {
-      options: ["--sensitivity", "--body-file"],
-    });
+    const parsed = parseArguments(args, { options: ["--sensitivity"] });
     const [proposalId] = requirePositional(parsed.positionals, 1);
     if (proposalId === undefined) throw new UsageError(this.usage);
 
@@ -26,15 +27,11 @@ export const promoteCommand: Command = {
     ) {
       throw new UsageError(this.usage);
     }
-    const bodyFile = parsed.options.get("--body-file");
 
     return withVault(io, async (ctx) => {
       const options: OwnerPromoteOptions = {};
       if (rawSensitivity !== undefined) {
         options.sensitivity = rawSensitivity as Sensitivity;
-      }
-      if (bodyFile !== undefined) {
-        options.editBody = readFileSync(bodyFile, "utf8");
       }
       const receipt = ownerPromote(
         ctx.db,
