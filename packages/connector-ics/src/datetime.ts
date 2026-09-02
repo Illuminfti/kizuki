@@ -30,28 +30,48 @@ function malformed(): never {
   throw new KizukiError("parse_error", "kizuki.ics: malformed date-time value");
 }
 
+export function daysInMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+/**
+ * A well-formed digit run can still name a day that never happened. Accepting
+ * it would put a timestamp like 2026-13-99 in the ledger, so it is refused
+ * here rather than normalised into a different, wrong day.
+ */
+function checked(local: LocalDateTime): LocalDateTime {
+  if (local.month < 1 || local.month > 12) malformed();
+  if (local.day < 1 || local.day > daysInMonth(local.year, local.month)) {
+    malformed();
+  }
+  if (local.hour > 23 || local.minute > 59) malformed();
+  // RFC 5545 §3.3.12 allows 60 for a leap second; the arithmetic rolls it over.
+  if (local.second > 60) malformed();
+  return local;
+}
+
 export function parseLocal(compact: string): LocalDateTime {
   const withTime = DATE_TIME.exec(compact);
   if (withTime !== null) {
-    return {
+    return checked({
       year: Number(withTime[1]),
       month: Number(withTime[2]),
       day: Number(withTime[3]),
       hour: Number(withTime[4]),
       minute: Number(withTime[5]),
       second: Number(withTime[6]),
-    };
+    });
   }
   const dateOnly = DATE_ONLY.exec(compact);
   if (dateOnly === null) malformed();
-  return {
+  return checked({
     year: Number(dateOnly[1]),
     month: Number(dateOnly[2]),
     day: Number(dateOnly[3]),
     hour: 0,
     minute: 0,
     second: 0,
-  };
+  });
 }
 
 const pad = (value: number, width = 2): string =>
@@ -67,7 +87,7 @@ export function formatLocalDate(local: LocalDateTime): string {
 
 /** Civil time read as if it were UTC; the zone shift is applied separately. */
 export function localToMs(local: LocalDateTime): number {
-  return Date.UTC(
+  const ms = Date.UTC(
     local.year,
     local.month - 1,
     local.day,
@@ -75,6 +95,10 @@ export function localToMs(local: LocalDateTime): number {
     local.minute,
     local.second,
   );
+  // Date.UTC folds years 0..99 into 1900..1999; calendar years are absolute.
+  return local.year >= 0 && local.year < 100
+    ? new Date(ms).setUTCFullYear(local.year)
+    : ms;
 }
 
 export function msToLocal(ms: number): LocalDateTime {

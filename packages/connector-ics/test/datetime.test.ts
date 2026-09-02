@@ -53,6 +53,35 @@ describe("date-time parsing", () => {
       expect(() => parseDateTime(value, {})).toThrow(KizukiError);
     }
   });
+
+  test("refuses a well-formed value naming a day that does not exist", () => {
+    for (const value of [
+      "20261399",
+      "20260230",
+      "20260231T090000Z",
+      "20250229",
+      "20260000",
+      "20261301T250000Z",
+      "20260302T096000Z",
+    ]) {
+      expect(() => parseDateTime(value, {})).toThrow(KizukiError);
+    }
+    expect(parseDateTime("20240229", {})).toEqual({
+      kind: "date",
+      date: "20240229",
+    });
+    expect(parseDateTime("20261231T235960Z", {})).toEqual({
+      kind: "utc",
+      iso: "2027-01-01T00:00:00.000Z",
+    });
+  });
+
+  test("a year below 100 stays in its own century", () => {
+    expect(parseDateTime("00260302T090000Z", {})).toEqual({
+      kind: "utc",
+      iso: "0026-03-02T09:00:00.000Z",
+    });
+  });
 });
 
 describe("zone resolution", () => {
