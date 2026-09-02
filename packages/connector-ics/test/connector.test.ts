@@ -284,6 +284,55 @@ describe("url mode", () => {
     await connector.revoke();
     expect((await connector.health()).state).toBe("disabled");
   });
+
+  test("backfill re-emits the snapshot even when the cursor could 304", async () => {
+    const conditionals: { etag?: string; last_modified?: string }[] = [];
+    const connector = createIcsConnector(
+      { secret_ref: REF },
+      {
+        fetch: async (_url, conditional) => {
+          conditionals.push(conditional);
+          return conditional.etag === '"v1"'
+            ? { status: 304, etag: '"v1"', last_modified: null, text: "" }
+            : okResult(SMALL, '"v1"');
+        },
+        now: NOW,
+      },
+    );
+    await connector.connect(resolver);
+    const first = await connector.backfill(null);
+    expect(first.events.length).toBeGreaterThan(0);
+
+    const again = await connector.backfill(first.cursor);
+    expect(again.events.map((event) => event.source_record_id)).toEqual(
+      first.events.map((event) => event.source_record_id),
+    );
+    expect(conditionals.at(-1)).toEqual({});
+
+    const synced = await connector.sync(first.cursor);
+    expect(synced.events).toEqual([]);
+    expect(conditionals.at(-1)).toEqual({ etag: '"v1"' });
+  });
+
+  test("an unexpected failure keeps the calendar URL out of the health detail", async () => {
+    const connector = createIcsConnector(
+      { secret_ref: REF },
+      {
+        fetch: async (url) => {
+          if (probing) throw new Error(`stream failed for ${url}`);
+          return okResult(SMALL, null);
+        },
+        now: NOW,
+      },
+    );
+    let probing = false;
+    await connector.connect(resolver);
+    probing = true;
+    const report = await connector.health();
+    expect(report.state).not.toBe("ok");
+    expect(report.detail ?? "").not.toContain("abc123");
+    expect(report.detail ?? "").not.toContain("calendar.acme.example");
+  });
 });
 
 describe("url sign-in", () => {

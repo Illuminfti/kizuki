@@ -159,9 +159,15 @@ export class IcsConnector implements Connector {
       parseIcs(response.text);
       return this.report("ok", checkedAt, {});
     } catch (error) {
-      const code = error instanceof KizukiError ? error.code : "unreachable";
-      return this.report(HEALTH_BY_CODE[code] ?? "degraded", checkedAt, {
-        detail: error instanceof Error ? error.message : String(error),
+      // Only a typed message is safe to surface: an untyped failure carries
+      // the request URL, and a private calendar URL is the credential.
+      if (!(error instanceof KizukiError)) {
+        return this.report("degraded", checkedAt, {
+          detail: "calendar check failed",
+        });
+      }
+      return this.report(HEALTH_BY_CODE[error.code] ?? "degraded", checkedAt, {
+        detail: error.message,
       });
     }
   }
@@ -263,7 +269,9 @@ export class IcsConnector implements Connector {
   async backfill(cursor: Cursor | null): Promise<SyncBatch> {
     const previous =
       cursor === null ? emptyIcsCursor() : decodeIcsCursor(cursor);
-    const snapshot = await this.snapshot({ ...previous, records: {} });
+    // The cursor is ignored on purpose: a conditional GET could answer 304 and
+    // hand back an empty batch, which is not what re-running a backfill means.
+    const snapshot = await this.snapshot(emptyIcsCursor());
     this.lastSuccessAt = this.now().toISOString();
     return {
       events: snapshot.events,
