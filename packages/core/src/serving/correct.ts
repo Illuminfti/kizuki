@@ -1,38 +1,50 @@
-import { SENSITIVITY_ORDER } from "../agents";
-import type { Grant, Sensitivity } from "../agents";
-import { getClaim, insertClaim, listClaims } from "../claims/store";
-import type { Claim, ClaimPolarity } from "../contracts/proposal";
+import type { Sensitivity } from "../agents";
+import { insertClaim } from "../claims/store";
+import type { AuthorityTier, Claim } from "../contracts/proposal";
 import { accept } from "../ledger/ledger";
-import { identifier, text } from "./arguments";
+import { text } from "./arguments";
 import { auditArguments, claimsIo, gateAsync, principalName } from "./gate";
 import type { Served } from "./gate";
+import { rewriteCanon } from "./rewrite";
+import type { RewrittenPage } from "./rewrite";
+import { groupByKey, readable, resolve } from "./target";
+import type { CorrectTarget } from "./target";
 import { ServeError } from "./types";
 import type { Envelope, ServeContext } from "./types";
 
 const MAX_STATEMENT_CHARS = 2_000;
-const CLAIM_KEY = /^[0-9a-f]{64}$/;
+const MAX_OBJECT_CHARS = 1_024;
 /** The owner's own words enter the ledger on an internal connector. */
 export const CORRECTION_CONNECTOR = "kizuki.owner";
 export const CORRECTION_KIND = "correction";
 
-export interface CorrectTarget {
-  claim_id?: string;
-  claim_key?: string;
-  subject?: string;
-}
+export type { CorrectTarget };
 
 export interface CorrectArgs {
   /** The owner's sentence, stored verbatim and never read as instruction. */
   statement: string;
   target?: CorrectTarget;
+  /**
+   * The value the claim should carry instead. Without it the correction is a
+   * denial of the recorded reading and nothing is asserted in its place:
+   * reading a replacement out of the sentence needs a model, and none is
+   * bound here (RFC 0002 §6.3 step 2).
+   */
+  object?: string;
+  /** Resolve and report, write nothing (RFC 0002 §6.2). */
+  dry_run?: boolean;
 }
 
 export interface CorrectData {
+  /** The receipt for the canon rewrite; null when no page moved. */
+  receipt_id: string | null;
   /** The statement's ledger event; null when nothing was recorded. */
   event_id: string | null;
-  /** The correction claim; null when the target was ambiguous. */
+  /** The correction claim; null when the target was ambiguous or a rehearsal. */
   claim_id: string | null;
   superseded: { claim_id: string; claim_key: string }[];
+  /** The pages the correction rewrote, with the bytes before and after. */
+  rewritten: RewrittenPage[];
   /** Groups that also matched and were deliberately left alone. */
   ambiguous: { claim_key: string; claim_ids: string[] }[];
   answer: string;
@@ -45,111 +57,36 @@ function refuse(field: string, rule: string): ServeError {
   );
 }
 
-/** Live, keyed claims grouped by the key a correction supersedes. */
-function groupByKey(claims: Claim[]): Map<string, Claim[]> {
-  const groups = new Map<string, Claim[]>();
-  for (const claim of claims) {
-    const key = claim.claim_key;
-    if (key === null) continue;
-    const bucket = groups.get(key);
-    if (bucket === undefined) groups.set(key, [claim]);
-    else bucket.push(claim);
-  }
-  return groups;
-}
-
 /**
- * Resolution is exact or it does not happen. A model would be needed to read
- * an implicit target out of the sentence, and none is bound here, so an
- * unnamed target fails closed instead of guessing which claim to retire.
+ * RFC 0002 §6.3 step 1: `sha256(statement ‖ 0 ‖ target_json)`. Hashing the
+ * statement alone would collapse two corrections of different claims that
+ * happen to be worded the same into one record, losing which claim each was
+ * aimed at. Keys are written in a fixed order so the same target always
+ * serializes the same way.
  */
-function resolve(ctx: ServeContext, target: CorrectTarget | undefined): Claim[] {
-  if (target === undefined) {
-    throw refuse("target", "name a claim, a claim key or a subject");
-  }
-  const named = [target.claim_id, target.claim_key, target.subject].filter(
-    (value) => value !== undefined,
-  );
-  if (named.length !== 1) {
-    throw refuse("target", "name exactly one of claim_id, claim_key, subject");
-  }
-
-  if (target.claim_id !== undefined) {
-    const claim = getClaim(
-      ctx.db,
-      identifier("target.claim_id", target.claim_id),
-    );
-    if (claim === null || claim.status !== "live") {
-      throw refuse("target.claim_id", "names no live claim");
-    }
-    if (claim.claim_key === null) {
-      throw refuse(
-        "target.claim_id",
-        "names a claim with no predicate to correct",
-      );
-    }
-    return [claim];
-  }
-
-  if (target.claim_key !== undefined) {
-    if (!CLAIM_KEY.test(target.claim_key)) {
-      throw refuse("target.claim_key", "must be a claim key");
-    }
-    const claims = listClaims(ctx.db, {
-      claim_key: target.claim_key,
-      status: "live",
-    });
-    if (claims.length === 0) {
-      throw refuse("target.claim_key", "names no live claim");
-    }
-    return claims;
-  }
-
-  const subject = identifier("target.subject", target.subject);
-  const claims = listClaims(ctx.db, { status: "live" }).filter(
-    (claim) => claim.subject === subject && claim.claim_key !== null,
-  );
-  if (claims.length === 0) {
-    throw refuse("target.subject", "names no live keyed claim");
-  }
-  return claims;
-}
-
-/** A correction may not reach further than the reader could read. */
-function readable(grant: Grant, claims: Claim[]): void {
-  for (const claim of claims) {
-    if (
-      SENSITIVITY_ORDER[claim.sensitivity] > SENSITIVITY_ORDER[grant.ceiling]
-    ) {
-      throw new ServeError("above_ceiling", "the target is above the ceiling");
-    }
-    if (
-      claim.subject !== null &&
-      grant.subjects !== null &&
-      !grant.subjects.includes(claim.subject)
-    ) {
-      throw new ServeError(
-        "subject_out_of_scope",
-        "the target is outside the grant",
-      );
-    }
-  }
+function recordId(statement: string, target: CorrectTarget): string {
+  const canonical = JSON.stringify({
+    claim_id: target.claim_id ?? null,
+    claim_key: target.claim_key ?? null,
+    subject: target.subject ?? null,
+  });
+  return new Bun.CryptoHasher("sha256")
+    .update(statement)
+    .update("\0")
+    .update(canonical)
+    .digest("hex");
 }
 
 function recordStatement(
   ctx: ServeContext,
   statement: string,
-  subject: string | null,
+  sourceRecordId: string,
+  subject: string,
   at: string,
 ): string {
-  const sourceRecordId = new Bun.CryptoHasher("sha256")
-    .update(statement)
-    .update("\0")
-    .update(subject ?? "")
-    .digest("hex");
-  // A repeat of the same sentence about the same subject is the same
-  // evidence (RFC 0002 §6.3): the ledger keeps one row for it, and the
-  // accepted instant would otherwise make every repeat a new record.
+  // A replay of the same sentence at the same target is the same evidence
+  // (RFC 0002 §6.3): the ledger keeps one row for it, and the accepted
+  // instant would otherwise make every replay a new record.
   const existing = ctx.db
     .query<{ event_id: string }, [string, string]>(
       `SELECT event_id FROM events
@@ -167,7 +104,7 @@ function recordStatement(
     occurred_at: at,
     observed_at: at,
     text: statement,
-    subjects: subject === null ? [] : [{ subject_id: subject, role: "about" }],
+    subjects: [{ subject_id: subject, role: "about" }],
     sensitivity_hint: "private",
     deleted: false,
     attachments: [],
@@ -179,15 +116,13 @@ function recordStatement(
   });
 }
 
-function opposite(polarity: ClaimPolarity): ClaimPolarity {
-  return polarity === "positive" ? "negative" : "positive";
-}
-
 function ambiguousAnswer(groups: Map<string, Claim[]>): CorrectData {
   return {
+    receipt_id: null,
     event_id: null,
     claim_id: null,
     superseded: [],
+    rewritten: [],
     ambiguous: [...groups.entries()].map(([claim_key, claims]) => ({
       claim_key,
       claim_ids: claims.map((claim) => claim.claim_id),
@@ -198,12 +133,42 @@ function ambiguousAnswer(groups: Map<string, Claim[]>): CorrectData {
   };
 }
 
+/** RFC 0002 §6.4: a grant may relay without speaking at the owner's tier. */
+function relayCeiling(ctx: ServeContext): AuthorityTier | undefined {
+  if (ctx.principal.kind === "owner") return undefined;
+  return ctx.principal.grant.relay_owner_corrections
+    ? undefined
+    : "owner_authored";
+}
+
+function sentence(
+  superseded: number,
+  subject: string,
+  rewrite: { rewritten: RewrittenPage[]; unreached: string[]; failed: boolean },
+): string {
+  const retired =
+    superseded === 0
+      ? "Recorded the correction. Nothing live contradicted it."
+      : `Recorded the correction and retired ${superseded} claim(s) about ${subject}.`;
+  const page = rewrite.rewritten[0];
+  const written =
+    page === undefined
+      ? rewrite.failed
+        ? " No page was rewritten: the canon writer refused this pass."
+        : ""
+      : ` Rewrote ${page.page_path}. Undo with kizuki undo ${page.receipt_id}.`;
+  const left =
+    rewrite.unreached.length === 0
+      ? ""
+      : ` Still to correct: ${rewrite.unreached.join(", ")}.`;
+  return `${retired}${written}${left}`;
+}
+
 /**
- * The owner's correction, and the only write that outranks everything else
- * in the store. It supersedes the contradicted claims and answers with what
- * it retired. Rewriting the canon pages bound to those claims belongs to the
- * receipted writer, which no revision of this tree binds yet; no page is
- * bound to a claim here, so nothing is silently left half-done.
+ * The owner's correction, and the only write that outranks everything else in
+ * the store. It supersedes the contradicted claims and rewrites the canon
+ * bound to them in the same pass, answering with what it retired and what it
+ * wrote (RFC 0002 §6.3).
  */
 export async function serveCorrect(
   ctx: ServeContext,
@@ -216,6 +181,10 @@ export async function serveCorrect(
     async ({ ctx, at }): Promise<Served<CorrectData>> => {
       const grant = ctx.principal.grant;
       const statement = text("statement", args.statement, MAX_STATEMENT_CHARS);
+      const replacement =
+        args.object === undefined
+          ? undefined
+          : text("object", args.object, MAX_OBJECT_CHARS);
       const candidates = resolve(ctx, args.target);
       readable(grant, candidates);
 
@@ -229,7 +198,7 @@ export async function serveCorrect(
         };
       }
 
-      const [entry] = [...groups.entries()];
+      const entry = [...groups.entries()][0];
       if (entry === undefined) {
         throw refuse("target", "names no live keyed claim");
       }
@@ -241,32 +210,68 @@ export async function serveCorrect(
         throw refuse("target", "names a claim with no predicate to correct");
       }
 
-      const eventId = recordStatement(ctx, statement, subject, at);
-      const sensitivity: Sensitivity = first.sensitivity;
-      const filed = await insertClaim(
-        claimsIo(ctx),
-        {
-          kind: "claim",
-          body: statement,
-          provenance: [eventId],
-          subjects: [subject],
-          subject,
-          predicate,
-          // The owner says the recorded reading is wrong; the object it
-          // should carry instead needs a model this path does not bind.
-          polarity: opposite(first.polarity),
-          producer:
-            ctx.principal.kind === "owner"
-              ? "owner"
-              : `agent:${ctx.principal.agent.name}`,
-          confidence: 1,
-          intent: "correct",
-          taint: "clean",
-          sensitivity,
-        },
-      );
+      if (args.dry_run === true) {
+        return {
+          canon: [],
+          quoted: [],
+          withheld: [],
+          data: {
+            receipt_id: null,
+            event_id: null,
+            claim_id: null,
+            superseded: group.map((claim) => ({
+              claim_id: claim.claim_id,
+              claim_key: claimKeyValue,
+            })),
+            rewritten: [],
+            ambiguous: [],
+            answer:
+              `Nothing was written. This would retire ${group.length} ` +
+              `claim(s) about ${subject}.`,
+          },
+        };
+      }
 
-      const claim = filed.outcome === "contested" ? filed.incoming : filed.claim;
+      const eventId = recordStatement(
+        ctx,
+        statement,
+        recordId(statement, args.target as CorrectTarget),
+        subject,
+        at,
+      );
+      const sensitivity: Sensitivity = first.sensitivity;
+      const ceiling = relayCeiling(ctx);
+      const filed = await insertClaim(claimsIo(ctx), {
+        kind: "claim",
+        // The key the correction is about, so one wording aimed at two
+        // different readings files as two claims rather than colliding on
+        // the store's idempotency index.
+        target: `correction:${claimKeyValue}`,
+        body: statement,
+        provenance: [eventId],
+        subjects: [subject],
+        subject,
+        predicate,
+        // Named a replacement, the correction asserts it. Unnamed, it denies
+        // the recorded reading and asserts nothing: deriving the polarity
+        // from whatever is live would flip with the count of how many times
+        // the owner has spoken rather than with what the owner said.
+        ...(replacement === undefined
+          ? { polarity: "negative" as const }
+          : { polarity: "positive" as const, object: replacement }),
+        producer:
+          ctx.principal.kind === "owner"
+            ? "owner"
+            : `agent:${ctx.principal.agent.name}`,
+        confidence: 1,
+        intent: "correct",
+        taint: "clean",
+        sensitivity,
+        ...(ceiling === undefined ? {} : { relay_ceiling: ceiling }),
+      });
+
+      const claim =
+        filed.outcome === "contested" ? filed.incoming : filed.claim;
       const superseded =
         filed.outcome === "stored"
           ? filed.superseded.map((retired) => ({
@@ -274,22 +279,28 @@ export async function serveCorrect(
               claim_key: claimKeyValue,
             }))
           : [];
+      const rewrite =
+        filed.outcome === "stored"
+          ? rewriteCanon(ctx, claim, [claimKeyValue])
+          : { receipt_id: null, rewritten: [], unreached: [], failed: false };
+
       const answer =
         filed.outcome === "duplicate"
           ? "That correction was already recorded; nothing changed."
-          : superseded.length === 0
-            ? "Recorded the correction. Nothing live contradicted it."
-            : `Recorded the correction and retired ${superseded.length} ` +
-              `claim(s) about ${subject}.`;
+          : sentence(superseded.length, subject, rewrite);
 
       return {
         canon: [],
         quoted: [],
-        withheld: [],
+        withheld: rewrite.failed
+          ? [{ id: `tool:correct`, reason: "error" }]
+          : [],
         data: {
+          receipt_id: rewrite.receipt_id,
           event_id: eventId,
           claim_id: claim.claim_id,
           superseded,
+          rewritten: rewrite.rewritten,
           ambiguous: [],
           answer: `${answer} Relayed by ${principalName(ctx.principal)}.`,
         },

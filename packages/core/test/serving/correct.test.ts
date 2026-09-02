@@ -1,6 +1,19 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  applyCanonWrite,
+  createBudgetTracker,
+  getCanonReceipt,
+  resolveTarget,
+} from "../../src/canon";
 import { DEFAULT_GRANT, listAudit } from "../../src/agents";
-import { getClaim, listClaims, listSupersessions } from "../../src/claims/store";
+import {
+  getClaim,
+  insertClaim,
+  listClaims,
+  listSupersessions,
+} from "../../src/claims/store";
 import { serveCorrect } from "../../src/serving/correct";
 import type { CorrectArgs } from "../../src/serving/correct";
 import { servePropose } from "../../src/serving/propose";
@@ -19,6 +32,16 @@ afterEach(() => {
   fixture?.dispose();
   fixture = null;
 });
+
+function ownerEvents(live: Fixture): number {
+  return (
+    live.db
+      .query<{ count: number }, [string]>(
+        "SELECT count(*) AS count FROM events WHERE connector_id = ?",
+      )
+      .get("kizuki.owner")?.count ?? -1
+  );
+}
 
 async function refusal(run: () => Promise<unknown>): Promise<ServeError> {
   try {
@@ -88,7 +111,7 @@ describe("serveCorrect retires what the owner says is wrong", () => {
     expect(envelope.quoted).toEqual([]);
   });
 
-  test("the statement lands in the ledger and repeats do not duplicate it", async () => {
+  test("the statement lands in the ledger and an exact replay reuses it", async () => {
     const live = newFixture();
     const wrong = await fileClaim(
       live,
@@ -98,7 +121,10 @@ describe("serveCorrect retires what the owner says is wrong", () => {
     );
     const args: CorrectArgs = {
       statement: "Ada is based in Lisbon.",
-      target: { claim_id: wrong },
+      // Keyed, not by claim id: the id the correction retires stops being a
+      // live target the moment the first call lands.
+      target: { claim_key: getClaim(live.db, wrong)?.claim_key ?? "" },
+      object: "Lisbon",
     };
 
     const first = await serveCorrect(live.owner(), args);
@@ -113,23 +139,47 @@ describe("serveCorrect retires what the owner says is wrong", () => {
     expect(row?.connector_id).toBe("kizuki.owner");
     expect(row?.kind).toBe("correction");
 
-    // The claim it contradicted is retired, so the repeat is aimed at the
-    // subject: the same sentence is the same evidence and the same claim.
-    const second = await serveCorrect(live.owner(), {
-      statement: args.statement,
-      target: { subject: "person:ada" },
+    // The same sentence aimed at the same reading is the same evidence, so
+    // the ledger keeps one row for it and nothing is corrected twice.
+    const replay = await serveCorrect(live.owner(), args);
+    expect(replay.data?.event_id).toBe(eventId);
+    expect(replay.data?.claim_id).toBe(first.data?.claim_id ?? "");
+    expect(replay.data?.superseded).toEqual([]);
+    expect(replay.data?.answer).toContain("already recorded");
+    expect(ownerEvents(live)).toBe(1);
+  });
+
+  test("one wording aimed at two targets is two records, not one", async () => {
+    const live = newFixture();
+    const lagos = await fileClaim(
+      live,
+      "Ada is based in Lagos.",
+      "location.based_in",
+      "Lagos",
+    );
+    const acme = await fileClaim(
+      live,
+      "Ada works at Acme.",
+      "employment.works_at",
+      "Acme",
+    );
+
+    const statement = "That is out of date.";
+    const one = await serveCorrect(live.owner(), {
+      statement,
+      target: { claim_id: lagos },
     });
-    expect(second.data?.event_id).toBe(eventId);
-    expect(second.data?.claim_id).toBe(first.data?.claim_id ?? "");
-    expect(second.data?.superseded).toEqual([]);
-    expect(second.data?.answer).toContain("already recorded");
-    expect(
-      live.db
-        .query<{ count: number }, [string]>(
-          "SELECT count(*) AS count FROM events WHERE connector_id = ?",
-        )
-        .get("kizuki.owner")?.count,
-    ).toBe(1);
+    const two = await serveCorrect(live.owner(), {
+      statement,
+      target: { claim_id: acme },
+    });
+
+    // The record id is the statement and the target it was aimed at, so two
+    // corrections worded the same keep their own provenance.
+    expect(one.data?.event_id).not.toBe(two.data?.event_id ?? "");
+    expect(ownerEvents(live)).toBe(2);
+    expect(getClaim(live.db, lagos)?.status).toBe("superseded");
+    expect(getClaim(live.db, acme)?.status).toBe("superseded");
   });
 
   test("a subject that names one group is corrected, several are reported", async () => {
@@ -319,6 +369,227 @@ describe("serveCorrect retires what the owner says is wrong", () => {
     const refiled = await servePropose(ctx, args);
     expect(refiled.data?.outcome).toBe("duplicate");
     expect(refiled.data?.claim_id).toBe(first.data?.claim_id ?? "");
+  });
+
+  test("repeated denials never flip back into an assertion", async () => {
+    const live = newFixture();
+    await fileClaim(live, "Ada works at Acme.", "employment.works_at", "Acme");
+    const key =
+      listClaims(live.db, {
+        status: "live",
+        subject: "person:ada",
+        keyed: true,
+      })[0]?.claim_key ?? "";
+
+    const denials = [
+      "Ada does not work at acme.",
+      "Ada has never worked at acme, I keep telling you.",
+      "Once more: Ada does not work at acme.",
+    ];
+    for (const statement of denials) {
+      await serveCorrect(live.owner(), { statement, target: { claim_key: key } });
+      const live_ = listClaims(live.db, { claim_key: key, status: "live" });
+      // Deriving the polarity from whatever is live made it alternate with
+      // the count of how often the owner had spoken.
+      expect(live_.map((claim) => claim.polarity)).toEqual(["negative"]);
+      expect(live_[0]?.object).toBeNull();
+      expect(live_[0]?.authority).toBe("owner_correction");
+    }
+  });
+
+  test("a named replacement is what the store keeps, not a bare denial", async () => {
+    const live = newFixture();
+    const wrong = await fileClaim(
+      live,
+      "Ada is based in Lagos.",
+      "location.based_in",
+      "Lagos",
+    );
+
+    const corrected = await serveCorrect(live.owner(), {
+      statement: "Ada is based in Lisbon now.",
+      target: { claim_id: wrong },
+      object: "Lisbon",
+    });
+
+    const filed = getClaim(live.db, corrected.data?.claim_id ?? "");
+    expect(filed?.object).toBe("Lisbon");
+    expect(filed?.polarity).toBe("positive");
+    expect(filed?.predicate).toBe("location.based_in");
+    expect(filed?.subject).toBe("person:ada");
+    expect(getClaim(live.db, wrong)?.status).toBe("superseded");
+  });
+
+  test("a subject resolves past the store's default page of claims", async () => {
+    const live = newFixture();
+    // More live claims than one page of the claims table, so a resolver that
+    // read a page and filtered it in memory sees none of the keyed claim
+    // filed after them.
+    for (let index = 0; index < 220; index += 1) {
+      await insertClaim(
+        { db: live.db },
+        {
+          kind: "claim",
+          target: `facts:filler-${index}`,
+          body: `Filler kettle reading number ${index}.`,
+          subjects: ["person:grace"],
+          provenance: [live.events["public"] as string],
+          producer: "deterministic",
+          confidence: 1,
+        },
+      );
+    }
+    const wrong = await fileClaim(
+      live,
+      "Ada works at Acme.",
+      "employment.works_at",
+      "Acme",
+    );
+    expect(
+      listClaims(live.db, { status: "live", limit: 1_000 }).length,
+    ).toBeGreaterThan(220);
+
+    const corrected = await serveCorrect(live.owner(), {
+      statement: "Ada left Acme.",
+      target: { subject: "person:ada" },
+    });
+    expect(corrected.data?.superseded.map((entry) => entry.claim_id)).toEqual([
+      wrong,
+    ]);
+    // Seeding two hundred claims is the point of the case, so it gets room.
+  }, 30_000);
+
+  test("a grant's window and type scope bind a correction too", async () => {
+    const live = newFixture();
+    const wrong = await fileClaim(
+      live,
+      "Ada works at Acme.",
+      "employment.works_at",
+      "Acme",
+    );
+
+    // The windowed agent reads nothing in this vault: every candidate falls
+    // outside its grant. What it cannot read it cannot retire either.
+    const windowed = await refusal(() =>
+      serveCorrect(live.agent("windowed"), {
+        statement: "Ada left Acme.",
+        target: { claim_id: wrong },
+      }),
+    );
+    expect(windowed.code).toBe("time_out_of_scope");
+
+    const typed = await refusal(() =>
+      serveCorrect(live.agent("typed"), {
+        statement: "Ada left Acme.",
+        target: { claim_id: wrong },
+      }),
+    );
+    expect(typed.code).toBe("type_out_of_scope");
+    expect(getClaim(live.db, wrong)?.status).toBe("live");
+  });
+
+  test("a grant that may not speak as the owner files one tier down", async () => {
+    const live = newFixture();
+    const wrong = await fileClaim(
+      live,
+      "Ada works at Acme.",
+      "employment.works_at",
+      "Acme",
+    );
+
+    const relayed = await serveCorrect(live.agent("downgraded"), {
+      statement: "Ada left Acme.",
+      target: { claim_id: wrong },
+    });
+    const filed = getClaim(live.db, relayed.data?.claim_id ?? "");
+    expect(filed?.authority).toBe("owner_authored");
+    expect(filed?.frontmatter["x-relayed-by"]).toBe("agent:downgraded");
+  });
+
+  test("a rehearsal names what it would retire and writes nothing", async () => {
+    const live = newFixture();
+    const wrong = await fileClaim(
+      live,
+      "Ada works at Acme.",
+      "employment.works_at",
+      "Acme",
+    );
+
+    const rehearsal = await serveCorrect(live.owner(), {
+      statement: "Ada left Acme.",
+      target: { claim_id: wrong },
+      dry_run: true,
+    });
+    expect(rehearsal.data?.claim_id).toBeNull();
+    expect(rehearsal.data?.event_id).toBeNull();
+    expect(rehearsal.data?.superseded.map((entry) => entry.claim_id)).toEqual([
+      wrong,
+    ]);
+    expect(getClaim(live.db, wrong)?.status).toBe("live");
+    expect(ownerEvents(live)).toBe(0);
+  });
+
+  test("the page bound to a retired claim is rewritten in the same pass", async () => {
+    const live = newFixture();
+    // A claim the receipted writer materialized, which is what a correction
+    // has to reach: the claim moves and the page moves with it.
+    const filed = await insertClaim(
+      { db: live.db },
+      {
+        kind: "claim",
+        target: "facts:workplace",
+        body: "Linus works at acme.",
+        frontmatter: { type: "fact", title: "Where Linus works" },
+        subjects: ["person:linus"],
+        subject: "person:linus",
+        predicate: "employment.works_at",
+        object: "acme",
+        provenance: [live.events["public"] as string],
+        producer: "deterministic",
+        confidence: 1,
+      },
+    );
+    if (filed.outcome !== "stored") throw new Error(filed.outcome);
+    const io = { db: live.db, vault_path: live.vaultPath };
+    const receipt = applyCanonWrite(
+      io,
+      filed.claim,
+      resolveTarget(io, filed.claim),
+      {
+        writer: "loop",
+        budget: createBudgetTracker({ canon_writes_per_run: 4 }),
+      },
+    );
+    const before = readFileSync(
+      join(live.vaultPath, receipt.page_path),
+      "utf8",
+    );
+    expect(before).toContain("Linus works at acme.");
+
+    const corrected = await serveCorrect(live.owner(), {
+      statement: "Linus works at the workshop, not at acme.",
+      target: { claim_id: filed.claim.claim_id },
+      object: "the workshop",
+    });
+
+    const rewritten = corrected.data?.rewritten ?? [];
+    expect(rewritten).toHaveLength(1);
+    expect(rewritten[0]?.page_path).toBe(receipt.page_path);
+    expect(corrected.data?.receipt_id).toBe(rewritten[0]?.receipt_id ?? "");
+    const after = readFileSync(join(live.vaultPath, receipt.page_path), "utf8");
+    expect(after).toContain("Linus works at the workshop, not at acme.");
+    expect(after).not.toContain("Linus works at acme.");
+    expect(rewritten[0]?.diff).toContain("-Linus works at acme.");
+    expect(rewritten[0]?.diff).toContain(
+      "+Linus works at the workshop, not at acme.",
+    );
+    // The receipt is the reversal: bytes before, bytes after, one id.
+    const stored = getCanonReceipt(live.db, rewritten[0]?.receipt_id ?? "");
+    expect(stored?.writer).toBe("correction");
+    expect(stored?.before_hash).toBe(rewritten[0]?.before_hash ?? null);
+    expect(stored?.after_hash).toBe(rewritten[0]?.after_hash ?? "");
+    expect(corrected.data?.answer).toContain(receipt.page_path);
+    expect(corrected.data?.answer).toContain(rewritten[0]?.receipt_id ?? "");
   });
 
   test("a grant without the tool cannot relay a correction", async () => {

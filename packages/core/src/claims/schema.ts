@@ -46,6 +46,7 @@ CREATE UNIQUE INDEX claims_idempotency
   WHERE kind <> 'purge_review';
 CREATE INDEX IF NOT EXISTS claims_by_key ON claims(claim_key, status, valid_from);
 CREATE INDEX IF NOT EXISTS claims_by_status ON claims(status, created_at);
+CREATE INDEX IF NOT EXISTS claims_by_subject ON claims(subject, status);
 `;
 
 const SUPPORTING_TABLES = `

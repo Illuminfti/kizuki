@@ -65,6 +65,8 @@ export interface InsertClaimInput {
   valid_to?: string | null;
   claim_id?: string;
   intent?: "propose" | "correct";
+  /** RFC 0002 §6.4: caps the tier a relayed correction is filed at. */
+  relay_ceiling?: AuthorityTier;
   events?: EventFacts[];
 }
 
@@ -479,7 +481,15 @@ export function getClaim(db: Database, claimId: string): Claim | null {
 
 export function listClaims(
   db: Database,
-  opts: { status?: ClaimStatus; claim_key?: string; limit?: number } = {},
+  opts: {
+    status?: ClaimStatus;
+    claim_key?: string;
+    /** Narrowed in SQL: filtering a default page in memory misses rows. */
+    subject?: string;
+    /** Only claims that carry a conflict key, which is what a correction retires. */
+    keyed?: boolean;
+    limit?: number;
+  } = {},
 ): Claim[] {
   if (!tableExists(db, "claims")) return [];
   const clauses: string[] = [];
@@ -492,6 +502,11 @@ export function listClaims(
     clauses.push("claim_key = ?");
     params.push(opts.claim_key);
   }
+  if (opts.subject !== undefined) {
+    clauses.push("subject = ?");
+    params.push(opts.subject);
+  }
+  if (opts.keyed === true) clauses.push("claim_key IS NOT NULL");
   const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
   const limit = opts.limit ?? 200;
   return db
@@ -627,6 +642,9 @@ export async function insertClaim(
       body: input.body,
       provenance: input.provenance,
       ...(input.intent === undefined ? {} : { intent: input.intent }),
+      ...(input.relay_ceiling === undefined
+        ? {}
+        : { relayCeiling: input.relay_ceiling }),
       hasCorroboration,
     },
   );

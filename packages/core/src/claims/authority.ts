@@ -82,6 +82,8 @@ export function authorityFor(
     provenance?: readonly string[];
     intent?: "propose" | "correct";
     hasCorroboration?: boolean;
+    /** RFC 0002 §6.4: the tier a relay may not exceed. */
+    relayCeiling?: AuthorityTier;
   },
 ): AuthorityAssignment {
   const producer = canonicalizeProducer(extras.producer);
@@ -136,7 +138,7 @@ export function authorityFor(
   if (typeof extras.producer === "string" && extras.producer.startsWith("agent:")) {
     relayed_by = extras.producer;
     if (draft.intent === "correct") {
-      authority = "owner_correction";
+      authority = clampAtMost("owner_correction", extras.relayCeiling ?? "owner_correction");
     } else {
       authority = clampAtMost(authority, "connector_evidence");
     }

@@ -494,6 +494,9 @@ export type { TimelineEntry, TimelineOptions } from "./query";
 export { rebuildDerived } from "./derived";
 export type { DerivedRebuildResult } from "./derived";
 
+export { diffLines } from "./util/diff";
+export type { DiffLine } from "./util/diff";
+
 export {
   DEFAULT_GRANT,
   OWNER,
@@ -561,6 +564,7 @@ export type {
   ProposeArgs,
   ProposeData,
   QuotedChunk,
+  RewrittenPage,
   SearchArgs,
   ServeContext,
   Served,

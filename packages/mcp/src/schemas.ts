@@ -140,6 +140,8 @@ export const CORRECT_INPUT = z.strictObject({
       subject: ID.optional(),
     })
     .optional(),
+  object: z.string().min(1).max(1024).optional(),
+  dry_run: z.boolean().optional(),
 });
 
 export const PROPOSE_INPUT = z.strictObject({

@@ -29,3 +29,4 @@ export { servePropose } from "./propose";
 export type { ProposeArgs, ProposeData } from "./propose";
 export { serveCorrect } from "./correct";
 export type { CorrectArgs, CorrectData, CorrectTarget } from "./correct";
+export type { RewrittenPage } from "./rewrite";

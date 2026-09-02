@@ -115,6 +115,7 @@ describe("public surface", () => {
       "createFts5RetrievalPort",
       "createRemoteRetrievalPort",
       "decodeRemoteValue",
+      "diffLines",
       "disconnect",
       "doctorVault",
       "encodeRemoteValue",

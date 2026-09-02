@@ -155,17 +155,35 @@ describe("the stdio MCP server over a real client", () => {
       .claim_id;
 
     const owner = await connect(running.owner());
+    const rehearsal = await call(owner, "correct", {
+      statement: "Ada left Acme; she is at the workshop now.",
+      target: { claim_id: claimId },
+      object: "the workshop",
+      dry_run: true,
+    });
+    expect(
+      (envelopeOf(rehearsal)["data"] as { claim_id: string | null }).claim_id,
+    ).toBeNull();
+    expect(listClaims(running.db, { status: "superseded" })).toEqual([]);
+
     const corrected = await call(owner, "correct", {
       statement: "Ada left Acme; she is at the workshop now.",
       target: { claim_id: claimId },
+      object: "the workshop",
     });
     expect(corrected.isError).toBeUndefined();
     const data = envelopeOf(corrected)["data"] as {
       superseded: { claim_id: string }[];
+      rewritten: { page_path: string }[];
+      receipt_id: string | null;
       answer: string;
     };
     expect(data.superseded.map((entry) => entry.claim_id)).toEqual([claimId]);
     expect(data.answer).toContain("retired 1 claim");
+    // Nothing had materialized this reading as a page, so there is nothing to
+    // rewrite and the reply says so rather than naming a page it never wrote.
+    expect(data.rewritten).toEqual([]);
+    expect(data.receipt_id).toBeNull();
     expect(
       listClaims(running.db, { status: "superseded" }).map(
         (claim) => claim.claim_id,
