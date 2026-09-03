@@ -44,7 +44,15 @@ export async function runRetrievalConformance(
     {
       apply: async (port, fixtures) =>
         port.upsert(fixtures.docs.map(validateRetrievalDoc)),
-      observe: async (port, fixtures) => port.search(fixtures.query),
+      // Timings are wall-clock noise, not state: two identical searches may
+      // legitimately differ by a millisecond, so they are not part of what the
+      // idempotence and restart families compare.
+      observe: async (port, fixtures) => {
+        const { timings_ms: _timings, ...semantic } = await port.search(
+          fixtures.query,
+        );
+        return semantic;
+      },
       induceFailure: async (port, fixtures) =>
         port.search({
           ...fixtures.query,
