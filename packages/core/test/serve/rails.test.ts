@@ -3,7 +3,10 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openLedger } from "../../src/ledger/db";
+import { doctorVault } from "../../src/vault/doctor";
+import { parseFrontmatter } from "../../src/vault/frontmatter";
 import { initVault } from "../../src/vault/init";
+import { validatePage } from "../../src/vault/schema";
 import { dueRails, runRail, runServeOnce } from "../../src/serve/rails";
 import { listSchedules } from "../../src/serve/schema";
 import { listRunReceipts } from "../../src/serve/receipts";
@@ -46,6 +49,14 @@ describe("rails", () => {
     expect(listRunReceipts(db)).toHaveLength(7);
     expect(existsSync(join(vault, "dashboards", "brief-2026-09-03.md"))).toBe(true);
     const brief = readFileSync(join(vault, "dashboards", "brief-2026-09-03.md"), "utf8");
+    expect(brief.startsWith("---\n")).toBe(true);
+    const parsed = parseFrontmatter(brief);
+    expect(validatePage(parsed.data)).toEqual([]);
+    const vaultDoctor = doctorVault(vault);
+    const briefPage = vaultDoctor.pages.find(
+      (page) => page.page === "dashboards/brief-2026-09-03.md",
+    );
+    expect(briefPage?.errors ?? ["missing brief page"]).toEqual([]);
     expect(brief).toContain("There is no review queue");
     expect(brief).toContain("kizuki tell");
     expect(brief).not.toContain("kizuki review");

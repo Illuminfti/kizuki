@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { createHelpers } from "../helpers";
 
 const { cleanup, isolatedEnv, runCli, tempVault } = createHelpers();
@@ -81,6 +83,54 @@ describe("doctor liveness", () => {
       "canon writing: off (no model configured — connectors, ledger, search, timeline and undo still work)",
     );
     expect(result.exitCode).toBe(0);
+  });
+
+  test("serve --once writes a doctor-valid brief and does not fail doctor for that file", () => {
+    const setup = tempVault();
+    const once = runCli(setup.env, "serve", "--once", "--no-http");
+    expect(once.exitCode).toBe(0);
+
+    const names = readdirSync(join(setup.vault, "dashboards"));
+    const briefName = names.find(
+      (name) => name.startsWith("brief-") && name.endsWith(".md"),
+    );
+    expect(briefName).toBeDefined();
+    const brief = readFileSync(join(setup.vault, "dashboards", briefName ?? ""), "utf8");
+    expect(brief.startsWith("---\n")).toBe(true);
+
+    const doctor = runCli(setup.env, "doctor", "--json");
+    expect(doctor.exitCode).toBe(0);
+    const report = JSON.parse(doctor.stdout) as {
+      ok: boolean;
+      problems: { page: string; error: string }[];
+      serve: { ok: boolean };
+    };
+    expect(report.ok).toBe(true);
+    expect(report.serve.ok).toBe(true);
+    expect(
+      report.problems.filter((problem) => problem.page.startsWith("dashboards/brief-")),
+    ).toEqual([]);
+
+    runCli({ ...setup.env, KIZUKI_SUPERVISOR: "systemd" }, "serve", "--install");
+    const masked = runCli(
+      {
+        ...setup.env,
+        KIZUKI_SUPERVISOR: "systemd",
+        KIZUKI_SUPERVISOR_FIXTURE: "masked",
+      },
+      "doctor",
+      "--json",
+    );
+    expect(masked.exitCode).toBe(1);
+    expect(masked.stdout).toContain("masked");
+    const maskedReport = JSON.parse(masked.stdout) as {
+      problems: { page: string; error: string }[];
+    };
+    expect(
+      maskedReport.problems.filter((problem) =>
+        problem.page.startsWith("dashboards/brief-"),
+      ),
+    ).toEqual([]);
   });
 
   test("init without a supervisor prints the exact serve command", () => {

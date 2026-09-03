@@ -5,6 +5,7 @@ import { createBudgetTracker } from "../canon/budget";
 import { inspectPurgeHealth, verifyPurge } from "../ledger/purge";
 import { tableExists } from "../ledger/schema";
 import { ulid } from "../util/ulid";
+import { serializePage } from "../vault/frontmatter";
 import { addDailyBudget, budgetDay, readDailyBudget } from "./budget-ledger";
 import { loadServeConfig } from "./config";
 import { createFileNotifier, briefPath } from "./notifier-file";
@@ -167,15 +168,27 @@ async function runEmbedBackfill(hooks: RailHooks | undefined): Promise<Partial<R
 }
 
 function renderBrief(now: string, extra: string[]): string {
-  return [
-    `# Brief ${dayOf(now)}`,
-    "",
-    "The loop writes canon. There is no review queue.",
-    "Correction is `kizuki tell` / MCP `correct`. Audit and undo stay in the TUI.",
-    "",
-    ...extra.map((line) => `- ${line}`),
-    "",
-  ].join("\n");
+  const day = dayOf(now);
+  return serializePage({
+    data: {
+      id: `rollup:brief-${day}`,
+      title: `Daily brief ${day}`,
+      type: "rollup",
+      status: "active",
+      sensitivity: "personal",
+      taint: "clean",
+      "x-brief-producer": "deterministic",
+    },
+    body: [
+      `# Brief ${day}`,
+      "",
+      "The loop writes canon. There is no review queue.",
+      "Correction is `kizuki tell` / MCP `correct`. Audit and undo stay in the TUI.",
+      "",
+      ...extra.map((line) => `- ${line}`),
+      "",
+    ].join("\n"),
+  });
 }
 
 async function runBrief(
