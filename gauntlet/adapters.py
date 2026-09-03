@@ -8,7 +8,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from .safe_io import SafeIOError, sha256_regular_nofollow
+from .safe_io import SafeIOError, sha256_regular_nofollow_with_identity
 
 _PROBES = {"codex": ("--version",), "claude": ("--version",), "cursor": ("--version",), "grok": ("--version",)}
 _SECRET_MARKERS = ("token", "secret", "password", "authorization", "bearer", "api_key", "apikey")
@@ -141,13 +141,18 @@ def validate_identities(adapters, receipts):
     """Hash configured executables once, outside observer request handling."""
     checked_at=time.time(); configured={adapter.name:adapter for adapter in adapters}; result={}
     for receipt in receipts:
-        name=receipt.get("name"); adapter=configured.get(name); current=False
+        name=receipt.get("name"); adapter=configured.get(name); current=False; executable=None; fingerprint=None
         if adapter is not None:
             executable=adapter._resolved()
             if executable is not None:
-                try: current=sha256_regular_nofollow(executable,1024**3)==receipt.get("executable_sha256")
+                try:
+                    digest, fingerprint = sha256_regular_nofollow_with_identity(executable,1024**3)
+                    current=digest==receipt.get("executable_sha256")
                 except SafeIOError: current=False
-        result[name]={"current":current,"checked_at":checked_at}
+        item={"current":current,"checked_at":checked_at}
+        if executable is not None and fingerprint is not None:
+            item["cache_token"]=(os.fspath(executable),fingerprint)
+        result[name]=item
     return result
 
 

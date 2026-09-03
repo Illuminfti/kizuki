@@ -95,12 +95,12 @@ It takes an exclusive flock in the state directory every time it starts, checks
 the ledger/projection and circuit breakers at a fixed monotonic interval, and
 atomically publishes a mode-0600 `loop-status.json`. Its status includes the
 campaign/task/incident counts and persisted readiness of Codex, Claude, Cursor,
-and Grok. It hashes configured harness executables at startup, after any
-receipt or executable inode/ctime change, and at least every 30 minutes. Cheap
-metadata checks run on every tick, while the cached hash evidence expires
-within the existing one-hour identity bound. It never claims controller
-authority, starts or invokes a worker, sends network traffic, calls GitHub, or
-enables a merge.
+and Grok. With the default 30-second heartbeat it hashes configured harness
+executables at startup, after any receipt or executable inode/ctime change,
+and on the first tick after each 30-minute refresh deadline. Cheap metadata
+checks run on every tick, while the cached hash evidence expires within the
+existing one-hour identity bound. It never claims controller authority, starts
+or invokes a worker, sends network traffic, calls GitHub, or enables a merge.
 
 Install it alongside the observer with:
 

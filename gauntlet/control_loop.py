@@ -17,6 +17,7 @@ from pathlib import Path
 
 from .adapters import statuses, validate_identities
 from .core import Guard, GuardError, Limits, Store
+from .safe_io import regular_identity_nofollow
 
 
 DEFAULT_INTERVAL_SECONDS = 30.0
@@ -38,19 +39,23 @@ def _identity_inputs(adapters, receipts):
         if resolved is None:
             adapter_inputs.append((adapter.name, adapter.executable, None))
             continue
-        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-        fd = os.open(os.fspath(resolved), flags)
-        try:
-            item = os.fstat(fd)
-            if not stat.S_ISREG(item.st_mode):
-                raise GuardError("adapter executable must remain a regular file")
-            fingerprint = (
-                item.st_dev, item.st_ino, item.st_mode, item.st_uid, item.st_gid,
-                item.st_nlink, item.st_size, item.st_mtime_ns, item.st_ctime_ns,
-            )
-        finally:
-            os.close(fd)
+        fingerprint = regular_identity_nofollow(resolved)
         adapter_inputs.append((adapter.name, adapter.executable, os.fspath(resolved), fingerprint))
+    receipt_inputs = tuple(sorted(
+        json.dumps(receipt, sort_keys=True, separators=(",", ":"))
+        for receipt in receipts
+    ))
+    return tuple(adapter_inputs), receipt_inputs
+
+
+def _attested_identity_inputs(adapters, receipts, identities):
+    adapter_inputs = []
+    for adapter in adapters:
+        item = identities.get(adapter.name)
+        token = item.get("cache_token") if isinstance(item, dict) else None
+        if not isinstance(token, tuple) or len(token) != 2 or not isinstance(token[0], str) or not isinstance(token[1], tuple):
+            return None
+        adapter_inputs.append((adapter.name, adapter.executable, token[0], token[1]))
     receipt_inputs = tuple(sorted(
         json.dumps(receipt, sort_keys=True, separators=(",", ":"))
         for receipt in receipts
@@ -222,12 +227,16 @@ class ControlLoop:
                 # clock afterwards so a just-created identity cannot appear
                 # to come from the future by a few microseconds.
                 now = self.clock()
-                adapter_status = statuses(self.adapters, snapshot["adapter_receipts"], now=now, identities=identities)
                 if refresh_identities:
-                    self._identity_cache = identities
-                    self._identity_cache_inputs = identity_inputs
-                    self._identity_cache_wall_at = now
-                    self._next_identity_refresh = identity_check_at + self.identity_refresh_seconds
+                    attested_inputs = _attested_identity_inputs(self.adapters, snapshot["adapter_receipts"], identities)
+                    if attested_inputs is not None:
+                        if _identity_inputs(self.adapters, snapshot["adapter_receipts"]) != attested_inputs:
+                            raise GuardError("adapter identity changed during validation")
+                        self._identity_cache = identities
+                        self._identity_cache_inputs = attested_inputs
+                        self._identity_cache_wall_at = now
+                        self._next_identity_refresh = identity_check_at + self.identity_refresh_seconds
+                adapter_status = statuses(self.adapters, snapshot["adapter_receipts"], now=now, identities=identities)
         except (GuardError, OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
             reasons.append("integrity_or_guard_failed:%s" % type(exc).__name__)
         except Exception as exc:

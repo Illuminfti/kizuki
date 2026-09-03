@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from gauntlet.adapters import Adapter
+from gauntlet.adapters import Adapter, validate_identities
 from gauntlet.control_loop import ControlLoop, LoopAlreadyRunning
 from gauntlet.core import Limits, Store
 
@@ -91,7 +91,10 @@ class ControlLoopTests(unittest.TestCase):
 
         def validator(_adapters, _receipts):
             current = next(outcomes)
-            return {adapter.name: {"current": current, "checked_at": wall[0]} for adapter in adapters}
+            result = validate_identities(_adapters, _receipts)
+            for item in result.values():
+                item.update(current=current, checked_at=wall[0])
+            return result
 
         loop = ControlLoop(
             self.tmp.name,
@@ -151,7 +154,10 @@ class ControlLoopTests(unittest.TestCase):
 
         def validator(_adapters, _receipts):
             current = next(outcomes)
-            return {adapter.name: {"current": current, "checked_at": wall[0]} for adapter in adapters}
+            result = validate_identities(_adapters, _receipts)
+            for item in result.values():
+                item.update(current=current, checked_at=wall[0])
+            return result
 
         loop = ControlLoop(
             self.tmp.name,
@@ -188,6 +194,44 @@ class ControlLoopTests(unittest.TestCase):
         self.assertEqual(result["state"], "DEGRADED")
         codex = next(item for item in result["adapters"] if item["name"] == "codex")
         self.assertFalse(codex["ready"])
+
+    def test_symlink_swap_during_hash_never_populates_ready_cache(self):
+        executable_a = Path(self.tmp.name) / "harness-a"
+        executable_b = Path(self.tmp.name) / "harness-b"
+        executable_a.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        executable_b.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        executable_a.chmod(0o700)
+        executable_b.chmod(0o700)
+        executable = Path(self.tmp.name) / "harness"
+        executable.symlink_to(executable_a)
+        expected_sha = hashlib.sha256(executable_b.read_bytes()).hexdigest()
+        adapters = tuple(Adapter(name, str(executable)) for name in ("codex", "claude", "cursor", "grok"))
+        with Store(self.tmp.name) as store:
+            store.claim_controller()
+            for adapter in adapters:
+                store.record_adapter_receipt(adapter.name, "v", "READY", "READY", "a" * 64, expected_sha, "ISOLATED_ROUTE_PROBE", 60)
+
+        def point_to(target):
+            replacement = Path(self.tmp.name) / "next-harness-link"
+            replacement.symlink_to(target)
+            os.replace(replacement, executable)
+
+        def racing_validator(_adapters, _receipts):
+            point_to(executable_b)
+            try:
+                return validate_identities(_adapters, _receipts)
+            finally:
+                point_to(executable_a)
+
+        loop = ControlLoop(
+            self.tmp.name,
+            Limits(min_free_bytes=1),
+            adapters=adapters,
+            identity_validator=racing_validator,
+        )
+        result = loop.tick()
+        self.assertEqual(result["state"], "DEGRADED")
+        self.assertTrue(all(not item["ready"] for item in result["adapters"]))
 
     def test_store_failure_replaces_stale_running_status_with_degraded(self):
         class BrokenStore:
