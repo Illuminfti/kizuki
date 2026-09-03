@@ -19,6 +19,11 @@ cannot be enabled in `config.json`, and provide no OS sandbox. Real harness
 execution remains disabled until separately reviewed scheduler, sandbox, and
 adapter wiring is merged.
 
+An [inert attempt-bound egress seam](EGRESS_PROXY.md) likewise exists only as a
+directly injected library with synthetic socket-pair tests. It has no listener,
+resolver/dialer defaults, controller import, configuration flag, or service
+wiring and therefore does not enable network access.
+
 The reviewed phase-2 contract is
 [`EXECUTION_PROTOCOL.md`](EXECUTION_PROTOCOL.md). Its presence does not enable
 execution: the deployed controller remains observer-only until the documented

@@ -7,11 +7,15 @@ proxy may accept and resolves a complete, public-only address set for pinning.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import ipaddress
+import json
 import re
 import socket
-from dataclasses import dataclass
-from typing import Callable, Iterable, Tuple
+from dataclasses import asdict, dataclass, fields, replace
+from itertools import islice
+from typing import Callable, Iterable, Mapping, Tuple
 
 
 class EgressError(RuntimeError):
@@ -19,8 +23,46 @@ class EgressError(RuntimeError):
 
 
 _PROFILE = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}\Z")
+_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
 _LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
 _HEADER = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}\Z")
+_HEX64 = re.compile(r"[0-9a-f]{64}\Z")
+_ADAPTERS = frozenset(("codex", "claude", "cursor", "grok"))
+EGRESS_POLICY_SCHEMA = "kizuki-gauntlet-egress-policy-v1"
+
+
+def _canonical(value: object) -> bytes:
+    try:
+        return json.dumps(
+            value, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+    except (TypeError, ValueError) as exc:
+        raise EgressError("egress policy is not canonicalizable") from exc
+
+
+def _key(value: bytes) -> bytes:
+    if not isinstance(value, bytes) or len(value) < 32:
+        raise EgressError("egress-policy HMAC key must be at least 32 bytes")
+    return value
+
+
+def _identifier(value: str, label: str) -> str:
+    if not isinstance(value, str) or not _ID.fullmatch(value):
+        raise EgressError(f"invalid {label}")
+    return value
+
+
+def _digest(value: str, label: str) -> str:
+    if not isinstance(value, str) or not _HEX64.fullmatch(value):
+        raise EgressError(f"invalid {label}")
+    return value
+
+
+def _positive(value: int, label: str, maximum: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= maximum:
+        raise EgressError(f"invalid {label}")
+    return value
 
 
 def _host(value: str) -> str:
@@ -45,38 +87,236 @@ def _host(value: str) -> str:
     return value
 
 
+def _network_values(
+    *, profile_id: str, hosts: Tuple[str, ...], max_connections: int,
+    max_client_bytes: int, max_upstream_bytes: int, max_total_bytes: int,
+    resolver_timeout_seconds: int, idle_seconds: int, wall_seconds: int,
+    max_connect_bytes: int, max_client_hello_bytes: int,
+) -> dict:
+    if not isinstance(profile_id, str) or not _PROFILE.fullmatch(profile_id):
+        raise EgressError("invalid profile id")
+    if not isinstance(hosts, tuple) or not 1 <= len(hosts) <= 64:
+        raise EgressError("one to 64 exact hosts required")
+    normalized = tuple(_host(host) for host in hosts)
+    if normalized != tuple(sorted(set(normalized))):
+        raise EgressError("hosts must be normalized, sorted, and unique")
+    _positive(max_connections, "connection limit", 64)
+    _positive(max_client_bytes, "client byte limit", 1_000_000_000)
+    _positive(max_upstream_bytes, "upstream byte limit", 1_000_000_000)
+    _positive(max_total_bytes, "total byte limit", 2_000_000_000)
+    _positive(resolver_timeout_seconds, "resolver timeout", 30)
+    _positive(idle_seconds, "idle timeout", 300)
+    _positive(wall_seconds, "wall timeout", 3600)
+    _positive(max_connect_bytes, "CONNECT byte limit", 65_536)
+    _positive(max_client_hello_bytes, "ClientHello byte limit", 262_144)
+    if resolver_timeout_seconds > wall_seconds or idle_seconds > wall_seconds:
+        raise EgressError("phase timeout exceeds wall limit")
+    return {
+        "profile_id": profile_id,
+        "hosts": normalized,
+        "max_connections": max_connections,
+        "max_client_bytes": max_client_bytes,
+        "max_upstream_bytes": max_upstream_bytes,
+        "max_total_bytes": max_total_bytes,
+        "resolver_timeout_seconds": resolver_timeout_seconds,
+        "idle_seconds": idle_seconds,
+        "wall_seconds": wall_seconds,
+        "max_connect_bytes": max_connect_bytes,
+        "max_client_hello_bytes": max_client_hello_bytes,
+    }
+
+
+def network_profile_sha256(**values) -> str:
+    """Digest the complete network authority surface, not an arbitrary label."""
+    material = _network_values(**values)
+    return hashlib.sha256(
+        b"kizuki-egress-network-profile-v1\0" + _canonical(material)
+    ).hexdigest()
+
+
+@dataclass(frozen=True)
+class EgressAttemptBinding:
+    campaign_id: str
+    task_id: str
+    attempt: int
+    controller_epoch: int
+    adapter: str
+    principal_id: str
+    authority_domain: str
+    identity_generation: int
+    network_profile_sha256: str
+
+    def __post_init__(self) -> None:
+        for value, label in (
+            (self.campaign_id, "campaign id"),
+            (self.task_id, "task id"),
+            (self.principal_id, "principal id"),
+            (self.authority_domain, "authority domain"),
+        ):
+            _identifier(value, label)
+        _positive(self.attempt, "attempt", 2**63 - 1)
+        _positive(self.controller_epoch, "controller epoch", 2**63 - 1)
+        _positive(self.identity_generation, "identity generation", 2**63 - 1)
+        if self.adapter not in _ADAPTERS:
+            raise EgressError("invalid adapter")
+        _digest(self.network_profile_sha256, "network-profile digest")
+
+
 @dataclass(frozen=True)
 class EgressPolicy:
+    schema: str
+    issuer_key_id: str
+    campaign_id: str
+    task_id: str
+    attempt: int
+    controller_epoch: int
+    adapter: str
+    principal_id: str
+    authority_domain: str
+    identity_generation: int
     profile_id: str
     hosts: Tuple[str, ...]
     max_connections: int
-    max_bytes: int
+    max_client_bytes: int
+    max_upstream_bytes: int
+    max_total_bytes: int
+    resolver_timeout_seconds: int
     idle_seconds: int
     wall_seconds: int
+    max_connect_bytes: int
+    max_client_hello_bytes: int
+    network_profile_sha256: str
+    issued_at: int
+    expires_at: int
+    nonce: str
+    policy_sha256: str
+    signature_sha256: str
 
     def __post_init__(self) -> None:
-        if not isinstance(self.profile_id, str) or not _PROFILE.fullmatch(self.profile_id):
-            raise EgressError("invalid profile id")
-        if not isinstance(self.hosts, tuple) or not 1 <= len(self.hosts) <= 64:
-            raise EgressError("one to 64 exact hosts required")
-        normalized = tuple(_host(host) for host in self.hosts)
-        if len(set(normalized)) != len(normalized):
-            raise EgressError("duplicate host")
-        object.__setattr__(self, "hosts", normalized)
-        limits = (self.max_connections, self.max_bytes, self.idle_seconds, self.wall_seconds)
-        if any(isinstance(value, bool) or not isinstance(value, int) or value < 1 for value in limits):
-            raise EgressError("positive integer limits required")
-        if self.max_connections > 64 or self.max_bytes > 1_000_000_000:
-            raise EgressError("egress limits too broad")
-        if self.idle_seconds > 300 or self.wall_seconds > 3600:
-            raise EgressError("time limits too broad")
+        if self.schema != EGRESS_POLICY_SCHEMA:
+            raise EgressError("unknown egress-policy schema")
+        for value, label in (
+            (self.issuer_key_id, "issuer key id"),
+            (self.campaign_id, "campaign id"),
+            (self.task_id, "task id"),
+            (self.principal_id, "principal id"),
+            (self.authority_domain, "authority domain"),
+        ):
+            _identifier(value, label)
+        _positive(self.attempt, "attempt", 2**63 - 1)
+        _positive(self.controller_epoch, "controller epoch", 2**63 - 1)
+        _positive(self.identity_generation, "identity generation", 2**63 - 1)
+        if self.adapter not in _ADAPTERS:
+            raise EgressError("invalid adapter")
+        network = _network_values(
+            profile_id=self.profile_id, hosts=self.hosts,
+            max_connections=self.max_connections,
+            max_client_bytes=self.max_client_bytes,
+            max_upstream_bytes=self.max_upstream_bytes,
+            max_total_bytes=self.max_total_bytes,
+            resolver_timeout_seconds=self.resolver_timeout_seconds,
+            idle_seconds=self.idle_seconds, wall_seconds=self.wall_seconds,
+            max_connect_bytes=self.max_connect_bytes,
+            max_client_hello_bytes=self.max_client_hello_bytes,
+        )
+        object.__setattr__(self, "hosts", network["hosts"])
+        expected_profile = network_profile_sha256(**network)
+        if self.network_profile_sha256 != expected_profile:
+            raise EgressError("network-profile digest mismatch")
+        if (
+            isinstance(self.issued_at, bool)
+            or isinstance(self.expires_at, bool)
+            or not isinstance(self.issued_at, int)
+            or not isinstance(self.expires_at, int)
+            or self.issued_at < 0
+            or not self.issued_at < self.expires_at <= self.issued_at + 7200
+        ):
+            raise EgressError("invalid egress-policy lifetime")
+        _digest(self.nonce, "policy nonce")
+        _digest(self.policy_sha256, "policy digest")
+        _digest(self.signature_sha256, "policy signature")
 
-    def permits(self, host: str) -> bool:
+    def permits(self, host: str, port: int = 443) -> bool:
+        if port != 443:
+            return False
         try:
             normalized = _host(host)
         except EgressError:
             return False
         return normalized in self.hosts
+
+
+_UNSIGNED_POLICY_FIELDS = tuple(
+    item.name for item in fields(EgressPolicy)
+    if item.name not in {"policy_sha256", "signature_sha256"}
+)
+
+
+def _unsigned_policy(policy: EgressPolicy) -> dict:
+    material = asdict(policy)
+    return {name: material[name] for name in _UNSIGNED_POLICY_FIELDS}
+
+
+def sign_egress_policy(*, signing_key: bytes, **values) -> EgressPolicy:
+    key = _key(signing_key)
+    if set(values) != set(_UNSIGNED_POLICY_FIELDS):
+        raise EgressError("egress-policy fields are not exactly allowlisted")
+    provisional = EgressPolicy(
+        **values, policy_sha256="0" * 64, signature_sha256="0" * 64,
+    )
+    digest = hashlib.sha256(_canonical(_unsigned_policy(provisional))).hexdigest()
+    with_digest = replace(provisional, policy_sha256=digest)
+    signature = hmac.new(
+        key,
+        b"kizuki-egress-policy-v1\0" + _canonical({
+            **_unsigned_policy(with_digest), "policy_sha256": digest,
+        }),
+        hashlib.sha256,
+    ).hexdigest()
+    return replace(with_digest, signature_sha256=signature)
+
+
+def verify_egress_policy(
+    policy: EgressPolicy,
+    verification_keys: Mapping[str, bytes],
+    binding: EgressAttemptBinding,
+    *,
+    now: int,
+) -> EgressPolicy:
+    if not isinstance(policy, EgressPolicy) or not isinstance(binding, EgressAttemptBinding):
+        raise EgressError("egress policy and attempt binding required")
+    if isinstance(now, bool) or not isinstance(now, int) or not policy.issued_at <= now < policy.expires_at:
+        raise EgressError("egress policy is not current")
+    if not isinstance(verification_keys, Mapping) or set(verification_keys) != {policy.issuer_key_id}:
+        raise EgressError("exactly one pinned egress-policy key is required")
+    key = _key(verification_keys[policy.issuer_key_id])
+    digest = hashlib.sha256(_canonical(_unsigned_policy(policy))).hexdigest()
+    if not hmac.compare_digest(policy.policy_sha256, digest):
+        raise EgressError("egress-policy digest mismatch")
+    signature = hmac.new(
+        key,
+        b"kizuki-egress-policy-v1\0" + _canonical({
+            **_unsigned_policy(policy), "policy_sha256": policy.policy_sha256,
+        }),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(policy.signature_sha256, signature):
+        raise EgressError("egress-policy authentication failed")
+    expected = (
+        policy.campaign_id, policy.task_id, policy.attempt,
+        policy.controller_epoch, policy.adapter, policy.principal_id,
+        policy.authority_domain, policy.identity_generation,
+        policy.network_profile_sha256,
+    )
+    actual = (
+        binding.campaign_id, binding.task_id, binding.attempt,
+        binding.controller_epoch, binding.adapter, binding.principal_id,
+        binding.authority_domain, binding.identity_generation,
+        binding.network_profile_sha256,
+    )
+    if actual != expected:
+        raise EgressError("egress policy does not match attempt identity")
+    return policy
 
 
 @dataclass(frozen=True)
@@ -127,7 +367,9 @@ def parse_connect_request(data: bytes, limit: int = 8192) -> ConnectRequest:
             raise EgressError("credentials are forbidden in proxy headers")
         if lowered == "host":
             header_host = value.lower()
-    if header_host is not None and header_host != f"{host}:443":
+    if header_host is None:
+        raise EgressError("Host header is required")
+    if header_host != f"{host}:443":
         raise EgressError("Host header does not match CONNECT target")
     return ConnectRequest(host=host, port=443)
 
@@ -138,7 +380,7 @@ Address = Tuple[int, int, int, str, tuple]
 def resolve_public_addresses(
     host: str,
     *,
-    resolver: Callable[..., Iterable[Address]] = socket.getaddrinfo,
+    resolver: Callable[..., Iterable[Address]],
 ) -> Tuple[Address, ...]:
     """Resolve once and return a deduplicated all-global address set to pin.
 
@@ -147,8 +389,16 @@ def resolve_public_addresses(
     """
     normalized = _host(host)
     try:
-        raw = list(resolver(normalized, 443, 0, socket.SOCK_STREAM, socket.IPPROTO_TCP))
-    except (OSError, socket.gaierror) as exc:
+        iterator = iter(resolver(
+            normalized, 443, 0, socket.SOCK_STREAM, socket.IPPROTO_TCP,
+        ))
+        try:
+            raw = list(islice(iterator, 33))
+        finally:
+            close = getattr(iterator, "close", None)
+            if callable(close):
+                close()
+    except (OSError, TypeError, ValueError) as exc:
         raise EgressError("resolution failed") from exc
     if not raw or len(raw) > 32:
         raise EgressError("empty or excessive resolution result")
@@ -158,14 +408,38 @@ def resolve_public_addresses(
         if not isinstance(entry, tuple) or len(entry) != 5:
             raise EgressError("malformed resolution result")
         family, socktype, protocol, canonname, sockaddr = entry
-        if family not in (socket.AF_INET, socket.AF_INET6) or socktype != socket.SOCK_STREAM:
+        if (
+            family not in (socket.AF_INET, socket.AF_INET6)
+            or socktype != socket.SOCK_STREAM
+            or protocol != socket.IPPROTO_TCP
+            or not isinstance(canonname, str)
+        ):
             raise EgressError("unsupported resolution result")
-        if not isinstance(sockaddr, tuple) or len(sockaddr) < 2 or sockaddr[1] != 443:
+        expected_length = 2 if family == socket.AF_INET else 4
+        if (
+            not isinstance(sockaddr, tuple)
+            or len(sockaddr) != expected_length
+            or not isinstance(sockaddr[0], str)
+            or "%" in sockaddr[0]
+            or isinstance(sockaddr[1], bool)
+            or sockaddr[1] != 443
+        ):
             raise EgressError("resolved destination port mismatch")
+        if family == socket.AF_INET6 and (
+            isinstance(sockaddr[2], bool)
+            or isinstance(sockaddr[3], bool)
+            or sockaddr[2:] != (0, 0)
+        ):
+            raise EgressError("resolved IPv6 metadata is forbidden")
         try:
             address = ipaddress.ip_address(sockaddr[0])
         except ValueError as exc:
             raise EgressError("invalid resolved address") from exc
+        if (
+            (family == socket.AF_INET and address.version != 4)
+            or (family == socket.AF_INET6 and address.version != 6)
+        ):
+            raise EgressError("resolved address family mismatch")
         if (
             not address.is_global
             or address.is_private
@@ -180,7 +454,12 @@ def resolve_public_addresses(
         if key in seen:
             continue
         seen.add(key)
-        result.append((family, socktype, protocol, canonname, sockaddr))
+        canonical_sockaddr = (
+            (address.compressed, 443)
+            if family == socket.AF_INET
+            else (address.compressed, 443, 0, 0)
+        )
+        result.append((family, socktype, protocol, "", canonical_sockaddr))
     if not result:
         raise EgressError("no public destination")
     return tuple(result)
