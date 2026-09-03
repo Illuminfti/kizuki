@@ -11,6 +11,7 @@ from gauntlet.identity import (
     IdentityError,
     IdentityManifest,
     IdentityReceipt,
+    authenticate_authority_binding,
     validated_authority_binding,
     materialize_attempt_home,
     receipt_is_current,
@@ -136,6 +137,7 @@ class IdentityIsolationTests(unittest.TestCase):
         self.assertLessEqual(binding.expires_at - binding.checked_at, 600)
         used = set()
         verify_authority_binding(binding, manifest, receipt, 16, key, operation, used)
+        self.assertEqual(used, {binding.binding_id})
         with self.assertRaises(IdentityError):
             verify_authority_binding(binding, manifest, receipt, 16, key, operation, used)
         with self.assertRaises(IdentityError):
@@ -149,6 +151,51 @@ class IdentityIsolationTests(unittest.TestCase):
             verify_authority_binding(tampered, manifest, receipt, 16, key, operation, set())
         with self.assertRaises(IdentityError):
             validated_authority_binding(manifest, receipt, 15, b"too-short", operation)
+
+    def test_authority_binding_authentication_is_pure_and_repeatable(self):
+        manifest = self.manifest()
+        receipt = IdentityReceipt(manifest.principal_id, manifest.authority_domain,
+                                  manifest.adapter, manifest.generation,
+                                  manifest.account_binding_sha256,
+                                  manifest.executable_sha256,
+                                  manifest.network_profile_sha256,
+                                  10, 900, "READY", "READY")
+        key, operation = b"k" * 32, "e" * 64
+        binding = validated_authority_binding(manifest, receipt, 15, key, operation)
+
+        self.assertIs(
+            authenticate_authority_binding(binding, manifest, receipt, 16, key, operation),
+            binding,
+        )
+        self.assertIs(
+            authenticate_authority_binding(binding, manifest, receipt, 16, key, operation),
+            binding,
+        )
+
+    def test_pure_authority_authentication_rejects_context_and_identity_drift(self):
+        manifest = self.manifest()
+        receipt = IdentityReceipt(manifest.principal_id, manifest.authority_domain,
+                                  manifest.adapter, manifest.generation,
+                                  manifest.account_binding_sha256,
+                                  manifest.executable_sha256,
+                                  manifest.network_profile_sha256,
+                                  10, 900, "READY", "READY")
+        key, operation = b"k" * 32, "e" * 64
+        binding = validated_authority_binding(manifest, receipt, 15, key, operation)
+
+        cases = (
+            (replace(binding, signature_sha256="0" * 64), manifest, receipt, 16, operation),
+            (binding, manifest, receipt, binding.expires_at, operation),
+            (binding, manifest, receipt, 16, "f" * 64),
+            (binding, replace(manifest, network_profile_sha256="d" * 64), receipt, 16, operation),
+            (binding, manifest, replace(receipt, executable_sha256="d" * 64), 16, operation),
+        )
+        for candidate, candidate_manifest, candidate_receipt, now, candidate_operation in cases:
+            with self.subTest(now=now, operation=candidate_operation), self.assertRaises(IdentityError):
+                authenticate_authority_binding(
+                    candidate, candidate_manifest, candidate_receipt, now, key,
+                    candidate_operation,
+                )
 
     def test_refuses_destination_nested_in_generation_or_containing_generation(self):
         with self.assertRaises(IdentityError):
