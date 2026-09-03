@@ -55,7 +55,8 @@ def main(argv=None):
   if a.cmd=="loop":
    # Do not even open the controller Store here: the loop owns its own
    # read-only Store lifecycle and never claims controller authority.
-   result=ControlLoop(cfg["state_dir"],Limits(**cfg["limits"]), cfg["loop"]["interval_seconds"]).run()
+   loop_adapters=defaults(cfg["adapters"])
+   result=ControlLoop(cfg["state_dir"],Limits(**cfg["limits"]), cfg["loop"]["interval_seconds"], adapters=loop_adapters).run()
    print(json.dumps({"ok":True,"state":result["state"],"execution_enabled":False,"merge_enabled":False}))
    return 0
   st=Store(cfg["state_dir"]); limits=Limits(**cfg["limits"]); adapters=defaults(cfg["adapters"])

@@ -1,8 +1,9 @@
 """Persistent, execution-disabled Gauntlet control-loop heartbeat.
 
 This module is deliberately a *reader* of controller state.  It does not claim
-the controller epoch, launch a worker, resolve an adapter executable, invoke an
-external command, or contact a network service.  Its only mutations are the private,
+the controller epoch, launch a worker, invoke an adapter, or contact a network
+service.  It verifies configured executable identity by hashing the regular
+file named in each adapter receipt.  Its only mutations are the private,
 atomically-replaced loop status file and the advisory loop-owner lock.
 """
 import fcntl
@@ -14,7 +15,7 @@ import time
 import uuid
 from pathlib import Path
 
-from .adapters import statuses
+from .adapters import statuses, validate_identities
 from .core import Guard, GuardError, Limits, Store
 
 
@@ -36,7 +37,8 @@ class ControlLoop:
 
     def __init__(self, state_dir, limits=None, interval_seconds=DEFAULT_INTERVAL_SECONDS,
                  store_factory=Store, clock=time.time, monotonic=time.monotonic,
-                 sleeper=time.sleep, session_id=None):
+                 sleeper=time.sleep, session_id=None, adapters=(),
+                 identity_validator=validate_identities):
         if not isinstance(interval_seconds, (int, float)) or isinstance(interval_seconds, bool) or not 1 <= interval_seconds <= 3600:
             raise ValueError("loop interval must be 1..3600 seconds")
         self.root = Path(state_dir)
@@ -46,6 +48,8 @@ class ControlLoop:
         self.clock = clock
         self.monotonic = monotonic
         self.sleeper = sleeper
+        self.adapters = tuple(adapters)
+        self.identity_validator = identity_validator
         self.session_id = session_id or str(uuid.uuid4())
         self.started_at = self.clock()
         self._lock_fd = None
@@ -146,17 +150,27 @@ class ControlLoop:
         now = self.clock()
         reasons = []
         summary = {"campaigns": {"count": 0, "states": {}}, "tasks": {"count": 0, "states": {}}, "incidents": {"count": 0, "kinds": {}}}
-        adapter_status = statuses((), ())
+        adapter_status = statuses(self.adapters, ())
         try:
             with self.store_factory(str(self.root)) as store:
                 store.verify_integrity()
                 Guard(self.limits).check(store)
                 snapshot = store.snapshot()
                 summary = self._summary(snapshot)
-                # This projection consumes only persisted receipts.  In
-                # particular it never hashes or probes a harness executable.
-                adapter_status = statuses((), snapshot["adapter_receipts"], now=now, identities={})
-        except (GuardError, OSError, ValueError, TypeError) as exc:
+                # Identity validation hashes the configured regular files; it
+                # never invokes a harness or inherits its environment.
+                identities = self.identity_validator(self.adapters, snapshot["adapter_receipts"])
+                # The validator timestamps its result. Sample the projection
+                # clock afterwards so a just-created identity cannot appear
+                # to come from the future by a few microseconds.
+                now = self.clock()
+                adapter_status = statuses(self.adapters, snapshot["adapter_receipts"], now=now, identities=identities)
+        except (GuardError, OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+            reasons.append("integrity_or_guard_failed:%s" % type(exc).__name__)
+        except Exception as exc:
+            # Database drivers and injected stores may expose implementation-
+            # specific exception classes.  Publish a fail-closed receipt so a
+            # prior RUNNING file cannot survive a failed tick.
             reasons.append("integrity_or_guard_failed:%s" % type(exc).__name__)
         if any(not item["ready"] for item in adapter_status):
             reasons.append("adapter_readiness_incomplete")

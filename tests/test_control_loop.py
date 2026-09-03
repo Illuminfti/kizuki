@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import stat
@@ -5,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from gauntlet.adapters import Adapter
 from gauntlet.control_loop import ControlLoop, LoopAlreadyRunning
 from gauntlet.core import Limits, Store
 
@@ -56,6 +58,33 @@ class ControlLoopTests(unittest.TestCase):
         self.assertFalse(claude["ready"])
         self.assertEqual(result["state"], "DEGRADED")
         self.assertFalse(result["execution_enabled"])
+
+    def test_four_fresh_receipts_with_current_identities_are_running(self):
+        executable = Path(self.tmp.name) / "harness"
+        executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        executable.chmod(0o700)
+        executable_sha = hashlib.sha256(executable.read_bytes()).hexdigest()
+        adapters = tuple(Adapter(name, str(executable)) for name in ("codex", "claude", "cursor", "grok"))
+        with Store(self.tmp.name) as store:
+            store.claim_controller()
+            for adapter in adapters:
+                store.record_adapter_receipt(adapter.name, "v", "READY", "READY", "a" * 64, executable_sha, "ISOLATED_ROUTE_PROBE", 60)
+        result = ControlLoop(self.tmp.name, Limits(min_free_bytes=1), adapters=adapters).tick()
+        self.assertEqual(result["state"], "RUNNING")
+        self.assertTrue(all(item["ready"] for item in result["adapters"]))
+        self.assertFalse(result["execution_enabled"])
+
+    def test_store_failure_replaces_stale_running_status_with_degraded(self):
+        class BrokenStore:
+            def __init__(self, _):
+                raise RuntimeError("database unavailable")
+
+        path = Path(self.tmp.name) / "loop-status.json"
+        path.write_text('{"state":"RUNNING"}\n', encoding="utf-8")
+        result = ControlLoop(self.tmp.name, Limits(min_free_bytes=1), store_factory=BrokenStore).tick()
+        self.assertEqual(result["state"], "DEGRADED")
+        self.assertIn("integrity_or_guard_failed:RuntimeError", result["reasons"])
+        self.assertEqual(self.status(), result)
 
     def test_clean_stop_then_restart_reuses_lock_and_replaces_status(self):
         first = ControlLoop(self.tmp.name, Limits(min_free_bytes=1), session_id="first")

@@ -136,7 +136,8 @@ python3 -m json.tool /home/ubuntu/.local/state/kizuki-gauntlet/loop-status.json
 The file must be mode `0600`, carry schema
 `kizuki-gauntlet-loop-status-v1`, a current PID/session/iteration/timestamp,
 and `execution_enabled: false` plus `merge_enabled: false`. `RUNNING` verifies
-the current ledger/projection and circuit breakers. `DEGRADED` is a receipt of a
+the current ledger/projection, circuit breakers, fresh readiness receipts, and
+the configured executable hashes without invoking a harness. `DEGRADED` is a receipt of a
 failed check or incomplete adapter readiness, not permission to repair or run
 work. The unit uses an exclusive state-directory flock, so a duplicate unit
 fails closed rather than creating a second scheduler. For a clean maintenance
