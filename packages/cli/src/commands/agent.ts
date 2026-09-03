@@ -1,6 +1,7 @@
 import {
   OWNER_AGENT_GRANT,
   addAgent,
+  getAgent,
   initAgents,
   listAgents,
   revokeAgent,
@@ -110,6 +111,14 @@ export const agentCommand: Command = {
 
       return withVault(io, async (ctx) => {
         initAgents(ctx.db);
+        const agent = getAgent(ctx.db, name);
+        if (agent === null) throw new Error(`agent ${name} does not exist`);
+        // core's revokeAgent coalesces the timestamp, so a second call would
+        // otherwise silently exit 0; the CLI refuses instead of restating a
+        // revocation that already happened.
+        if (agent.revoked_at !== null) {
+          throw new Error(`agent ${name} is already revoked`);
+        }
         revokeAgent(ctx.db, name);
         io.out(`revoked ${name}`);
         return 0;

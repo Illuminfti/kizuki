@@ -133,6 +133,20 @@ describe("kizuki agent add / list / revoke / rotate", () => {
     expect(rotated.stderr).toContain("does not exist");
   });
 
+  test("revoking an already-revoked agent refuses instead of restating success", () => {
+    const setup = tempVault();
+    expect(runCli(setup.env, "agent", "add", "ada").exitCode).toBe(0);
+
+    const first = runCli(setup.env, "agent", "revoke", "ada");
+    expect(first.exitCode).toBe(0);
+    expect(first.stdout).toContain("revoked ada");
+
+    const second = runCli(setup.env, "agent", "revoke", "ada");
+    expect(second.exitCode).not.toBe(0);
+    expect(second.stderr).toContain("already revoked");
+    expect(second.stdout).toBe("");
+  });
+
   test("agent add without a name is a usage error", () => {
     const setup = tempVault();
     const result = runCli(setup.env, "agent", "add");
