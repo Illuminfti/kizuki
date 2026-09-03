@@ -43,6 +43,7 @@ export function createHelpers(): CliHelpers {
       HOME: join(root, "home"),
       XDG_CONFIG_HOME: join(root, "xdg"),
       KIZUKI_CONFIG: join(root, "config.toml"),
+      KIZUKI_SUPERVISOR: "none",
       ...overrides,
     };
   };
@@ -108,7 +109,7 @@ export function createHelpers(): CliHelpers {
       KIZUKI_CONFIG: join(root, "config.toml"),
     });
     writeNotes(notes);
-    const init = runCli(env, "init", vault);
+    const init = runCli(env, "init", vault, "--no-service");
     if (init.exitCode !== 0) {
       throw new Error(`tempVault init failed: ${init.stderr}`);
     }

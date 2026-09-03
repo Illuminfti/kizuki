@@ -61,8 +61,10 @@ export {
   markClaimReverted,
   markClaimsAfterPurge,
   markClaimsPurged,
+  pendingRetrievalOps,
   reinstateClaim,
   resupersedeClaim,
+  retryRetrievalOps,
   supersedeLiveGroup,
   supersessionsForReceipt,
 } from "./store";

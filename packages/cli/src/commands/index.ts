@@ -11,6 +11,7 @@ import { purgeCommand } from "./purge";
 import { queryCommand } from "./query";
 import { rejectCommand } from "./reject";
 import { reviewCommand } from "./review";
+import { serveCommand } from "./serve";
 import { syncCommand } from "./sync";
 import { tellCommand } from "./tell";
 import { undoCommand } from "./undo";
@@ -47,6 +48,7 @@ export const COMMANDS: readonly Command[] = [
   rejectCommand,
   queryCommand,
   doctorCommand,
+  serveCommand,
   purgeCommand,
   exportCommand,
   versionCommand,

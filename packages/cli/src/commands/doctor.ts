@@ -3,11 +3,14 @@ import { join } from "node:path";
 import {
   PURGE_SLA_SECONDS,
   count,
+  detectSupervisorKind,
   doctorVault,
   getCanonReceipt,
   getCheckpoint,
   inspectPurgeHealth,
+  inspectServeDoctor,
   readHolds,
+  realSupervisorHost,
 } from "@kizuki/core";
 import {
   listProposals,
@@ -49,6 +52,7 @@ interface DoctorReport {
   holds: { page_path: string; proposal_id: string }[];
   retractions: { proposal_id: string; page: string }[];
   problems: { page: string; error: string }[];
+  serve: ReturnType<typeof inspectServeDoctor>;
   ok: boolean;
 }
 
@@ -61,7 +65,7 @@ export const doctorCommand: Command = {
     if (parsed.positionals.length !== 0) throw new UsageError(this.usage);
 
     return withVault(io, async (ctx) => {
-      const report = await collect(ctx.configPath, ctx.vaultPath, ctx);
+      const report = await collect(ctx.configPath, ctx.vaultPath, ctx, io.env);
       if (parsed.flags.has("--json")) {
         io.out(jsonLine(report));
         return report.ok ? 0 : 1;
@@ -76,6 +80,7 @@ async function collect(
   config: string,
   vaultPath: string,
   ctx: VaultContext,
+  env: Record<string, string | undefined>,
 ): Promise<DoctorReport> {
   const proposals = {
     pending: listProposals(ctx.db, { status: "pending", limit: 100000 }).length,
@@ -183,11 +188,19 @@ async function collect(
   }
 
   const unhealthy = connections.some((item) => item.health !== "ok");
+  const kind = detectSupervisorKind(env);
+  const host = realSupervisorHost(
+    kind,
+    env.HOME ?? env.XDG_CONFIG_HOME ?? "",
+    `kizuki serve --vault ${vaultPath}`,
+  );
+  const serve = inspectServeDoctor(ctx.db, vaultPath, { supervisor: host });
   const ok =
     vault.counts.invalid === 0 &&
     orphans.length === 0 &&
     !unhealthy &&
-    purge.ok;
+    purge.ok &&
+    serve.ok;
 
   return {
     config,
@@ -200,6 +213,7 @@ async function collect(
     holds,
     retractions,
     problems,
+    serve,
     ok,
   };
 }
@@ -227,5 +241,14 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   }
   for (const problem of report.problems) {
     io.out(`problem ${problem.page}: ${problem.error}`);
+  }
+  io.out(report.serve.supervisor.detail);
+  io.out(report.serve.model.detail);
+  for (const rail of report.serve.rails) {
+    const extra = rail.reason === null ? "" : ` ${rail.reason}`;
+    io.out(`rail ${rail.rail} status=${rail.status}${extra}`);
+  }
+  for (const failure of report.serve.failures) {
+    io.out(`serve-failure ${failure}`);
   }
 }
