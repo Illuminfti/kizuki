@@ -9,6 +9,7 @@ const DIRECTORIES = [
   "dashboards",
   "archive",
   ".kizuki",
+  join(".kizuki", "retrieval", "kizuki.retrieval.fts5"),
 ] as const;
 
 const CANON_DOCTRINE = `# Canon

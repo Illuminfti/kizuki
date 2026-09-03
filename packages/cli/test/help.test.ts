@@ -17,6 +17,7 @@ const IMPLEMENTED_NON_GATE_VERBS = [
   "undo",
   "query",
   "doctor",
+  "serve",
   "purge",
   "export",
   "version",
