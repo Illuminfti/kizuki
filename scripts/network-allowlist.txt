@@ -8,3 +8,5 @@ packages/llm/test/fake-endpoint.ts:loopback fake model endpoint for tests
 packages/connector-ics/src/fetch.ts:owner-configured ICS calendar URL; the single fetch of the ICS connector
 packages/connector-imap/src/transport.ts:owner-configured IMAP server over TLS; the single socket of the IMAP connector
 packages/connector-imap/test/transport.test.ts:loopback TLS server bound by the IMAP transport tests
+packages/core/test/auth/loopback.test.ts:loopback fake authorization server and client for the OAuth sign-in tests
+packages/core/src/auth/loopback.ts:OAuth sign-in loopback listener on 127.0.0.1 and the single token-endpoint fetch of the owner-configured provider

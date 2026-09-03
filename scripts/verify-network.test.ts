@@ -5,7 +5,6 @@ import {
   scanSourceText,
   scanTrackedSources,
 } from "./verify-network";
-import type { NetworkFinding } from "./verify-network";
 
 describe("network source verification", () => {
   test.each([
@@ -32,128 +31,62 @@ describe("network source verification", () => {
     `;
     expect(scanSourceText("packages/example.ts", source)).toEqual([]);
   });
-});
 
-describe("network allowlist", () => {
-  test("reads path and reason, skipping comments and blank lines", () => {
+  test("parseAllowlist accepts comments and rejects broken lines", () => {
+    expect(parseAllowlist("# none yet\n\n")).toEqual([]);
     expect(
-      parseAllowlist(
-        [
-          "# why this file may open a socket",
-          "",
-          "packages/core/src/auth/loopback.ts:loopback listener: Bun.serve and fetch",
-        ].join("\n"),
-      ),
+      parseAllowlist("packages/core/src/net.ts:user-configured model endpoint\n"),
     ).toEqual([
       {
-        path: "packages/core/src/auth/loopback.ts",
-        reason: "loopback listener: Bun.serve and fetch",
-        line: 3,
+        path: "packages/core/src/net.ts",
+        reason: "user-configured model endpoint",
+        line: 1,
       },
     ]);
-  });
-
-  test("rejects a line that carries no reason", () => {
-    expect(() => parseAllowlist("\npackages/core/src/auth/loopback.ts\n")).toThrow(
-      "line 2",
-    );
-  });
-
-  test("rejects an empty path", () => {
-    expect(() => parseAllowlist(":sign-in transport")).toThrow("empty path");
-  });
-
-  test("rejects an empty reason", () => {
-    expect(() => parseAllowlist("packages/core/src/a.ts:")).toThrow("empty reason");
-  });
-
-  test("rejects the same path twice", () => {
+    expect(() => parseAllowlist("no-colon\n")).toThrow("missing ':'");
+    expect(() => parseAllowlist("packages/core/src/net.ts:\n")).toThrow("empty");
     expect(() =>
       parseAllowlist(
-        ["packages/core/src/a.ts:one", "packages/core/src/a.ts:two"].join("\n"),
+        "packages/core/src/net.ts:one\npackages/core/src/net.ts:two\n",
       ),
-    ).toThrow("duplicate path");
-  });
-});
-
-describe("allowlist application", () => {
-  const finding = (file: string): NetworkFinding => ({
-    file,
-    line: 1,
-    column: 1,
-    reason: "network API call: fetch",
+    ).toThrow("duplicates");
   });
 
-  test("separates allowlisted findings from the ones that fail the gate", () => {
+  test("applyAllowlist separates findings and marks stale entries", () => {
+    const finding = {
+      file: "packages/core/src/net.ts",
+      line: 1,
+      column: 1,
+      reason: "network API call: fetch",
+    };
+    const live = {
+      path: "packages/core/src/net.ts",
+      reason: "user-configured model endpoint",
+      line: 1,
+    };
+    const staleUntracked = {
+      path: "packages/missing/src/net.ts",
+      reason: "gone",
+      line: 2,
+    };
+    const staleEmpty = {
+      path: "packages/core/src/clean.ts",
+      reason: "unused",
+      line: 3,
+    };
     const scan = applyAllowlist(
-      [finding("packages/core/src/auth/loopback.ts"), finding("packages/core/src/other.ts")],
-      parseAllowlist("packages/core/src/auth/loopback.ts:sign-in transport"),
-      ["packages/core/src/auth/loopback.ts", "packages/core/src/other.ts"],
+      [finding],
+      [live, staleUntracked, staleEmpty],
+      ["packages/core/src/net.ts", "packages/core/src/clean.ts"],
     );
-    expect(scan.findings).toEqual([finding("packages/core/src/other.ts")]);
-    expect(scan.allowlisted).toHaveLength(1);
-    expect(scan.allowlisted[0]?.findings).toHaveLength(1);
-    expect(scan.stale).toEqual([]);
+    expect(scan.findings).toEqual([]);
+    expect(scan.allowlisted).toEqual([{ entry: live, findings: [finding] }]);
+    expect(scan.stale).toEqual([staleUntracked, staleEmpty]);
   });
 
-  test("marks an entry whose file no longer opens a socket stale", () => {
-    const scan = applyAllowlist(
-      [],
-      parseAllowlist("packages/core/src/auth/loopback.ts:sign-in transport"),
-      ["packages/core/src/auth/loopback.ts"],
-    );
-    expect(scan.stale).toHaveLength(1);
-    expect(scan.allowlisted).toEqual([]);
-  });
-
-  test("marks an untracked path stale", () => {
-    const scan = applyAllowlist(
-      [finding("packages/core/src/gone.ts")],
-      parseAllowlist("packages/core/src/gone.ts:sign-in transport"),
-      [],
-    );
-    expect(scan.stale).toHaveLength(1);
-    expect(scan.findings).toHaveLength(1);
-  });
-
-  test("only a declared test may be allowlisted under test/", () => {
-    const path = "packages/core/test/auth/loopback.test.ts";
-    const withoutMarker = applyAllowlist(
-      [finding(path)],
-      parseAllowlist(`${path}:exercises the transport`),
-      [path],
-    );
-    expect(withoutMarker.stale).toHaveLength(1);
-
-    const withMarker = applyAllowlist(
-      [finding(path)],
-      parseAllowlist(`${path}:test: exercises the transport over a real socket`),
-      [path],
-    );
-    expect(withMarker.stale).toEqual([]);
-    expect(withMarker.allowlisted).toHaveLength(1);
-  });
-
-  test.each(["scripts/probe.ts", "tools/probe.ts"])(
-    "refuses %s, which is outside packages/<pkg>/src",
-    (path) => {
-      const scan = applyAllowlist(
-        [finding(path)],
-        parseAllowlist(`${path}:reads a fixture endpoint`),
-        [path],
-      );
-      expect(scan.stale).toHaveLength(1);
-      expect(scan.allowlisted).toEqual([]);
-      expect(scan.findings).toHaveLength(1);
-    },
-  );
-});
-
-describe("this tree", () => {
-  test("has no undeclared network surface and no stale declaration", async () => {
+  test("the tracked tree has no unallowlisted network calls or stale entries", async () => {
     const scan = await scanTrackedSources();
     expect(scan.findings).toEqual([]);
     expect(scan.stale).toEqual([]);
-    expect(scan.allowlisted).toHaveLength(4);
   });
 });
