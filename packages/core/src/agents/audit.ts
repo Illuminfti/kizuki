@@ -111,6 +111,12 @@ export function checkRate(
   };
 }
 
+/**
+ * `at` is a parameter, like `checkRate`'s `now`, so one served call can stamp
+ * its row, its envelope and anything it renders with the same instant. It is
+ * normalized on the way in: `checkRate` compares the column as a raw string,
+ * so an offset timestamp would leave the rolling window counting nothing.
+ */
 export function recordAudit(
   db: Database,
   principal: Principal,
@@ -118,8 +124,10 @@ export function recordAudit(
   args: Record<string, unknown>,
   served: AuditItem[],
   denied: AuditDenial[],
+  at: string = new Date().toISOString(),
 ): string {
   assertTool(tool);
+  const stamped = new Date(rfc3339Millis(at, "at")).toISOString();
   const auditId = ulid();
   const agentId = principal.kind === "owner" ? "owner" : principal.agent.agent_id;
   db.query<never, [string, string, string, string, string, string, string]>(
@@ -133,9 +141,33 @@ export function recordAudit(
     JSON.stringify(shapeArguments(args)),
     JSON.stringify(served),
     JSON.stringify(denied),
-    new Date().toISOString(),
+    stamped,
   );
   return auditId;
+}
+
+/**
+ * Fills in a row `recordAudit` already reserved. The gate writes the row
+ * before it runs the tool so the rate count and the row it produces cannot
+ * be separated; the outcome is written back here under the same id and the
+ * same instant.
+ */
+export function updateAudit(
+  db: Database,
+  auditId: string,
+  args: Record<string, unknown>,
+  served: AuditItem[],
+  denied: AuditDenial[],
+): void {
+  db.query<never, [string, string, string, string]>(
+    `UPDATE agent_audit SET query_shape = ?, served = ?, denied = ?
+      WHERE audit_id = ?`,
+  ).run(
+    JSON.stringify(shapeArguments(args)),
+    JSON.stringify(served),
+    JSON.stringify(denied),
+    auditId,
+  );
 }
 
 function parseAudit(row: StoredAuditRow): AuditRow {

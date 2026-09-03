@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS agent_grants (
   until      TEXT,
   tools      TEXT NOT NULL,
   rate_limit_per_minute INTEGER NOT NULL,
+  relay_owner_corrections INTEGER NOT NULL DEFAULT 1,
   updated_at TEXT NOT NULL
 ) STRICT;
 
@@ -35,7 +36,23 @@ CREATE INDEX IF NOT EXISTS agent_audit_by_agent
   ON agent_audit(agent_id, at);
 `;
 
+/** RFC 0002 §6.4 widened the grant; existing rows keep the relay they had. */
+function addRelayColumn(db: Database): void {
+  const present = db
+    .query<{ name: string }, []>(
+      "SELECT name FROM pragma_table_info('agent_grants')",
+    )
+    .all()
+    .some(({ name }) => name === "relay_owner_corrections");
+  if (present) return;
+  db.exec(
+    `ALTER TABLE agent_grants
+       ADD COLUMN relay_owner_corrections INTEGER NOT NULL DEFAULT 1`,
+  );
+}
+
 export function initAgents(db: Database): void {
   db.exec("PRAGMA foreign_keys = ON");
   db.exec(SCHEMA);
+  addRelayColumn(db);
 }

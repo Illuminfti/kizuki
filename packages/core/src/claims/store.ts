@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { Sensitivity } from "../agents/types";
-import type { RetrievalPort, RetrievalQuery } from "../contracts/retrieval";
+import type { RetrievalDoc, RetrievalPort, RetrievalQuery } from "../contracts/retrieval";
 import type {
   AuthorityTier,
   CanonicalProducer,
@@ -39,6 +39,9 @@ import { claimKey, hashBody, normalizeObject, objectsMatch } from "./hash";
 import { isRegisteredPredicate } from "./predicates";
 import { initClaims } from "./schema";
 
+/** One sweep never walks the whole backlog: the next pass takes the rest. */
+export const RETRIEVAL_SWEEP_LIMIT = 32;
+
 export interface ClaimsIo {
   readonly db: Database;
   readonly retrieval?: RetrievalPort;
@@ -65,6 +68,8 @@ export interface InsertClaimInput {
   valid_to?: string | null;
   claim_id?: string;
   intent?: "propose" | "correct";
+  /** RFC 0002 §6.4: caps the tier a relayed correction is filed at. */
+  relay_ceiling?: AuthorityTier;
   events?: EventFacts[];
 }
 
@@ -450,23 +455,105 @@ async function nominateSemantic(
   return nominated;
 }
 
-async function upsertRetrieval(io: ClaimsIo, claim: Claim): Promise<void> {
+function retrievalDoc(claim: Claim): RetrievalDoc {
+  return {
+    doc_id: claim.claim_id,
+    kind: "claim",
+    title: claim.predicate ?? claim.kind,
+    text: claim.body,
+    sensitivity: claim.sensitivity,
+    taint: claim.taint,
+    authority: claim.authority,
+    subjects: claim.subject !== null ? [claim.subject, ...claim.subjects] : claim.subjects,
+    provenance: claim.provenance,
+    occurred_at: claim.valid_from,
+    updated_at: claim.asserted_at,
+  };
+}
+
+/**
+ * RFC 0002 §4.6. The operation is enqueued inside the transaction that makes
+ * the claim durable, so a refresh that fails leaves a pending row the next
+ * pass retries rather than an authoritative claim the index never learns
+ * about. It cannot roll the claim back: canon and the ledger are the record,
+ * and a derived index is disposable.
+ */
+function enqueueRetrieval(db: Database, io: ClaimsIo, claim: Claim, at: string): string | null {
+  const store = io.retrieval?.descriptor.id;
+  if (store === undefined || !tableExists(db, "retrieval_ops")) return null;
+  const opId = ulid();
+  db.query<never, [string, string, string, string]>(
+    `INSERT INTO retrieval_ops (op_id, store, op, doc_id, state, created_at)
+     VALUES (?, ?, 'upsert', ?, 'pending', ?)`,
+  ).run(opId, store, claim.claim_id, at);
+  return opId;
+}
+
+function finishOp(db: Database, opId: string, at: string): void {
+  db.query<never, [string, string]>(
+    "UPDATE retrieval_ops SET state = 'done', done_at = ? WHERE op_id = ?",
+  ).run(at, opId);
+}
+
+/** Operations the refresh has not landed yet, oldest first. */
+export function pendingRetrievalOps(
+  db: Database,
+  limit = RETRIEVAL_SWEEP_LIMIT,
+): { op_id: string; doc_id: string }[] {
+  if (!tableExists(db, "retrieval_ops")) return [];
+  return db
+    .query<{ op_id: string; doc_id: string }, [number]>(
+      `SELECT op_id, doc_id FROM retrieval_ops
+        WHERE state = 'pending' ORDER BY created_at, op_id LIMIT ?`,
+    )
+    .all(limit);
+}
+
+/**
+ * Retries what the last pass could not land. Upsert is idempotent, so a
+ * replay of an operation that in fact succeeded costs one write and changes
+ * nothing; that is cheaper than a doc the index never learns about.
+ */
+export async function retryRetrievalOps(
+  io: ClaimsIo,
+  limit = RETRIEVAL_SWEEP_LIMIT,
+): Promise<{ retried: number; pending: number }> {
+  if (io.retrieval === undefined) {
+    return { retried: 0, pending: pendingRetrievalOps(io.db, limit).length };
+  }
+  let retried = 0;
+  for (const op of pendingRetrievalOps(io.db, limit)) {
+    const claim = getClaim(io.db, op.doc_id);
+    if (claim === null) {
+      finishOp(io.db, op.op_id, nowOf(io));
+      continue;
+    }
+    try {
+      await io.retrieval.upsert([retrievalDoc(claim)]);
+      finishOp(io.db, op.op_id, nowOf(io));
+      retried += 1;
+    } catch {
+      // Still pending; the next pass tries again and doctor reports the age.
+      break;
+    }
+  }
+  return { retried, pending: pendingRetrievalOps(io.db, limit).length };
+}
+
+async function upsertRetrieval(
+  io: ClaimsIo,
+  claim: Claim,
+  opId: string | null,
+): Promise<void> {
   if (io.retrieval === undefined) return;
-  await io.retrieval.upsert([
-    {
-      doc_id: claim.claim_id,
-      kind: "claim",
-      title: claim.predicate ?? claim.kind,
-      text: claim.body,
-      sensitivity: claim.sensitivity,
-      taint: claim.taint,
-      authority: claim.authority,
-      subjects: claim.subject !== null ? [claim.subject, ...claim.subjects] : claim.subjects,
-      provenance: claim.provenance,
-      occurred_at: claim.valid_from,
-      updated_at: claim.asserted_at,
-    },
-  ]);
+  try {
+    await io.retrieval.upsert([retrievalDoc(claim)]);
+    if (opId !== null) finishOp(io.db, opId, nowOf(io));
+  } catch {
+    // The claim stands and the operation stays pending: a degraded refresh
+    // is not a failed write, and reporting it as one would make the caller
+    // refile a claim the store already has.
+  }
 }
 
 export function getClaim(db: Database, claimId: string): Claim | null {
@@ -479,7 +566,15 @@ export function getClaim(db: Database, claimId: string): Claim | null {
 
 export function listClaims(
   db: Database,
-  opts: { status?: ClaimStatus; claim_key?: string; limit?: number } = {},
+  opts: {
+    status?: ClaimStatus;
+    claim_key?: string;
+    /** Narrowed in SQL: filtering a default page in memory misses rows. */
+    subject?: string;
+    /** Only claims that carry a conflict key, which is what a correction retires. */
+    keyed?: boolean;
+    limit?: number;
+  } = {},
 ): Claim[] {
   if (!tableExists(db, "claims")) return [];
   const clauses: string[] = [];
@@ -492,6 +587,11 @@ export function listClaims(
     clauses.push("claim_key = ?");
     params.push(opts.claim_key);
   }
+  if (opts.subject !== undefined) {
+    clauses.push("subject = ?");
+    params.push(opts.subject);
+  }
+  if (opts.keyed === true) clauses.push("claim_key IS NOT NULL");
   const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
   const limit = opts.limit ?? 200;
   return db
@@ -627,6 +727,9 @@ export async function insertClaim(
       body: input.body,
       provenance: input.provenance,
       ...(input.intent === undefined ? {} : { intent: input.intent }),
+      ...(input.relay_ceiling === undefined
+        ? {}
+        : { relayCeiling: input.relay_ceiling }),
       hasCorroboration,
     },
   );
@@ -678,6 +781,7 @@ export async function insertClaim(
   const semanticNominees =
     mode === "full" ? await nominateSemantic(io, claim, mode) : [];
 
+  let opId: string | null = null;
   const apply = io.db.transaction((): InsertClaimResult => {
     resolveProvenance(io.db, input.provenance);
 
@@ -748,6 +852,9 @@ export async function insertClaim(
 
     const stored: Claim = { ...claim, status: incomingStatus };
     insertRow(io.db, stored);
+    if (incomingStatus !== "skipped") {
+      opId = enqueueRetrieval(io.db, io, stored, at);
+    }
 
     if (incomingStatus === "skipped") {
       return {
@@ -772,8 +879,10 @@ export async function insertClaim(
 
   if (result.outcome === "stored" || result.outcome === "contested") {
     const stored = result.outcome === "stored" ? result.claim : result.incoming;
-    await upsertRetrieval(io, stored);
+    await upsertRetrieval(io, stored, opId);
   }
+  // A refile that deduped still drains what an earlier failure left behind.
+  await retryRetrievalOps(io);
 
   return result;
 }

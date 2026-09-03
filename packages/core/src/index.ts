@@ -342,6 +342,7 @@ export type { InitVaultResult } from "./vault/init";
 export {
   PAGE_SENSITIVITIES,
   PAGE_STATUSES,
+  PAGE_TAINTS,
   PAGE_TYPES,
   validatePage,
 } from "./vault/schema";
@@ -404,6 +405,7 @@ export type {
   UndoErrorCode,
   UndoReceiptOptions,
 } from "./canon";
+export type { WritePageOptions } from "./vault/write";
 export { findPageById, listCanonPages, listCanonPagesReport } from "./vault/pages";
 export type { CanonPage, CanonPageReport, SkippedPage } from "./vault/pages";
 export { readDerivedMeta } from "./derived-meta";
@@ -492,6 +494,9 @@ export type { TimelineEntry, TimelineOptions } from "./query";
 export { rebuildDerived } from "./derived";
 export type { DerivedRebuildResult } from "./derived";
 
+export { diffLines } from "./util/diff";
+export type { DiffLine } from "./util/diff";
+
 export {
   DEFAULT_GRANT,
   OWNER,
@@ -525,3 +530,43 @@ export type {
   Servable,
   Tool,
 } from "./agents";
+
+export {
+  CanonUnreadableError,
+  ENTITY_TYPES,
+  ENVELOPE_SCHEMA,
+  ServeError,
+  gate,
+  serveContextPacket,
+  serveCorrect,
+  serveEntities,
+  serveGetPage,
+  serveGraph,
+  serveHealth,
+  servePropose,
+  serveSearch,
+  serveTimeline,
+} from "./serving";
+export type {
+  CanonChunk,
+  ContextPacketArgs,
+  ContextPacketData,
+  CorrectArgs,
+  CorrectData,
+  CorrectTarget,
+  Denied,
+  EntitiesArgs,
+  Envelope,
+  GetPageArgs,
+  GraphArgs,
+  GraphData,
+  HealthData,
+  ProposeArgs,
+  ProposeData,
+  QuotedChunk,
+  RewrittenPage,
+  SearchArgs,
+  ServeContext,
+  Served,
+  TimelineArgs,
+} from "./serving";

@@ -20,7 +20,7 @@ const SHA256_HEX = /^[0-9a-f]{64}$/;
 const AGENT_GRANT_SELECT = `
   SELECT a.agent_id, a.name, a.token_hash, a.created_at, a.revoked_at,
          g.ceiling, g.types, g.subjects, g.since, g.until, g.tools,
-         g.rate_limit_per_minute
+         g.rate_limit_per_minute, g.relay_owner_corrections
     FROM agents a
     JOIN agent_grants g ON g.agent_id = a.agent_id
 `;
@@ -41,6 +41,7 @@ interface AgentGrantRow extends AgentRow {
   until: string | null;
   tools: string;
   rate_limit_per_minute: number;
+  relay_owner_corrections: number;
 }
 
 function hashToken(token: string): string {
@@ -119,6 +120,9 @@ function validateGrant(grant: Grant): Grant {
   ) {
     throw new TypeError("rate_limit_per_minute: must be an integer of at least 1");
   }
+  if (typeof grant.relay_owner_corrections !== "boolean") {
+    throw new TypeError("relay_owner_corrections: must be a boolean");
+  }
   for (const [field, value] of [
     ["since", grant.since],
     ["until", grant.until],
@@ -140,6 +144,7 @@ function validateGrant(grant: Grant): Grant {
     until: grant.until,
     tools: [...grant.tools],
     rate_limit_per_minute: grant.rate_limit_per_minute,
+    relay_owner_corrections: grant.relay_owner_corrections,
   };
 }
 
@@ -167,6 +172,7 @@ function rowGrant(row: AgentGrantRow): Grant {
     until: row.until,
     tools: tools as Tool[],
     rate_limit_per_minute: row.rate_limit_per_minute,
+    relay_owner_corrections: row.relay_owner_corrections !== 0,
   });
 }
 
@@ -181,12 +187,12 @@ function grantRowByName(db: Database, name: string): AgentGrantRow | null {
 function writeGrant(db: Database, agentId: string, grant: Grant, at: string): void {
   db.query<
     never,
-    [string, string, string | null, string | null, string | null, string | null, string, number, string]
+    [string, string, string | null, string | null, string | null, string | null, string, number, number, string]
   >(
     `INSERT INTO agent_grants
        (agent_id, ceiling, types, subjects, since, until, tools,
-        rate_limit_per_minute, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        rate_limit_per_minute, relay_owner_corrections, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     agentId,
     grant.ceiling,
@@ -196,6 +202,7 @@ function writeGrant(db: Database, agentId: string, grant: Grant, at: string): vo
     grant.until,
     JSON.stringify(grant.tools),
     grant.rate_limit_per_minute,
+    grant.relay_owner_corrections ? 1 : 0,
     at,
   );
 }
@@ -286,11 +293,12 @@ export function setGrant(
     const grant = mergeGrant(rowGrant(row), patch);
     db.query<
       never,
-      [string, string | null, string | null, string | null, string | null, string, number, string, string]
+      [string, string | null, string | null, string | null, string | null, string, number, number, string, string]
     >(
       `UPDATE agent_grants
           SET ceiling = ?, types = ?, subjects = ?, since = ?, until = ?,
-              tools = ?, rate_limit_per_minute = ?, updated_at = ?
+              tools = ?, rate_limit_per_minute = ?,
+              relay_owner_corrections = ?, updated_at = ?
         WHERE agent_id = ?`,
     ).run(
       grant.ceiling,
@@ -300,6 +308,7 @@ export function setGrant(
       grant.until,
       JSON.stringify(grant.tools),
       grant.rate_limit_per_minute,
+      grant.relay_owner_corrections ? 1 : 0,
       new Date().toISOString(),
       row.agent_id,
     );

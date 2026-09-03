@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { SENSITIVITY_ORDER } from "../agents/types";
 import type { Sensitivity } from "../agents/types";
 import { ceilingSql, instantBound, instantSql } from "../query/sql";
+import { placeholders } from "../util/sql";
 import type { DocScope } from "./indexer";
 
 export interface SearchOptions {
@@ -85,10 +86,6 @@ export function toFtsQuery(raw: string): string {
       `"${value.replaceAll('"', '""')}"${prefix ? "*" : ""}`,
     )
     .join(" ");
-}
-
-function placeholders(count: number): string {
-  return new Array<string>(count).fill("?").join(", ");
 }
 
 function validLimit(limit: number): number {

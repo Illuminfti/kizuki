@@ -28,10 +28,16 @@ export {
   setGrant,
 } from "./identity";
 
-export { authorize, filterServable, toolAllowed } from "./authorization";
+export {
+  authorize,
+  filterServable,
+  sensitivity,
+  toolAllowed,
+} from "./authorization";
 export {
   checkRate,
   listAudit,
   recordAudit,
   shapeArguments,
+  updateAudit,
 } from "./audit";

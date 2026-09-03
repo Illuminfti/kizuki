@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { stampDerived } from "../derived-meta";
+import { compareText } from "../util/order";
+import { placeholders } from "../util/sql";
 import { listCanonPagesReport, stringArray } from "../vault/pages";
 import type { SkippedPage } from "../vault/pages";
 import { initGraph } from "./schema";
@@ -145,14 +147,6 @@ export function rebuildGraph(
   }).immediate();
 
   return { pages: pages.length, edges, skipped, rebuilt_at: rebuiltAt };
-}
-
-function placeholders(count: number): string {
-  return new Array<string>(count).fill("?").join(", ");
-}
-
-function compareText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function chunks<T>(items: T[], size: number): T[][] {

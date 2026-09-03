@@ -158,6 +158,26 @@ describe("checkRate", () => {
     db.close();
   });
 
+  test("the recorded instant is normalized, so the rolling window holds", () => {
+    const { db, principal } = principalWithRate(1);
+    // An offset timestamp compares as a raw string in the window query: a
+    // caller-supplied instant has to be stored in one shape or the limit
+    // silently stops counting.
+    recordAudit(db, principal, "search", {}, [], [], "2026-02-28T12:00:00+02:00");
+    const stored = listAudit(db, principal.kind === "agent" ? principal.agent.name : "owner", {
+      limit: 1,
+    })[0];
+    expect(stored?.at).toBe("2026-02-28T10:00:00.000Z");
+    expect(
+      checkRate(db, principal, "search", "2026-02-28T10:00:30Z"),
+    ).toMatchObject({ allow: false });
+
+    expect(() =>
+      recordAudit(db, principal, "search", {}, [], [], "yesterday"),
+    ).toThrow(TypeError);
+    db.close();
+  });
+
   test("never rate limits the owner", () => {
     const db = agentsDb();
     for (let index = 0; index < 100; index += 1) {
