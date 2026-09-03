@@ -33,13 +33,13 @@ jobs:
           cp "$(command -v bun)" .tooling/bun
       - name: package exact-head workspace
         if: always()
-        run: tar --exclude=.git --exclude=./.git --exclude=kizuki-workspace.tar.gz -czf kizuki-workspace.tar.gz .
+        run: tar --exclude=.git --exclude=./.git -czf "$RUNNER_TEMP/kizuki-workspace.tar.gz" .
       - name: upload exact-head workspace
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: kizuki-workspace-${{ github.sha }}
-          path: kizuki-workspace.tar.gz
+          name: kizuki-workspace-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/kizuki-workspace.tar.gz
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
