@@ -1,18 +1,18 @@
-"""Inert construction of the offline worker containment topology.
+"""Inert construction of an offline worker containment candidate.
 
 This module deliberately returns immutable argv/property records only.  It
 does not create directories, start a transient unit, or execute bubblewrap.
-The eventual runner must separately prove these commands on the VPS before it
-may be wired to any scheduler path.
+The eventual runner must bind a verified isolated checkout, FD-pin all mutable
+paths at the actual start boundary, and enforce bounded private I/O before any
+returned command may be wired to a scheduler path.
 """
 from __future__ import annotations
 
 import hashlib
-import math
 import os
 import stat
-from collections.abc import Mapping, MutableSet
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Tuple
 
@@ -25,11 +25,16 @@ from gauntlet.identity import (
     verify_authority_binding,
     verify_materialized_identity,
 )
-from gauntlet.protocol import LeaseGrant
+from gauntlet.launch_intent import (
+    LaunchIntent,
+    LaunchIntentError,
+    verify_launch_intent,
+)
 from gauntlet.task_spec import (
     TaskSpec,
     TaskSpecError,
     command_policy_sha256,
+    verification_policy_sha256,
     verify_task_spec,
 )
 
@@ -95,6 +100,16 @@ def _absolute_directory(value: str, name: str, *, must_exist: bool = True, priva
 def _under(child: Path, parent: Path, name: str) -> None:
     if child == parent or parent not in child.parents:
         raise SandboxError(f"{name} escapes attempt root")
+
+
+def _path_identity(path: Path, name: str) -> tuple[int, int]:
+    try:
+        info = os.lstat(path)
+    except OSError as exc:
+        raise SandboxError(f"{name} is unavailable") from exc
+    if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
+        raise SandboxError(f"{name} must remain a directory")
+    return info.st_dev, info.st_ino
 
 
 def full_release_tree_hash(release_tree: str | Path, max_bytes: int = 256 * 1024 * 1024) -> str:
@@ -232,6 +247,10 @@ class SandboxSpec:
     network_profile_sha256: str
     expected_receipt_schema: str
     network_profile: str = "offline"
+    _release_identity: tuple[int, int] = field(init=False, repr=False, compare=False)
+    _attempt_identity: tuple[int, int] = field(init=False, repr=False, compare=False)
+    _work_identity: tuple[int, int] = field(init=False, repr=False, compare=False)
+    _raw_identity: tuple[int, int] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         _opaque_id(self.campaign_id, "campaign_id")
@@ -304,6 +323,10 @@ class SandboxSpec:
         object.__setattr__(self, "worktree", str(work))
         object.__setattr__(self, "raw_evidence", str(raw))
         object.__setattr__(self, "job_home", str(home))
+        object.__setattr__(self, "_release_identity", _path_identity(release, "release_tree"))
+        object.__setattr__(self, "_attempt_identity", _path_identity(root, "attempt_root"))
+        object.__setattr__(self, "_work_identity", _path_identity(work, "worktree"))
+        object.__setattr__(self, "_raw_identity", _path_identity(raw, "raw_evidence"))
 
 
 @dataclass(frozen=True)
@@ -314,8 +337,11 @@ class OfflineLaunch:
     relay_bwrap_argv: Tuple[str, ...] | None
     release_sha256: str
     task_spec_sha256: str
+    launch_operation_id: str
     authority_binding_id: str
     lease_run_id: str
+    execution_authorized: bool
+    unmet_gates: Tuple[str, ...]
 
 
 def _bwrap_prefix() -> Tuple[str, ...]:
@@ -419,31 +445,51 @@ def _prepared_job_home(spec: SandboxSpec, receipt: MaterializedIdentity,
     return prepared
 
 
+def _revalidate_preflight_paths(spec: SandboxSpec) -> None:
+    """Detect path replacement since SandboxSpec construction.
+
+    The eventual process runner must additionally keep these directories open
+    and compare their file descriptors at the actual exec boundary.  This
+    preflight check deliberately does not claim to replace that FD-pinned step.
+    """
+    paths = (
+        (spec.release_tree, "release_tree", False, spec._release_identity),
+        (spec.attempt_root, "attempt_root", True, spec._attempt_identity),
+        (spec.worktree, "worktree", True, spec._work_identity),
+        (spec.raw_evidence, "raw_evidence", True, spec._raw_identity),
+    )
+    for value, label, private, expected in paths:
+        current = _absolute_directory(value, label, private=private)
+        if _path_identity(current, label) != expected:
+            raise SandboxError(f"{label} changed after preflight")
+
+
 def _validate_launch_admission(
     spec: SandboxSpec,
     task_spec: TaskSpec,
     task_spec_verification_keys: Mapping[str, bytes],
-    lease_grant: LeaseGrant,
+    launch_intent: LaunchIntent,
+    launch_intent_verification_key: bytes,
+    verification_commands: Mapping[str, Sequence[str]],
     identity_manifest: IdentityManifest,
     identity_receipt: IdentityReceipt,
     authority_binding: AuthorityBinding,
     *,
-    current_task_version: int,
-    current_controller_epoch: int,
     now: int,
 ) -> None:
-    """Validate all immutable admission facts without consuming authority."""
+    """Validate authenticated spec and a store-issued durable launch intent."""
     if isinstance(now, bool) or not isinstance(now, int):
         raise SandboxError("launch admission time must be an integer")
-    if any(
-        isinstance(value, bool) or not isinstance(value, int) or value < 1
-        for value in (current_task_version, current_controller_epoch)
-    ):
-        raise SandboxError("invalid live controller fence")
     try:
         verify_task_spec(task_spec, task_spec_verification_keys, now=now)
     except TaskSpecError as exc:
         raise SandboxError("task specification is not authentic and current") from exc
+    try:
+        verify_launch_intent(launch_intent, launch_intent_verification_key, now=now)
+    except LaunchIntentError as exc:
+        raise SandboxError("durable launch intent is not authentic and current") from exc
+    if not isinstance(authority_binding, AuthorityBinding):
+        raise SandboxError("single-use AuthorityBinding required")
 
     sandbox_context = (
         spec.campaign_id,
@@ -451,8 +497,6 @@ def _validate_launch_admission(
         spec.attempt,
         spec.controller_epoch,
         spec.expected_task_version,
-        spec.lease_token,
-        spec.lease_run_id,
         spec.adapter,
         spec.identity_principal_id,
         spec.identity_authority_domain,
@@ -475,8 +519,6 @@ def _validate_launch_admission(
         task_spec.attempt,
         task_spec.controller_epoch,
         task_spec.expected_task_version,
-        task_spec.lease_token,
-        task_spec.lease_run_id,
         task_spec.adapter,
         task_spec.principal_id,
         task_spec.authority_domain,
@@ -495,10 +537,6 @@ def _validate_launch_admission(
     )
     if sandbox_context != authenticated_context:
         raise SandboxError("sandbox specification does not match authenticated task specification")
-    if task_spec.expected_task_version != current_task_version:
-        raise SandboxError("task specification has a stale row version")
-    if task_spec.controller_epoch != current_controller_epoch:
-        raise SandboxError("task specification has a stale controller epoch")
     expected_policy = _COMMAND_POLICIES[task_spec.adapter]
     if (
         task_spec.command_policy != expected_policy
@@ -506,50 +544,61 @@ def _validate_launch_admission(
         != command_policy_sha256(expected_policy, _ADAPTER_PROFILES[task_spec.adapter])
     ):
         raise SandboxError("task specification names an unexpected command policy")
-
-    if not isinstance(lease_grant, LeaseGrant):
-        raise SandboxError("live LeaseGrant required")
-    if any(
-        type(value) is not int or value < 1
-        for value in (lease_grant.attempt, lease_grant.token, lease_grant.epoch)
+    try:
+        policy_digest = verification_policy_sha256(
+            task_spec.verification_policy, verification_commands,
+        )
+    except TaskSpecError as exc:
+        raise SandboxError("verification command policy is invalid") from exc
+    if (
+        policy_digest != task_spec.verification_policy_sha256
+        or not set(task_spec.required_verification_commands).issubset(verification_commands)
     ):
-        raise SandboxError("lease contains an invalid numeric fence")
-    expected_resource = (
-        f"task:{task_spec.task_id}:{task_spec.attempt}:"
-        f"{task_spec.role.lower().replace('_', '-')}"
-    )
-    lease_context = (
-        lease_grant.task_id,
-        lease_grant.attempt,
-        lease_grant.role,
-        lease_grant.principal_id,
-        lease_grant.run_id,
-        lease_grant.authority_domain,
-        lease_grant.token,
-        lease_grant.epoch,
-        lease_grant.resource,
-    )
-    expected_lease_context = (
+        raise SandboxError("verification command policy does not match task specification")
+
+    expected_intent_context = (
+        task_spec.task_spec_sha256,
+        task_spec.campaign_id,
         task_spec.task_id,
         task_spec.attempt,
         task_spec.role,
         task_spec.principal_id,
-        task_spec.lease_run_id,
         task_spec.authority_domain,
-        task_spec.lease_token,
+        task_spec.expected_task_version,
         task_spec.controller_epoch,
-        expected_resource,
+        spec.lease_run_id,
+        spec.lease_token,
+        spec.identity_manifest_sha256,
+        authority_binding.receipt_sha256,
+        authority_binding.binding_id,
     )
-    if lease_context != expected_lease_context:
-        raise SandboxError("lease does not match authenticated task specification")
+    intent_context = (
+        launch_intent.task_spec_sha256,
+        launch_intent.campaign_id,
+        launch_intent.task_id,
+        launch_intent.attempt,
+        launch_intent.role,
+        launch_intent.principal_id,
+        launch_intent.authority_domain,
+        launch_intent.expected_task_version,
+        launch_intent.controller_epoch,
+        launch_intent.lease_run_id,
+        launch_intent.lease_token,
+        launch_intent.identity_manifest_sha256,
+        launch_intent.identity_receipt_sha256,
+        launch_intent.authority_binding_id,
+    )
+    if intent_context != expected_intent_context:
+        raise SandboxError("durable launch intent does not match task, lease, and identity")
     if (
-        isinstance(lease_grant.expires_at, bool)
-        or not isinstance(lease_grant.expires_at, (int, float))
-        or not math.isfinite(lease_grant.expires_at)
-        or lease_grant.expires_at < now + task_spec.wall_seconds
-        or lease_grant.expires_at > task_spec.expires_at
+        launch_intent.issued_at < task_spec.issued_at
+        or launch_intent.expires_at > task_spec.expires_at
+        or launch_intent.lease_expires_at < now + task_spec.wall_seconds
+        or launch_intent.lease_expires_at > task_spec.expires_at
     ):
-        raise SandboxError("lease does not cover the bounded launch lifetime")
+        raise SandboxError("durable lease intent does not cover the bounded launch lifetime")
+    if task_spec.role == "BUILDER" and launch_intent.subject_sha != task_spec.base_sha:
+        raise SandboxError("builder launch subject is not the authenticated base SHA")
 
     if not isinstance(identity_manifest, IdentityManifest) or not isinstance(identity_receipt, IdentityReceipt):
         raise SandboxError("identity manifest and receipt required")
@@ -569,16 +618,12 @@ def _validate_launch_admission(
     )
     if identity_context != expected_identity_context:
         raise SandboxError("identity manifest does not match authenticated task specification")
-    if not isinstance(authority_binding, AuthorityBinding):
-        raise SandboxError("single-use AuthorityBinding required")
     if (
         authority_binding.operation_sha256 != task_spec.task_spec_sha256
         or authority_binding.manifest_sha256 != spec.identity_manifest_sha256
         or authority_binding.network_profile_sha256 != task_spec.network_profile_sha256
-        or lease_grant.account_binding_sha256 != authority_binding.account_binding_sha256
-        or lease_grant.identity_receipt_sha256 != authority_binding.receipt_sha256
     ):
-        raise SandboxError("authority, identity, lease, and task specification do not match")
+        raise SandboxError("authority, identity, intent, and task specification do not match")
 
 
 def build_offline_launch(
@@ -588,32 +633,36 @@ def build_offline_launch(
     *,
     task_spec: TaskSpec,
     task_spec_verification_keys: Mapping[str, bytes],
-    lease_grant: LeaseGrant,
+    launch_intent: LaunchIntent,
+    verification_commands: Mapping[str, Sequence[str]],
     identity_manifest: IdentityManifest,
     identity_receipt: IdentityReceipt,
     authority_binding: AuthorityBinding,
-    consumed_binding_ids: MutableSet[str],
-    current_task_version: int,
-    current_controller_epoch: int,
     now: int,
 ) -> OfflineLaunch:
-    """Build, but never execute, one fully admitted offline launch topology."""
+    """Build, but never execute, an authenticated offline launch candidate.
+
+    A durable store must have issued ``launch_intent`` atomically.  Checkout
+    provenance, FD-pinned exec, bounded private I/O, and result admission are
+    deliberately separate gates; this inert object authorizes none of them.
+    """
     if not isinstance(spec, SandboxSpec):
         raise SandboxError("SandboxSpec required")
     _validate_launch_admission(
         spec,
         task_spec,
         task_spec_verification_keys,
-        lease_grant,
+        launch_intent,
+        controller_hmac_key,
+        verification_commands,
         identity_manifest,
         identity_receipt,
         authority_binding,
-        current_task_version=current_task_version,
-        current_controller_epoch=current_controller_epoch,
         now=now,
     )
     prepared_home = _prepared_job_home(spec, materialized_identity, controller_hmac_key)
     # Recheck mutable filesystem identity at the launch boundary.
+    _revalidate_preflight_paths(spec)
     if full_release_tree_hash(spec.release_tree) != spec.release_sha256:
         raise SandboxError("release tree identity changed")
     release_executable = (
@@ -621,12 +670,11 @@ def build_offline_launch(
     )
     if _regular_file_sha256(release_executable) != identity_manifest.executable_sha256:
         raise SandboxError("release executable does not match attested identity")
-    identity = (
-        f"{spec.campaign_id}\0{spec.task_id}\0{spec.attempt}\0"
-        f"{spec.controller_epoch}\0{spec.expected_task_version}\0"
-        f"{spec.lease_token}\0{spec.lease_run_id}\0{spec.task_spec_sha256}"
-    ).encode()
-    unit_name = "kizuki-gauntlet-attempt-" + hashlib.sha256(identity).hexdigest()[:24] + ".service"
+    unit_name = (
+        "kizuki-gauntlet-attempt-"
+        + launch_intent.launch_operation_id[:24]
+        + ".service"
+    )
     harness = _bwrap_prefix() + (
         "--ro-bind", spec.release_tree, "/opt/harness",
         "--bind", spec.worktree, "/work",
@@ -645,6 +693,8 @@ def build_offline_launch(
         f"BindReadOnlyPaths={spec.release_tree}", f"ReadWritePaths={spec.attempt_root}",
     )
     systemd = ("/usr/bin/systemd-run", "--user", "--wait", "--pipe", "--service-type=exec", f"--unit={unit_name}", "--collect") + tuple(f"--property={value}" for value in properties) + ("--", *harness)
+    # Authenticity is rechecked here. Durable one-use consumption happened in
+    # the same store transaction that issued the signed LaunchIntent.
     try:
         verify_authority_binding(
             authority_binding,
@@ -653,10 +703,12 @@ def build_offline_launch(
             now,
             controller_hmac_key,
             task_spec.task_spec_sha256,
-            consumed_binding_ids,
+            set(),
         )
     except IdentityError as exc:
-        raise SandboxError("authority binding is not authentic, current, and unused") from exc
+        raise SandboxError("authority binding is not authentic and current") from exc
+    _revalidate_preflight_paths(spec)
+    _prepared_job_home(spec, materialized_identity, controller_hmac_key)
     return OfflineLaunch(
         unit_name,
         systemd,
@@ -664,6 +716,16 @@ def build_offline_launch(
         None,
         spec.release_sha256,
         task_spec.task_spec_sha256,
+        launch_intent.launch_operation_id,
         authority_binding.binding_id,
-        lease_grant.run_id,
+        launch_intent.lease_run_id,
+        False,
+        (
+            "durable-store-integration",
+            "isolated-checkout-binding",
+            "fd-pinned-start",
+            "bounded-private-io",
+            "task-spec-result-binding",
+            "independent-review",
+        ),
     )

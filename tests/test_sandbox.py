@@ -11,6 +11,11 @@ from gauntlet.identity import (
     materialize_attempt_home,
     validated_authority_binding,
 )
+from gauntlet.launch_intent import (
+    LAUNCH_INTENT_SCHEMA,
+    launch_operation_id,
+    sign_launch_intent,
+)
 from gauntlet.protocol import LeaseGrant
 from gauntlet.sandbox import (
     SandboxError,
@@ -18,11 +23,20 @@ from gauntlet.sandbox import (
     full_release_tree_hash,
     build_offline_launch,
 )
-from gauntlet.task_spec import command_policy_sha256, sign_task_spec
+from gauntlet.task_spec import (
+    TASK_SPEC_SCHEMA,
+    command_policy_sha256,
+    sign_task_spec,
+    verification_policy_sha256,
+)
 
 
 TASK_SPEC_KEY = b"sandbox-task-spec-signing-key-01"
 TASK_SPEC_KEYS = {"task-spec-key-1": TASK_SPEC_KEY}
+VERIFICATION_COMMANDS = {
+    "compile": ("python3", "-m", "compileall", "-q", "gauntlet", "tests"),
+    "unit": ("python3", "-m", "unittest", "discover", "-s", "tests", "-v"),
+}
 
 
 class SandboxConstructionTests(unittest.TestCase):
@@ -80,18 +94,17 @@ class SandboxConstructionTests(unittest.TestCase):
             "-s", "workspace-write", "-a", "never", "-",
         )
         fields = {
-            "schema": "kizuki-gauntlet-task-spec-v1",
+            "schema": TASK_SPEC_SCHEMA,
             "issuer_key_id": "task-spec-key-1",
             "campaign_id": "camp-01",
             "task_id": "task-01",
             "attempt": 1,
             "controller_epoch": 7,
             "expected_task_version": 11,
-            "lease_token": 11,
-            "lease_run_id": "run-01",
             "repository": "Illuminfti/kizuki",
             "base_sha": "a" * 40,
             "expected_branch": "outer/task-01",
+            "issue_spec_url": "https://github.com/Illuminfti/kizuki/issues/4",
             "allowed_paths": ("gauntlet", "tests"),
             "forbidden_paths": (".github/workflows", "systemd"),
             "adapter": "codex",
@@ -101,6 +114,11 @@ class SandboxConstructionTests(unittest.TestCase):
             "role": "BUILDER",
             "command_policy": "codex-exec-v1",
             "command_policy_sha256": command_policy_sha256("codex-exec-v1", command),
+            "verification_policy": "python-project-v1",
+            "verification_policy_sha256": verification_policy_sha256(
+                "python-project-v1", VERIFICATION_COMMANDS,
+            ),
+            "required_verification_commands": ("compile", "unit"),
             "wall_seconds": 300,
             "cpu_seconds": 300,
             "cpu_quota_percent": 100,
@@ -145,6 +163,36 @@ class SandboxConstructionTests(unittest.TestCase):
             authority.receipt_sha256, 11, 7, 500,
             "task:task-01:1:builder",
         )
+        intent_values = {
+            "schema": LAUNCH_INTENT_SCHEMA,
+            "task_spec_sha256": task_spec.task_spec_sha256,
+            "campaign_id": "camp-01",
+            "task_id": "task-01",
+            "attempt": 1,
+            "role": "BUILDER",
+            "principal_id": "codex-builder",
+            "authority_domain": "builder-domain",
+            "expected_task_version": 11,
+            "controller_epoch": 7,
+            "lease_resource": lease.resource,
+            "lease_run_id": lease.run_id,
+            "lease_token": lease.token,
+            "lease_expires_at": int(lease.expires_at),
+            "subject_sha": "a" * 40,
+            "identity_manifest_sha256": authority.manifest_sha256,
+            "identity_receipt_sha256": authority.receipt_sha256,
+            "authority_binding_id": authority.binding_id,
+            "issued_at": 20,
+            "expires_at": 320,
+        }
+        intent_values["launch_operation_id"] = launch_operation_id(
+            task_spec_sha256=task_spec.task_spec_sha256,
+            lease_resource=lease.resource,
+            lease_run_id=lease.run_id,
+            lease_token=lease.token,
+            controller_epoch=lease.epoch,
+        )
+        launch_intent = sign_launch_intent(signing_key=self.key, **intent_values)
         spec = self.spec(
             task_spec_sha256=task_spec.task_spec_sha256,
             identity_manifest_sha256=materialized.manifest_sha256,
@@ -156,17 +204,15 @@ class SandboxConstructionTests(unittest.TestCase):
             "identity_manifest": manifest,
             "identity_receipt": identity_receipt,
             "authority_binding": authority,
-            "lease_grant": lease,
+            "launch_intent": launch_intent,
         }
 
-    def build(self, context, *, consumed=None, **overrides):
+    def build(self, context, **overrides):
         values = {
             **context,
             "controller_hmac_key": self.key,
             "task_spec_verification_keys": TASK_SPEC_KEYS,
-            "consumed_binding_ids": set() if consumed is None else consumed,
-            "current_task_version": 11,
-            "current_controller_epoch": 7,
+            "verification_commands": VERIFICATION_COMMANDS,
             "now": 20,
         }
         values.update(overrides)
@@ -210,6 +256,9 @@ class SandboxConstructionTests(unittest.TestCase):
     def test_constructs_controller_bound_offline_topology(self):
         context = self.admission_fixture()
         launch = self.build(context)
+        self.assertFalse(launch.execution_authorized)
+        self.assertIn("fd-pinned-start", launch.unmet_gates)
+        self.assertIn("bounded-private-io", launch.unmet_gates)
         self.assertTrue(launch.unit_name.startswith("kizuki-gauntlet-attempt-"))
         self.assertIn("--property=BindsTo=kizuki-gauntlet.service", launch.systemd_argv)
         self.assertIn("--property=PrivateNetwork=yes", launch.systemd_argv)

@@ -11,6 +11,7 @@ from gauntlet.identity import (
     materialize_attempt_home,
     validated_authority_binding,
 )
+from gauntlet.launch_intent import LAUNCH_INTENT_SCHEMA, sign_launch_intent
 from gauntlet.protocol import LeaseGrant
 from gauntlet.sandbox import (
     SandboxError,
@@ -20,15 +21,21 @@ from gauntlet.sandbox import (
 )
 
 from gauntlet.task_spec import (
+    TASK_SPEC_SCHEMA,
     TaskSpecError,
     command_policy_sha256,
     sign_task_spec,
+    verification_policy_sha256,
     verify_task_spec,
 )
 
 
 SPEC_KEY = b"task-spec-signing-key-material-01"
 SPEC_KEYS = {"task-spec-key-1": SPEC_KEY}
+VERIFICATION_COMMANDS = {
+    "compile": ("python3", "-m", "compileall", "-q", "gauntlet", "tests"),
+    "unit": ("python3", "-m", "unittest", "discover", "-s", "tests", "-v"),
+}
 
 
 def spec_fields(**overrides):
@@ -38,18 +45,17 @@ def spec_fields(**overrides):
         "-s", "workspace-write", "-a", "never", "-",
     )
     values = {
-        "schema": "kizuki-gauntlet-task-spec-v1",
+        "schema": TASK_SPEC_SCHEMA,
         "issuer_key_id": "task-spec-key-1",
         "campaign_id": "campaign-01",
         "task_id": "task-01",
         "attempt": 2,
         "controller_epoch": 7,
         "expected_task_version": 11,
-        "lease_token": 19,
-        "lease_run_id": "run-01",
         "repository": "Illuminfti/kizuki",
         "base_sha": "a" * 40,
         "expected_branch": "outer/task-01",
+        "issue_spec_url": "https://github.com/Illuminfti/kizuki/issues/4",
         "allowed_paths": ("gauntlet", "tests"),
         "forbidden_paths": (".github/workflows", "systemd"),
         "adapter": "codex",
@@ -59,6 +65,11 @@ def spec_fields(**overrides):
         "role": "BUILDER",
         "command_policy": "codex-exec-v1",
         "command_policy_sha256": command_policy_sha256("codex-exec-v1", command),
+        "verification_policy": "python-project-v1",
+        "verification_policy_sha256": verification_policy_sha256(
+            "python-project-v1", VERIFICATION_COMMANDS,
+        ),
+        "required_verification_commands": ("compile", "unit"),
         "wall_seconds": 300,
         "cpu_seconds": 300,
         "cpu_quota_percent": 100,
@@ -179,6 +190,7 @@ class LaunchAdmissionTests(unittest.TestCase):
             expires_at=500,
             resource="task:task-01:2:builder",
         )
+        self.launch_intent = self.issue_launch_intent()
         self.sandbox_spec = SandboxSpec(
             campaign_id="campaign-01",
             task_id="task-01",
@@ -215,24 +227,63 @@ class LaunchAdmissionTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def admit(self, *, consumed=None, **overrides):
+    def admit(self, **overrides):
         values = {
             "spec": self.sandbox_spec,
             "materialized_identity": self.materialized,
             "controller_hmac_key": self.controller_key,
             "task_spec": self.task_spec,
             "task_spec_verification_keys": SPEC_KEYS,
-            "lease_grant": self.lease,
             "identity_manifest": self.manifest,
             "identity_receipt": self.identity_receipt,
             "authority_binding": self.authority,
-            "consumed_binding_ids": set() if consumed is None else consumed,
-            "current_task_version": 11,
-            "current_controller_epoch": 7,
+            "launch_intent": self.launch_intent,
+            "verification_commands": VERIFICATION_COMMANDS,
             "now": 20,
         }
         values.update(overrides)
         return build_offline_launch(**values)
+
+    def issue_launch_intent(self, *, authority=None, **overrides):
+        authority = self.authority if authority is None else authority
+        explicit = set(overrides)
+        values = {
+            "schema": LAUNCH_INTENT_SCHEMA,
+            "task_spec_sha256": self.task_spec.task_spec_sha256,
+            "campaign_id": "campaign-01",
+            "task_id": "task-01",
+            "attempt": 2,
+            "role": "BUILDER",
+            "principal_id": "codex-builder",
+            "authority_domain": "codex-builder-domain",
+            "expected_task_version": 11,
+            "controller_epoch": 7,
+            "lease_resource": "task:task-01:2:builder",
+            "lease_run_id": "run-01",
+            "lease_token": 19,
+            "lease_expires_at": 500,
+            "subject_sha": "a" * 40,
+            "identity_manifest_sha256": authority.manifest_sha256,
+            "identity_receipt_sha256": authority.receipt_sha256,
+            "authority_binding_id": authority.binding_id,
+            "issued_at": 20,
+            "expires_at": 320,
+        }
+        values.update(overrides)
+        if "lease_resource" not in explicit:
+            values["lease_resource"] = (
+                f"task:{values['task_id']}:{values['attempt']}:"
+                f"{values['role'].lower().replace('_', '-')}"
+            )
+        from gauntlet.launch_intent import launch_operation_id
+        values["launch_operation_id"] = launch_operation_id(
+            task_spec_sha256=values["task_spec_sha256"],
+            lease_resource=values["lease_resource"],
+            lease_run_id=values["lease_run_id"],
+            lease_token=values["lease_token"],
+            controller_epoch=values["controller_epoch"],
+        )
+        return sign_launch_intent(signing_key=self.controller_key, **values)
 
     def test_launch_requires_exact_authenticated_current_admission(self):
         launch = self.admit()
@@ -242,16 +293,15 @@ class LaunchAdmissionTests(unittest.TestCase):
 
         denials = (
             {"task_spec": replace(self.task_spec, task_id="task-02")},
-            {"lease_grant": replace(self.lease, task_id="task-02")},
-            {"lease_grant": replace(self.lease, attempt=3)},
-            {"lease_grant": replace(self.lease, token=19.0)},
-            {"lease_grant": replace(self.lease, principal_id="other-builder")},
-            {"lease_grant": replace(self.lease, role="VERIFIER")},
-            {"lease_grant": replace(self.lease, token=20)},
+            {"launch_intent": self.issue_launch_intent(task_id="task-02")},
+            {"launch_intent": self.issue_launch_intent(attempt=3)},
+            {"launch_intent": self.issue_launch_intent(principal_id="other-builder")},
+            {"launch_intent": self.issue_launch_intent(role="VERIFIER")},
+            {"launch_intent": self.issue_launch_intent(lease_token=20)},
             {"materialized_identity": replace(self.materialized, task_id="task-02")},
             {"materialized_identity": replace(self.materialized, attempt=3)},
-            {"current_task_version": 12},
-            {"current_controller_epoch": 8},
+            {"launch_intent": self.issue_launch_intent(expected_task_version=12)},
+            {"launch_intent": self.issue_launch_intent(controller_epoch=8)},
             {"now": 500},
         )
         for override in denials:
@@ -274,6 +324,16 @@ class LaunchAdmissionTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(SandboxError, "destination"):
             self.admit(materialized_identity=other)
+
+    def test_post_preflight_worktree_symlink_swap_is_denied(self):
+        original = self.attempt_root / "original-work"
+        outside = self.root / "outside-work"
+        outside.mkdir(mode=0o700)
+        (outside / ".git").mkdir(mode=0o700)
+        self.work.rename(original)
+        self.work.symlink_to(outside, target_is_directory=True)
+        with self.assertRaisesRegex(SandboxError, "worktree"):
+            self.admit()
 
     def test_authenticated_materialization_is_bound_to_task_attempt_and_spec(self):
         other_spec = sign_task_spec(
@@ -310,33 +370,38 @@ class LaunchAdmissionTests(unittest.TestCase):
             self.controller_key,
             self.task_spec.task_spec_sha256,
         )
-        matching_lease = replace(
-            self.lease,
-            identity_receipt_sha256=expired_authority.receipt_sha256,
-        )
+        expired_intent = self.issue_launch_intent(authority=expired_authority)
         with self.assertRaisesRegex(SandboxError, "authority"):
             self.admit(
                 identity_receipt=expired_receipt,
                 authority_binding=expired_authority,
-                lease_grant=matching_lease,
+                launch_intent=expired_intent,
                 now=26,
             )
 
-    def test_authority_binding_is_consumed_once(self):
-        consumed = set()
-        self.admit(consumed=consumed)
-        self.assertEqual(consumed, {self.authority.binding_id})
-        with self.assertRaisesRegex(SandboxError, "authority"):
-            self.admit(consumed=consumed)
+    def test_retry_of_one_durable_intent_is_the_same_inert_operation(self):
+        first = self.admit()
+        second = self.admit()
+        self.assertEqual(first.launch_operation_id, second.launch_operation_id)
+        self.assertEqual(first.unit_name, second.unit_name)
 
-    def test_failed_preflight_does_not_consume_authority(self):
-        consumed = set()
-        with self.assertRaisesRegex(SandboxError, "lease"):
-            self.admit(
-                consumed=consumed,
-                lease_grant=replace(self.lease, run_id="stale-run"),
-            )
-        self.assertEqual(consumed, set())
+    def test_fresh_binding_cannot_select_a_new_operation_for_the_same_lease(self):
+        fresh_authority = validated_authority_binding(
+            self.manifest,
+            self.identity_receipt,
+            21,
+            self.controller_key,
+            self.task_spec.task_spec_sha256,
+        )
+        fresh_intent = self.issue_launch_intent(authority=fresh_authority, issued_at=21)
+        original = self.admit()
+        replacement = self.admit(
+            authority_binding=fresh_authority,
+            launch_intent=fresh_intent,
+            now=21,
+        )
+        self.assertEqual(original.launch_operation_id, replacement.launch_operation_id)
+        self.assertEqual(original.unit_name, replacement.unit_name)
 
     def test_attested_executable_must_be_the_release_executable(self):
         mismatched_manifest = replace(self.manifest, executable_sha256="f" * 64)
@@ -375,11 +440,7 @@ class LaunchAdmissionTests(unittest.TestCase):
             self.controller_key,
             self.task_spec.task_spec_sha256,
         )
-        matching_lease = replace(
-            self.lease,
-            account_binding_sha256=mismatched_authority.account_binding_sha256,
-            identity_receipt_sha256=mismatched_authority.receipt_sha256,
-        )
+        mismatched_intent = self.issue_launch_intent(authority=mismatched_authority)
         with self.assertRaisesRegex(SandboxError, "executable"):
             self.admit(
                 spec=mismatched_sandbox,
@@ -387,7 +448,7 @@ class LaunchAdmissionTests(unittest.TestCase):
                 identity_manifest=mismatched_manifest,
                 identity_receipt=mismatched_receipt,
                 authority_binding=mismatched_authority,
-                lease_grant=matching_lease,
+                launch_intent=mismatched_intent,
             )
 
 
