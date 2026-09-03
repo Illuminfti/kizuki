@@ -16,8 +16,20 @@ import stat
 import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Callable, Mapping, Tuple
+from typing import Mapping, Tuple
 from urllib.parse import urlsplit
+
+__all__ = (
+    "TaskSpecError",
+    "ResourceBudgets",
+    "TaskSpec",
+    "SignedTaskSpec",
+    "sign_task_spec",
+    "verify_task_spec",
+    "canonical_envelope_bytes",
+    "materialize_task_spec",
+    "read_task_spec",
+)
 
 
 class TaskSpecError(RuntimeError):
@@ -67,9 +79,17 @@ def _positive_integer(value: object, label: str, maximum: int) -> int:
     return value
 
 
-def _clock_sample(clock: Callable[[], int] | None) -> int:
-    current = int(time.time()) if clock is None else clock()
-    if isinstance(current, bool) or not isinstance(current, int) or current < 0:
+def _wall_time() -> int:
+    """Sample the trusted controller wall clock.
+
+    Time remains patchable at the module boundary for deterministic tests, but
+    callers cannot inject executable behavior into the admission sequence.
+    """
+    try:
+        current = int(time.time())
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise TaskSpecError("task specification clock returned an invalid time") from exc
+    if current < 0:
         raise TaskSpecError("task specification clock returned an invalid time")
     return current
 
@@ -98,6 +118,8 @@ def _branch(value: object) -> str:
             or value.startswith(("-", ".", "/")) or value.endswith(("/", "."))
             or ".." in value or "//" in value or "@{" in value
             or value.endswith(".lock") or "\\" in value
+            or any(part.startswith(".") or part.endswith(".lock")
+                   for part in value.split("/"))
             or any(ord(character) < 0x20 or ord(character) == 0x7f for character in value)
             or any(character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/" for character in value)):
         raise TaskSpecError("invalid expected branch")
@@ -108,13 +130,15 @@ def _prefixes(values: object, label: str) -> Tuple[str, ...]:
     if isinstance(values, (str, bytes)):
         raise TaskSpecError(f"invalid {label}")
     try:
-        candidates = tuple(values)  # type: ignore[arg-type]
+        iterator = iter(values)  # type: ignore[arg-type]
     except TypeError as exc:
         raise TaskSpecError(f"invalid {label}") from exc
-    if not candidates or len(candidates) > 64:
-        raise TaskSpecError(f"invalid {label}")
-    normalized = []
-    for value in candidates:
+    normalized: list[str] = []
+    for value in iterator:
+        # Fetch at most the one item needed to prove that the 64-item bound was
+        # exceeded.  Never materialize or exhaust a caller-provided iterable.
+        if len(normalized) == 64:
+            raise TaskSpecError(f"invalid {label}")
         if (not isinstance(value, str) or not value or "\x00" in value or "\\" in value
                 or len(value.encode("utf-8")) > 240):
             raise TaskSpecError(f"invalid {label}")
@@ -125,6 +149,8 @@ def _prefixes(values: object, label: str) -> Tuple[str, ...]:
                 or path.as_posix() != value.rstrip("/")):
             raise TaskSpecError(f"invalid {label}")
         normalized.append(path.as_posix())
+    if not normalized:
+        raise TaskSpecError(f"invalid {label}")
     if len(set(normalized)) != len(normalized):
         raise TaskSpecError(f"duplicate {label}")
     return tuple(sorted(normalized))
@@ -515,6 +541,35 @@ def _private_file_identity(info: os.stat_result, expected_size: int) -> bool:
     )
 
 
+def _stable_file_metadata(info: os.stat_result) -> tuple[int, ...]:
+    """Return every security-relevant field that must survive admission."""
+    return (
+        info.st_dev,
+        info.st_ino,
+        info.st_mode,
+        info.st_nlink,
+        info.st_uid,
+        info.st_gid,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+
+
+def _pread_exact(fd: int, expected_size: int) -> bytes:
+    chunks: list[bytes] = []
+    offset = 0
+    while offset < expected_size:
+        block = os.pread(fd, min(65536, expected_size - offset), offset)
+        if not block:
+            raise TaskSpecError("task specification content changed during final readback")
+        chunks.append(block)
+        offset += len(block)
+    if os.pread(fd, 1, expected_size):
+        raise TaskSpecError("task specification content changed during final readback")
+    return b"".join(chunks)
+
+
 def _named_file(parent_fd: int, name: str) -> os.stat_result:
     try:
         return os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
@@ -530,14 +585,19 @@ def materialize_task_spec(
     expected_subject_sha: str,
     expected_instruction_sha256: str,
     expected_instruction_bytes: int,
-    clock: Callable[[], int] | None = None,
 ) -> str:
-    """Create ``<attempts_root>/<signed-attempt>/task-spec.json`` once."""
+    """Create ``<attempts_root>/<signed-attempt>/task-spec.json`` once.
+
+    The controller account and every same-UID process are part of this local
+    storage seam's trusted computing base.  Name/inode and byte revalidation
+    close races inside this call; they cannot defend against a malicious peer
+    with the same UID changing the file after this function returns.
+    """
     expected_digest = _digest(
         expected_task_spec_sha256, 64, "expected task specification digest",
     )
     verified = verify_task_spec(
-        envelope, controller_hmac_key, now=_clock_sample(clock),
+        envelope, controller_hmac_key, now=_wall_time(),
         expected_phase_attempt_id=expected_phase_attempt_id,
         expected_subject_sha=expected_subject_sha,
         expected_instruction_sha256=expected_instruction_sha256,
@@ -558,7 +618,7 @@ def materialize_task_spec(
             root_fd, verified.spec.phase_attempt_id, "attempt directory",
         )
         flags = (
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
+            os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
             | getattr(os, "O_NOFOLLOW", 0)
         )
         try:
@@ -592,7 +652,9 @@ def materialize_task_spec(
         if (not _private_file_identity(opened_after, len(encoded))
                 or not _private_file_identity(named_after, len(encoded))
                 or (opened_after.st_dev, opened_after.st_ino) != created_identity
-                or (named_after.st_dev, named_after.st_ino) != created_identity):
+                or (named_after.st_dev, named_after.st_ino) != created_identity
+                or _stable_file_metadata(named_after)
+                   != _stable_file_metadata(opened_after)):
             raise TaskSpecError("task specification final name/inode changed")
         _recheck_private_child_directory(
             root_fd, verified.spec.phase_attempt_id, attempt_fd, attempt_info,
@@ -603,7 +665,7 @@ def materialize_task_spec(
         # Currentness and every durable context binding are sampled again only
         # after both durability barriers and the first complete identity pass.
         final_verified = verify_task_spec(
-            envelope, controller_hmac_key, now=_clock_sample(clock),
+            envelope, controller_hmac_key, now=_wall_time(),
             expected_phase_attempt_id=expected_phase_attempt_id,
             expected_subject_sha=expected_subject_sha,
             expected_instruction_sha256=expected_instruction_sha256,
@@ -615,16 +677,29 @@ def materialize_task_spec(
                 )):
             raise TaskSpecError("task specification identity changed before admission")
 
-        # The clock is an injectable controller boundary and can run arbitrary
-        # test code.  Recheck every canonical name/inode after it; nothing below
-        # this block reads caller-controlled storage.
+        # Re-read through the held descriptor after the final currentness
+        # sample.  Stable size/mode/inode alone cannot detect an in-place,
+        # same-length overwrite.
+        baseline_metadata = _stable_file_metadata(opened_after)
         opened_final = os.fstat(fd)
         named_final = _named_file(attempt_fd, _TASK_SPEC_NAME)
         if (not _private_file_identity(opened_final, len(encoded))
                 or not _private_file_identity(named_final, len(encoded))
-                or (opened_final.st_dev, opened_final.st_ino) != created_identity
-                or (named_final.st_dev, named_final.st_ino) != created_identity):
-            raise TaskSpecError("task specification final name/inode changed")
+                or _stable_file_metadata(opened_final) != baseline_metadata
+                or _stable_file_metadata(named_final) != baseline_metadata):
+            raise TaskSpecError("task specification final metadata changed")
+        readback = _pread_exact(fd, len(encoded))
+        opened_readback = os.fstat(fd)
+        named_readback = _named_file(attempt_fd, _TASK_SPEC_NAME)
+        if (readback != encoded
+                or _stable_file_metadata(opened_readback) != baseline_metadata
+                or _stable_file_metadata(named_readback) != baseline_metadata):
+            raise TaskSpecError("task specification final content or metadata changed")
+        decoded_readback = _decode_envelope(readback)
+        if not hmac.compare_digest(
+            decoded_readback.task_spec_sha256, expected_digest,
+        ):
+            raise TaskSpecError("task specification final digest changed")
         _recheck_private_child_directory(
             root_fd, verified.spec.phase_attempt_id, attempt_fd, attempt_info,
             "attempt directory",
@@ -735,7 +810,6 @@ def read_task_spec(
     expected_subject_sha: str,
     expected_instruction_sha256: str,
     expected_instruction_bytes: int,
-    now: int | None = None,
 ) -> SignedTaskSpec:
     """Read the fixed file under the exact durable/signed attempt directory."""
     _digest(expected_task_spec_sha256, 64, "expected task specification digest")
@@ -783,7 +857,7 @@ def read_task_spec(
             raise TaskSpecError("task specification file changed while reading")
         raw = b"".join(chunks)
         envelope = verify_task_spec(
-            _decode_envelope(raw), controller_hmac_key, now=now,
+            _decode_envelope(raw), controller_hmac_key, now=_wall_time(),
             expected_phase_attempt_id=expected_phase_attempt_id,
             expected_subject_sha=expected_subject_sha,
             expected_instruction_sha256=expected_instruction_sha256,
@@ -818,8 +892,3 @@ def read_task_spec(
         if attempt_fd >= 0:
             os.close(attempt_fd)
         os.close(root_fd)
-
-
-# Explicit verb aliases make the storage contract easy to discover without
-# adding a second implementation.
-write_task_spec = materialize_task_spec

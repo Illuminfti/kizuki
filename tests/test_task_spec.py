@@ -1,5 +1,6 @@
 import dataclasses
 import hashlib
+import inspect
 import json
 import os
 import tempfile
@@ -36,8 +37,11 @@ class TaskSpecTests(unittest.TestCase):
         self.attempt_dir = self.attempts_root / ("9" * 64)
         self.attempt_dir.mkdir(mode=0o700)
         self.task_spec_path = self.attempt_dir / "task-spec.json"
+        self.time_patch = mock.patch("gauntlet.task_spec.time.time", return_value=self.now)
+        self.time_patch.start()
 
     def tearDown(self):
+        self.time_patch.stop()
         self.temp.cleanup()
 
     def spec(self, **overrides):
@@ -82,7 +86,6 @@ class TaskSpecTests(unittest.TestCase):
             expected_subject_sha=envelope.spec.subject_sha,
             expected_instruction_sha256=envelope.spec.instruction_sha256,
             expected_instruction_bytes=envelope.spec.instruction_bytes,
-            clock=lambda: self.now,
         )
         expected.update(overrides)
         return materialize_task_spec(
@@ -115,6 +118,7 @@ class TaskSpecTests(unittest.TestCase):
                 expected_instruction_sha256="0" * 64,
                 expected_instruction_bytes=len(INSTRUCTION),
             )
+
         with self.assertRaisesRegex(TaskSpecError, "instruction"):
             verify_task_spec(
                 envelope, KEY, now=self.now,
@@ -139,6 +143,28 @@ class TaskSpecTests(unittest.TestCase):
                 self.spec(instruction_bytes=invalid)
         with self.assertRaises(TaskSpecError):
             self.spec(instruction_sha256="not-a-digest")
+
+    def test_materialization_has_no_public_clock_or_alias_surface(self):
+        import gauntlet.task_spec as module
+
+        self.assertEqual(
+            set(module.__all__),
+            {
+                "TaskSpecError",
+                "ResourceBudgets",
+                "TaskSpec",
+                "SignedTaskSpec",
+                "sign_task_spec",
+                "verify_task_spec",
+                "canonical_envelope_bytes",
+                "materialize_task_spec",
+                "read_task_spec",
+            },
+        )
+        self.assertEqual(len(module.__all__), len(set(module.__all__)))
+        self.assertNotIn("clock", inspect.signature(materialize_task_spec).parameters)
+        self.assertNotIn("now", inspect.signature(read_task_spec).parameters)
+        self.assertFalse(hasattr(module, "write_task_spec"))
 
     def test_signs_canonical_immutable_bounded_envelope(self):
         envelope = sign_task_spec(self.spec(), "controller-key-1", KEY)
@@ -249,6 +275,53 @@ class TaskSpecTests(unittest.TestCase):
         with self.assertRaises(TaskSpecError):
             ResourceBudgets(10, 11, 1024 * 1024 * 1024, 1, 1)
 
+    def test_prefix_validation_stops_after_the_sixty_fifth_item(self):
+        yielded = 0
+
+        def unbounded_prefixes():
+            nonlocal yielded
+            while True:
+                yielded += 1
+                if yielded > 65:
+                    raise AssertionError("prefix iterable was exhausted past its bound")
+                yield f"path-{yielded}"
+
+        with self.assertRaisesRegex(TaskSpecError, "allowed prefixes"):
+            self.spec(allowed_prefixes=unbounded_prefixes())
+
+        self.assertEqual(yielded, 65)
+
+    def test_expected_branch_uses_conservative_git_ref_grammar_without_git(self):
+        accepted = (
+            "main",
+            "topic/safe",
+            "release/1.2.3",
+            "users/name_fix-2",
+        )
+        rejected = (
+            "topic/.hidden",
+            "topic/name.lock/child",
+            "topic//child",
+            "topic/../child",
+            "topic/trailing.",
+            "topic/has space",
+            "topic/has~operator",
+            "@",
+        )
+
+        with mock.patch(
+            "subprocess.Popen",
+            side_effect=AssertionError("branch validation must not execute Git"),
+        ):
+            for branch in accepted:
+                with self.subTest(accepted=branch):
+                    self.assertEqual(self.spec(expected_branch=branch).expected_branch, branch)
+            for branch in rejected:
+                with self.subTest(rejected=branch), self.assertRaisesRegex(
+                    TaskSpecError, "branch",
+                ):
+                    self.spec(expected_branch=branch)
+
     def test_materialization_is_exclusive_private_durable_and_verified_on_read(self):
         envelope = sign_task_spec(self.spec(), "controller-key-1", KEY)
         destination = self.task_spec_path
@@ -264,7 +337,7 @@ class TaskSpecTests(unittest.TestCase):
         )
         self.assertEqual(
             read_task_spec(
-                self.attempts_root, KEY, now=self.now,
+                self.attempts_root, KEY,
                 expected_task_spec_sha256=envelope.task_spec_sha256,
                 expected_phase_attempt_id=envelope.spec.phase_attempt_id,
                 expected_subject_sha=envelope.spec.subject_sha,
@@ -298,7 +371,6 @@ class TaskSpecTests(unittest.TestCase):
             with self.subTest(mismatch=mismatch), self.assertRaises(TaskSpecError):
                 materialize_task_spec(
                     envelope, self.attempts_root, KEY,
-                    clock=lambda: self.now,
                     **expected,
                 )
             self.assertFalse(self.task_spec_path.exists())
@@ -326,7 +398,8 @@ class TaskSpecTests(unittest.TestCase):
             self.assertTrue(self.task_spec_path.is_file())
             return envelope.spec.expires_at
 
-        with mock.patch.object(module.os, "fsync", side_effect=recording_fsync):
+        with mock.patch.object(module.os, "fsync", side_effect=recording_fsync), \
+                mock.patch.object(module.time, "time", side_effect=expiring_clock):
             with self.assertRaisesRegex(TaskSpecError, "expired"):
                 materialize_task_spec(
                     envelope, self.attempts_root, KEY,
@@ -335,7 +408,6 @@ class TaskSpecTests(unittest.TestCase):
                     expected_subject_sha=envelope.spec.subject_sha,
                     expected_instruction_sha256=envelope.spec.instruction_sha256,
                     expected_instruction_bytes=envelope.spec.instruction_bytes,
-                    clock=expiring_clock,
                 )
 
         self.assertGreaterEqual(clock_calls, 2)
@@ -349,7 +421,6 @@ class TaskSpecTests(unittest.TestCase):
                 expected_subject_sha=envelope.spec.subject_sha,
                 expected_instruction_sha256=envelope.spec.instruction_sha256,
                 expected_instruction_bytes=envelope.spec.instruction_bytes,
-                clock=lambda: self.now,
             )
 
     def test_storage_derives_the_signed_attempt_and_never_uses_a_sibling(self):
@@ -376,7 +447,7 @@ class TaskSpecTests(unittest.TestCase):
         destination.chmod(0o600)
         with self.assertRaises(TaskSpecError):
             read_task_spec(
-                self.attempts_root, KEY, now=self.now,
+                self.attempts_root, KEY,
                 expected_task_spec_sha256=envelope.task_spec_sha256,
                 expected_phase_attempt_id=envelope.spec.phase_attempt_id,
                 expected_subject_sha=envelope.spec.subject_sha,
@@ -388,7 +459,7 @@ class TaskSpecTests(unittest.TestCase):
         destination.chmod(0o644)
         with self.assertRaisesRegex(TaskSpecError, "0600"):
             read_task_spec(
-                self.attempts_root, KEY, now=self.now,
+                self.attempts_root, KEY,
                 expected_task_spec_sha256=envelope.task_spec_sha256,
                 expected_phase_attempt_id=envelope.spec.phase_attempt_id,
                 expected_subject_sha=envelope.spec.subject_sha,
@@ -403,7 +474,7 @@ class TaskSpecTests(unittest.TestCase):
         destination.symlink_to(target)
         with self.assertRaises(TaskSpecError):
             read_task_spec(
-                self.attempts_root, KEY, now=self.now,
+                self.attempts_root, KEY,
                 expected_task_spec_sha256=envelope.task_spec_sha256,
                 expected_phase_attempt_id=envelope.spec.phase_attempt_id,
                 expected_subject_sha=envelope.spec.subject_sha,
@@ -446,19 +517,36 @@ class TaskSpecTests(unittest.TestCase):
         for expected in cases:
             with self.subTest(expected=expected), self.assertRaises(TaskSpecError):
                 read_task_spec(
-                    self.attempts_root, KEY, now=self.now,
+                    self.attempts_root, KEY,
                     **expected,
                 )
         os.link(destination, self.root / "task-spec-hardlink.json")
         with self.assertRaisesRegex(TaskSpecError, "link|regular"):
             read_task_spec(
-                self.attempts_root, KEY, now=self.now,
+                self.attempts_root, KEY,
                 expected_task_spec_sha256=envelope.task_spec_sha256,
                 expected_phase_attempt_id=envelope.spec.phase_attempt_id,
                 expected_subject_sha=envelope.spec.subject_sha,
                 expected_instruction_sha256=envelope.spec.instruction_sha256,
                 expected_instruction_bytes=envelope.spec.instruction_bytes,
             )
+
+    def test_read_uses_fresh_trusted_time_and_rejects_expired_file(self):
+        envelope = sign_task_spec(self.spec(), "controller-key-1", KEY)
+        self.materialize(envelope)
+
+        with mock.patch(
+            "gauntlet.task_spec.time.time", return_value=envelope.spec.expires_at,
+        ):
+            with self.assertRaisesRegex(TaskSpecError, "expired"):
+                read_task_spec(
+                    self.attempts_root, KEY,
+                    expected_task_spec_sha256=envelope.task_spec_sha256,
+                    expected_phase_attempt_id=envelope.spec.phase_attempt_id,
+                    expected_subject_sha=envelope.spec.subject_sha,
+                    expected_instruction_sha256=envelope.spec.instruction_sha256,
+                    expected_instruction_bytes=envelope.spec.instruction_bytes,
+                )
 
     def test_read_rejects_final_name_inode_swap(self):
         import gauntlet.task_spec as module
@@ -484,7 +572,7 @@ class TaskSpecTests(unittest.TestCase):
         with mock.patch.object(module.os, "read", side_effect=swapping_read):
             with self.assertRaisesRegex(TaskSpecError, "changed|inode"):
                 read_task_spec(
-                    self.attempts_root, KEY, now=self.now,
+                    self.attempts_root, KEY,
                     expected_task_spec_sha256=envelope.task_spec_sha256,
                     expected_phase_attempt_id=envelope.spec.phase_attempt_id,
                     expected_subject_sha=envelope.spec.subject_sha,
@@ -521,7 +609,6 @@ class TaskSpecTests(unittest.TestCase):
                     expected_subject_sha=envelope.spec.subject_sha,
                     expected_instruction_sha256=envelope.spec.instruction_sha256,
                     expected_instruction_bytes=envelope.spec.instruction_bytes,
-                    clock=lambda: self.now,
                 )
 
         self.assertTrue(swapped)
@@ -552,7 +639,7 @@ class TaskSpecTests(unittest.TestCase):
         with mock.patch.object(module.os, "read", side_effect=swap_after_first_read):
             with self.assertRaisesRegex(TaskSpecError, "attempt directory|mapping"):
                 read_task_spec(
-                    self.attempts_root, KEY, now=self.now,
+                    self.attempts_root, KEY,
                     expected_task_spec_sha256=envelope.task_spec_sha256,
                     expected_phase_attempt_id=envelope.spec.phase_attempt_id,
                     expected_subject_sha=envelope.spec.subject_sha,
@@ -616,6 +703,33 @@ class TaskSpecTests(unittest.TestCase):
         self.assertEqual(destination.read_text(encoding="utf-8"), "victim")
         self.assertTrue(residue.is_file())
         self.assertGreater(residue.stat().st_size, len("victim"))
+
+    def test_materialization_rejects_same_length_content_change_at_final_time_sample(self):
+        envelope = sign_task_spec(self.spec(), "controller-key-1", KEY)
+        calls = 0
+
+        def mutate_at_final_sample():
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raw = self.task_spec_path.read_bytes()
+                self.task_spec_path.write_bytes(b"[" + raw[1:])
+                self.task_spec_path.chmod(0o600)
+            return self.now
+
+        with mock.patch("gauntlet.task_spec.time.time", side_effect=mutate_at_final_sample):
+            with self.assertRaisesRegex(TaskSpecError, "content|metadata|changed"):
+                materialize_task_spec(
+                    envelope, self.attempts_root, KEY,
+                    expected_task_spec_sha256=envelope.task_spec_sha256,
+                    expected_phase_attempt_id=envelope.spec.phase_attempt_id,
+                    expected_subject_sha=envelope.spec.subject_sha,
+                    expected_instruction_sha256=envelope.spec.instruction_sha256,
+                    expected_instruction_bytes=envelope.spec.instruction_bytes,
+                )
+
+        self.assertEqual(calls, 2)
+        self.assertTrue(self.task_spec_path.is_file())
 
 
 if __name__ == "__main__":
