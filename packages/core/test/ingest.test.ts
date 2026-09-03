@@ -503,6 +503,10 @@ describe("runToCompletion", () => {
     // interrupted run reports.
     expect(result.cursor).toBe("page-2");
     expect(getCheckpoint(db, "fixture", "src-1")?.cursor).toBe("page-2");
+    db.close();
+  });
+});
+
 /**
  * The grant belongs to the connection the host enrolled. These are the three
  * ways a batch can claim one that was never given to it.

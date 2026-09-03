@@ -1,4 +1,4 @@
-import type { CaptureEventInput } from "./event";
+import type { CaptureEventInput, SensitivityHint } from "./event";
 import { isRfc3339 } from "../util/time";
 
 export const CONNECTOR_SCHEMA = "kizuki.connector/v1" as const;
