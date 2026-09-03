@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: read
+  issues: read
+  pull-requests: read
 
 concurrency:
   group: agent-source-export-${{ github.ref }}
@@ -26,11 +28,20 @@ jobs:
       - name: Install exact dependencies
         shell: bash
         run: bun install --frozen-lockfile
+      - name: Capture live coordination state
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .agent-devkit/bin .agent-devkit/live
+          gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/issues?state=open&per_page=100" > .agent-devkit/live/open-issues-pages.json
+          gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" > .agent-devkit/live/open-pulls-pages.json
+          gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" > .agent-devkit/live/check-runs.json
       - name: Pack exact development snapshot
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p .agent-devkit/bin
           cp "$(command -v bun)" .agent-devkit/bin/bun
           chmod 0755 .agent-devkit/bin/bun
           printf '%s\n' "$GITHUB_SHA" > .agent-source-sha
