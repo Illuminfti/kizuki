@@ -1,0 +1,35 @@
+name: agent-source-export
+
+on:
+  push:
+    branches:
+      - agent/launch-campaign-source-20260903
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-source-export-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 1
+      - name: Pack exact source snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$GITHUB_SHA" > .agent-source-sha
+          tar --exclude=.git --exclude=.agent-source-sha.tmp -czf /tmp/kizuki-source.tgz .
+      - name: Upload source snapshot
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kizuki-source-${{ github.sha }}
+          path: /tmp/kizuki-source.tgz
+          if-no-files-found: error
+          retention-days: 1
