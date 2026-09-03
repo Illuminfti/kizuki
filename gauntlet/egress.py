@@ -28,7 +28,7 @@ _LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
 _HEADER = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}\Z")
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 _ADAPTERS = frozenset(("codex", "claude", "cursor", "grok"))
-EGRESS_POLICY_SCHEMA = "kizuki-gauntlet-egress-policy-v1"
+EGRESS_POLICY_SCHEMA = "kizuki-gauntlet-egress-policy-v2"
 
 
 def _canonical(value: object) -> bytes:
@@ -90,8 +90,9 @@ def _host(value: str) -> str:
 def _network_values(
     *, profile_id: str, hosts: Tuple[str, ...], max_connections: int,
     max_client_bytes: int, max_upstream_bytes: int, max_total_bytes: int,
-    resolver_timeout_seconds: int, idle_seconds: int, wall_seconds: int,
-    max_connect_bytes: int, max_client_hello_bytes: int,
+    connect_timeout_seconds: int, resolver_timeout_seconds: int,
+    idle_seconds: int, wall_seconds: int, max_connect_bytes: int,
+    max_client_hello_bytes: int,
 ) -> dict:
     if not isinstance(profile_id, str) or not _PROFILE.fullmatch(profile_id):
         raise EgressError("invalid profile id")
@@ -104,13 +105,19 @@ def _network_values(
     _positive(max_client_bytes, "client byte limit", 1_000_000_000)
     _positive(max_upstream_bytes, "upstream byte limit", 1_000_000_000)
     _positive(max_total_bytes, "total byte limit", 2_000_000_000)
+    _positive(connect_timeout_seconds, "connect timeout", 30)
     _positive(resolver_timeout_seconds, "resolver timeout", 30)
     _positive(idle_seconds, "idle timeout", 300)
     _positive(wall_seconds, "wall timeout", 3600)
     _positive(max_connect_bytes, "CONNECT byte limit", 65_536)
     _positive(max_client_hello_bytes, "ClientHello byte limit", 262_144)
-    if resolver_timeout_seconds > wall_seconds or idle_seconds > wall_seconds:
-        raise EgressError("phase timeout exceeds wall limit")
+    if (
+        connect_timeout_seconds > wall_seconds
+        or resolver_timeout_seconds > connect_timeout_seconds
+        or resolver_timeout_seconds > wall_seconds
+        or idle_seconds > wall_seconds
+    ):
+        raise EgressError("invalid timeout ordering")
     return {
         "profile_id": profile_id,
         "hosts": normalized,
@@ -118,6 +125,7 @@ def _network_values(
         "max_client_bytes": max_client_bytes,
         "max_upstream_bytes": max_upstream_bytes,
         "max_total_bytes": max_total_bytes,
+        "connect_timeout_seconds": connect_timeout_seconds,
         "resolver_timeout_seconds": resolver_timeout_seconds,
         "idle_seconds": idle_seconds,
         "wall_seconds": wall_seconds,
@@ -130,7 +138,7 @@ def network_profile_sha256(**values) -> str:
     """Digest the complete network authority surface, not an arbitrary label."""
     material = _network_values(**values)
     return hashlib.sha256(
-        b"kizuki-egress-network-profile-v1\0" + _canonical(material)
+        b"kizuki-egress-network-profile-v2\0" + _canonical(material)
     ).hexdigest()
 
 
@@ -141,6 +149,7 @@ class EgressAttemptBinding:
     attempt: int
     controller_epoch: int
     adapter: str
+    profile_id: str
     principal_id: str
     authority_domain: str
     identity_generation: int
@@ -159,6 +168,8 @@ class EgressAttemptBinding:
         _positive(self.identity_generation, "identity generation", 2**63 - 1)
         if self.adapter not in _ADAPTERS:
             raise EgressError("invalid adapter")
+        if not isinstance(self.profile_id, str) or not _PROFILE.fullmatch(self.profile_id):
+            raise EgressError("invalid profile id")
         _digest(self.network_profile_sha256, "network-profile digest")
 
 
@@ -180,6 +191,7 @@ class EgressPolicy:
     max_client_bytes: int
     max_upstream_bytes: int
     max_total_bytes: int
+    connect_timeout_seconds: int
     resolver_timeout_seconds: int
     idle_seconds: int
     wall_seconds: int
@@ -214,6 +226,7 @@ class EgressPolicy:
             max_client_bytes=self.max_client_bytes,
             max_upstream_bytes=self.max_upstream_bytes,
             max_total_bytes=self.max_total_bytes,
+            connect_timeout_seconds=self.connect_timeout_seconds,
             resolver_timeout_seconds=self.resolver_timeout_seconds,
             idle_seconds=self.idle_seconds, wall_seconds=self.wall_seconds,
             max_connect_bytes=self.max_connect_bytes,
@@ -268,7 +281,7 @@ def sign_egress_policy(*, signing_key: bytes, **values) -> EgressPolicy:
     with_digest = replace(provisional, policy_sha256=digest)
     signature = hmac.new(
         key,
-        b"kizuki-egress-policy-v1\0" + _canonical({
+        b"kizuki-egress-policy-v2\0" + _canonical({
             **_unsigned_policy(with_digest), "policy_sha256": digest,
         }),
         hashlib.sha256,
@@ -295,7 +308,7 @@ def verify_egress_policy(
         raise EgressError("egress-policy digest mismatch")
     signature = hmac.new(
         key,
-        b"kizuki-egress-policy-v1\0" + _canonical({
+        b"kizuki-egress-policy-v2\0" + _canonical({
             **_unsigned_policy(policy), "policy_sha256": policy.policy_sha256,
         }),
         hashlib.sha256,
@@ -305,13 +318,13 @@ def verify_egress_policy(
     expected = (
         policy.campaign_id, policy.task_id, policy.attempt,
         policy.controller_epoch, policy.adapter, policy.principal_id,
-        policy.authority_domain, policy.identity_generation,
+        policy.profile_id, policy.authority_domain, policy.identity_generation,
         policy.network_profile_sha256,
     )
     actual = (
         binding.campaign_id, binding.task_id, binding.attempt,
         binding.controller_epoch, binding.adapter, binding.principal_id,
-        binding.authority_domain, binding.identity_generation,
+        binding.profile_id, binding.authority_domain, binding.identity_generation,
         binding.network_profile_sha256,
     )
     if actual != expected:

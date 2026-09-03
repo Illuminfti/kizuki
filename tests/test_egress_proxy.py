@@ -3,9 +3,11 @@ import socket
 import threading
 import unittest
 from dataclasses import replace
+from unittest.mock import patch
 
 from gauntlet.egress import (
     EgressAttemptBinding,
+    EgressError,
     network_profile_sha256,
     sign_egress_policy,
 )
@@ -66,6 +68,7 @@ def signed_policy(**overrides):
         "max_client_bytes": 4096,
         "max_upstream_bytes": 4096,
         "max_total_bytes": 6144,
+        "connect_timeout_seconds": 3,
         "resolver_timeout_seconds": 2,
         "idle_seconds": 2,
         "wall_seconds": 5,
@@ -76,7 +79,7 @@ def signed_policy(**overrides):
         if name in overrides:
             network[name] = overrides.pop(name)
     values = {
-        "schema": "kizuki-gauntlet-egress-policy-v1",
+        "schema": "kizuki-gauntlet-egress-policy-v2",
         "issuer_key_id": "egress-key-1",
         "campaign_id": "campaign-01",
         "task_id": "task-01",
@@ -103,6 +106,7 @@ def binding(policy):
         attempt=policy.attempt,
         controller_epoch=policy.controller_epoch,
         adapter=policy.adapter,
+        profile_id=policy.profile_id,
         principal_id=policy.principal_id,
         authority_domain=policy.authority_domain,
         identity_generation=policy.identity_generation,
@@ -120,7 +124,7 @@ class ConnectSessionTests(unittest.TestCase):
 
     def start_connected_session(
         self, *, policy=None, budget=None, cancel_event=None, event_sink=None,
-        connect_headers=b"",
+        connect_headers=b"", trusted_time=None,
     ):
         policy = policy or signed_policy()
         budget = budget or AttemptEgressBudget(policy)
@@ -137,9 +141,7 @@ class ConnectSessionTests(unittest.TestCase):
             "",
             ("93.184.216.34", 443),
         )
-        kwargs = {}
-        if event_sink is not None:
-            kwargs["event_sink"] = event_sink
+        kwargs = {"event_sink": event_sink or (lambda _event: None)}
         thread = threading.Thread(target=lambda: result.setdefault(
             "value",
             handle_connect_session(
@@ -148,7 +150,7 @@ class ConnectSessionTests(unittest.TestCase):
                 POLICY_KEYS,
                 binding(policy),
                 budget,
-                policy_now=20,
+                trusted_time=trusted_time or (lambda: 20),
                 resolver=lambda *_args: (chosen,),
                 dialer=lambda address, _timeout, _cancel: PeerSocket(
                     upstream, address[4],
@@ -192,10 +194,11 @@ class ConnectSessionTests(unittest.TestCase):
                         POLICY_KEYS,
                         candidate_binding,
                         budget,
-                        policy_now=now,
+                        trusted_time=lambda n=now: n,
                         resolver=forbidden,
                         dialer=forbidden,
                         cancel_event=threading.Event(),
+                        event_sink=lambda _event: None,
                     ),
                 ))
                 thread.start()
@@ -229,12 +232,13 @@ class ConnectSessionTests(unittest.TestCase):
                 POLICY_KEYS,
                 binding(policy),
                 AttemptEgressBudget(policy),
-                policy_now=20,
+                trusted_time=lambda: 20,
                 resolver=lambda *_args: (chosen,),
                 dialer=lambda address, _timeout, _cancel: PeerSocket(
                     upstream, address[4],
                 ),
                 cancel_event=threading.Event(),
+                event_sink=lambda _event: None,
             ),
         ))
         thread.start()
@@ -244,7 +248,7 @@ class ConnectSessionTests(unittest.TestCase):
         )
         self.assertIn(b"200 Connection Established", user.recv(1024))
 
-        hello = client_hello()
+        hello = client_hello("API.OPENAI.COM")
         client_payload = hello + b"encrypted-client-record"
         user.sendall(client_payload)
         user.shutdown(socket.SHUT_WR)
@@ -271,7 +275,7 @@ class ConnectSessionTests(unittest.TestCase):
         self.assertFalse(thread.is_alive())
         self.assertEqual(bytes(response), server_payload)
         self.assertEqual(result["value"].outcome, "COMPLETED")
-        self.assertTrue(result["value"].allowed)
+        self.assertTrue(result["value"].admitted)
         self.assertEqual(result["value"].client_to_upstream_bytes, len(client_payload))
         self.assertEqual(result["value"].upstream_to_client_bytes, len(server_payload))
         self.assertEqual(result["value"].total_bytes, len(client_payload) + len(server_payload))
@@ -281,6 +285,10 @@ class ConnectSessionTests(unittest.TestCase):
         malformed[6:9] = b"\xff\xff\xff"
         cases = {
             "wrong-sni": client_hello("other.example"),
+            "trailing-dot-sni": client_hello("api.openai.com."),
+            "literal-sni": client_hello("93.184.216.34"),
+            "wildcard-sni": client_hello("*.openai.com"),
+            "control-sni": client_hello("api.openai.com\x01"),
             "missing-sni": client_hello(include_sni=False),
             "ech": client_hello(include_ech=True),
             "legacy-esni": client_hello(encrypted_extension=0xFFCE),
@@ -315,7 +323,10 @@ class ConnectSessionTests(unittest.TestCase):
         self.assertEqual(result["value"].outcome, "DENIED_TLS")
 
     def test_stalled_tls_preface_hits_idle_cap(self):
-        policy = signed_policy(idle_seconds=1, wall_seconds=2)
+        policy = signed_policy(
+            connect_timeout_seconds=2, resolver_timeout_seconds=2,
+            idle_seconds=1, wall_seconds=2,
+        )
         _policy, user, server, thread, result = self.start_connected_session(policy=policy)
         thread.join(timeout=1.5)
         user.close()
@@ -343,10 +354,11 @@ class ConnectSessionTests(unittest.TestCase):
                     POLICY_KEYS,
                     binding(policy),
                     budget,
-                    policy_now=20,
+                    trusted_time=lambda: 20,
                     resolver=forbidden,
                     dialer=forbidden,
                     cancel_event=threading.Event(),
+                    event_sink=lambda _event: None,
                 ),
             ))
             thread.start()
@@ -363,10 +375,42 @@ class ConnectSessionTests(unittest.TestCase):
         self.assertEqual(outcomes, ["DENIED_HOST", "DENIED_POLICY"])
         self.assertEqual(budget.connections, 1)
 
+    def test_attempt_budget_reservation_is_atomic_between_threads(self):
+        policy = signed_policy(max_client_bytes=1, max_total_bytes=1)
+        budget = AttemptEgressBudget(policy)
+        barrier = threading.Barrier(8)
+        accepted = []
+        denied = []
+
+        def reserve_once(index):
+            barrier.wait()
+            try:
+                budget.reserve(policy, "client", 1)
+            except EgressError:
+                denied.append(index)
+            else:
+                accepted.append(index)
+
+        workers = [
+            threading.Thread(target=reserve_once, args=(index,))
+            for index in range(8)
+        ]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=1)
+            self.assertFalse(worker.is_alive())
+        self.assertEqual(len(accepted), 1)
+        self.assertEqual(len(denied), 7)
+        self.assertEqual(budget.client_bytes, 1)
+
     def test_client_direction_byte_cap_never_forwards_excess(self):
         hello = client_hello()
         policy = signed_policy(max_client_bytes=len(hello))
-        _policy, user, server, thread, result = self.start_connected_session(policy=policy)
+        events = []
+        _policy, user, server, thread, result = self.start_connected_session(
+            policy=policy, event_sink=events.append,
+        )
         user.sendall(hello + b"x")
         self.assertEqual(server.recv(4096), hello)
         self.assert_stream_closed(server)
@@ -376,7 +420,11 @@ class ConnectSessionTests(unittest.TestCase):
         server.close()
         self.assertFalse(thread.is_alive())
         self.assertEqual(result["value"].outcome, "BYTE_LIMIT")
+        self.assertTrue(result["value"].admitted)
         self.assertEqual(result["value"].client_to_upstream_bytes, len(hello))
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["allowlist_decision"], "ALLOWED")
+        self.assertEqual(events[0]["outcome"], "BYTE_LIMIT")
 
     def test_upstream_direction_and_total_byte_caps_never_forward_excess(self):
         hello = client_hello()
@@ -407,17 +455,28 @@ class ConnectSessionTests(unittest.TestCase):
 
     def test_relay_enforces_idle_and_wall_caps(self):
         for policy, expected, timeout in (
-            (signed_policy(idle_seconds=1, wall_seconds=2), "IDLE_TIMEOUT", 1.5),
             (
                 signed_policy(
-                    resolver_timeout_seconds=1, idle_seconds=1, wall_seconds=1,
+                    connect_timeout_seconds=2, resolver_timeout_seconds=2,
+                    idle_seconds=1, wall_seconds=2,
+                ),
+                "IDLE_TIMEOUT",
+                1.5,
+            ),
+            (
+                signed_policy(
+                    connect_timeout_seconds=1, resolver_timeout_seconds=1,
+                    idle_seconds=1, wall_seconds=1,
                 ),
                 "WALL_TIMEOUT",
                 1.5,
             ),
         ):
             with self.subTest(expected=expected):
-                _policy, user, server, thread, result = self.start_connected_session(policy=policy)
+                events = []
+                _policy, user, server, thread, result = self.start_connected_session(
+                    policy=policy, event_sink=events.append,
+                )
                 user.sendall(client_hello())
                 self.assertTrue(server.recv(4096))
                 thread.join(timeout=timeout)
@@ -425,6 +484,10 @@ class ConnectSessionTests(unittest.TestCase):
                 server.close()
                 self.assertFalse(thread.is_alive())
                 self.assertEqual(result["value"].outcome, expected)
+                self.assertTrue(result["value"].admitted)
+                self.assertEqual(len(events), 1)
+                self.assertEqual(events[0]["allowlist_decision"], "ALLOWED")
+                self.assertEqual(events[0]["outcome"], expected)
 
     def test_cancellation_interrupts_stalled_preface_and_cleans_up_streams(self):
         cancel = threading.Event()
@@ -469,10 +532,11 @@ class ConnectSessionTests(unittest.TestCase):
                 POLICY_KEYS,
                 binding(policy),
                 AttemptEgressBudget(policy),
-                policy_now=20,
+                trusted_time=lambda: 20,
                 resolver=resolver,
                 dialer=dialer,
                 cancel_event=cancel,
+                event_sink=lambda _event: None,
             ),
         ))
         thread.start()
@@ -487,11 +551,37 @@ class ConnectSessionTests(unittest.TestCase):
         self.assertEqual(dialed, [])
         self.assertEqual(result["value"].outcome, "CANCELLED")
 
+    def test_resolver_error_after_cancellation_sends_no_control_response(self):
+        policy = signed_policy()
+        cancel = threading.Event()
+        user, proxy = socket.socketpair()
+        user.settimeout(1)
+        user.sendall(
+            b"CONNECT api.openai.com:443 HTTP/1.1\r\n"
+            b"Host: api.openai.com:443\r\n\r\n"
+        )
+
+        def resolver(*_args):
+            cancel.set()
+            raise OSError("raw-model-output-marker")
+
+        result = handle_connect_session(
+            proxy, policy, POLICY_KEYS, binding(policy), AttemptEgressBudget(policy),
+            trusted_time=lambda: 20, resolver=resolver,
+            dialer=lambda *_args: self.fail("cancelled resolution reached dialer"),
+            cancel_event=cancel, event_sink=lambda _event: None,
+        )
+        self.assertEqual(result.outcome, "CANCELLED")
+        self.assertTrue(result.admitted)
+        self.assert_stream_closed(user)
+        user.close()
+
     def test_structured_event_is_bounded_and_contains_hostname_hash_only(self):
         events = []
         _policy, user, server, thread, result = self.start_connected_session(
             event_sink=events.append,
             connect_headers=b"X-Opaque: credential-marker\r\n",
+            trusted_time=lambda: 42,
         )
         model_output = b"raw-model-output-marker"
         upstream_payload = b"upstream-payload-marker"
@@ -512,13 +602,21 @@ class ConnectSessionTests(unittest.TestCase):
         event = events[0]
         self.assertEqual(set(event), {
             "schema",
+            "timestamp_unix_seconds",
+            "adapter",
+            "profile_id",
             "outcome",
-            "allowed",
+            "allowlist_decision",
             "hostname_sha256",
             "client_to_upstream_bytes",
             "upstream_to_client_bytes",
             "total_bytes",
         })
+        self.assertEqual(event["schema"], "kizuki-gauntlet-egress-terminal-event-v2")
+        self.assertEqual(event["timestamp_unix_seconds"], 42)
+        self.assertEqual(event["adapter"], "codex")
+        self.assertEqual(event["profile_id"], "codex-v1")
+        self.assertEqual(event["allowlist_decision"], "ALLOWED")
         self.assertRegex(event["hostname_sha256"], r"^[0-9a-f]{64}$")
         encoded = json.dumps(event, sort_keys=True, separators=(",", ":"))
         self.assertLessEqual(len(encoded.encode("ascii")), 512)
@@ -548,10 +646,11 @@ class ConnectSessionTests(unittest.TestCase):
                 POLICY_KEYS,
                 binding(policy),
                 AttemptEgressBudget(policy),
-                policy_now=20,
+                trusted_time=lambda: 20,
                 resolver=forbidden,
                 dialer=forbidden,
                 cancel_event=threading.Event(),
+                event_sink=lambda _event: None,
             )
 
         thread = threading.Thread(target=run)
@@ -566,7 +665,8 @@ class ConnectSessionTests(unittest.TestCase):
         self.assertFalse(thread.is_alive())
         self.assertIn(b"403 Forbidden", response)
         self.assertEqual(result["value"].outcome, "DENIED_HOST")
-        self.assertFalse(result["value"].allowed)
+        self.assertFalse(result["value"].admitted)
+        self.assertEqual(result["value"].allowlist_decision, "DENIED")
 
     def test_resolution_timeout_is_bounded_and_never_reaches_dialer(self):
         policy = signed_policy()
@@ -591,10 +691,11 @@ class ConnectSessionTests(unittest.TestCase):
                 POLICY_KEYS,
                 binding(policy),
                 AttemptEgressBudget(policy),
-                policy_now=20,
+                trusted_time=lambda: 20,
                 resolver=resolver,
                 dialer=dialer,
                 cancel_event=cancel,
+                event_sink=lambda _event: None,
             ),
         ))
         thread.start()
@@ -647,10 +748,11 @@ class ConnectSessionTests(unittest.TestCase):
                         POLICY_KEYS,
                         binding(policy),
                         AttemptEgressBudget(policy),
-                        policy_now=20,
+                        trusted_time=lambda: 20,
                         resolver=lambda *_args, a=answers: a,
                         dialer=forbidden,
                         cancel_event=threading.Event(),
+                        event_sink=lambda _event: None,
                     ),
                 ))
                 thread.start()
@@ -693,10 +795,11 @@ class ConnectSessionTests(unittest.TestCase):
                 POLICY_KEYS,
                 binding(policy),
                 AttemptEgressBudget(policy),
-                policy_now=20,
+                trusted_time=lambda: 20,
                 resolver=resolver,
                 dialer=dialer,
                 cancel_event=threading.Event(),
+                event_sink=lambda _event: None,
             ),
         ))
         thread.start()
@@ -713,7 +816,7 @@ class ConnectSessionTests(unittest.TestCase):
         self.assertIn(b"502 Bad Gateway", response)
         self.assertEqual(result["value"].outcome, "DENIED_PEER")
 
-    def test_dial_result_arriving_after_wall_deadline_is_rejected_before_200(self):
+    def test_dial_result_arriving_after_connect_deadline_is_rejected_before_200(self):
         policy = signed_policy()
         user, proxy = socket.socketpair()
         upstream, server = socket.socketpair()
@@ -730,9 +833,9 @@ class ConnectSessionTests(unittest.TestCase):
 
         def dialer(address, timeout, dial_cancel):
             self.assertEqual(address, chosen)
-            self.assertEqual(timeout, 5)
+            self.assertEqual(timeout, 3)
             self.assertFalse(dial_cancel.is_set())
-            now[0] = 5.0
+            now[0] = 3.0
             return PeerSocket(upstream, address[4])
 
         thread = threading.Thread(target=lambda: result.setdefault(
@@ -743,10 +846,11 @@ class ConnectSessionTests(unittest.TestCase):
                 POLICY_KEYS,
                 binding(policy),
                 AttemptEgressBudget(policy),
-                policy_now=20,
+                trusted_time=lambda: 20,
                 resolver=lambda *_args: (chosen,),
                 dialer=dialer,
                 cancel_event=threading.Event(),
+                event_sink=lambda _event: None,
                 monotonic=lambda: now[0],
             ),
         ))
@@ -760,7 +864,444 @@ class ConnectSessionTests(unittest.TestCase):
         user.close()
         server.close()
         self.assertFalse(thread.is_alive())
-        self.assertEqual(result["value"].outcome, "DENIED_PEER")
+        self.assertEqual(result["value"].outcome, "CONNECT_TIMEOUT")
+
+    def test_policy_expiry_clamps_resolution_and_is_rechecked_before_dial(self):
+        policy = signed_policy(issued_at=490, expires_at=500)
+        user, proxy = socket.socketpair()
+        user.settimeout(1)
+        user.sendall(
+            b"CONNECT api.openai.com:443 HTTP/1.1\r\n"
+            b"Host: api.openai.com:443\r\n\r\n"
+        )
+        wall = [499]
+        observed = []
+        dialed = []
+        events = []
+        chosen = (
+            socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "",
+            ("93.184.216.34", 443),
+        )
+
+        def resolver(host, port, timeout, cancel):
+            observed.append((host, port, timeout, cancel.is_set()))
+            wall[0] = 500
+            return (chosen,)
+
+        result = handle_connect_session(
+            proxy, policy, POLICY_KEYS, binding(policy), AttemptEgressBudget(policy),
+            trusted_time=lambda: wall[0], resolver=resolver,
+            dialer=lambda *_args: dialed.append(True),
+            cancel_event=threading.Event(), event_sink=events.append,
+        )
+        self.assertEqual(observed[0][:2], ("api.openai.com", 443))
+        self.assertGreater(observed[0][2], 0)
+        self.assertLessEqual(observed[0][2], 1)
+        self.assertFalse(observed[0][3])
+        self.assertEqual(dialed, [])
+        self.assertEqual(result.outcome, "POLICY_EXPIRED")
+        self.assertTrue(result.admitted)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["timestamp_unix_seconds"], 500)
+        self.assertEqual(events[0]["allowlist_decision"], "ALLOWED")
+        self.assertIn(b"502 Bad Gateway", user.recv(1024))
+        self.assert_stream_closed(user)
+        user.close()
+
+    def test_policy_expiry_clamps_dial_and_rejects_late_socket_before_200(self):
+        policy = signed_policy(issued_at=490, expires_at=500)
+        user, proxy = socket.socketpair()
+        upstream, server = socket.socketpair()
+        user.settimeout(1)
+        user.sendall(
+            b"CONNECT api.openai.com:443 HTTP/1.1\r\n"
+            b"Host: api.openai.com:443\r\n\r\n"
+        )
+        wall = [498]
+        dial_timeouts = []
+        chosen = (
+            socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "",
+            ("93.184.216.34", 443),
+        )
+
+        def dialer(address, timeout, cancel):
+            dial_timeouts.append(timeout)
+            wall[0] = 500
+            return PeerSocket(upstream, address[4])
+
+        result = handle_connect_session(
+            proxy, policy, POLICY_KEYS, binding(policy), AttemptEgressBudget(policy),
+            trusted_time=lambda: wall[0], resolver=lambda *_args: (chosen,),
+            dialer=dialer, cancel_event=threading.Event(),
+            event_sink=lambda _event: None,
+        )
+        self.assertEqual(len(dial_timeouts), 1)
+        self.assertGreater(dial_timeouts[0], 0)
+        self.assertLessEqual(dial_timeouts[0], 2)
+        self.assertEqual(result.outcome, "POLICY_EXPIRED")
+        self.assertTrue(result.admitted)
+        self.assertIn(b"502 Bad Gateway", user.recv(1024))
+        self.assert_stream_closed(user)
+        self.assert_stream_closed(server)
+        user.close()
+        server.close()
+
+    def test_connection_deadline_is_shared_across_resolution_and_dial(self):
+        policy = signed_policy(
+            connect_timeout_seconds=3, resolver_timeout_seconds=3,
+        )
+        user, proxy = socket.socketpair()
+        upstream, server = socket.socketpair()
+        user.settimeout(1)
+        user.sendall(
+            b"CONNECT api.openai.com:443 HTTP/1.1\r\n"
+            b"Host: api.openai.com:443\r\n\r\n"
+        )
+        monotonic_now = [0.0]
+        dial_timeouts = []
+        chosen = (
+            socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "",
+            ("93.184.216.34", 443),
+        )
+
+        def resolver(*_args):
+            monotonic_now[0] = 2.0
+            return (chosen,)
+
+        def dialer(address, timeout, cancel):
+            dial_timeouts.append(timeout)
+            monotonic_now[0] = 3.0
+            return PeerSocket(upstream, address[4])
+
+        result = handle_connect_session(
+            proxy, policy, POLICY_KEYS, binding(policy), AttemptEgressBudget(policy),
+            trusted_time=lambda: 20, resolver=resolver, dialer=dialer,
+            cancel_event=threading.Event(), monotonic=lambda: monotonic_now[0],
+            event_sink=lambda _event: None,
+        )
+        self.assertEqual(dial_timeouts, [1])
+        self.assertEqual(result.outcome, "CONNECT_TIMEOUT")
+        self.assertTrue(result.admitted)
+        self.assertIn(b"502 Bad Gateway", user.recv(1024))
+        self.assert_stream_closed(user)
+        self.assert_stream_closed(server)
+        user.close()
+        server.close()
+
+    def test_peer_recheck_crossing_connect_deadline_never_sends_200(self):
+        class SlowPeer(PeerSocket):
+            def getpeername(self):
+                monotonic_now[0] = 3.0
+                return super().getpeername()
+
+        policy = signed_policy(
+            connect_timeout_seconds=3, resolver_timeout_seconds=3,
+        )
+        user, proxy = socket.socketpair()
+        upstream, server = socket.socketpair()
+        user.settimeout(1)
+        user.sendall(
+            b"CONNECT api.openai.com:443 HTTP/1.1\r\n"
+            b"Host: api.openai.com:443\r\n\r\n"
+        )
+        monotonic_now = [0.0]
+        chosen = (
+            socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "",
+            ("93.184.216.34", 443),
+        )
+        result = handle_connect_session(
+            proxy, policy, POLICY_KEYS, binding(policy), AttemptEgressBudget(policy),
+            trusted_time=lambda: 20, resolver=lambda *_args: (chosen,),
+            dialer=lambda address, *_args: SlowPeer(upstream, address[4]),
+            cancel_event=threading.Event(), monotonic=lambda: monotonic_now[0],
+            event_sink=lambda _event: None,
+        )
+        response = user.recv(1024)
+        self.assertIn(b"502 Bad Gateway", response)
+        self.assertNotIn(b"200 Connection Established", response)
+        self.assertEqual(result.outcome, "CONNECT_TIMEOUT")
+        self.assertTrue(result.admitted)
+        self.assert_stream_closed(user)
+        self.assert_stream_closed(server)
+        user.close()
+        server.close()
+
+    def test_socket_reset_and_select_value_error_emit_one_sanitized_terminal_event(self):
+        class ResetOnRecv(PeerSocket):
+            def recv(self, _size):
+                raise ConnectionResetError("credential-marker api.openai.com")
+
+        policy = signed_policy()
+        for label in ("reset", "select-value-error"):
+            with self.subTest(label=label):
+                user, proxy = socket.socketpair()
+                user.sendall(b"trigger readability")
+                events = []
+                client = ResetOnRecv(proxy, None) if label == "reset" else proxy
+
+                def invoke():
+                    return handle_connect_session(
+                        client, policy, POLICY_KEYS, binding(policy),
+                        AttemptEgressBudget(policy), trusted_time=lambda: 20,
+                        resolver=lambda *_args: self.fail("unexpected resolver"),
+                        dialer=lambda *_args: self.fail("unexpected dialer"),
+                        cancel_event=threading.Event(), event_sink=events.append,
+                    )
+
+                if label == "select-value-error":
+                    with patch(
+                        "gauntlet.egress_proxy.select.select",
+                        side_effect=ValueError("raw-model-output-marker"),
+                    ):
+                        result = invoke()
+                else:
+                    result = invoke()
+                self.assertEqual(result.outcome, "IO_ERROR")
+                self.assertEqual(result.allowlist_decision, "NOT_EVALUATED")
+                self.assertEqual(len(events), 1)
+                encoded = json.dumps(events[0], sort_keys=True, separators=(",", ":"))
+                self.assertNotIn("credential-marker", encoded)
+                self.assertNotIn("raw-model-output-marker", encoded)
+                user.close()
+
+    def test_control_write_oserror_is_sanitized_and_closes_both_streams(self):
+        class ResetOnControl(PeerSocket):
+            def send(self, _data):
+                raise ConnectionResetError("credential-marker api.openai.com")
+
+        policy = signed_policy()
+        user, proxy = socket.socketpair()
+        upstream, server = socket.socketpair()
+        user.settimeout(1)
+        user.sendall(
+            b"CONNECT api.openai.com:443 HTTP/1.1\r\n"
+            b"Host: api.openai.com:443\r\n\r\n"
+        )
+        events = []
+        chosen = (
+            socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "",
+            ("93.184.216.34", 443),
+        )
+        result = handle_connect_session(
+            ResetOnControl(proxy, None), policy, POLICY_KEYS, binding(policy),
+            AttemptEgressBudget(policy), trusted_time=lambda: 20,
+            resolver=lambda *_args: (chosen,),
+            dialer=lambda address, *_args: PeerSocket(upstream, address[4]),
+            cancel_event=threading.Event(), event_sink=events.append,
+        )
+        self.assertEqual(result.outcome, "IO_ERROR")
+        self.assertTrue(result.admitted)
+        self.assertEqual(len(events), 1)
+        self.assertNotIn("credential-marker", json.dumps(events[0]))
+        self.assert_stream_closed(user)
+        self.assert_stream_closed(server)
+        user.close()
+        server.close()
+
+    def test_setblocking_value_error_keeps_admitted_byte_evidence(self):
+        class SetblockingRaises(PeerSocket):
+            def setblocking(self, _flag):
+                raise ValueError("raw-model-output-marker")
+
+        policy = signed_policy()
+        user, proxy = socket.socketpair()
+        upstream, server = socket.socketpair()
+        user.settimeout(1)
+        server.settimeout(1)
+        events = []
+        result = {}
+        chosen = (
+            socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "",
+            ("93.184.216.34", 443),
+        )
+        thread = threading.Thread(target=lambda: result.setdefault(
+            "value",
+            handle_connect_session(
+                proxy, policy, POLICY_KEYS, binding(policy),
+                AttemptEgressBudget(policy), trusted_time=lambda: 20,
+                resolver=lambda *_args: (chosen,),
+                dialer=lambda address, *_args: SetblockingRaises(
+                    upstream, address[4],
+                ),
+                cancel_event=threading.Event(), event_sink=events.append,
+            ),
+        ))
+        thread.start()
+        user.sendall(
+            b"CONNECT api.openai.com:443 HTTP/1.1\r\n"
+            b"Host: api.openai.com:443\r\n\r\n"
+        )
+        self.assertIn(b"200 Connection Established", user.recv(1024))
+        hello = client_hello()
+        user.sendall(hello)
+        self.assert_stream_closed(user)
+        self.assert_stream_closed(server)
+        thread.join(timeout=1)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(result["value"].outcome, "IO_ERROR")
+        self.assertTrue(result["value"].admitted)
+        self.assertEqual(result["value"].client_to_upstream_bytes, 0)
+        self.assertEqual(len(events), 1)
+        self.assertNotIn("raw-model-output-marker", json.dumps(events[0]))
+        user.close()
+        server.close()
+
+    def test_policy_expiry_terminates_tls_preface_with_one_admitted_event(self):
+        wall = [499]
+        events = []
+        policy = signed_policy(issued_at=490, expires_at=500)
+        _policy, user, server, thread, result = self.start_connected_session(
+            policy=policy, trusted_time=lambda: wall[0], event_sink=events.append,
+        )
+        wall[0] = 500
+        thread.join(timeout=0.5)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(result["value"].outcome, "POLICY_EXPIRED")
+        self.assertTrue(result["value"].admitted)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["allowlist_decision"], "ALLOWED")
+        self.assertEqual(events[0]["timestamp_unix_seconds"], 500)
+        self.assert_stream_closed(user)
+        self.assert_stream_closed(server)
+        user.close()
+        server.close()
+
+    def test_policy_expiry_terminates_an_active_relay_with_bounded_evidence(self):
+        wall = [499]
+        events = []
+        policy = signed_policy(issued_at=490, expires_at=500)
+        _policy, user, server, thread, result = self.start_connected_session(
+            policy=policy, trusted_time=lambda: wall[0], event_sink=events.append,
+        )
+        hello = client_hello()
+        user.sendall(hello)
+        self.assertEqual(server.recv(4096), hello)
+        wall[0] = 500
+        thread.join(timeout=0.5)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(result["value"].outcome, "POLICY_EXPIRED")
+        self.assertEqual(result["value"].client_to_upstream_bytes, len(hello))
+        self.assertTrue(result["value"].admitted)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["outcome"], "POLICY_EXPIRED")
+        self.assertEqual(events[0]["total_bytes"], len(hello))
+        self.assert_stream_closed(user)
+        self.assert_stream_closed(server)
+        user.close()
+        server.close()
+
+    def test_client_hello_over_remaining_attempt_budget_is_a_byte_limit(self):
+        hello = client_hello()
+        policy = signed_policy(max_client_bytes=len(hello) - 1)
+        events = []
+        _policy, user, server, thread, result = self.start_connected_session(
+            policy=policy, event_sink=events.append,
+        )
+        user.sendall(hello)
+        self.assert_stream_closed(server)
+        self.assert_stream_closed(user)
+        thread.join(timeout=1)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(result["value"].outcome, "BYTE_LIMIT")
+        self.assertTrue(result["value"].admitted)
+        self.assertEqual(result["value"].total_bytes, 0)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["outcome"], "BYTE_LIMIT")
+        user.close()
+        server.close()
+
+    def test_invalid_policy_event_metadata_comes_from_attempt_binding(self):
+        policy = signed_policy()
+        trusted_binding = replace(
+            binding(policy), adapter="claude", profile_id="claude-v1",
+        )
+        user, proxy = socket.socketpair()
+        user.settimeout(1)
+        events = []
+        result = handle_connect_session(
+            proxy, policy, POLICY_KEYS, trusted_binding, AttemptEgressBudget(policy),
+            trusted_time=lambda: 20,
+            resolver=lambda *_args: self.fail("unexpected resolver"),
+            dialer=lambda *_args: self.fail("unexpected dialer"),
+            cancel_event=threading.Event(), event_sink=events.append,
+        )
+        self.assertEqual(result.outcome, "DENIED_POLICY")
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["adapter"], "claude")
+        self.assertEqual(events[0]["profile_id"], "claude-v1")
+        self.assertNotIn("codex-v1", json.dumps(events[0]))
+        self.assertIn(b"403 Forbidden", user.recv(1024))
+        self.assert_stream_closed(user)
+        user.close()
+
+    def test_cleanup_value_errors_do_not_suppress_the_single_terminal_event(self):
+        class CloseRaises(PeerSocket):
+            def __init__(self, stream, peer):
+                super().__init__(stream, peer)
+                self.close_calls = 0
+
+            def close(self):
+                self.close_calls += 1
+                self.stream.close()
+                raise ValueError("credential-marker")
+
+        policy = signed_policy()
+        user, proxy_socket = socket.socketpair()
+        upstream_socket, server = socket.socketpair()
+        client = CloseRaises(proxy_socket, None)
+        upstream = CloseRaises(upstream_socket, ("1.1.1.1", 443))
+        user.settimeout(1)
+        user.sendall(
+            b"CONNECT api.openai.com:443 HTTP/1.1\r\n"
+            b"Host: api.openai.com:443\r\n\r\n"
+        )
+        events = []
+        chosen = (
+            socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "",
+            ("93.184.216.34", 443),
+        )
+        result = handle_connect_session(
+            client, policy, POLICY_KEYS, binding(policy), AttemptEgressBudget(policy),
+            trusted_time=lambda: 20, resolver=lambda *_args: (chosen,),
+            dialer=lambda *_args: upstream, cancel_event=threading.Event(),
+            event_sink=events.append,
+        )
+        self.assertEqual(result.outcome, "DENIED_PEER")
+        self.assertEqual(client.close_calls, 1)
+        self.assertEqual(upstream.close_calls, 1)
+        self.assertEqual(len(events), 1)
+        self.assertNotIn("credential-marker", json.dumps(events[0]))
+        self.assertIn(b"502 Bad Gateway", user.recv(1024))
+        self.assert_stream_closed(user)
+        self.assert_stream_closed(server)
+        user.close()
+        server.close()
+
+    def test_terminal_sink_failure_is_sanitized_after_cleanup_and_called_once(self):
+        policy = signed_policy()
+        invalid_policy = replace(policy, signature_sha256="b" * 64)
+        user, proxy = socket.socketpair()
+        user.settimeout(1)
+        calls = []
+
+        def broken_sink(event):
+            calls.append(event)
+            raise ValueError("credential-marker api.openai.com")
+
+        with self.assertRaisesRegex(EgressError, "terminal event sink failed") as raised:
+            handle_connect_session(
+                proxy, invalid_policy, POLICY_KEYS, binding(policy),
+                AttemptEgressBudget(policy),
+                trusted_time=lambda: 20,
+                resolver=lambda *_args: self.fail("unexpected resolver"),
+                dialer=lambda *_args: self.fail("unexpected dialer"),
+                cancel_event=threading.Event(), event_sink=broken_sink,
+            )
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn("credential-marker", str(raised.exception))
+        self.assertIn(b"403 Forbidden", user.recv(1024))
+        self.assert_stream_closed(user)
+        user.close()
 
 
 if __name__ == "__main__":

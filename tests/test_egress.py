@@ -27,6 +27,7 @@ def policy_fields(**overrides):
         "max_client_bytes": 1_000_000,
         "max_upstream_bytes": 1_000_000,
         "max_total_bytes": 1_500_000,
+        "connect_timeout_seconds": 10,
         "resolver_timeout_seconds": 5,
         "idle_seconds": 30,
         "wall_seconds": 300,
@@ -34,7 +35,7 @@ def policy_fields(**overrides):
         "max_client_hello_bytes": 65536,
     }
     values = {
-        "schema": "kizuki-gauntlet-egress-policy-v1",
+        "schema": "kizuki-gauntlet-egress-policy-v2",
         "issuer_key_id": "egress-key-1",
         "campaign_id": "campaign-01",
         "task_id": "task-01",
@@ -61,6 +62,7 @@ def attempt_binding(**overrides):
         "attempt": 2,
         "controller_epoch": 7,
         "adapter": "codex",
+        "profile_id": "codex-v1",
         "principal_id": "codex-builder",
         "authority_domain": "codex-builder-domain",
         "identity_generation": 3,
@@ -83,6 +85,7 @@ class AuthenticatedEgressPolicyTests(unittest.TestCase):
             ("attempt", 3),
             ("controller_epoch", 8),
             ("adapter", "claude"),
+            ("profile_id", "codex-v2"),
             ("principal_id", "other-builder"),
             ("authority_domain", "other-domain"),
             ("identity_generation", 4),
@@ -113,6 +116,7 @@ class AuthenticatedEgressPolicyTests(unittest.TestCase):
             ("authority_domain", "other-domain"),
             ("identity_generation", 4),
             ("profile_id", "codex-v2"),
+            ("connect_timeout_seconds", 11),
             ("issued_at", 11),
             ("expires_at", 501),
             ("nonce", "b" * 64),
@@ -148,6 +152,7 @@ class EgressPolicyTests(unittest.TestCase):
             ("max_client_bytes", 1_000_000_001),
             ("max_upstream_bytes", 1_000_000_001),
             ("max_total_bytes", 2_000_000_001),
+            ("connect_timeout_seconds", 31),
             ("resolver_timeout_seconds", 31),
             ("idle_seconds", 301),
             ("wall_seconds", 3601),
@@ -156,6 +161,20 @@ class EgressPolicyTests(unittest.TestCase):
         ):
             with self.subTest(field=field), self.assertRaises(EgressError):
                 sign_egress_policy(signing_key=POLICY_KEY, **policy_fields(**{field: value}))
+
+        with self.assertRaises(EgressError):
+            sign_egress_policy(
+                signing_key=POLICY_KEY,
+                **policy_fields(connect_timeout_seconds=11, wall_seconds=10),
+            )
+        with self.assertRaises(EgressError):
+            sign_egress_policy(
+                signing_key=POLICY_KEY,
+                **policy_fields(
+                    connect_timeout_seconds=4,
+                    resolver_timeout_seconds=5,
+                ),
+            )
 
     def test_connect_parser_accepts_only_https_connect_to_exact_host(self):
         request = (
