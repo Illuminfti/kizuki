@@ -6,8 +6,10 @@ import { initStaging } from "@kizuki/core/staging";
 import { ownerPrincipal, principalFromToken } from "./principal";
 import { runStdio } from "./stdio";
 
-const USAGE =
-  "usage: kizuki-mcp --vault PATH (--owner | --token-env VAR) [--retrieval ID]";
+const USAGE = [
+  "usage: kizuki-mcp --vault PATH (--owner | --token-env VAR) [--retrieval ID]",
+  "Kizuki MCP — stdio adapter over one vault. No policy of its own.",
+].join("\n");
 
 interface Options {
   vault: string;

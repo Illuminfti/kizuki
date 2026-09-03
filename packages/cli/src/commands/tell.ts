@@ -8,7 +8,7 @@ export const tellCommand: Command = {
   name: "tell",
   usage:
     'tell "<statement>" [--claim CLAIM_ID] [--since TIME] [--until TIME] [--dry-run] [--json] [--verbose]',
-  summary: "correct a claim and rewrite affected canon in the same pass",
+  summary: "correct a claim; rewrite affected canon in the same pass",
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, {
       options: ["--about", "--claim", "--page", "--since", "--until"],

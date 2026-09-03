@@ -1,8 +1,8 @@
 # Kizuki product context
 
 Document kind: product direction for humans and agents  
-Implementation claim: none; verify shipped behavior against the code and README  
-Product stage: single-person private brain first
+Implementation claim: none; verify shipped behavior against the code and [README.md](../README.md)  
+Product stage: single-person private brain first; 1.0 is not tagged
 
 ## Product identity
 

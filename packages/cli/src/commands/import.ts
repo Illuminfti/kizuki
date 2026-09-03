@@ -18,7 +18,7 @@ import type { CliIo, Command } from "./index";
 export const importCommand: Command = {
   name: "import",
   usage: "import <connector> --source PATH",
-  summary: "connect a none-mode source and backfill it in one step",
+  summary: "enroll a file source and backfill it in one step",
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, { options: ["--source"] });
     const [rawId] = requirePositional(parsed.positionals, 1);

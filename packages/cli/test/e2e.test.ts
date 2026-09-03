@@ -8,7 +8,7 @@ const { cleanup, runCli, tempVault } = createHelpers();
 afterEach(cleanup);
 
 describe("kizuki CLI stranger loop", () => {
-  test("init, import, fail-closed query, sync, doctor, export", () => {
+  test("init, import, fail-closed query, doctor, sync, export", () => {
     const setup = tempVault();
     expect(setup.env.KIZUKI_CONFIG).toBeDefined();
     expect(readFileSync(setup.env.KIZUKI_CONFIG ?? "", "utf8")).toContain(
@@ -59,11 +59,18 @@ describe("kizuki CLI stranger loop", () => {
 
     const doctor = runCli(setup.env, "doctor");
     expect(doctor.exitCode).toBe(0);
+    expect(doctor.stdout).toContain("Kizuki doctor");
     expect(doctor.stdout).toContain("health=ok");
     expect(doctor.stdout).toContain("connection kizuki.markdown-folder");
     expect(doctor.stdout).toContain("claims live=");
+    expect(doctor.stdout).toContain("status=ok");
     expect(doctor.stdout).not.toContain("proposals pending=");
     expect(doctor.stdout).not.toContain("retraction-pending");
+    expect(doctor.stdout).toContain("filed ");
+    expect(doctor.stdout).toContain("tell --claim needs a live claim");
+    expect(doctor.stdout.split("\n").some((line) => line.startsWith("claim "))).toBe(
+      false,
+    );
 
     rmSync(join(setup.notes, "linus.md"));
     const synced = runCli(setup.env, "sync", "markdown-folder");

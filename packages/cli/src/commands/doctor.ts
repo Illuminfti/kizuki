@@ -9,6 +9,7 @@ import {
   getCheckpoint,
   inspectPurgeHealth,
   inspectServeDoctor,
+  listClaims,
   readHolds,
   readReceiptsLog,
   realSupervisorHost,
@@ -38,6 +39,8 @@ interface DoctorReport {
   vault: string;
   events: number;
   claims: Record<ClaimStatus, number>;
+  live_claims: DoctorClaim[];
+  filed_claims: DoctorClaim[];
   connections: DoctorConnection[];
   receipts: number;
   orphans: string[];
@@ -47,10 +50,16 @@ interface DoctorReport {
   ok: boolean;
 }
 
+interface DoctorClaim {
+  claim_id: string;
+  target: string | null;
+  predicate: string | null;
+}
+
 export const doctorCommand: Command = {
   name: "doctor",
   usage: "doctor [--json]",
-  summary: "report vault, connection, receipt, and hold health",
+  summary: "report vault, connection, receipt, claim, and hold health",
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, { flags: ["--json"] });
     if (parsed.positionals.length !== 0) throw new UsageError(this.usage);
@@ -168,11 +177,29 @@ async function collect(
     purge.ok &&
     serve.ok;
 
+  const toDoctorClaim = (claim: {
+    claim_id: string;
+    target: string | null;
+    predicate: string | null;
+  }): DoctorClaim => ({
+    claim_id: claim.claim_id,
+    target: claim.target,
+    predicate: claim.predicate,
+  });
+  const liveClaims = listClaims(ctx.db, { status: "live", limit: 8 }).map(
+    toDoctorClaim,
+  );
+  const filedClaims = listClaims(ctx.db, { status: "skipped", limit: 8 }).map(
+    toDoctorClaim,
+  );
+
   return {
     config,
     vault: vaultPath,
     events: count(ctx.db),
     claims,
+    live_claims: liveClaims,
+    filed_claims: filedClaims,
     connections,
     receipts: log.length,
     orphans,
@@ -184,12 +211,23 @@ async function collect(
 }
 
 function printHuman(io: CliIo, report: DoctorReport): void {
+  io.out("Kizuki doctor");
   io.out(`config=${report.config}`);
   io.out(`vault=${report.vault}`);
   io.out(`events=${report.events}`);
   io.out(
     `claims live=${report.claims.live} superseded=${report.claims.superseded} skipped=${report.claims.skipped} purged=${report.claims.purged}`,
   );
+  for (const claim of report.live_claims) {
+    io.out(
+      `claim ${claim.claim_id} target=${claim.target ?? "-"} predicate=${claim.predicate ?? "-"}`,
+    );
+  }
+  for (const claim of report.filed_claims) {
+    io.out(
+      `filed ${claim.claim_id} target=${claim.target ?? "-"} predicate=${claim.predicate ?? "-"}`,
+    );
+  }
   for (const item of report.connections) {
     const line = `connection ${item.connector_id} source=${item.source_key} path=${item.path} state=${item.state} health=${item.health} checkpoint=${item.checkpoint} stored=${item.stored} errors=${item.errors}`;
     io.out(item.problem === null ? line : `${line} ${item.problem}`);
@@ -210,5 +248,14 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   }
   for (const failure of report.serve.failures) {
     io.out(`serve-failure ${failure}`);
+  }
+  io.out(`status=${report.ok ? "ok" : "failed"}`);
+  const firstLive = report.live_claims[0];
+  if (firstLive !== undefined) {
+    io.out(`next: kizuki tell "<statement>" --claim ${firstLive.claim_id}`);
+  } else if (report.filed_claims.length > 0) {
+    io.out(
+      "next: ingest filed claims; tell --claim needs a live claim. the writer is off until a model is configured.",
+    );
   }
 }
