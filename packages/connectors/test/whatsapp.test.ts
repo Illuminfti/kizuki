@@ -1,0 +1,352 @@
+import { expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { validateEventInput } from "@kizuki/core";
+import type { CaptureEventInput } from "@kizuki/core";
+import { KizukiError } from "../src/errors";
+import { readBoundedUtf8 } from "../src/read";
+import { FIXTURE_OBSERVED_AT } from "../src/util";
+import {
+  MESSAGE_START,
+  WHATSAPP_FIXTURE_FILES,
+  WHATSAPP_FIXTURE_TIMEZONE,
+  WHATSAPP_IMPORT_CONNECTOR_ID,
+  chatNameFromFile,
+  createWhatsAppImportConnector,
+  fsMediaLookup,
+  mapMediaLookup,
+  parseWhatsAppExport,
+} from "../src/import-whatsapp";
+
+const CHAT_FILE = "WhatsApp Chat with Acme Planning.txt";
+const FIXTURE_CHAT = WHATSAPP_FIXTURE_FILES[CHAT_FILE] ?? "";
+
+async function withTempRoot<T>(body: (root: string) => Promise<T>): Promise<T> {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-whatsapp-"));
+  try {
+    return await body(root);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function rejected(body: () => Promise<unknown>): Promise<KizukiError> {
+  try {
+    await body();
+  } catch (error) {
+    if (error instanceof KizukiError) return error;
+    throw error;
+  }
+  throw new Error("expected a KizukiError");
+}
+
+function parse(
+  text: string,
+  overrides: Partial<Parameters<typeof parseWhatsAppExport>[1]> = {},
+): Promise<CaptureEventInput[]> {
+  return parseWhatsAppExport(text, {
+    timezone: WHATSAPP_FIXTURE_TIMEZONE,
+    chat: "Acme Planning",
+    observed_at: FIXTURE_OBSERVED_AT,
+    media: mapMediaLookup({}),
+    ...overrides,
+  });
+}
+
+async function fixtureEvents(): Promise<CaptureEventInput[]> {
+  return createWhatsAppImportConnector({ path: "/nonexistent" }).fixture();
+}
+
+test("the fixture export maps to eight events", async () => {
+  const events = await fixtureEvents();
+  expect(events.length).toBe(8);
+  expect(events.map((event) => event.occurred_at)).toEqual([
+    "2026-01-04T09:15:00.000Z",
+    "2026-01-04T09:16:00.000Z",
+    "2026-01-04T09:16:00.000Z",
+    "2026-01-04T09:16:00.000Z",
+    "2026-01-04T09:20:00.000Z",
+    "2026-01-04T09:21:00.000Z",
+    "2026-01-13T18:05:00.000Z",
+    "2026-02-01T00:00:00.000Z",
+  ]);
+  expect(events.map((event) => event.text)).toEqual([
+    "Morning all. Planning for the acme launch starts today.",
+    "Morning! Two things:\n- venue\n- budget",
+    "ok",
+    "ok",
+    "IMG-20260104-WA0001.jpg (file attached)",
+    "<Media omitted>",
+    "Venue booked for the 20th. Café Kōan, 18:00.",
+    "Reminder: budget review at noon.",
+  ]);
+  for (const event of events) {
+    expect(event.connector_id).toBe(WHATSAPP_IMPORT_CONNECTOR_ID);
+    expect(event.kind).toBe("message");
+    expect(event.sensitivity_hint).toBe("private");
+    expect(event.deleted).toBe(false);
+    expect(event.observed_at).toBe(FIXTURE_OBSERVED_AT);
+    expect(event.source_record_id).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}\/[0-9a-f]{16}\/\d+$/,
+    );
+    expect(validateEventInput(event).ok).toBe(true);
+  }
+});
+
+test("the subjects of a message are its sender and its chat", async () => {
+  const events = await fixtureEvents();
+  // One segment after the namespace, so the handle these ids yield is what a
+  // person page is titled by and what an owner types into a purge.
+  expect(events[0]?.subjects).toEqual([
+    {
+      subject_id: "whatsapp:ada",
+      role: "from",
+      display_name: "Ada",
+    },
+    {
+      subject_id: "whatsapp:chat:acme-planning",
+      role: "about",
+      display_name: "Acme Planning",
+    },
+  ]);
+});
+
+test("a participant is filed under the handle their name shortens to", async () => {
+  // A readable handle is a lossy one: punctuation goes, and a name with no
+  // letters or digits has nothing left. Two names that shorten to one handle
+  // are one subject, because an export carries nothing else to tell them
+  // apart — stated in the package README, not decided here.
+  const chat = [
+    "1/4/26, 09:00 - A B: one",
+    "1/4/26, 09:01 - A-B: two",
+    "1/4/26, 09:02 - \u{1f642}: three",
+    "1/4/26, 09:03 - \u{1f44d}: four",
+  ].join("\n");
+  const events = await parse(chat, { date_order: "mdy" });
+  expect(events.map((event) => event.subjects[0]?.subject_id)).toEqual([
+    "whatsapp:a-b",
+    "whatsapp:a-b",
+    "whatsapp:unknown",
+    "whatsapp:unknown",
+  ]);
+  // The display name is kept whole beside the id, so the two names are still
+  // in the evidence.
+  expect(events.map((event) => event.subjects[0]?.display_name)).toEqual([
+    "A B",
+    "A-B",
+    "\u{1f642}",
+    "\u{1f44d}",
+  ]);
+});
+
+test("two identical messages in one minute are numbered, not merged", async () => {
+  const events = await fixtureEvents();
+  const [first, second] = [events[2], events[3]];
+  expect(first?.source_record_id.replace(/\d$/, "")).toBe(
+    second?.source_record_id.replace(/\d$/, ""),
+  );
+  expect(first?.source_record_id.endsWith("/1")).toBe(true);
+  expect(second?.source_record_id.endsWith("/2")).toBe(true);
+});
+
+test("an attached file present beside the chat becomes one reference", async () => {
+  const events = await fixtureEvents();
+  expect(events[4]?.attachments).toEqual([
+    {
+      attachment_id: "IMG-20260104-WA0001.jpg",
+      media_type: "image/jpeg",
+      filename: "IMG-20260104-WA0001.jpg",
+      byte_size: 26,
+    },
+  ]);
+  expect(events[4]?.metadata["media"]).toBe("file");
+  expect(events[4]?.metadata["filename"]).toBe("IMG-20260104-WA0001.jpg");
+});
+
+test("media left out of the export is recorded, not invented", async () => {
+  const events = await fixtureEvents();
+  expect(events[5]?.attachments).toEqual([]);
+  expect(events[5]?.metadata["media"]).toBe("omitted");
+  expect(events[5]?.metadata["filename"]).toBeNull();
+});
+
+test("the bracketed export format parses with seconds and a stripped mark", async () => {
+  await withTempRoot(async (root) => {
+    const media = "00000002-PHOTO-2026-01-04-09-16-30.jpg";
+    await writeFile(path.join(root, media), "0123456789");
+    const events = await parse(
+      [
+        "[04/01/2026, 09:15:00] Ada: Morning all.",
+        `[13/01/2026, 09:16:30] Grace: \u200E<attached: ${media}>`,
+      ].join("\n"),
+      { media: fsMediaLookup(root) },
+    );
+    expect(events.map((event) => event.occurred_at)).toEqual([
+      "2026-01-04T09:15:00.000Z",
+      "2026-01-13T09:16:30.000Z",
+    ]);
+    expect(events[1]?.text).toBe(`<attached: ${media}>`);
+    expect(events[1]?.attachments).toEqual([
+      {
+        attachment_id: media,
+        media_type: "image/jpeg",
+        filename: media,
+        byte_size: 10,
+      },
+    ]);
+  });
+});
+
+test("a continuation line before the first message is dropped", async () => {
+  const events = await parse(
+    ["stray line", "4/1/26, 09:00 - Ada: hi", "and more"].join("\n"),
+    { date_order: "dmy" },
+  );
+  expect(events.length).toBe(1);
+  expect(events[0]?.text).toBe("hi\nand more");
+});
+
+test("carriage returns do not change a single event", async () => {
+  await withTempRoot(async (root) => {
+    const lfPath = path.join(root, CHAT_FILE);
+    const crlfPath = path.join(root, "crlf", CHAT_FILE);
+    await mkdir(path.join(root, "crlf"));
+    await writeFile(lfPath, FIXTURE_CHAT);
+    await writeFile(crlfPath, FIXTURE_CHAT.replace(/\n/g, "\r\n"));
+    const lf = await parse(
+      await readBoundedUtf8(lfPath, WHATSAPP_IMPORT_CONNECTOR_ID),
+    );
+    const crlf = await parse(
+      await readBoundedUtf8(crlfPath, WHATSAPP_IMPORT_CONNECTOR_ID),
+    );
+    expect(crlf).toEqual(lf);
+  });
+});
+
+test("the newline a file ends on is a terminator, the next one is text", async () => {
+  const chat = "1/4/26, 9:15 AM - Ada: hi";
+  const bare = await parse(chat, { date_order: "mdy" });
+  expect(bare[0]?.text).toBe("hi");
+  // One newline ends the file's last line. Every newline after it is a blank
+  // continuation line, which the export wrote and the message says, so it is
+  // kept verbatim and the message is a different record for having it.
+  expect((await parse(`${chat}\n`, { date_order: "mdy" }))[0]).toEqual(
+    bare[0] as CaptureEventInput,
+  );
+  for (const [suffix, text] of [
+    ["\n\n", "hi\n"],
+    ["\n\n\n", "hi\n\n"],
+  ] as const) {
+    const events = await parse(`${chat}${suffix}`, { date_order: "mdy" });
+    expect(events[0]?.text).toBe(text);
+    expect(events[0]?.source_record_id).not.toBe(bare[0]?.source_record_id);
+  }
+});
+
+test("a message start is every shape the two apps write, and nothing else", () => {
+  const rest = "Ada: hi";
+  for (const line of [
+    "1/4/26, 9:15 AM - Ada: hi",
+    "13.01.2026, 18:05 - Ada: hi",
+    "2026-01-13, 18:05 - Ada: hi",
+    "1/13/26, 6:05\u202FPM - Ada: hi",
+    "1/4/26, 9:15\u00a0a.m. - Ada: hi",
+    "1/4/26, 9:15 p. m. - Ada: hi",
+  ]) {
+    const matched = MESSAGE_START.exec(line);
+    expect(matched?.[2]).toBe(line.slice(0, line.indexOf(" - ")));
+    expect(matched?.[3]).toBe(rest);
+  }
+  const bracketed = MESSAGE_START.exec("[04/01/2026, 09:15:00] Ada: hi");
+  expect(bracketed?.[1]).toBe("04/01/2026, 09:15:00");
+  expect(bracketed?.[3]).toBe(rest);
+  for (const line of [
+    "- venue",
+    "just some prose",
+    "9:15 - Ada: hi",
+    " 1/4/26, 9:15 AM - Ada: hi",
+    "1/4/26 - Ada: hi",
+  ]) {
+    expect(MESSAGE_START.exec(line)).toBeNull();
+  }
+});
+
+test("system notices are skipped and never become events", async () => {
+  const events = await parse(FIXTURE_CHAT);
+  expect(
+    events.some((event) => event.text.includes("end-to-end encrypted")),
+  ).toBe(false);
+  const noticesOnly = await parse(
+    "4/1/26, 09:00 - Messages and calls are end-to-end encrypted.",
+    { date_order: "dmy" },
+  );
+  expect(noticesOnly).toEqual([]);
+});
+
+test("the dates of a notice settle nothing and refuse nothing", async () => {
+  // A notice is dropped, so its date is not evidence for the order and not a
+  // line that can fail under it. An export holding only notices is empty
+  // rather than ambiguous, and a notice a longer export carries cannot refuse
+  // the messages around it.
+  expect(
+    await parse("4/1/26, 09:00 - Messages and calls are end-to-end encrypted."),
+  ).toEqual([]);
+
+  const events = await parse(
+    [
+      "1/13/26, 09:00 - Ada: hello",
+      "31/12/26, 09:01 - Messages and calls are end-to-end encrypted.",
+      "1/14/26, 09:02 - Grace: hi",
+    ].join("\n"),
+  );
+  expect(events.map((event) => event.metadata["sender"])).toEqual([
+    "Ada",
+    "Grace",
+  ]);
+  expect(events[0]?.occurred_at).toBe("2026-01-13T09:00:00.000Z");
+});
+
+test("a file with no timestamped line is refused", async () => {
+  const error = await rejected(() => parse("just some prose\nand more prose"));
+  expect(error.code).toBe("parse_error");
+  expect(error.message).toContain(
+    "not a WhatsApp chat export (no timestamped line found)",
+  );
+});
+
+test("the configured owner name becomes the self subject", async () => {
+  const events = await parse(FIXTURE_CHAT, { self: "Ada", chat: "Launch" });
+  expect(events[0]?.subjects[0]?.subject_id).toBe("whatsapp:self");
+  expect(events[0]?.subjects[0]?.display_name).toBe("Ada");
+  expect(events[0]?.subjects[1]?.subject_id).toBe("whatsapp:chat:launch");
+  expect(events[1]?.subjects[0]?.subject_id).toBe("whatsapp:grace");
+});
+
+test("which name is the owner's comes from configuration", async () => {
+  // An export names every participant by whatever they set on their own
+  // profile and says nothing about which of them is the owner, so the
+  // reserved id is handed out from configuration or not at all.
+  const chat = [
+    "1/13/26, 09:00 - Ada: hi",
+    "1/13/26, 09:01 - Grace: hello",
+  ].join("\n");
+  const unowned = await parse(chat, { date_order: "mdy" });
+  expect(unowned.map((event) => event.subjects[0]?.subject_id)).toEqual([
+    "whatsapp:ada",
+    "whatsapp:grace",
+  ]);
+  const owned = await parse(chat, { date_order: "mdy", self: "Ada" });
+  expect(owned.map((event) => event.subjects[0]?.subject_id)).toEqual([
+    "whatsapp:self",
+    "whatsapp:grace",
+  ]);
+});
+
+test("the chat name comes from the export file name", () => {
+  expect(chatNameFromFile(`/exports/${CHAT_FILE}`)).toBe("Acme Planning");
+  expect(chatNameFromFile("/exports/Acme Planning/_chat.txt")).toBe(
+    "Acme Planning",
+  );
+  expect(chatNameFromFile("/exports/export.txt")).toBe("export");
+});
