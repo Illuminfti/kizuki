@@ -19,6 +19,10 @@ class SandboxConstructionTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.release = self.root / "release"
         (self.release / "bin").mkdir(parents=True)
+        # Test fixtures must not inherit the host umask: the production guard
+        # correctly rejects a release tree writable by the group or world.
+        self.release.chmod(0o755)
+        (self.release / "bin").chmod(0o755)
         for name in ("relay", "launch-isolated", "codex", "claude", "cursor-agent", "grok"):
             path = self.release / "bin" / name
             path.write_text("#!/bin/false\n", encoding="utf-8")
@@ -119,6 +123,11 @@ class SandboxConstructionTests(unittest.TestCase):
         (self.release / "bin" / "codex").write_text("#!/bin/false\n", encoding="utf-8")
         (self.release / "bin" / "codex").chmod(0o400)
         self.assertNotEqual(baseline, full_release_tree_hash(self.release))
+
+    def test_release_tree_rejects_group_or_world_writable_root(self):
+        self.release.chmod(0o775)
+        with self.assertRaisesRegex(SandboxError, "group or world writable"):
+            full_release_tree_hash(self.release)
 
     def test_rejects_network_and_unsafe_or_nonfresh_paths(self):
         with self.assertRaises(SandboxError):
