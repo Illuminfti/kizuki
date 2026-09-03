@@ -34,9 +34,9 @@ describe("serveHealth", () => {
       held: 1,
     });
     expect(data?.events).toBe(6);
-    // The fixture's one promoted page is the only live claim: the receipted
-    // writer keeps a claim row behind every page it materializes.
-    expect(data?.live_claims).toBe(1);
+    // makeHeldPage writes a page then purges its only source. RFC 0002 §13.1
+    // marks that claim purged; nothing live remains until a later file.
+    expect(data?.live_claims).toBe(0);
     // Nothing bound a retrieval port, so nothing is waiting on one.
     expect(data?.pending_retrieval_ops).toBe(0);
     expect(data?.derived.search).not.toBeNull();
@@ -52,7 +52,7 @@ describe("serveHealth", () => {
       subjects: ["person:ada"],
       provenance: [fixture.events["public"] as string],
     });
-    expect(serveHealth(fixture.owner()).data?.live_claims).toBe(2);
+    expect(serveHealth(fixture.owner()).data?.live_claims).toBe(1);
   });
 
   test("an agent sees its own grant and its own servable count", () => {
