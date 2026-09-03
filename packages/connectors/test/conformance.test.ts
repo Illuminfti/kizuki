@@ -170,6 +170,7 @@ test("all registry connectors pass conformance", async () => {
       { pass: true, failures: [] },
       { pass: true, failures: [] },
       { pass: true, failures: [] },
+      { pass: true, failures: [] },
     ]);
     expect(REGISTRY_IDS).toContain(IMAP_CONNECTOR_ID);
     expect(REGISTRY_IDS).toContain(ICS_CONNECTOR_ID);
