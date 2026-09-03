@@ -3,6 +3,10 @@ import { UsageError, extractVault } from "./args";
 import { COMMANDS } from "./commands/index";
 import type { CliIo } from "./commands/index";
 import { errorText } from "./output";
+import {
+  isRetiredOwnerGateVerb,
+  retiredOwnerGateMessage,
+} from "./retired";
 
 function printHelp(write: (line: string) => void): void {
   write("usage: kizuki <verb> [options]");
@@ -50,6 +54,10 @@ async function dispatch(argv: string[]): Promise<number> {
       printHelp(io.out);
       return 0;
     }
+    if (isRetiredOwnerGateVerb(name)) {
+      io.err(retiredOwnerGateMessage(name));
+      return 2;
+    }
     const command = COMMANDS.find((entry) => entry.name === name);
     if (command === undefined) {
       io.err(`unknown verb: ${name}`);
@@ -58,6 +66,11 @@ async function dispatch(argv: string[]): Promise<number> {
     }
     io.out(`usage: kizuki ${command.usage}`);
     return 0;
+  }
+
+  if (isRetiredOwnerGateVerb(verb)) {
+    io.err(retiredOwnerGateMessage(verb));
+    return 2;
   }
 
   const command = COMMANDS.find((entry) => entry.name === verb);
