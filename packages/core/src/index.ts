@@ -21,7 +21,7 @@ export {
   targetProblem,
   validatePageCandidate,
 } from "./contracts/page-candidate";
-export type { PageCandidate } from "./contracts/page-candidate";
+export type { PageCandidate as StagedPageCandidate } from "./contracts/page-candidate";
 
 export {
   AUTHORITY_TIERS,
