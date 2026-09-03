@@ -3,7 +3,8 @@ import type { SubjectRef } from "./event";
 import type { Port } from "./ports";
 
 export const PRODUCER_CONTRACT = "kizuki.producer/v1" as const;
-export const PRODUCER_CONTRACT_MINOR = 0;
+/** Minor 1 adds the optional `dropped` report on an ok result. */
+export const PRODUCER_CONTRACT_MINOR = 1;
 export const PRODUCER_CAPABILITIES = ["deterministic", "model"] as const;
 export type ProducerCapability =
   (typeof PRODUCER_CAPABILITIES)[number];
@@ -83,11 +84,35 @@ export interface ExtractResponse {
   readonly claims: readonly ClaimDraft[];
 }
 
+export const DROPPED_DRAFT_REASONS = [
+  "unknown_predicate",
+  "unknown_subject",
+] as const;
+export type DroppedDraftReason = (typeof DROPPED_DRAFT_REASONS)[number];
+
+/**
+ * A draft the producer declined without failing the call. Recorded
+ * so the run receipt can count it and the predicate registry can grow
+ * deliberately (RFC 0002 §4.2). Never carries captured text.
+ */
+export type DroppedDraft =
+  | {
+      readonly reason: "unknown_predicate";
+      /** Present only when the model returned a registry-shaped identifier. */
+      readonly predicate?: string;
+      readonly event_ids: readonly string[];
+    }
+  | {
+      readonly reason: "unknown_subject";
+      readonly event_ids: readonly string[];
+    };
+
 export type ProduceResult =
   | {
       status: "ok";
       claims: ClaimDraft[];
       usage: ModelUsage;
+      dropped?: DroppedDraft[];
     }
   | { status: "unavailable"; reason: string }
   | {
