@@ -237,6 +237,7 @@ function copyClaimsToCompatProposals(db: Database): void {
         WHEN 'superseded' THEN 'rejected'
         WHEN 'skipped' THEN CASE WHEN retracted_at IS NOT NULL THEN 'withdrawn' ELSE 'pending' END
         WHEN 'purged' THEN 'withdrawn'
+        WHEN 'provenance_reduced' THEN 'promoted'
         WHEN 'reverted' THEN 'withdrawn'
         ELSE status
       END,

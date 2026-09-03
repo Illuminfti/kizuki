@@ -723,6 +723,17 @@ export function supersedeLiveGroup(
   return out;
 }
 
+function remainingProvenanceCount(db: Database, claim: Claim): number {
+  if (!tableExists(db, "events") || claim.provenance.length === 0) return 0;
+  const placeholders = claim.provenance.map(() => "?").join(", ");
+  const row = db
+    .query<{ n: number }, string[]>(
+      `SELECT count(*) AS n FROM events WHERE event_id IN (${placeholders})`,
+    )
+    .get(...claim.provenance);
+  return row?.n ?? 0;
+}
+
 export function markClaimsPurged(db: Database): string[] {
   if (!tableExists(db, "claims")) return [];
   const live = listClaims(db, { status: "live" });
@@ -735,6 +746,33 @@ export function markClaimsPurged(db: Database): string[] {
     purged.push(claim.claim_id);
   }
   return purged;
+}
+
+/** RFC 0002 §13.1: fully purged vs partially reduced provenance. */
+export function markClaimsAfterPurge(
+  db: Database,
+  at: string,
+): { purged: string[]; reduced: string[] } {
+  if (!tableExists(db, "claims")) return { purged: [], reduced: [] };
+  const candidates = [
+    ...listClaims(db, { status: "live" }),
+    ...listClaims(db, { status: "provenance_reduced" }),
+  ];
+  const purged: string[] = [];
+  const reduced: string[] = [];
+  for (const claim of candidates) {
+    const remaining = remainingProvenanceCount(db, claim);
+    if (remaining === 0) {
+      persistClaim(db, { ...claim, status: "purged", retracted_at: at });
+      purged.push(claim.claim_id);
+      continue;
+    }
+    if (remaining < claim.provenance.length && claim.status === "live") {
+      persistClaim(db, { ...claim, status: "provenance_reduced" });
+      reduced.push(claim.claim_id);
+    }
+  }
+  return { purged, reduced };
 }
 
 export async function insertClaim(

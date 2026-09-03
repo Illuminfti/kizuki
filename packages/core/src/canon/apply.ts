@@ -526,3 +526,113 @@ export function applyRevertWrite(
     expected_hash: input.expected_hash,
   });
 }
+
+export interface PurgeRewriteInput {
+  rel_path: string;
+  purged_event_ids: readonly string[];
+  purged_claim_ids: readonly string[];
+  purged_claim_bodies: readonly string[];
+}
+
+function redactBody(body: string, fragments: readonly string[]): string {
+  let next = body;
+  for (const fragment of fragments) {
+    const trimmed = fragment.trim();
+    if (trimmed.length === 0) continue;
+    next = next.split(trimmed).join("");
+  }
+  const cleaned = next.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  return cleaned.length === 0 ? "" : `${cleaned}\n`;
+}
+
+/**
+ * Same-pass purge rewrite (RFC 0002 §13.1 phase 3). Mints a loop capability
+ * and calls `writePage` here so the capability scan still holds. There is no
+ * owner review queue: the hold lifts when this receipt lands.
+ */
+export function applyPurgeRewrite(
+  io: CanonIo,
+  input: PurgeRewriteInput,
+): CanonReceipt {
+  initCanon(io.db);
+  const existing = readPage(io, input.rel_path);
+  if (existing === null) {
+    throw new CanonWriteError("page_missing", `page ${input.rel_path} is gone`);
+  }
+
+  const prior = existingSources(existing.page);
+  const remainingSources = prior.filter(
+    (source) => !input.purged_event_ids.includes(source),
+  );
+  const body = redactBody(existing.page.body, input.purged_claim_bodies);
+  const nothingRemains = remainingSources.length === 0 && body.trim().length === 0;
+  const action: PageAction = nothingRemains ? "archive" : "edit";
+  const data: Record<string, unknown> = { ...existing.page.data };
+  data["sources"] = remainingSources;
+  if (nothingRemains) data["status"] = "archived";
+
+  const priorSensitivity = existing.page.data["sensitivity"];
+  const sensitivity = isSensitivity(priorSensitivity) ? priorSensitivity : "private";
+  const taint: ClaimTaint = existing.page.data["taint"] === "quoted" ? "quoted" : "clean";
+  data["sensitivity"] = sensitivity;
+  data["taint"] = taint;
+
+  const receiptId = mintId(io);
+  const cap = grantCanonWrite("loop", receiptId);
+  const path = join(io.vault_path, input.rel_path);
+  const outcome = writePage(cap, path, { data, body: body.length === 0 ? "\n" : body }, {
+    revision: true,
+    expected_hash: existing.hash,
+  });
+
+  const pageIdRaw = existing.page.data["id"];
+  const pageId = typeof pageIdRaw === "string" && pageIdRaw.length > 0 ? pageIdRaw : null;
+  const retrievalOps: RetrievalOpRef[] =
+    io.retrieval_store === undefined || pageId === null
+      ? []
+      : [{ store: io.retrieval_store, op: "remove", doc: `page:${pageId}` }];
+
+  const receipt: CanonReceipt = {
+    receipt_id: receiptId,
+    kind: "purge_rewrite",
+    claim_ids: [...input.purged_claim_ids],
+    page_path: input.rel_path,
+    page_action: action,
+    before_hash: existing.hash,
+    after_hash: outcome.after_hash,
+    archive_path: outcome.archive_path,
+    writer: "loop",
+    producer: "deterministic",
+    model_ref: null,
+    authority: "connector_evidence",
+    confidence: 1,
+    sensitivity,
+    taint,
+    provenance: [...input.purged_event_ids],
+    superseded: [],
+    candidates: [],
+    retrieval_ops: retrievalOps,
+    reverts: null,
+    reverted_by: null,
+    at: nowOf(io),
+  };
+
+  appendReceiptLine(io, receipt);
+  const priorSubject = existing.page.data["x-subject-id"];
+  io.db.transaction((): void => {
+    insertReceiptRow(io.db, receipt, "purge_review");
+    if (tableExists(io.db, "canon_holds")) {
+      io.db.query("DELETE FROM canon_holds WHERE page_path = ?").run(input.rel_path);
+    }
+    if (pageId !== null) {
+      upsertPageIndex(io.db, {
+        page_id: pageId,
+        rel_path: input.rel_path,
+        subject_key: typeof priorSubject === "string" ? priorSubject : null,
+        last_receipt: receipt.receipt_id,
+        last_hash: receipt.after_hash,
+      });
+    }
+  })();
+  return receipt;
+}

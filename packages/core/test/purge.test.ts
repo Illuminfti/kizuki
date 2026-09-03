@@ -121,7 +121,13 @@ describe("purgeEvents", () => {
     expect(() => purgeEvents(db, vaultPath, {}, "unsafe")).toThrow("filter");
     expect(
       purgeEvents(db, vaultPath, { connector_id: "missing" }, "no match"),
-    ).toEqual({ receipts: [], withdrawn_proposals: [], canon_holds: [] });
+    ).toEqual({
+      receipts: [],
+      withdrawn_proposals: [],
+      canon_holds: [],
+      purge_ops: [],
+      rewritten: [],
+    });
     expect(count(db)).toBe(1);
     db.close();
   });

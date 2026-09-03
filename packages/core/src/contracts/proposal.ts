@@ -36,6 +36,7 @@ export const CLAIM_STATUSES = [
   "superseded",
   "reverted",
   "purged",
+  "provenance_reduced",
   "skipped",
 ] as const;
 export type ClaimStatus = (typeof CLAIM_STATUSES)[number];
