@@ -88,6 +88,7 @@ describe("correct", () => {
     expect(result.rewritten[0]?.before_hash.length).toBe(64);
     expect(result.rewritten[0]?.after_hash.length).toBe(64);
     expect(result.rewritten[0]?.before_hash).not.toBe(result.rewritten[0]?.after_hash);
+    expect(result.rewritten[0]?.receipt_id).toBe(result.receipt_id);
     expect(result.rewritten[0]?.diff).toContain("--- a/people/grace.md");
     expect(result.rewritten[0]?.diff).toContain("+grace is at initech now, not acme");
     expect(result.answer).toContain("initech");
@@ -208,8 +209,8 @@ describe("correct", () => {
     if (!(caught instanceof CorrectError)) return;
     expect(caught.code).toBe("target_required");
     expect(caught.message).toContain("--claim");
-    expect(caught.message).toContain("--about");
-    expect(caught.message).toContain("--page");
+    expect(caught.message).not.toContain("--about");
+    expect(caught.message).not.toContain("--page");
     expect(listClaims(fixture.db, { status: "superseded" })).toHaveLength(0);
     expect(getClaimsEpoch(fixture.db)).toBe(0);
   });
@@ -222,6 +223,9 @@ describe("correct", () => {
       { statement: STATEMENT, target: { claim_id: claimId }, dry_run: true },
     );
     expect(result.receipt_id).toBeNull();
+    expect(result.rewritten[0]?.receipt_id).toBeNull();
+    expect(result.rewritten[0]?.before_hash).not.toBe(result.rewritten[0]?.after_hash);
+    expect(result.rewritten[0]?.after_hash.length).toBe(64);
     expect(result.superseded.map((row) => row.claim_id)).toEqual([claimId]);
     expect(getClaim(fixture.db, claimId)?.status).toBe("live");
     expect(readFileSync(join(fixture.vault, "people/grace.md"), "utf8")).toBe(before);
@@ -271,6 +275,24 @@ describe("correct", () => {
     expect(winner?.authority).toBe("owner_correction");
     expect(winner?.producer).toBe("agent:reviewer");
     expect(winner?.frontmatter["x-relayed-by"]).toBe("agent:reviewer");
+  });
+
+  test("a refused canon write keeps the owner claim", async () => {
+    const { fixture, claimId } = await writtenGrace();
+    const result = await correct(
+      {
+        db: fixture.db,
+        vault_path: fixture.vault,
+        now: () => AT,
+        budget: budget(0),
+      },
+      { statement: STATEMENT, target: { claim_id: claimId } },
+    );
+    expect(result.rewritten).toHaveLength(0);
+    expect(result.receipt_id).toBeNull();
+    expect(getClaim(fixture.db, result.claim_ids[0] ?? "")?.status).toBe("live");
+    expect(getClaim(fixture.db, claimId)?.status).toBe("superseded");
+    expect(getClaimsEpoch(fixture.db)).toBe(1);
   });
 
   test("relay_owner_corrections false cannot overturn a live owner correction", async () => {

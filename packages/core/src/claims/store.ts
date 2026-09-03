@@ -269,42 +269,24 @@ function resolveProvenance(db: Database, ids: readonly string[]): void {
   }
 }
 
-function eventTaint(
-  connectorId: string,
-  metadataRaw: string,
-): EventFacts["taint"] {
-  if (connectorId === "kizuki.owner") return "owner";
-  try {
-    const parsed: unknown = JSON.parse(metadataRaw);
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      !Array.isArray(parsed) &&
-      (parsed as { taint?: unknown }).taint === "owner"
-    ) {
-      return "owner";
-    }
-  } catch {
-    // Stored metadata is attacker-controlled; treat parse failure as untrusted.
-  }
-  return "untrusted";
+function eventTaint(connectorId: string): EventFacts["taint"] {
+  // Captured metadata is attacker-controlled. Only the internal owner
+  // connector may establish owner evidence (RFC 0002 §6.3, invariant 8).
+  return connectorId === "kizuki.owner" ? "owner" : "untrusted";
 }
 
 function loadEventFacts(db: Database, ids: readonly string[]): EventFacts[] {
   const placeholders = ids.map(() => "?").join(", ");
   return db
-    .query<
-      { event_id: string; connector_id: string; text: string; metadata: string },
-      string[]
-    >(
-      `SELECT event_id, connector_id, text, metadata FROM events WHERE event_id IN (${placeholders})`,
+    .query<{ event_id: string; connector_id: string; text: string }, string[]>(
+      `SELECT event_id, connector_id, text FROM events WHERE event_id IN (${placeholders})`,
     )
     .all(...ids)
     .map((row) => ({
       event_id: row.event_id,
       connector_id: row.connector_id,
       text: row.text,
-      taint: eventTaint(row.connector_id, row.metadata),
+      taint: eventTaint(row.connector_id),
     }));
 }
 

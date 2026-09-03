@@ -7,7 +7,7 @@ import type { CliIo, Command } from "./index";
 export const tellCommand: Command = {
   name: "tell",
   usage:
-    'tell "<statement>" [--about SUBJECT] [--claim CLAIM_ID] [--page PAGE_ID] [--since TIME] [--until TIME] [--dry-run] [--json] [--verbose]',
+    'tell "<statement>" [--claim CLAIM_ID] [--since TIME] [--until TIME] [--dry-run] [--json] [--verbose]',
   summary: "correct a claim and rewrite affected canon in the same pass",
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, {
