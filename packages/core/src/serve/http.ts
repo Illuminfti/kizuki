@@ -5,17 +5,7 @@ import { join } from "node:path";
 import { OWNER, TOOLS, authenticate } from "../agents";
 import type { Principal, Tool } from "../agents";
 import { initAgents } from "../agents/schema";
-import {
-  serveContextPacket,
-  serveCorrect,
-  serveEntities,
-  serveGetPage,
-  serveGraph,
-  serveHealth,
-  servePropose,
-  serveSearch,
-  serveTimeline,
-} from "../serving";
+import { ServeError, dispatchServeTool } from "../serving";
 import type { ServeContext } from "../serving";
 import { SERVE_TOKEN_PATH, ServeDaemonError } from "./types";
 
@@ -73,27 +63,23 @@ function json(status: number, body: unknown): Response {
   });
 }
 
-async function dispatch(ctx: ServeContext, tool: Tool, args: Record<string, unknown>) {
-  switch (tool) {
-    case "search":
-      return serveSearch(ctx, args as never);
-    case "get_page":
-      return serveGetPage(ctx, args as never);
-    case "query_entities":
-      return serveEntities(ctx, args as never);
-    case "timeline":
-      return serveTimeline(ctx, args as never);
-    case "context_packet":
-      return serveContextPacket(ctx, args as never);
-    case "graph_neighbors":
-      return serveGraph(ctx, args as never);
-    case "system_health":
-      return serveHealth(ctx);
-    case "propose":
-      return servePropose(ctx, args as never);
-    case "correct":
-      return serveCorrect(ctx, args as never);
+function refused(error: unknown): Response {
+  if (error instanceof ServeError) {
+    const status = error.code === "rate_limited" ? 429 : 400;
+    return json(status, {
+      ok: false,
+      error: {
+        code: error.code,
+        message: error.message,
+        retryable: false,
+        retry_after_seconds: error.retry_after_seconds,
+      },
+    });
   }
+  return json(400, {
+    ok: false,
+    error: { code: "error", message: "serving failed", retryable: false },
+  });
 }
 
 /**
@@ -154,17 +140,14 @@ export function startServeHttp(options: ServeHttpOptions): ServeHttpHandle {
         });
       }
       try {
-        const envelope = await dispatch(
+        const envelope = await dispatchServeTool(
           { db: options.db, vaultPath: options.vaultPath, principal },
           tool as Tool,
           args,
         );
         return json(200, { ok: true, value: envelope });
-      } catch {
-        return json(400, {
-          ok: false,
-          error: { code: "not_supported", message: "tool refused", retryable: false },
-        });
+      } catch (error) {
+        return refused(error);
       }
     },
   });

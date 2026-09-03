@@ -1,7 +1,12 @@
 import type { Database } from "bun:sqlite";
 import type { LedgerCursor } from "@kizuki/core";
-import { indexEvent, indexPage, listCanonPages, readSince } from "@kizuki/core";
-import { readReceiptsLog } from "@kizuki/core/staging";
+import {
+  indexEvent,
+  indexPage,
+  listCanonPages,
+  readReceiptsLog,
+  readSince,
+} from "@kizuki/core";
 
 export function indexEventsSince(db: Database, since: LedgerCursor): number {
   let cursor: LedgerCursor | null = since;

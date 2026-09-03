@@ -1,8 +1,8 @@
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 import {
+  CLAIM_STATUSES,
   PURGE_SLA_SECONDS,
   count,
+  countClaims,
   detectSupervisorKind,
   doctorVault,
   getCanonReceipt,
@@ -10,13 +10,10 @@ import {
   inspectPurgeHealth,
   inspectServeDoctor,
   readHolds,
+  readReceiptsLog,
   realSupervisorHost,
 } from "@kizuki/core";
-import {
-  listProposals,
-  readPromotion,
-  readReceiptsLog,
-} from "@kizuki/core/staging";
+import type { ClaimStatus } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
 import { listHostConnections, loadConnector } from "../connections";
 import { withVault } from "../context";
@@ -40,17 +37,11 @@ interface DoctorReport {
   config: string;
   vault: string;
   events: number;
-  proposals: {
-    pending: number;
-    promoted: number;
-    rejected: number;
-    withdrawn: number;
-  };
+  claims: Record<ClaimStatus, number>;
   connections: DoctorConnection[];
   receipts: number;
   orphans: string[];
-  holds: { page_path: string; proposal_id: string }[];
-  retractions: { proposal_id: string; page: string }[];
+  holds: { page_path: string; id: string }[];
   problems: { page: string; error: string }[];
   serve: ReturnType<typeof inspectServeDoctor>;
   ok: boolean;
@@ -82,15 +73,12 @@ async function collect(
   ctx: VaultContext,
   env: Record<string, string | undefined>,
 ): Promise<DoctorReport> {
-  const proposals = {
-    pending: listProposals(ctx.db, { status: "pending", limit: 100000 }).length,
-    promoted: listProposals(ctx.db, { status: "promoted", limit: 100000 })
-      .length,
-    rejected: listProposals(ctx.db, { status: "rejected", limit: 100000 })
-      .length,
-    withdrawn: listProposals(ctx.db, { status: "withdrawn", limit: 100000 })
-      .length,
-  };
+  const claims = Object.fromEntries(
+    CLAIM_STATUSES.map((status) => [
+      status,
+      countClaims(ctx.db, { status }),
+    ]),
+  ) as Record<ClaimStatus, number>;
 
   const connections: DoctorConnection[] = [];
   for (const host of listHostConnections(ctx.db, ctx.store)) {
@@ -145,31 +133,9 @@ async function collect(
     }
   }
 
-  const promoted = listProposals(ctx.db, {
-    status: "promoted",
-    limit: 100000,
-  });
-  for (const proposal of promoted) {
-    const promotion = readPromotion(ctx.db, proposal.proposal_id);
-    if (promotion === null) continue;
-    if (!existsSync(join(vaultPath, promotion.page_path))) {
-      orphans.push(
-        `orphan promotion ${promotion.receipt_id} page=${promotion.page_path} (missing on disk)`,
-      );
-    }
-  }
-
   const holds = readHolds(ctx.db).map((hold) => ({
     page_path: hold.page_path,
-    proposal_id: hold.proposal_id,
-  }));
-  const retractions = listProposals(ctx.db, {
-    kind: "deletion",
-    status: "pending",
-    limit: 100000,
-  }).map((proposal) => ({
-    proposal_id: proposal.proposal_id,
-    page: `${proposal.target ?? ""}.md`,
+    id: hold.proposal_id,
   }));
 
   const vault = doctorVault(vaultPath);
@@ -206,12 +172,11 @@ async function collect(
     config,
     vault: vaultPath,
     events: count(ctx.db),
-    proposals,
+    claims,
     connections,
     receipts: log.length,
     orphans,
     holds,
-    retractions,
     problems,
     serve,
     ok,
@@ -223,7 +188,7 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   io.out(`vault=${report.vault}`);
   io.out(`events=${report.events}`);
   io.out(
-    `proposals pending=${report.proposals.pending} promoted=${report.proposals.promoted} rejected=${report.proposals.rejected} withdrawn=${report.proposals.withdrawn}`,
+    `claims live=${report.claims.live} superseded=${report.claims.superseded} skipped=${report.claims.skipped} purged=${report.claims.purged}`,
   );
   for (const item of report.connections) {
     const line = `connection ${item.connector_id} source=${item.source_key} path=${item.path} state=${item.state} health=${item.health} checkpoint=${item.checkpoint} stored=${item.stored} errors=${item.errors}`;
@@ -232,12 +197,7 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   io.out(`receipts=${report.receipts} orphans=${report.orphans.length}`);
   for (const orphan of report.orphans) io.out(orphan);
   for (const hold of report.holds) {
-    io.out(`hold ${hold.page_path} proposal=${hold.proposal_id}`);
-  }
-  for (const retraction of report.retractions) {
-    io.out(
-      `retraction-pending ${retraction.proposal_id} page=${retraction.page}`,
-    );
+    io.out(`hold ${hold.page_path} id=${hold.id}`);
   }
   for (const problem of report.problems) {
     io.out(`problem ${problem.page}: ${problem.error}`);

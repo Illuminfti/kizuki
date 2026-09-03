@@ -54,6 +54,7 @@ export {
 export type { PredicateCardinality, PredicateSpec } from "./predicates";
 export { CLAIMS_SCHEMA_VERSION, applyClaimsV3, initClaims } from "./schema";
 export {
+  countClaims,
   getClaim,
   insertClaim,
   listClaims,

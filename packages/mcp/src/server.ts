@@ -1,28 +1,5 @@
-import {
-  ServeError,
-  serveContextPacket,
-  serveCorrect,
-  serveEntities,
-  serveGetPage,
-  serveGraph,
-  serveHealth,
-  servePropose,
-  serveSearch,
-  serveTimeline,
-} from "@kizuki/core";
-import type {
-  ContextPacketArgs,
-  CorrectArgs,
-  EntitiesArgs,
-  Envelope,
-  GetPageArgs,
-  GraphArgs,
-  ProposeArgs,
-  SearchArgs,
-  ServeContext,
-  TimelineArgs,
-  Tool,
-} from "@kizuki/core";
+import { ServeError, dispatchServeTool } from "@kizuki/core";
+import type { Envelope, ServeContext, Tool } from "@kizuki/core";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   CORRECT_INPUT,
@@ -108,16 +85,7 @@ function refused(error: unknown): ToolResult {
   };
 }
 
-function respond(run: () => Envelope<unknown>): ToolResult {
-  try {
-    return served(run());
-  } catch (error) {
-    return refused(error);
-  }
-}
-
-/** The write tools reach an async claim store; the contract is unchanged. */
-async function respondAsync(
+async function respond(
   run: () => Promise<Envelope<unknown>>,
 ): Promise<ToolResult> {
   try {
@@ -142,7 +110,7 @@ export function createServer(ctx: ServeContext): McpServer {
       outputSchema: ENVELOPE_SHAPE,
       annotations: READ_ONLY,
     },
-    (args) => respond(() => serveSearch(ctx, args as SearchArgs)),
+    (args) => respond(() => dispatchServeTool(ctx, "search", args)),
   );
 
   server.registerTool(
@@ -154,7 +122,7 @@ export function createServer(ctx: ServeContext): McpServer {
       outputSchema: ENVELOPE_SHAPE,
       annotations: READ_ONLY,
     },
-    (args) => respond(() => serveGetPage(ctx, args as GetPageArgs)),
+    (args) => respond(() => dispatchServeTool(ctx, "get_page", args)),
   );
 
   server.registerTool(
@@ -166,7 +134,7 @@ export function createServer(ctx: ServeContext): McpServer {
       outputSchema: ENVELOPE_SHAPE,
       annotations: READ_ONLY,
     },
-    (args) => respond(() => serveEntities(ctx, args as EntitiesArgs)),
+    (args) => respond(() => dispatchServeTool(ctx, "query_entities", args)),
   );
 
   server.registerTool(
@@ -178,7 +146,7 @@ export function createServer(ctx: ServeContext): McpServer {
       outputSchema: ENVELOPE_SHAPE,
       annotations: READ_ONLY,
     },
-    (args) => respond(() => serveTimeline(ctx, args as TimelineArgs)),
+    (args) => respond(() => dispatchServeTool(ctx, "timeline", args)),
   );
 
   server.registerTool(
@@ -190,7 +158,7 @@ export function createServer(ctx: ServeContext): McpServer {
       outputSchema: ENVELOPE_SHAPE,
       annotations: READ_ONLY,
     },
-    (args) => respond(() => serveContextPacket(ctx, args as ContextPacketArgs)),
+    (args) => respond(() => dispatchServeTool(ctx, "context_packet", args)),
   );
 
   server.registerTool(
@@ -202,7 +170,7 @@ export function createServer(ctx: ServeContext): McpServer {
       outputSchema: ENVELOPE_SHAPE,
       annotations: READ_ONLY,
     },
-    (args) => respond(() => serveGraph(ctx, args as GraphArgs)),
+    (args) => respond(() => dispatchServeTool(ctx, "graph_neighbors", args)),
   );
 
   server.registerTool(
@@ -214,7 +182,7 @@ export function createServer(ctx: ServeContext): McpServer {
       outputSchema: ENVELOPE_SHAPE,
       annotations: READ_ONLY,
     },
-    () => respond(() => serveHealth(ctx)),
+    () => respond(() => dispatchServeTool(ctx, "system_health", {})),
   );
 
   server.registerTool(
@@ -226,7 +194,7 @@ export function createServer(ctx: ServeContext): McpServer {
       outputSchema: ENVELOPE_SHAPE,
       annotations: WRITE,
     },
-    async (args) => respondAsync(() => servePropose(ctx, args as ProposeArgs)),
+    (args) => respond(() => dispatchServeTool(ctx, "propose", args)),
   );
 
   server.registerTool(
@@ -238,7 +206,7 @@ export function createServer(ctx: ServeContext): McpServer {
       outputSchema: ENVELOPE_SHAPE,
       annotations: WRITE,
     },
-    async (args) => respondAsync(() => serveCorrect(ctx, args as CorrectArgs)),
+    (args) => respond(() => dispatchServeTool(ctx, "correct", args)),
   );
 
   return server;

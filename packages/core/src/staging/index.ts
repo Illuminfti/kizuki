@@ -5,7 +5,6 @@ export {
   getProposal,
   hashBody,
   initStaging,
-  isSuppressed,
   listProposals,
   openStagingDb,
   setProposalStatus,

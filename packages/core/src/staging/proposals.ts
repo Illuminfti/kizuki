@@ -51,8 +51,7 @@ export interface StagedProposal {
 
 export type FileProposalResult =
   | { outcome: "stored"; proposal: StagedProposal }
-  | { outcome: "duplicate"; proposal: StagedProposal }
-  | { outcome: "suppressed"; body_hash: string; reason: string };
+  | { outcome: "duplicate"; proposal: StagedProposal };
 
 export class StagingError extends Error {
   override name = "StagingError";
@@ -237,7 +236,6 @@ function updateCompatClaim(
 export function fileProposal(
   db: Database,
   input: ProposalInput,
-  _opts: { bypassSuppression?: boolean } = {},
 ): FileProposalResult {
   validateInput(input);
   initStaging(db);
@@ -378,8 +376,4 @@ export function setProposalStatus(
   });
 
   return apply();
-}
-
-export function isSuppressed(_db: Database, _bodyHash: string): boolean {
-  return false;
 }
