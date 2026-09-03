@@ -86,6 +86,9 @@ class CancellationSignal(Protocol):
 class EvidenceReceipt:
     """Immutable, content-free evidence and callback metrics."""
 
+    attempt_id: Optional[str]
+    generation: Optional[str]
+    object_sha256: Optional[str]
     stdout_observed_sha256: str
     stderr_observed_sha256: str
     stdout_retained_sha256: str
@@ -111,6 +114,18 @@ class EvidenceReceipt:
     recovery_required: bool
 
     def __post_init__(self) -> None:
+        if self.attempt_id is not None:
+            _validated_attempt_id(self.attempt_id)
+        if self.generation is not None:
+            _validated_generation(self.generation)
+        if (self.object_sha256 is not None
+                and (not isinstance(self.object_sha256, str)
+                     or _HEX_64.fullmatch(self.object_sha256) is None)):
+            raise EvidencePumpError("invalid evidence object digest")
+        if self.generation is not None and self.attempt_id is None:
+            raise EvidencePumpError("evidence generation lacks attempt binding")
+        if self.object_sha256 is not None and self.generation is None:
+            raise EvidencePumpError("evidence object lacks generation binding")
         for digest in (
             self.stdout_observed_sha256,
             self.stderr_observed_sha256,
@@ -188,6 +203,12 @@ class EvidenceReceipt:
             raise EvidencePumpError("evidence cannot be committed and quarantined")
         publication = self.raw_evidence_committed or self.raw_evidence_quarantined
         unpublished_capture = self.capture_started and not publication
+        if self.capture_started and (
+            self.attempt_id is None or self.generation is None
+        ):
+            raise EvidencePumpError("started capture lacks attempt binding")
+        if publication != (self.object_sha256 is not None):
+            raise EvidencePumpError("published evidence lacks authenticated object digest")
         if (
             publication
         ) and not self.capture_started:
@@ -1398,6 +1419,9 @@ def _append_tombstone(
 
 def _receipt(
     *,
+    attempt_id: Optional[str],
+    generation: Optional[str],
+    object_sha256: Optional[str],
     observed_hashes: dict[str, "hashlib._Hash"],
     observed_counts: dict[str, int],
     retained_metrics: dict[str, _Metric],
@@ -1417,6 +1441,9 @@ def _receipt(
         for stream in ("stdout", "stderr")
     )
     return EvidenceReceipt(
+        attempt_id=attempt_id,
+        generation=generation,
+        object_sha256=object_sha256,
         stdout_observed_sha256=observed_hashes["stdout"].hexdigest(),
         stderr_observed_sha256=observed_hashes["stderr"].hexdigest(),
         stdout_retained_sha256=retained_metrics["stdout"].digest,
@@ -1444,9 +1471,13 @@ def _receipt(
 
 
 def _zero_receipt(
-    *, stop_status: _StopStatus, recovered_residue: bool
+    *, stop_status: _StopStatus, recovered_residue: bool,
+    attempt_id: Optional[str] = None, generation: Optional[str] = None,
 ) -> EvidenceReceipt:
     return _receipt(
+        attempt_id=attempt_id,
+        generation=generation,
+        object_sha256=None,
         observed_hashes={"stdout": hashlib.sha256(), "stderr": hashlib.sha256()},
         observed_counts={"stdout": 0, "stderr": 0},
         retained_metrics={
@@ -1528,6 +1559,9 @@ def _receipt_from_parsed(parsed: _ParsedEvidence) -> EvidenceReceipt:
         error=None,
     )
     return _receipt(
+        attempt_id=parsed.attempt_id,
+        generation=parsed.generation,
+        object_sha256=parsed.object_sha256,
         observed_hashes=observed_hashes,
         observed_counts={
             "stdout": int(trailer["stdout_observed_bytes"]),
@@ -1819,6 +1853,9 @@ def _run_reserved_capture(
         "stderr": _Metric(_EMPTY_SHA256, 0),
     }
     receipt = _receipt(
+        attempt_id=attempt_id,
+        generation=generation,
+        object_sha256=None,
         observed_hashes=observed_hashes,
         observed_counts=observed_counts,
         retained_metrics=empty_metrics,
@@ -1866,7 +1903,7 @@ def pump_evidence(
         fallback = _StopController(stop_callback, _FALLBACK_STOP_CALLBACK_SECONDS)
         fallback.request()
         receipt = _zero_receipt(
-            stop_status=fallback.status(wait=True), recovered_residue=False
+            stop_status=fallback.status(wait=True), recovered_residue=False,
         )
         raise EvidencePumpError(str(exc), receipt=receipt) from exc
 
@@ -1924,7 +1961,10 @@ def pump_evidence(
                     recovered = recovered or bool(_attempt_names(directory, attempt))
                 except EvidencePumpError:
                     recovered = True
-            receipt = _zero_receipt(stop_status=status, recovered_residue=recovered)
+            receipt = _zero_receipt(
+                stop_status=status, recovered_residue=recovered,
+                attempt_id=attempt if "attempt" in locals() else None,
+            )
             if isinstance(exc, EvidencePumpError):
                 raise EvidencePumpError(str(exc), receipt=receipt) from exc
             raise EvidencePumpError("evidence preflight failed", receipt=receipt) from exc
@@ -1939,7 +1979,10 @@ def pump_evidence(
                 pass
             _append_tombstone(directory, attempt, lock, "RESIDUE_DETECTED")
             status = stop.status(wait=True)
-            receipt = _zero_receipt(stop_status=status, recovered_residue=True)
+            receipt = _zero_receipt(
+                stop_status=status, recovered_residue=True,
+                attempt_id=attempt,
+            )
             raise EvidencePumpError(
                 "single-use attempt already has evidence residue", receipt=receipt
             )
@@ -1963,7 +2006,10 @@ def pump_evidence(
                 writer.seal_partial()
             _append_tombstone(directory, attempt, lock, "PUBLICATION_FAILED")
             status = stop.status(wait=True)
-            receipt = _zero_receipt(stop_status=status, recovered_residue=False)
+            receipt = _zero_receipt(
+                stop_status=status, recovered_residue=False,
+                attempt_id=attempt, generation=generation,
+            )
             raise EvidencePumpError("evidence reservation failed", receipt=receipt) from exc
 
         return _run_reserved_capture(

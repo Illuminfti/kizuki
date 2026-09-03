@@ -1813,6 +1813,35 @@ class EvidencePumpTests(unittest.TestCase):
         with self.assertRaises(FrozenInstanceError):
             receipt.stdout_observed_bytes = 0
 
+    def test_receipt_binds_attempt_generation_and_authenticated_object_digest(self):
+        generation = "b" * 32
+        with mock.patch.object(
+            evidence_pump_module.secrets, "token_hex", return_value=generation
+        ):
+            first_out, first_err, _, _ = self.pipes(b"same", b"output")
+            first = pump_evidence(
+                first_out, first_err, **self.pump_kwargs(self.attempt(1))
+            )
+            second_out, second_err, _, _ = self.pipes(b"same", b"output")
+            second = pump_evidence(
+                second_out, second_err, **self.pump_kwargs(self.attempt(2))
+            )
+
+        self.assertEqual(first.attempt_id, self.attempt(1))
+        self.assertEqual(second.attempt_id, self.attempt(2))
+        self.assertEqual(first.generation, generation)
+        self.assertEqual(second.generation, generation)
+        self.assertEqual(
+            first.object_sha256,
+            hashlib.sha256(self.evidence_path(self.attempt(1)).read_bytes()).hexdigest(),
+        )
+        self.assertEqual(
+            second.object_sha256,
+            hashlib.sha256(self.evidence_path(self.attempt(2)).read_bytes()).hexdigest(),
+        )
+        self.assertNotEqual(first.object_sha256, second.object_sha256)
+        self.assertNotEqual(first, second)
+
     def test_receipt_rejects_impossible_stop_and_publication_combinations(self):
         stdout_fd, stderr_fd = self.eof_pipes()
         receipt = pump_evidence(stdout_fd, stderr_fd, **self.pump_kwargs())
@@ -1854,6 +1883,15 @@ class EvidencePumpTests(unittest.TestCase):
             EvidenceReceipt(**committed_with_spurious_recovery)
         with self.assertRaises(EvidencePumpError):
             EvidenceReceipt(**unpublished_with_retained_metrics)
+        for missing_binding in (
+            {"attempt_id": None},
+            {"generation": None},
+            {"object_sha256": None},
+        ):
+            with self.subTest(missing_binding=missing_binding), self.assertRaises(
+                EvidencePumpError
+            ):
+                EvidenceReceipt(**(values | missing_binding))
 
         zero_capture = values | {
             "stdout_observed_sha256": hashlib.sha256().hexdigest(),
