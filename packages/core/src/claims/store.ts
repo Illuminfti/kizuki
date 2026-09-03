@@ -851,7 +851,10 @@ export async function insertClaim(
     const structural = structuralCandidates.find((live) =>
       structuralMatch(claim, live),
     );
-    if (structural !== undefined && input.intent !== "correct") {
+    // Same key + polarity + object is corroboration, including a second
+    // owner denial of the same reading. `intent: "correct"` still reaches
+    // conflict/R5 when the object or polarity differs (RFC 0002 §5.2, §6.3).
+    if (structural !== undefined) {
       return {
         outcome: "duplicate",
         claim: corroborate(io.db, structural, claim, at),
