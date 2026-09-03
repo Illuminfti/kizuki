@@ -405,7 +405,6 @@ export type {
   UndoErrorCode,
   UndoReceiptOptions,
 } from "./canon";
-export { writePage } from "./vault/write";
 export type { WritePageOptions } from "./vault/write";
 export { findPageById, listCanonPages, listCanonPagesReport } from "./vault/pages";
 export type { CanonPage, CanonPageReport, SkippedPage } from "./vault/pages";
