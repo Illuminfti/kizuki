@@ -387,7 +387,7 @@ describe("opaque connector connection state", () => {
     const db = openLedger(":memory:");
     const control = temporary();
     const store = new ConnectionStateStore(control);
-    const sourceKey = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    const sourceKey = "01JJ0000000000000000000002";
     const fabricated = {
       connector_id: "fixture",
       source_key: sourceKey,
@@ -490,7 +490,7 @@ describe("opaque connector connection state", () => {
 
   test("forged handles and malformed rows fail closed", () => {
     const db = openLedger(":memory:");
-    const source = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    const source = "01JJ0000000000000000000002";
     const store = new ConnectionStateStore(temporary());
     expect(() =>
       (
@@ -545,7 +545,7 @@ describe("opaque connector connection state", () => {
         )
         .run(
           "fixture",
-          "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+          "01JJ0000000000000000000002",
           '{"session_id":"ordinary-plaintext-credential"}',
           "[]",
           new Date().toISOString(),
