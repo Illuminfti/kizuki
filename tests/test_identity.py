@@ -56,9 +56,41 @@ class IdentityIsolationTests(unittest.TestCase):
         values.update(overrides)
         return IdentityManifest(**values)
 
+    def materialize(self, destination, *, manifest=None, vault=None, **overrides):
+        context = {
+            "campaign_id": "campaign-01",
+            "task_id": "task-01",
+            "attempt": 2,
+            "controller_epoch": 7,
+            "task_spec_sha256": "d" * 64,
+        }
+        context.update(overrides)
+        return materialize_attempt_home(
+            manifest or self.manifest(), vault or self.vault, destination, self.key,
+            **context,
+        )
+
+    def test_materialization_receipt_binds_task_attempt_spec_and_destination(self):
+        destination = self.attempts / "job-home"
+        result = self.materialize(destination)
+        self.assertEqual(
+            (
+                result.campaign_id,
+                result.task_id,
+                result.attempt,
+                result.controller_epoch,
+                result.task_spec_sha256,
+            ),
+            ("campaign-01", "task-01", 2, 7, "d" * 64),
+        )
+        self.assertEqual(
+            result.destination_sha256,
+            digest(b"kizuki-attempt-home-v1\0" + str(destination.resolve()).encode()),
+        )
+
     def test_materializes_only_reviewed_files_into_fresh_private_home(self):
         destination = self.attempts / "job-home"
-        result = materialize_attempt_home(self.manifest(), self.vault, destination, self.key)
+        result = self.materialize(destination)
         copied = destination / ".codex" / "auth.json"
         self.assertEqual(copied.read_bytes(), self.secret)
         self.assertEqual(result.files, (".codex/auth.json",))
@@ -70,11 +102,11 @@ class IdentityIsolationTests(unittest.TestCase):
         destination = self.attempts / "job-home"
         destination.mkdir(mode=0o700)
         with self.assertRaises(IdentityError):
-            materialize_attempt_home(self.manifest(), self.vault, destination, self.key)
+            self.materialize(destination)
         destination.rmdir()
         destination.symlink_to(self.generation, target_is_directory=True)
         with self.assertRaises(IdentityError):
-            materialize_attempt_home(self.manifest(), self.vault, destination, self.key)
+            self.materialize(destination)
         destination.unlink()
         with self.assertRaises(IdentityError):
             self.manifest(artifacts=(Artifact("../auth.json", "a" * 64, 10),))
@@ -84,13 +116,13 @@ class IdentityIsolationTests(unittest.TestCase):
         auth.unlink()
         auth.symlink_to(self.generation / "elsewhere")
         with self.assertRaises(IdentityError):
-            materialize_attempt_home(self.manifest(), self.vault, self.attempts / "one", self.key)
+            self.materialize(self.attempts / "one")
         auth.unlink(); auth.write_bytes(self.secret); auth.chmod(0o666)
         with self.assertRaises(IdentityError):
-            materialize_attempt_home(self.manifest(), self.vault, self.attempts / "two", self.key)
+            self.materialize(self.attempts / "two")
         auth.chmod(0o600); auth.write_bytes(b"changed")
         with self.assertRaises(IdentityError):
-            materialize_attempt_home(self.manifest(), self.vault, self.attempts / "three", self.key)
+            self.materialize(self.attempts / "three")
 
     def test_receipt_binds_generation_account_binary_network_and_expiry(self):
         manifest = self.manifest()
@@ -152,8 +184,7 @@ class IdentityIsolationTests(unittest.TestCase):
 
     def test_refuses_destination_nested_in_generation_or_containing_generation(self):
         with self.assertRaises(IdentityError):
-            materialize_attempt_home(self.manifest(), self.vault,
-                                     self.generation / "attempt" / "job-home", self.key)
+            self.materialize(self.generation / "attempt" / "job-home")
         # A generation constructed below an existing attempt parent is equally
         # unsafe: the destination contains the source generation.
         nested_vault = self.attempts / "vault"
@@ -165,7 +196,7 @@ class IdentityIsolationTests(unittest.TestCase):
                      nested_vault / "codex-builder" / "generation-1", nested_generation):
             path.chmod(0o700)
         with self.assertRaises(IdentityError):
-            materialize_attempt_home(self.manifest(), nested_vault, self.attempts, self.key)
+            self.materialize(self.attempts, vault=nested_vault)
 
     def test_manifest_rejects_duplicate_paths_and_unknown_adapter(self):
         artifact = Artifact(".x/auth", "d" * 64, 10)

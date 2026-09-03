@@ -151,6 +151,12 @@ class MaterializedIdentity:
     authority_domain: str
     adapter: str
     generation: int
+    campaign_id: str
+    task_id: str
+    attempt: int
+    controller_epoch: int
+    task_spec_sha256: str
+    destination_sha256: str
     manifest_sha256: str
     artifacts: Tuple[AttestedArtifact, ...]
     total_bytes: int
@@ -160,6 +166,11 @@ class MaterializedIdentity:
         if not isinstance(self.principal_id, str) or not _ID.fullmatch(self.principal_id): raise IdentityError("invalid materialized principal")
         if not isinstance(self.authority_domain, str) or not _ID.fullmatch(self.authority_domain): raise IdentityError("invalid materialized authority domain")
         if self.adapter not in _ADAPTERS or isinstance(self.generation, bool) or not isinstance(self.generation, int) or self.generation < 1: raise IdentityError("invalid materialized identity")
+        if not isinstance(self.campaign_id, str) or not _ID.fullmatch(self.campaign_id): raise IdentityError("invalid materialized campaign")
+        if not isinstance(self.task_id, str) or not _ID.fullmatch(self.task_id): raise IdentityError("invalid materialized task")
+        if any(isinstance(value, bool) or not isinstance(value, int) or value < 1 for value in (self.attempt, self.controller_epoch)): raise IdentityError("invalid materialized attempt fence")
+        _digest(self.task_spec_sha256, "materialized task-spec digest")
+        _digest(self.destination_sha256, "materialized destination digest")
         _digest(self.manifest_sha256, "materialized manifest digest")
         if not isinstance(self.artifacts, tuple) or not self.artifacts or any(not isinstance(item, AttestedArtifact) for item in self.artifacts): raise IdentityError("invalid materialized artifact inventory")
         paths = [item.path for item in self.artifacts]
@@ -215,6 +226,10 @@ def _binding_payload(binding: AuthorityBinding) -> bytes:
 def _materialized_payload(receipt: MaterializedIdentity) -> bytes:
     return _canonical({"principal_id": receipt.principal_id, "authority_domain": receipt.authority_domain,
                        "adapter": receipt.adapter, "generation": receipt.generation,
+                       "campaign_id": receipt.campaign_id, "task_id": receipt.task_id,
+                       "attempt": receipt.attempt, "controller_epoch": receipt.controller_epoch,
+                       "task_spec_sha256": receipt.task_spec_sha256,
+                       "destination_sha256": receipt.destination_sha256,
                        "manifest_sha256": receipt.manifest_sha256,
                        "artifacts": [(item.path, item.sha256, item.bytes) for item in receipt.artifacts],
                        "total_bytes": receipt.total_bytes})
@@ -248,12 +263,30 @@ def _read_artifact(generation_root: Path, artifact: Artifact) -> bytes:
     finally: os.close(fd)
 
 
-def materialize_attempt_home(manifest: IdentityManifest, vault_root: str | Path, destination: str | Path,
-                             controller_hmac_key: bytes) -> MaterializedIdentity:
+def materialize_attempt_home(
+    manifest: IdentityManifest,
+    vault_root: str | Path,
+    destination: str | Path,
+    controller_hmac_key: bytes,
+    *,
+    campaign_id: str,
+    task_id: str,
+    attempt: int,
+    controller_epoch: int,
+    task_spec_sha256: str,
+) -> MaterializedIdentity:
     if not isinstance(manifest, IdentityManifest): raise IdentityError("IdentityManifest required")
     _hmac_key(controller_hmac_key)
     vault, destination = Path(vault_root), Path(destination)
     if not vault.is_absolute() or not destination.is_absolute(): raise IdentityError("identity paths must be absolute")
+    if not isinstance(campaign_id, str) or not _ID.fullmatch(campaign_id): raise IdentityError("invalid campaign id")
+    if not isinstance(task_id, str) or not _ID.fullmatch(task_id): raise IdentityError("invalid task id")
+    if any(isinstance(value, bool) or not isinstance(value, int) or value < 1 for value in (attempt, controller_epoch)): raise IdentityError("invalid attempt fence")
+    _digest(task_spec_sha256, "task-spec digest")
+    try:
+        destination = destination.resolve(strict=False)
+    except OSError as exc:
+        raise IdentityError("attempt home cannot be safely resolved") from exc
     _owned_private_directory(vault, "identity vault")
     principal_root = vault / manifest.principal_id; generation_root = principal_root / f"generation-{manifest.generation}"
     _owned_private_directory(principal_root, "principal vault"); _owned_private_directory(generation_root, "identity generation")
@@ -284,8 +317,25 @@ def materialize_attempt_home(manifest: IdentityManifest, vault_root: str | Path,
     except OSError as exc:
         raise IdentityError("attempt identity materialization failed") from exc
     inventory = tuple(sorted((AttestedArtifact(item.path, hashlib.sha256(data).hexdigest(), len(data)) for item, data in verified), key=lambda item: item.path))
-    unsigned = MaterializedIdentity(manifest.principal_id, manifest.authority_domain, manifest.adapter,
-                                    manifest.generation, _manifest_hash(manifest), inventory, total, "0" * 64)
+    destination_sha256 = hashlib.sha256(
+        b"kizuki-attempt-home-v1\0" + os.fsencode(str(destination))
+    ).hexdigest()
+    unsigned = MaterializedIdentity(
+        principal_id=manifest.principal_id,
+        authority_domain=manifest.authority_domain,
+        adapter=manifest.adapter,
+        generation=manifest.generation,
+        campaign_id=campaign_id,
+        task_id=task_id,
+        attempt=attempt,
+        controller_epoch=controller_epoch,
+        task_spec_sha256=task_spec_sha256,
+        destination_sha256=destination_sha256,
+        manifest_sha256=_manifest_hash(manifest),
+        artifacts=inventory,
+        total_bytes=total,
+        attestation_sha256="0" * 64,
+    )
     signature = hmac.new(controller_hmac_key, b"kizuki-materialized-identity-v1\0" + _materialized_payload(unsigned), hashlib.sha256).hexdigest()
     return replace(unsigned, attestation_sha256=signature)
 

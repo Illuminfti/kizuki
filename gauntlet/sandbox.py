@@ -8,13 +8,30 @@ may be wired to any scheduler path.
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import stat
+from collections.abc import Mapping, MutableSet
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Tuple
 
-from gauntlet.identity import IdentityError, MaterializedIdentity, verify_materialized_identity
+from gauntlet.identity import (
+    AuthorityBinding,
+    IdentityError,
+    IdentityManifest,
+    IdentityReceipt,
+    MaterializedIdentity,
+    verify_authority_binding,
+    verify_materialized_identity,
+)
+from gauntlet.protocol import LeaseGrant
+from gauntlet.task_spec import (
+    TaskSpec,
+    TaskSpecError,
+    command_policy_sha256,
+    verify_task_spec,
+)
 
 
 class SandboxError(RuntimeError):
@@ -23,12 +40,22 @@ class SandboxError(RuntimeError):
 
 _HEX = frozenset("0123456789abcdef")
 _ID_SAFE = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-")
+_ROLES = frozenset({
+    "BUILDER", "VERIFIER", "SPEC_REVIEWER", "REGRESSION_REVIEWER",
+    "INDEPENDENT_REVIEWER", "INTEGRATOR", "POST_MERGE_VERIFIER",
+})
 _SYSTEM_RO_BINDS = (("/usr", "/usr"), ("/bin", "/bin"), ("/lib", "/lib"), ("/lib64", "/lib64"))
 _ADAPTER_PROFILES = {
     "codex": ("/opt/harness/bin/codex", "exec", "--json", "--ephemeral", "--ignore-user-config", "--ignore-rules", "-C", "/work", "-s", "workspace-write", "-a", "never", "-"),
     "claude": ("/opt/harness/bin/claude", "--print", "--output-format", "stream-json", "--no-session-persistence", "--safe-mode", "--restricted", "--permission-mode", "dontAsk", "--permission-prompts", "none", "--strict-mcp-config"),
     "cursor": ("/opt/harness/bin/cursor-agent", "--print", "--output-format", "stream-json", "--sandbox", "disabled", "--trust", "--workspace", "/work"),
     "grok": ("/opt/harness/bin/grok", "--single", "-", "--output-format", "streaming-json", "--cwd", "/work", "--permission-mode", "dontAsk", "--disable-web-search", "--no-subagents"),
+}
+_COMMAND_POLICIES = {
+    "codex": "codex-exec-v1",
+    "claude": "claude-print-v1",
+    "cursor": "cursor-print-v1",
+    "grok": "grok-single-v1",
 }
 
 
@@ -124,13 +151,64 @@ def full_release_tree_hash(release_tree: str | Path, max_bytes: int = 256 * 1024
     return digest.hexdigest()
 
 
+def _regular_file_sha256(path: Path, max_bytes: int = 256 * 1024 * 1024) -> str:
+    """Hash one controller-owned, immutable regular file without link traversal."""
+    try:
+        info = os.lstat(path)
+    except OSError as exc:
+        raise SandboxError("attested executable is unavailable") from exc
+    if (
+        stat.S_ISLNK(info.st_mode)
+        or not stat.S_ISREG(info.st_mode)
+        or info.st_uid != os.geteuid()
+        or info.st_mode & 0o022
+        or info.st_size > max_bytes
+    ):
+        raise SandboxError("attested executable is not an immutable bounded file")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        raise SandboxError("attested executable cannot be opened safely") from exc
+    try:
+        opened = os.fstat(fd)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino)
+        ):
+            raise SandboxError("attested executable changed while opening")
+        digest = hashlib.sha256()
+        consumed = 0
+        while True:
+            block = os.read(fd, 65536)
+            if not block:
+                break
+            consumed += len(block)
+            if consumed > max_bytes:
+                raise SandboxError("attested executable exceeds hash budget")
+            digest.update(block)
+        final = os.fstat(fd)
+        if (
+            consumed != info.st_size
+            or final.st_size != info.st_size
+            or final.st_mtime_ns != info.st_mtime_ns
+            or final.st_ctime_ns != info.st_ctime_ns
+        ):
+            raise SandboxError("attested executable changed while hashing")
+        return digest.hexdigest()
+    finally:
+        os.close(fd)
+
+
 @dataclass(frozen=True)
 class SandboxSpec:
     campaign_id: str
     task_id: str
     attempt: int
     controller_epoch: int
+    expected_task_version: int
     lease_token: int
+    lease_run_id: str
     controller_unit: str
     release_tree: str
     release_sha256: str
@@ -139,24 +217,43 @@ class SandboxSpec:
     job_home: str
     raw_evidence: str
     identity_principal_id: str
+    identity_authority_domain: str
     identity_generation: int
     identity_manifest_sha256: str
     adapter: str
+    role: str
+    task_spec_sha256: str
     wall_seconds: int
+    cpu_seconds: int
     cpu_quota_percent: int
     memory_bytes: int
     tasks_max: int
     output_bytes: int
+    network_profile_sha256: str
+    expected_receipt_schema: str
     network_profile: str = "offline"
 
     def __post_init__(self) -> None:
         _opaque_id(self.campaign_id, "campaign_id")
         _opaque_id(self.task_id, "task_id")
+        _opaque_id(self.lease_run_id, "lease run id")
         _opaque_id(self.identity_principal_id, "identity principal")
+        _opaque_id(self.identity_authority_domain, "identity authority domain")
+        _opaque_id(self.expected_receipt_schema, "expected receipt schema")
         if not isinstance(self.identity_generation, int) or isinstance(self.identity_generation, bool) or self.identity_generation < 1:
             raise SandboxError("invalid identity generation")
         _sha256(self.identity_manifest_sha256, "identity_manifest_sha256")
-        if not all(isinstance(value, int) and value > 0 for value in (self.attempt, self.controller_epoch, self.lease_token)):
+        _sha256(self.task_spec_sha256, "task_spec_sha256")
+        _sha256(self.network_profile_sha256, "network_profile_sha256")
+        if not all(
+            isinstance(value, int) and not isinstance(value, bool) and value > 0
+            for value in (
+                self.attempt,
+                self.controller_epoch,
+                self.expected_task_version,
+                self.lease_token,
+            )
+        ):
             raise SandboxError("invalid attempt fence")
         if self.controller_unit != "kizuki-gauntlet.service":
             raise SandboxError("controller unit must be the canonical service")
@@ -183,12 +280,24 @@ class SandboxSpec:
             raise SandboxError("networked sandbox profiles are not implemented")
         if self.adapter not in _ADAPTER_PROFILES:
             raise SandboxError("adapter must select a controller-owned profile")
+        if self.role not in _ROLES:
+            raise SandboxError("invalid protocol role")
         executable = release / "bin" / Path(_ADAPTER_PROFILES[self.adapter][0]).name
         if not executable.is_file() or executable.is_symlink() or not os.access(executable, os.X_OK):
             raise SandboxError("adapter executable is not in the release tree")
-        if any(not isinstance(value, int) or value < 1 for value in (self.wall_seconds, self.cpu_quota_percent, self.memory_bytes, self.tasks_max, self.output_bytes)):
+        if any(
+            not isinstance(value, int) or isinstance(value, bool) or value < 1
+            for value in (
+                self.wall_seconds,
+                self.cpu_seconds,
+                self.cpu_quota_percent,
+                self.memory_bytes,
+                self.tasks_max,
+                self.output_bytes,
+            )
+        ):
             raise SandboxError("invalid resource budget")
-        if self.wall_seconds > 3600 or self.cpu_quota_percent > 1000 or self.tasks_max > 512 or self.output_bytes > 64 * 1024 * 1024:
+        if self.wall_seconds > 3600 or self.cpu_seconds > 36_000 or self.cpu_quota_percent > 1000 or self.tasks_max > 512 or self.output_bytes > 64 * 1024 * 1024:
             raise SandboxError("resource budget exceeds policy")
         object.__setattr__(self, "release_tree", str(release))
         object.__setattr__(self, "attempt_root", str(root))
@@ -204,6 +313,9 @@ class OfflineLaunch:
     harness_bwrap_argv: Tuple[str, ...]
     relay_bwrap_argv: Tuple[str, ...] | None
     release_sha256: str
+    task_spec_sha256: str
+    authority_binding_id: str
+    lease_run_id: str
 
 
 def _bwrap_prefix() -> Tuple[str, ...]:
@@ -227,13 +339,25 @@ def _prepared_job_home(spec: SandboxSpec, receipt: MaterializedIdentity,
     except IdentityError as exc:
         raise SandboxError("materialized identity receipt authentication failed") from exc
     if (receipt.principal_id != spec.identity_principal_id
+            or receipt.authority_domain != spec.identity_authority_domain
             or receipt.generation != spec.identity_generation
             or receipt.adapter != spec.adapter
             or receipt.manifest_sha256 != spec.identity_manifest_sha256):
         raise SandboxError("identity receipt does not match sandbox specification")
+    if (receipt.campaign_id != spec.campaign_id
+            or receipt.task_id != spec.task_id
+            or receipt.attempt != spec.attempt
+            or receipt.controller_epoch != spec.controller_epoch
+            or receipt.task_spec_sha256 != spec.task_spec_sha256):
+        raise SandboxError("identity receipt does not match task attempt")
     prepared = _absolute_directory(spec.job_home, "prepared_job_home", private=True)
     if prepared != Path(spec.job_home) or prepared.parent != Path(spec.attempt_root):
         raise SandboxError("prepared job_home does not match preflight specification")
+    destination_sha256 = hashlib.sha256(
+        b"kizuki-attempt-home-v1\0" + os.fsencode(str(prepared))
+    ).hexdigest()
+    if receipt.destination_sha256 != destination_sha256:
+        raise SandboxError("identity receipt destination does not match prepared job_home")
     expected_files = {artifact.path: artifact for artifact in receipt.artifacts}
     expected_dirs = {""}
     for artifact in receipt.artifacts:
@@ -295,16 +419,213 @@ def _prepared_job_home(spec: SandboxSpec, receipt: MaterializedIdentity,
     return prepared
 
 
-def build_offline_launch(spec: SandboxSpec, materialized_identity: MaterializedIdentity,
-                         controller_hmac_key: bytes) -> OfflineLaunch:
-    """Build, but never execute, the exact offline transient-unit topology."""
+def _validate_launch_admission(
+    spec: SandboxSpec,
+    task_spec: TaskSpec,
+    task_spec_verification_keys: Mapping[str, bytes],
+    lease_grant: LeaseGrant,
+    identity_manifest: IdentityManifest,
+    identity_receipt: IdentityReceipt,
+    authority_binding: AuthorityBinding,
+    *,
+    current_task_version: int,
+    current_controller_epoch: int,
+    now: int,
+) -> None:
+    """Validate all immutable admission facts without consuming authority."""
+    if isinstance(now, bool) or not isinstance(now, int):
+        raise SandboxError("launch admission time must be an integer")
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 1
+        for value in (current_task_version, current_controller_epoch)
+    ):
+        raise SandboxError("invalid live controller fence")
+    try:
+        verify_task_spec(task_spec, task_spec_verification_keys, now=now)
+    except TaskSpecError as exc:
+        raise SandboxError("task specification is not authentic and current") from exc
+
+    sandbox_context = (
+        spec.campaign_id,
+        spec.task_id,
+        spec.attempt,
+        spec.controller_epoch,
+        spec.expected_task_version,
+        spec.lease_token,
+        spec.lease_run_id,
+        spec.adapter,
+        spec.identity_principal_id,
+        spec.identity_authority_domain,
+        spec.identity_generation,
+        spec.role,
+        spec.wall_seconds,
+        spec.cpu_seconds,
+        spec.cpu_quota_percent,
+        spec.memory_bytes,
+        spec.tasks_max,
+        spec.output_bytes,
+        spec.network_profile,
+        spec.network_profile_sha256,
+        spec.expected_receipt_schema,
+        spec.task_spec_sha256,
+    )
+    authenticated_context = (
+        task_spec.campaign_id,
+        task_spec.task_id,
+        task_spec.attempt,
+        task_spec.controller_epoch,
+        task_spec.expected_task_version,
+        task_spec.lease_token,
+        task_spec.lease_run_id,
+        task_spec.adapter,
+        task_spec.principal_id,
+        task_spec.authority_domain,
+        task_spec.identity_generation,
+        task_spec.role,
+        task_spec.wall_seconds,
+        task_spec.cpu_seconds,
+        task_spec.cpu_quota_percent,
+        task_spec.memory_bytes,
+        task_spec.process_max,
+        task_spec.output_bytes,
+        task_spec.network_profile,
+        task_spec.network_profile_sha256,
+        task_spec.expected_receipt_schema,
+        task_spec.task_spec_sha256,
+    )
+    if sandbox_context != authenticated_context:
+        raise SandboxError("sandbox specification does not match authenticated task specification")
+    if task_spec.expected_task_version != current_task_version:
+        raise SandboxError("task specification has a stale row version")
+    if task_spec.controller_epoch != current_controller_epoch:
+        raise SandboxError("task specification has a stale controller epoch")
+    expected_policy = _COMMAND_POLICIES[task_spec.adapter]
+    if (
+        task_spec.command_policy != expected_policy
+        or task_spec.command_policy_sha256
+        != command_policy_sha256(expected_policy, _ADAPTER_PROFILES[task_spec.adapter])
+    ):
+        raise SandboxError("task specification names an unexpected command policy")
+
+    if not isinstance(lease_grant, LeaseGrant):
+        raise SandboxError("live LeaseGrant required")
+    if any(
+        type(value) is not int or value < 1
+        for value in (lease_grant.attempt, lease_grant.token, lease_grant.epoch)
+    ):
+        raise SandboxError("lease contains an invalid numeric fence")
+    expected_resource = (
+        f"task:{task_spec.task_id}:{task_spec.attempt}:"
+        f"{task_spec.role.lower().replace('_', '-')}"
+    )
+    lease_context = (
+        lease_grant.task_id,
+        lease_grant.attempt,
+        lease_grant.role,
+        lease_grant.principal_id,
+        lease_grant.run_id,
+        lease_grant.authority_domain,
+        lease_grant.token,
+        lease_grant.epoch,
+        lease_grant.resource,
+    )
+    expected_lease_context = (
+        task_spec.task_id,
+        task_spec.attempt,
+        task_spec.role,
+        task_spec.principal_id,
+        task_spec.lease_run_id,
+        task_spec.authority_domain,
+        task_spec.lease_token,
+        task_spec.controller_epoch,
+        expected_resource,
+    )
+    if lease_context != expected_lease_context:
+        raise SandboxError("lease does not match authenticated task specification")
+    if (
+        isinstance(lease_grant.expires_at, bool)
+        or not isinstance(lease_grant.expires_at, (int, float))
+        or not math.isfinite(lease_grant.expires_at)
+        or lease_grant.expires_at < now + task_spec.wall_seconds
+        or lease_grant.expires_at > task_spec.expires_at
+    ):
+        raise SandboxError("lease does not cover the bounded launch lifetime")
+
+    if not isinstance(identity_manifest, IdentityManifest) or not isinstance(identity_receipt, IdentityReceipt):
+        raise SandboxError("identity manifest and receipt required")
+    identity_context = (
+        identity_manifest.principal_id,
+        identity_manifest.authority_domain,
+        identity_manifest.adapter,
+        identity_manifest.generation,
+        identity_manifest.network_profile_sha256,
+    )
+    expected_identity_context = (
+        task_spec.principal_id,
+        task_spec.authority_domain,
+        task_spec.adapter,
+        task_spec.identity_generation,
+        task_spec.network_profile_sha256,
+    )
+    if identity_context != expected_identity_context:
+        raise SandboxError("identity manifest does not match authenticated task specification")
+    if not isinstance(authority_binding, AuthorityBinding):
+        raise SandboxError("single-use AuthorityBinding required")
+    if (
+        authority_binding.operation_sha256 != task_spec.task_spec_sha256
+        or authority_binding.manifest_sha256 != spec.identity_manifest_sha256
+        or authority_binding.network_profile_sha256 != task_spec.network_profile_sha256
+        or lease_grant.account_binding_sha256 != authority_binding.account_binding_sha256
+        or lease_grant.identity_receipt_sha256 != authority_binding.receipt_sha256
+    ):
+        raise SandboxError("authority, identity, lease, and task specification do not match")
+
+
+def build_offline_launch(
+    spec: SandboxSpec,
+    materialized_identity: MaterializedIdentity,
+    controller_hmac_key: bytes,
+    *,
+    task_spec: TaskSpec,
+    task_spec_verification_keys: Mapping[str, bytes],
+    lease_grant: LeaseGrant,
+    identity_manifest: IdentityManifest,
+    identity_receipt: IdentityReceipt,
+    authority_binding: AuthorityBinding,
+    consumed_binding_ids: MutableSet[str],
+    current_task_version: int,
+    current_controller_epoch: int,
+    now: int,
+) -> OfflineLaunch:
+    """Build, but never execute, one fully admitted offline launch topology."""
     if not isinstance(spec, SandboxSpec):
         raise SandboxError("SandboxSpec required")
+    _validate_launch_admission(
+        spec,
+        task_spec,
+        task_spec_verification_keys,
+        lease_grant,
+        identity_manifest,
+        identity_receipt,
+        authority_binding,
+        current_task_version=current_task_version,
+        current_controller_epoch=current_controller_epoch,
+        now=now,
+    )
     prepared_home = _prepared_job_home(spec, materialized_identity, controller_hmac_key)
     # Recheck mutable filesystem identity at the launch boundary.
     if full_release_tree_hash(spec.release_tree) != spec.release_sha256:
         raise SandboxError("release tree identity changed")
-    identity = f"{spec.campaign_id}\0{spec.task_id}\0{spec.attempt}\0{spec.controller_epoch}\0{spec.lease_token}".encode()
+    release_executable = (
+        Path(spec.release_tree) / "bin" / Path(_ADAPTER_PROFILES[spec.adapter][0]).name
+    )
+    if _regular_file_sha256(release_executable) != identity_manifest.executable_sha256:
+        raise SandboxError("release executable does not match attested identity")
+    identity = (
+        f"{spec.campaign_id}\0{spec.task_id}\0{spec.attempt}\0"
+        f"{spec.controller_epoch}\0{spec.expected_task_version}\0"
+        f"{spec.lease_token}\0{spec.lease_run_id}\0{spec.task_spec_sha256}"
+    ).encode()
     unit_name = "kizuki-gauntlet-attempt-" + hashlib.sha256(identity).hexdigest()[:24] + ".service"
     harness = _bwrap_prefix() + (
         "--ro-bind", spec.release_tree, "/opt/harness",
@@ -324,4 +645,25 @@ def build_offline_launch(spec: SandboxSpec, materialized_identity: MaterializedI
         f"BindReadOnlyPaths={spec.release_tree}", f"ReadWritePaths={spec.attempt_root}",
     )
     systemd = ("/usr/bin/systemd-run", "--user", "--wait", "--pipe", "--service-type=exec", f"--unit={unit_name}", "--collect") + tuple(f"--property={value}" for value in properties) + ("--", *harness)
-    return OfflineLaunch(unit_name, systemd, harness, None, spec.release_sha256)
+    try:
+        verify_authority_binding(
+            authority_binding,
+            identity_manifest,
+            identity_receipt,
+            now,
+            controller_hmac_key,
+            task_spec.task_spec_sha256,
+            consumed_binding_ids,
+        )
+    except IdentityError as exc:
+        raise SandboxError("authority binding is not authentic, current, and unused") from exc
+    return OfflineLaunch(
+        unit_name,
+        systemd,
+        harness,
+        None,
+        spec.release_sha256,
+        task_spec.task_spec_sha256,
+        authority_binding.binding_id,
+        lease_grant.run_id,
+    )
