@@ -183,6 +183,24 @@ async function runConnector(
   return result;
 }
 
+export function runBackfill(
+  db: Database,
+  connector: Connector,
+  connector_id: string,
+  source_key: string,
+): Promise<RunResult> {
+  return runConnector(db, connector, connector_id, source_key, "backfill");
+}
+
+export function runSync(
+  db: Database,
+  connector: Connector,
+  connector_id: string,
+  source_key: string,
+): Promise<RunResult> {
+  return runConnector(db, connector, connector_id, source_key, "sync");
+}
+
 export interface RunToCompletionOptions {
   /** Upper bound on batches per call; exceeding it is an error, not a silent stop. */
   maxBatches?: number;
@@ -214,7 +232,6 @@ function absorb(total: RunResult, batch: RunResult): void {
  * the batches before it stored.
  */
 export async function runToCompletion(
-export function runBackfill(
   db: Database,
   connector: Connector,
   connector_id: string,
@@ -265,15 +282,4 @@ export function runBackfill(
   }
   total.errors.push(`run did not complete within ${maxBatches} batches`);
   return total;
-): Promise<RunResult> {
-  return runConnector(db, connector, connector_id, source_key, "backfill");
-}
-
-export function runSync(
-  db: Database,
-  connector: Connector,
-  connector_id: string,
-  source_key: string,
-): Promise<RunResult> {
-  return runConnector(db, connector, connector_id, source_key, "sync");
 }
