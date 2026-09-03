@@ -159,6 +159,7 @@ What this revision does have:
 | --- | --- |
 | RFC 0002 lanes | Code exists for contracts, claims, writer, undo/audit, llm, producer, correction, sensitivity, FTS retrieval, retrieval-pg, embed-gguf, serve, purge. Lane exit proofs (seven-day receipts, stranger loop, cutover) are not claimed. |
 | `kizuki doctor` | Reports vault pages, connections, receipts, holds, purge SLA, serve rails, and `canon writing: on\|off`. Off when no model is configured. |
+| `kizuki agent` | `add <name> [--owner-agent]`, `list`, `revoke <name>`, `rotate <name>` compose the existing core identity API (RFC 0002 §8.4). A minted token prints once, on stdout only; default ceiling is `personal`, `--owner-agent` is `private`. |
 | Denylist | `scripts/verify.sh` fails on forbidden identifiers in tracked text and reachable commit messages, and on network calls outside `scripts/network-allowlist.txt`. |
 | Cutover | Estate importers exist (`kizuki.import-legacy-wiki`, `kizuki.import-legacy-events`). Parallel-run cutover is not done. |
 | Leftover verbs | `review`, `promote`, `reject` still run. They are not the owner path. |

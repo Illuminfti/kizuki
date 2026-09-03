@@ -1,3 +1,4 @@
+import { agentCommand } from "./agent";
 import { auditCommand } from "./audit";
 import { backfillCommand } from "./backfill";
 import { connectCommand } from "./connect";
@@ -37,6 +38,7 @@ export const COMMANDS: readonly Command[] = [
   syncCommand,
   importCommand,
   modelsCommand,
+  agentCommand,
   auditCommand,
   tellCommand,
   undoCommand,
