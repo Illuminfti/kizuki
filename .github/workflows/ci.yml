@@ -26,6 +26,18 @@ jobs:
         run: |
           git fetch --no-tags origin main
           git diff --check FETCH_HEAD...HEAD
+      - name: package exact-head workspace
+        if: always()
+        run: tar --exclude=.git --exclude=./.git --exclude=kizuki-workspace.tar.gz -czf kizuki-workspace.tar.gz .
+      - name: upload exact-head workspace
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: kizuki-workspace-${{ github.sha }}
+          path: kizuki-workspace.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
   secrets:
     permissions:
       contents: read
