@@ -1,26 +1,40 @@
 import type { Database } from "bun:sqlite";
 import {
   chmodSync,
-  closeSync,
   existsSync,
-  fsyncSync,
   mkdirSync,
-  openSync,
   readFileSync,
   readdirSync,
-  renameSync,
   rmSync,
-  writeSync,
 } from "node:fs";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, join } from "node:path";
 import type {
   ConnectionStateWriter,
   Connector,
   SignInIo,
 } from "../contracts/connector";
 import { ulid } from "../util/ulid";
-import { isRfc3339 } from "../util/time";
+import {
+  clearSwapDebris,
+  connectionStatePath,
+  fsyncDirectory,
+  isCoreUlid,
+  restoreStateFile,
+  stateRefFor,
+  swapStateFile,
+  sweepAbandonedStaging,
+  writeDurableFile,
+} from "./connection-state-files";
+import { repairSwap, type SwapJournal } from "./connection-state-journal";
+import {
+  commitConnectionRow,
+  nextConnectedAt,
+  writeLocked,
+  type ConnectionExpectation,
+} from "./connection-state-rows";
 import { LedgerError, getConnection, type Connection } from "./connections";
+
+export { writeAll } from "./connection-state-files";
 
 export const CONNECTION_CONFIG_SCHEMA = "kizuki.connection-config/v1" as const;
 export const NULL_CONNECTION_CONFIG =
@@ -43,112 +57,8 @@ interface PendingState {
   completed: boolean;
 }
 
-interface SwapJournal {
-  schema: "kizuki.connection-state-swap/v1";
-  connector_id: string;
-  source_key: string;
-  connected_at: string;
-  final_name: string;
-  backup_name: string | null;
-}
-
-interface ConnectedAtRow {
-  connected_at: string;
-}
-
-type ChunkWriter = (
-  fd: number,
-  bytes: Uint8Array,
-  offset: number,
-  length: number,
-) => number;
-
-const writeChunk: ChunkWriter = (fd, bytes, offset, length) =>
-  writeSync(fd, bytes, offset, length);
-
-function isCoreUlid(value: string): boolean {
-  return /^[0-9A-HJKMNPQRSTVWXYZ]{26}$/.test(value);
-}
-
-function stateRefFor(sourceKey: string): string {
-  return `file:connections/${sourceKey}.state`;
-}
-
-function connectionStatePath(directory: string, ref: string): string {
-  if (!ref.startsWith("file:connections/") || !ref.endsWith(".state")) {
-    throw new LedgerError("connection state ref is invalid");
-  }
-  const path = resolve(dirname(directory), ref.slice("file:".length));
-  if (dirname(path) !== resolve(directory) || relative(directory, path).startsWith("..")) {
-    throw new LedgerError("connection state ref escapes the store");
-  }
-  return path;
-}
-
-/** Internal test seam; this module is not re-exported from the public package. */
-export function writeAll(
-  fd: number,
-  bytes: Uint8Array,
-  writer: ChunkWriter = writeChunk,
-): void {
-  let offset = 0;
-  while (offset < bytes.byteLength) {
-    const written = writer(fd, bytes, offset, bytes.byteLength - offset);
-    if (written <= 0) {
-      throw new LedgerError("connection state write made no progress");
-    }
-    offset += written;
-  }
-}
-
-function writeDurableFile(path: string, bytes: Uint8Array): void {
-  let fd: number | undefined;
-  try {
-    fd = openSync(path, "wx", 0o600);
-    writeAll(fd, bytes);
-    fsyncSync(fd);
-  } catch (error) {
-    if (fd !== undefined) {
-      closeSync(fd);
-      fd = undefined;
-    }
-    rmSync(path, { force: true });
-    throw error;
-  } finally {
-    if (fd !== undefined) closeSync(fd);
-  }
-}
-
-function fsyncDirectory(directory: string): void {
-  const fd = openSync(directory, "r");
-  try {
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-}
-
-function nextConnectedAt(
-  db: Database,
-  connectorId: string,
-  sourceKey: string,
-): string {
-  const previous = db
-    .query<ConnectedAtRow, [string, string]>(
-      "SELECT connected_at FROM connections WHERE connector_id = ? AND source_key = ?",
-    )
-    .get(connectorId, sourceKey);
-  const previousMillis = previous === null ? Number.NEGATIVE_INFINITY : Date.parse(previous.connected_at);
-  if (previous !== null && !Number.isFinite(previousMillis)) {
-    throw new LedgerError("stored connection timestamp is invalid");
-  }
-  const millis = Math.max(Date.now(), previousMillis + 1);
-  const connectedAt = new Date(millis).toISOString();
-  if (!isRfc3339(connectedAt)) {
-    throw new LedgerError("core generated an invalid connection timestamp");
-  }
-  return connectedAt;
-}
+/** The caller offered a row the store has already moved past. */
+const STALE_CONNECTION_SNAPSHOT = "connection does not match persisted state";
 
 /**
  * Core-owned opaque-state store. Connector code gets only a one-shot writer;
@@ -158,6 +68,8 @@ export class ConnectionStateStore implements ConnectionStateReader {
   readonly directory: string;
   private readonly minted = new Set<string>();
   private readonly handles = new WeakSet<PendingState>();
+  /** Staging paths this store is still writing, so recovery leaves them alone. */
+  private readonly staging = new Set<string>();
 
   constructor(controlDirectory: string) {
     this.directory = join(controlDirectory, "connections");
@@ -210,6 +122,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
             writeDurableFile(temporary, state);
             pending.temporaryPath = temporary;
             pending.written = true;
+            this.staging.add(temporary);
           } catch (error) {
             rmSync(temporary, { force: true });
             throw error;
@@ -227,6 +140,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
     if (!this.handles.has(pending)) return;
     const hadTemporary = pending.temporaryPath !== null;
     if (pending.temporaryPath !== null) {
+      this.staging.delete(pending.temporaryPath);
       rmSync(pending.temporaryPath, { force: true });
       pending.temporaryPath = null;
     }
@@ -237,62 +151,32 @@ export class ConnectionStateStore implements ConnectionStateReader {
 
   /** Repairs an interrupted state swap before the next trusted enrollment. */
   recover(db: Database): void {
-    for (const name of readdirSync(this.directory)) {
-      if (!name.endsWith(".journal")) continue;
-      const journalPath = join(this.directory, name);
-      let journal: SwapJournal;
-      try {
-        journal = JSON.parse(readFileSync(journalPath, "utf8")) as SwapJournal;
-      } catch {
-        throw new LedgerError("connection state swap journal is unreadable");
-      }
-      if (
-        journal.schema !== "kizuki.connection-state-swap/v1" ||
-        typeof journal.connector_id !== "string" ||
-        journal.connector_id.length === 0 ||
-        !isCoreUlid(journal.source_key) ||
-        !isRfc3339(journal.connected_at) ||
-        journal.final_name !== `${journal.source_key}.state` ||
-        (journal.backup_name !== null &&
-          (basename(journal.backup_name) !== journal.backup_name ||
-            !journal.backup_name.startsWith(`${journal.final_name}.`) ||
-            !journal.backup_name.endsWith(".rollback")))
-      ) {
-        throw new LedgerError("connection state swap journal is invalid");
-      }
-      const finalPath = join(this.directory, journal.final_name);
-      const backupPath = journal.backup_name === null
-        ? null
-        : join(this.directory, journal.backup_name);
-      const row = db
-        .query<ConnectedAtRow, [string, string]>(
-          "SELECT connected_at FROM connections WHERE connector_id = ? AND source_key = ?",
-        )
-        .get(journal.connector_id, journal.source_key);
-      if (row?.connected_at === journal.connected_at) {
-        if (!existsSync(finalPath)) {
-          throw new LedgerError("committed connection state is missing");
-        }
-        if (backupPath !== null) rmSync(backupPath, { force: true });
-      } else if (backupPath !== null && existsSync(backupPath)) {
-        rmSync(finalPath, { force: true });
-        renameSync(backupPath, finalPath);
-      } else if (backupPath !== null) {
-        if (!existsSync(finalPath)) {
-          throw new LedgerError("connection state and rollback are both missing");
-        }
-        // The journal was durable before the first rename. The original final
-        // file is therefore still authoritative when its planned backup does
-        // not exist and the database row was not committed.
-      } else {
-        rmSync(finalPath, { force: true });
-      }
-      rmSync(journalPath, { force: true });
-      fsyncDirectory(this.directory);
+    const journals = readdirSync(this.directory).filter((name) =>
+      name.endsWith(".journal"),
+    );
+    if (journals.length > 0) {
+      // A journal is only crash debris once no writer is standing over it, and
+      // the write lock is what tells the two apart across processes.
+      writeLocked(db, () => {
+        for (const name of journals) repairSwap(db, this.directory, name);
+      });
     }
+    sweepAbandonedStaging(this.directory, this.staging);
   }
 
-  save(db: Database, connectorId: string, pending: PendingState): Connection {
+
+
+  /**
+   * `expect` is the row the caller validated before it staged bytes. Committing
+   * against it is what keeps a disconnect or a competing rewrite that landed
+   * during the staging window from being silently undone.
+   */
+  save(
+    db: Database,
+    connectorId: string,
+    pending: PendingState,
+    expect?: ConnectionExpectation,
+  ): Connection {
     if (
       !this.handles.has(pending) ||
       !this.minted.has(pending.sourceKey) ||
@@ -300,86 +184,84 @@ export class ConnectionStateStore implements ConnectionStateReader {
     ) {
       throw new LedgerError("connection state handle was not minted by this store");
     }
-    const existing = existsSync(pending.finalPath);
-    if (existing && !pending.written) {
-      throw new LedgerError("existing connection state cannot be cleared implicitly");
-    }
-    const refs = pending.written ? [pending.ref] : [];
-    const config = pending.written ? STATE_CONNECTION_CONFIG : NULL_CONNECTION_CONFIG;
-    const connectedAt = nextConnectedAt(db, connectorId, pending.sourceKey);
-    const backupPath = existing
-      ? `${pending.finalPath}.${ulid()}.rollback`
-      : null;
-    const journalPath = pending.written
-      ? `${pending.finalPath}.${ulid()}.journal`
-      : null;
+    let backupPath: string | null = null;
+    let journalPath: string | null = null;
     let swapped = false;
-    let committed = false;
-    try {
-      if (journalPath !== null) {
-        const journal: SwapJournal = {
-          schema: "kizuki.connection-state-swap/v1",
-          connector_id: connectorId,
-          source_key: pending.sourceKey,
-          connected_at: connectedAt,
-          final_name: basename(pending.finalPath),
-          backup_name: backupPath === null ? null : basename(backupPath),
-        };
-        writeDurableFile(
-          journalPath,
-          new TextEncoder().encode(JSON.stringify(journal)),
-        );
-        fsyncDirectory(this.directory);
-        if (backupPath !== null) renameSync(pending.finalPath, backupPath);
-        if (pending.temporaryPath === null) {
-          throw new LedgerError("connection state staging is missing");
-        }
-        renameSync(pending.temporaryPath, pending.finalPath);
+    let rolledBack = false;
+    const undoSwap = (): void => {
+      // Set first: a rollback that fails part way through must not be run
+      // again outside the lock, where it could take away bytes a recovery in
+      // another process had already restored.
+      rolledBack = true;
+      const staging = pending.temporaryPath;
+      if (staging !== null) {
+        this.staging.delete(staging);
         pending.temporaryPath = null;
-        swapped = true;
-        fsyncDirectory(this.directory);
       }
-      db.transaction(() => {
-        db.query(
-          `INSERT INTO connections
-             (connector_id, source_key, config, secret_refs, connected_at, disconnected_at)
-           VALUES (?, ?, ?, ?, ?, NULL)
-           ON CONFLICT (connector_id, source_key) DO UPDATE SET
-             config = excluded.config, secret_refs = excluded.secret_refs,
-             connected_at = excluded.connected_at, disconnected_at = NULL`,
-        ).run(
-          connectorId,
-          pending.sourceKey,
-          config,
-          JSON.stringify(refs),
-          connectedAt,
-        );
-      }).immediate();
-      committed = true;
-      if (backupPath !== null) rmSync(backupPath, { force: true });
-      if (journalPath !== null) rmSync(journalPath, { force: true });
-      if (journalPath !== null || backupPath !== null) {
-        fsyncDirectory(this.directory);
-      }
-    } catch (error) {
-      if (!committed) {
-        if (swapped) {
-          rmSync(pending.finalPath, { force: true });
-          if (backupPath !== null && existsSync(backupPath)) {
-            renameSync(backupPath, pending.finalPath);
+      restoreStateFile(this.directory, {
+        finalPath: pending.finalPath,
+        stagingPath: staging,
+        backupPath,
+        journalPath,
+        swapped,
+      });
+    };
+    try {
+      writeLocked(db, () => {
+        const existing = existsSync(pending.finalPath);
+        if (existing && !pending.written) {
+          throw new LedgerError(
+            "existing connection state cannot be cleared implicitly",
+          );
+        }
+        const connectedAt = nextConnectedAt(db, connectorId, pending.sourceKey);
+        backupPath = existing ? `${pending.finalPath}.${ulid()}.rollback` : null;
+        const staging = pending.temporaryPath;
+        if (pending.written) {
+          if (staging === null) {
+            throw new LedgerError("connection state staging is missing");
           }
-        } else if (backupPath !== null && existsSync(backupPath)) {
-          renameSync(backupPath, pending.finalPath);
-        }
-        if (pending.temporaryPath !== null) {
-          rmSync(pending.temporaryPath, { force: true });
+          journalPath = `${pending.finalPath}.${ulid()}.journal`;
+          const journal: SwapJournal = {
+            schema: "kizuki.connection-state-swap/v1",
+            connector_id: connectorId,
+            source_key: pending.sourceKey,
+            connected_at: connectedAt,
+            final_name: basename(pending.finalPath),
+            backup_name: backupPath === null ? null : basename(backupPath),
+          };
+          swapStateFile(this.directory, {
+            finalPath: pending.finalPath,
+            stagingPath: staging,
+            backupPath,
+            journalPath,
+            journalBytes: new TextEncoder().encode(JSON.stringify(journal)),
+          });
+          this.staging.delete(staging);
           pending.temporaryPath = null;
+          swapped = true;
         }
-        if (journalPath !== null) rmSync(journalPath, { force: true });
-        fsyncDirectory(this.directory);
-      }
+        commitConnectionRow(db, {
+          connectorId,
+          sourceKey: pending.sourceKey,
+          config: pending.written
+            ? STATE_CONNECTION_CONFIG
+            : NULL_CONNECTION_CONFIG,
+          secretRefs: pending.written ? [pending.ref] : [],
+          connectedAt,
+          expect,
+        });
+      }, undoSwap);
+    } catch (error) {
+      // Reached without the locked rollback only when the transaction never
+      // opened, or when the commit itself failed after the files had moved.
+      // A swap that landed belongs to recovery from here: its journal is on
+      // disk and the next recover() undoes it under the lock. The staged
+      // bytes of a swap that never started are still this call's to remove.
+      if (!rolledBack && !swapped) undoSwap();
       throw error;
     }
+    clearSwapDebris(this.directory, { backupPath, journalPath });
     pending.completed = true;
     this.minted.delete(pending.sourceKey);
     const connection = getConnection(db, connectorId, pending.sourceKey);
@@ -409,19 +291,16 @@ export class ConnectionStateStore implements ConnectionStateReader {
   }
 
   /**
-   * Re-authentication keeps the core source identity. New opaque bytes are
-   * staged in a 0600 sibling then atomically renamed only after sign-in
-   * succeeds, so a connector never observes or chooses the durable pathname.
+   * The one staging path for replacing the state of an existing source: it
+   * validates the caller's connection against the persisted row, stages new
+   * bytes in a 0600 sibling, and swaps only once `update` has written.
    */
-  async replace(
+  private async swap(
     db: Database,
     connection: Connection,
-    connector: Connector,
-    io: SignInIo,
+    update: (writer: ConnectionStateWriter) => Promise<void>,
+    options: { missingStateMessage: string; refuseDisconnected: boolean },
   ): Promise<Connection> {
-    if (typeof connector.signIn !== "function") {
-      throw new LedgerError("connector does not implement interactive sign-in");
-    }
     this.recover(db);
     const persisted = getConnection(
       db,
@@ -438,7 +317,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
       persisted.secret_refs.length !== connection.secret_refs.length ||
       persisted.secret_refs.some((ref, index) => ref !== connection.secret_refs[index])
     ) {
-      throw new LedgerError("connection does not match persisted state");
+      throw new LedgerError(STALE_CONNECTION_SNAPSHOT);
     }
     if (
       persisted.config.state_ref_index !== 0 ||
@@ -446,38 +325,75 @@ export class ConnectionStateStore implements ConnectionStateReader {
     ) {
       throw new LedgerError("connection is not eligible for state replacement");
     }
+    // save() clears disconnected_at, so an automatic path that accepted a
+    // withdrawn grant would let a background refresh undo an owner's
+    // disconnect. Only an interactive re-sign-in may reconnect a source.
+    if (options.refuseDisconnected && persisted.disconnected_at !== null) {
+      throw new LedgerError("connection is disconnected");
+    }
     this.read(persisted);
     const pending = this.beginFor(persisted.source_key);
     try {
-      await connector.signIn(io, pending.writer);
+      await update(pending.writer);
       if (!pending.pending.written) {
-        throw new LedgerError("replacement sign-in did not provide connection state");
+        throw new LedgerError(options.missingStateMessage);
       }
-      return this.save(db, persisted.connector_id, pending.pending);
+      return this.save(db, persisted.connector_id, pending.pending, {
+        connected_at: persisted.connected_at,
+        disconnected_at: persisted.disconnected_at,
+      });
     } catch (error) {
       this.discard(pending.pending);
       throw error;
     }
   }
-}
 
-/** Runs an interactive sign-in and persists only host-minted opaque state. */
-export async function enrollConnection(
-  db: Database,
-  store: ConnectionStateStore,
-  connector: Connector,
-  io: SignInIo,
-): Promise<Connection> {
-  if (typeof connector.signIn !== "function") {
-    throw new LedgerError("connector does not implement interactive sign-in");
+  /**
+   * Re-authentication keeps the core source identity. New opaque bytes are
+   * staged in a 0600 sibling then atomically renamed only after sign-in
+   * succeeds, so a connector never observes or chooses the durable pathname.
+   */
+  async replace(
+    db: Database,
+    connection: Connection,
+    connector: Connector,
+    io: SignInIo,
+  ): Promise<Connection> {
+    const signIn = connector.signIn;
+    if (typeof signIn !== "function") {
+      throw new LedgerError("connector does not implement interactive sign-in");
+    }
+    return this.swap(
+      db,
+      connection,
+      async (writer) => {
+        await signIn.call(connector, io, writer);
+      },
+      {
+        missingStateMessage:
+          "replacement sign-in did not provide connection state",
+        // A re-sign-in is the owner reconnecting a source on purpose.
+        refuseDisconnected: false,
+      },
+    );
   }
-  store.recover(db);
-  const pending = store.begin();
-  try {
-    await connector.signIn(io, pending.writer);
-    return store.save(db, connector.manifest().connector_id, pending.pending);
-  } catch (error) {
-    store.discard(pending.pending);
-    throw error;
+
+  /**
+   * Non-interactive state replacement for the same source: token refresh and
+   * refresh-token rotation. The connection must already hold state and must
+   * still be connected, and `update` gets a one-shot writer scoped to it.
+   * `save` advances
+   * `connected_at` on every rewrite, so from here on that column means
+   * "state last written at", not "signed in at".
+   */
+  async rewrite(
+    db: Database,
+    connection: Connection,
+    update: (writer: ConnectionStateWriter) => Promise<void>,
+  ): Promise<Connection> {
+    return this.swap(db, connection, update, {
+      missingStateMessage: "state rewrite did not provide connection state",
+      refuseDisconnected: true,
+    });
   }
 }
