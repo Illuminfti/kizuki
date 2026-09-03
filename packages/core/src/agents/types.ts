@@ -18,6 +18,13 @@ export const SENSITIVITY_ORDER = {
 } as const;
 export type Sensitivity = keyof typeof SENSITIVITY_ORDER;
 
+export function isSensitivity(value: unknown): value is Sensitivity {
+  return (
+    typeof value === "string" &&
+    Object.prototype.hasOwnProperty.call(SENSITIVITY_ORDER, value)
+  );
+}
+
 export interface Grant {
   ceiling: Sensitivity;
   types: string[] | null;
@@ -57,6 +64,13 @@ export const DEFAULT_GRANT: Grant = {
   ],
   rate_limit_per_minute: 60,
   relay_owner_corrections: true,
+};
+
+/** Harnesses the owner runs themselves (RFC 0002 §8.4). */
+export const OWNER_AGENT_GRANT: Grant = {
+  ...DEFAULT_GRANT,
+  ceiling: "private",
+  tools: [...DEFAULT_GRANT.tools],
 };
 
 export interface Agent {

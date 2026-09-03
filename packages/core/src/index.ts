@@ -595,6 +595,7 @@ export type { DiffLine } from "./util/diff";
 export {
   DEFAULT_GRANT,
   OWNER,
+  OWNER_AGENT_GRANT,
   SENSITIVITY_ORDER,
   TOOLS,
   addAgent,
@@ -604,6 +605,7 @@ export {
   filterServable,
   getAgent,
   initAgents,
+  isSensitivity,
   listAudit,
   listAgents,
   recordAudit,
@@ -625,6 +627,40 @@ export type {
   Servable,
   Tool,
 } from "./agents";
+
+export {
+  SENSITIVITY_ERROR_CODES,
+  SENSITIVITY_SCHEMA_VERSION,
+  SOURCE_CLASSES,
+  SOURCE_CLASS_POLICY,
+  SensitivityError,
+  applyConnectionSensitivity,
+  applySensitivityV6,
+  connectorSensitivityFor,
+  getConnectorSensitivity,
+  initSensitivity,
+  labelClaimSensitivity,
+  parseSensitivity,
+  policyForConnector,
+  policyForSourceClass,
+  policyFromManifest,
+  raiseConnectorSensitivityFloor,
+  resolveSensitivity,
+  seedConnectorSensitivity,
+  sensitivityOrPrivate,
+  sourceClassForConnector,
+  stricter,
+} from "./sensitivity";
+export type {
+  ConnectorSensitivity,
+  ResolveSensitivityInput,
+  SensitivityErrorCode,
+  SensitivityPolicy,
+  SensitivityRefinement,
+  SensitivityResolution,
+  SensitivitySetBy,
+  SourceClass,
+} from "./sensitivity";
 
 export {
   CanonUnreadableError,

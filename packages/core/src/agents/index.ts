@@ -1,8 +1,10 @@
 export {
   DEFAULT_GRANT,
   OWNER,
+  OWNER_AGENT_GRANT,
   SENSITIVITY_ORDER,
   TOOLS,
+  isSensitivity,
 } from "./types";
 export type {
   Agent,

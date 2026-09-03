@@ -14,6 +14,7 @@ import type {
 } from "../contracts/proposal";
 import { AUTHORITY_TIERS, CLAIM_SCHEMA, canonicalizeProducer, isClaimKind, isProducer } from "../contracts/proposal";
 import { tableExists } from "../ledger/schema";
+import { labelClaimSensitivity } from "../sensitivity/store";
 import { isRfc3339 } from "../util/time";
 import { ulid } from "../util/ulid";
 import {
@@ -288,6 +289,20 @@ function loadEventFacts(db: Database, ids: readonly string[]): EventFacts[] {
       text: row.text,
       taint: eventTaint(row.connector_id),
     }));
+}
+
+function loadEventSensitivityHints(
+  db: Database,
+  ids: readonly string[],
+): unknown[] {
+  if (ids.length === 0) return [];
+  const placeholders = ids.map(() => "?").join(", ");
+  return db
+    .query<{ sensitivity_hint: string | null }, string[]>(
+      `SELECT sensitivity_hint FROM events WHERE event_id IN (${placeholders})`,
+    )
+    .all(...ids)
+    .map((row) => row.sensitivity_hint);
 }
 
 function insertRow(db: Database, claim: Claim): void {
@@ -833,7 +848,15 @@ export async function insertClaim(
     model_ref: input.model_ref ?? null,
     authority: assigned.authority,
     confidence: assigned.confidence,
-    sensitivity: input.sensitivity ?? "private",
+    sensitivity: labelClaimSensitivity(io.db, {
+      connector_ids: [...new Set(events.map((event) => event.connector_id))],
+      event_hints: loadEventSensitivityHints(io.db, input.provenance),
+      ...(input.sensitivity === undefined
+        ? {}
+        : input.intent === "correct"
+          ? { owner_label: input.sensitivity, owner_override: true }
+          : { model_label: input.sensitivity }),
+    }).sensitivity,
     taint: input.taint ?? "clean",
     valid_from: input.valid_from ?? at,
     valid_to: input.valid_to ?? null,

@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { runBackfill } from "@kizuki/core";
+import { applyConnectionSensitivity, runBackfill } from "@kizuki/core";
 import { getConnector } from "@kizuki/connectors";
 import { UsageError, parseArguments, requirePositional } from "../args";
 import {
@@ -58,6 +58,7 @@ export const importCommand: Command = {
             config: { path: absolute },
           },
         );
+        applyConnectionSensitivity(ctx.db, connection, connector.manifest());
         selected = {
           connection,
           state: {

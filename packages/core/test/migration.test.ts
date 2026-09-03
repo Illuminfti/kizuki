@@ -307,7 +307,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(5);
+      expect(schemaVersion(upgraded)).toBe(6);
       const tables = upgraded
         .query<{ name: string }, []>(
           "SELECT name FROM sqlite_master WHERE type = 'table'",
@@ -321,6 +321,8 @@ describe("openLedger migrations", () => {
         "proposals",
         "canon_receipts",
         "page_index",
+        "purge_ops",
+        "connector_sensitivity",
       ]));
       expect(tables).not.toContain("rejections");
       expect(tables).not.toContain("promotions");
@@ -430,7 +432,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(5);
+      expect(schemaVersion(upgraded)).toBe(6);
       const receipts = upgraded
         .query<
           {
@@ -556,6 +558,19 @@ describe("openLedger migrations", () => {
       legacy.close();
       const upgraded = openLedger(path);
       expect(columns(upgraded, "canon_receipts")).toEqual(freshColumns);
+      expect(schemaVersion(fresh)).toBe(6);
+      expect(schemaVersion(upgraded)).toBe(6);
+      expect(columns(fresh, "connector_sensitivity")).toEqual([
+        "at",
+        "connector_id",
+        "default_sensitivity",
+        "floor",
+        "set_by",
+        "source_key",
+      ]);
+      expect(columns(upgraded, "connector_sensitivity")).toEqual(
+        columns(fresh, "connector_sensitivity"),
+      );
       upgraded.close();
     } finally {
       rmSync(directory, { recursive: true, force: true });
@@ -582,7 +597,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(5);
+      expect(schemaVersion(upgraded)).toBe(6);
       expect(
         upgraded
           .query<{ name: string }, []>(
