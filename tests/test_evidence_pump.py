@@ -105,6 +105,15 @@ class EvidencePumpTests(unittest.TestCase):
         self.assertEqual(len(matches), 1)
         return matches[0]
 
+    def test_module_exports_only_the_narrow_public_seam(self):
+        self.assertEqual(
+            evidence_pump_module.__all__,
+            ("EvidencePumpError", "EvidenceReceipt", "pump_evidence"),
+        )
+        self.assertFalse(hasattr(evidence_pump_module, "CancellationSignal"))
+        for name in evidence_pump_module.__all__:
+            self.assertTrue(hasattr(evidence_pump_module, name))
+
     def parsed_evidence(self, attempt_id=ATTEMPT_ID):
         path = self.evidence_path(attempt_id)
         generation = path.name.split(".")[1]
@@ -180,7 +189,7 @@ class EvidencePumpTests(unittest.TestCase):
         self.assertEqual(framed_stderr, expected_stderr)
         self.assertEqual(parsed.object_sha256, hashlib.sha256(path.read_bytes()).hexdigest())
         self.assertEqual(parsed.state, "COMMITTED")
-        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o400)
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
         attempt_entries = sorted(self.raw_directory.glob(f"{ATTEMPT_ID}.*"))
         self.assertEqual(len(attempt_entries), 2)
@@ -192,6 +201,59 @@ class EvidencePumpTests(unittest.TestCase):
         self.assertNotIn(str(self.raw_directory), serialized)
         self.assertNotIn("stdout-evidence", serialized)
         self.assertNotIn("stderr-evidence", serialized)
+
+    def test_receipt_binds_authenticated_object_and_distinguishes_equal_streams(self):
+        payload = b"same-stream-evidence"
+        first_out, first_err, _, _ = self.pipes(payload, payload)
+        first = pump_evidence(first_out, first_err, **self.pump_kwargs())
+
+        second_attempt = self.attempt(2)
+        second_raw = Path(self.temp.name) / "second-raw"
+        second_raw.mkdir(mode=0o700)
+        second_out, second_err, _, _ = self.pipes(payload, payload)
+        second = pump_evidence(
+            second_out,
+            second_err,
+            **(
+                self.pump_kwargs(second_attempt)
+                | {"raw_directory": second_raw}
+            ),
+        )
+
+        for raw_directory, attempt_id, receipt in (
+            (self.raw_directory, ATTEMPT_ID, first),
+            (second_raw, second_attempt, second),
+        ):
+            objects = list(raw_directory.glob(f"{attempt_id}.*.evidence"))
+            self.assertEqual(len(objects), 1)
+            raw = objects[0].read_bytes()
+            generation = objects[0].name.split(".")[1]
+            self.assertEqual(receipt.attempt_id, attempt_id)
+            self.assertEqual(receipt.generation, generation)
+            self.assertEqual(receipt.evidence_bytes, len(raw))
+            self.assertEqual(
+                receipt.evidence_sha256,
+                hashlib.sha256(raw).hexdigest(),
+            )
+            parsed = evidence_pump_module._parse_evidence_object(
+                raw,
+                expected_attempt_id=attempt_id,
+                expected_generation=generation,
+            )
+            self.assertEqual(receipt.attempt_id, parsed.attempt_id)
+            self.assertEqual(receipt.generation, parsed.generation)
+            self.assertEqual(receipt.evidence_sha256, parsed.object_sha256)
+            self.assertEqual(receipt.evidence_bytes, parsed.object_bytes)
+
+        self.assertEqual(
+            first.stdout_observed_sha256,
+            second.stdout_observed_sha256,
+        )
+        self.assertEqual(
+            first.stderr_observed_sha256,
+            second.stderr_observed_sha256,
+        )
+        self.assertNotEqual(first.evidence_sha256, second.evidence_sha256)
 
     def test_combined_retention_overflow_stops_once_and_boundedly_drains_to_eof(self):
         stdout_chunk = b"O" * 4096
@@ -339,6 +401,83 @@ class EvidencePumpTests(unittest.TestCase):
         self.assertTrue(receipt.raw_evidence_quarantined)
         self.assertTrue(receipt.recovery_required)
 
+    def test_exact_unset_threading_event_allows_normal_capture(self):
+        stdout_fd, stderr_fd, _, _ = self.pipes(b"stdout", b"stderr")
+        receipt = pump_evidence(
+            stdout_fd,
+            stderr_fd,
+            **(self.pump_kwargs() | {"cancel_event": threading.Event()}),
+        )
+        self.assertTrue(receipt.raw_evidence_committed)
+        self.assertFalse(receipt.cancelled)
+
+    def test_custom_blocking_cancellation_signal_is_rejected_without_execution(self):
+        stdout_fd, stderr_fd = self.eof_pipes()
+        calls = []
+        signal_calls = []
+
+        class BlockingCancellation:
+            def is_set(self):
+                signal_calls.append(True)
+                time.sleep(1)
+                return False
+
+        started = time.monotonic()
+        with self.assertRaises(EvidencePumpError) as caught:
+            pump_evidence(
+                stdout_fd,
+                stderr_fd,
+                **(
+                    self.pump_kwargs()
+                    | {
+                        "cancel_event": BlockingCancellation(),
+                        "stop_callback": lambda: calls.append(True),
+                    }
+                ),
+            )
+        self.assertLess(time.monotonic() - started, 0.5)
+        self.assertEqual(calls, [True])
+        self.assertEqual(signal_calls, [])
+        receipt = caught.exception.receipt
+        self.assertFalse(receipt.capture_started)
+        self.assertTrue(receipt.stop_callback_completed)
+        self.assertTrue(receipt.recovery_required)
+        self.assertIsNone(receipt.attempt_id)
+        self.assertIsNone(receipt.generation)
+        self.assertIsNone(receipt.evidence_sha256)
+        self.assertEqual(receipt.evidence_bytes, 0)
+        self.assertEqual(list(self.raw_directory.iterdir()), [])
+
+    def test_threading_event_subclass_override_is_rejected_without_execution(self):
+        stdout_fd, stderr_fd = self.eof_pipes()
+        calls = []
+        signal_calls = []
+
+        class EventSubclass(threading.Event):
+            def is_set(self):
+                signal_calls.append(True)
+                raise RuntimeError("must not execute")
+
+        with self.assertRaises(EvidencePumpError) as caught:
+            pump_evidence(
+                stdout_fd,
+                stderr_fd,
+                **(
+                    self.pump_kwargs()
+                    | {
+                        "cancel_event": EventSubclass(),
+                        "stop_callback": lambda: calls.append(True),
+                    }
+                ),
+            )
+        self.assertEqual(calls, [True])
+        self.assertEqual(signal_calls, [])
+        receipt = caught.exception.receipt
+        self.assertFalse(receipt.capture_started)
+        self.assertTrue(receipt.stop_callback_completed)
+        self.assertTrue(receipt.recovery_required)
+        self.assertEqual(list(self.raw_directory.iterdir()), [])
+
     def test_post_timeout_selector_waits_are_positive_and_do_not_spin(self):
         stdout_fd, stderr_fd, _, _ = self.pipes(close_writers=False)
         original_selector = selectors.DefaultSelector
@@ -438,7 +577,13 @@ class EvidencePumpTests(unittest.TestCase):
         self.assertEqual(calls, [True])
         self.assertTrue(caught.exception.receipt.stop_callback_failed)
         self.assertTrue(caught.exception.receipt.raw_evidence_quarantined)
-        self.assertEqual(self.parsed_evidence()[1].state, "QUARANTINED")
+        path, parsed = self.parsed_evidence()
+        receipt = caught.exception.receipt
+        self.assertEqual(parsed.state, "QUARANTINED")
+        self.assertEqual(receipt.attempt_id, parsed.attempt_id)
+        self.assertEqual(receipt.generation, parsed.generation)
+        self.assertEqual(receipt.evidence_sha256, parsed.object_sha256)
+        self.assertEqual(receipt.evidence_bytes, len(path.read_bytes()))
 
     def test_invalid_callback_timeout_still_requests_one_bounded_stop(self):
         stdout_fd, stderr_fd = self.eof_pipes()
@@ -492,7 +637,12 @@ class EvidencePumpTests(unittest.TestCase):
                         ),
                     )
                 self.assertEqual(calls, [True])
-                self.assertFalse(caught.exception.receipt.capture_started)
+                receipt = caught.exception.receipt
+                self.assertFalse(receipt.capture_started)
+                self.assertIsNone(receipt.attempt_id)
+                self.assertIsNone(receipt.generation)
+                self.assertIsNone(receipt.evidence_sha256)
+                self.assertEqual(receipt.evidence_bytes, 0)
                 self.assertEqual(list(self.raw_directory.glob(f"{attempt_id}.*")), [])
 
     def test_stdout_and_stderr_must_be_distinct_kernel_streams(self):
@@ -505,8 +655,46 @@ class EvidencePumpTests(unittest.TestCase):
                 **(self.pump_kwargs() | {"stop_callback": lambda: calls.append(True)}),
             )
         self.assertEqual(calls, [True])
-        self.assertFalse(caught.exception.receipt.capture_started)
+        receipt = caught.exception.receipt
+        self.assertFalse(receipt.capture_started)
+        self.assertIsNone(receipt.attempt_id)
+        self.assertIsNone(receipt.generation)
+        self.assertIsNone(receipt.evidence_sha256)
+        self.assertEqual(receipt.evidence_bytes, 0)
         self.assertEqual(list(self.raw_directory.iterdir()), [])
+
+    def test_input_descriptor_is_pinned_before_artifact_path_resolution(self):
+        stdout_fd, stderr_fd, _, _ = self.pipes(b"trusted-stdout", b"")
+        attacker_fd, _, _, _ = self.pipes(b"attacker-stdout", b"")
+        rebound = False
+
+        class RebindingDirectory:
+            def __fspath__(inner_self):
+                nonlocal rebound
+                if not rebound:
+                    _close(stdout_fd)
+                    os.dup2(attacker_fd, stdout_fd)
+                    rebound = True
+                return str(self.raw_directory)
+
+        receipt = pump_evidence(
+            stdout_fd,
+            stderr_fd,
+            **(
+                self.pump_kwargs()
+                | {"raw_directory": RebindingDirectory()}
+            ),
+        )
+        self.assertTrue(rebound)
+        self.assertEqual(receipt.stdout_observed_bytes, len(b"trusted-stdout"))
+        self.assertEqual(
+            receipt.stdout_observed_sha256,
+            hashlib.sha256(b"trusted-stdout").hexdigest(),
+        )
+        self.assertNotEqual(
+            receipt.stdout_observed_sha256,
+            hashlib.sha256(b"attacker-stdout").hexdigest(),
+        )
 
     def test_regular_input_descriptor_requests_stop_before_artifact_reservation(self):
         regular = Path(self.temp.name) / "not-a-pipe"
@@ -594,8 +782,13 @@ class EvidencePumpTests(unittest.TestCase):
             )
         self.assertEqual(calls, [True])
         self.assertEqual(target.read_bytes(), b"preserve-me")
-        self.assertTrue(caught.exception.receipt.recovered_residue)
-        self.assertFalse(caught.exception.receipt.capture_started)
+        receipt = caught.exception.receipt
+        self.assertTrue(receipt.recovered_residue)
+        self.assertFalse(receipt.capture_started)
+        self.assertIsNone(receipt.attempt_id)
+        self.assertIsNone(receipt.generation)
+        self.assertIsNone(receipt.evidence_sha256)
+        self.assertEqual(receipt.evidence_bytes, 0)
         tombstones = list(self.raw_directory.glob(f"{ATTEMPT_ID}.*.TOMBSTONE"))
         self.assertEqual(len(tombstones), 1)
         self.assertEqual(stat.S_IMODE(tombstones[0].stat().st_mode), 0o400)
@@ -603,6 +796,85 @@ class EvidencePumpTests(unittest.TestCase):
             json.loads(tombstones[0].read_text("ascii"))["attempt_id"],
             ATTEMPT_ID,
         )
+
+    def test_total_directory_entry_bound_rejects_unrelated_flood_before_reservation(self):
+        unrelated = []
+        for index in range(30):
+            path = self.raw_directory / f"unrelated-{index:02d}"
+            path.write_bytes(b"preserve")
+            unrelated.append(path)
+        stdout_fd, stderr_fd = self.eof_pipes()
+        calls = []
+        with self.assertRaises(EvidencePumpError) as caught:
+            pump_evidence(
+                stdout_fd,
+                stderr_fd,
+                **(self.pump_kwargs() | {"stop_callback": lambda: calls.append(True)}),
+            )
+        self.assertEqual(calls, [True])
+        receipt = caught.exception.receipt
+        self.assertFalse(receipt.capture_started)
+        self.assertIsNone(receipt.attempt_id)
+        self.assertIsNone(receipt.generation)
+        self.assertIsNone(receipt.evidence_sha256)
+        self.assertEqual(receipt.evidence_bytes, 0)
+        self.assertEqual(list(self.raw_directory.glob(f"{ATTEMPT_ID}.*")), [])
+        self.assertTrue(all(path.read_bytes() == b"preserve" for path in unrelated))
+
+    def test_twenty_nine_unrelated_entries_allow_bounded_failure_tombstone(self):
+        for index in range(29):
+            (self.raw_directory / f"unrelated-{index:02d}").write_bytes(b"preserve")
+        stdout_fd, stderr_fd = self.eof_pipes()
+        calls = []
+        with mock.patch(
+            "gauntlet.evidence_pump._authenticate_evidence",
+            side_effect=EvidencePumpError("injected authentication failure"),
+        ):
+            with self.assertRaises(EvidencePumpError) as caught:
+                pump_evidence(
+                    stdout_fd,
+                    stderr_fd,
+                    **(
+                        self.pump_kwargs()
+                        | {"stop_callback": lambda: calls.append(True)}
+                    ),
+                )
+        self.assertEqual(calls, [True])
+        self.assertTrue(caught.exception.receipt.capture_started)
+        self.assertTrue(caught.exception.receipt.recovery_required)
+        self.assertEqual(len(list(self.raw_directory.iterdir())), 32)
+        self.assertEqual(len(list(self.raw_directory.glob(f"{ATTEMPT_ID}.*"))), 3)
+        self.assertEqual(
+            len(list(self.raw_directory.glob(f"{ATTEMPT_ID}.*.TOMBSTONE"))),
+            1,
+        )
+
+    def test_tombstone_reservation_never_crosses_total_directory_bound(self):
+        for index in range(30):
+            (self.raw_directory / f"unrelated-{index:02d}").write_bytes(b"preserve")
+        directory = evidence_pump_module._open_owned_directory(self.raw_directory)
+        lock = evidence_pump_module._open_attempt_lock(directory, ATTEMPT_ID)
+        evidence = self.raw_directory / f"{ATTEMPT_ID}.{'f' * 32}.evidence"
+        evidence.write_bytes(b"")
+        evidence.chmod(0o600)
+        try:
+            self.assertEqual(len(list(self.raw_directory.iterdir())), 32)
+            self.assertFalse(
+                evidence_pump_module._append_tombstone(
+                    directory,
+                    ATTEMPT_ID,
+                    lock,
+                    "PUBLICATION_FAILED",
+                )
+            )
+            self.assertEqual(len(list(self.raw_directory.iterdir())), 32)
+            self.assertEqual(
+                list(self.raw_directory.glob(f"{ATTEMPT_ID}.*.TOMBSTONE")),
+                [],
+            )
+        finally:
+            os.close(lock.fd)
+            os.close(directory.fd)
 
     def test_exact_name_symlink_fifo_and_hardlink_residue_are_never_followed(self):
         victim = Path(self.temp.name) / "victim"
@@ -805,7 +1077,7 @@ class EvidencePumpTests(unittest.TestCase):
                 )
                 try:
                     os.write(fd, competitor)
-                    os.fchmod(fd, 0o400)
+                    os.fchmod(fd, 0o600)
                 finally:
                     os.close(fd)
             return real_open(path, flags, mode, dir_fd=dir_fd)
@@ -822,6 +1094,10 @@ class EvidencePumpTests(unittest.TestCase):
                 )
         self.assertEqual(calls, [True])
         self.assertFalse(caught.exception.receipt.capture_started)
+        self.assertEqual(caught.exception.receipt.attempt_id, ATTEMPT_ID)
+        self.assertRegex(caught.exception.receipt.generation, r"[0-9a-f]{32}\Z")
+        self.assertIsNone(caught.exception.receipt.evidence_sha256)
+        self.assertEqual(caught.exception.receipt.evidence_bytes, 0)
         competitor_path = self.raw_directory / competing_names[0]
         self.assertEqual(competitor_path.read_bytes(), competitor)
         retry_out, retry_err = self.eof_pipes()
@@ -855,11 +1131,89 @@ class EvidencePumpTests(unittest.TestCase):
                 )
         self.assertEqual(calls, [True])
         self.assertFalse(caught.exception.receipt.capture_started)
+        self.assertEqual(caught.exception.receipt.attempt_id, ATTEMPT_ID)
+        self.assertRegex(caught.exception.receipt.generation, r"[0-9a-f]{32}\Z")
+        self.assertIsNone(caught.exception.receipt.evidence_sha256)
+        self.assertEqual(caught.exception.receipt.evidence_bytes, 0)
         self.assertTrue(caught.exception.receipt.recovery_required)
         self.assertEqual(list(self.raw_directory.glob(f"{ATTEMPT_ID}.*.evidence")), [])
         tombstones = list(self.raw_directory.glob(f"{ATTEMPT_ID}.*.TOMBSTONE"))
         self.assertEqual(len(tombstones), 1)
         self.assertEqual(stat.S_IMODE(tombstones[0].stat().st_mode), 0o400)
+
+    def test_generation_failure_after_lock_requests_stop_and_returns_unbound_receipt(self):
+        cases = (
+            RuntimeError("entropy failure"),
+            "not-a-generation",
+        )
+        for index, first_result in enumerate(cases, 48):
+            attempt_id = self.attempt(index)
+            stdout_fd, stderr_fd = self.eof_pipes()
+            calls = []
+            with self.subTest(first_result=repr(first_result)), mock.patch(
+                "gauntlet.evidence_pump.secrets.token_hex",
+                side_effect=(first_result, f"{index:032x}"),
+            ):
+                with self.assertRaises(EvidencePumpError) as caught:
+                    pump_evidence(
+                        stdout_fd,
+                        stderr_fd,
+                        **(
+                            self.pump_kwargs(attempt_id)
+                            | {"stop_callback": lambda: calls.append(True)}
+                        ),
+                    )
+            self.assertEqual(calls, [True])
+            receipt = caught.exception.receipt
+            self.assertIsNotNone(receipt)
+            self.assertFalse(receipt.capture_started)
+            self.assertIsNone(receipt.attempt_id)
+            self.assertIsNone(receipt.generation)
+            self.assertIsNone(receipt.evidence_sha256)
+            self.assertEqual(receipt.evidence_bytes, 0)
+            self.assertTrue(receipt.stop_callback_completed)
+            self.assertTrue(receipt.recovery_required)
+            self.assertEqual(
+                len(list(self.raw_directory.glob(f"{attempt_id}.controller.lock"))),
+                1,
+            )
+            self.assertEqual(
+                len(list(self.raw_directory.glob(f"{attempt_id}.*.TOMBSTONE"))),
+                1,
+            )
+            self.assertEqual(
+                list(self.raw_directory.glob(f"{attempt_id}.*.evidence")),
+                [],
+            )
+
+    def test_generation_and_tombstone_entropy_failures_still_return_one_stop_receipt(self):
+        stdout_fd, stderr_fd = self.eof_pipes()
+        calls = []
+        with mock.patch(
+            "gauntlet.evidence_pump.secrets.token_hex",
+            side_effect=(RuntimeError("generation entropy"), RuntimeError("marker entropy")),
+        ):
+            with self.assertRaises(EvidencePumpError) as caught:
+                pump_evidence(
+                    stdout_fd,
+                    stderr_fd,
+                    **(
+                        self.pump_kwargs()
+                        | {"stop_callback": lambda: calls.append(True)}
+                    ),
+                )
+        self.assertEqual(calls, [True])
+        receipt = caught.exception.receipt
+        self.assertIsNotNone(receipt)
+        self.assertFalse(receipt.capture_started)
+        self.assertIsNone(receipt.attempt_id)
+        self.assertIsNone(receipt.generation)
+        self.assertTrue(receipt.stop_callback_completed)
+        self.assertTrue(receipt.recovery_required)
+        self.assertEqual(
+            list(self.raw_directory.glob(f"{ATTEMPT_ID}.*.TOMBSTONE")),
+            [],
+        )
 
     def test_forced_crash_leaves_partial_object_and_requires_a_fresh_attempt(self):
         crashed_attempt = self.attempt(50)
@@ -973,7 +1327,7 @@ class EvidencePumpTests(unittest.TestCase):
             receipt = pump_evidence(stdout_fd, stderr_fd, **self.pump_kwargs())
         self.assertTrue(receipt.raw_evidence_committed)
         self.assertEqual(snapshots, [[]])
-        self.assertEqual(stat.S_IMODE(self.evidence_path().stat().st_mode), 0o400)
+        self.assertEqual(stat.S_IMODE(self.evidence_path().stat().st_mode), 0o600)
 
     def test_same_inode_same_size_mutation_between_complete_object_reads_is_rejected(self):
         stdout_fd, stderr_fd, _, _ = self.pipes(b"coherent-stdout", b"coherent-stderr")
@@ -987,14 +1341,12 @@ class EvidencePumpTests(unittest.TestCase):
             target = os.readlink(f"/proc/self/fd/{fd}")
             if chunk and not mutated and target.endswith(".evidence") and offset == 0:
                 mutated = True
-                os.chmod(target, 0o600)
                 writer = os.open(target, os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0))
                 try:
                     os.pwrite(writer, b"X", len(evidence_pump_module._MAGIC))
                     os.fsync(writer)
                 finally:
                     os.close(writer)
-                    os.chmod(target, 0o400)
             return chunk
 
         with mock.patch("gauntlet.evidence_pump.os.pread", side_effect=mutate_after_first_read):
@@ -1024,19 +1376,17 @@ class EvidencePumpTests(unittest.TestCase):
             nonlocal sealed_stats, mutated
             result = real_stat(path, *args, **kwargs)
             if isinstance(path, str) and path.endswith(".evidence"):
-                if stat.S_IMODE(result.st_mode) == 0o400:
+                if stat.S_IMODE(result.st_mode) == 0o600:
                     sealed_stats += 1
                     if sealed_stats == 2 and not mutated:
                         mutated = True
                         target = self.raw_directory / path
-                        target.chmod(0o600)
                         writer = os.open(target, os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0))
                         try:
                             os.pwrite(writer, b"Y", len(evidence_pump_module._MAGIC))
                             os.fsync(writer)
                         finally:
                             os.close(writer)
-                            target.chmod(0o400)
             return result
 
         with mock.patch("gauntlet.evidence_pump.os.stat", side_effect=mutate_after_named_stat):
@@ -1105,7 +1455,7 @@ class EvidencePumpTests(unittest.TestCase):
                 swapped = True
                 os.replace(target, saved)
                 target.write_bytes(replacement_bytes)
-                target.chmod(0o400)
+                target.chmod(0o600)
             return chunk
 
         with mock.patch("gauntlet.evidence_pump.os.pread", side_effect=swap_name):
@@ -1194,7 +1544,7 @@ class EvidencePumpTests(unittest.TestCase):
             if (
                 isinstance(path, str)
                 and path.endswith(".evidence")
-                and stat.S_IMODE(result.st_mode) == 0o400
+                and stat.S_IMODE(result.st_mode) == 0o600
                 and not replaced
             ):
                 replaced = True
@@ -1235,7 +1585,7 @@ class EvidencePumpTests(unittest.TestCase):
             if (
                 isinstance(path, str)
                 and path.endswith(".evidence")
-                and stat.S_IMODE(result.st_mode) == 0o400
+                and stat.S_IMODE(result.st_mode) == 0o600
             ):
                 sealed_stats += 1
                 if sealed_stats == 3 and not injected_once:
@@ -1340,10 +1690,6 @@ class EvidencePumpTests(unittest.TestCase):
 
     def test_post_open_capture_failures_publish_only_authenticated_quarantine(self):
         failure_factories = {
-            "dup": lambda: mock.patch(
-                "gauntlet.evidence_pump.os.dup",
-                side_effect=OSError(errno.EMFILE, "dup failure"),
-            ),
             "selector": lambda: mock.patch(
                 "gauntlet.evidence_pump.selectors.DefaultSelector",
                 side_effect=OSError(errno.EMFILE, "selector failure"),
@@ -1488,9 +1834,22 @@ class EvidencePumpTests(unittest.TestCase):
                 return result
             raise OSError(errno.EMFILE, "second dup failed")
 
+        calls = []
         with mock.patch("gauntlet.evidence_pump.os.dup", side_effect=second_dup_fails):
-            with self.assertRaises(EvidencePumpError):
-                pump_evidence(stdout_fd, stderr_fd, **self.pump_kwargs())
+            with self.assertRaises(EvidencePumpError) as caught:
+                pump_evidence(
+                    stdout_fd,
+                    stderr_fd,
+                    **(
+                        self.pump_kwargs()
+                        | {"stop_callback": lambda: calls.append(True)}
+                    ),
+                )
+        self.assertEqual(calls, [True])
+        self.assertFalse(caught.exception.receipt.capture_started)
+        self.assertIsNone(caught.exception.receipt.attempt_id)
+        self.assertIsNone(caught.exception.receipt.generation)
+        self.assertEqual(list(self.raw_directory.iterdir()), [])
         self.assertEqual(len(duplicated), 1)
         with self.assertRaises(OSError):
             os.fstat(duplicated[0])
@@ -1762,7 +2121,7 @@ class EvidencePumpTests(unittest.TestCase):
             os.fsync(writer)
         finally:
             os.close(writer)
-            path.chmod(0o400)
+            path.chmod(0o600)
         corrupted = path.read_bytes()
         retry_out, retry_err = self.eof_pipes()
         calls = []
@@ -1856,6 +2215,10 @@ class EvidencePumpTests(unittest.TestCase):
             EvidenceReceipt(**unpublished_with_retained_metrics)
 
         zero_capture = values | {
+            "attempt_id": None,
+            "generation": None,
+            "evidence_sha256": None,
+            "evidence_bytes": 0,
             "stdout_observed_sha256": hashlib.sha256().hexdigest(),
             "stderr_observed_sha256": hashlib.sha256().hexdigest(),
             "stdout_retained_sha256": hashlib.sha256().hexdigest(),
@@ -1873,22 +2236,51 @@ class EvidencePumpTests(unittest.TestCase):
             "stop_callback_completed": True,
             "recovery_required": True,
         }
+        EvidenceReceipt(**zero_capture)
+
+        reserved_without_object = zero_capture | {
+            "attempt_id": ATTEMPT_ID,
+            "generation": "f" * 32,
+        }
+        EvidenceReceipt(**reserved_without_object)
+
+        for changed in (
+            {"attempt_id": None},
+            {"generation": None},
+            {"attempt_id": "bad"},
+            {"generation": "bad"},
+            {"evidence_sha256": None},
+            {"evidence_bytes": 0},
+            {"evidence_sha256": "bad"},
+            {"evidence_bytes": True},
+            {"evidence_bytes": evidence_pump_module._MAX_OBJECT_BYTES + 1},
+        ):
+            with self.subTest(binding_change=changed), self.assertRaises(
+                EvidencePumpError
+            ):
+                EvidenceReceipt(**(values | changed))
+
+        for changed in (
+            {"attempt_id": ATTEMPT_ID},
+            {"generation": "f" * 32},
+            {"evidence_sha256": "f" * 64},
+            {"evidence_bytes": 1},
+        ):
+            with self.subTest(zero_binding_change=changed), self.assertRaises(
+                EvidencePumpError
+            ):
+                EvidenceReceipt(**(zero_capture | changed))
+
         for flag in ("timed_out", "cancelled", "drain_limit_reached"):
             with self.subTest(zero_capture_flag=flag), self.assertRaises(
                 EvidencePumpError
             ):
                 EvidenceReceipt(**(zero_capture | {flag: True}))
 
+        recovered_residue = zero_capture | {"recovered_residue": True}
+        EvidenceReceipt(**recovered_residue)
         with self.assertRaises(EvidencePumpError):
-            EvidenceReceipt(
-                **(
-                    values
-                    | {
-                        "recovered_residue": True,
-                        "recovery_required": True,
-                    }
-                )
-            )
+            EvidenceReceipt(**(reserved_without_object | {"recovered_residue": True}))
 
     def test_append_only_seam_contains_no_delete_or_rename_operation(self):
         source = inspect.getsource(evidence_pump_module)

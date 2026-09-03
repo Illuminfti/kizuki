@@ -2,12 +2,12 @@
 
 The evidence linearization unit is one generation-bound framed file.  It holds a
 canonical header, bounded typed stdout/stderr frames, and one canonical terminal
-trailer.  The writer is fsynced, sealed mode 0400, closed, reopened read-only via
+trailer.  The writer is fsynced, closed mode 0600, reopened read-only via
 a pinned directory descriptor, parsed, and hashed before a receipt is returned.
 
 This seam reports only evidence and stop-callback facts.  It never claims that a
 process or cgroup stopped.  Its stable-read protocol detects mutations that
-intersect authentication.  The final proof checks the sealed object, then the
+intersect authentication.  The final proof checks the closed evidence object, then the
 attempt lock and namespace.  It assumes the same-UID controller does not mutate
 each resource after its respective final fingerprint, including the narrow
 interval before the caller observes the return.  It cannot protect against
@@ -38,7 +38,10 @@ import threading
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Callable, Optional, Protocol
+from typing import Callable, Optional
+
+
+__all__ = ("EvidencePumpError", "EvidenceReceipt", "pump_evidence")
 
 
 _READ_SIZE = 64 * 1024
@@ -52,6 +55,7 @@ _MAX_OBSERVED_BYTES = 1024 * 1024 * 1024
 _MAX_TIMEOUT_SECONDS = 60 * 60
 _MAX_DRAIN_TIMEOUT_SECONDS = 30
 _MAX_STOP_CALLBACK_SECONDS = 10
+_CANCEL_POLL_SECONDS = 0.01
 _FALLBACK_STOP_CALLBACK_SECONDS = 0.1
 _MAX_MARKER_BYTES = 4096
 _MAX_DATA_FRAMES = (_MAX_RETAINED_BYTES + _FRAME_DATA_MAX - 1) // _FRAME_DATA_MAX + 2
@@ -62,6 +66,7 @@ _MAX_OBJECT_BYTES = (
     + (_MAX_DATA_FRAMES * _FRAME_HEADER.size)
 )
 _MAX_ATTEMPT_ENTRIES = 8
+_MAX_DIRECTORY_ENTRIES = 32
 _EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 _HEX_64 = re.compile(r"[0-9a-f]{64}\Z")
 _HEX_32 = re.compile(r"[0-9a-f]{32}\Z")
@@ -78,14 +83,14 @@ class EvidencePumpError(RuntimeError):
         self.receipt = receipt
 
 
-class CancellationSignal(Protocol):
-    def is_set(self) -> bool: ...
-
-
 @dataclass(frozen=True, slots=True)
 class EvidenceReceipt:
     """Immutable, content-free evidence and callback metrics."""
 
+    attempt_id: Optional[str]
+    generation: Optional[str]
+    evidence_sha256: Optional[str]
+    evidence_bytes: int
     stdout_observed_sha256: str
     stderr_observed_sha256: str
     stdout_retained_sha256: str
@@ -111,6 +116,28 @@ class EvidenceReceipt:
     recovery_required: bool
 
     def __post_init__(self) -> None:
+        if self.attempt_id is not None and (
+            not isinstance(self.attempt_id, str)
+            or _HEX_64.fullmatch(self.attempt_id) is None
+        ):
+            raise EvidencePumpError("invalid receipt attempt_id")
+        if self.generation is not None and (
+            not isinstance(self.generation, str)
+            or _HEX_32.fullmatch(self.generation) is None
+        ):
+            raise EvidencePumpError("invalid receipt generation")
+        if self.evidence_sha256 is not None and (
+            not isinstance(self.evidence_sha256, str)
+            or _HEX_64.fullmatch(self.evidence_sha256) is None
+        ):
+            raise EvidencePumpError("invalid evidence object digest")
+        if (
+            isinstance(self.evidence_bytes, bool)
+            or not isinstance(self.evidence_bytes, int)
+            or self.evidence_bytes < 0
+            or self.evidence_bytes > _MAX_OBJECT_BYTES
+        ):
+            raise EvidencePumpError("invalid evidence object byte count")
         for digest in (
             self.stdout_observed_sha256,
             self.stderr_observed_sha256,
@@ -186,11 +213,23 @@ class EvidenceReceipt:
             raise EvidencePumpError("invalid stop callback outcome")
         if self.raw_evidence_committed and self.raw_evidence_quarantined:
             raise EvidencePumpError("evidence cannot be committed and quarantined")
+        attempt_bound = self.attempt_id is not None
+        if attempt_bound != (self.generation is not None):
+            raise EvidencePumpError("attempt and generation bindings must be paired")
+        object_bound = self.evidence_sha256 is not None
+        if object_bound != (self.evidence_bytes > 0):
+            raise EvidencePumpError("evidence digest and byte count must be paired")
+        if object_bound and not attempt_bound:
+            raise EvidencePumpError("evidence object lacks attempt generation binding")
         publication = self.raw_evidence_committed or self.raw_evidence_quarantined
         unpublished_capture = self.capture_started and not publication
-        if (
-            publication
-        ) and not self.capture_started:
+        if publication != object_bound:
+            raise EvidencePumpError("publication and authenticated object binding differ")
+        if self.capture_started and not attempt_bound:
+            raise EvidencePumpError("started capture lacks attempt generation binding")
+        if self.recovered_residue and attempt_bound:
+            raise EvidencePumpError("pre-reservation residue receipt claims a generation")
+        if publication and not self.capture_started:
             raise EvidencePumpError("published evidence requires started capture")
         if unpublished_capture and (
             self.stdout_retained_bytes
@@ -228,7 +267,9 @@ class EvidenceReceipt:
         ):
             raise EvidencePumpError("residue recovery cannot resume capture")
         if (
-            self.timed_out or self.cancelled or self.drain_limit_reached
+            self.timed_out
+            or self.cancelled
+            or self.drain_limit_reached
         ) and not self.stop_callback_requested:
             raise EvidencePumpError("capture interruption lacks a stop request")
         if (
@@ -373,6 +414,7 @@ class _ParsedEvidence:
     stdout_retained: _Metric
     stderr_retained: _Metric
     object_sha256: str
+    object_bytes: int
     object_fingerprint: Optional[tuple[int, ...]] = None
 
 
@@ -405,16 +447,44 @@ def _validated_generation(value: object) -> str:
     return value
 
 
-def _validated_input_fd(value: object, label: str) -> int:
+def _input_fingerprint(info: os.stat_result) -> tuple[int, int, int]:
+    return (info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode))
+
+
+def _admit_input_fd(value: object, label: str) -> tuple[int, tuple[int, int, int]]:
+    """Pin and identify the kernel stream before any artifact reservation."""
+
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise EvidencePumpError(f"{label} must be a file descriptor")
+    duplicate = -1
     try:
-        info = os.fstat(value)
+        before = os.fstat(value)
+        if not (stat.S_ISFIFO(before.st_mode) or stat.S_ISSOCK(before.st_mode)):
+            raise EvidencePumpError(f"{label} must be a pipe or socket")
+        duplicate = os.dup(value)
+        after = os.fstat(value)
+        held = os.fstat(duplicate)
     except OSError as exc:
+        if duplicate >= 0:
+            os.close(duplicate)
         raise EvidencePumpError(f"{label} is not open") from exc
-    if not (stat.S_ISFIFO(info.st_mode) or stat.S_ISSOCK(info.st_mode)):
-        raise EvidencePumpError(f"{label} must be a pipe or socket")
-    return value
+    except BaseException:
+        if duplicate >= 0:
+            os.close(duplicate)
+        raise
+    fingerprints = {
+        _input_fingerprint(before),
+        _input_fingerprint(after),
+        _input_fingerprint(held),
+    }
+    if (
+        len(fingerprints) != 1
+        or not (stat.S_ISFIFO(after.st_mode) or stat.S_ISSOCK(after.st_mode))
+        or not (stat.S_ISFIFO(held.st_mode) or stat.S_ISSOCK(held.st_mode))
+    ):
+        os.close(duplicate)
+        raise EvidencePumpError(f"{label} changed during admission")
+    return duplicate, _input_fingerprint(held)
 
 
 def _open_owned_directory(raw_directory: object) -> _Directory:
@@ -892,6 +962,7 @@ def _parse_evidence_object(
         stdout_retained=retained["stdout"],
         stderr_retained=retained["stderr"],
         object_sha256=hashlib.sha256(raw).hexdigest(),
+        object_bytes=len(raw),
     )
 
 
@@ -936,6 +1007,7 @@ def _stable_read_regular(
     name: str,
     *,
     maximum_size: int,
+    expected_mode: int = 0o400,
     expected_identity: Optional[tuple[int, int]] = None,
 ) -> tuple[bytes, tuple[int, ...]]:
     try:
@@ -943,7 +1015,7 @@ def _stable_read_regular(
         _exact_regular(
             named_before,
             uid=directory.uid,
-            modes=(0o400,),
+            modes=(expected_mode,),
             maximum_size=maximum_size,
         )
         fd = os.open(
@@ -960,7 +1032,7 @@ def _stable_read_regular(
         _exact_regular(
             before,
             uid=directory.uid,
-            modes=(0o400,),
+            modes=(expected_mode,),
             maximum_size=maximum_size,
         )
         identity = (before.st_dev, before.st_ino)
@@ -1010,6 +1082,7 @@ def _authenticate_evidence(
         directory,
         name,
         maximum_size=_MAX_OBJECT_BYTES,
+        expected_mode=0o600,
         expected_identity=expected_identity,
     )
     parsed = _parse_evidence_object(
@@ -1049,7 +1122,7 @@ def _verify_final_publication_state(
     _exact_regular(
         current_evidence,
         uid=directory.uid,
-        modes=(0o400,),
+        modes=(0o600,),
         maximum_size=_MAX_OBJECT_BYTES,
     )
     if (
@@ -1058,7 +1131,7 @@ def _verify_final_publication_state(
         or _metadata_fingerprint(current_evidence) != evidence_fingerprint
     ):
         raise EvidencePumpError("evidence object changed after stable read")
-    # The sealed evidence object is the sole evidence linearization object.  Its
+    # The closed evidence object is the sole evidence linearization object.  Its
     # final fingerprint check must precede the last namespace proof: a new or
     # replaced attempt entry during that check changes the pinned directory's
     # metadata and is therefore rejected below.  Mutations after this final
@@ -1236,7 +1309,7 @@ class _EvidenceWriter:
                 raise EvidencePumpError("evidence frame count exceeds bound")
             self._write_frame(b"T", _canonical_json(trailer))
             os.fsync(self.fd)
-            os.fchmod(self.fd, 0o400)
+            os.fchmod(self.fd, 0o600)
             os.fsync(self.fd)
         except BaseException:
             self.broken = True
@@ -1253,7 +1326,7 @@ class _EvidenceWriter:
         try:
             try:
                 os.fsync(self.fd)
-                os.fchmod(self.fd, 0o400)
+                os.fchmod(self.fd, 0o600)
                 os.fsync(self.fd)
             except OSError:
                 pass
@@ -1269,12 +1342,23 @@ class _EvidenceWriter:
             pass
 
 
-def _attempt_names(directory: _Directory, attempt_id: str) -> tuple[str, ...]:
+def _attempt_names(
+    directory: _Directory,
+    attempt_id: str,
+    *,
+    reserve_entries: int = 0,
+) -> tuple[str, ...]:
+    if reserve_entries < 0 or reserve_entries > _MAX_DIRECTORY_ENTRIES:
+        raise EvidencePumpError("invalid directory entry reservation")
     prefix = f"{attempt_id}."
     names: list[str] = []
+    scanned = 0
     try:
         with os.scandir(directory.fd) as entries:
             for entry in entries:
+                scanned += 1
+                if scanned + reserve_entries > _MAX_DIRECTORY_ENTRIES:
+                    raise EvidencePumpError("raw_directory exceeds total entry bound")
                 if entry.name.startswith(prefix):
                     names.append(entry.name)
                     if len(names) > _MAX_ATTEMPT_ENTRIES:
@@ -1318,7 +1402,7 @@ def _validate_existing_state(
                 _exact_regular(
                     info,
                     uid=directory.uid,
-                    modes=(0o400, 0o600),
+                    modes=(0o600,),
                     maximum_size=_MAX_OBJECT_BYTES,
                 )
             else:
@@ -1333,7 +1417,7 @@ def _validate_existing_state(
             invalid = True
     for name, kind, token, mode in valid:
         try:
-            if kind == "evidence" and mode == 0o400:
+            if kind == "evidence" and mode == 0o600:
                 assert token is not None
                 _authenticate_evidence(
                     directory,
@@ -1383,7 +1467,10 @@ def _append_tombstone(
                 return True
             except EvidencePumpError:
                 continue
-        token = secrets.token_hex(16)
+        # A new marker is an additional durable namespace entry.  Re-scan at
+        # the write boundary so this helper cannot cross the directory cap.
+        _attempt_names(directory, attempt_id, reserve_entries=1)
+        token = _validated_generation(secrets.token_hex(16))
         name = f"{attempt_id}.{token}.TOMBSTONE"
         raw = _tombstone_payload(attempt_id, token, reason)
         _write_sealed_marker(directory, name, raw)
@@ -1392,12 +1479,16 @@ def _append_tombstone(
         )[0]
         _validate_tombstone(_parse_canonical_json(persisted), attempt_id, token)
         return True
-    except (EvidencePumpError, OSError):
+    except BaseException:
         return False
 
 
 def _receipt(
     *,
+    attempt_id: Optional[str],
+    generation: Optional[str],
+    evidence_sha256: Optional[str],
+    evidence_bytes: int,
     observed_hashes: dict[str, "hashlib._Hash"],
     observed_counts: dict[str, int],
     retained_metrics: dict[str, _Metric],
@@ -1417,6 +1508,10 @@ def _receipt(
         for stream in ("stdout", "stderr")
     )
     return EvidenceReceipt(
+        attempt_id=attempt_id,
+        generation=generation,
+        evidence_sha256=evidence_sha256,
+        evidence_bytes=evidence_bytes,
         stdout_observed_sha256=observed_hashes["stdout"].hexdigest(),
         stderr_observed_sha256=observed_hashes["stderr"].hexdigest(),
         stdout_retained_sha256=retained_metrics["stdout"].digest,
@@ -1444,9 +1539,17 @@ def _receipt(
 
 
 def _zero_receipt(
-    *, stop_status: _StopStatus, recovered_residue: bool
+    *,
+    attempt_id: Optional[str],
+    generation: Optional[str],
+    stop_status: _StopStatus,
+    recovered_residue: bool,
 ) -> EvidenceReceipt:
     return _receipt(
+        attempt_id=attempt_id,
+        generation=generation,
+        evidence_sha256=None,
+        evidence_bytes=0,
         observed_hashes={"stdout": hashlib.sha256(), "stderr": hashlib.sha256()},
         observed_counts={"stdout": 0, "stderr": 0},
         retained_metrics={
@@ -1515,6 +1618,8 @@ def _trailer_payload(
 
 
 def _receipt_from_parsed(parsed: _ParsedEvidence) -> EvidenceReceipt:
+    # Authenticated receipt bindings come only from the exact framed object
+    # parser; caller-supplied attempt or generation values never reach them.
     trailer = parsed.trailer
     observed_hashes = {
         "stdout": _FixedHash(str(trailer["stdout_observed_sha256"])),
@@ -1528,6 +1633,10 @@ def _receipt_from_parsed(parsed: _ParsedEvidence) -> EvidenceReceipt:
         error=None,
     )
     return _receipt(
+        attempt_id=parsed.attempt_id,
+        generation=parsed.generation,
+        evidence_sha256=parsed.object_sha256,
+        evidence_bytes=parsed.object_bytes,
         observed_hashes=observed_hashes,
         observed_counts={
             "stdout": int(trailer["stdout_observed_bytes"]),
@@ -1571,7 +1680,7 @@ def _capture(
     timeout_seconds: float,
     drain_timeout_seconds: float,
     stop: _StopController,
-    cancel_event: Optional[CancellationSignal],
+    cancel_event: Optional[threading.Event],
 ) -> tuple[
     dict[str, "hashlib._Hash"],
     dict[str, int],
@@ -1613,7 +1722,11 @@ def _capture(
             if not timed_out and now - started_at >= timeout_seconds:
                 timed_out = True
                 request_stop()
-            if not cancelled and cancel_event is not None and cancel_event.is_set():
+            if (
+                not cancelled
+                and cancel_event is not None
+                and threading.Event.is_set(cancel_event)
+            ):
                 cancelled = True
                 request_stop()
             if drain_deadline is not None and now >= drain_deadline:
@@ -1623,6 +1736,8 @@ def _capture(
                 wait = min(0.05, drain_deadline - now)
             else:
                 wait = min(0.05, timeout_seconds - (now - started_at))
+            if cancel_event is not None:
+                wait = min(wait, _CANCEL_POLL_SECONDS)
             if wait <= 0:
                 continue
             events = selector.select(wait)
@@ -1692,7 +1807,7 @@ def _run_reserved_capture(
     timeout_seconds: float,
     drain_timeout_seconds: float,
     stop: _StopController,
-    cancel_event: Optional[CancellationSignal],
+    cancel_event: Optional[threading.Event],
 ) -> EvidenceReceipt:
     """Capture, publish, and authenticate or return one recovery-bound error."""
 
@@ -1819,6 +1934,10 @@ def _run_reserved_capture(
         "stderr": _Metric(_EMPTY_SHA256, 0),
     }
     receipt = _receipt(
+        attempt_id=attempt_id,
+        generation=generation,
+        evidence_sha256=None,
+        evidence_bytes=0,
         observed_hashes=observed_hashes,
         observed_counts=observed_counts,
         retained_metrics=empty_metrics,
@@ -1850,7 +1969,7 @@ def pump_evidence(
     drain_timeout_seconds: float,
     stop_callback_timeout_seconds: float,
     stop_callback: Callable[[], None],
-    cancel_event: Optional[CancellationSignal] = None,
+    cancel_event: Optional[threading.Event] = None,
 ) -> EvidenceReceipt:
     """Capture one trusted, controller-derived, single-use attempt."""
 
@@ -1866,7 +1985,10 @@ def pump_evidence(
         fallback = _StopController(stop_callback, _FALLBACK_STOP_CALLBACK_SECONDS)
         fallback.request()
         receipt = _zero_receipt(
-            stop_status=fallback.status(wait=True), recovered_residue=False
+            attempt_id=None,
+            generation=None,
+            stop_status=fallback.status(wait=True),
+            recovered_residue=False,
         )
         raise EvidencePumpError(str(exc), receipt=receipt) from exc
 
@@ -1874,17 +1996,14 @@ def pump_evidence(
     directory: Optional[_Directory] = None
     lock: Optional[_Lock] = None
     writer: Optional[_EvidenceWriter] = None
+    stdout = -1
+    stderr = -1
     try:
         try:
             attempt = _validated_attempt_id(attempt_id)
-            stdout = _validated_input_fd(stdout_fd, "stdout_fd")
-            stderr = _validated_input_fd(stderr_fd, "stderr_fd")
-            stdout_info = os.fstat(stdout)
-            stderr_info = os.fstat(stderr)
-            if (stdout_info.st_dev, stdout_info.st_ino) == (
-                stderr_info.st_dev,
-                stderr_info.st_ino,
-            ):
+            stdout, stdout_identity = _admit_input_fd(stdout_fd, "stdout_fd")
+            stderr, stderr_identity = _admit_input_fd(stderr_fd, "stderr_fd")
+            if stdout_identity == stderr_identity:
                 raise EvidencePumpError("stdout_fd and stderr_fd must be distinct streams")
             retained_cap = _bounded_integer(
                 retained_byte_cap,
@@ -1910,9 +2029,12 @@ def pump_evidence(
                 label="drain_timeout_seconds",
                 maximum=_MAX_DRAIN_TIMEOUT_SECONDS,
             )
-            if cancel_event is not None and not callable(getattr(cancel_event, "is_set", None)):
-                raise EvidencePumpError("cancel_event must expose is_set()")
+            if cancel_event is not None and type(cancel_event) is not threading.Event:
+                raise EvidencePumpError("cancel_event must be an exact threading.Event")
             directory = _open_owned_directory(raw_directory)
+            # Bound the entire controller-provided namespace before creating an
+            # attempt artifact; nonmatching names must not make discovery unbounded.
+            _attempt_names(directory, attempt, reserve_entries=3)
             lock = _open_attempt_lock(directory, attempt)
             names = _attempt_names(directory, attempt)
         except BaseException as exc:
@@ -1924,7 +2046,12 @@ def pump_evidence(
                     recovered = recovered or bool(_attempt_names(directory, attempt))
                 except EvidencePumpError:
                     recovered = True
-            receipt = _zero_receipt(stop_status=status, recovered_residue=recovered)
+            receipt = _zero_receipt(
+                attempt_id=None,
+                generation=None,
+                stop_status=status,
+                recovered_residue=recovered,
+            )
             if isinstance(exc, EvidencePumpError):
                 raise EvidencePumpError(str(exc), receipt=receipt) from exc
             raise EvidencePumpError("evidence preflight failed", receipt=receipt) from exc
@@ -1939,13 +2066,19 @@ def pump_evidence(
                 pass
             _append_tombstone(directory, attempt, lock, "RESIDUE_DETECTED")
             status = stop.status(wait=True)
-            receipt = _zero_receipt(stop_status=status, recovered_residue=True)
+            receipt = _zero_receipt(
+                attempt_id=None,
+                generation=None,
+                stop_status=status,
+                recovered_residue=True,
+            )
             raise EvidencePumpError(
                 "single-use attempt already has evidence residue", receipt=receipt
             )
 
-        generation = secrets.token_hex(16)
+        generation: Optional[str] = None
         try:
+            generation = _validated_generation(secrets.token_hex(16))
             _verify_directory(directory)
             _verify_lock(directory, lock)
             writer = _EvidenceWriter(
@@ -1963,9 +2096,15 @@ def pump_evidence(
                 writer.seal_partial()
             _append_tombstone(directory, attempt, lock, "PUBLICATION_FAILED")
             status = stop.status(wait=True)
-            receipt = _zero_receipt(stop_status=status, recovered_residue=False)
+            receipt = _zero_receipt(
+                attempt_id=attempt if generation is not None else None,
+                generation=generation,
+                stop_status=status,
+                recovered_residue=False,
+            )
             raise EvidencePumpError("evidence reservation failed", receipt=receipt) from exc
 
+        assert generation is not None
         return _run_reserved_capture(
             stdout,
             stderr,
@@ -1982,6 +2121,12 @@ def pump_evidence(
             cancel_event=cancel_event,
         )
     finally:
+        for admitted_fd in (stdout, stderr):
+            if admitted_fd >= 0:
+                try:
+                    os.close(admitted_fd)
+                except OSError:
+                    pass
         if writer is not None:
             writer.seal_partial()
         if lock is not None:
