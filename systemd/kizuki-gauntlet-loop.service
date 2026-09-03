@@ -1,0 +1,30 @@
+[Unit]
+Description=Kizuki Gauntlet execution-disabled control-loop heartbeat
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ubuntu/LifeOS/operations/kizuki-gauntlet
+UMask=0077
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 /home/ubuntu/LifeOS/operations/kizuki-gauntlet/gauntlet.py --config /home/ubuntu/LifeOS/operations/kizuki-gauntlet/config.json --state-dir /home/ubuntu/.local/state/kizuki-gauntlet loop
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ReadWritePaths=/home/ubuntu/.local/state/kizuki-gauntlet
+ReadOnlyPaths=/home/ubuntu/LifeOS/operations/kizuki-gauntlet
+AmbientCapabilities=
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_UNIX
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=default.target
