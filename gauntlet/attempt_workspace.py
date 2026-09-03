@@ -1154,8 +1154,11 @@ def create_attempt_workspace(
     repository_sources: Mapping[str, str | os.PathLike[str]],
     attempts_root: str | os.PathLike[str],
     *,
+    expected_task_spec_sha256: str,
     expected_phase_attempt_id: str,
     expected_subject_sha: str,
+    expected_instruction_sha256: str,
+    expected_instruction_bytes: int,
     clock: Callable[[], int] | None = None,
 ) -> AttemptWorkspaceReceipt:
     """Create and verify ``<attempts_root>/<signed-attempt>/work``.
@@ -1163,6 +1166,11 @@ def create_attempt_workspace(
     ``repository_sources`` is trusted controller configuration.  Selection is
     by the authenticated repository slug, preventing a caller-selected source
     from being smuggled through the worker specification.
+
+    Every controller-selected digest and instruction binding is authenticated
+    before the attempts root is opened.  A still-valid but superseded signed
+    specification therefore cannot reserve the current lease's single-use
+    namespace.
 
     The source branch is used only to capture the signed subject into a fresh
     clone.  Admission proves that clone's captured branch, detached HEAD, tree,
@@ -1174,8 +1182,11 @@ def create_attempt_workspace(
     try:
         verified = verify_task_spec(
             envelope, controller_hmac_key, now=_clock_sample(clock),
+            expected_task_spec_sha256=expected_task_spec_sha256,
             expected_phase_attempt_id=expected_phase_attempt_id,
             expected_subject_sha=expected_subject_sha,
+            expected_instruction_sha256=expected_instruction_sha256,
+            expected_instruction_bytes=expected_instruction_bytes,
         )
     except TaskSpecError as exc:
         raise AttemptWorkspaceError("task specification authentication failed") from exc
@@ -1433,8 +1444,11 @@ def create_attempt_workspace(
         try:
             final_verified = verify_task_spec(
                 envelope, controller_hmac_key, now=_clock_sample(clock),
+                expected_task_spec_sha256=expected_task_spec_sha256,
                 expected_phase_attempt_id=expected_phase_attempt_id,
                 expected_subject_sha=expected_subject_sha,
+                expected_instruction_sha256=expected_instruction_sha256,
+                expected_instruction_bytes=expected_instruction_bytes,
             )
         except TaskSpecError as exc:
             raise AttemptWorkspaceError("task specification changed before admission") from exc

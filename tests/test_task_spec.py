@@ -207,6 +207,11 @@ class TaskSpecTests(unittest.TestCase):
 
     def test_rejects_cross_attempt_subject_replay_and_far_future_lifetime(self):
         envelope = sign_task_spec(self.spec(), "controller-key-1", KEY)
+        with self.assertRaisesRegex(TaskSpecError, "digest"):
+            verify_task_spec(
+                envelope, KEY, now=self.now,
+                expected_task_spec_sha256="0" * 64,
+            )
         with self.assertRaisesRegex(TaskSpecError, "attempt"):
             verify_task_spec(
                 envelope, KEY, now=self.now,

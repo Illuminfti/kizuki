@@ -96,19 +96,50 @@ class AttemptWorkspaceTests(unittest.TestCase):
             values["subject_sha"] = overrides["base_sha"]
         return sign_task_spec(TaskSpec(**values), "controller-key-1", KEY)
 
-    def create(self, envelope=None):
+    @staticmethod
+    def admission_context(envelope):
+        return dict(
+            expected_task_spec_sha256=envelope.task_spec_sha256,
+            expected_phase_attempt_id=envelope.spec.phase_attempt_id,
+            expected_subject_sha=envelope.spec.subject_sha,
+            expected_instruction_sha256=envelope.spec.instruction_sha256,
+            expected_instruction_bytes=envelope.spec.instruction_bytes,
+        )
+
+    def create(self, envelope=None, *, expected_envelope=None):
         current = envelope or self.envelope()
+        expected = expected_envelope or current
         self._privatize_source_metadata()
         return create_attempt_workspace(
             current, KEY, {"owner/repository": self.source}, self.attempts_root,
-            expected_phase_attempt_id=current.spec.phase_attempt_id,
-            expected_subject_sha=current.spec.subject_sha, clock=lambda: self.now,
+            **self.admission_context(expected), clock=lambda: self.now,
         )
 
     def use_fresh_attempt(self, label):
         self.attempts_root = self.root / f"attempts-{label}"
         self.attempts_root.mkdir(mode=0o700)
         self.attempt = self.attempts_root / ("9" * 64)
+
+    def test_stale_signed_context_cannot_consume_current_attempt_workspace(self):
+        valid = self.envelope()
+        stale_envelopes = (
+            self.envelope(instruction_sha256="0" * 64),
+            self.envelope(task_attempt=2, controller_epoch=4),
+            self.envelope(principal_id="other-builder"),
+            self.envelope(receipt_schema="other-phase-receipt-v2"),
+            self.envelope(expected_branch="topic/stale"),
+        )
+
+        for stale in stale_envelopes:
+            with self.subTest(task_spec_sha256=stale.task_spec_sha256):
+                with self.assertRaisesRegex(AttemptWorkspaceError, "authentication"):
+                    self.create(stale, expected_envelope=valid)
+                self.assertFalse(self.attempt.exists())
+
+        receipt = self.create(valid, expected_envelope=valid)
+        self.assertEqual(receipt.task_spec_sha256, valid.task_spec_sha256)
+        with self.assertRaisesRegex(AttemptWorkspaceError, "consumed|recovery"):
+            self.create(valid, expected_envelope=valid)
 
     def test_creates_private_detached_no_local_clone_with_bounded_receipt(self):
         import gauntlet.attempt_workspace as module
@@ -503,8 +534,7 @@ class AttemptWorkspaceTests(unittest.TestCase):
         with self.assertRaisesRegex(AttemptWorkspaceError, "writable|metadata"):
             create_attempt_workspace(
                 envelope, KEY, {"owner/repository": self.source}, self.attempts_root,
-                expected_phase_attempt_id=envelope.spec.phase_attempt_id,
-                expected_subject_sha=envelope.spec.subject_sha, clock=lambda: self.now,
+                **self.admission_context(envelope), clock=lambda: self.now,
             )
         git_dir.chmod(0o700)
 
@@ -514,8 +544,7 @@ class AttemptWorkspaceTests(unittest.TestCase):
         with self.assertRaisesRegex(AttemptWorkspaceError, "metadata|path"):
             create_attempt_workspace(
                 envelope, KEY, {"owner/repository": self.source}, self.attempts_root,
-                expected_phase_attempt_id=envelope.spec.phase_attempt_id,
-                expected_subject_sha=envelope.spec.subject_sha, clock=lambda: self.now,
+                **self.admission_context(envelope), clock=lambda: self.now,
             )
         config.chmod(0o600)
 
@@ -527,8 +556,7 @@ class AttemptWorkspaceTests(unittest.TestCase):
         with self.assertRaisesRegex(AttemptWorkspaceError, "metadata|path"):
             create_attempt_workspace(
                 envelope, KEY, {"owner/repository": self.source}, self.attempts_root,
-                expected_phase_attempt_id=envelope.spec.phase_attempt_id,
-                expected_subject_sha=envelope.spec.subject_sha, clock=lambda: self.now,
+                **self.admission_context(envelope), clock=lambda: self.now,
             )
         hooks.unlink()
         outside_hooks.rename(hooks)
@@ -541,8 +569,7 @@ class AttemptWorkspaceTests(unittest.TestCase):
         with self.assertRaisesRegex(AttemptWorkspaceError, "metadata|path"):
             create_attempt_workspace(
                 envelope, KEY, {"owner/repository": self.source}, self.attempts_root,
-                expected_phase_attempt_id=envelope.spec.phase_attempt_id,
-                expected_subject_sha=envelope.spec.subject_sha, clock=lambda: self.now,
+                **self.admission_context(envelope), clock=lambda: self.now,
             )
 
     def test_rejects_git_indirection_metadata_and_metadata_hardlinks(self):
@@ -576,8 +603,7 @@ class AttemptWorkspaceTests(unittest.TestCase):
         with self.assertRaisesRegex(AttemptWorkspaceError, "link|metadata"):
             create_attempt_workspace(
                 envelope, KEY, {"owner/repository": self.source}, self.attempts_root,
-                expected_phase_attempt_id=envelope.spec.phase_attempt_id,
-                expected_subject_sha=envelope.spec.subject_sha, clock=lambda: self.now,
+                **self.admission_context(envelope), clock=lambda: self.now,
             )
 
     def test_attempt_root_swap_is_detected_and_owned_residue_is_retained(self):
@@ -841,8 +867,7 @@ class AttemptWorkspaceTests(unittest.TestCase):
             with self.assertRaisesRegex(AttemptWorkspaceError, "specification|admission|expired"):
                 create_attempt_workspace(
                     envelope, KEY, {"owner/repository": self.source}, self.attempts_root,
-                    expected_phase_attempt_id=envelope.spec.phase_attempt_id,
-                    expected_subject_sha=envelope.spec.subject_sha,
+                    **self.admission_context(envelope),
                     clock=clock,
                 )
         self.assertEqual(inventory_calls, 2)
@@ -868,8 +893,7 @@ class AttemptWorkspaceTests(unittest.TestCase):
         ):
             create_attempt_workspace(
                 envelope, KEY, {"owner/repository": self.source}, self.attempts_root,
-                expected_phase_attempt_id=envelope.spec.phase_attempt_id,
-                expected_subject_sha=envelope.spec.subject_sha,
+                **self.admission_context(envelope),
                 clock=swapping_clock,
             )
 
@@ -1235,27 +1259,26 @@ class AttemptWorkspaceTests(unittest.TestCase):
             create_attempt_workspace(
                 envelope, KEY, {"other/repository": self.source}, self.attempts_root,
                 clock=lambda: self.now,
-                expected_phase_attempt_id=envelope.spec.phase_attempt_id,
-                expected_subject_sha=envelope.spec.subject_sha,
+                **self.admission_context(envelope),
             )
         with self.assertRaises(AttemptWorkspaceError):
             create_attempt_workspace(
                 envelope, b"z" * 32, {"owner/repository": self.source}, self.attempts_root,
-                expected_phase_attempt_id=envelope.spec.phase_attempt_id,
-                expected_subject_sha=envelope.spec.subject_sha, clock=lambda: self.now,
+                **self.admission_context(envelope), clock=lambda: self.now,
             )
         with self.assertRaises(AttemptWorkspaceError):
             create_attempt_workspace(
                 envelope, KEY, {"owner/repository": self.source}, self.attempts_root,
-                expected_phase_attempt_id=envelope.spec.phase_attempt_id,
-                expected_subject_sha=envelope.spec.subject_sha,
+                **self.admission_context(envelope),
                 clock=lambda: envelope.spec.expires_at,
             )
         with self.assertRaisesRegex(AttemptWorkspaceError, "authentication"):
             create_attempt_workspace(
                 envelope, KEY, {"owner/repository": self.source}, self.attempts_root,
-                expected_phase_attempt_id="8" * 64,
-                expected_subject_sha=envelope.spec.subject_sha, clock=lambda: self.now,
+                **(self.admission_context(envelope) | {
+                    "expected_phase_attempt_id": "8" * 64,
+                }),
+                clock=lambda: self.now,
             )
         self.attempts_root.chmod(0o755)
         with self.assertRaisesRegex(AttemptWorkspaceError, "0700"):

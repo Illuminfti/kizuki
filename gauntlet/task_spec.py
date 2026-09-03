@@ -329,6 +329,7 @@ def sign_task_spec(
 
 def verify_task_spec(
     envelope: SignedTaskSpec, controller_hmac_key: bytes, *, now: int | None = None,
+    expected_task_spec_sha256: str | None = None,
     expected_phase_attempt_id: str | None = None,
     expected_subject_sha: str | None = None,
     expected_instruction_sha256: str | None = None,
@@ -352,6 +353,12 @@ def verify_task_spec(
     ).hexdigest()
     if not hmac.compare_digest(expected, envelope.signature_sha256):
         raise TaskSpecError("task specification authentication failed")
+    if expected_task_spec_sha256 is not None:
+        expected_spec_digest = _digest(
+            expected_task_spec_sha256, 64, "expected task specification digest",
+        )
+        if not hmac.compare_digest(expected_spec_digest, digest):
+            raise TaskSpecError("task specification expected digest is stale")
     if current + _MAX_CLOCK_SKEW_SECONDS < envelope.spec.issued_at:
         raise TaskSpecError("task specification issuance is in the future")
     if current >= envelope.spec.expires_at:
@@ -538,6 +545,7 @@ def materialize_task_spec(
     )
     verified = verify_task_spec(
         envelope, controller_hmac_key, now=_clock_sample(clock),
+        expected_task_spec_sha256=expected_digest,
         expected_phase_attempt_id=expected_phase_attempt_id,
         expected_subject_sha=expected_subject_sha,
         expected_instruction_sha256=expected_instruction_sha256,
@@ -604,6 +612,7 @@ def materialize_task_spec(
         # after both durability barriers and the first complete identity pass.
         final_verified = verify_task_spec(
             envelope, controller_hmac_key, now=_clock_sample(clock),
+            expected_task_spec_sha256=expected_digest,
             expected_phase_attempt_id=expected_phase_attempt_id,
             expected_subject_sha=expected_subject_sha,
             expected_instruction_sha256=expected_instruction_sha256,
@@ -784,6 +793,7 @@ def read_task_spec(
         raw = b"".join(chunks)
         envelope = verify_task_spec(
             _decode_envelope(raw), controller_hmac_key, now=now,
+            expected_task_spec_sha256=expected_task_spec_sha256,
             expected_phase_attempt_id=expected_phase_attempt_id,
             expected_subject_sha=expected_subject_sha,
             expected_instruction_sha256=expected_instruction_sha256,
