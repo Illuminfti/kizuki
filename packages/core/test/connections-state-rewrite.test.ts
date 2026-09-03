@@ -63,7 +63,7 @@ describe("non-interactive state rewrite", () => {
     const db = openLedger(":memory:");
     const control = temporary();
     const store = new ConnectionStateStore(control);
-    const sourceKey = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    const sourceKey = "01JJ0000000000000000000001";
     await expect(
       store.rewrite(
         db,
