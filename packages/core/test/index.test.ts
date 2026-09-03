@@ -35,6 +35,7 @@ describe("public surface", () => {
       "HEALTH_STATES",
       "HealthReport",
       "JOURNAL_STORE_CONTRACT",
+      "KizukiError",
       "LEDGER_STORE_CONTRACT",
       "LLM_CAPABILITIES",
       "LLM_CONTRACT",

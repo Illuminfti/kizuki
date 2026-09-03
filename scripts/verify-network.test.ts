@@ -14,6 +14,7 @@ describe("network source verification", () => {
     ['const tls = require("node:tls")', "node:tls"],
     ['await import("undici")', "undici"],
     ['Bun["serve"]({ fetch() {} })', "Bun.serve"],
+    ['Bun.listen({ hostname: "127.0.0.1", port: 0 })', "Bun.listen"],
     ['new window["WebSocket"]("wss://example.invalid")', "window.WebSocket"],
     ['process.getBuiltinModule("node:http")', "node:http"],
   ])("rejects %s", (source, expected) => {

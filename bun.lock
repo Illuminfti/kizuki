@@ -22,6 +22,18 @@
         "@kizuki/tui": "workspace:*",
       },
     },
+    "packages/connector-ics": {
+      "name": "@kizuki/connector-ics",
+      "dependencies": {
+        "@kizuki/core": "workspace:*",
+      },
+    },
+    "packages/connector-imap": {
+      "name": "@kizuki/connector-imap",
+      "dependencies": {
+        "@kizuki/core": "workspace:*",
+      },
+    },
     "packages/connector-screenpipe": {
       "name": "@kizuki/connector-screenpipe",
       "dependencies": {
@@ -38,6 +50,8 @@
     "packages/connectors": {
       "name": "@kizuki/connectors",
       "dependencies": {
+        "@kizuki/connector-ics": "workspace:*",
+        "@kizuki/connector-imap": "workspace:*",
         "@kizuki/connector-screenpipe": "workspace:*",
         "@kizuki/connector-telegram": "workspace:*",
         "@kizuki/core": "workspace:*",
@@ -75,6 +89,10 @@
     "@cryptography/aes": ["@cryptography/aes@0.1.1", "", {}, "sha512-PcYz4FDGblO6tM2kSC+VzhhK62vml6k6/YAkiWtyPvrgJVfnDRoHGDtKn5UiaRRUrvUTTocBpvc2rRgTCqxjsg=="],
 
     "@kizuki/cli": ["@kizuki/cli@workspace:packages/cli"],
+
+    "@kizuki/connector-ics": ["@kizuki/connector-ics@workspace:packages/connector-ics"],
+
+    "@kizuki/connector-imap": ["@kizuki/connector-imap@workspace:packages/connector-imap"],
 
     "@kizuki/connector-screenpipe": ["@kizuki/connector-screenpipe@workspace:packages/connector-screenpipe"],
 

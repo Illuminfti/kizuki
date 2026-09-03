@@ -72,3 +72,18 @@ export {
   parseClaudeExport,
 } from "./import-claude";
 export type { ClaudeImportConfig } from "./import-claude";
+export {
+  ICS_CONNECTOR_ID,
+  IcsConnector,
+  createIcsConnector,
+} from "@kizuki/connector-ics";
+export type { IcsConnectorConfig, IcsConnectorDeps } from "@kizuki/connector-ics";
+export {
+  IMAP_CONNECTOR_ID,
+  ImapConnector,
+  createImapConnector,
+} from "@kizuki/connector-imap";
+export type {
+  ImapConnectorConfig,
+  ImapConnectorDeps,
+} from "@kizuki/connector-imap";

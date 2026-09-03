@@ -44,6 +44,7 @@ const networkCalls = new Set([
   "self.WebSocket",
   "self.EventSource",
   "Bun.serve",
+  "Bun.listen",
   "Bun.connect",
   "Deno.serve",
   "Deno.listen",
