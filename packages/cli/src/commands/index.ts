@@ -12,6 +12,7 @@ import { queryCommand } from "./query";
 import { rejectCommand } from "./reject";
 import { reviewCommand } from "./review";
 import { syncCommand } from "./sync";
+import { tellCommand } from "./tell";
 import { undoCommand } from "./undo";
 import { versionCommand } from "./version";
 
@@ -39,6 +40,7 @@ export const COMMANDS: readonly Command[] = [
   importCommand,
   modelsCommand,
   auditCommand,
+  tellCommand,
   undoCommand,
   reviewCommand,
   promoteCommand,

@@ -62,6 +62,7 @@ export {
   markClaimsPurged,
   reinstateClaim,
   resupersedeClaim,
+  supersedeLiveGroup,
   supersessionsForReceipt,
 } from "./store";
 export type { ClaimsIo, InsertClaimInput, InsertClaimResult } from "./store";
