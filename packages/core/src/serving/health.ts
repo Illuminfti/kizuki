@@ -1,10 +1,9 @@
 import { listAgents } from "../agents";
 import type { Sensitivity, Tool } from "../agents";
-import { pendingRetrievalOps } from "../claims/store";
+import { countClaims, pendingRetrievalOps } from "../claims/store";
 import { readDerivedMeta } from "../derived-meta";
 import { getCheckpoint, listConnections } from "../ledger/connections";
 import { count } from "../ledger/ledger";
-import { tableExists } from "../ledger/schema";
 import { asSensitivity, asTaint, eligible, loadCanon, pageDecision } from "./canon";
 import { auditArguments, gate, principalName } from "./gate";
 import type { Served } from "./gate";
@@ -54,17 +53,6 @@ export interface HealthData {
     } | null;
   }[];
   agents: { total: number; revoked: number };
-}
-
-function liveClaims(ctx: ServeContext): number {
-  if (!tableExists(ctx.db, "claims")) return 0;
-  return (
-    ctx.db
-      .query<{ count: number }, []>(
-        "SELECT count(*) AS count FROM claims WHERE status = 'live'",
-      )
-      .get()?.count ?? 0
-  );
 }
 
 export function serveHealth(ctx: ServeContext): Envelope<HealthData> {
@@ -136,7 +124,7 @@ export function serveHealth(ctx: ServeContext): Envelope<HealthData> {
               .length,
           },
           events: count(ctx.db),
-          live_claims: liveClaims(ctx),
+          live_claims: countClaims(ctx.db, { status: "live" }),
           pending_retrieval_ops: pendingRetrievalOps(ctx.db).length,
           derived: {
             search: readDerivedMeta(ctx.db, "search")?.rebuilt_at ?? null,

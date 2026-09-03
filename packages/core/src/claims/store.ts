@@ -577,6 +577,26 @@ async function upsertRetrieval(
   }
 }
 
+export function countClaims(
+  db: Database,
+  opts: { status?: ClaimStatus } = {},
+): number {
+  if (!tableExists(db, "claims")) return 0;
+  if (opts.status === undefined) {
+    return (
+      db.query<{ n: number }, []>("SELECT count(*) AS n FROM claims").get()?.n ??
+      0
+    );
+  }
+  return (
+    db
+      .query<{ n: number }, [string]>(
+        "SELECT count(*) AS n FROM claims WHERE status = ?",
+      )
+      .get(opts.status)?.n ?? 0
+  );
+}
+
 export function getClaim(db: Database, claimId: string): Claim | null {
   if (!tableExists(db, "claims")) return null;
   const row = db

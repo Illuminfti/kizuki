@@ -61,6 +61,9 @@ describe("kizuki CLI stranger loop", () => {
     expect(doctor.exitCode).toBe(0);
     expect(doctor.stdout).toContain("health=ok");
     expect(doctor.stdout).toContain("connection kizuki.markdown-folder");
+    expect(doctor.stdout).toContain("claims live=");
+    expect(doctor.stdout).not.toContain("proposals pending=");
+    expect(doctor.stdout).not.toContain("retraction-pending");
 
     rmSync(join(setup.notes, "linus.md"));
     const synced = runCli(setup.env, "sync", "markdown-folder");

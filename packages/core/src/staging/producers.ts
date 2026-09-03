@@ -7,9 +7,9 @@ import { fileProposal } from "./proposals";
 import type { ProposalInput } from "./proposals";
 
 /**
- * The deterministic floor: what staging produces from an event with no LLM
- * configured. Everything here is derivable by inspection of the event, so the
- * review queue is never empty just because no model is wired up.
+ * The deterministic floor: claims derivable from an event with no model.
+ * Inspection only. Nothing here writes canon, and nothing here is a review
+ * queue — the receipted writer acts on the claims later.
  */
 
 /** Identity is a candidate, never a fact: the owner confirms a subject is a person. */

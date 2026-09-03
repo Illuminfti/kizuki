@@ -60,6 +60,24 @@ describe("serve http", () => {
     expect(body.ok).toBe(true);
     const stored = readFileSync(handle.tokenPath, "utf8");
     expect(stored).toContain("test-token-not-a-secret-fixture");
+
+    const refused = await fetch(`${handle.url}/v1/search`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer test-token-not-a-secret-fixture",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ query: "" }),
+    });
+    expect(refused.status).toBe(400);
+    const refusal = (await refused.json()) as {
+      ok: boolean;
+      error: { code: string; message: string };
+    };
+    expect(refusal.ok).toBe(false);
+    expect(refusal.error.code).toBe("invalid_arguments");
+    expect(refusal.error.message).toContain("query");
+
     await handle.stop();
     db.close();
   });
