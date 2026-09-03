@@ -317,13 +317,15 @@ def validated_authority_binding(manifest: IdentityManifest, receipt: IdentityRec
     return replace(unsigned, signature_sha256=signature)
 
 
-def authenticate_authority_binding(binding: AuthorityBinding, manifest: IdentityManifest,
-                                   receipt: IdentityReceipt, now: float,
-                                   controller_hmac_key: bytes,
-                                   operation_sha256: str) -> AuthorityBinding:
-    """Authenticate a binding without consuming its single-use identifier."""
+def verify_authority_binding(binding: AuthorityBinding, manifest: IdentityManifest, receipt: IdentityReceipt, now: float, controller_hmac_key: bytes, operation_sha256: str, consumed_binding_ids: MutableSet[str]) -> None:
+    """Fail closed, consume-on-success verification for a protocol transition.
+
+    ``consumed_binding_ids`` must be backed by the protocol's durable atomic
+    transaction. A transient set is intentionally not sufficient in production.
+    """
     _hmac_key(controller_hmac_key); _digest(operation_sha256, "operation digest")
-    if not isinstance(binding, AuthorityBinding): raise IdentityError("AuthorityBinding required")
+    if not isinstance(binding, AuthorityBinding) or not isinstance(consumed_binding_ids, MutableSet): raise IdentityError("authority verifier requires a durable consumed-id set")
+    if binding.binding_id in consumed_binding_ids: raise IdentityError("authority binding was already consumed")
     if binding.operation_sha256 != operation_sha256 or not receipt_is_current(manifest, receipt, now): raise IdentityError("authority binding context is not current")
     if not binding.checked_at <= now < binding.expires_at or binding.manifest_sha256 != _manifest_hash(manifest) or binding.receipt_sha256 != _receipt_hash(receipt): raise IdentityError("authority binding is expired or does not match evidence")
     for name in ("principal_id", "authority_domain", "adapter", "generation", "account_binding_sha256", "executable_sha256", "network_profile_sha256"):
@@ -331,16 +333,4 @@ def authenticate_authority_binding(binding: AuthorityBinding, manifest: Identity
     expected_id = hmac.new(controller_hmac_key, b"kizuki-authority-id\0" + _canonical([binding.manifest_sha256, binding.receipt_sha256, binding.operation_sha256, binding.checked_at, binding.expires_at]), hashlib.sha256).hexdigest()
     expected_signature = hmac.new(controller_hmac_key, b"kizuki-authority-v1\0" + _binding_payload(binding), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(binding.binding_id, expected_id) or not hmac.compare_digest(binding.signature_sha256, expected_signature): raise IdentityError("authority binding authentication failed")
-    return binding
-
-
-def verify_authority_binding(binding: AuthorityBinding, manifest: IdentityManifest, receipt: IdentityReceipt, now: float, controller_hmac_key: bytes, operation_sha256: str, consumed_binding_ids: MutableSet[str]) -> None:
-    """Fail closed, consume-on-success verification for a protocol transition.
-
-    ``consumed_binding_ids`` must be backed by the protocol's durable atomic
-    transaction. A transient set is intentionally not sufficient in production.
-    """
-    if not isinstance(consumed_binding_ids, MutableSet): raise IdentityError("authority verifier requires a durable consumed-id set")
-    authenticated = authenticate_authority_binding(binding, manifest, receipt, now, controller_hmac_key, operation_sha256)
-    if authenticated.binding_id in consumed_binding_ids: raise IdentityError("authority binding was already consumed")
-    consumed_binding_ids.add(authenticated.binding_id)
+    consumed_binding_ids.add(binding.binding_id)
