@@ -6,11 +6,8 @@ import { exportCommand } from "./export";
 import { importCommand } from "./import";
 import { initCommand } from "./init";
 import { modelsCommand } from "./models";
-import { promoteCommand } from "./promote";
 import { purgeCommand } from "./purge";
 import { queryCommand } from "./query";
-import { rejectCommand } from "./reject";
-import { reviewCommand } from "./review";
 import { serveCommand } from "./serve";
 import { syncCommand } from "./sync";
 import { tellCommand } from "./tell";
@@ -43,9 +40,6 @@ export const COMMANDS: readonly Command[] = [
   auditCommand,
   tellCommand,
   undoCommand,
-  reviewCommand,
-  promoteCommand,
-  rejectCommand,
   queryCommand,
   doctorCommand,
   serveCommand,
