@@ -4,8 +4,9 @@ from .core import Store, Guard, GuardError, ConflictError, FencedError, Limits, 
 from .adapters import defaults, validate_identities
 from .http import serve
 from .safe_io import SafeIOError, sha256_regular_nofollow
+from .control_loop import ControlLoop, LoopAlreadyRunning
 
-DEFAULT_CONFIG={"state_dir":"/home/ubuntu/.local/state/kizuki-gauntlet","observer":{"host":"127.0.0.1","port":8765},"limits":{"min_free_bytes":35*1024**3,"max_running":4,"max_attempts":3,"max_crashes":3},"adapters":{}}
+DEFAULT_CONFIG={"state_dir":"/home/ubuntu/.local/state/kizuki-gauntlet","observer":{"host":"127.0.0.1","port":8765},"loop":{"interval_seconds":30},"limits":{"min_free_bytes":35*1024**3,"max_running":4,"max_attempts":3,"max_crashes":3},"adapters":{}}
 
 def load_config(path=None):
  try:
@@ -14,10 +15,11 @@ def load_config(path=None):
    config_path=Path(path)
    if not config_path.is_file(): raise ValueError("config file does not exist")
    cfg.update(json.loads(config_path.read_text(encoding="utf-8")))
-  cfg["observer"]={**DEFAULT_CONFIG["observer"],**cfg.get("observer",{})}; cfg["limits"]={**DEFAULT_CONFIG["limits"],**cfg.get("limits",{})}
+  cfg["observer"]={**DEFAULT_CONFIG["observer"],**cfg.get("observer",{})}; cfg["loop"]={**DEFAULT_CONFIG["loop"],**cfg.get("loop",{})}; cfg["limits"]={**DEFAULT_CONFIG["limits"],**cfg.get("limits",{})}
   if not isinstance(cfg.get("state_dir"),str) or not cfg["state_dir"].startswith("/"): raise ValueError("state_dir must be an absolute path")
   if cfg["observer"]["host"]!="127.0.0.1": raise ValueError("observer host must be 127.0.0.1")
   if not isinstance(cfg["observer"]["port"],int) or not 1<=cfg["observer"]["port"]<=65535: raise ValueError("observer port invalid")
+  if not isinstance(cfg["loop"].get("interval_seconds"),(int,float)) or isinstance(cfg["loop"]["interval_seconds"],bool) or not 1<=cfg["loop"]["interval_seconds"]<=3600: raise ValueError("loop.interval_seconds must be 1..3600")
   if not isinstance(cfg.get("adapters",{}),dict): raise ValueError("adapters must be an object")
   for name, adapter in cfg["adapters"].items():
    if name not in {"codex","claude","cursor","grok"}: raise ValueError("unknown adapter: %s"%name)
@@ -42,7 +44,7 @@ def _campaign(snapshot, campaign_id=None):
 
 def main(argv=None):
  p=argparse.ArgumentParser(prog="gauntlet"); p.add_argument("--config",default=None); p.add_argument("--state-dir",default=None)
- sub=p.add_subparsers(dest="cmd",required=True); sub.add_parser("init"); sub.add_parser("doctor"); sub.add_parser("probe"); r=sub.add_parser("reconcile"); r.add_argument("repo"); r.add_argument("--campaign"); sub.add_parser("status"); s=sub.add_parser("serve"); s.add_argument("--port",type=int,default=None); sub.add_parser("once"); q=sub.add_parser("quiesce"); q.add_argument("campaign"); q.add_argument("version",type=int); promote=sub.add_parser("promote"); promote.add_argument("campaign"); promote.add_argument("version",type=int); receipt=sub.add_parser("record-adapter"); receipt.add_argument("name",choices=("codex","claude","cursor","grok")); receipt.add_argument("--version",required=True); receipt.add_argument("--auth-status",choices=("READY","FAILED","UNKNOWN"),required=True); receipt.add_argument("--route-status",choices=("READY","QUOTA_BLOCKED","FAILED","UNKNOWN"),required=True); receipt.add_argument("--evidence-file",required=True); receipt.add_argument("--reason-code",choices=("ISOLATED_ROUTE_PROBE","PROVIDER_QUOTA_BLOCKED","AUTH_CHECK","PROBE_FAILED"),required=True); receipt.add_argument("--ttl-seconds",type=int,default=21600)
+ sub=p.add_subparsers(dest="cmd",required=True); sub.add_parser("init"); sub.add_parser("doctor"); sub.add_parser("probe"); r=sub.add_parser("reconcile"); r.add_argument("repo"); r.add_argument("--campaign"); sub.add_parser("status"); s=sub.add_parser("serve"); s.add_argument("--port",type=int,default=None); sub.add_parser("once"); sub.add_parser("loop"); q=sub.add_parser("quiesce"); q.add_argument("campaign"); q.add_argument("version",type=int); promote=sub.add_parser("promote"); promote.add_argument("campaign"); promote.add_argument("version",type=int); receipt=sub.add_parser("record-adapter"); receipt.add_argument("name",choices=("codex","claude","cursor","grok")); receipt.add_argument("--version",required=True); receipt.add_argument("--auth-status",choices=("READY","FAILED","UNKNOWN"),required=True); receipt.add_argument("--route-status",choices=("READY","QUOTA_BLOCKED","FAILED","UNKNOWN"),required=True); receipt.add_argument("--evidence-file",required=True); receipt.add_argument("--reason-code",choices=("ISOLATED_ROUTE_PROBE","PROVIDER_QUOTA_BLOCKED","AUTH_CHECK","PROBE_FAILED"),required=True); receipt.add_argument("--ttl-seconds",type=int,default=21600)
  a=p.parse_args(argv)
  try: cfg=load_config(a.config)
  except ValueError as exc: print(json.dumps({"ok":False,"error":str(exc)})); return 2
@@ -50,6 +52,12 @@ def main(argv=None):
   if not Path(a.state_dir).is_absolute(): print(json.dumps({"ok":False,"error":"state-dir must be an absolute path"})); return 2
   cfg["state_dir"]=a.state_dir
  try:
+  if a.cmd=="loop":
+   # Do not even open the controller Store here: the loop owns its own
+   # read-only Store lifecycle and never claims controller authority.
+   result=ControlLoop(cfg["state_dir"],Limits(**cfg["limits"]), cfg["loop"]["interval_seconds"]).run()
+   print(json.dumps({"ok":True,"state":result["state"],"execution_enabled":False,"merge_enabled":False}))
+   return 0
   st=Store(cfg["state_dir"]); limits=Limits(**cfg["limits"]); adapters=defaults(cfg["adapters"])
   if a.cmd=="init":
    st.claim_controller()
@@ -87,7 +95,7 @@ def main(argv=None):
    try: srv.serve_forever()
    finally: srv.server_close(); st.release_controller()
   return 0
- except (GuardError, ConflictError, FencedError, SafeIOError, OSError, ValueError, TypeError, AttributeError) as exc:
+ except (GuardError, ConflictError, FencedError, SafeIOError, LoopAlreadyRunning, OSError, ValueError, TypeError, AttributeError) as exc:
   try: st.release_controller()
   except Exception: pass
   print(json.dumps({"ok":False,"error":str(exc)})); return 2

@@ -88,5 +88,30 @@ For Grokbot or another local observer, use `bin/kizuki-gauntlet-status`. The
 service is intentionally unreachable off-host; remote observers must enter over
 an authenticated SSH route and query loopback. Never expose port 8765 publicly.
 
+## Persistent control-loop heartbeat
+
+`kizuki-gauntlet-loop.service` is a separate, execution-disabled VPS heartbeat.
+It takes an exclusive flock in the state directory every time it starts, checks
+the ledger/projection and circuit breakers at a fixed monotonic interval, and
+atomically publishes a mode-0600 `loop-status.json`. Its status includes the
+campaign/task/incident counts and persisted readiness of Codex, Claude, Cursor,
+and Grok. It never claims controller authority, starts a worker, probes an
+adapter, sends network traffic, calls GitHub, or enables a merge.
+
+Install it alongside the observer with:
+
+```sh
+install -Dm0644 systemd/kizuki-gauntlet-loop.service ~/.config/systemd/user/kizuki-gauntlet-loop.service
+systemctl --user daemon-reload
+systemctl --user enable --now kizuki-gauntlet-loop.service
+systemctl --user status kizuki-gauntlet-loop.service
+python3 -m json.tool /home/ubuntu/.local/state/kizuki-gauntlet/loop-status.json
+```
+
+`RUNNING` means the latest integrity/guard check passed; `DEGRADED` means it
+did not, or a harness lacks a fresh independently-attested ready receipt. Both
+states retain `execution_enabled: false` and `merge_enabled: false`. `STOPPED`
+is written only on a clean SIGTERM or bounded diagnostic exit.
+
 See [RUNBOOK.md](RUNBOOK.md), [ARCHITECTURE.md](ARCHITECTURE.md), and
 [`config.example.json`](config.example.json).

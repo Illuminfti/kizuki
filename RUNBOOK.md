@@ -119,3 +119,27 @@ Because the observer process owns the single controller lock, later
 brief maintenance window: stop the observer, run the bounded command, then
 restart it and verify health. Read-only `status`, `doctor`, and `probe` remain
 available while the observer runs.
+
+## Persistent loop receipt
+
+The loop is a separate observer of the durable state, not an executor. Install
+and start it after the main observer is healthy:
+
+```sh
+install -Dm0644 systemd/kizuki-gauntlet-loop.service ~/.config/systemd/user/kizuki-gauntlet-loop.service
+systemctl --user daemon-reload
+systemctl --user enable --now kizuki-gauntlet-loop.service
+systemctl --user is-active kizuki-gauntlet-loop.service
+python3 -m json.tool /home/ubuntu/.local/state/kizuki-gauntlet/loop-status.json
+```
+
+The file must be mode `0600`, carry schema
+`kizuki-gauntlet-loop-status-v1`, a current PID/session/iteration/timestamp,
+and `execution_enabled: false` plus `merge_enabled: false`. `RUNNING` verifies
+the current ledger/projection and circuit breakers. `DEGRADED` is a receipt of a
+failed check or incomplete adapter readiness, not permission to repair or run
+work. The unit uses an exclusive state-directory flock, so a duplicate unit
+fails closed rather than creating a second scheduler. For a clean maintenance
+stop, use `systemctl --user stop kizuki-gauntlet-loop.service`; it writes
+`STOPPED` with `clean_stop_requested`. Never delete the status file or lock to
+force a restart.
