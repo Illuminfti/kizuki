@@ -1,6 +1,7 @@
 import hashlib
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -43,7 +44,7 @@ class SandboxConstructionTests(unittest.TestCase):
     def materialize_fixture(self, destination):
         vault = self.root / "fixture-vault"
         generation = vault / "codex-builder" / "generation-1" / ".codex"
-        generation.mkdir(parents=True, mode=0o700)
+        generation.mkdir(parents=True, mode=0o700, exist_ok=True)
         secret = b"x"
         auth = generation / "credential"
         auth.write_bytes(secret); auth.chmod(0o600)
@@ -52,7 +53,14 @@ class SandboxConstructionTests(unittest.TestCase):
         manifest = IdentityManifest("codex-builder", "builder-domain", "codex", 1,
                                     "a" * 64, "b" * 64, "c" * 64,
                                     (Artifact(".codex/credential", hashlib.sha256(secret).hexdigest(), 4096),))
-        return materialize_attempt_home(manifest, vault, destination, self.key)
+        issued_at = time.time()
+        return materialize_attempt_home(
+            manifest, vault, destination, self.key,
+            campaign_id="camp-01", task_id="task-01", task_attempt=1,
+            phase_attempt_id="e" * 64, controller_epoch=7,
+            task_spec_sha256="f" * 64, expires_at=issued_at + 300,
+            clock=lambda: issued_at,
+        )
 
     def spec(self, **overrides):
         data = dict(
@@ -69,8 +77,12 @@ class SandboxConstructionTests(unittest.TestCase):
             job_home=str(self.home),
             raw_evidence=str(self.raw),
             identity_principal_id="codex-builder",
+            identity_authority_domain="builder-domain",
             identity_generation=1,
             identity_manifest_sha256="d" * 64,
+            identity_expires_at=time.time() + 300,
+            phase_attempt_id="e" * 64,
+            task_spec_sha256="f" * 64,
             adapter="codex",
             wall_seconds=300,
             cpu_quota_percent=100,
@@ -83,7 +95,8 @@ class SandboxConstructionTests(unittest.TestCase):
 
     def test_constructs_controller_bound_offline_topology(self):
         receipt = self.materialize_fixture(self.home)
-        spec = self.spec(identity_manifest_sha256=receipt.manifest_sha256)
+        spec = self.spec(identity_manifest_sha256=receipt.manifest_sha256,
+                         identity_expires_at=receipt.expires_at)
         launch = build_offline_launch(spec, receipt, self.key)
         self.assertTrue(launch.unit_name.startswith("kizuki-gauntlet-attempt-"))
         self.assertIn("--property=BindsTo=kizuki-gauntlet.service", launch.systemd_argv)
@@ -133,10 +146,14 @@ class SandboxConstructionTests(unittest.TestCase):
         with self.assertRaises(SandboxError):
             self.spec(network_profile="vendor")
         receipt = self.materialize_fixture(self.attempt / "attested-home")
-        spec = self.spec(identity_manifest_sha256=receipt.manifest_sha256)
-        with self.assertRaisesRegex(SandboxError, "prepared"):
+        spec = self.spec(identity_manifest_sha256=receipt.manifest_sha256,
+                         identity_expires_at=receipt.expires_at)
+        with self.assertRaisesRegex(SandboxError, "does not match sandbox"):
             build_offline_launch(spec, receipt, self.key)
-        self.home.mkdir(mode=0o700)
+        receipt = self.materialize_fixture(self.home)
+        spec = self.spec(identity_manifest_sha256=receipt.manifest_sha256,
+                         identity_expires_at=receipt.expires_at)
+        (self.home / ".codex" / "credential").unlink()
         with self.assertRaisesRegex(SandboxError, "exactly match"):
             build_offline_launch(spec, receipt, self.key)
         (self.home / "bad").symlink_to(self.release / "bin")
@@ -172,7 +189,8 @@ class SandboxConstructionTests(unittest.TestCase):
 
     def test_commands_are_inert_and_fail_closed_on_bad_unit_values(self):
         receipt = self.materialize_fixture(self.home)
-        spec = self.spec(identity_manifest_sha256=receipt.manifest_sha256)
+        spec = self.spec(identity_manifest_sha256=receipt.manifest_sha256,
+                         identity_expires_at=receipt.expires_at)
         launch = build_offline_launch(spec, receipt, self.key)
         self.assertNotIn("system", launch.systemd_argv[:3])
         self.assertEqual(launch.systemd_argv[:2], ("/usr/bin/systemd-run", "--user"))
@@ -193,8 +211,16 @@ class SandboxConstructionTests(unittest.TestCase):
         manifest = IdentityManifest("codex-builder", "builder-domain", "codex", 1,
                                     "a" * 64, "b" * 64, "c" * 64,
                                     (Artifact(".codex/auth.json", hashlib.sha256(secret).hexdigest(), 4096),))
-        materialized = materialize_attempt_home(manifest, vault, self.home, self.key)
-        spec = self.spec(identity_manifest_sha256=materialized.manifest_sha256)
+        issued_at = time.time()
+        materialized = materialize_attempt_home(
+            manifest, vault, self.home, self.key,
+            campaign_id="camp-01", task_id="task-01", task_attempt=1,
+            phase_attempt_id="e" * 64, controller_epoch=7,
+            task_spec_sha256="f" * 64, expires_at=issued_at + 300,
+            clock=lambda: issued_at,
+        )
+        spec = self.spec(identity_manifest_sha256=materialized.manifest_sha256,
+                         identity_expires_at=materialized.expires_at)
         launch = build_offline_launch(spec, materialized, self.key)
         self.assertIn("/job-home", launch.harness_bwrap_argv)
         self.assertEqual((self.home / ".codex" / "auth.json").stat().st_mode & 0o777, 0o600)
@@ -210,8 +236,16 @@ class SandboxConstructionTests(unittest.TestCase):
         manifest = IdentityManifest("codex-builder", "builder-domain", "codex", 1,
                                     "a" * 64, "b" * 64, "c" * 64,
                                     (Artifact(".codex/auth.json", hashlib.sha256(secret).hexdigest(), 4096),))
-        receipt = materialize_attempt_home(manifest, vault, self.home, self.key)
-        spec = self.spec(identity_manifest_sha256=receipt.manifest_sha256)
+        issued_at = time.time()
+        receipt = materialize_attempt_home(
+            manifest, vault, self.home, self.key,
+            campaign_id="camp-01", task_id="task-01", task_attempt=1,
+            phase_attempt_id="e" * 64, controller_epoch=7,
+            task_spec_sha256="f" * 64, expires_at=issued_at + 300,
+            clock=lambda: issued_at,
+        )
+        spec = self.spec(identity_manifest_sha256=receipt.manifest_sha256,
+                         identity_expires_at=receipt.expires_at)
         build_offline_launch(spec, receipt, self.key)
         (self.home / "extra").write_text("no", encoding="utf-8")
         (self.home / "extra").chmod(0o600)
@@ -228,7 +262,28 @@ class SandboxConstructionTests(unittest.TestCase):
         auth_copy.chmod(0o600)
         with self.assertRaisesRegex(SandboxError, "does not match sandbox"):
             build_offline_launch(self.spec(identity_principal_id="other",
-                                           identity_manifest_sha256=receipt.manifest_sha256), receipt, self.key)
+                                           identity_manifest_sha256=receipt.manifest_sha256,
+                                           identity_expires_at=receipt.expires_at), receipt, self.key)
+
+        for changed in (
+            {"attempt": 2},
+            {"phase_attempt_id": "0" * 64},
+            {"controller_epoch": 8},
+            {"task_spec_sha256": "1" * 64},
+            {"identity_expires_at": receipt.expires_at + 1},
+            {"identity_authority_domain": "other-domain"},
+        ):
+            with self.subTest(changed=changed), self.assertRaisesRegex(
+                    SandboxError, "does not match sandbox"):
+                context = {
+                    "identity_manifest_sha256": receipt.manifest_sha256,
+                    "identity_expires_at": receipt.expires_at,
+                }
+                context.update(changed)
+                build_offline_launch(
+                    self.spec(**context),
+                    receipt, self.key,
+                )
 
 
 if __name__ == "__main__":

@@ -8,13 +8,20 @@ may be wired to any scheduler path.
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import stat
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Tuple
 
-from gauntlet.identity import IdentityError, MaterializedIdentity, verify_materialized_identity
+from gauntlet.identity import (
+    IdentityError,
+    MaterializedIdentity,
+    materialized_identity_destination_sha256,
+    verify_materialized_identity,
+)
 
 
 class SandboxError(RuntimeError):
@@ -139,8 +146,12 @@ class SandboxSpec:
     job_home: str
     raw_evidence: str
     identity_principal_id: str
+    identity_authority_domain: str
     identity_generation: int
     identity_manifest_sha256: str
+    identity_expires_at: float
+    phase_attempt_id: str
+    task_spec_sha256: str
     adapter: str
     wall_seconds: int
     cpu_quota_percent: int
@@ -153,9 +164,17 @@ class SandboxSpec:
         _opaque_id(self.campaign_id, "campaign_id")
         _opaque_id(self.task_id, "task_id")
         _opaque_id(self.identity_principal_id, "identity principal")
+        _opaque_id(self.identity_authority_domain, "identity authority domain")
         if not isinstance(self.identity_generation, int) or isinstance(self.identity_generation, bool) or self.identity_generation < 1:
             raise SandboxError("invalid identity generation")
         _sha256(self.identity_manifest_sha256, "identity_manifest_sha256")
+        _sha256(self.phase_attempt_id, "phase_attempt_id")
+        _sha256(self.task_spec_sha256, "task_spec_sha256")
+        if (isinstance(self.identity_expires_at, bool)
+                or not isinstance(self.identity_expires_at, (int, float))
+                or not math.isfinite(self.identity_expires_at)
+                or self.identity_expires_at <= 0):
+            raise SandboxError("invalid identity expiry")
         if not all(isinstance(value, int) and value > 0 for value in (self.attempt, self.controller_epoch, self.lease_token)):
             raise SandboxError("invalid attempt fence")
         if self.controller_unit != "kizuki-gauntlet.service":
@@ -223,13 +242,23 @@ def _prepared_job_home(spec: SandboxSpec, receipt: MaterializedIdentity,
     if not isinstance(receipt, MaterializedIdentity):
         raise SandboxError("MaterializedIdentity receipt required")
     try:
-        verify_materialized_identity(receipt, controller_hmac_key)
+        verify_materialized_identity(receipt, controller_hmac_key, now=time.time())
     except IdentityError as exc:
         raise SandboxError("materialized identity receipt authentication failed") from exc
     if (receipt.principal_id != spec.identity_principal_id
+            or receipt.authority_domain != spec.identity_authority_domain
             or receipt.generation != spec.identity_generation
             or receipt.adapter != spec.adapter
-            or receipt.manifest_sha256 != spec.identity_manifest_sha256):
+            or receipt.manifest_sha256 != spec.identity_manifest_sha256
+            or receipt.campaign_id != spec.campaign_id
+            or receipt.task_id != spec.task_id
+            or receipt.task_attempt != spec.attempt
+            or receipt.phase_attempt_id != spec.phase_attempt_id
+            or receipt.controller_epoch != spec.controller_epoch
+            or receipt.task_spec_sha256 != spec.task_spec_sha256
+            or receipt.expires_at != spec.identity_expires_at
+            or receipt.destination_sha256
+            != materialized_identity_destination_sha256(spec.job_home)):
         raise SandboxError("identity receipt does not match sandbox specification")
     prepared = _absolute_directory(spec.job_home, "prepared_job_home", private=True)
     if prepared != Path(spec.job_home) or prepared.parent != Path(spec.attempt_root):

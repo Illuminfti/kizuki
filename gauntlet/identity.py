@@ -9,12 +9,14 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import os
 import re
 import stat
+import time
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
-from typing import MutableSet, Tuple
+from typing import Callable, MutableSet, Tuple
 
 
 class IdentityError(RuntimeError):
@@ -28,6 +30,8 @@ _AUTH_STATES = frozenset(("READY", "FAILED", "UNKNOWN"))
 _ROUTE_STATES = frozenset(("READY", "FAILED", "UNKNOWN", "QUOTA_BLOCKED"))
 _TOTAL_LIMIT = 16 * 1024 * 1024
 _MAX_BINDING_SECONDS = 600
+_MAX_MATERIALIZATION_SECONDS = 3900
+_MATERIALIZED_IDENTITY_DOMAIN = b"kizuki-materialized-identity-v2\0"
 
 
 def _digest(value: str, label: str) -> str:
@@ -151,6 +155,15 @@ class MaterializedIdentity:
     authority_domain: str
     adapter: str
     generation: int
+    campaign_id: str
+    task_id: str
+    task_attempt: int
+    phase_attempt_id: str
+    controller_epoch: int
+    task_spec_sha256: str
+    destination_sha256: str
+    issued_at: float
+    expires_at: float
     manifest_sha256: str
     artifacts: Tuple[AttestedArtifact, ...]
     total_bytes: int
@@ -160,6 +173,18 @@ class MaterializedIdentity:
         if not isinstance(self.principal_id, str) or not _ID.fullmatch(self.principal_id): raise IdentityError("invalid materialized principal")
         if not isinstance(self.authority_domain, str) or not _ID.fullmatch(self.authority_domain): raise IdentityError("invalid materialized authority domain")
         if self.adapter not in _ADAPTERS or isinstance(self.generation, bool) or not isinstance(self.generation, int) or self.generation < 1: raise IdentityError("invalid materialized identity")
+        if not isinstance(self.campaign_id, str) or not _ID.fullmatch(self.campaign_id): raise IdentityError("invalid materialized campaign")
+        if not isinstance(self.task_id, str) or not _ID.fullmatch(self.task_id): raise IdentityError("invalid materialized task")
+        if any(isinstance(value, bool) or not isinstance(value, int) or value < 1 for value in (self.task_attempt, self.controller_epoch)): raise IdentityError("invalid materialized attempt fence")
+        _digest(self.phase_attempt_id, "materialized phase attempt")
+        _digest(self.task_spec_sha256, "materialized task-spec digest")
+        _digest(self.destination_sha256, "materialized destination digest")
+        if (any(isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value) for value in (self.issued_at, self.expires_at))
+                or self.issued_at < 0
+                or not self.issued_at < self.expires_at
+                or self.expires_at > self.issued_at + _MAX_MATERIALIZATION_SECONDS):
+            raise IdentityError("materialized identity lifetime is invalid")
         _digest(self.manifest_sha256, "materialized manifest digest")
         if not isinstance(self.artifacts, tuple) or not self.artifacts or any(not isinstance(item, AttestedArtifact) for item in self.artifacts): raise IdentityError("invalid materialized artifact inventory")
         paths = [item.path for item in self.artifacts]
@@ -215,9 +240,30 @@ def _binding_payload(binding: AuthorityBinding) -> bytes:
 def _materialized_payload(receipt: MaterializedIdentity) -> bytes:
     return _canonical({"principal_id": receipt.principal_id, "authority_domain": receipt.authority_domain,
                        "adapter": receipt.adapter, "generation": receipt.generation,
+                       "campaign_id": receipt.campaign_id, "task_id": receipt.task_id,
+                       "task_attempt": receipt.task_attempt,
+                       "phase_attempt_id": receipt.phase_attempt_id,
+                       "controller_epoch": receipt.controller_epoch,
+                       "task_spec_sha256": receipt.task_spec_sha256,
+                       "destination_sha256": receipt.destination_sha256,
+                       "issued_at": receipt.issued_at, "expires_at": receipt.expires_at,
                        "manifest_sha256": receipt.manifest_sha256,
                        "artifacts": [(item.path, item.sha256, item.bytes) for item in receipt.artifacts],
                        "total_bytes": receipt.total_bytes})
+
+
+def materialized_identity_destination_sha256(destination: str | Path) -> str:
+    """Return the canonical, domain-separated identity-home path digest."""
+    path = Path(destination)
+    if not path.is_absolute():
+        raise IdentityError("attempt identity destination must be absolute")
+    try:
+        resolved = path.resolve(strict=False)
+    except OSError as exc:
+        raise IdentityError("attempt home cannot be safely resolved") from exc
+    return hashlib.sha256(
+        b"kizuki-attempt-home-v2\0" + os.fsencode(str(resolved))
+    ).hexdigest()
 
 
 def _hmac_key(key: bytes) -> bytes:
@@ -248,12 +294,33 @@ def _read_artifact(generation_root: Path, artifact: Artifact) -> bytes:
     finally: os.close(fd)
 
 
-def materialize_attempt_home(manifest: IdentityManifest, vault_root: str | Path, destination: str | Path,
-                             controller_hmac_key: bytes) -> MaterializedIdentity:
+def materialize_attempt_home(
+    manifest: IdentityManifest, vault_root: str | Path, destination: str | Path,
+    controller_hmac_key: bytes, *, campaign_id: str, task_id: str,
+    task_attempt: int, phase_attempt_id: str, controller_epoch: int,
+    task_spec_sha256: str, expires_at: float,
+    clock: Callable[[], float] | None = None,
+) -> MaterializedIdentity:
     if not isinstance(manifest, IdentityManifest): raise IdentityError("IdentityManifest required")
     _hmac_key(controller_hmac_key)
     vault, destination = Path(vault_root), Path(destination)
     if not vault.is_absolute() or not destination.is_absolute(): raise IdentityError("identity paths must be absolute")
+    if not isinstance(campaign_id, str) or not _ID.fullmatch(campaign_id): raise IdentityError("invalid campaign id")
+    if not isinstance(task_id, str) or not _ID.fullmatch(task_id): raise IdentityError("invalid task id")
+    if any(isinstance(value, bool) or not isinstance(value, int) or value < 1 for value in (task_attempt, controller_epoch)): raise IdentityError("invalid attempt fence")
+    _digest(phase_attempt_id, "phase attempt id")
+    _digest(task_spec_sha256, "task-spec digest")
+    issued_at = time.time() if clock is None else clock()
+    if (isinstance(issued_at, bool) or not isinstance(issued_at, (int, float))
+            or not math.isfinite(issued_at) or issued_at < 0
+            or isinstance(expires_at, bool) or not isinstance(expires_at, (int, float))
+            or not math.isfinite(expires_at) or not issued_at < expires_at
+            or expires_at > issued_at + _MAX_MATERIALIZATION_SECONDS):
+        raise IdentityError("attempt identity materialization is not current")
+    try:
+        destination = destination.resolve(strict=False)
+    except OSError as exc:
+        raise IdentityError("attempt home cannot be safely resolved") from exc
     _owned_private_directory(vault, "identity vault")
     principal_root = vault / manifest.principal_id; generation_root = principal_root / f"generation-{manifest.generation}"
     _owned_private_directory(principal_root, "principal vault"); _owned_private_directory(generation_root, "identity generation")
@@ -284,20 +351,61 @@ def materialize_attempt_home(manifest: IdentityManifest, vault_root: str | Path,
     except OSError as exc:
         raise IdentityError("attempt identity materialization failed") from exc
     inventory = tuple(sorted((AttestedArtifact(item.path, hashlib.sha256(data).hexdigest(), len(data)) for item, data in verified), key=lambda item: item.path))
-    unsigned = MaterializedIdentity(manifest.principal_id, manifest.authority_domain, manifest.adapter,
-                                    manifest.generation, _manifest_hash(manifest), inventory, total, "0" * 64)
-    signature = hmac.new(controller_hmac_key, b"kizuki-materialized-identity-v1\0" + _materialized_payload(unsigned), hashlib.sha256).hexdigest()
+    destination_sha256 = materialized_identity_destination_sha256(destination)
+    unsigned = MaterializedIdentity(
+        principal_id=manifest.principal_id,
+        authority_domain=manifest.authority_domain,
+        adapter=manifest.adapter,
+        generation=manifest.generation,
+        campaign_id=campaign_id,
+        task_id=task_id,
+        task_attempt=task_attempt,
+        phase_attempt_id=phase_attempt_id,
+        controller_epoch=controller_epoch,
+        task_spec_sha256=task_spec_sha256,
+        destination_sha256=destination_sha256,
+        issued_at=float(issued_at),
+        expires_at=float(expires_at),
+        manifest_sha256=_manifest_hash(manifest),
+        artifacts=inventory,
+        total_bytes=total,
+        attestation_sha256="0" * 64,
+    )
+    signature = hmac.new(controller_hmac_key, _MATERIALIZED_IDENTITY_DOMAIN + _materialized_payload(unsigned), hashlib.sha256).hexdigest()
     return replace(unsigned, attestation_sha256=signature)
 
 
-def verify_materialized_identity(receipt: MaterializedIdentity, controller_hmac_key: bytes) -> None:
+def verify_materialized_identity(
+    receipt: MaterializedIdentity, controller_hmac_key: bytes, *,
+    now: float | None = None, campaign_id: str | None = None,
+    task_id: str | None = None, task_attempt: int | None = None,
+    phase_attempt_id: str | None = None, controller_epoch: int | None = None,
+    task_spec_sha256: str | None = None, expires_at: float | None = None,
+) -> None:
     """Fail closed on fabricated or altered materialization receipts."""
     _hmac_key(controller_hmac_key)
     if not isinstance(receipt, MaterializedIdentity):
         raise IdentityError("MaterializedIdentity receipt required")
-    expected = hmac.new(controller_hmac_key, b"kizuki-materialized-identity-v1\0" + _materialized_payload(receipt), hashlib.sha256).hexdigest()
+    expected = hmac.new(controller_hmac_key, _MATERIALIZED_IDENTITY_DOMAIN + _materialized_payload(receipt), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(receipt.attestation_sha256, expected):
         raise IdentityError("materialized identity attestation failed")
+    if now is not None:
+        if (isinstance(now, bool) or not isinstance(now, (int, float))
+                or not math.isfinite(now) or not receipt.issued_at <= now < receipt.expires_at):
+            raise IdentityError("materialized identity receipt is not current")
+    context = {
+        "campaign_id": campaign_id, "task_id": task_id,
+        "task_attempt": task_attempt, "phase_attempt_id": phase_attempt_id,
+        "controller_epoch": controller_epoch,
+        "task_spec_sha256": task_spec_sha256, "expires_at": expires_at,
+    }
+    supplied = tuple(value is not None for value in context.values())
+    if any(supplied) and not all(supplied):
+        raise IdentityError("materialized identity expected context is incomplete")
+    if all(supplied) and any(
+        getattr(receipt, name) != value for name, value in context.items()
+    ):
+        raise IdentityError("materialized identity receipt context is stale")
 
 
 def receipt_is_current(manifest: IdentityManifest, receipt: IdentityReceipt, now: float) -> bool:
