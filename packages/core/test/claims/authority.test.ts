@@ -256,10 +256,9 @@ describe("claims authority", () => {
     });
     expect(accepted.status).toBe("stored");
     if (accepted.status !== "stored") return;
-    const filed = await insertClaim(
-      { db },
-      claimInput(accepted.event.event_id, { events: undefined }),
-    );
+    const { events: _ignored, ...reloaded } = claimInput(accepted.event.event_id);
+    void _ignored;
+    const filed = await insertClaim({ db }, reloaded);
     expect(filed.outcome).toBe("stored");
     if (filed.outcome !== "stored") return;
     expect(filed.claim.authority).toBe("model_inference");
@@ -278,13 +277,12 @@ describe("claims authority", () => {
     });
     expect(accepted.status).toBe("stored");
     if (accepted.status !== "stored") return;
-    const filed = await insertClaim(
-      { db },
-      claimInput(accepted.event.event_id, {
-        producer: "deterministic",
-        events: undefined,
-      }),
+    const { events: _ignored, ...reloaded } = claimInput(
+      accepted.event.event_id,
+      { producer: "deterministic" },
     );
+    void _ignored;
+    const filed = await insertClaim({ db }, reloaded);
     expect(filed.outcome).toBe("stored");
     if (filed.outcome !== "stored") return;
     expect(filed.claim.authority).toBe("owner_authored");
