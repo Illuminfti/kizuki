@@ -17,6 +17,9 @@ describe("GGUF embedding RSS ceiling", () => {
       batch_size: 8,
     });
     cleanups.push(temporary.cleanup);
+    // The ceiling bounds what the port adds to a process, not the process
+    // itself: the test runner already holds the rest of the suite in memory.
+    const baseline = process.memoryUsage().rss;
     const port = createGgufEmbeddingPort(temporary.ctx);
     try {
       const texts = Array.from(
@@ -28,8 +31,8 @@ describe("GGUF embedding RSS ceiling", () => {
         expect(vectors).toHaveLength(8);
         expect(vectors[0]?.length).toBe(8);
       }
-      const rss = process.memoryUsage().rss;
-      expect(rss).toBeLessThan(RSS_CEILING_BYTES);
+      const growth = process.memoryUsage().rss - baseline;
+      expect(growth).toBeLessThan(RSS_CEILING_BYTES);
       const health = await port.health();
       if (health.status !== "ready") throw new Error("expected ready");
       expect(health.detail["rss_ceiling_bytes"]).toBe(RSS_CEILING_BYTES);
