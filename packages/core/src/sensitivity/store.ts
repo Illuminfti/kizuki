@@ -199,8 +199,8 @@ export function applyConnectionSensitivity(
   db: Database,
   connection: { connector_id: string; source_key: string },
   manifest: {
-    default_sensitivity: unknown;
-    sensitivity_floor: unknown;
+    default_sensitivity?: unknown;
+    sensitivity_floor?: unknown;
   },
   requested?: Sensitivity,
   at?: string,

@@ -69,8 +69,8 @@ export function policyForConnector(connectorId: string): SensitivityPolicy {
 }
 
 export function policyFromManifest(manifest: {
-  default_sensitivity: unknown;
-  sensitivity_floor: unknown;
+  default_sensitivity?: unknown;
+  sensitivity_floor?: unknown;
 }): SensitivityPolicy {
   const floor = sensitivityOrPrivate(manifest.sensitivity_floor);
   const defaultSensitivity = sensitivityOrPrivate(manifest.default_sensitivity);
