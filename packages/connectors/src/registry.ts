@@ -93,6 +93,8 @@ export function getConnector(
 export function getConnector(
   id: typeof ICS_CONNECTOR_ID,
   config: IcsConnectorConfig,
+): Connector;
+export function getConnector(
   id: typeof WHATSAPP_IMPORT_CONNECTOR_ID,
   config: WhatsAppImportConfig,
 ): Connector;

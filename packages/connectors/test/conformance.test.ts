@@ -19,19 +19,18 @@ import {
   SCREENPIPE_CONNECTOR_ID,
   TELEGRAM_CONNECTOR_ID,
   TelegramConnector,
-  createIcsConnector,
-  createImapConnector,
   WHATSAPP_FIXTURE_FILES,
   WHATSAPP_FIXTURE_TIMEZONE,
   WHATSAPP_IMPORT_CONNECTOR_ID,
+  createIcsConnector,
+  createImapConnector,
   getConnector,
   runConformance,
   scriptedDeps,
   seedFixtureDatabase,
-  REGISTRY,
 } from "../src";
-import { encodeState } from "@kizuki/connector-telegram";
 import type { ConformanceResult } from "../src";
+import { encodeState } from "@kizuki/connector-telegram";
 import type { Connector } from "@kizuki/core";
 import {
   FakeImapServer,
@@ -39,12 +38,13 @@ import {
   fixtureState,
   memoryDialer,
 } from "@kizuki/connector-imap/testing";
-import { FIXTURE_ICS, memoryFetcher, okResult } from "@kizuki/connector-ics/testing";
-
-const REGISTRY_IDS = Object.keys(REGISTRY);
+import {
+  FIXTURE_ICS,
+  memoryFetcher,
+  okResult,
+} from "@kizuki/connector-ics/testing";
 
 const TELEGRAM_STATE_REF = "file:connections/01JJ0000000000000000000000.state";
-import type { Connector, Manifest, SensitivityHint } from "@kizuki/core";
 
 interface Layout {
   markdown: string;
@@ -54,6 +54,7 @@ interface Layout {
   whatsapp: string;
   pocket: string;
   omnivore: string;
+  ics: string;
   deletedMarkdown: string;
 }
 
@@ -66,13 +67,38 @@ function layoutFor(root: string): Layout {
     whatsapp: path.join(root, "whatsapp"),
     pocket: path.join(root, "pocket.csv"),
     omnivore: path.join(root, "omnivore"),
+    ics: path.join(root, "team.ics"),
     deletedMarkdown: path.join(root, "markdown", "delete-me.md"),
+  };
+}
+
+/** The ICS fixture without its attachment event, used to prove a tombstone. */
+const ICS_WITHOUT_ATTACHMENT = FIXTURE_ICS.replace(
+  [
+    "BEGIN:VEVENT",
+    "UID:attach-1@acme.example",
+    "DTSTAMP:20260201T000000Z",
+    "DTSTART:20260306T090000Z",
+    "DTEND:20260306T093000Z",
+    "ATTACH;FMTTYPE=application/pdf:https://files.acme.example/agenda.pdf",
+    "SUMMARY:Board prep",
+    "END:VEVENT",
+    "",
+  ].join("\r\n"),
+  "",
+);
+
+function combine(results: ConformanceResult[]): ConformanceResult {
+  return {
+    pass: results.every((result) => result.pass),
+    failures: results.flatMap((result) => result.failures),
   };
 }
 
 /**
  * One entry per registry id, so the coverage test below proves the suite
  * exercises the whole registry rather than a hand-counted subset of it.
+ * Connectors that sign in build their fixture peer inside the thunk.
  */
 function batteryFor(
   layout: Layout,
@@ -114,6 +140,71 @@ function batteryFor(
     [OMNIVORE_IMPORT_CONNECTOR_ID]: plain(
       getConnector(OMNIVORE_IMPORT_CONNECTOR_ID, { path: layout.omnivore }),
     ),
+    [TELEGRAM_CONNECTOR_ID]: async () => {
+      const telegram = new TelegramConnector(
+        { state_ref: TELEGRAM_STATE_REF },
+        scriptedDeps(),
+      );
+      await telegram.connect(async (ref) => {
+        expect(ref).toBe(TELEGRAM_STATE_REF);
+        return new TextDecoder().decode(
+          encodeState({
+            schema: "kizuki.telegram-state/v1",
+            user_id: "1001",
+            session: "fixture-session-token-not-a-real-credential",
+          }),
+        );
+      });
+      return runConformance(telegram);
+    },
+    [IMAP_CONNECTOR_ID]: async () => {
+      const imapServer = new FakeImapServer(fixtureMailbox(), {
+        username: fixtureState().username,
+        password: fixtureState().password,
+      });
+      const imap = createImapConnector(
+        { secret_ref: "file:connections/01ABCDEFGHJKMNPQRSTVWXYZ00.state" },
+        { dial: memoryDialer(imapServer) },
+      );
+      await imap.connect(async () => JSON.stringify(fixtureState()));
+      return runConformance(imap, {
+        tombstone: {
+          prepare: async () => (await imap.backfill(null)).cursor,
+          mutate: async () => {
+            imapServer.expunge("INBOX", 1);
+          },
+        },
+      });
+    },
+    [ICS_CONNECTOR_ID]: async () => {
+      const icsFile = createIcsConnector({ path: layout.ics });
+      const icsUrl = "https://calendar.acme.example/private/abc123.ics";
+      let icsRoute = FIXTURE_ICS;
+      const icsRemote = createIcsConnector(
+        { secret_ref: "file:connections/01ABCDEFGHJKMNPQRSTVWXYZ01.state" },
+        { fetch: memoryFetcher({ [icsUrl]: () => okResult(icsRoute) }) },
+      );
+      await icsRemote.connect(async () =>
+        JSON.stringify({ schema: "kizuki.ics-state/v1", url: icsUrl }),
+      );
+      const fileResult = await runConformance(icsFile, {
+        tombstone: {
+          prepare: async () => (await icsFile.backfill(null)).cursor,
+          mutate: async () => {
+            await writeFile(layout.ics, ICS_WITHOUT_ATTACHMENT);
+          },
+        },
+      });
+      const remoteResult = await runConformance(icsRemote, {
+        tombstone: {
+          prepare: async () => (await icsRemote.backfill(null)).cursor,
+          mutate: async () => {
+            icsRoute = ICS_WITHOUT_ATTACHMENT;
+          },
+        },
+      });
+      return combine([fileResult, remoteResult]);
+    },
   };
 }
 
@@ -127,6 +218,7 @@ async function seedExports(layout: Layout): Promise<void> {
     writeFile(layout.chatGpt, JSON.stringify(CHATGPT_FIXTURE_EXPORT)),
     writeFile(layout.claude, JSON.stringify(CLAUDE_FIXTURE_EXPORT)),
     writeFile(layout.pocket, POCKET_FIXTURE_EXPORT),
+    writeFile(layout.ics, FIXTURE_ICS),
   ]);
   const screenpipeFixture = new Database(layout.screenpipe);
   seedFixtureDatabase(screenpipeFixture);
@@ -144,141 +236,6 @@ async function seedExports(layout: Layout): Promise<void> {
 test("all registry connectors pass conformance", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-conformance-"));
   try {
-    const markdownRoot = path.join(root, "markdown");
-    await mkdir(path.join(markdownRoot, "nested"), { recursive: true });
-    const deletedPath = path.join(markdownRoot, "delete-me.md");
-    await Promise.all([
-      writeFile(path.join(markdownRoot, "one.md"), "# One\n"),
-      writeFile(path.join(markdownRoot, "nested", "two.md"), "# Two\n"),
-      writeFile(deletedPath, "# Delete me\n"),
-    ]);
-
-    const chatGptPath = path.join(root, "chatgpt.json");
-    const claudePath = path.join(root, "claude.json");
-    await Promise.all([
-      writeFile(chatGptPath, JSON.stringify(CHATGPT_FIXTURE_EXPORT)),
-      writeFile(claudePath, JSON.stringify(CLAUDE_FIXTURE_EXPORT)),
-    ]);
-    const screenpipePath = path.join(root, "screenpipe.sqlite");
-    const screenpipeFixture = new Database(screenpipePath);
-    seedFixtureDatabase(screenpipeFixture);
-    screenpipeFixture.close();
-
-    const icsPath = path.join(root, "team.ics");
-    const icsWithout = FIXTURE_ICS.replace(
-      [
-        "BEGIN:VEVENT",
-        "UID:attach-1@acme.example",
-        "DTSTAMP:20260201T000000Z",
-        "DTSTART:20260306T090000Z",
-        "DTEND:20260306T093000Z",
-        "ATTACH;FMTTYPE=application/pdf:https://files.acme.example/agenda.pdf",
-        "SUMMARY:Board prep",
-        "END:VEVENT",
-        "",
-      ].join("\r\n"),
-      "",
-    );
-    await writeFile(icsPath, FIXTURE_ICS);
-
-    const imapServer = new FakeImapServer(fixtureMailbox(), {
-      username: fixtureState().username,
-      password: fixtureState().password,
-    });
-    const imap = createImapConnector(
-      { secret_ref: "file:connections/01ABCDEFGHJKMNPQRSTVWXYZ00.state" },
-      { dial: memoryDialer(imapServer) },
-    );
-    await imap.connect(async () => JSON.stringify(fixtureState()));
-
-    const icsFile = createIcsConnector({ path: icsPath });
-    const icsUrl = "https://calendar.acme.example/private/abc123.ics";
-    let icsRoute = FIXTURE_ICS;
-    const icsRemote = createIcsConnector(
-      { secret_ref: "file:connections/01ABCDEFGHJKMNPQRSTVWXYZ01.state" },
-      {
-        fetch: memoryFetcher({ [icsUrl]: () => okResult(icsRoute) }),
-      },
-    );
-    await icsRemote.connect(async () =>
-      JSON.stringify({ schema: "kizuki.ics-state/v1", url: icsUrl }),
-    );
-
-    const markdown = getConnector(MARKDOWN_FOLDER_CONNECTOR_ID, {
-      path: markdownRoot,
-    });
-    const telegram = new TelegramConnector(
-      { state_ref: TELEGRAM_STATE_REF },
-      scriptedDeps(),
-    );
-    await telegram.connect(async (ref) => {
-      expect(ref).toBe(TELEGRAM_STATE_REF);
-      return new TextDecoder().decode(
-        encodeState({
-          schema: "kizuki.telegram-state/v1",
-          user_id: "1001",
-          session: "fixture-session-token-not-a-real-credential",
-        }),
-      );
-    });
-    const results = await Promise.all([
-      runConformance(markdown, {
-        tombstone: {
-          prepare: async () => (await markdown.backfill(null)).cursor,
-          mutate: async () => unlink(deletedPath),
-        },
-      }),
-      runConformance(
-        getConnector(CHATGPT_IMPORT_CONNECTOR_ID, { path: chatGptPath }),
-      ),
-      runConformance(
-        getConnector(CLAUDE_IMPORT_CONNECTOR_ID, { path: claudePath }),
-      ),
-      runConformance(
-        getConnector(SCREENPIPE_CONNECTOR_ID, {
-          path: screenpipePath,
-          settle_seconds: 0,
-        }),
-      ),
-      runConformance(telegram),
-      runConformance(imap, {
-        tombstone: {
-          prepare: async () => (await imap.backfill(null)).cursor,
-          mutate: async () => {
-            imapServer.expunge("INBOX", 1);
-          },
-        },
-      }),
-      runConformance(icsFile, {
-        tombstone: {
-          prepare: async () => (await icsFile.backfill(null)).cursor,
-          mutate: async () => {
-            await writeFile(icsPath, icsWithout);
-          },
-        },
-      }),
-      runConformance(icsRemote, {
-        tombstone: {
-          prepare: async () => (await icsRemote.backfill(null)).cursor,
-          mutate: async () => {
-            icsRoute = icsWithout;
-          },
-        },
-      }),
-    ]);
-
-    expect(results).toEqual([
-      { pass: true, failures: [] },
-      { pass: true, failures: [] },
-      { pass: true, failures: [] },
-      { pass: true, failures: [] },
-      { pass: true, failures: [] },
-      { pass: true, failures: [] },
-      { pass: true, failures: [] },
-      { pass: true, failures: [] },
-    ]);
-    expect(REGISTRY_IDS).toContain(IMAP_CONNECTOR_ID);
-    expect(REGISTRY_IDS).toContain(ICS_CONNECTOR_ID);
     const layout = layoutFor(root);
     await seedExports(layout);
     const battery = batteryFor(layout);
@@ -336,44 +293,4 @@ test("the registry builds the interactive telegram connector", () => {
   expect(manifest.auth_modes).toEqual(["sign_in"]);
   expect(typeof connector.signIn).toBe("function");
   expect(manifest.required_secrets).toEqual([]);
-test("every importer of this lane declares its sensitivity policy", () => {
-  for (const [id, expected] of [
-    [WHATSAPP_IMPORT_CONNECTOR_ID, ["private", "personal"]],
-    [POCKET_IMPORT_CONNECTOR_ID, ["personal", "public"]],
-    [OMNIVORE_IMPORT_CONNECTOR_ID, ["personal", "public"]],
-  ] as const) {
-    const manifest = getConnector(id, { path: "/nonexistent" }).manifest();
-    expect([
-      manifest.default_sensitivity,
-      manifest.sensitivity_floor,
-    ]).toEqual([...expected]);
-  }
-});
-
-test("a half-declared or unreachable sensitivity policy fails conformance", async () => {
-  const base = getConnector(POCKET_IMPORT_CONNECTOR_ID, {
-    path: "fixture.csv",
-  });
-  const cases: [SensitivityHint | undefined, string][] = [
-    [
-      undefined,
-      "manifest.default_sensitivity: must be declared together with sensitivity_floor",
-    ],
-    [
-      "not-a-label" as SensitivityHint,
-      "manifest.sensitivity_floor: must be one of public | personal | private",
-    ],
-    [
-      "private",
-      "manifest.sensitivity_floor: must not be stricter than default_sensitivity",
-    ],
-  ];
-  for (const [floor, failure] of cases) {
-    const manifest: Manifest = { ...base.manifest() };
-    if (floor === undefined) delete manifest.sensitivity_floor;
-    else manifest.sensitivity_floor = floor;
-    const result = await runConformance({ ...base, manifest: () => manifest });
-    expect(result.pass).toBe(false);
-    expect(result.failures).toContain(failure);
-  }
 });

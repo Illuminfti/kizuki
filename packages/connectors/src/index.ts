@@ -87,6 +87,7 @@ export type {
   ImapConnectorConfig,
   ImapConnectorDeps,
 } from "@kizuki/connector-imap";
+export {
   MESSAGE_START,
   WHATSAPP_FIXTURE_FILES,
   WHATSAPP_FIXTURE_TIMEZONE,
