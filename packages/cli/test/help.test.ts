@@ -81,7 +81,7 @@ describe("help", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("tell");
     expect(runCli(env, "help", "tell").stdout).toContain(
-      'usage: kizuki tell "<statement>" [--about SUBJECT] [--claim CLAIM_ID]',
+      'usage: kizuki tell "<statement>" [--claim CLAIM_ID]',
     );
   });
 

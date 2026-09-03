@@ -119,8 +119,8 @@ describe("kizuki tell", () => {
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("target_required");
     expect(result.stderr).toContain("--claim");
-    expect(result.stderr).toContain("--about");
-    expect(result.stderr).toContain("--page");
+    expect(result.stderr).not.toContain("--about");
+    expect(result.stderr).not.toContain("--page");
   });
 
   test("tell --json prints the CorrectResult and --verbose prints the diff", async () => {

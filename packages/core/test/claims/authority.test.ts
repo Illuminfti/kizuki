@@ -5,6 +5,8 @@ import {
   listSupersessions,
 } from "../../src/claims/store";
 import { SINGLE_SOURCE_CAP } from "../../src/claims/authority";
+import { accept } from "../../src/ledger/ledger";
+import { validEvent } from "../fixtures";
 import {
   claimInput,
   claimsDb,
@@ -240,6 +242,52 @@ describe("claims authority", () => {
     if (result.outcome !== "stored") return;
     expect(result.claim.authority).toBe("model_inference");
     expect(result.claim.confidence).toBe(SINGLE_SOURCE_CAP);
+    db.close();
+  });
+
+  test("connector metadata cannot mint owner authority", async () => {
+    const db = claimsDb();
+    const accepted = accept(db, {
+      ...validEvent(),
+      connector_id: "fixture",
+      source_record_id: "rec-hostile-taint",
+      text: "Grace runs partnerships at Acme.",
+      metadata: { taint: "owner" },
+    });
+    expect(accepted.status).toBe("stored");
+    if (accepted.status !== "stored") return;
+    const filed = await insertClaim(
+      { db },
+      claimInput(accepted.event.event_id, { events: undefined }),
+    );
+    expect(filed.outcome).toBe("stored");
+    if (filed.outcome !== "stored") return;
+    expect(filed.claim.authority).toBe("model_inference");
+    expect(filed.claim.confidence).toBe(SINGLE_SOURCE_CAP);
+    db.close();
+  });
+
+  test("kizuki.owner events stay owner taint without metadata", async () => {
+    const db = claimsDb();
+    const accepted = accept(db, {
+      ...validEvent(),
+      connector_id: "kizuki.owner",
+      source_record_id: "rec-owner-plain",
+      text: "Grace runs partnerships at Acme.",
+      metadata: {},
+    });
+    expect(accepted.status).toBe("stored");
+    if (accepted.status !== "stored") return;
+    const filed = await insertClaim(
+      { db },
+      claimInput(accepted.event.event_id, {
+        producer: "deterministic",
+        events: undefined,
+      }),
+    );
+    expect(filed.outcome).toBe("stored");
+    if (filed.outcome !== "stored") return;
+    expect(filed.claim.authority).toBe("owner_authored");
     db.close();
   });
 

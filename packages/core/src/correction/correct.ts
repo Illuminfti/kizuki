@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { toolAllowed } from "../agents/authorization";
 import { applyCanonWrite } from "../canon/apply";
 import { resolveTarget } from "../canon/arbiter";
-import { createBudgetTracker } from "../canon/budget";
+import { BudgetExhausted, createBudgetTracker } from "../canon/budget";
+import { CanonWriteError } from "../canon/errors";
 import type { CanonIo } from "../canon";
 import { getCanonReceipt } from "../canon/receipts";
 import { getClaim, insertClaim, listClaims, supersedeLiveGroup } from "../claims/store";
@@ -27,7 +28,7 @@ import type { CorrectInput, CorrectIo, CorrectResult, CorrectTarget } from "./ty
 
 const STATEMENT_MAX = 2000;
 const TARGET_REQUIRED_HINT =
-  'kizuki tell "…" --claim <id>  (see kizuki audit). Also accepted: --about, --page.';
+  'kizuki tell "…" --claim <id>  (see kizuki audit).';
 
 function nowOf(io: CorrectIo): string {
   return io.now?.() ?? new Date().toISOString();
@@ -249,6 +250,7 @@ function reconstruct(
       page_path: receipt.page_path,
       before_hash: receipt.before_hash ?? "",
       after_hash: receipt.after_hash,
+      receipt_id: receipt.receipt_id,
       diff: page === null ? "" : unifiedDiff("", page.content, receipt.page_path),
     };
   });
@@ -279,11 +281,20 @@ function formatAnswer(
       ? `Corrected: ${subject} ${predicate} is ${now}.`
       : `Corrected: ${subject} ${predicate} is ${now} (was: ${was}).`;
   const pages = rewritten.map((row) => row.page_path).join(", ");
+  const undoIds = [
+    ...new Set(
+      [receiptId, ...rewritten.map((row) => row.receipt_id)].filter(
+        (id): id is string => typeof id === "string" && id.length > 0,
+      ),
+    ),
+  ];
   const undo =
-    receiptId === null ? "" : `\nUndo: kizuki undo ${receiptId}`;
+    undoIds.length === 0
+      ? ""
+      : `\nUndo: ${undoIds.map((id) => `kizuki undo ${id}`).join("; ")}`;
   const extra =
     remainder > 0
-      ? `\n${remainder} more page(s) not rewritten; continue with --page.`
+      ? `\n${remainder} more page(s) not rewritten in this pass.`
       : "";
   return [
     head,
@@ -536,7 +547,8 @@ export async function correct(io: CorrectIo, input: CorrectInput): Promise<Corre
         {
           page_path: page.rel_path,
           before_hash: existing.hash,
-          after_hash: existing.hash,
+          after_hash: new Bun.CryptoHasher("sha256").update(after).digest("hex"),
+          receipt_id: null,
           diff: unifiedDiff(existing.content, after, page.rel_path),
         },
       ];
@@ -641,16 +653,25 @@ export async function correct(io: CorrectIo, input: CorrectInput): Promise<Corre
             rel_path: page.rel_path,
             superseded: superseded.map((row) => row.claim_id),
           };
-    const receipt = applyCanonWrite(canon, stored, writeDecision, {
-      writer: "correction",
-      budget,
-    });
+    let receipt: ReturnType<typeof applyCanonWrite>;
+    try {
+      receipt = applyCanonWrite(canon, stored, writeDecision, {
+        writer: "correction",
+        budget,
+      });
+    } catch (error) {
+      if (error instanceof CanonWriteError || error instanceof BudgetExhausted) {
+        continue;
+      }
+      throw error;
+    }
     if (receiptId === null) receiptId = receipt.receipt_id;
     const after = readVaultPage(io.vault_path, receipt.page_path);
     rewritten.push({
       page_path: receipt.page_path,
       before_hash: receipt.before_hash ?? "",
       after_hash: receipt.after_hash,
+      receipt_id: receipt.receipt_id,
       diff: unifiedDiff(before, after?.content ?? before, receipt.page_path),
     });
   }

@@ -37,6 +37,7 @@ export interface CorrectResult {
     page_path: string;
     before_hash: string;
     after_hash: string;
+    receipt_id: string | null;
     diff: string;
   }[];
   ambiguous: { claim_key: string; claim_ids: string[]; score: number }[];
