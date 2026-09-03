@@ -11,7 +11,8 @@ export type KizukiErrorCode =
   | "unauthenticated"
   | "unreachable"
   | "rate_limited"
-  | "protocol";
+  | "protocol"
+  | "provider_error";
 
 export class KizukiError extends Error {
   readonly code: KizukiErrorCode;
