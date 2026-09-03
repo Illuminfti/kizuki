@@ -20,8 +20,42 @@ from .core import Guard, GuardError, Limits, Store
 
 
 DEFAULT_INTERVAL_SECONDS = 30.0
+DEFAULT_IDENTITY_REFRESH_SECONDS = 1800.0
 _STATUS_NAME = "loop-status.json"
 _LOCK_NAME = ".loop.lock"
+
+
+def _identity_inputs(adapters, receipts):
+    """Return cheap change evidence for the inputs to executable hashing.
+
+    Inode and ctime are intentionally included: replacing a binary or changing
+    it in place invalidates the cached digest even when its size and mtime are
+    preserved. A normal unprivileged process cannot restore ctime.
+    """
+    adapter_inputs = []
+    for adapter in adapters:
+        resolved = adapter._resolved()
+        if resolved is None:
+            adapter_inputs.append((adapter.name, adapter.executable, None))
+            continue
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(os.fspath(resolved), flags)
+        try:
+            item = os.fstat(fd)
+            if not stat.S_ISREG(item.st_mode):
+                raise GuardError("adapter executable must remain a regular file")
+            fingerprint = (
+                item.st_dev, item.st_ino, item.st_mode, item.st_uid, item.st_gid,
+                item.st_nlink, item.st_size, item.st_mtime_ns, item.st_ctime_ns,
+            )
+        finally:
+            os.close(fd)
+        adapter_inputs.append((adapter.name, adapter.executable, os.fspath(resolved), fingerprint))
+    receipt_inputs = tuple(sorted(
+        json.dumps(receipt, sort_keys=True, separators=(",", ":"))
+        for receipt in receipts
+    ))
+    return tuple(adapter_inputs), receipt_inputs
 
 
 class LoopAlreadyRunning(RuntimeError):
@@ -38,9 +72,12 @@ class ControlLoop:
     def __init__(self, state_dir, limits=None, interval_seconds=DEFAULT_INTERVAL_SECONDS,
                  store_factory=Store, clock=time.time, monotonic=time.monotonic,
                  sleeper=time.sleep, session_id=None, adapters=(),
-                 identity_validator=validate_identities):
+                 identity_validator=validate_identities,
+                 identity_refresh_seconds=DEFAULT_IDENTITY_REFRESH_SECONDS):
         if not isinstance(interval_seconds, (int, float)) or isinstance(interval_seconds, bool) or not 1 <= interval_seconds <= 3600:
             raise ValueError("loop interval must be 1..3600 seconds")
+        if not isinstance(identity_refresh_seconds, (int, float)) or isinstance(identity_refresh_seconds, bool) or not 1 <= identity_refresh_seconds <= 1800:
+            raise ValueError("identity refresh must be 1..1800 seconds")
         self.root = Path(state_dir)
         self.limits = limits or Limits()
         self.interval_seconds = float(interval_seconds)
@@ -50,11 +87,16 @@ class ControlLoop:
         self.sleeper = sleeper
         self.adapters = tuple(adapters)
         self.identity_validator = identity_validator
+        self.identity_refresh_seconds = float(identity_refresh_seconds)
         self.session_id = session_id or str(uuid.uuid4())
         self.started_at = self.clock()
         self._lock_fd = None
         self._stop_requested = False
         self._iteration = 0
+        self._identity_cache = None
+        self._identity_cache_inputs = None
+        self._identity_cache_wall_at = None
+        self._next_identity_refresh = 0.0
 
     def request_stop(self, *_):
         """Signal-safe intent marker; the run loop performs the only write."""
@@ -157,14 +199,35 @@ class ControlLoop:
                 Guard(self.limits).check(store)
                 snapshot = store.snapshot()
                 summary = self._summary(snapshot)
-                # Identity validation hashes the configured regular files; it
-                # never invokes a harness or inherits its environment.
-                identities = self.identity_validator(self.adapters, snapshot["adapter_receipts"])
+                # Full identity validation hashes the configured regular files;
+                # unchanged inputs reuse that result for at most 30 minutes.
+                # Cheap inode/ctime evidence invalidates it immediately on a
+                # persistent executable or receipt change. No path invokes a
+                # harness or inherits its environment.
+                identity_inputs = _identity_inputs(self.adapters, snapshot["adapter_receipts"])
+                identity_check_at = self.monotonic()
+                wall_age = None if self._identity_cache_wall_at is None else now - self._identity_cache_wall_at
+                refresh_identities = (
+                    self._identity_cache is None
+                    or identity_inputs != self._identity_cache_inputs
+                    or identity_check_at >= self._next_identity_refresh
+                    or wall_age is None
+                    or wall_age < 0
+                    or wall_age >= self.identity_refresh_seconds
+                )
+                identities = self.identity_validator(self.adapters, snapshot["adapter_receipts"]) if refresh_identities else self._identity_cache
+                if not isinstance(identities, dict):
+                    raise TypeError("identity validator must return a mapping")
                 # The validator timestamps its result. Sample the projection
                 # clock afterwards so a just-created identity cannot appear
                 # to come from the future by a few microseconds.
                 now = self.clock()
                 adapter_status = statuses(self.adapters, snapshot["adapter_receipts"], now=now, identities=identities)
+                if refresh_identities:
+                    self._identity_cache = identities
+                    self._identity_cache_inputs = identity_inputs
+                    self._identity_cache_wall_at = now
+                    self._next_identity_refresh = identity_check_at + self.identity_refresh_seconds
         except (GuardError, OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
             reasons.append("integrity_or_guard_failed:%s" % type(exc).__name__)
         except Exception as exc:

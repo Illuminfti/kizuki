@@ -74,6 +74,121 @@ class ControlLoopTests(unittest.TestCase):
         self.assertTrue(all(item["ready"] for item in result["adapters"]))
         self.assertFalse(result["execution_enabled"])
 
+    def test_unchanged_identity_is_reused_only_until_bounded_refresh(self):
+        executable = Path(self.tmp.name) / "harness"
+        executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        executable.chmod(0o700)
+        executable_sha = hashlib.sha256(executable.read_bytes()).hexdigest()
+        adapters = tuple(Adapter(name, str(executable)) for name in ("codex", "claude", "cursor", "grok"))
+        with Store(self.tmp.name) as store:
+            store.claim_controller()
+            for adapter in adapters:
+                store.record_adapter_receipt(adapter.name, "v", "READY", "READY", "a" * 64, executable_sha, "ISOLATED_ROUTE_PROBE", 60)
+
+        wall = [100.0]
+        monotonic = [0.0]
+        outcomes = iter((True, False))
+
+        def validator(_adapters, _receipts):
+            current = next(outcomes)
+            return {adapter.name: {"current": current, "checked_at": wall[0]} for adapter in adapters}
+
+        loop = ControlLoop(
+            self.tmp.name,
+            Limits(min_free_bytes=1),
+            adapters=adapters,
+            clock=lambda: wall[0],
+            monotonic=lambda: monotonic[0],
+            identity_validator=validator,
+            identity_refresh_seconds=10,
+        )
+        self.assertEqual(loop.tick()["state"], "RUNNING")
+        wall[0] = 109.0
+        monotonic[0] = 9.0
+        self.assertEqual(loop.tick()["state"], "RUNNING")
+        wall[0] = 110.0
+        monotonic[0] = 10.0
+        self.assertEqual(loop.tick()["state"], "DEGRADED")
+
+    def test_executable_replacement_invalidates_cached_identity_immediately(self):
+        executable = Path(self.tmp.name) / "harness"
+        executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        executable.chmod(0o700)
+        original = executable.stat()
+        executable_sha = hashlib.sha256(executable.read_bytes()).hexdigest()
+        adapters = tuple(Adapter(name, str(executable)) for name in ("codex", "claude", "cursor", "grok"))
+        with Store(self.tmp.name) as store:
+            store.claim_controller()
+            for adapter in adapters:
+                store.record_adapter_receipt(adapter.name, "v", "READY", "READY", "a" * 64, executable_sha, "ISOLATED_ROUTE_PROBE", 60)
+
+        loop = ControlLoop(self.tmp.name, Limits(min_free_bytes=1), adapters=adapters)
+        self.assertEqual(loop.tick()["state"], "RUNNING")
+
+        replacement = Path(self.tmp.name) / "replacement"
+        replacement.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        replacement.chmod(0o700)
+        os.utime(replacement, ns=(original.st_atime_ns, original.st_mtime_ns))
+        os.replace(replacement, executable)
+
+        result = loop.tick()
+        self.assertEqual(result["state"], "DEGRADED")
+        self.assertTrue(all(not item["ready"] for item in result["adapters"]))
+
+    def test_identity_refresh_deadline_includes_suspended_time(self):
+        executable = Path(self.tmp.name) / "harness"
+        executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        executable.chmod(0o700)
+        executable_sha = hashlib.sha256(executable.read_bytes()).hexdigest()
+        adapters = tuple(Adapter(name, str(executable)) for name in ("codex", "claude", "cursor", "grok"))
+        with Store(self.tmp.name) as store:
+            store.claim_controller()
+            for adapter in adapters:
+                store.record_adapter_receipt(adapter.name, "v", "READY", "READY", "a" * 64, executable_sha, "ISOLATED_ROUTE_PROBE", 60)
+
+        wall = [100.0]
+        outcomes = iter((True, False))
+
+        def validator(_adapters, _receipts):
+            current = next(outcomes)
+            return {adapter.name: {"current": current, "checked_at": wall[0]} for adapter in adapters}
+
+        loop = ControlLoop(
+            self.tmp.name,
+            Limits(min_free_bytes=1),
+            adapters=adapters,
+            clock=lambda: wall[0],
+            monotonic=lambda: 0.0,
+            identity_validator=validator,
+            identity_refresh_seconds=10,
+        )
+        self.assertEqual(loop.tick()["state"], "RUNNING")
+        wall[0] = 111.0
+        self.assertEqual(loop.tick()["state"], "DEGRADED")
+
+    def test_receipt_change_invalidates_cached_identity_immediately(self):
+        executable = Path(self.tmp.name) / "harness"
+        executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        executable.chmod(0o700)
+        executable_sha = hashlib.sha256(executable.read_bytes()).hexdigest()
+        adapters = tuple(Adapter(name, str(executable)) for name in ("codex", "claude", "cursor", "grok"))
+        with Store(self.tmp.name) as store:
+            store.claim_controller()
+            for adapter in adapters:
+                store.record_adapter_receipt(adapter.name, "v", "READY", "READY", "a" * 64, executable_sha, "ISOLATED_ROUTE_PROBE", 60)
+
+        loop = ControlLoop(self.tmp.name, Limits(min_free_bytes=1), adapters=adapters)
+        self.assertEqual(loop.tick()["state"], "RUNNING")
+
+        with Store(self.tmp.name) as store:
+            store.claim_controller()
+            store.record_adapter_receipt("codex", "v", "READY", "READY", "a" * 64, "b" * 64, "ISOLATED_ROUTE_PROBE", 60)
+
+        result = loop.tick()
+        self.assertEqual(result["state"], "DEGRADED")
+        codex = next(item for item in result["adapters"] if item["name"] == "codex")
+        self.assertFalse(codex["ready"])
+
     def test_store_failure_replaces_stale_running_status_with_degraded(self):
         class BrokenStore:
             def __init__(self, _):
