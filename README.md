@@ -89,8 +89,9 @@ It takes an exclusive flock in the state directory every time it starts, checks
 the ledger/projection and circuit breakers at a fixed monotonic interval, and
 atomically publishes a mode-0600 `loop-status.json`. Its status includes the
 campaign/task/incident counts and persisted readiness of Codex, Claude, Cursor,
-and Grok. It never claims controller authority, starts a worker, probes an
-adapter, sends network traffic, calls GitHub, or enables a merge.
+and Grok. It hashes configured harness executables to reject stale identity
+receipts, but never claims controller authority, starts or invokes a worker,
+sends network traffic, calls GitHub, or enables a merge.
 
 Install it alongside the observer with:
 
