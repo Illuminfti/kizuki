@@ -20,12 +20,14 @@ export type {
   StagingStatus,
 } from "./proposals";
 
+export { pageCandidateProposal } from "./page-candidate";
+
 export {
   cascadeTombstone,
   proposalsForEvent,
   withdrawForTombstone,
 } from "./producers";
-export type { TombstoneCascade } from "./producers";
+export type { ProducerGrants, TombstoneCascade } from "./producers";
 
 export {
   PAGE_TYPES,

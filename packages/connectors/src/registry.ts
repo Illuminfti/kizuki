@@ -45,6 +45,16 @@ import {
 } from "./import-omnivore";
 import type { OmnivoreImportConfig } from "./import-omnivore";
 import {
+  LEGACY_EVENTS_CONNECTOR_ID,
+  createLegacyEventsConnector,
+} from "./import-legacy-events";
+import type { LegacyEventsConfig } from "./import-legacy-events";
+import {
+  LEGACY_WIKI_CONNECTOR_ID,
+  createLegacyWikiConnector,
+} from "./import-legacy-wiki";
+import type { LegacyWikiConfig } from "./import-legacy-wiki";
+import {
   MARKDOWN_FOLDER_CONNECTOR_ID,
   createMarkdownFolderConnector,
 } from "./markdown-folder";
@@ -62,6 +72,8 @@ export const REGISTRY = Object.freeze({
   [WHATSAPP_IMPORT_CONNECTOR_ID]: createWhatsAppImportConnector,
   [POCKET_IMPORT_CONNECTOR_ID]: createPocketImportConnector,
   [OMNIVORE_IMPORT_CONNECTOR_ID]: createOmnivoreImportConnector,
+  [LEGACY_WIKI_CONNECTOR_ID]: createLegacyWikiConnector,
+  [LEGACY_EVENTS_CONNECTOR_ID]: createLegacyEventsConnector,
 });
 
 export type ConnectorId = keyof typeof REGISTRY;
@@ -106,6 +118,14 @@ export function getConnector(
   id: typeof OMNIVORE_IMPORT_CONNECTOR_ID,
   config: OmnivoreImportConfig,
 ): Connector;
+export function getConnector(
+  id: typeof LEGACY_WIKI_CONNECTOR_ID,
+  config: LegacyWikiConfig,
+): Connector;
+export function getConnector(
+  id: typeof LEGACY_EVENTS_CONNECTOR_ID,
+  config: LegacyEventsConfig,
+): Connector;
 export function getConnector(id: string, config?: unknown): Connector;
 export function getConnector(id: string, config?: unknown): Connector {
   switch (id) {
@@ -129,6 +149,10 @@ export function getConnector(id: string, config?: unknown): Connector {
       return createPocketImportConnector(config as PocketImportConfig);
     case OMNIVORE_IMPORT_CONNECTOR_ID:
       return createOmnivoreImportConnector(config as OmnivoreImportConfig);
+    case LEGACY_WIKI_CONNECTOR_ID:
+      return createLegacyWikiConnector(config as LegacyWikiConfig);
+    case LEGACY_EVENTS_CONNECTOR_ID:
+      return createLegacyEventsConnector(config as LegacyEventsConfig);
     default:
       throw new KizukiError(
         "unknown_connector",

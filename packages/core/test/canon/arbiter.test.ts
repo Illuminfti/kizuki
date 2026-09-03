@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chooseCandidate, pageRelPath, resolveTarget } from "../../src/canon/arbiter";
+import { targetProblem, targetRefusal } from "../../src/contracts/page-candidate";
 import { CanonWriteError } from "../../src/canon/errors";
 import { rebuildPageIndex } from "../../src/canon/store";
 import { getClaim } from "../../src/claims/store";
@@ -42,6 +43,51 @@ describe("pageRelPath", () => {
     expect(() => pageRelPath({ claim_id: "01A", target: `x/${"y".repeat(65)}` })).toThrow(
       CanonWriteError,
     );
+  });
+
+  // A producer that mints a target checks it with `targetProblem` before it
+  // files anything. If the two rules ever drift, the producer promises a page
+  // the writer will refuse, so pin them to each other rather than to a copy.
+  test("accepts exactly the targets targetRefusal calls usable", () => {
+    const targets = [
+      "people/grace",
+      "people:grace",
+      "a/b/c/d/e/f/g/h",
+      "a/b/c/d/e/f/g/h/i",
+      "a/../b",
+      "a//b",
+      "a/ b",
+      `x/${"y".repeat(64)}`,
+      `x/${"y".repeat(65)}`,
+      "-leading",
+      ".hidden",
+    ];
+    for (const target of targets) {
+      const refusal = targetRefusal(target);
+      expect(refusal === null).toBe(targetProblem(target) === null);
+      if (refusal === null) {
+        expect(pageRelPath({ claim_id: "01A", target })).toBe(
+          `${target.split(/[:/]/).join("/")}.md`,
+        );
+        continue;
+      }
+      expect(() => pageRelPath({ claim_id: "01A", target })).toThrow(refusal);
+    }
+  });
+
+  test("the refusal quotes nothing from the target it refused", () => {
+    // A claim target is derived from captured text, so the writer's error is
+    // the rule alone; the producer-side check may name the segment.
+    const target = `people/${"my private diary entry ".repeat(20)}`;
+    let message = "";
+    try {
+      pageRelPath({ claim_id: "01A", target });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toBe("target: unusable path segment");
+    expect(targetProblem(target)).toContain("my private diary");
+    expect((targetProblem(target) as string).length).toBeLessThan(120);
   });
 });
 

@@ -172,6 +172,10 @@ kizuki doctor
 kizuki export --out ./export
 ```
 
+Two migration importers move a previous personal-knowledge estate in: a
+markdown wiki and a SQLite/JSONL event table, both driven by owner-written
+mapping files. See [docs/legacy-import.md](docs/legacy-import.md).
+
 Designed, not built (see [docs/architecture.md](docs/architecture.md)):
 
 - MCP serving, `correct`, and a standing serve daemon

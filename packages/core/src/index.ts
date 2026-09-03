@@ -2,6 +2,7 @@ export {
   EVENT_SCHEMA,
   SENSITIVITY_HINTS,
   SUBJECT_ROLES,
+  raiseSensitivity,
   validateEventInput,
 } from "./contracts/event";
 export type {
@@ -12,6 +13,15 @@ export type {
   SubjectRef,
   SubjectRole,
 } from "./contracts/event";
+
+export {
+  ENTITY_PAGE_TYPES,
+  PAGE_CANDIDATE_KEY,
+  PAGE_CANDIDATE_SCHEMA,
+  targetProblem,
+  validatePageCandidate,
+} from "./contracts/page-candidate";
+export type { PageCandidate as StagedPageCandidate } from "./contracts/page-candidate";
 
 export {
   AUTHORITY_TIERS,

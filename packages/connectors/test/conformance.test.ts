@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -10,6 +10,10 @@ import {
   CLAUDE_IMPORT_CONNECTOR_ID,
   ICS_CONNECTOR_ID,
   IMAP_CONNECTOR_ID,
+  LEGACY_EVENTS_CONNECTOR_ID,
+  LEGACY_EVENTS_FIXTURE,
+  LEGACY_WIKI_CONNECTOR_ID,
+  LEGACY_WIKI_FIXTURE,
   MARKDOWN_FOLDER_CONNECTOR_ID,
   OMNIVORE_FIXTURE_FILES,
   OMNIVORE_IMPORT_CONNECTOR_ID,
@@ -30,6 +34,7 @@ import {
   seedFixtureDatabase,
 } from "../src";
 import type { ConformanceResult } from "../src";
+import { fixtureJsonl as jsonlFixture } from "../src/import-legacy-events/fixture";
 import { encodeState } from "@kizuki/connector-telegram";
 import type { Connector } from "@kizuki/core";
 import {
@@ -55,6 +60,10 @@ interface Layout {
   pocket: string;
   omnivore: string;
   ics: string;
+  wiki: string;
+  removedWikiPage: string;
+  eventsDb: string;
+  eventsJsonl: string;
   deletedMarkdown: string;
 }
 
@@ -68,6 +77,10 @@ function layoutFor(root: string): Layout {
     pocket: path.join(root, "pocket.csv"),
     omnivore: path.join(root, "omnivore"),
     ics: path.join(root, "team.ics"),
+    wiki: path.join(root, "wiki"),
+    removedWikiPage: path.join(root, "wiki", "notes", "plan.md"),
+    eventsDb: path.join(root, "legacy.db"),
+    eventsJsonl: path.join(root, "legacy.jsonl"),
     deletedMarkdown: path.join(root, "markdown", "delete-me.md"),
   };
 }
@@ -205,6 +218,61 @@ function batteryFor(
       });
       return combine([fileResult, remoteResult]);
     },
+    [LEGACY_WIKI_CONNECTOR_ID]: async () => {
+      const wiki = getConnector(LEGACY_WIKI_CONNECTOR_ID, { path: layout.wiki });
+      return runConformance(wiki, {
+        tombstone: {
+          prepare: async () => (await wiki.backfill(null)).cursor,
+          mutate: async () => unlink(layout.removedWikiPage),
+        },
+      });
+    },
+    [LEGACY_EVENTS_CONNECTOR_ID]: async () => {
+      const eventsDb = getConnector(LEGACY_EVENTS_CONNECTOR_ID, {
+        path: layout.eventsDb,
+      });
+      const eventsJsonl = getConnector(LEGACY_EVENTS_CONNECTOR_ID, {
+        path: layout.eventsJsonl,
+      });
+      const dbResult = await runConformance(eventsDb, {
+        tombstone: {
+          prepare: async () => {
+            let cursor: string | null = null;
+            for (let page = 0; page < 20; page += 1) {
+              const batch = await eventsDb.backfill(cursor);
+              cursor = batch.cursor;
+              if (batch.events.length === 0) break;
+            }
+            return cursor;
+          },
+          mutate: async () => {
+            const db = new Database(layout.eventsDb);
+            db.exec(
+              "INSERT INTO events (id, type, ts, subject, body, is_deleted) VALUES ('r99', 'msg', 1767226380, 'Gone', 'Removed at the source.', 1)",
+            );
+            db.close();
+          },
+        },
+      });
+      const jsonlResult = await runConformance(eventsJsonl, {
+        tombstone: {
+          prepare: async () => (await eventsJsonl.backfill(null)).cursor,
+          mutate: async () =>
+            appendFile(
+              layout.eventsJsonl,
+              `${JSON.stringify({
+                id: "r99",
+                type: "msg",
+                ts: 1_767_226_380,
+                subject: "Gone",
+                body: "Removed at the source.",
+                is_deleted: 1,
+              })}\n`,
+            ),
+        },
+      });
+      return combine([dbResult, jsonlResult]);
+    },
   };
 }
 
@@ -231,6 +299,27 @@ async function seedExports(layout: Layout): Promise<void> {
     await mkdir(path.dirname(target), { recursive: true });
     await writeFile(target, content);
   }
+  for (const file of LEGACY_WIKI_FIXTURE.files) {
+    const target = path.join(layout.wiki, file.relpath);
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, file.content);
+  }
+  await writeFile(
+    path.join(layout.wiki, "kizuki-mapping.json"),
+    JSON.stringify(LEGACY_WIKI_FIXTURE.mapping),
+  );
+  const eventsDb = new Database(layout.eventsDb);
+  eventsDb.exec(LEGACY_EVENTS_FIXTURE.sql);
+  eventsDb.close();
+  await writeFile(
+    `${layout.eventsDb}.kizuki-mapping.json`,
+    JSON.stringify(LEGACY_EVENTS_FIXTURE.mapping),
+  );
+  await writeFile(layout.eventsJsonl, jsonlFixture());
+  await writeFile(
+    `${layout.eventsJsonl}.kizuki-mapping.json`,
+    JSON.stringify({ ...LEGACY_EVENTS_FIXTURE.mapping, table: null }),
+  );
 }
 
 test("all registry connectors pass conformance", async () => {

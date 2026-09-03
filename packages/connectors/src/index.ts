@@ -152,3 +152,47 @@ export {
   safeFilename,
   subjectSlug,
 } from "./util";
+export {
+  LEGACY_WIKI_CONNECTOR_ID,
+  LEGACY_WIKI_FIXTURE,
+  LEGACY_WIKI_REPORT_SCHEMA,
+  LegacyWikiConnector,
+  createLegacyWikiConnector,
+  parseLegacyFrontmatter,
+  parseLegacyWikiMapping,
+  planLegacyWiki,
+  renderLegacyWikiReport,
+  scanLegacyWiki,
+} from "./import-legacy-wiki";
+export type {
+  LegacyFrontmatter,
+  LegacyWikiConfig,
+  LegacyWikiFieldReport,
+  LegacyWikiFile,
+  LegacyWikiMapping,
+  LegacyWikiPageReport,
+  LegacyWikiReport,
+  ScanResult,
+} from "./import-legacy-wiki";
+export {
+  LEGACY_EVENTS_CONNECTOR_ID,
+  LEGACY_EVENTS_FIXTURE,
+  LEGACY_EVENTS_REPORT_SCHEMA,
+  LegacyEventsConnector,
+  createLegacyEventsConnector,
+  kindsOf,
+  openJsonlSource,
+  openSqliteSource,
+  parseLegacyEventsMapping,
+  renderLegacyEventsReport,
+  rowToEvent,
+} from "./import-legacy-events";
+export type {
+  LegacyEventsConfig,
+  LegacyEventsMapping,
+  LegacyEventsReport,
+  LegacyRow,
+  LegacyRowSource,
+  RowSkip,
+  RowSkipReason,
+} from "./import-legacy-events";

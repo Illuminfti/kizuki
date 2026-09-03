@@ -44,6 +44,13 @@ export interface ManifestCapabilities {
   tombstones: boolean;
   purge: boolean;
   fixture: boolean;
+  /**
+   * Whether the host may stage a typed page from this source's event metadata
+   * rather than a quoted capture note. Metadata is attacker-controlled input
+   * (AGENTS.md invariant 7), so the grant is bound to the connector rather
+   * than carried in the metadata that asks for it, and its absence denies.
+   */
+  page_candidates?: boolean;
 }
 
 export interface Manifest {

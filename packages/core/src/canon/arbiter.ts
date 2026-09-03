@@ -1,3 +1,4 @@
+import { targetRefusal } from "../contracts/page-candidate";
 import type { Claim, ClaimKind } from "../contracts/proposal";
 import { AUTHORITY_TIERS } from "../contracts/proposal";
 import { tableExists } from "../ledger/schema";
@@ -43,23 +44,19 @@ const PROSE_KINDS: ReadonlySet<ClaimKind> = new Set(["entity", "claim", "edit", 
 /**
  * Path derivation is unchanged from the pre-RFC promote: `target` split on
  * `[:/]`, at most 8 segments of at most 64 chars, `captures/<claim_id>.md`
- * when the target is null.
+ * when the target is null. The grammar lives with the contract so a producer
+ * can check a target against the rule the writer will apply, not a copy.
  */
 export function pageRelPath(claim: { claim_id: string; target: string | null }): string {
   const target = claim.target;
   if (target === null || target.length === 0) {
     return `captures/${claim.claim_id}.md`;
   }
-  const segments = target.split(/[:/]/);
-  if (segments.length > MAX_SEGMENTS) {
-    throw new CanonWriteError("target_invalid", `target: more than ${MAX_SEGMENTS} path segments`);
-  }
-  for (const segment of segments) {
-    if (segment.length > MAX_SEGMENT_LENGTH || !PATH_SEGMENT.test(segment)) {
-      throw new CanonWriteError("target_invalid", "target: unusable path segment");
-    }
-  }
-  return `${segments.join("/")}.md`;
+  // The rule alone: a claim target is derived from captured text, and the
+  // writer's error must not echo it back.
+  const refusal = targetRefusal(target);
+  if (refusal !== null) throw new CanonWriteError("target_invalid", refusal);
+  return `${target.split(/[:/]/).join("/")}.md`;
 }
 
 /**

@@ -10,6 +10,21 @@ export type SubjectRole = (typeof SUBJECT_ROLES)[number];
 export const SENSITIVITY_HINTS = ["public", "personal", "private"] as const;
 export type SensitivityHint = (typeof SENSITIVITY_HINTS)[number];
 
+/**
+ * The lattice `public < personal < private` (RFC 0002 §8.1). Sensitivity
+ * resolves as a `max` over the floor, the default or model label and the
+ * owner's, so every caller that combines two labels needs the same rule:
+ * refinement only ever moves up.
+ */
+export function raiseSensitivity(
+  left: SensitivityHint,
+  right: SensitivityHint,
+): SensitivityHint {
+  return SENSITIVITY_HINTS.indexOf(left) >= SENSITIVITY_HINTS.indexOf(right)
+    ? left
+    : right;
+}
+
 export interface SubjectRef {
   subject_id: string; // stable id within the emitting connector's namespace
   role: SubjectRole;
