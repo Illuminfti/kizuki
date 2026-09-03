@@ -26,6 +26,11 @@ jobs:
         run: |
           git fetch --no-tags origin main
           git diff --check FETCH_HEAD...HEAD
+      - name: copy pinned toolchain
+        if: always()
+        run: |
+          mkdir -p .tooling
+          cp "$(command -v bun)" .tooling/bun
       - name: package exact-head workspace
         if: always()
         run: tar --exclude=.git --exclude=./.git --exclude=kizuki-workspace.tar.gz -czf kizuki-workspace.tar.gz .
