@@ -260,16 +260,9 @@ export async function runAudit(opts: AuditOptions): Promise<AuditSummary> {
     return false;
   };
 
-  terminal.enter();
-  try {
-    draw();
-  } catch (error) {
-    terminal.leave();
-    throw error;
-  }
-
   return new Promise<AuditSummary>((resolve, reject) => {
     let finished = false;
+    let stopKeys = (): void => {};
     const finish = (error?: unknown): void => {
       if (finished) return;
       finished = true;
@@ -295,11 +288,22 @@ export async function runAudit(opts: AuditOptions): Promise<AuditSummary> {
     const stopResize = terminal.onResize(() => {
       if (!finished) safeDraw();
     });
-    const stopClose = terminal.onClose(() => {
+    const stopClose = terminal.onClose((reason, error) => {
+      if (reason === "uncaughtException" || reason === "unhandledRejection") {
+        finish(error ?? new Error(reason));
+        return;
+      }
       finish();
     });
+    try {
+      terminal.enter();
+      draw();
+    } catch (error) {
+      finish(error);
+      return;
+    }
     let keyQueue: Promise<void> = Promise.resolve();
-    const stopKeys = terminal.onKeys((keys) => {
+    stopKeys = terminal.onKeys((keys) => {
       if (finished) return;
       keyQueue = keyQueue
         .then(async () => {

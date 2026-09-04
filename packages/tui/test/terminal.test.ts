@@ -30,7 +30,10 @@ class FakeStdout extends EventEmitter {
   }
 }
 
-function signalBus(): SignalHost & { emit(event: string): void; count(event: string): number } {
+function signalBus(): SignalHost & {
+  emit(event: string, ...args: unknown[]): void;
+  count(event: string): number;
+} {
   const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
   return {
     on(event, listener) {
@@ -41,8 +44,8 @@ function signalBus(): SignalHost & { emit(event: string): void; count(event: str
     off(event, listener) {
       listeners.get(event)?.delete(listener);
     },
-    emit(event) {
-      for (const listener of listeners.get(event) ?? []) listener();
+    emit(event, ...args: unknown[]) {
+      for (const listener of listeners.get(event) ?? []) listener(...args);
     },
     count(event) {
       return listeners.get(event)?.size ?? 0;
@@ -89,6 +92,46 @@ describe("createTerminal", () => {
     expect(stdout.writes.some((chunk) => chunk.includes(`${CSI}?1049l`))).toBe(true);
     terminal.leave();
     expect(signals.count("SIGTERM")).toBe(0);
+  });
+
+  test("a fatal signal restores the TTY and closes the session", () => {
+    const stdin = new FakeStdin();
+    const stdout = new FakeStdout();
+    const signals = signalBus();
+    const terminal = createTerminal(
+      stdin as unknown as NodeJS.ReadStream,
+      stdout as unknown as NodeJS.WriteStream,
+      { signals },
+    );
+    const reasons: string[] = [];
+    terminal.onClose((reason) => {
+      reasons.push(reason);
+    });
+    terminal.enter();
+    signals.emit("SIGTERM");
+    expect(stdin.isRaw).toBe(false);
+    expect(reasons).toEqual(["SIGTERM"]);
+    expect(signals.count("SIGTERM")).toBe(0);
+  });
+
+  test("an uncaught exception restores the TTY and closes as a crash", () => {
+    const stdin = new FakeStdin();
+    const stdout = new FakeStdout();
+    const signals = signalBus();
+    const terminal = createTerminal(
+      stdin as unknown as NodeJS.ReadStream,
+      stdout as unknown as NodeJS.WriteStream,
+      { signals },
+    );
+    const seen: { reason: string; error: unknown }[] = [];
+    terminal.onClose((reason, error) => {
+      seen.push({ reason, error });
+    });
+    terminal.enter();
+    const boom = new Error("boom");
+    signals.emit("uncaughtException", boom);
+    expect(stdin.isRaw).toBe(false);
+    expect(seen).toEqual([{ reason: "uncaughtException", error: boom }]);
   });
 
   test("onClose fires for end, close, and error", () => {

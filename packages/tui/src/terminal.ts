@@ -9,8 +9,8 @@ export interface Terminal {
   draw(frame: string[]): void;
   onKeys(handler: (keys: Key[]) => void): () => void;
   onResize(handler: () => void): () => void;
-  /** stdin ended, closed, or errored — same cleanup path as quit. */
-  onClose(handler: (reason: "end" | "close" | "error") => void): () => void;
+  /** stdin ended, a fatal signal, or a crash — same cleanup path as quit. */
+  onClose(handler: (reason: CloseReason, error?: unknown) => void): () => void;
   enter(): void;
   leave(): void;
   /** Leaves the screen, runs `fn` (an editor, typically), then re-enters. */
@@ -45,6 +45,12 @@ const FATAL_EVENTS = [
   "unhandledRejection",
 ] as const;
 
+export type CloseReason = "end" | "close" | "error" | (typeof FATAL_EVENTS)[number];
+
+function isCrash(reason: CloseReason): boolean {
+  return reason === "uncaughtException" || reason === "unhandledRejection";
+}
+
 export function createTerminal(
   stdin: NodeJS.ReadStream = process.stdin,
   stdout: NodeJS.WriteStream = process.stdout,
@@ -59,6 +65,8 @@ export function createTerminal(
   const signalHost: SignalHost | null =
     opts.signals === undefined ? (process as unknown as SignalHost) : opts.signals;
   let uninstallSignals: (() => void) | null = null;
+  let closeHandler: ((reason: CloseReason, error?: unknown) => void) | null = null;
+  const ownsProcess = opts.signals === undefined;
 
   const restore = (): void => {
     if (!entered) return;
@@ -85,15 +93,40 @@ export function createTerminal(
     uninstallSignals = null;
   };
 
+  const die = (reason: CloseReason, error?: unknown): void => {
+    restore();
+    if (closeHandler !== null) {
+      closeHandler(reason, error);
+      return;
+    }
+    if (!ownsProcess) return;
+    if (isCrash(reason)) {
+      const err = error instanceof Error ? error : new Error(reason);
+      process.nextTick(() => {
+        throw err;
+      });
+      return;
+    }
+    process.exitCode = process.exitCode ?? 1;
+    process.exit();
+  };
+
   const installSignals = (): void => {
     if (signalHost === null) return;
     const host = signalHost;
-    const handler = (): void => {
-      restore();
-    };
-    for (const event of FATAL_EVENTS) host.on(event, handler);
+    const handlers = new Map<string, (...args: unknown[]) => void>();
+    for (const event of FATAL_EVENTS) {
+      const handler = (...args: unknown[]): void => {
+        die(event, args[0]);
+      };
+      handlers.set(event, handler);
+      host.on(event, handler);
+    }
     uninstallSignals = () => {
-      for (const event of FATAL_EVENTS) host.off(event, handler);
+      for (const event of FATAL_EVENTS) {
+        const handler = handlers.get(event);
+        if (handler !== undefined) host.off(event, handler);
+      }
     };
   };
 
@@ -127,6 +160,7 @@ export function createTerminal(
       };
     },
     onClose(handler) {
+      closeHandler = handler;
       const onEnd = (): void => handler("end");
       const onClosed = (): void => handler("close");
       const onError = (): void => handler("error");
@@ -134,6 +168,7 @@ export function createTerminal(
       stdin.on("close", onClosed);
       stdin.on("error", onError);
       return () => {
+        closeHandler = null;
         stdin.off("end", onEnd);
         stdin.off("close", onClosed);
         stdin.off("error", onError);

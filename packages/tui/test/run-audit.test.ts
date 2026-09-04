@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initVault, openLedger } from "@kizuki/core";
 import { loadItems, runAudit } from "../src/app";
-import type { Terminal } from "../src/terminal";
+import type { CloseReason, Terminal } from "../src/terminal";
 import type { Key } from "../src/keys";
 
 const temporary: string[] = [];
@@ -22,9 +22,10 @@ function fakeTerminal(): {
   push(keys: Key[]): void;
   close(): void;
   failDraw(): void;
+  fatal(reason: CloseReason, error?: unknown): void;
 } {
   let keyHandler: ((keys: Key[]) => void) | null = null;
-  let closeHandler: ((reason: "end" | "close" | "error") => void) | null = null;
+  let closeHandler: ((reason: CloseReason, error?: unknown) => void) | null = null;
   let explode = false;
   const frames: string[][] = [];
   const api = {
@@ -38,6 +39,9 @@ function fakeTerminal(): {
     },
     failDraw() {
       explode = true;
+    },
+    fatal(reason: CloseReason, error?: unknown) {
+      closeHandler?.(reason, error);
     },
     terminal: {
       isTTY: true,
@@ -55,7 +59,7 @@ function fakeTerminal(): {
       onResize() {
         return () => {};
       },
-      onClose(handler: (reason: "end" | "close" | "error") => void) {
+      onClose(handler: (reason: CloseReason, error?: unknown) => void) {
         closeHandler = handler;
         return () => {
           closeHandler = null;
@@ -118,6 +122,32 @@ describe("runAudit", () => {
     const done = runAudit({ db, vaultPath: vault, terminal: fake.terminal });
     fake.push([{ name: "char", ch: "q" }]);
     await expect(done).resolves.toEqual({ undone: 0 });
+    expect(fake.entered).toBe(false);
+    db.close();
+  });
+
+  test("a fatal signal restores the terminal and resolves the session", async () => {
+    const vault = mkdtempSync(join(tmpdir(), "kizuki-audit-signal-"));
+    temporary.push(vault);
+    initVault(vault);
+    const db = openLedger(":memory:");
+    const fake = fakeTerminal();
+    const done = runAudit({ db, vaultPath: vault, terminal: fake.terminal });
+    fake.fatal("SIGTERM");
+    await expect(done).resolves.toEqual({ undone: 0 });
+    expect(fake.entered).toBe(false);
+    db.close();
+  });
+
+  test("an uncaught exception restores the terminal and rejects the session", async () => {
+    const vault = mkdtempSync(join(tmpdir(), "kizuki-audit-crash-"));
+    temporary.push(vault);
+    initVault(vault);
+    const db = openLedger(":memory:");
+    const fake = fakeTerminal();
+    const done = runAudit({ db, vaultPath: vault, terminal: fake.terminal });
+    fake.fatal("uncaughtException", new Error("boom"));
+    await expect(done).rejects.toThrow("boom");
     expect(fake.entered).toBe(false);
     db.close();
   });

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { applyItems, initialState, reduce } from "../src/model";
+import { applyItems, initialState, reduce, withNotice } from "../src/model";
 import type { Effect } from "../src/model";
 import { render } from "../src/view";
 import { paint, sanitize, stringWidth } from "../src/ansi";
@@ -196,6 +196,51 @@ describe("audit reducer", () => {
     ]);
     expect(drifted.mode.name).toBe("list");
     expect(drifted.notice?.text).toContain("selection changed");
+  });
+
+  test("a session notice is visible even when vault health is set", () => {
+    const start = initialState({
+      vaultName: "vault",
+      today: "2026-09-02",
+      items: [item()],
+      health: { text: "2 unreadable or duplicate canon page(s); run kizuki doctor", tone: "error" },
+    });
+    const healthOnly = render(start, { cols: 120, rows: 24, paint: paint(false) }).join("\n");
+    expect(healthOnly).toContain("unreadable or duplicate");
+    const afterUndo = render(withNotice(start, { text: "undone rec → revert", tone: "ok" }), {
+      cols: 120,
+      rows: 24,
+      paint: paint(false),
+    }).join("\n");
+    expect(afterUndo).toContain("undone rec → revert");
+    expect(afterUndo).not.toContain("unreadable or duplicate");
+  });
+
+  test("a filtered page keeps the omitted marker and does not invent a global range", () => {
+    const paged = initialState({
+      vaultName: "vault",
+      today: "2026-09-02",
+      items: [
+        item({ page_path: "people/grace.md" }),
+        item({ page_path: "people/linus.md" }),
+      ],
+      pageOffset: 200,
+      pageSize: 200,
+      pageTruncated: true,
+    });
+    const missed = press(paged, [...chars("/nope"), named("enter")]);
+    const empty = render(missed.state, { cols: 120, rows: 24, paint: paint(false) }).join("\n");
+    expect(empty).toContain("0 writes");
+    expect(empty).toContain("filter: nope");
+    expect(empty).toMatch(/\+/);
+    expect(empty).not.toMatch(/201–/);
+
+    const hit = press(paged, [...chars("/grace"), named("enter")]);
+    const matched = render(hit.state, { cols: 120, rows: 24, paint: paint(false) }).join("\n");
+    expect(matched).toContain("1 write");
+    expect(matched).toContain("filter: grace");
+    expect(matched).toMatch(/\+/);
+    expect(matched).not.toMatch(/201–/);
   });
 
   test("] and [ emit page effects and never claim a silent complete set", () => {

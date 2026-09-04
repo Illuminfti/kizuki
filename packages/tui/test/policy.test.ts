@@ -55,6 +55,7 @@ describe("packages/tui/AGENTS.md is executable", () => {
     expect(terminal).toContain("SIGTERM");
     expect(terminal).toContain("uncaughtException");
     expect(terminal).toContain("onClose");
+    expect(terminal).toContain("closeHandler");
     expect(terminal).not.toMatch(/setRawMode\?\.\(false\)/);
   });
 

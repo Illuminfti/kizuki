@@ -24,7 +24,7 @@ export type {
 export { layout, render, viewportFor } from "./view";
 export type { Layout, RenderOptions } from "./view";
 export { createTerminal } from "./terminal";
-export type { SignalHost, Terminal, TerminalOptions } from "./terminal";
+export type { CloseReason, SignalHost, Terminal, TerminalOptions } from "./terminal";
 export { createKeyStream, parseKeys } from "./keys";
 export type { Key, KeyName } from "./keys";
 export { DIFF_CHAR_CAP, DIFF_LINE_CAP, boundedDiff, diffLines } from "./diff";

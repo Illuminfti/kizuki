@@ -51,14 +51,18 @@ function shortHash(hash: string | null): string {
 }
 
 function listedLabel(state: AuditState): string {
-  const count = state.items.length;
+  const more = state.pageTruncated ? "+" : "";
   const filtered = state.filter ? ` (filter: ${sanitize(state.filter)})` : "";
-  if (count === 0) return `0 writes${filtered}`;
+  const count = state.items.length;
+  if (state.filter.length > 0) {
+    const noun = count === 1 ? "write" : "writes";
+    return `${count} ${noun}${filtered}${more}`;
+  }
+  if (count === 0) return "0 writes";
   const start = state.pageOffset + 1;
   const end = state.pageOffset + count;
-  const more = state.pageTruncated ? "+" : "";
   const noun = count === 1 && !state.pageTruncated ? "write" : "writes";
-  return `${start}–${end}${more} ${noun}${filtered}`;
+  return `${start}–${end}${more} ${noun}`;
 }
 
 function header(state: AuditState, cols: number, p: Paint): string {
@@ -248,7 +252,7 @@ function footer(state: AuditState, cols: number, p: Paint): string {
 }
 
 function noticeLine(state: AuditState, cols: number, p: Paint): string {
-  const notice = state.health ?? state.notice;
+  const notice = state.notice ?? state.health;
   if (notice === null) return "";
   const text = truncate(sanitize(notice.text), cols);
   if (notice.tone === "ok") return p.fg(COLOR.ok, text);
