@@ -22,7 +22,7 @@ const MANIFEST: Manifest = freezeManifest({
 });
 
 interface Config { baseUrl: URL; tokenRef: string; }
-interface Message { id: string; accountID: string; chatID: string; senderID: string; sortKey: string; timestamp: string; text: string; isDeleted?: boolean; editedTimestamp?: string; }
+interface Message { id: string; accountID: string; chatID: string; senderID?: string; sortKey: string; timestamp: string; text?: string; isDeleted?: boolean; editedTimestamp?: string; }
 interface Page { items: Message[]; hasMore: boolean; oldestCursor?: string; newestCursor?: string; }
 
 export class BeeperConnector implements Connector {
@@ -50,7 +50,17 @@ export class BeeperConnector implements Connector {
     const checked_at = this.#deps.now().toISOString();
     if (this.#revoked) return new HealthReport({ state: "disabled", checked_at, detail: "access was revoked" });
     if (this.#token === null) return new HealthReport({ state: "unauthenticated", checked_at, detail: "connect() has not been called" });
-    return new HealthReport({ state: "ok", checked_at, ...(this.#lastSuccessAt === undefined ? {} : { last_success_at: this.#lastSuccessAt }) });
+    try {
+      const response = await this.#request("/v1/info");
+      if (response.status === 401 || response.status === 403) return this.#health("unauthenticated", checked_at, "Beeper token was rejected");
+      if (response.redirected || !response.ok) return this.#health("unreachable", checked_at, "Beeper Desktop did not accept the health probe");
+      const payload = await boundedText(response);
+      let parsed: unknown;
+      try { parsed = JSON.parse(payload); } catch { return this.#health("degraded", checked_at, "Beeper Desktop returned an invalid health response"); }
+      return isPlainObject(parsed)
+        ? this.#health("ok", checked_at)
+        : this.#health("degraded", checked_at, "Beeper Desktop returned an invalid health response");
+    } catch { return this.#health("unreachable", checked_at, "Beeper Desktop could not be reached"); }
   }
   backfill(cursor: Cursor | null): Promise<SyncBatch> { return this.#advance(cursor); }
   sync(cursor: Cursor | null): Promise<SyncBatch> { return this.#advance(cursor); }
@@ -82,12 +92,23 @@ export class BeeperConnector implements Connector {
     url.searchParams.set("limit", String(PAGE_LIMIT));
     url.searchParams.set("direction", "before");
     if (cursor !== null) url.searchParams.set("cursor", cursor);
-    const signal = AbortSignal.timeout(TIMEOUT_MS);
     let response: Response;
-    try { response = await this.#deps.fetch(url, { method: "GET", headers: { Authorization: `Bearer ${this.#token!}` }, redirect: "error", signal }); }
+    try { response = await this.#request(url); }
     catch { throw unavailable("Beeper Desktop could not be reached"); }
     if (response.redirected || !response.ok) throw unavailable(response.status === 401 || response.status === 403 ? "Beeper token was rejected" : "Beeper Desktop request failed");
     return parsePage(await boundedText(response));
+  }
+  async #request(path: string | URL): Promise<Response> {
+    const url = typeof path === "string" ? new URL(path, this.#config.baseUrl) : path;
+    return this.#deps.fetch(url, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${this.#token!}` },
+      redirect: "error",
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+  }
+  #health(state: "ok" | "degraded" | "unauthenticated" | "unreachable", checked_at: string, detail?: string): HealthReport {
+    return new HealthReport({ state, checked_at, ...(detail === undefined ? {} : { detail }), ...(this.#lastSuccessAt === undefined ? {} : { last_success_at: this.#lastSuccessAt }) });
   }
   #assertActive(): void { if (this.#revoked) throw new KizukiError("unavailable", "kizuki.beeper: access was revoked"); }
   #assertConnected(): void { this.#assertActive(); if (this.#token === null) throw unavailable("connect() has not been called"); }
@@ -125,13 +146,14 @@ function parsePage(text: string): Page {
 function optionalCursor(value: unknown): string | undefined { if (value === undefined || value === null) return undefined; if (typeof value !== "string" || value.length === 0 || new TextEncoder().encode(value).byteLength > 8 * 1024) throw new KizukiError("parse_error", "kizuki.beeper: malformed pagination response"); return value; }
 function parseMessage(raw: unknown): Message {
   if (!isPlainObject(raw)) throw malformedMessage();
-  const identifiers = ["id", "accountID", "chatID", "senderID", "sortKey", "timestamp"] as const;
-  if (!identifiers.every((key) => typeof raw[key] === "string" && raw[key].length > 0) || typeof raw.text !== "string" || Number.isNaN(Date.parse(raw.timestamp as string)) || (raw.isDeleted !== undefined && typeof raw.isDeleted !== "boolean") || (raw.editedTimestamp !== undefined && typeof raw.editedTimestamp !== "string")) throw malformedMessage();
-  return { id: raw.id as string, accountID: raw.accountID as string, chatID: raw.chatID as string, senderID: raw.senderID as string, sortKey: raw.sortKey as string, timestamp: new Date(raw.timestamp as string).toISOString(), text: raw.text as string, ...(raw.isDeleted === true ? { isDeleted: true } : {}), ...(raw.editedTimestamp === undefined ? {} : { editedTimestamp: raw.editedTimestamp as string }) };
+  const identifiers = ["id", "accountID", "chatID", "sortKey", "timestamp"] as const;
+  if (!identifiers.every((key) => typeof raw[key] === "string" && raw[key].length > 0) || (raw.senderID !== undefined && typeof raw.senderID !== "string") || (raw.text !== undefined && typeof raw.text !== "string") || Number.isNaN(Date.parse(raw.timestamp as string)) || (raw.isDeleted !== undefined && typeof raw.isDeleted !== "boolean") || (raw.editedTimestamp !== undefined && typeof raw.editedTimestamp !== "string")) throw malformedMessage();
+  return { id: raw.id as string, accountID: raw.accountID as string, chatID: raw.chatID as string, ...(typeof raw.senderID === "string" ? { senderID: raw.senderID } : {}), sortKey: raw.sortKey as string, timestamp: new Date(raw.timestamp as string).toISOString(), ...(typeof raw.text === "string" ? { text: raw.text } : {}), ...(raw.isDeleted === true ? { isDeleted: true } : {}), ...(raw.editedTimestamp === undefined ? {} : { editedTimestamp: raw.editedTimestamp as string }) };
 }
 function malformedMessage(): KizukiError { return new KizukiError("parse_error", "kizuki.beeper: malformed message"); }
 function mapMessage(message: Message, observed_at: string): CaptureEventInput {
   const deleted = message.isDeleted === true;
-  return { schema: "kizuki.event/v1", connector_id: BEEPER_CONNECTOR_ID, source_record_id: `${message.accountID}:${message.chatID}:${message.id}`, kind: "message", occurred_at: message.timestamp, observed_at, text: deleted ? "" : message.text, subjects: [{ subject_id: `beeper:user:${message.senderID}`, role: "from" }, { subject_id: `beeper:chat:${message.accountID}:${message.chatID}`, role: "about" }], sensitivity_hint: "private", deleted, attachments: [], metadata: { source_kind: "beeper", account_id: message.accountID, chat_id: message.chatID, message_id: message.id, sender_id: message.senderID, sort_key: message.sortKey, edited_timestamp: message.editedTimestamp ?? null } };
+  const accountChat = JSON.stringify([message.accountID, message.chatID]);
+  return { schema: "kizuki.event/v1", connector_id: BEEPER_CONNECTOR_ID, source_record_id: JSON.stringify([message.accountID, message.chatID, message.id]), kind: "message", occurred_at: message.timestamp, observed_at, text: deleted ? "" : (message.text ?? ""), subjects: [ ...(message.senderID === undefined ? [] : [{ subject_id: `beeper:sender:${JSON.stringify([message.accountID, message.senderID])}`, role: "from" as const }]), { subject_id: `beeper:chat:${accountChat}`, role: "about" } ], sensitivity_hint: "private", deleted, attachments: [], metadata: { source_kind: "beeper", account_id: message.accountID, chat_id: message.chatID, message_id: message.id, sender_id: message.senderID ?? null, sort_key: message.sortKey, edited_timestamp: message.editedTimestamp ?? null } };
 }
 function unavailable(detail: string): KizukiError { return new KizukiError("unreachable", `kizuki.beeper: ${detail}`); }

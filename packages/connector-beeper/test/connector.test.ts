@@ -21,7 +21,7 @@ test("reads the local search API, paginates backward, and uses stable source ide
       : reply({ items: [deleted], hasMore: false });
   });
   const one = await value.backfill(null);
-  expect(one.events[0]?.source_record_id).toBe("a1:c1:m1");
+  expect(one.events[0]?.source_record_id).toBe('["a1","c1","m1"]');
   expect(one.events[0]?.metadata).toEqual({ source_kind: "beeper", account_id: "a1", chat_id: "c1", message_id: "m1", sender_id: "u1", sort_key: "001", edited_timestamp: null });
   const two = await value.backfill(one.cursor);
   expect(two.cursor).toBeNull();
@@ -36,6 +36,45 @@ test("does not infer tombstones from records absent from a later page", async ()
   expect(batch.events[0]?.deleted).toBeFalse();
 });
 
+test("maps attachment or system messages with optional text and sender without fabricating either", async () => {
+  const value = await connected(async () => reply({
+    items: [{ id: "attachment", accountID: "a1", chatID: "c1", sortKey: "003", timestamp: "2026-01-02T03:06:05Z" }],
+    hasMore: false,
+  }));
+  const batch = await value.backfill(null);
+  expect(batch.events[0]).toMatchObject({ text: "", subjects: [{ subject_id: 'beeper:chat:["a1","c1"]', role: "about" }] });
+  expect(batch.events[0]?.metadata).toMatchObject({ sender_id: null });
+});
+
+test("uses unambiguous tuple identities across colon-containing provider identifiers", async () => {
+  const value = await connected(async () => reply({
+    items: [
+      { ...first, id: "c:one", accountID: "a", chatID: "b:c" },
+      { ...first, id: "one", accountID: "a:b", chatID: "c" },
+    ], hasMore: false,
+  }));
+  const batch = await value.backfill(null);
+  expect(batch.events.map((event) => event.source_record_id)).toEqual(['["a","b:c","c:one"]', '["a:b","c","one"]']);
+  expect(batch.events[0]?.subjects[0]?.subject_id).toBe('beeper:sender:["a","u1"]');
+});
+
+test("health probes local Beeper with the token and distinguishes rejection, outage, and malformed info", async () => {
+  const requests: string[] = [];
+  const healthy = await connected(async (url, init) => {
+    requests.push(url.pathname);
+    expect(init.headers).toEqual({ Authorization: `Bearer ${TOKEN}` });
+    return reply({ version: "fixture" });
+  });
+  expect((await healthy.health()).state).toBe("ok");
+  expect(requests).toEqual(["/v1/info"]);
+  const rejected = await connected(async () => reply({}, 401));
+  expect((await rejected.health()).state).toBe("unauthenticated");
+  const offline = await connected(async () => { throw new Error("offline"); });
+  expect((await offline.health()).state).toBe("unreachable");
+  const malformed = await connected(async () => new Response("not-json"));
+  expect((await malformed.health()).state).toBe("degraded");
+});
+
 test("refuses malformed pages and looping cursors without advancing", async () => {
   const malformed = await connected(async () => reply({ items: [{}], hasMore: false }));
   await expect(malformed.backfill(null)).rejects.toThrow("malformed message");
@@ -45,6 +84,9 @@ test("refuses malformed pages and looping cursors without advancing", async () =
 
 test("fails closed for non-loopback URLs and secret resolution never returns the token", async () => {
   expect(() => new BeeperConnector({ token_secret_ref: "env:T", base_url: "https://sealgate.ai" })).toThrow("loopback");
+  expect(() => new BeeperConnector({ token_secret_ref: "env:T", base_url: "http://localhost:23373" })).toThrow("loopback");
+  expect(() => new BeeperConnector({ token_secret_ref: "env:T", base_url: "http://127.0.0.2:23373" })).toThrow("loopback");
+  expect(() => new BeeperConnector({ token_secret_ref: "env:T", base_url: "http://[::1]:23373" })).toThrow("loopback");
   expect(() => new BeeperConnector({ token_secret_ref: "env:T", base_url: "http://user:pass@127.0.0.1:23373" })).toThrow("loopback");
   const value = connector(async () => reply({ items: [], hasMore: false }));
   await expect(value.backfill(null)).rejects.toThrow("connect() has not been called");
