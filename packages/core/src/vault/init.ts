@@ -10,6 +10,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  unlinkSync,
   writeSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -352,9 +353,9 @@ function chmodPrivateFile(path: string): boolean {
   return true;
 }
 
-function writePrivateFile(path: string, content: string, flag: "wx" | "w"): void {
+function writePrivateFile(path: string, content: string): void {
   mkdirPrivate(dirname(path));
-  const fd = openSync(path, flag, VAULT_FILE_MODE);
+  const fd = openSync(path, "w", VAULT_FILE_MODE);
   try {
     writeSync(fd, content);
     fsyncSync(fd);
@@ -367,7 +368,7 @@ function writePrivateFile(path: string, content: string, flag: "wx" | "w"): void
 function writeAtomicFile(path: string, content: string): void {
   mkdirPrivate(dirname(path));
   const temporary = `${path}.tmp`;
-  writePrivateFile(temporary, content, "w");
+  writePrivateFile(temporary, content);
   renameSync(temporary, path);
   chmodSync(path, VAULT_FILE_MODE);
 }
@@ -435,10 +436,17 @@ function inventoryReceipt(inventory: InitInventory): InitJournalAdopt {
   };
 }
 
+function isTornTemplate(content: string, template: string): boolean {
+  return content.length < template.length && template.startsWith(content);
+}
+
 function classifyDoctrine(content: string, file: string): Exclude<DoctrineFileState, "missing"> {
-  if (content === CURRENT_DOCTRINE[file]) return "current";
+  const current = CURRENT_DOCTRINE[file];
+  if (current !== undefined && content === current) return "current";
   const historical = HISTORICAL_DOCTRINE[file] ?? [];
   if (historical.includes(content)) return "upgradeable";
+  if (current !== undefined && isTornTemplate(content, current)) return "upgradeable";
+  if (historical.some((template) => isTornTemplate(content, template))) return "upgradeable";
   return "owner-edited";
 }
 
@@ -708,15 +716,17 @@ export function initVault(path: string, options: InitVaultOptions = {}): InitVau
     ];
     for (const [relativePath, content] of files) {
       const target = join(path, relativePath);
+      const leftover = `${target}.tmp`;
+      if (existsSync(leftover)) unlinkSync(leftover);
       if (!existsSync(target)) {
-        writePrivateFile(target, content, "wx");
+        writeAtomicFile(target, content);
         created.push(relativePath);
         continue;
       }
       if (relativePath === "CANON.md" || relativePath === "SCHEMA.md") {
         const existing = readFileSync(target, "utf8");
         if (classifyDoctrine(existing, relativePath) === "upgradeable") {
-          writePrivateFile(target, content, "w");
+          writeAtomicFile(target, content);
           upgraded.push(relativePath);
         }
       }

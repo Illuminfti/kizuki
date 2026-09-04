@@ -215,6 +215,22 @@ Unknown frontmatter keys must use the \`x-*\` extension namespace.
     ]);
   });
 
+  test("repairs a torn doctrine write instead of treating it as an owner edit", () => {
+    const vault = join(tempDir(), "torn");
+    initVault(vault);
+    const current = readFileSync(join(vault, "SCHEMA.md"), "utf8");
+    writeFileSync(join(vault, "SCHEMA.md"), current.slice(0, 24));
+    writeFileSync(join(vault, "SCHEMA.md.tmp"), "leftover staging\n");
+
+    const result = initVault(vault);
+    expect(result.upgraded).toEqual(["SCHEMA.md"]);
+    expect(readFileSync(join(vault, "SCHEMA.md"), "utf8")).toBe(current);
+    expect(existsSync(join(vault, "SCHEMA.md.tmp"))).toBe(false);
+    expect(doctorVault(vault).doctrine.find((item) => item.file === "SCHEMA.md")?.state).toBe(
+      "current",
+    );
+  });
+
   test("refuses a non-empty directory unless adopt is set", () => {
     const vault = join(tempDir(), "notes");
     mkdirSync(vault);
