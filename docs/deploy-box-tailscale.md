@@ -144,19 +144,20 @@ Finish line, `deploy/proof/compose-lint.sh` (CI-runnable):
 | 2.4 | Kizuki has no network of its own. | The kizuki service has `network_mode: service:tailscale` and no `ports:`. |
 | 2.5 | Capabilities are empty. | `cap_drop: [ALL]` on both services; no `cap_add`, no `devices`. |
 
-Finish line, `deploy/proof/tailnet.sh` (runs against a real tailnet; not
-CI-runnable):
+Finish line, `deploy/proof/tailnet.sh` (runs FROM a tailnet peer AGAINST an
+already-running, remote box; not CI-runnable — see the 2026-09-04 topology
+Finding below for why it no longer brings the box up itself):
 
 | # | Assertion | How it is decided |
 | --- | --- | --- |
-| 2.6 | Node is on the tailnet. | `tailscale status --json` reports the node online with hostname `kizuki-m2-proof`. The auth key used against this branch is untagged (owner-account key, no `tag:kizuki`); the check asserts online state and hostname, not a tag, and reports whether a tag is present. |
-| 2.7 | Health over the tailnet. | `wget` (no `curl` in the tailscale image) against `http://<node-tailscale-ip>:8787/health` with an explicit `Host: 127.0.0.1` header, over the raw TCP forward `serve.json` sets up (see the Finding below for why this is plain HTTP, not HTTPS) → `"ok":true`. |
-| 2.8 | MCP read over the tailnet with a token. | `POST /v1/mcp/system_health` to the same address with `Host: 127.0.0.1` and `Authorization: Bearer <daemon token>` → 200, `"ok":true`. |
-| 2.9 | Fail closed without a token. | Same call, same `Host: 127.0.0.1`, no `Authorization` header → 401 `unauthorized`. |
-| 2.10 | Public IP is dark. | Neither container publishes a port (`docker inspect` `NetworkSettings.Ports` is empty for both); the real public-IP probe is M3's, run from the Box. |
-| 2.11 | 2.11 no-shell-exposed: SSH is refused. | With the node confirmed up (2.6 having passed, and `/health` re-checked immediately before the attempt so a failure cannot be mistaken for "nothing is reachable"), `tailscale ssh kizuki-m2-proof -- true` must fail to establish a session. PASS only on that refusal; FAIL if a session succeeds. |
-| 2.12 | Node identity survives restart. | `docker compose restart`; the node id in `tailscale status --json` is unchanged. |
-| 2.14 | 2.14 only-served-ports-reachable. | From the peer side, a TCP connect to a node port not named in `serve.json` (one nothing listens on, and one a neighbor in the shared namespace might plausibly run) must be refused or time out, under a short explicit timeout. |
+| 2.6 | Node is on the tailnet. | This peer's own `tailscale status --json` reports the target (`kizuki-m2-proof` by default) as an online `Peer` entry, distinct from `Self`. The auth key used against this branch is untagged (owner-account key, no `tag:kizuki`); the check asserts online state and hostname, not a tag, and reports whether a tag is present. Sets the target's tailnet IP for every later check. |
+| 2.7 | Health over the tailnet. | `curl`, run directly on the peer (no `docker compose exec` wrapper — see the Finding), against `http://<node-tailscale-ip>:8787/health` with an explicit `Host: 127.0.0.1` header, over the raw TCP forward `serve.json` sets up (see the older Finding below for why this is plain HTTP, not HTTPS) → `"ok":true`. |
+| 2.8 | MCP read over the tailnet with a token. | `POST /v1/mcp/system_health` from the peer to the same address with `Host: 127.0.0.1` and `Authorization: Bearer <daemon token>` → 200, `"ok":true`. The token comes from `KIZUKI_DAEMON_TOKEN` in the peer's environment (see the Finding: a peer with no shell access to the box has no other way to learn it); BLOCKED, not FAIL, if it is absent. |
+| 2.9 | Fail closed without a token. | Same call from the peer, same `Host: 127.0.0.1`, no `Authorization` header → 401 `unauthorized`. |
+| 2.10 | Public IP is dark. | BLOCKED by design: a peer-only proof has no docker access to the remote box's containers to read `NetworkSettings.Ports`. The real public-IP-is-dark probe is M3's, run from outside the box against its actual public IP. |
+| 2.11 | 2.11 no-shell-exposed: SSH is refused. | With the node confirmed up (2.6 having passed, and `/health` re-checked immediately before the attempt so a failure cannot be mistaken for "nothing is reachable"), `tailscale ssh kizuki-m2-proof -- true` run from the peer's own `tailscale` binary must fail to establish a session. PASS only on that refusal; FAIL if a session succeeds. |
+| 2.12 | Node identity is stable, as observed by a peer. | The node id in this peer's own `tailscale status --json` for the target is unchanged across two reads. A peer-only proof cannot trigger the box's restart itself (no docker/compose access to a remote box), so the full restart-survives-identity assertion needs the restart to happen out of band while this comparison runs before and after; see the Finding. |
+| 2.14 | 2.14 only-served-ports-reachable. | From the peer, after re-confirming `/health` reachability, a TCP connect to a node port not named in `serve.json` (one nothing listens on, and one a neighbor in the shared namespace might plausibly run) must be refused or time out, under a short explicit timeout. |
 
 Finding (2026-09-03, updated 2026-09-03): the Host-header problem below was
 first hit, diagnosed and reported as an unresolved FAIL on 2.7-2.9. It was
@@ -186,6 +187,42 @@ configurable path (`${KIZUKI_TS_AUTHKEY_FILE:-...}`), so the same image
 joins the operator's own tailnet for this proof or a customer's own tailnet
 in the hosted arrangement without any image change — only the key file
 path differs.
+
+Finding (2026-09-04, topology correction): a review of the change above
+found that `deploy/proof/tailnet.sh` ran `docker compose up` on the same
+machine that then ran every check, and wrapped every peer-side check in
+`docker compose exec -T tailscale ...` — a request from *inside* the node
+under test's own network namespace to that same node's tailnet IP, which
+can short-circuit locally without ever touching the real tailnet data path.
+That made "the peer can reach it" and "only served ports are reachable"
+(2.7, 2.8, 2.9, 2.11 and especially the new 2.14) close to vacuous: a node
+proving it can reach itself proves nothing about what an actual peer sees.
+`deploy/proof/tailnet.sh` is rewritten to the topology it was always meant
+to have: it runs FROM a tailnet peer AGAINST an already-running, remote
+box, takes the target's hostname as an argument or `$KIZUKI_TAILNET_NODE`,
+and no longer brings the box up itself — bringing a box up is the
+deployment's job (M3), not the proof's. It verifies the target is online
+and reachable (2.6) before running anything else and reports `BLOCKED` with
+an explicit reason on every check that depends on that and did not get it,
+so an unreachable target cannot be mistaken for a contained one. This also
+means the script has real gaps it did not have before, and they are
+recorded rather than hidden: it has no docker or filesystem access to the
+remote box, so 2.8 needs the daemon token supplied out-of-band via
+`KIZUKI_DAEMON_TOKEN` (the box has no shell to read it from — see the
+shell-removal finding above), 2.10's "no port published" assertion is
+BLOCKED here and left fully to M3's own public-IP probe, and 2.12 can only
+observe identity stability, not trigger and verify a restart, since it does
+not own the box's lifecycle. 2.6 and 2.12 keep reading the target's own
+status, which is legitimately a node-status read rather than a network
+reachability claim — the fix is specifically that they now read it via the
+*peer's* own `tailscale status --json` output about that target, never via
+a shell into the target's own container. Correspondingly, `container.sh`
+and `compose-lint.sh` are not run from this machine: Docker is not
+installed on the Windows host this branch was authored from, only inside a
+WSL distro that was used for local shell experiments and is not itself a
+tailnet peer distinct from the operator's own identity; both proofs already
+run in CI on a Linux runner, which is the right place for them, and this
+document does not claim a local result for either.
 
 *Host header, as first found.* `tailscale serve`'s HTTP proxy handler is
 Go's `NewSingleHostReverseProxy` (confirmed by reading exported symbols out
@@ -253,8 +290,12 @@ blocks every local user but its owner from traversing into it at all, so a
 `0644` file inside it is not reachable by anyone the directory itself
 excludes — the directory, not the file mode, is what actually protects the
 key, exactly as it protects every other file that directory holds.
-`deploy/proof/tailnet.sh` asserts both modes as a precondition and fails
-loudly, with a specific remediation message, if either one does not hold.
+This precondition was asserted by an earlier, same-machine version of
+`deploy/proof/tailnet.sh` that also brought the box up itself; now that the
+proof runs from a peer against an already-running remote box (see the
+2026-09-04 topology Finding above), the check belongs to whatever brings
+the box up — M3's `bootstrap.sh` — not to this peer-side script, and it
+still needs to assert both modes there before its own `docker compose up`.
 `deploy/compose.yml`'s `secrets: { ts_authkey: { file: ... } }` still reads
 from `${KIZUKI_TS_AUTHKEY_FILE:-<real path>}`, but that override exists
 only to point at a *different real key file with the same directory-then-
