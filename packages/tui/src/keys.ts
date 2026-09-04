@@ -37,15 +37,13 @@ const SEQUENCES: Record<string, KeyName> = {
   OF: "end",
 };
 
-const decoder = new TextDecoder("utf-8", { fatal: false });
-
 /**
- * Splits one stdin chunk into key events. A chunk can carry several keys
- * (a fast typist, a paste) and an escape sequence can arrive whole, so the
- * parser walks the text and consumes the longest known sequence at each ESC.
+ * Splits one decoded stdin string into key events. A chunk can carry several
+ * keys (a fast typist, a paste) and an escape sequence can arrive whole, so
+ * the parser walks the text and consumes the longest known sequence at each ESC.
  */
 export function parseKeys(chunk: Uint8Array | string): Key[] {
-  const text = typeof chunk === "string" ? chunk : decoder.decode(chunk);
+  const text = typeof chunk === "string" ? chunk : new TextDecoder("utf-8", { fatal: false }).decode(chunk);
   const keys: Key[] = [];
   const chars = [...text];
   let i = 0;
@@ -89,4 +87,25 @@ export function parseKeys(chunk: Uint8Array | string): Key[] {
     i += 1;
   }
   return keys;
+}
+
+/**
+ * Streaming stdin decoder. A multibyte UTF-8 code point split across
+ * `data` chunks is held until the rest arrives; `end()` flushes the tail.
+ */
+export function createKeyStream(): {
+  push(chunk: Uint8Array | string): Key[];
+  end(): Key[];
+} {
+  const decoder = new TextDecoder("utf-8", { fatal: false });
+  return {
+    push(chunk) {
+      const text = typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+      return parseKeys(text);
+    },
+    end() {
+      const rest = decoder.decode();
+      return rest.length === 0 ? [] : parseKeys(rest);
+    },
+  };
 }

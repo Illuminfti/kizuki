@@ -48,6 +48,7 @@ export function item(
     priorBody: extra.priorBody ?? null,
     currentBody: extra.currentBody ?? "Grace runs partnerships at Acme.\n",
     evidence: extra.evidence ?? r.provenance.map((id) => `event ${id}`),
+    loadError: extra.loadError ?? null,
   };
 }
 

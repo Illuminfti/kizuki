@@ -1,7 +1,7 @@
 import { COLOR, padEnd, sanitize, stringWidth, truncate, wrap } from "./ansi";
 import type { Paint } from "./ansi";
-import { diffLines } from "./diff";
-import { currentItem, cursorRow } from "./model";
+import { boundedDiff } from "./diff";
+import { EVIDENCE_CAP, currentItem, cursorRow } from "./model";
 import type { AuditItem, AuditState } from "./model";
 
 export interface RenderOptions {
@@ -50,9 +50,20 @@ function shortHash(hash: string | null): string {
   return hash.slice(0, 8);
 }
 
+function listedLabel(state: AuditState): string {
+  const count = state.items.length;
+  const filtered = state.filter ? ` (filter: ${sanitize(state.filter)})` : "";
+  if (count === 0) return `0 writes${filtered}`;
+  const start = state.pageOffset + 1;
+  const end = state.pageOffset + count;
+  const more = state.pageTruncated ? "+" : "";
+  const noun = count === 1 && !state.pageTruncated ? "write" : "writes";
+  return `${start}–${end}${more} ${noun}${filtered}`;
+}
+
 function header(state: AuditState, cols: number, p: Paint): string {
   const counts = state.groups.map((g) => `${g.count} ${g.label}`).join(", ");
-  const listed = `${state.items.length} write${state.items.length === 1 ? "" : "s"}${state.filter ? ` (filter: ${sanitize(state.filter)})` : ""}`;
+  const listed = listedLabel(state);
   const left = [p.fgBold(COLOR.accent, "kizuki audit"), sanitize(state.vaultName), state.today, listed]
     .concat(counts.length > 0 ? [p.dim(counts)] : [])
     .join(p.dim(" · "));
@@ -77,6 +88,7 @@ function listLines(state: AuditState, width: number, rows: number, p: Paint): st
       const selected = index === state.cursor;
       const badge = ACTION_BADGE[item.receipt.page_action];
       const flags = [
+        item.loadError !== null ? "err" : "",
         item.receipt.reverted_by !== null ? "rev" : "",
         item.receipt.ambiguous ? "amb" : "",
         item.receipt.contested ? "con" : "",
@@ -104,8 +116,9 @@ function bodyLines(item: AuditItem, width: number, p: Paint): string[] {
   if (before.length === 0 && after.length === 0) {
     return [p.dim("no page bytes on disk for this receipt")];
   }
+  const diff = boundedDiff(before, after);
   const lines: string[] = [];
-  for (const d of diffLines(before, after)) {
+  for (const d of diff.lines) {
     const prefix = d.op === "add" ? "+" : d.op === "del" ? "-" : " ";
     for (const piece of wrap(d.text, Math.max(1, width - 2))) {
       const text = `${prefix} ${piece}`;
@@ -114,6 +127,28 @@ function bodyLines(item: AuditItem, width: number, p: Paint): string[] {
       );
     }
   }
+  if (diff.truncated) {
+    lines.push(
+      p.dim(
+        truncate(
+          `diff truncated · ${shortHash(item.receipt.before_hash)} → ${shortHash(item.receipt.after_hash)} · o opens the page`,
+          width,
+        ),
+      ),
+    );
+  }
+  return lines;
+}
+
+function idLines(label: string, ids: readonly string[], width: number, p: Paint): string[] {
+  if (ids.length === 0) return [];
+  const shown = ids.slice(0, EVIDENCE_CAP);
+  const extra = ids.length - shown.length;
+  const lines = [metaLine(label, extra > 0 ? `${shown.length} of ${ids.length}` : `${ids.length}`, p)];
+  for (const id of shown) {
+    lines.push(p.dim(truncate(sanitize(id), width)));
+  }
+  if (extra > 0) lines.push(p.dim(truncate(`… ${extra} more`, width)));
   return lines;
 }
 
@@ -132,12 +167,18 @@ function detailLines(state: AuditState, width: number, p: Paint): string[] {
     ),
     metaLine("receipt", truncate(sanitize(receipt.receipt_id), width - 8), p),
     metaLine("page", truncate(sanitize(receipt.page_path), width - 5), p),
+    ...wrap(`before ${receipt.before_hash ?? "—"}`, width).map((line) => p.dim(line)),
+    ...wrap(`after  ${receipt.after_hash}`, width).map((line) => p.dim(line)),
+    metaLine("authority", truncate(sanitize(receipt.authority), width - 10), p),
     metaLine(
-      "hashes",
-      truncate(`${shortHash(receipt.before_hash)} → ${shortHash(receipt.after_hash)}`, width - 7),
+      "model",
+      truncate(sanitize(receipt.model_ref ?? "none"), width - 6),
       p,
     ),
   ];
+  if (item.loadError !== null) {
+    lines.push(p.fg(COLOR.danger, truncate(`load error: ${sanitize(item.loadError)}`, width)));
+  }
   if (receipt.reverted_by !== null) {
     lines.push(metaLine("reverted", truncate(sanitize(receipt.reverted_by), width - 9), p));
   }
@@ -154,9 +195,21 @@ function detailLines(state: AuditState, width: number, p: Paint): string[] {
     .filter((flag) => flag.length > 0)
     .join(" · ");
   lines.push(p.dim(truncate(flags, width)));
+  lines.push(...idLines("events", receipt.provenance, width, p));
+  lines.push(...idLines("claims", receipt.claim_ids, width, p));
+  if (receipt.superseded.length > 0) {
+    lines.push(
+      ...idLines(
+        "superseded",
+        receipt.superseded.map((row) => row.claim_id),
+        width,
+        p,
+      ),
+    );
+  }
   if (item.evidence.length > 0) {
-    lines.push(metaLine("evidence", `${item.evidence.length}`, p));
-    for (const quote of item.evidence) {
+    lines.push(metaLine("quoted", `${Math.min(item.evidence.length, EVIDENCE_CAP)}`, p));
+    for (const quote of item.evidence.slice(0, EVIDENCE_CAP)) {
       lines.push(p.dim(truncate(sanitize(quote), width)));
     }
   }
@@ -170,12 +223,14 @@ const HELP = [
   "",
   "j / k        move           J / K   page",
   "g / G        first / last   tab     switch pane",
+  "[ / ]        older / newer receipt page",
   "u            undo the selected write (type yes)",
   "o / enter    open the page",
   "/            filter          ?       this help",
   "q            quit",
   "",
-  "Every write is receipted. Undo restores the prior bytes from the archive.",
+  "Every write is receipted and undoable. Undo restores the prior bytes",
+  "from the archive for the exact receipt and after-hash on screen.",
 ];
 
 function footer(state: AuditState, cols: number, p: Paint): string {
@@ -187,20 +242,23 @@ function footer(state: AuditState, cols: number, p: Paint): string {
   if (mode.name === "confirm") {
     return (
       truncate(
-        `undo ${mode.receiptId} — type yes then enter: ${sanitize(mode.text)}`,
+        `undo ${mode.receiptId} ${shortHash(mode.afterHash)} — type yes then enter: ${sanitize(mode.text)}`,
         cols - 1,
       ) + cursor
     );
   }
   if (mode.name === "help") return truncate("any key closes help", cols);
-  return p.dim(truncate("j/k move  u undo  o open  / filter  tab pane  ? help  q quit", cols));
+  return p.dim(
+    truncate("j/k move  u undo  o open  [ ] page  / filter  tab pane  ? help  q quit", cols),
+  );
 }
 
 function noticeLine(state: AuditState, cols: number, p: Paint): string {
-  if (state.notice === null) return "";
-  const text = truncate(sanitize(state.notice.text), cols);
-  if (state.notice.tone === "ok") return p.fg(COLOR.ok, text);
-  if (state.notice.tone === "warn") return p.fg(COLOR.warn, text);
+  const notice = state.health ?? state.notice;
+  if (notice === null) return "";
+  const text = truncate(sanitize(notice.text), cols);
+  if (notice.tone === "ok") return p.fg(COLOR.ok, text);
+  if (notice.tone === "warn") return p.fg(COLOR.warn, text);
   return p.fg(COLOR.danger, text);
 }
 
