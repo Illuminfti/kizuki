@@ -9,6 +9,8 @@ test("production entrypoint does not export conformance or fixture helpers", () 
   expect("CHATGPT_FIXTURE_EXPORT" in production).toBe(false);
   expect("CLAUDE_FIXTURE_EXPORT" in production).toBe(false);
   expect("FIXTURE_NOW" in production).toBe(false);
+  expect("FIXTURE_DDL" in production).toBe(false);
+  expect("FIXTURE_MIGRATIONS" in production).toBe(false);
 });
 
 test("testkit subpath exports the helpers tests need", () => {

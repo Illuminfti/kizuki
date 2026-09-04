@@ -25,7 +25,7 @@ export { CLAUDE_FIXTURE_EXPORT } from "./import-claude";
 export {
   FIXTURE_NOW,
   seedFixtureDatabase,
-} from "@kizuki/connector-screenpipe";
+} from "@kizuki/connector-screenpipe/testkit";
 export {
   POCKET_FIXTURE_EXPORT,
 } from "./import-pocket";

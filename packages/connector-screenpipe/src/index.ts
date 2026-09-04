@@ -38,13 +38,6 @@ export {
 export { ScreenpipeConnectorError } from "./errors";
 export type { ScreenpipeErrorCode } from "./errors";
 export {
-  FIXTURE_DDL,
-  FIXTURE_MIGRATIONS,
-  FIXTURE_NOW,
-  seedFixtureDatabase,
-} from "./fixture";
-export type { SeedOptions } from "./fixture";
-export {
   inspectIdentity,
   schemaFingerprint,
 } from "./identity";
