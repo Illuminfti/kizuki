@@ -38,6 +38,9 @@ export function rrfFusion(
       if (existing !== undefined) {
         existing.score += rrfScore;
         if (candidate.keyword_hit) existing.keywordHit = true;
+        if (existing.result.vector === null && candidate.vector !== null) {
+          existing.result = { ...existing.result, vector: candidate.vector };
+        }
         return;
       }
       scores.set(key, {

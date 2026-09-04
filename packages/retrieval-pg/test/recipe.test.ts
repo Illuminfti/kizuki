@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { NEIGHBOR_CAP_PER_HOP } from "../vendor/recipe/graph";
 import {
   AUTHORITY_WEIGHT,
   NEAR_DUPLICATE_JACCARD,
@@ -141,6 +142,33 @@ describe("vendored retrieval recipe", () => {
     expect(cosineSimilarity(query, aligned)).toBeCloseTo(1, 8);
   });
 
+  test("fusion keeps a later vector so the cosine blend applies to dual matches", () => {
+    const query = new Float32Array([1, 0]);
+    const aligned = new Float32Array([1, 0]);
+    const fused = rrfFusion(
+      [
+        [candidate("page:a", 1, { keyword_hit: true })],
+        [candidate("page:a", 1, { vector: aligned })],
+      ],
+      RRF_K,
+      false,
+    );
+    expect(fused[0]?.keyword_hit).toBe(true);
+    expect(fused[0]?.vector).not.toBeNull();
+    const rescored = cosineReScore(fused, query);
+    expect(rescored[0]?.score).toBeCloseTo(1, 5);
+    const reversed = rrfFusion(
+      [
+        [candidate("page:a", 1, { vector: aligned })],
+        [candidate("page:a", 1, { keyword_hit: true })],
+      ],
+      RRF_K,
+      false,
+    );
+    expect(reversed[0]?.keyword_hit).toBe(true);
+    expect(reversed[0]?.vector).not.toBeNull();
+  });
+
   test("declared degradation is set-like", () => {
     const degraded: string[] = [];
     pushDegraded(degraded, "vector-skipped");
@@ -176,6 +204,29 @@ describe("vendored retrieval recipe", () => {
     );
     expect(walked.edges.map((edge) => edge.from)).toEqual(["page:grace"]);
     expect(walked.truncated).toBe(false);
+  });
+
+  test("hop-cap truncation is declared when a later hop cannot expand", () => {
+    const edges = Array.from({ length: NEIGHBOR_CAP_PER_HOP + 1 }, (_, i) => ({
+      from: "person:hub",
+      to: `page:n${i}`,
+      type: "subject",
+      weight: 1,
+      provenance: ["event:a"],
+    }));
+    const oneHop = walkNeighbors("person:hub", edges, {
+      hops: 1,
+      limit: 1000,
+      visible: () => true,
+    });
+    expect(oneHop.truncated).toBe(false);
+    expect(oneHop.edges).toHaveLength(NEIGHBOR_CAP_PER_HOP + 1);
+    const twoHop = walkNeighbors("person:hub", edges, {
+      hops: 2,
+      limit: 1000,
+      visible: () => true,
+    });
+    expect(twoHop.truncated).toBe(true);
   });
 
   test("adjacency boost keeps candidate fields", () => {

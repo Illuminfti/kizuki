@@ -5,7 +5,7 @@ export const ADJACENCY_BOOST = 1.05;
 export const ADJACENCY_MIN_HITS = 2;
 export const DEFAULT_TOP_K = 20;
 const MAX_WALK_DEPTH = 2;
-const NEIGHBOR_CAP_PER_HOP = 50;
+export const NEIGHBOR_CAP_PER_HOP = 50;
 
 export interface AdjacencyTarget {
   readonly id: string;
@@ -75,7 +75,8 @@ export function applyAdjacencyBoost<T extends AdjacencyTarget>(
 /**
  * Hop-limited neighbor walk. Depth is capped at 2. Invisible nodes are
  * skipped (fail closed). Truncates when the collected edge count reaches
- * the caller limit.
+ * the caller limit, or when the per-hop frontier cap drops a node that
+ * a later hop would have expanded.
  */
 export function walkNeighbors(
   start: string,
@@ -94,6 +95,7 @@ export function walkNeighbors(
   const collected: RecipeEdge[] = [];
   const seen = new Set<string>([start]);
   let frontier = [start];
+  let truncated = false;
 
   for (let hop = 0; hop < depth; hop += 1) {
     const next: string[] = [];
@@ -107,16 +109,19 @@ export function walkNeighbors(
         if (collected.length >= opts.limit) {
           return { edges: collected.slice(0, opts.limit), truncated: true };
         }
-        if (!seen.has(other) && hopCount < NEIGHBOR_CAP_PER_HOP) {
+        if (seen.has(other)) continue;
+        if (hopCount < NEIGHBOR_CAP_PER_HOP) {
           seen.add(other);
           next.push(other);
           hopCount += 1;
+          continue;
         }
+        if (hop + 1 < depth) truncated = true;
       }
     }
     if (next.length === 0) break;
     frontier = next;
   }
 
-  return { edges: collected, truncated: false };
+  return { edges: collected, truncated };
 }
