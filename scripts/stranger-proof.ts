@@ -117,6 +117,14 @@ function sha256(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
+function safeSha256(path: string): string {
+  try {
+    return sha256(path);
+  } catch {
+    return "unavailable";
+  }
+}
+
 function checkedArtifact(path: string): BuildInfo {
   const stat = lstatSync(path);
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
@@ -182,14 +190,18 @@ function writeReceipt(report: string, receipt: ProofReceipt): string {
 }
 
 export async function runArtifactProof(args: ProofArgs): Promise<string> {
-  const build = checkedArtifact(args.artifact);
   const proofRoot = mkdtempSync(join(tmpdir(), "kizuki-artifact-proof-"));
   const copiedArtifact = join(proofRoot, "artifact");
   const execution = join(proofRoot, "execution");
   const steps: StepReceipt[] = [];
   const failures: string[] = [];
   let receipt: ProofReceipt | undefined;
+  let sourceSha = "unavailable";
+  let artifactTarget = "unavailable";
   try {
+    const build = checkedArtifact(args.artifact);
+    sourceSha = build.source_sha;
+    artifactTarget = build.target;
     cpSync(args.artifact, copiedArtifact, { recursive: true, dereference: false, errorOnExist: true });
     checkedArtifact(copiedArtifact);
     const executable = join(copiedArtifact, "kizuki");
@@ -217,8 +229,8 @@ export async function runArtifactProof(args: ProofArgs): Promise<string> {
 
     receipt = {
       schema,
-      source_sha: build.source_sha,
-      target: build.target,
+      source_sha: sourceSha,
+      target: artifactTarget,
       host_platform: process.platform,
       host_arch: process.arch,
       binary_sha256: sha256(executable),
@@ -230,11 +242,11 @@ export async function runArtifactProof(args: ProofArgs): Promise<string> {
     failures.push(error instanceof Error ? error.message : "artifact proof failed");
     receipt = {
       schema,
-      source_sha: build.source_sha,
-      target: build.target,
+      source_sha: sourceSha,
+      target: artifactTarget,
       host_platform: process.platform,
       host_arch: process.arch,
-      binary_sha256: existsSync(join(copiedArtifact, "kizuki")) ? sha256(join(copiedArtifact, "kizuki")) : "unavailable",
+      binary_sha256: safeSha256(join(copiedArtifact, "kizuki")),
       paths: {
         executable: join(copiedArtifact, "kizuki"),
         home: join(execution, "home"),

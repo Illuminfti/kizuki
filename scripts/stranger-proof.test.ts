@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseBuildInfo, parseProofArgs, proofEnvironment, requireFixture } from "./stranger-proof";
+import { parseBuildInfo, parseProofArgs, proofEnvironment, requireFixture, runArtifactProof } from "./stranger-proof";
 import type { StepReceipt } from "./stranger-proof";
 
 const directories: string[] = [];
@@ -54,5 +54,24 @@ describe("artifact proof", () => {
       passed: false,
       timeout_ms: 0,
     }]);
+  });
+
+  test("writes a failure receipt for missing or malformed artifacts", async () => {
+    const directory = temporary();
+    for (const [name, artifact] of [
+      ["missing", join(directory, "missing")],
+      ["malformed", directory],
+    ] as const) {
+      const report = join(directory, name);
+      await expect(runArtifactProof({ artifact, report })).rejects.toThrow("artifact proof failed");
+      const receipt = JSON.parse(readFileSync(join(report, "receipt.json"), "utf8")) as {
+        source_sha: string;
+        binary_sha256: string;
+        failures: string[];
+      };
+      expect(receipt.source_sha).toBe("unavailable");
+      expect(receipt.binary_sha256).toBe("unavailable");
+      expect(receipt.failures).toHaveLength(1);
+    }
   });
 });
