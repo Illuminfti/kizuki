@@ -81,7 +81,9 @@ function header(state: AuditState, cols: number, p: Paint): string {
 
 function listLines(state: AuditState, width: number, rows: number, p: Paint): string[] {
   if (state.items.length === 0) {
-    const message = state.filter ? "no receipts match the filter" : "no writes yet";
+    const message = state.filter
+      ? "no receipts match this filter · / to try another"
+      : "no writes yet · captured evidence has not changed canon";
     return [p.dim(truncate(message, width))];
   }
   const all: string[] = [];
@@ -158,29 +160,33 @@ function idLines(label: string, ids: readonly string[], width: number, p: Paint)
   return lines;
 }
 
-function detailLines(state: AuditState, width: number, p: Paint): string[] {
-  const item = currentItem(state);
-  if (item === null) return [p.dim("select a write to see it here")];
+function trustLine(item: AuditItem, width: number, p: Paint): string {
+  const receipt = item.receipt;
+  const flags = [
+    receipt.page_action,
+    receipt.sensitivity,
+    receipt.taint,
+    `confidence ${receipt.confidence}`,
+    receipt.ambiguous ? "ambiguous" : "",
+    receipt.contested ? "contested" : "",
+    receipt.reverted_by === null ? "undoable" : "reverted",
+  ]
+    .filter((flag) => flag.length > 0)
+    .join(" · ");
+  return p.dim(truncate(flags, width));
+}
+
+function receiptDetails(item: AuditItem, width: number, p: Paint): string[] {
   const receipt = item.receipt;
   const created = receipt.at.slice(0, 16).replace("T", " ");
-  const lines: string[] = [
-    p.bold(truncate(sanitize(item.title), width)),
-    p.dim(
-      truncate(
-        `${receipt.page_action} · ${receipt.writer} · ${receipt.producer} · ${created}`,
-        width,
-      ),
-    ),
+  const lines = [
+    p.dim(truncate(`${receipt.writer} · ${receipt.producer} · ${created}`, width)),
     metaLine("receipt", truncate(sanitize(receipt.receipt_id), width - 8), p),
     metaLine("page", truncate(sanitize(receipt.page_path), width - 5), p),
     ...wrap(`before ${receipt.before_hash ?? "—"}`, width).map((line) => p.dim(line)),
     ...wrap(`after  ${receipt.after_hash}`, width).map((line) => p.dim(line)),
     metaLine("authority", truncate(sanitize(receipt.authority), width - 10), p),
-    metaLine(
-      "model",
-      truncate(sanitize(receipt.model_ref ?? "none"), width - 6),
-      p,
-    ),
+    metaLine("model", truncate(sanitize(receipt.model_ref ?? "none"), width - 6), p),
   ];
   if (item.loadError !== null) {
     lines.push(p.fg(COLOR.danger, truncate(`load error: ${sanitize(item.loadError)}`, width)));
@@ -191,30 +197,29 @@ function detailLines(state: AuditState, width: number, p: Paint): string[] {
   if (receipt.reverts !== null) {
     lines.push(metaLine("reverts", truncate(sanitize(receipt.reverts), width - 8), p));
   }
-  const flags = [
-    `confidence ${receipt.confidence}`,
-    receipt.sensitivity,
-    receipt.taint,
-    receipt.ambiguous ? "ambiguous" : "",
-    receipt.contested ? "contested" : "",
-  ]
-    .filter((flag) => flag.length > 0)
-    .join(" · ");
-  lines.push(p.dim(truncate(flags, width)));
   lines.push(...idLines("events", receipt.provenance, width, p));
   lines.push(...idLines("claims", receipt.claim_ids, width, p));
   if (receipt.superseded.length > 0) {
-    lines.push(
-      ...idLines(
-        "superseded",
-        receipt.superseded.map((row) => row.claim_id),
-        width,
-        p,
-      ),
-    );
+    lines.push(...idLines("superseded", receipt.superseded.map((row) => row.claim_id), width, p));
   }
-  lines.push(rule(width, p));
+  return lines;
+}
+
+function detailLines(state: AuditState, width: number, p: Paint): string[] {
+  const item = currentItem(state);
+  if (item === null) {
+    return [p.dim(state.filter ? "no receipts match this filter · / to try another" : "no writes yet")];
+  }
+  const lines: string[] = [
+    p.bold(truncate(sanitize(item.title), width)),
+    trustLine(item, width, p),
+  ];
+  if (state.showDetails) {
+    lines.push(...receiptDetails(item, width, p));
+    lines.push(rule(width, p));
+  }
   lines.push(...bodyLines(item, width, p));
+  if (!state.showDetails) lines.push(p.dim(truncate("d details: receipt, hashes, provenance", width)));
   return lines;
 }
 
@@ -224,6 +229,7 @@ const HELP = [
   "j / k        move           J / K   page",
   "g / G        first / last   tab     switch pane",
   "[ / ]        older / newer receipt page",
+  "d            show or hide receipt details",
   "u            undo the selected write (type yes)",
   "o / enter    open the page",
   "/            filter          ?       this help",
@@ -248,9 +254,7 @@ function footer(state: AuditState, cols: number, p: Paint): string {
     );
   }
   if (mode.name === "help") return truncate("any key closes help", cols);
-  return p.dim(
-    truncate("j/k move  u undo  o open  [ ] page  / filter  tab pane  ? help  q quit", cols),
-  );
+  return p.dim(truncate("j/k move  d details  u undo  o open  / filter  ? help  q quit", cols));
 }
 
 function noticeLine(state: AuditState, cols: number, p: Paint): string {
@@ -286,13 +290,11 @@ export function render(state: AuditState, opts: RenderOptions): string[] {
     const left = fit(listLines(state, l.listWidth, listRows, p), l.bodyRows, l.listWidth);
     const right = fit(detailContent, l.bodyRows, l.detailWidth);
     body = left.map((line, i) => `${line}${p.fg(COLOR.rule, "│")}${right[i] ?? ""}`);
-  } else if (state.focus === "list" && state.mode.name !== "help") {
-    body = fit(listLines(state, cols, l.bodyRows, p), l.bodyRows, cols);
   } else {
     body = fit(detailContent, l.bodyRows, cols);
   }
 
-  const cursorHint = l.split ? "" : state.focus === "list" ? " list" : " detail";
+  const cursorHint = l.split ? "" : state.showDetails ? " details" : " change";
   const lines = [
     padEnd(header(state, cols, p), cols),
     padEnd(rule(cols - stringWidth(cursorHint), p) + p.dim(cursorHint), cols),
