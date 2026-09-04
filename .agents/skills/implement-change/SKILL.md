@@ -45,6 +45,8 @@ acceptance evidence, and paths owned by this lane.
    review when the task requires one.
 10. Run `handoff-work`.
 
+Load `.agents/skills/elegance-review/SKILL.md` and apply its standing bar before treating the change as done.
+
 ## Change discipline
 
 - Do not weaken tests, suppress errors broadly, or add sleeps to hide races.

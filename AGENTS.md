@@ -21,6 +21,8 @@ Before proposing work, read:
 4. `docs/product-context.md` when it exists on the checked-out revision.
 5. The nearest scoped `AGENTS.md`.
 6. The relevant skill under `.agents/skills/`.
+7. Always load `.agents/skills/elegance-review/SKILL.md` for any code change,
+   refactor, or PR review.
 
 For active campaign context, inspect the live issue and pull-request state.
 While issue #4 is open and not superseded, treat it as the durable handoff.
@@ -339,6 +341,7 @@ Open the matching canonical playbook before performing the task:
 | Implement or repair a bounded change | `.agents/skills/implement-change/SKILL.md` |
 | Diagnose a failure without shotgun edits | `.agents/skills/diagnose-failure/SKILL.md` |
 | Review a branch or pull request | `.agents/skills/review-change/SKILL.md` |
+| Every implementation or PR review | `.agents/skills/elegance-review/SKILL.md` (house default; standing elegance bar) |
 | Add or change a connector | `.agents/skills/connector-work/SKILL.md` |
 | Audit privacy and security boundaries | `.agents/skills/security-privacy-review/SKILL.md` |
 | Write or revise a design RFC | `.agents/skills/write-rfc/SKILL.md` |
@@ -348,6 +351,12 @@ Use the smallest set that covers the task. `orient-repository` comes first for
 all non-trivial work; `handoff-work` comes last when work continues elsewhere.
 Every skill is subordinate to `docs/CURRENT.md`, `docs/decision-log.md` and
 `rfcs/0002-autonomous-canon.md`; see `.agents/skills/README.md`.
+
+### Elegance
+
+House default for code work. The standing review bar:
+
+> Review this branch like your life depends on it. Make it as elegant, simple, and correct as possible. No weird wiring. No needless abstractions. Pure elegance.
 
 ## Definition of done
 

@@ -54,6 +54,8 @@ Run focused tests, package tests, typecheck, full repository verification, and
 `git diff --check` on the exact head. Inspect CI logs rather than relying only
 on a green badge.
 
+Load `.agents/skills/elegance-review/SKILL.md` and apply its standing bar before a merge recommendation.
+
 ## Findings format
 
 List findings first, highest severity first. Each finding must include:
