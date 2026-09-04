@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { stampDerived } from "../../src/derived-meta";
 import { serveGetPage } from "../../src/serving/page";
 import { serveSearch } from "../../src/serving/search";
+import type { SearchData } from "../../src/serving/search";
 import { ServeError } from "../../src/serving/types";
 import type { Envelope } from "../../src/serving/types";
 import { serveFixture } from "./helpers";
@@ -17,11 +18,11 @@ afterAll(() => {
   fixture.dispose();
 });
 
-function pageIds(envelope: Envelope): string[] {
+function pageIds(envelope: Envelope<SearchData>): string[] {
   return envelope.canon.map((chunk) => chunk.page_id).sort();
 }
 
-function eventIds(envelope: Envelope): string[] {
+function eventIds(envelope: Envelope<SearchData>): string[] {
   return envelope.quoted.map((chunk) => chunk.event_id).sort();
 }
 
