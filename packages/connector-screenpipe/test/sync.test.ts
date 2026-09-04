@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { ScreenpipeConnector } from "../src";
+import { ScreenpipeConnector, parseCursor } from "../src";
 import {
   cleanupFixtureDatabases,
   createFixtureDatabase,
@@ -43,7 +43,7 @@ describe("ScreenpipeConnector sync", () => {
     await connector.revoke();
   });
 
-  test("a caught-up sync returns an empty batch with the same cursor", async () => {
+  test("a caught-up live tail returns an empty batch and keeps the high-water cursor", async () => {
     const fixture = createFixtureDatabase();
     const connector = new ScreenpipeConnector(
       { path: fixture.path, settle_seconds: 0 },
@@ -52,18 +52,24 @@ describe("ScreenpipeConnector sync", () => {
     const initial = await connector.sync(null);
     const caughtUp = await connector.sync(initial.cursor);
 
-    expect(caughtUp).toEqual({ events: [], cursor: initial.cursor });
+    expect(caughtUp.events).toEqual([]);
+    expect(caughtUp.cursor).toBe(initial.cursor);
+    if (caughtUp.cursor === null) throw new Error("expected a screenpipe cursor");
+    expect(parseCursor(caughtUp.cursor).phase).toBe("exhausted");
     await connector.revoke();
   });
 
-  test("sync never returns a null cursor", async () => {
+  test("an empty database is exhausted, not a null cursor, so the high-water mark survives", async () => {
     const fixture = createFixtureDatabase({ rows: false });
     const connector = new ScreenpipeConnector(
       { path: fixture.path, settle_seconds: 0 },
       fixtureDeps("2026-01-09T00:00:00.000Z"),
     );
 
-    expect((await connector.sync(null)).cursor).not.toBeNull();
+    const batch = await connector.sync(null);
+    expect(batch.cursor).not.toBeNull();
+    if (batch.cursor === null) throw new Error("expected a screenpipe cursor");
+    expect(parseCursor(batch.cursor).phase).toBe("exhausted");
     await connector.revoke();
   });
 });

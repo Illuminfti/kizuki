@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  DISTINCT_SCAN_CAP,
   MAX_PLAN_IDS,
   ScreenpipeConnector,
+  planSourceRecords,
+  planUnreachableSourceRecords,
 } from "../src";
 import {
   cleanupFixtureDatabases,
@@ -11,8 +14,6 @@ import {
   insertTranscription,
 } from "./helpers";
 
-afterEach(cleanupFixtureDatabases);
-
 function digest(path: string): Promise<string> {
   return Bun.file(path)
     .arrayBuffer()
@@ -21,20 +22,29 @@ function digest(path: string): Promise<string> {
     );
 }
 
-describe("ScreenpipeConnector purge planning", () => {
-  test("an app plan lists every frame of that app under unreachable ids, nothing under source_record_ids", async () => {
+describe("ScreenpipeConnector source purge", () => {
+  test("purgeSource is not supported and does not claim source deletion", async () => {
     const fixture = createFixtureDatabase();
     const connector = new ScreenpipeConnector(
       { path: fixture.path },
       fixtureDeps("2026-01-09T00:00:00.000Z"),
     );
 
-    expect(await connector.purgeSource("screenpipe:app:acme-mail")).toEqual({
-      subject_id: "screenpipe:app:acme-mail",
-      source_record_ids: [],
-      unreachable_source_record_ids: ["frame:1", "frame:4", "frame:5"],
+    expect(connector.manifest().capabilities.purge).toBe(false);
+    await expect(
+      connector.purgeSource("screenpipe:app:acme-mail"),
+    ).rejects.toMatchObject({
+      code: "not_supported",
     });
     await connector.revoke();
+  });
+
+  test("an app plan lists every frame of that app without deleting them", async () => {
+    const fixture = createFixtureDatabase();
+
+    expect(
+      planUnreachableSourceRecords(fixture.writer, "screenpipe:app:acme-mail"),
+    ).toEqual(["frame:1", "frame:4", "frame:5"]);
   });
 
   test("a site plan matches by host only", async () => {
@@ -49,43 +59,27 @@ describe("ScreenpipeConnector purge planning", () => {
       timestamp: "2026-01-05T12:01:00Z",
       browserUrl: "https://other.example/mail.acme.example",
     });
-    const connector = new ScreenpipeConnector(
-      { path: fixture.path },
-      fixtureDeps("2026-01-09T00:00:00.000Z"),
-    );
 
     expect(
-      await connector.purgeSource("screenpipe:site:mail.acme.example"),
-    ).toEqual({
-      subject_id: "screenpipe:site:mail.acme.example",
-      source_record_ids: [],
-      unreachable_source_record_ids: ["frame:2", "frame:9"],
-    });
-    await connector.revoke();
+      planUnreachableSourceRecords(
+        fixture.writer,
+        "screenpipe:site:mail.acme.example",
+      ),
+    ).toEqual(["frame:2", "frame:9"]);
   });
 
   test("a speaker plan and a device plan", async () => {
     const fixture = createFixtureDatabase();
-    const connector = new ScreenpipeConnector(
-      { path: fixture.path },
-      fixtureDeps("2026-01-09T00:00:00.000Z"),
-    );
 
-    expect(await connector.purgeSource("screenpipe:speaker:1")).toEqual({
-      subject_id: "screenpipe:speaker:1",
-      source_record_ids: [],
-      unreachable_source_record_ids: ["transcription:1"],
-    });
     expect(
-      await connector.purgeSource(
+      planUnreachableSourceRecords(fixture.writer, "screenpipe:speaker:1"),
+    ).toEqual(["transcription:1"]);
+    expect(
+      planUnreachableSourceRecords(
+        fixture.writer,
         "screenpipe:audio-device:display-audio-output",
       ),
-    ).toEqual({
-      subject_id: "screenpipe:audio-device:display-audio-output",
-      source_record_ids: [],
-      unreachable_source_record_ids: ["transcription:2"],
-    });
-    await connector.revoke();
+    ).toEqual(["transcription:2"]);
   });
 
   test("an unknown subject yields an empty plan", async () => {
@@ -95,10 +89,6 @@ describe("ScreenpipeConnector purge planning", () => {
       timestamp: "2026-01-06T12:00:00Z",
       speakerId: 0,
     });
-    const connector = new ScreenpipeConnector(
-      { path: fixture.path },
-      fixtureDeps("2026-01-09T00:00:00.000Z"),
-    );
 
     for (const subject_id of [
       "conformance:subject",
@@ -108,13 +98,10 @@ describe("ScreenpipeConnector purge planning", () => {
       "screenpipe:speaker:0",
       "screenpipe:speaker:-1",
     ]) {
-      expect(await connector.purgeSource(subject_id)).toEqual({
-        subject_id,
-        source_record_ids: [],
-        unreachable_source_record_ids: [],
-      });
+      expect(planUnreachableSourceRecords(fixture.writer, subject_id)).toEqual(
+        [],
+      );
     }
-    await connector.revoke();
   });
 
   test("the plan is capped at MAX_PLAN_IDS", async () => {
@@ -128,22 +115,40 @@ describe("ScreenpipeConnector purge planning", () => {
         });
       }
     })();
-    const connector = new ScreenpipeConnector(
-      { path: fixture.path },
-      fixtureDeps("2026-01-09T00:00:00.000Z"),
-    );
 
-    const plan = await connector.purgeSource("screenpipe:app:bulk-app");
+    const plan = planSourceRecords(fixture.writer, "screenpipe:app:bulk-app");
 
-    expect(plan.unreachable_source_record_ids).toHaveLength(MAX_PLAN_IDS);
-    expect(plan.unreachable_source_record_ids[0]).toBe("frame:1");
-    expect(plan.unreachable_source_record_ids.at(-1)).toBe(
-      `frame:${MAX_PLAN_IDS}`,
-    );
-    await connector.revoke();
+    expect(plan.ids).toHaveLength(MAX_PLAN_IDS);
+    expect(plan.truncated).toBe(true);
+    expect(plan.ids[0]).toBe("frame:1");
+    expect(plan.ids.at(-1)).toBe(`frame:${MAX_PLAN_IDS}`);
   });
 
-  test("purgeSource never writes", async () => {
+  test("distinct-value scans used for planning are capped", async () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    fixture.writer.transaction(() => {
+      for (let id = 1; id <= DISTINCT_SCAN_CAP + 25; id += 1) {
+        insertFrame(fixture.writer, {
+          id,
+          timestamp: "2026-01-01T00:00:00Z",
+          appName: `App ${String(id).padStart(4, "0")}`,
+        });
+      }
+    })();
+
+    const included = planSourceRecords(
+      fixture.writer,
+      "screenpipe:app:app-0001",
+    );
+    const excluded = planSourceRecords(
+      fixture.writer,
+      `screenpipe:app:app-${String(DISTINCT_SCAN_CAP + 25).padStart(4, "0")}`,
+    );
+    expect(included.ids).toEqual(["frame:1"]);
+    expect(excluded.ids).toEqual([]);
+  });
+
+  test("planning never writes", async () => {
     const fixture = createFixtureDatabase();
     fixture.writer.close();
     const before = await digest(fixture.path);
@@ -152,7 +157,9 @@ describe("ScreenpipeConnector purge planning", () => {
       fixtureDeps("2026-01-09T00:00:00.000Z"),
     );
 
-    await connector.purgeSource("screenpipe:app:acme-mail");
+    await expect(
+      connector.purgeSource("screenpipe:app:acme-mail"),
+    ).rejects.toMatchObject({ code: "not_supported" });
     await connector.revoke();
 
     expect(await digest(fixture.path)).toBe(before);

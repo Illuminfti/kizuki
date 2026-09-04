@@ -7,7 +7,14 @@ import { SCREENPIPE_CONNECTOR_ID } from "./config";
 import { MAX_TEXT_CHARS } from "./cursor";
 import { ScreenpipeConnectorError } from "./errors";
 import type { FrameRow, TranscriptionRow } from "./read";
-import { normalizeTimestamp, offsetSeconds } from "./time";
+import { resolveTimestamp, offsetSeconds } from "./time";
+import { redactBrowserUrl } from "./url";
+
+export interface MapOptions {
+  occurredAt?: string;
+  timeZone?: string | null;
+  retainFullUrls?: boolean;
+}
 
 export function slug(name: string): string {
   return name
@@ -35,9 +42,16 @@ export function siteHost(browserUrl: string | null): string | null {
 export function mapFrame(
   row: FrameRow,
   observedAt: string,
+  options: MapOptions = {},
 ): CaptureEventInput {
-  const occurredAt = requiredTimestamp(row.timestamp, "frame");
+  const occurredAt =
+    options.occurredAt ??
+    requiredTimestamp(row.timestamp, "frame", options.timeZone ?? null);
   const text = requiredFrameText(row.full_text);
+  const browserUrl = redactBrowserUrl(
+    row.browser_url,
+    options.retainFullUrls === true,
+  );
   const truncated = text.length > MAX_TEXT_CHARS;
   const subjects: SubjectRef[] = [];
   if (row.app_name !== null && row.app_name.length > 0) {
@@ -50,7 +64,7 @@ export function mapFrame(
       });
     }
   }
-  const host = siteHost(row.browser_url);
+  const host = siteHost(browserUrl ?? row.browser_url);
   if (host !== null) {
     subjects.push({
       subject_id: `screenpipe:site:${host}`,
@@ -86,7 +100,7 @@ export function mapFrame(
       device_name: row.device_name,
       app_name: row.app_name,
       window_name: row.window_name,
-      browser_url: row.browser_url,
+      browser_url: browserUrl,
       document_path: row.document_path,
       focused: row.focused,
       capture_trigger: row.capture_trigger,
@@ -101,8 +115,22 @@ export function mapFrame(
 export function mapTranscription(
   row: TranscriptionRow,
   observedAt: string,
+  options: MapOptions = {},
 ): CaptureEventInput {
-  const base = requiredTimestamp(row.timestamp, "transcription");
+  const base =
+    options.occurredAt ??
+    requiredTimestamp(
+      row.timestamp,
+      "transcription",
+      options.timeZone ?? null,
+    );
+  const occurredAt = offsetSeconds(base, row.start_time);
+  if (occurredAt === null) {
+    throw new ScreenpipeConnectorError(
+      "parse_error",
+      "kizuki.screenpipe: transcription offset is invalid",
+    );
+  }
   const truncated = row.transcription.length > MAX_TEXT_CHARS;
   const subjects: SubjectRef[] = [];
   if (row.speaker_id !== null) {
@@ -130,7 +158,7 @@ export function mapTranscription(
     connector_id: SCREENPIPE_CONNECTOR_ID,
     source_record_id: `transcription:${row.id}`,
     kind: "audio_transcription",
-    occurred_at: offsetSeconds(base, row.start_time),
+    occurred_at: occurredAt,
     observed_at: observedAt,
     text: truncated
       ? row.transcription.slice(0, MAX_TEXT_CHARS)
@@ -154,15 +182,19 @@ export function mapTranscription(
   };
 }
 
-function requiredTimestamp(raw: string, rowKind: string): string {
-  const timestamp = normalizeTimestamp(raw);
-  if (timestamp === null) {
+function requiredTimestamp(
+  raw: string,
+  rowKind: string,
+  timeZone: string | null,
+): string {
+  const resolved = resolveTimestamp(raw, timeZone);
+  if ("reject" in resolved) {
     throw new ScreenpipeConnectorError(
       "parse_error",
-      `kizuki.screenpipe: ${rowKind} timestamp is invalid`,
+      `kizuki.screenpipe: ${rowKind} timestamp is ${resolved.reject === "offset_unknown" ? "offset-unknown" : "invalid"}`,
     );
   }
-  return timestamp;
+  return resolved.iso;
 }
 
 function requiredFrameText(text: string | null): string {
