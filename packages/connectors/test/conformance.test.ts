@@ -146,8 +146,11 @@ function batteryFor(
         { token_secret_ref: "env:KIZUKI_BEEPER_FIXTURE_TOKEN" },
         {
           now: () => new Date("2026-01-01T00:00:00.000Z"),
-          fetch: async () =>
-            new Response(JSON.stringify({
+          fetch: async (url) =>
+            new Response(JSON.stringify(url.pathname === "/v1/info" ? {
+              app: { name: "Beeper", version: "fixture" },
+              server: { status: "ready" },
+            } : {
               items: [{
                 id: "fixture-message", accountID: "fixture-account", chatID: "fixture-chat",
                 senderID: "fixture-sender", sortKey: "1", timestamp: "2026-01-01T00:00:00.000Z",

@@ -63,7 +63,7 @@ test("health probes local Beeper with the token and distinguishes rejection, out
   const healthy = await connected(async (url, init) => {
     requests.push(url.pathname);
     expect(init.headers).toEqual({ Authorization: `Bearer ${TOKEN}` });
-    return reply({ version: "fixture" });
+    return reply({ app: { name: "Beeper", version: "fixture" }, server: { status: "ready" } });
   });
   expect((await healthy.health()).state).toBe("ok");
   expect(requests).toEqual(["/v1/info"]);
@@ -72,7 +72,7 @@ test("health probes local Beeper with the token and distinguishes rejection, out
   const offline = await connected(async () => { throw new Error("offline"); });
   expect((await offline.health()).state).toBe("unreachable");
   const malformed = await connected(async () => new Response("not-json"));
-  expect((await malformed.health()).state).toBe("degraded");
+  expect((await malformed.health()).state).toBe("misconfigured");
 });
 
 test("refuses malformed pages and looping cursors without advancing", async () => {

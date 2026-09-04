@@ -56,10 +56,10 @@ export class BeeperConnector implements Connector {
       if (response.redirected || !response.ok) return this.#health("unreachable", checked_at, "Beeper Desktop did not accept the health probe");
       const payload = await boundedText(response);
       let parsed: unknown;
-      try { parsed = JSON.parse(payload); } catch { return this.#health("degraded", checked_at, "Beeper Desktop returned an invalid health response"); }
-      return isPlainObject(parsed)
+      try { parsed = JSON.parse(payload); } catch { return this.#health("misconfigured", checked_at, "Beeper Desktop returned an invalid health response"); }
+      return isInfoResponse(parsed)
         ? this.#health("ok", checked_at)
-        : this.#health("degraded", checked_at, "Beeper Desktop returned an invalid health response");
+        : this.#health("misconfigured", checked_at, "Beeper Desktop returned an invalid health response");
     } catch { return this.#health("unreachable", checked_at, "Beeper Desktop could not be reached"); }
   }
   backfill(cursor: Cursor | null): Promise<SyncBatch> { return this.#advance(cursor); }
@@ -107,7 +107,7 @@ export class BeeperConnector implements Connector {
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
   }
-  #health(state: "ok" | "degraded" | "unauthenticated" | "unreachable", checked_at: string, detail?: string): HealthReport {
+  #health(state: "ok" | "misconfigured" | "unauthenticated" | "unreachable", checked_at: string, detail?: string): HealthReport {
     return new HealthReport({ state, checked_at, ...(detail === undefined ? {} : { detail }), ...(this.#lastSuccessAt === undefined ? {} : { last_success_at: this.#lastSuccessAt }) });
   }
   #assertActive(): void { if (this.#revoked) throw new KizukiError("unavailable", "kizuki.beeper: access was revoked"); }
@@ -151,6 +151,12 @@ function parseMessage(raw: unknown): Message {
   return { id: raw.id as string, accountID: raw.accountID as string, chatID: raw.chatID as string, ...(typeof raw.senderID === "string" ? { senderID: raw.senderID } : {}), sortKey: raw.sortKey as string, timestamp: new Date(raw.timestamp as string).toISOString(), ...(typeof raw.text === "string" ? { text: raw.text } : {}), ...(raw.isDeleted === true ? { isDeleted: true } : {}), ...(raw.editedTimestamp === undefined ? {} : { editedTimestamp: raw.editedTimestamp as string }) };
 }
 function malformedMessage(): KizukiError { return new KizukiError("parse_error", "kizuki.beeper: malformed message"); }
+function isInfoResponse(value: unknown): boolean {
+  return isPlainObject(value) && isPlainObject(value.app) && isPlainObject(value.server)
+    && typeof value.app.name === "string" && value.app.name.length > 0
+    && typeof value.app.version === "string" && value.app.version.length > 0
+    && typeof value.server.status === "string";
+}
 function mapMessage(message: Message, observed_at: string): CaptureEventInput {
   const deleted = message.isDeleted === true;
   const accountChat = JSON.stringify([message.accountID, message.chatID]);
