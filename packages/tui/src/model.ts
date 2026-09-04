@@ -52,10 +52,13 @@ export interface AuditState {
   listScroll: number;
   detailScroll: number;
   focus: "list" | "detail";
+  showDetails: boolean;
   mode: Mode;
   notice: Notice | null;
   /** Persistent vault/load failure; not cleared by navigation. */
   health: Notice | null;
+  /** Command-level scope, distinct from the transient local `/` search. */
+  commandFilter: string;
   filter: string;
   pageOffset: number;
   pageSize: number;
@@ -130,6 +133,7 @@ export interface InitialStateInput {
   today: string;
   items: AuditItem[];
   health?: Notice | null;
+  commandFilter?: string;
   pageOffset?: number;
   pageSize?: number;
   pageTruncated?: boolean;
@@ -147,9 +151,11 @@ export function initialState(input: InitialStateInput): AuditState {
     listScroll: 0,
     detailScroll: 0,
     focus: "list",
+    showDetails: false,
     mode: { name: "list" },
     notice: null,
     health: input.health ?? null,
+    commandFilter: input.commandFilter ?? "",
     filter: "",
     pageOffset: input.pageOffset ?? 0,
     pageSize: input.pageSize ?? input.items.length,
@@ -266,6 +272,9 @@ function reduceList(state: AuditState, key: Key, viewport: Viewport): Step {
   if (key.name === "ctrl-c" || ch === "q") return step(state, [{ type: "quit" }]);
   if (key.name === "tab") {
     return step({ ...state, focus: state.focus === "list" ? "detail" : "list" });
+  }
+  if (ch === "d") {
+    return step({ ...state, showDetails: !state.showDetails, detailScroll: 0 });
   }
   if (ch === "?") return step({ ...state, mode: { name: "help" } });
   if (ch === "/") return step({ ...state, mode: { name: "filter", text: state.filter } });

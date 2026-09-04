@@ -1,6 +1,6 @@
 # CLI reference
 
-Invoke from a clone. Nothing is packaged.
+Run the native `kizuki` executable from the [local build](native-build.md), or invoke from a clone:
 
 ```bash
 bun packages/cli/src/main.ts <verb> [options]
@@ -8,8 +8,8 @@ bun packages/cli/src/main.ts help
 bun packages/cli/src/main.ts help <verb>
 ```
 
-If a bin alias `kizuki` is on `PATH`, it is the same entry
-(`packages/cli/src/main.ts`). `npm i -g kizuki` is not supported.
+The compiled CLI uses the same commands. `kizuki <verb> --help` also prints
+command help without opening a vault. `npm i -g kizuki` is not supported.
 
 Global option: `--vault <path|name>` on every verb. User config is
 `$KIZUKI_CONFIG`, else `$XDG_CONFIG_HOME/kizuki/config.toml`, else
@@ -54,17 +54,27 @@ owner edits are left in place.
 usage: kizuki import <connector> --source PATH
 ```
 
-Enrolls a `none`-mode source and backfills it to exhaustion. Sign-in
-connectors are not in the CLI enrollment list.
+Enrolls a `none`-mode file source and backfills it to exhaustion. For local
+Beeper messages, use `connect beeper` followed by `backfill beeper`.
 
 ## connect
 
 ```text
-usage: kizuki connect <connector> --source PATH [--sensitivity public|personal|private]
+usage: kizuki connect [--list|status] [--json]
+       kizuki connect <connector> --source PATH [--sensitivity public|personal|private]
+       kizuki connect beeper --token-ref env:VAR|file:/absolute/path [--endpoint http://127.0.0.1:23373] [--sensitivity public|personal|private] [--json]
 ```
 
-Enroll a none-mode file source only. Sensitivity is optional; unlabeled
-evidence is not served. Sign-in connectors refuse enrollment.
+Browse sources, inspect saved sync status, or enroll a source. Local Beeper
+enrollment checks its authenticated Desktop API before saving a secret
+reference. File sources remain supported. Other account sign-in flows are
+unavailable and labeled in the catalog. See [connection setup](connect.md).
+
+Sensitivity is optional: trusted connector runs resolve each valid event
+against that connection's default, floor, owner label, and source hint.
+Hints cannot lower the connection policy. A legacy connection without a
+recorded policy defaults to private. Direct unlabelled ledger writes remain
+withheld, and changing policy does not relabel historical events.
 
 ## backfill / sync
 
@@ -73,10 +83,12 @@ usage: kizuki backfill <connector> [--source PATH|KEY]
 usage: kizuki sync [connector] [--source PATH|KEY]
 ```
 
-Historical sweep vs incremental sweep. Each selected connection is drained
+Historical capture vs source refresh. Each selected connection is drained
 until the connector reports exhaustion. `--source` requires an explicit
 connector. A named connector with no rows exits `1` (`no_connections`).
 One connection failure does not skip the rest.
+The Beeper connector conservatively rescans available history on each completed
+sync cycle to observe edits and explicit tombstones; unchanged records deduplicate.
 
 ## query
 
@@ -123,7 +135,10 @@ usage: kizuki context [--purpose session|recall|correction|audit] [--budget N] [
 
 Purpose-scoped compilation of canon, graph, timeline, and working-knowledge
 claims with provenance stamps and a token budget. Same engine as MCP
-`context_packet`. Does not write canon.
+`context_packet`. Does not write canon. Empty packets keep the machine header
+on stdout and offer a next step on stderr. If gathering fails, the CLI returns
+exit 1 and reports `degraded` in JSON instead of presenting the header as a
+complete packet.
 
 ## undo
 
@@ -136,11 +151,13 @@ Restores prior canon bytes from a write receipt.
 ## audit
 
 ```text
-usage: kizuki audit [--since TIME] [--page PATH] [--writer NAME] [--contested] [--ambiguous] [--reverted] [--json]
+usage: kizuki audit [--since TIME] [--page PATH] [--writer NAME] [--contested] [--ambiguous] [--reverted] [--list|--json]
 ```
 
 Lists receipted writes. A TTY without `--json` / `--list` opens the audit
-TUI. The only effect that TUI may emit is `undo`.
+TUI. The actual change appears first with compact trust details; `d` reveals
+full receipt hashes and provenance. Command filters apply throughout paging
+and reloads. The only effect that TUI may emit is `undo`.
 
 ## serve
 

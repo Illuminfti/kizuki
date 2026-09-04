@@ -81,7 +81,7 @@ describe("query", () => {
     }
   });
 
-  test("--scope canon and --scope ledger split labeled pages from unlabeled events", () => {
+  test("--scope canon and --scope ledger split pages from connected source events", () => {
     const setup = tempVault();
     importNotes(setup);
     seedCanonPage(setup, {
@@ -97,8 +97,10 @@ describe("query", () => {
 
     const ledger = runCli(setup.env, "query", "acme", "--scope", "ledger");
     expect(ledger.exitCode).toBe(0);
-    expect(ledger.stdout).toBe("");
-    expect(ledger.stderr).toContain("withheld=");
+    expect(ledger.stdout).toMatch(/^event /);
+    expect(ledger.stdout).toContain("acme");
+    expect(ledger.stdout).not.toMatch(/^page /m);
+    expect(ledger.stderr).not.toContain("withheld=");
   });
 
   test("held and archived pages are never returned", () => {

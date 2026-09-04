@@ -22,7 +22,7 @@ import type {
 export interface SupervisorHost {
   readonly kind: SupervisorKind;
   readonly home: string;
-  readonly execStart: string;
+  readonly execStart: string | readonly string[];
   query(vaultId: string): SupervisorStatus;
   enable(unitPath: string, unitName: string): { ok: boolean; detail: string };
   disable(unitName: string): { ok: boolean; detail: string };
@@ -56,7 +56,7 @@ function runCommand(argv: string[]): { ok: boolean; stdout: string; stderr: stri
 export function realSupervisorHost(
   kind: SupervisorKind,
   home: string,
-  execStart: string,
+  execStart: string | readonly string[],
 ): SupervisorHost {
   return {
     kind,

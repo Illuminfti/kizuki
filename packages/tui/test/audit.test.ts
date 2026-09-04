@@ -146,11 +146,49 @@ describe("audit reducer", () => {
     expect(joined).not.toContain("kizuki review");
     expect(joined.toLowerCase()).not.toContain("promote");
     expect(joined.toLowerCase()).not.toContain("nothing here is undoable");
+    expect(joined).toContain("personal");
+    expect(joined).toContain("clean");
+    expect(joined).toContain("confidence 0.8");
+    expect(joined).toContain("d details");
+    expect(joined).not.toContain("connector_evidence");
+    const detailed = press(start, chars("d")).state;
+    const detailFrame = render(detailed, { cols: 100, rows: 24, paint: paint(false) }).join("\n");
     const eventId = hostile.receipt.provenance[0];
     if (eventId === undefined) throw new Error("expected provenance");
-    expect(joined).toContain(eventId);
-    expect(joined).toContain("authority");
-    expect(joined).toContain("connector_evidence");
+    expect(detailFrame).toContain(eventId);
+    expect(detailFrame).toContain("authority");
+    expect(detailFrame).toContain("connector_evidence");
+  });
+
+  test("the initial standard-terminal frame puts the change before receipt detail", () => {
+    const start = state([
+      item(
+        { page_action: "edit", before_hash: "b".repeat(64), after_hash: "a".repeat(64) },
+        { priorBody: "Grace runs partnerships.\n", currentBody: "Grace leads partnerships.\n" },
+      ),
+    ]);
+    for (const viewport of [{ cols: 80, rows: 24 }, { cols: 120, rows: 30 }]) {
+      const frame = render(start, { ...viewport, paint: paint(false) }).join("\n");
+      expect(frame).toContain("- Grace runs partnerships.");
+      expect(frame).toContain("+ Grace leads partnerships.");
+      expect(frame).toContain("personal");
+      expect(frame).toContain("clean");
+      expect(frame).not.toContain("before bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    }
+  });
+
+  test("d reveals bounded provenance and long hashes without adding an effect", () => {
+    const start = state([item({ before_hash: "b".repeat(64), after_hash: "a".repeat(64) })]);
+    const result = press(start, chars("d"));
+    expect(result.effects).toEqual([]);
+    expect(result.state.showDetails).toBe(true);
+    const frame = render(result.state, { cols: 120, rows: 30, paint: paint(false) }).join("\n");
+    expect(frame).toContain("before");
+    expect(frame).toContain("after");
+    expect(frame).toContain("b".repeat(64));
+    expect(frame).toContain("a".repeat(64));
+    expect(frame).toContain("events 1");
+    expect(frame).toContain("claims 1");
   });
 
   test("help and empty-list paths stay on the four effects", () => {

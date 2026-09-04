@@ -3,7 +3,7 @@ import type { ServeConfig } from "./types";
 export interface UnitSpec {
   readonly vaultPath: string;
   readonly vaultId: string;
-  readonly execStart: string;
+  readonly execStart: string | readonly string[];
   readonly config: ServeConfig;
 }
 
@@ -28,6 +28,10 @@ export function launchdPlistPath(home: string, vaultId: string): string {
  * path; network address filtering is deliberately not applied.
  */
 export function renderSystemdUnit(spec: UnitSpec): string {
+  validateSpec(spec);
+  const exec = typeof spec.execStart === "string"
+    ? spec.execStart
+    : spec.execStart.map((arg) => systemdValue(arg, true)).join(" ");
   return [
     "[Unit]",
     `Description=kizuki serve (${spec.vaultId})`,
@@ -36,14 +40,14 @@ export function renderSystemdUnit(spec: UnitSpec): string {
     "",
     "[Service]",
     "Type=simple",
-    `ExecStart=${spec.execStart}`,
-    `WorkingDirectory=${spec.vaultPath}`,
+    `ExecStart=${exec}`,
+    `WorkingDirectory=${systemdValue(spec.vaultPath)}`,
     "Restart=on-failure",
     "NoNewPrivileges=true",
     "PrivateTmp=true",
     "ProtectSystem=strict",
     "ProtectHome=read-only",
-    `ReadWritePaths=${spec.vaultPath}`,
+    `ReadWritePaths=${systemdValue(spec.vaultPath)}`,
     "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
     "UMask=0077",
     `MemoryMax=${spec.config.memory_max}`,
@@ -57,9 +61,11 @@ export function renderSystemdUnit(spec: UnitSpec): string {
 }
 
 export function renderLaunchdPlist(spec: UnitSpec): string {
-  const args = spec.execStart
-    .split(/\s+/)
-    .filter((part) => part.length > 0)
+  validateSpec(spec);
+  const argv = typeof spec.execStart === "string"
+    ? spec.execStart.split(/\s+/).filter((part) => part.length > 0)
+    : spec.execStart;
+  const args = argv
     .map((part) => `    <string>${escapeXml(part)}</string>`)
     .join("\n");
   return [
@@ -87,6 +93,28 @@ export function renderLaunchdPlist(spec: UnitSpec): string {
     `</plist>`,
     "",
   ].join("\n");
+}
+
+/** Supervisor commands are argument vectors; paths are never shell code. */
+function validateSpec(spec: UnitSpec): void {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(spec.vaultId)) {
+    throw new Error("invalid vault identity for a user service");
+  }
+  const argv = typeof spec.execStart === "string" ? [spec.execStart] : spec.execStart;
+  if (argv.length === 0 || argv[0]?.length === 0) {
+    throw new Error("user service requires an executable");
+  }
+  for (const value of [spec.vaultPath, ...argv]) {
+    if (/[\x00-\x1f\x7f]/.test(value)) {
+      throw new Error("user service paths and arguments must not contain control characters");
+    }
+  }
+}
+
+function systemdValue(value: string, command = false): string {
+  if (/^[a-zA-Z0-9_./:-]+$/.test(value)) return value;
+  const escaped = value.replaceAll("%", "%%");
+  return JSON.stringify(command ? escaped.replaceAll("$", () => "$$") : escaped);
 }
 
 function escapeXml(value: string): string {

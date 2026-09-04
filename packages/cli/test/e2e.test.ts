@@ -52,10 +52,11 @@ describe("kizuki CLI stranger loop", () => {
     );
     expect(statSync(statePath).mode & 0o777).toBe(0o600);
 
-    const unlabeled = runCli(setup.env, "query", "acme");
-    expect(unlabeled.exitCode).toBe(0);
-    expect(unlabeled.stdout).toBe("");
-    expect(unlabeled.stderr).toBe("withheld=1 (no sensitivity label)\n");
+    const recalled = runCli(setup.env, "query", "acme");
+    expect(recalled.exitCode).toBe(0);
+    expect(recalled.stdout).toMatch(/^event /);
+    expect(recalled.stdout).toContain("acme");
+    expect(recalled.stderr).toBe("");
 
     const doctor = runCli(setup.env, "doctor");
     expect(doctor.exitCode).toBe(0);

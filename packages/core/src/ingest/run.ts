@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { Connector, Manifest, SyncBatch } from "../contracts/connector";
+import { validateEventInput } from "../contracts/event";
 import {
   CONNECTOR_OPERATION_DEADLINE_MS,
   MAX_SYNC_BATCH_BYTES,
@@ -14,6 +15,8 @@ import {
   type ConnectionRunStatus,
 } from "../ledger/connections";
 import { accept } from "../ledger/ledger";
+import { resolveSensitivity } from "../sensitivity/resolve";
+import { getConnectorSensitivity } from "../sensitivity/store";
 import { cascadeTombstone, proposalsForEvent } from "../staging/producers";
 import type { ProducerGrants } from "../staging/producers";
 import { fileProposal } from "../staging/proposals";
@@ -210,6 +213,40 @@ function refusedRun(reason: string, cursor: string | null): RunResult {
   };
 }
 
+/**
+ * The connector supplies a hint, but the enrolled connection supplies the
+ * authority that turns it into a serving label. Preserve malformed inputs for
+ * `accept` so this trusted step cannot turn a bad connector event into a
+ * valid private one.
+ */
+function labelBatch(
+  db: Database,
+  connectorId: string,
+  sourceKey: string,
+  batch: SyncBatch,
+): SyncBatch {
+  const policy = getConnectorSensitivity(db, connectorId, sourceKey);
+  const floor = policy?.floor ?? "private";
+  const defaultSensitivity = policy?.default_sensitivity ?? "private";
+  return {
+    ...batch,
+    events: batch.events.map((input) => {
+      const validated = validateEventInput(input);
+      if (!validated.ok) return input;
+      return {
+        ...validated.value,
+        sensitivity_hint: resolveSensitivity({
+          connector_floor: floor,
+          connector_default: defaultSensitivity,
+          ...(validated.value.sensitivity_hint === undefined
+            ? {}
+            : { event_hint: validated.value.sensitivity_hint }),
+        }).sensitivity,
+      };
+    }),
+  };
+}
+
 function isUnavailable(error: unknown, batch: SyncBatch | null): boolean {
   if (batch?.status === "unavailable") return true;
   if (error instanceof DeadlineError) return true;
@@ -338,7 +375,11 @@ async function runConnector(
     return persistRun(db, connector_id, source_key, mode, previous, batch.cursor, result, "refused");
   }
 
-  const processed = runBatch(db, batch, sourceGrants(manifest));
+  const processed = runBatch(
+    db,
+    labelBatch(db, connector_id, source_key, batch),
+    sourceGrants(manifest),
+  );
   const status: ConnectionRunStatus = processed.errors.length === 0 ? "ok" : "failed";
   return persistRun(
     db,

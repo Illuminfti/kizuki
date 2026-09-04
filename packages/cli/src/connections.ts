@@ -9,13 +9,16 @@ import type {
 import { ConnectionStateStore, isPlainObject, listConnections } from "@kizuki/core";
 import { REGISTRY, getConnector } from "@kizuki/connectors";
 import { errorText } from "./output";
+import { tokenResolver, validTokenRef } from "./secrets";
 
 export const HOST_STATE_SCHEMA = "kizuki.cli.connection-state/v1" as const;
 
 export interface HostConnectionState {
   schema: typeof HOST_STATE_SCHEMA;
   connector_id: string;
-  config: { path: string };
+  config:
+    | { path: string; base_url?: never; token_secret_ref?: never }
+    | { base_url: string; token_secret_ref: string; path?: never };
 }
 
 export class ConnectionError extends Error {
@@ -29,7 +32,9 @@ export function encodeHostState(state: HostConnectionState): Uint8Array {
     JSON.stringify({
       schema: state.schema,
       connector_id: state.connector_id,
-      config: { path: state.config.path },
+      config: state.config.path !== undefined
+        ? { path: state.config.path }
+        : { base_url: state.config.base_url, token_secret_ref: state.config.token_secret_ref },
     }),
   );
 }
@@ -69,6 +74,18 @@ export function decodeHostState(
     throw new ConnectionError("connection state config is not an object");
   }
   const configKeys = Object.keys(config);
+  if (connectorId === "kizuki.beeper") {
+    const endpoint = config["base_url"];
+    const ref = config["token_secret_ref"];
+    if (configKeys.length !== 2 || typeof endpoint !== "string" ||
+        typeof ref !== "string" || !validTokenRef(ref)) {
+      throw new ConnectionError("Beeper connection state requires an endpoint and a supported token reference");
+    }
+    // The connector validates the loopback URL before any secret resolution or request.
+    getConnector(connectorId, { base_url: endpoint, token_secret_ref: ref });
+    return { schema: HOST_STATE_SCHEMA, connector_id: connectorId,
+      config: { base_url: endpoint, token_secret_ref: ref } };
+  }
   if (configKeys.length !== 1 || configKeys[0] !== "path") {
     throw new ConnectionError("connection state config has unexpected keys");
   }
@@ -84,7 +101,7 @@ export function decodeHostState(
 }
 
 function connectorAuthModes(id: string): readonly string[] | null {
-  for (const config of [{}, { path: "/var/empty" }] as const) {
+  for (const config of [{}, { path: "/var/empty" }, { token_secret_ref: "env:BEEPER_TOKEN" }] as const) {
     try {
       return getConnector(id, config).manifest().auth_modes;
     } catch {
@@ -98,7 +115,8 @@ function connectorAuthModes(id: string): readonly string[] | null {
 export function listEnrollableConnectorIds(): string[] {
   return Object.keys(REGISTRY)
     .sort()
-    .filter((id) => connectorAuthModes(id)?.includes("none") === true);
+    .filter((id) => connectorAuthModes(id)?.includes("none") === true ||
+      (id === "kizuki.beeper" && connectorAuthModes(id)?.includes("secret_ref") === true));
 }
 
 function resolveRegisteredId(input: string): string | null {
@@ -176,8 +194,9 @@ export function listHostConnections(
   db: Database,
   store: ConnectionStateStore,
   connectorId?: string,
+  opts: { includeDisconnected?: boolean } = {},
 ): HostConnection[] {
-  return listConnections(db)
+  return listConnections(db, opts)
     .filter(
       (connection) =>
         connectorId === undefined || connection.connector_id === connectorId,
@@ -217,7 +236,8 @@ export function selectConnection(
     }
   } else {
     const absolute = resolve(selector);
-    selected = matches.find((item) => item.state?.config.path === absolute);
+    selected = matches.find((item) => item.state?.config.path === absolute ||
+      item.state?.config.base_url === selector.replace(/\/$/, ""));
     if (selected === undefined) {
       throw new ConnectionError(
         `no connection for ${connectorId}; run: kizuki connect ${connectorId} --source PATH`,
@@ -238,8 +258,8 @@ export function selectConnection(
   return selected;
 }
 
-export const refuseSecrets: SecretResolver = async (ref) => {
-  throw new ConnectionError(`no secret configured for ${ref}`);
+export const refuseSecrets: SecretResolver = async () => {
+  throw new ConnectionError("no secret configured for this connection");
 };
 
 /** A usable source may be degraded; only closed states block enrollment. */
@@ -249,6 +269,7 @@ export function blocksEnrollment(state: HealthState): boolean {
 
 export async function loadConnector(
   selected: HostConnection,
+  env: Record<string, string | undefined> = process.env,
 ): Promise<Connector> {
   if (selected.state === null) {
     throw new ConnectionError(
@@ -259,6 +280,7 @@ export async function loadConnector(
     selected.connection.connector_id,
     selected.state.config,
   );
-  await connector.connect(refuseSecrets);
+  const ref = selected.state.config.token_secret_ref;
+  await connector.connect(ref === undefined ? refuseSecrets : tokenResolver(ref, env));
   return connector;
 }

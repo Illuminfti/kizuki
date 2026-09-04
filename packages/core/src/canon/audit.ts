@@ -63,6 +63,9 @@ export function listAuditReceipts(db: Database, opts: AuditListOptions = {}): Au
   if (opts.since !== undefined) query.since = opts.since;
   if (opts.offset !== undefined) query.offset = opts.offset;
   if (opts.reverted === false) query.include_reverted = false;
+  if (opts.reverted === true) query.only_reverted = true;
+  if (opts.ambiguous === true) query.only_ambiguous = true;
+  if (opts.contested === true) query.only_contested = true;
 
   let rows = listCanonReceipts(db, query).map((receipt) => ({
     ...receipt,
@@ -70,12 +73,6 @@ export function listAuditReceipts(db: Database, opts: AuditListOptions = {}): Au
     ambiguous: receipt.candidates.length > 0,
   }));
 
-  if (opts.reverted === true) {
-    rows = rows.filter((row) => row.reverted_by !== null);
-  }
-  if (opts.ambiguous === true) {
-    rows = rows.filter((row) => row.ambiguous);
-  }
 
   const contestedKeys = liveContestedKeys(db);
   const keys = claimKeysForReceipts(
@@ -85,9 +82,6 @@ export function listAuditReceipts(db: Database, opts: AuditListOptions = {}): Au
   for (const row of rows) {
     const claimKeys = keys.get(row.receipt_id) ?? [];
     row.contested = claimKeys.some((key) => contestedKeys.has(key));
-  }
-  if (opts.contested === true) {
-    rows = rows.filter((row) => row.contested);
   }
   return rows;
 }

@@ -31,7 +31,11 @@ export const importCommand: Command = {
     const absolute = resolve(source);
 
     return withVault(io, async (ctx) => {
-      let selected = listHostConnections(ctx.db, ctx.store, connectorId).find(
+      const hosts = listHostConnections(ctx.db, ctx.store, connectorId);
+      if (hosts.some((item) => item.state === null)) {
+        throw new ConnectionError("An existing connection has missing or unreadable state. Run kizuki doctor and restore its connection state before importing another source.");
+      }
+      let selected = hosts.find(
         (item) => item.state?.config.path === absolute,
       );
       if (selected === undefined || selected.state === null) {

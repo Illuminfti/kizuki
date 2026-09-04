@@ -15,7 +15,7 @@ import type { CliIo, Command } from "./index";
 export const syncCommand: Command = {
   name: "sync",
   usage: "sync [connector] [--source PATH|KEY]",
-  summary: "drain incremental sweeps until each selected connection is exhausted",
+  summary: "refresh selected sources until each connector reports exhaustion",
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, { options: ["--source"] });
     if (parsed.positionals.length > 1) throw new UsageError(this.usage);

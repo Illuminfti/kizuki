@@ -6,6 +6,8 @@
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit",
     "verify": "bash scripts/verify.sh",
+    "build:release": "bun scripts/build-release.ts",
+    "smoke:release": "bun scripts/smoke-release.ts",
     "verify:network": "bun scripts/verify-network.ts",
     "ci:workflows": "bun scripts/verify-workflows.ts",
     "ci:secrets": "bun scripts/verify-secrets.ts",

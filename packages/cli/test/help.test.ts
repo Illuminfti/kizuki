@@ -91,9 +91,11 @@ describe("help", () => {
   test("help <verb> prints that verb's usage", () => {
     const result = runCli(isolatedEnv(), "help", "connect");
     expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("usage: kizuki connect [--list|status] [--json]");
     expect(result.stdout).toContain(
-      "usage: kizuki connect <connector> --source PATH [--sensitivity public|personal|private]",
+      "kizuki connect <connector> --source PATH [--sensitivity public|personal|private]",
     );
+    expect(result.stdout).toContain("kizuki connect beeper --token-ref");
   });
 
   test("root help is a product front door without RFC jargon or live retired verbs", () => {

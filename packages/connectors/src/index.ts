@@ -11,6 +11,16 @@ export {
 } from "./registry";
 export type { ConnectorFactory, ConnectorId, ManifestOverlay } from "./registry";
 export {
+  BEEPER_CONNECTOR_ID,
+  BeeperConnector,
+  createBeeperConnector,
+} from "@kizuki/connector-beeper";
+export type {
+  BeeperConnectorConfig,
+  BeeperConnectorDeps,
+  BeeperCursor,
+} from "@kizuki/connector-beeper";
+export {
   SCREENPIPE_CONNECTOR_ID,
   ScreenpipeConnector,
   ScreenpipeConnectorError,
