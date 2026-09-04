@@ -49,7 +49,7 @@ wait_ready() {
   done
   for attempt in $(seq 1 60); do
     status_json="$(docker exec "$CONTAINER" kizuki serve status --json --vault /vault 2>/dev/null || true)"
-    pid="$(printf '%s' "$status_json" | jq -r '.pid // empty' 2>/dev/null || true)"
+    pid="$(printf '%s' "$status_json" | jq -r '.data.pid // empty' 2>/dev/null || true)"
     if [ -n "$pid" ] && [ "$pid" != "null" ]; then
       printf '%s' "$status_json"
       return 0
@@ -116,10 +116,10 @@ start_container() {
 check_1_3() {
   local status_json pid ok
   status_json="$(wait_ready)" || fail 1.3 pid-alive "serve status never reported a pid"
-  pid="$(printf '%s' "$status_json" | jq -r '.pid')"
+  pid="$(printf '%s' "$status_json" | jq -r '.data.pid')"
   [ "$pid" = "1" ] || fail 1.3 pid-alive "expected the loop to be pid 1 inside the container, got $pid"
   docker exec "$CONTAINER" test -d "/proc/$pid" || fail 1.3 pid-alive "no /proc/$pid inside the container"
-  ok="$(printf '%s' "$status_json" | jq -r '.doctor.ok')"
+  ok="$(printf '%s' "$status_json" | jq -r '.data.doctor.ok')"
   [ "$ok" = "true" ] || fail 1.3 pid-alive "doctor.ok=$ok: $status_json"
   pass 1.3 pid-alive
 }
@@ -191,6 +191,14 @@ check_1_6() {
     *) fail 1.6 ingest-works-fail-closed "query stderr missing 'withheld=': $q_err" ;;
   esac
 
+  # Finding (2026-09-04, merging main's "Harden snapshot importers and the
+  # markdown folder connector" #412): the connector now carries a persisted
+  # per-file sha256/size cursor (packages/connectors/src/markdown-folder/
+  # index.ts sweep) and skips a file whose identity is unchanged before it
+  # ever becomes a CaptureEventInput, so a re-import of untouched files no
+  # longer resubmits them for the ledger's own content-hash dedup to count.
+  # A repeat import is still a true no-op — proven here as zero submitted
+  # events rather than three ledger-level duplicates.
   local out2
   out2="$(docker exec "$CONTAINER" kizuki import markdown-folder --source /fixtures --vault /vault)" \
     || fail 1.6 ingest-works-fail-closed "second import exited non-zero"
@@ -199,8 +207,8 @@ check_1_6() {
     *) fail 1.6 ingest-works-fail-closed "second import stdout missing events_stored=0: $out2" ;;
   esac
   case "$out2" in
-    *duplicates=3*) ;;
-    *) fail 1.6 ingest-works-fail-closed "second import stdout missing duplicates=3: $out2" ;;
+    *duplicates=0*) ;;
+    *) fail 1.6 ingest-works-fail-closed "second import stdout missing duplicates=0: $out2" ;;
   esac
   pass 1.6 ingest-works-fail-closed
 }
@@ -234,16 +242,19 @@ check_1_8() {
   started_after="$(docker inspect -f '{{.State.StartedAt}}' "$CONTAINER")"
   [ "$started_before" != "$started_after" ] \
     || fail 1.8 restart-survives "container StartedAt did not change; restart did not happen"
-  pid="$(printf '%s' "$status_json" | jq -r '.pid')"
+  pid="$(printf '%s' "$status_json" | jq -r '.data.pid')"
   # A container's own pid namespace always renumbers its init process to 1,
   # so "a new pid" (the plan's wording) cannot be observed this way; a
   # changed StartedAt is this proof's evidence that a real restart occurred.
   [ "$pid" = "1" ] || fail 1.8 restart-survives "expected pid 1 after restart, got $pid"
-  ok="$(printf '%s' "$status_json" | jq -r '.doctor.ok')"
+  ok="$(printf '%s' "$status_json" | jq -r '.data.doctor.ok')"
   [ "$ok" = "true" ] || fail 1.8 restart-survives "doctor.ok=$ok after restart: $status_json"
 
-  # A third identical import proves the ledger (not a search hit) survived
-  # the restart: it must report the same three events as duplicates again.
+  # A third identical import proves the ledger and the connector's own
+  # checkpoint (not a search hit) survived the restart: see the finding in
+  # check_1_6 above — the connector's persisted per-file cursor now skips
+  # unchanged files before they reach the ledger, so a no-op repeat reports
+  # zero stored and zero duplicate events rather than three duplicates.
   out3="$(docker exec "$CONTAINER" kizuki import markdown-folder --source /fixtures --vault /vault)" \
     || fail 1.8 restart-survives "import after restart exited non-zero"
   case "$out3" in
@@ -251,8 +262,8 @@ check_1_8() {
     *) fail 1.8 restart-survives "import after restart missing events_stored=0: $out3" ;;
   esac
   case "$out3" in
-    *duplicates=3*) ;;
-    *) fail 1.8 restart-survives "import after restart missing duplicates=3: $out3" ;;
+    *duplicates=0*) ;;
+    *) fail 1.8 restart-survives "import after restart missing duplicates=0: $out3" ;;
   esac
 
   doc="$(docker exec "$CONTAINER" kizuki doctor --vault /vault || true)"
@@ -287,12 +298,17 @@ check_1_10() {
 }
 
 check_1_11() {
-  docker exec "$CONTAINER" kizuki export --out /vault/export --vault /vault >/dev/null \
+  # Finding (2026-09-04, merging main's "Harden backup export and add
+  # verified restore" #419): exportVault now refuses a destination inside
+  # the vault it is exporting (packages/core/src/export.ts assertSeparated),
+  # so the export must land outside /vault. /tmp is the container's only
+  # other writable path on this read-only rootfs (see check_1_10).
+  docker exec "$CONTAINER" kizuki export --out /tmp/export --vault /vault >/dev/null \
     || fail 1.11 export-readable "export exited non-zero"
-  docker exec "$CONTAINER" test -f /vault/export/ledger/events.jsonl \
-    || fail 1.11 export-readable "/vault/export/ledger/events.jsonl does not exist"
-  if ! docker exec "$CONTAINER" grep -q acme /vault/export/ledger/events.jsonl; then
-    fail 1.11 export-readable "/vault/export/ledger/events.jsonl does not mention acme"
+  docker exec "$CONTAINER" test -f /tmp/export/ledger/events.jsonl \
+    || fail 1.11 export-readable "/tmp/export/ledger/events.jsonl does not exist"
+  if ! docker exec "$CONTAINER" grep -q acme /tmp/export/ledger/events.jsonl; then
+    fail 1.11 export-readable "/tmp/export/ledger/events.jsonl does not mention acme"
   fi
   pass 1.11 export-readable
 }
