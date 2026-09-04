@@ -190,6 +190,20 @@ describe("config", () => {
     15_000,
   );
 
+  test(
+    "a directory at the lock path fails closed",
+    () => {
+      const env = isolatedEnv();
+      const path = env.KIZUKI_CONFIG ?? "";
+      mkdirSync(join(path, ".."), { recursive: true });
+      mkdirSync(`${path}.lock`);
+      const result = runCli(env, "init", join(tempDir(), "dir-lock-vault"));
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("could not lock");
+    },
+    15_000,
+  );
+
   test("config writes are atomic and round-trip aliases", () => {
     const env = isolatedEnv();
     const first = join(tempDir(), "first");

@@ -4,6 +4,7 @@ import {
   existsSync,
   fsyncSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -63,7 +64,13 @@ export function writeAtomicFile(
 type LockHolder = "live" | "dead" | "pending";
 
 function inspectLockHolder(lockPath: string): LockHolder {
-  if (!existsSync(lockPath)) return "dead";
+  let st;
+  try {
+    st = lstatSync(lockPath);
+  } catch {
+    return "dead";
+  }
+  if (!st.isFile()) return "live";
   let raw = "";
   try {
     raw = readFileSync(lockPath, "utf8").trim();
@@ -101,10 +108,10 @@ export function withExclusiveLock(lockPath: string, fn: () => void): void {
         if (holder === "dead" || (holder === "pending" && expired)) {
           try {
             unlinkSync(lockPath);
+            continue;
           } catch {
-            // Another waiter may have already stolen the stale file.
+            // Name still occupied (directory, EPERM, or a racer).
           }
-          continue;
         }
         if (expired) {
           throw new Error(`could not lock ${lockPath}`);
