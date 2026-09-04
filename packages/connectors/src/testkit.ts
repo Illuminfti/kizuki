@@ -10,13 +10,23 @@ export type {
   ConformanceOptions,
   ConformanceResult,
   TombstoneConformanceHooks,
+  UnavailableConformanceHooks,
 } from "./conformance";
+export {
+  dishonestPurgeConnector,
+  emptyOnUnavailableConnector,
+  hangingConnector,
+  mutableManifestConnector,
+  scriptedSignInConnector,
+  unlabeledEventsConnector,
+  untypedSignInCancelConnector,
+} from "./conformance-fixtures";
 export { CHATGPT_FIXTURE_EXPORT } from "./import-chatgpt";
 export { CLAUDE_FIXTURE_EXPORT } from "./import-claude";
 export {
   FIXTURE_NOW,
   seedFixtureDatabase,
-} from "@kizuki/connector-screenpipe";
+} from "@kizuki/connector-screenpipe/testkit";
 export {
   POCKET_FIXTURE_EXPORT,
 } from "./import-pocket";

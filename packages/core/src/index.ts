@@ -127,6 +127,7 @@ export {
   CONNECTOR_SCHEMA,
   HEALTH_STATES,
   HealthReport,
+  freezeManifest,
   isAuthMode,
   isHealthState,
 } from "./contracts/connector";
@@ -376,8 +377,12 @@ export type {
   StorageConformanceHarness,
   SurfaceConformanceHarness,
 } from "./contracts/conformance";
-export { KizukiError } from "./contracts/errors";
-export type { KizukiErrorCode } from "./contracts/errors";
+export {
+  KIZUKI_ERROR_CODES,
+  KizukiError,
+  isKizukiErrorCode,
+} from "./contracts/errors";
+export type { KizukiErrorCode, KizukiErrorOptions } from "./contracts/errors";
 
 export {
   OAUTH_STATE_SCHEMA,

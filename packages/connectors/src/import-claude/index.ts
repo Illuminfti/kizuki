@@ -1,4 +1,4 @@
-import { isPlainObject } from "@kizuki/core";
+import { freezeManifest, isPlainObject, policyForConnector } from "@kizuki/core";
 import type {
   AttachmentRef,
   CaptureEventInput,
@@ -17,7 +17,12 @@ import {
   requirePathConfig,
 } from "../util";
 import type { ImportParseResult, ImportRecordError } from "../import-report";
-import { runSnapshot, snapshotHealth } from "../import-snapshot";
+import { notSupported } from "../errors";
+import {
+  IMPORT_SNAPSHOT_CURSOR_SCHEMA,
+  runSnapshot,
+  snapshotHealth,
+} from "../import-snapshot";
 import type { SnapshotParse } from "../import-snapshot";
 import {
   encodeSourceRecordId,
@@ -54,10 +59,14 @@ export const CLAUDE_FIXTURE_EXPORT = [
   },
 ] as const;
 
-const MANIFEST: Manifest = {
+const MANIFEST: Manifest = freezeManifest({
   schema: "kizuki.connector/v1",
   connector_id: CLAUDE_IMPORT_CONNECTOR_ID,
   version: "0.2.0",
+  contract_minor: 1,
+  implementation: "@kizuki/connectors",
+  allowed_egress: [],
+  cursor_schema: IMPORT_SNAPSHOT_CURSOR_SCHEMA,
   kinds: ["message"],
   capabilities: {
     backfill: true,
@@ -68,8 +77,9 @@ const MANIFEST: Manifest = {
   },
   required_secrets: [],
   emits_sensitivity_hint: false,
+  ...policyForConnector(CLAUDE_IMPORT_CONNECTOR_ID),
   auth_modes: ["none"],
-};
+});
 
 const SNAPSHOT: SnapshotParse = {
   connectorId: CLAUDE_IMPORT_CONNECTOR_ID,
@@ -107,12 +117,8 @@ export class ClaudeImportConnector implements Connector {
 
   async revoke(): Promise<void> {}
 
-  async purgeSource(subject_id: string): Promise<PurgePlan> {
-    return {
-      subject_id,
-      source_record_ids: [],
-      unreachable_source_record_ids: [],
-    };
+  async purgeSource(_subject_id: string): Promise<PurgePlan> {
+    return notSupported(CLAUDE_IMPORT_CONNECTOR_ID, "purge");
   }
 
   async fixture(): Promise<CaptureEventInput[]> {

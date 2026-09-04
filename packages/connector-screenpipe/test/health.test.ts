@@ -3,7 +3,6 @@ import { Database } from "bun:sqlite";
 import path from "node:path";
 import { HealthReport } from "@kizuki/core";
 import {
-  FIXTURE_NOW,
   SCREENPIPE_SCHEMA_FLOOR,
   SCREENPIPE_SCHEMA_VERIFIED,
   ScreenpipeConnector,
@@ -11,6 +10,7 @@ import {
   createScreenpipeConnector,
   parseConfig,
 } from "../src";
+import { FIXTURE_NOW } from "../src/testkit";
 import {
   cleanupFixtureDatabases,
   createFixtureDatabase,

@@ -75,6 +75,51 @@ export interface Manifest {
   sensitivity_floor?: SensitivityHint;
   /** Non-empty; `sign_in`/`oauth` require a `signIn` implementation. */
   auth_modes: AuthMode[];
+  /** Additive `kizuki.connector/v1` minor; host binds on major match. */
+  contract_minor?: number;
+  /** Workspace or npm package that ships this implementation. */
+  implementation?: string;
+  /**
+   * Hosts this connector may contact. Empty means no network. A host that is
+   * chosen at enrollment (IMAP, ICS URL) is not listed here.
+   */
+  allowed_egress?: readonly string[];
+  /** Cursor JSON schema id, or `null` when the source is a single-shot export. */
+  cursor_schema?: string | null;
+}
+
+/**
+ * Deep-freeze a manifest so capabilities, kinds, secrets and auth modes
+ * cannot change after the connector handed them to a host.
+ */
+export function freezeManifest(manifest: Manifest): Manifest {
+  const kinds = [...manifest.kinds];
+  const required_secrets = [...manifest.required_secrets];
+  const auth_modes = [...manifest.auth_modes];
+  const capabilities = { ...manifest.capabilities };
+  const allowed_egress =
+    manifest.allowed_egress === undefined
+      ? undefined
+      : [...manifest.allowed_egress];
+  const frozen: Manifest = {
+    ...manifest,
+    kinds,
+    capabilities,
+    required_secrets,
+    auth_modes,
+  };
+  if (allowed_egress !== undefined) {
+    frozen.allowed_egress = allowed_egress;
+  }
+  Object.freeze(kinds);
+  Object.freeze(required_secrets);
+  Object.freeze(auth_modes);
+  Object.freeze(capabilities);
+  if (allowed_egress !== undefined) {
+    Object.freeze(allowed_egress);
+  }
+  Object.freeze(frozen);
+  return frozen;
 }
 
 /** Terminal-facing prompts the CLI lends a connector during `signIn`. */

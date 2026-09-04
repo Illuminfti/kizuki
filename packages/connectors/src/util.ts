@@ -33,13 +33,13 @@ export async function pathHealth(
     return new HealthReport({
       state: matches ? "ok" : "misconfigured",
       checked_at: new Date().toISOString(),
-      ...(!matches ? { detail: `path is not a ${expected}: ${path}` } : {}),
+      ...(!matches ? { detail: `path is not a ${expected}` } : {}),
     });
-  } catch (error) {
+  } catch {
     return new HealthReport({
       state: "misconfigured",
       checked_at: new Date().toISOString(),
-      detail: `cannot access ${path}: ${errorMessage(error)}`,
+      detail: "cannot access configured path",
     });
   }
 }

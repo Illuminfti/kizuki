@@ -48,6 +48,14 @@ const CONNECTOR_SOURCE_CLASS: Readonly<Record<string, SourceClass>> = {
   "kizuki.markdown-folder": "local_files",
   "kizuki.import-chatgpt": "agent_session",
   "kizuki.import-claude": "agent_session",
+  "kizuki.import-whatsapp": "direct_messaging",
+  "kizuki.import-pocket": "saved_web",
+  "kizuki.import-omnivore": "saved_web",
+  "kizuki.import-legacy-wiki": "local_files",
+  "kizuki.import-legacy-events": "local_files",
+  "kizuki.telegram": "direct_messaging",
+  "kizuki.imap": "email",
+  "kizuki.ics": "calendar",
   "kizuki.screenpipe": "local_files",
 };
 

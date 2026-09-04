@@ -53,6 +53,10 @@ describe("manifest", () => {
       schema: "kizuki.connector/v1",
       connector_id: "kizuki.imap",
       version: "0.1.0",
+      contract_minor: 1,
+      implementation: "@kizuki/connector-imap",
+      allowed_egress: [],
+      cursor_schema: "kizuki.imap-cursor/v1",
       kinds: ["email"],
       capabilities: {
         backfill: true,
@@ -63,6 +67,8 @@ describe("manifest", () => {
       },
       required_secrets: [],
       emits_sensitivity_hint: true,
+      default_sensitivity: "private",
+      sensitivity_floor: "personal",
       auth_modes: ["sign_in"],
     });
     expect(JSON.stringify(manifest)).not.toContain(FIXTURE_USERNAME);

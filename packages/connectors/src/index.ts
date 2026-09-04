@@ -1,8 +1,15 @@
-export { KizukiError } from "./errors";
+export { KizukiError, notSupported } from "./errors";
 export type { KizukiErrorCode } from "./errors";
 export * from "./types";
-export { getConnector, REGISTRY } from "./registry";
-export type { ConnectorId } from "./registry";
+export {
+  ConnectorRegistry,
+  REGISTRY,
+  defaultConnectorRegistry,
+  getConnector,
+  listConnectorDescriptors,
+  sealConnector,
+} from "./registry";
+export type { ConnectorFactory, ConnectorId, ManifestOverlay } from "./registry";
 export {
   SCREENPIPE_CONNECTOR_ID,
   ScreenpipeConnector,

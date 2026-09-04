@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { KizukiError as CoreKizukiError } from "@kizuki/core";
+import {
+  HealthReport,
+  KizukiError as CoreKizukiError,
+  freezeManifest,
+} from "@kizuki/core";
 import type { KizukiErrorCode } from "@kizuki/core";
 import type { Connector } from "@kizuki/core";
 import { KizukiError } from "../src";
@@ -7,37 +11,58 @@ import { runConformance } from "../src/testkit";
 
 function secretRequiringConnector(): Connector {
   return {
-    manifest: () => ({
-      schema: "kizuki.connector/v1",
-      connector_id: "fixture",
-      version: "1",
-      kinds: ["message"],
-      capabilities: {
-        backfill: false,
-        sync: false,
-        tombstones: false,
-        purge: false,
-        fixture: false,
-      },
-      required_secrets: ["env:FIXTURE_TOKEN"],
-      emits_sensitivity_hint: false,
-      auth_modes: ["secret_ref"],
-    }),
-    health: async () => {
-      throw new Error("unused");
-    },
+    manifest: () =>
+      freezeManifest({
+        schema: "kizuki.connector/v1",
+        connector_id: "fixture",
+        version: "1",
+        contract_minor: 1,
+        implementation: "@kizuki/connectors",
+        allowed_egress: [],
+        cursor_schema: null,
+        kinds: ["message"],
+        capabilities: {
+          backfill: false,
+          sync: false,
+          tombstones: false,
+          purge: false,
+          fixture: false,
+        },
+        required_secrets: ["env:FIXTURE_TOKEN"],
+        emits_sensitivity_hint: false,
+        default_sensitivity: "private",
+        sensitivity_floor: "private",
+        auth_modes: ["secret_ref"],
+      }),
+    health: async () =>
+      new HealthReport({
+        state: "unauthenticated",
+        checked_at: "2026-01-01T00:00:00.000Z",
+      }),
     connect: async (resolve) => {
       await resolve("env:FIXTURE_TOKEN");
     },
-    backfill: async () => ({ events: [], cursor: null }),
-    sync: async () => ({ events: [], cursor: null }),
+    backfill: async () => {
+      throw new KizukiError("not_supported", "fixture: backfill", {
+        retryable: false,
+      });
+    },
+    sync: async () => {
+      throw new KizukiError("not_supported", "fixture: sync", {
+        retryable: false,
+      });
+    },
     revoke: async () => undefined,
-    purgeSource: async () => ({
-      subject_id: "",
-      source_record_ids: [],
-      unreachable_source_record_ids: [],
-    }),
-    fixture: async () => [],
+    purgeSource: async () => {
+      throw new KizukiError("not_supported", "fixture: purge", {
+        retryable: false,
+      });
+    },
+    fixture: async () => {
+      throw new KizukiError("not_supported", "fixture: fixture", {
+        retryable: false,
+      });
+    },
   };
 }
 
@@ -66,7 +91,15 @@ describe("KizukiError lives in core", () => {
       "rate_limited",
       "unreachable",
       "provider_error",
+      "timeout",
+      "not_supported",
+      "unavailable",
+      "malformed_record",
+      "source_schema",
+      "corrupted",
     ];
+    expect(new KizukiError("timeout", "late").retryable).toBe(true);
+    expect(new KizukiError("not_supported", "no").retryable).toBe(false);
     for (const code of codes) {
       expect(new KizukiError(code, code).code).toBe(code);
     }

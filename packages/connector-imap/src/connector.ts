@@ -1,4 +1,9 @@
-import { HealthReport, KizukiError } from "@kizuki/core";
+import {
+  HealthReport,
+  KizukiError,
+  freezeManifest,
+  policyForConnector,
+} from "@kizuki/core";
 import type {
   CaptureEventInput,
   ConnectionStateWriter,
@@ -12,6 +17,7 @@ import type {
   SignInIo,
   SyncBatch,
 } from "@kizuki/core";
+import { IMAP_CURSOR_SCHEMA } from "./cursor";
 import { IMAP_CONNECTOR_ID, folderLabel, recordId } from "./events";
 import { fixtureEvents } from "./fixture";
 import { ImapSession } from "./imap/session";
@@ -38,10 +44,14 @@ export interface ImapConnectorDeps {
   session?: SessionOptions;
 }
 
-const MANIFEST: Manifest = {
+const MANIFEST: Manifest = freezeManifest({
   schema: "kizuki.connector/v1",
   connector_id: IMAP_CONNECTOR_ID,
   version: "0.1.0",
+  contract_minor: 1,
+  implementation: "@kizuki/connector-imap",
+  allowed_egress: [],
+  cursor_schema: IMAP_CURSOR_SCHEMA,
   kinds: ["email"],
   capabilities: {
     backfill: true,
@@ -53,8 +63,9 @@ const MANIFEST: Manifest = {
   // Empty because sign-in mints the state; `connect` still fails closed.
   required_secrets: [],
   emits_sensitivity_hint: true,
+  ...policyForConnector(IMAP_CONNECTOR_ID),
   auth_modes: ["sign_in"],
-};
+});
 
 const HEALTH_BY_CODE: Record<string, HealthState> = {
   unauthenticated: "unauthenticated",
