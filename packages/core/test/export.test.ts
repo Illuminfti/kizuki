@@ -308,6 +308,36 @@ describe("exportVault", () => {
     db.close();
   });
 
+  test("does not delete another run's incomplete staging", () => {
+    const { db, vaultPath } = populated();
+    const parent = temporary("kizuki-export-parent-");
+    const other = join(parent, `other${".kizuki-backup-"}01OTHERSTAGING0000000001.partial`);
+    mkdirSync(other);
+    writeFileSync(join(other, ".kizuki-backup-incomplete"), "incomplete\n");
+    exportVault(db, vaultPath, join(parent, "dump"));
+    expect(readFileSync(join(other, ".kizuki-backup-incomplete"), "utf8")).toBe(
+      "incomplete\n",
+    );
+    db.close();
+  });
+
+  test("does not recursively delete a destination that filled during export", () => {
+    const { db, vaultPath } = populated();
+    const outDir = join(temporary("kizuki-export-parent-"), "dump");
+    expect(() =>
+      exportVault(db, vaultPath, outDir, {
+        onProgress: (label) => {
+          if (label === "vault" && !existsSync(outDir)) {
+            mkdirSync(outDir);
+            writeFileSync(join(outDir, "keep.txt"), "keep\n");
+          }
+        },
+      }),
+    ).toThrow(/not empty/);
+    expect(readFileSync(join(outDir, "keep.txt"), "utf8")).toBe("keep\n");
+    db.close();
+  });
+
   test("removes the staging directory when export is cancelled", () => {
     const { db, vaultPath } = populated();
     const parent = temporary("kizuki-export-parent-");
@@ -434,6 +464,25 @@ describe("restoreVault", () => {
       flag: "w",
     });
     expect(() => verifyBackup(backup)).toThrow(/hash mismatch/);
+    db.close();
+  });
+
+  test("does not recursively delete a restore target that filled later", () => {
+    const { db, vaultPath } = populated();
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    exportVault(db, vaultPath, backup);
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    expect(() =>
+      restoreVault(backup, target, {
+        onProgress: (label) => {
+          if (label === "vault" && !existsSync(target)) {
+            mkdirSync(target);
+            writeFileSync(join(target, "keep.txt"), "keep\n");
+          }
+        },
+      }),
+    ).toThrow(/not empty/);
+    expect(readFileSync(join(target, "keep.txt"), "utf8")).toBe("keep\n");
     db.close();
   });
 

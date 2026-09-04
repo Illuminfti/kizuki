@@ -11,6 +11,7 @@ import {
   readdirSync,
   realpathSync,
   renameSync,
+  rmdirSync,
   rmSync,
   statSync,
   unlinkSync,
@@ -369,14 +370,12 @@ function prepareDestination(outDir: string): void {
   }
 }
 
-function sweepAbandoned(parent: string): void {
-  if (!existsSync(parent)) return;
-  for (const name of readdirSync(parent).sort(compareCodeUnits)) {
-    if (!name.includes(STAGING_MARK) || !name.endsWith(".partial")) continue;
-    const staging = join(parent, name);
-    if (!existsSync(join(staging, INCOMPLETE))) continue;
-    rmSync(staging, { recursive: true, force: true });
+function installStaging(staging: string, destination: string): void {
+  if (existsSync(destination)) {
+    prepareDestination(destination);
+    rmdirSync(destination);
   }
+  renameSync(staging, destination);
 }
 
 function vaultFiles(directory: string): string[] {
@@ -909,7 +908,6 @@ export function exportVault(
   prepareDestination(destination);
   const parent = dirname(destination);
   mkdirPrivate(parent);
-  sweepAbandoned(parent);
 
   const staging = join(parent, `${basenameSafe(destination)}${STAGING_MARK}${ulid()}.partial`);
   mkdirPrivate(staging);
@@ -979,8 +977,7 @@ export function exportVault(
     verifyFiles(staging, manifest);
     unlinkSync(join(staging, INCOMPLETE));
     fsyncDirectory(staging);
-    if (existsSync(destination)) rmSync(destination, { recursive: true });
-    renameSync(staging, destination);
+    installStaging(staging, destination);
     fsyncDirectory(parent);
     return manifest;
   } catch (error) {
@@ -1340,7 +1337,6 @@ export function restoreVault(
   prepareDestination(destination);
   const parent = dirname(destination);
   mkdirPrivate(parent);
-  sweepAbandoned(parent);
 
   const staging = join(
     parent,
@@ -1428,8 +1424,7 @@ export function restoreVault(
       db.close();
       unlinkSync(join(staging, INCOMPLETE));
       fsyncDirectory(staging);
-      if (existsSync(destination)) rmSync(destination, { recursive: true });
-      renameSync(staging, destination);
+      installStaging(staging, destination);
       fsyncDirectory(parent);
       return report;
     } catch (error) {
