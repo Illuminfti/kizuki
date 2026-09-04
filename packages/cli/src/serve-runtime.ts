@@ -120,7 +120,7 @@ async function syncConnections(
       continue;
     }
     try {
-      const connector = await loadConnector(selected, env);
+      const connector = await loadConnector(selected, store, env);
       const result = await runToCompletion(
         db,
         connector,
