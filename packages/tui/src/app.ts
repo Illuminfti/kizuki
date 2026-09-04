@@ -125,16 +125,27 @@ export interface LoadPage {
   health: Notice | null;
 }
 
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function vaultHealth(vaultPath: string): Notice | null {
-  const report = listCanonPagesReport(vaultPath);
-  const first = report.skipped[0];
-  if (first === undefined) return null;
-  const extra = report.skipped.length - 1;
-  const detail = extra > 0 ? `${first.relPath} (+${extra} more)` : first.relPath;
-  return {
-    text: `${report.skipped.length} unreadable or duplicate canon page(s) (${detail}); run kizuki doctor`,
-    tone: "error",
-  };
+  try {
+    const report = listCanonPagesReport(vaultPath);
+    const first = report.skipped[0];
+    if (first === undefined) return null;
+    const extra = report.skipped.length - 1;
+    const detail = extra > 0 ? `${first.relPath} (+${extra} more)` : first.relPath;
+    return {
+      text: `${report.skipped.length} unreadable or duplicate canon page(s) (${detail}); run kizuki doctor`,
+      tone: "error",
+    };
+  } catch (error) {
+    return {
+      text: `canon scan failed (${errorText(error)}); run kizuki doctor`,
+      tone: "error",
+    };
+  }
 }
 
 export function loadItems(db: Database, vaultPath: string, offset = 0): LoadPage {
@@ -148,10 +159,6 @@ export function loadItems(db: Database, vaultPath: string, offset = 0): LoadPage
     truncated,
     health: vaultHealth(vaultPath),
   };
-}
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 export async function runAudit(opts: AuditOptions): Promise<AuditSummary> {

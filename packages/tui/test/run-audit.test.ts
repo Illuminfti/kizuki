@@ -177,6 +177,21 @@ describe("vault health", () => {
     db.close();
   });
 
+  test("an unreadable vault path becomes health text instead of aborting load", () => {
+    const vault = mkdtempSync(join(tmpdir(), "kizuki-audit-unreadable-"));
+    temporary.push(vault);
+    initVault(vault);
+    const blocked = join(vault, "not-a-directory");
+    writeFileSync(blocked, "not a vault\n", "utf8");
+    const db = openLedger(":memory:");
+    const loaded = loadItems(db, blocked);
+    expect(loaded.items).toEqual([]);
+    expect(loaded.health?.tone).toBe("error");
+    expect(loaded.health?.text).toContain("canon scan failed");
+    expect(loaded.health?.text).toContain("kizuki doctor");
+    db.close();
+  });
+
   test("archive revisions with the same id are not live canon", () => {
     const vault = mkdtempSync(join(tmpdir(), "kizuki-audit-archive-"));
     temporary.push(vault);
