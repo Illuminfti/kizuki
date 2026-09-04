@@ -71,6 +71,7 @@ interface DoctorReport {
   holds: { page_path: string; id: string }[];
   problems: { page: string; error: string }[];
   serve: ReturnType<typeof inspectServeDoctor>;
+  doctrine: { file: string; state: string }[];
   ok: boolean;
 }
 
@@ -262,6 +263,13 @@ async function collect(
   const problems = vault.pages.flatMap((page) =>
     page.errors.map((error) => ({ page: page.page, error })),
   );
+  for (const item of vault.doctrine) {
+    if (item.state === "current" || item.state === "owner-edited") continue;
+    problems.push({ page: item.file, error: `doctrine ${item.state}` });
+  }
+  for (const item of vault.control) {
+    problems.push({ page: item.path, error: item.problem });
+  }
   const purge = inspectPurgeHealth(ctx.db);
   for (const failure of purge.failures) {
     problems.push({
@@ -341,6 +349,7 @@ async function collect(
     holds,
     problems,
     serve,
+    doctrine: vault.doctrine,
     ok,
   };
 }
@@ -390,6 +399,9 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   for (const orphan of report.orphans) io.out(orphan);
   for (const hold of report.holds) {
     io.out(`hold ${hold.page_path} id=${hold.id}`);
+  }
+  for (const item of report.doctrine) {
+    if (item.state === "owner-edited") io.out(`doctrine ${item.file}: owner-edited`);
   }
   for (const problem of report.problems) {
     io.out(`problem ${problem.page}: ${problem.error}`);

@@ -1,7 +1,13 @@
 import { Database } from "bun:sqlite";
 import { existsSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { ConnectionStateStore, initSearch, openLedger, readVaultId } from "@kizuki/core";
+import {
+  ConnectionStateStore,
+  assertVaultControl,
+  initSearch,
+  openLedger,
+  readVaultId,
+} from "@kizuki/core";
 import type { CliIo } from "./commands/index";
 import {
   type KizukiConfig,
@@ -92,6 +98,7 @@ export function assertVault(path: string): string {
     );
   }
   peekLedgerIdentity(dbPath);
+  assertVaultControl(absolutePath);
   return absolutePath;
 }
 

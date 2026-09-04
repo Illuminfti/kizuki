@@ -447,8 +447,31 @@ export { doctorVault } from "./vault/doctor";
 export type { DoctorPageResult, DoctorVaultResult } from "./vault/doctor";
 export { parseFrontmatter, serializePage } from "./vault/frontmatter";
 export type { VaultPage } from "./vault/frontmatter";
-export { initVault } from "./vault/init";
-export type { InitVaultResult } from "./vault/init";
+export {
+  DOCTRINE_VERSION,
+  INIT_JOURNAL_SCHEMA,
+  VAULT_DIR_MODE,
+  VAULT_FILE_MODE,
+  VAULT_INIT_ERROR_CODES,
+  VaultInitError,
+  assertVaultControl,
+  hardenLedgerFile,
+  initVault,
+  inspectDoctrineFiles,
+  inspectVaultControl,
+  readInitJournal,
+} from "./vault/init";
+export type {
+  ControlPathReport,
+  DoctrineFileReport,
+  DoctrineFileState,
+  InitInventory,
+  InitJournal,
+  InitJournalAdopt,
+  InitVaultOptions,
+  InitVaultResult,
+  VaultInitErrorCode,
+} from "./vault/init";
 export {
   PAGE_SENSITIVITIES,
   PAGE_STATUSES,

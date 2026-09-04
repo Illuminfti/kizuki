@@ -1,7 +1,10 @@
 import { join, resolve } from "node:path";
 import {
+  type InitInventory,
+  VaultInitError,
   detectSupervisorKind,
   ensureVaultId,
+  hardenLedgerFile,
   initVault,
   installServeService,
   openLedger,
@@ -21,13 +24,13 @@ import type { CliIo, Command } from "./index";
 
 export const initCommand: Command = {
   name: "init",
-  usage: "init <path> [--default | --no-default] [--no-service]",
+  usage: "init <path> [--default | --no-default] [--no-service] [--adopt] [--dry-run]",
   summary: "create a vault and install the local serve loop",
   async run(io: CliIo, args: string[]): Promise<number> {
     const path = configPath(io.env);
     const config = readConfig(path);
     const parsed = parseArguments(args, {
-      flags: ["--default", "--no-default", "--no-service"],
+      flags: ["--default", "--no-default", "--no-service", "--adopt", "--dry-run"],
     });
     const [rawPath] = requirePositional(parsed.positionals, 1);
     if (rawPath === undefined || rawPath.length === 0) {
@@ -38,10 +41,30 @@ export const initCommand: Command = {
     }
 
     const vaultPath = resolve(rawPath);
-    initVault(vaultPath);
+    let result;
+    try {
+      result = initVault(vaultPath, {
+        adopt: parsed.flags.has("--adopt"),
+        dryRun: parsed.flags.has("--dry-run"),
+      });
+    } catch (error) {
+      if (error instanceof VaultInitError && error.inventory !== undefined) {
+        io.err(
+          `adopt entries=${error.inventory.entry_count} markdown=${error.inventory.markdown_count} git=${error.inventory.has_git ? "yes" : "no"}`,
+        );
+        for (const name of error.inventory.names) io.err(`entry ${name}`);
+      }
+      throw error;
+    }
+    if (result.dry_run) {
+      printInventory(io, vaultPath, result.inventory, true);
+      return 0;
+    }
     ensureVaultId(vaultPath);
-    const ledger = openLedger(join(vaultPath, ".kizuki", "kizuki.db"));
+    const ledgerPath = join(vaultPath, ".kizuki", "kizuki.db");
+    const ledger = openLedger(ledgerPath);
     ledger.close();
+    hardenLedgerFile(ledgerPath);
 
     let wrote = false;
     if (!parsed.flags.has("--no-default")) {
@@ -86,7 +109,30 @@ export const initCommand: Command = {
       }
     }
     if (wrote) io.out(`default_vault set in ${path}`);
+    if (result.inventory !== null) {
+      printInventory(io, vaultPath, result.inventory, false);
+    }
     io.out("next: import a file source, then query and doctor");
     return 0;
   },
 };
+
+function printInventory(
+  io: CliIo,
+  vaultPath: string,
+  inventory: InitInventory | null,
+  dryRun: boolean,
+): void {
+  if (dryRun) io.out(`dry-run ${vaultPath}`);
+  if (inventory === null) {
+    if (dryRun) io.out("entries=0");
+    return;
+  }
+  io.out(
+    `adopt entries=${inventory.entry_count} markdown=${inventory.markdown_count} git=${inventory.has_git ? "yes" : "no"} symlinks=${inventory.symlink_count}`,
+  );
+  if (dryRun) {
+    for (const name of inventory.names) io.out(`entry ${name}`);
+    for (const name of inventory.reserved_conflicts) io.out(`reserved_conflict ${name}`);
+  }
+}
