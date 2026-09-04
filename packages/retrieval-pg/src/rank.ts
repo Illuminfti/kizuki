@@ -1,12 +1,9 @@
 import type {
-  RetrievalAuthority,
-  RetrievalDoc,
   RetrievalHit,
+  RetrievalDoc,
 } from "@kizuki/core";
 import {
   AUTHORITY_RANK,
-  AUTHORITY_WEIGHT,
-  NEAR_DUPLICATE_JACCARD,
   RRF_K,
   applyAdjacencyBoost,
   collapseToDocuments,
@@ -17,13 +14,14 @@ import {
 import type { RecipeCandidate, RecipeEdge } from "../vendor/recipe";
 
 export {
-  AUTHORITY_RANK,
   AUTHORITY_WEIGHT,
   NEAR_DUPLICATE_JACCARD,
   RRF_K,
   cosineSimilarity,
-  reciprocalRankFusion,
+  pushDegraded,
+  walkNeighbors,
 } from "../vendor/recipe";
+export type { RecipeCandidate, RecipeEdge } from "../vendor/recipe";
 
 export function tokenize(text: string): string[] {
   return text.toLowerCase().match(/[a-z0-9]+/g) ?? [];
@@ -61,13 +59,6 @@ export function snippetFor(query: string, text: string): string {
   const prefix = start > 0 ? "…" : "";
   const suffix = end < text.length ? "…" : "";
   return `${prefix}${text.slice(start, end)}${suffix}`;
-}
-
-export function applyTierWeight(
-  fused: number,
-  authority: RetrievalAuthority,
-): number {
-  return fused * AUTHORITY_WEIGHT[authority];
 }
 
 export function compareHits(left: RetrievalHit, right: RetrievalHit): number {
@@ -108,21 +99,17 @@ export function finalizeRecipe(opts: {
   edges: readonly RecipeEdge[];
   visible: (id: string) => boolean;
 }): RecipeCandidate[] {
-  const lists: RecipeCandidate[][] = [[...opts.lexical]];
-  if (opts.vector !== null && opts.vector.length > 0) {
-    lists.push([...opts.vector]);
-  }
+  const lists =
+    opts.vector !== null && opts.vector.length > 0
+      ? [opts.lexical, opts.vector]
+      : [opts.lexical];
   let fused = rrfFusion(lists, RRF_K, true);
   if (opts.queryVector !== null) {
     fused = cosineReScore(fused, opts.queryVector);
   }
   const boosted = applyAdjacencyBoost(fused, opts.edges, opts.visible);
-  const boostedRows = fused.map((row) => {
-    const match = boosted.find((item) => item.id === row.id);
-    return match === undefined ? row : { ...row, score: match.score };
-  });
-  boostedRows.sort((left, right) => right.score - left.score);
-  return collapseToDocuments(dedupResults(boostedRows));
+  boosted.sort((left, right) => right.score - left.score);
+  return collapseToDocuments(dedupResults(boosted));
 }
 
 export function hitsFromCandidates(
@@ -144,8 +131,7 @@ export function hitsFromCandidates(
       taint: doc.taint,
       authority: doc.authority,
     });
-    if (hits.length >= limit) break;
   }
   hits.sort(compareHits);
-  return hits;
+  return hits.slice(0, limit);
 }

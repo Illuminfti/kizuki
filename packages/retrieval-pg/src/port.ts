@@ -30,12 +30,14 @@ import { WriterLease } from "./lease";
 import type { LeaseReceipt } from "./lease";
 import {
   candidateFromDoc,
+  cosineSimilarity,
   finalizeRecipe,
   hitsFromCandidates,
   lexicalScore,
+  pushDegraded,
+  walkNeighbors,
+  type RecipeCandidate,
 } from "./rank";
-import { cosineSimilarity, pushDegraded, walkNeighbors } from "../vendor/recipe";
-import type { RecipeCandidate, RecipeEdge } from "../vendor/recipe";
 import {
   chunkDocument,
   engineMismatch,
@@ -196,7 +198,6 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
 
     const visible = this.visibleDocs(validated);
     const docs = new Map(visible.map((doc) => [doc.doc_id, doc]));
-    const edges = this.recipeEdges();
     const nodeVisible = (id: string): boolean => this.nodeVisible(id, validated.ceiling);
 
     const lexicalStarted = Date.now();
@@ -223,14 +224,12 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
 
     this.assertDeadline(started, validated.deadline_ms);
 
+    const skipLexical = validated.mode === "vector" && vectorEnabled;
     const finalized = finalizeRecipe({
-      lexical:
-        validated.mode === "vector" && vectorCandidates !== null
-          ? []
-          : lexicalCandidates,
+      lexical: skipLexical ? [] : lexicalCandidates,
       vector: vectorEnabled ? vectorCandidates : null,
       queryVector: vectorEnabled ? queryVector : null,
-      edges,
+      edges: this.store.graph.edges,
       visible: nodeVisible,
     });
     const hits = hitsFromCandidates(
@@ -290,7 +289,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
       return { entity: entity.entity_id, edges: [], truncated: false };
     }
 
-    const walked = walkNeighbors(entity.entity_id, this.recipeEdges(), {
+    const walked = walkNeighbors(entity.entity_id, this.store.graph.edges, {
       hops: options.hops,
       limit: options.limit,
       visible: (id) => this.nodeVisible(id, options.ceiling),
@@ -637,20 +636,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
     const space = this.embedding?.space().id;
     const candidates: RecipeCandidate[] = [];
     for (const doc of docs) {
-      const chunks =
-        doc.chunks.length > 0
-          ? doc.chunks
-          : [
-              {
-                chunk_id: `${doc.doc_id}:0`,
-                index: 0,
-                text: doc.text,
-                vector: null,
-                embedded_at: null,
-                space: null,
-              },
-            ];
-      for (const chunk of chunks) {
+      for (const chunk of doc.chunks) {
         if (chunk.vector === null) continue;
         if (space !== undefined && chunk.space !== space) continue;
         const vector = Float32Array.from(chunk.vector);
@@ -669,16 +655,6 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
       if (right.score !== left.score) return right.score - left.score;
       return left.id.localeCompare(right.id);
     });
-  }
-
-  private recipeEdges(): RecipeEdge[] {
-    return this.store.graph.edges.map((edge) => ({
-      from: edge.from,
-      to: edge.to,
-      type: edge.type,
-      weight: edge.weight,
-      provenance: [...edge.provenance],
-    }));
   }
 
   private spaceMismatch(): boolean {

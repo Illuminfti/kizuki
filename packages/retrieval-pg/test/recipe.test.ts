@@ -10,12 +10,15 @@ import {
   cosineSimilarity,
   dedupResults,
   pushDegraded,
-  reciprocalRankFusion,
   rrfFusion,
   walkNeighbors,
 } from "../vendor/recipe";
 import type { RecipeCandidate } from "../vendor/recipe";
-import { candidateFromDoc, finalizeRecipe } from "../src/rank";
+import {
+  candidateFromDoc,
+  finalizeRecipe,
+  hitsFromCandidates,
+} from "../src/rank";
 import type { RetrievalDoc } from "@kizuki/core";
 
 const VENDOR = join(import.meta.dir, "../vendor");
@@ -70,14 +73,9 @@ describe("vendored retrieval recipe", () => {
     const fused = rrfFusion([lexical, vector], RRF_K, true);
     expect(fused.map((row) => row.id).sort()).toEqual(["page:a", "page:b"]);
     expect(fused[0]?.score).toBeCloseTo(fused[1]?.score ?? 0, 8);
-    const raw = reciprocalRankFusion(
-      [
-        ["page:a", "page:b"],
-        ["page:b", "page:a"],
-      ],
-      RRF_K,
-    );
-    expect(raw.get("page:a")).toBeCloseTo(1 / 60 + 1 / 61, 8);
+    const raw = rrfFusion([lexical, vector], RRF_K, false);
+    expect(raw[0]?.score).toBeCloseTo(1, 8);
+    expect(raw[1]?.score).toBeCloseTo(1, 8);
     expect(AUTHORITY_WEIGHT.owner_correction).toBe(2.0);
   });
 
@@ -178,6 +176,68 @@ describe("vendored retrieval recipe", () => {
     );
     expect(walked.edges.map((edge) => edge.from)).toEqual(["page:grace"]);
     expect(walked.truncated).toBe(false);
+  });
+
+  test("adjacency boost keeps candidate fields", () => {
+    const fused = finalizeRecipe({
+      lexical: [
+        candidate("page:a", 1, { keyword_hit: true, text: "hub a" }),
+        candidate("page:b", 1, { keyword_hit: true, text: "hub b" }),
+        candidate("page:c", 1, { keyword_hit: true, text: "hub c" }),
+      ],
+      vector: null,
+      queryVector: null,
+      edges: [
+        {
+          from: "page:a",
+          to: "page:b",
+          type: "subject",
+          weight: 1,
+          provenance: ["event:a"],
+        },
+        {
+          from: "page:a",
+          to: "page:c",
+          type: "subject",
+          weight: 1,
+          provenance: ["event:a"],
+        },
+        {
+          from: "page:b",
+          to: "page:c",
+          type: "subject",
+          weight: 1,
+          provenance: ["event:a"],
+        },
+      ],
+      visible: () => true,
+    });
+    expect(fused).toHaveLength(3);
+    for (const row of fused) {
+      expect(row.keyword_hit).toBe(true);
+      expect(row.text.startsWith("hub ")).toBe(true);
+    }
+  });
+
+  test("hits apply authority before the limit cut", () => {
+    const docs = new Map<string, RetrievalDoc>([
+      [
+        "page:inferred",
+        { ...BASE_DOC, doc_id: "page:inferred", authority: "model_inference" },
+      ],
+      [
+        "page:corrected",
+        { ...BASE_DOC, doc_id: "page:corrected", authority: "owner_correction" },
+      ],
+    ]);
+    const hits = hitsFromCandidates(
+      [candidate("page:inferred", 1), candidate("page:corrected", 1)],
+      docs,
+      "alpha",
+      1,
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.doc_id).toBe("page:corrected");
   });
 
   test("collapse keeps the best chunk per document", () => {

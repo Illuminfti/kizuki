@@ -4,9 +4,6 @@ import type { RecipeCandidate } from "./types";
 /** Reciprocal rank fusion constant from the public tip hybrid search. */
 export const RRF_K = 60;
 
-/** Pre-fusion candidate-pool floor (D-3002 in the public tip). */
-export const PRE_FUSION_POOL_FLOOR = 50;
-
 /**
  * Cosine blend used after RRF: 0.7 fused + 0.3 query-chunk cosine.
  * Forked from cosineReScore in the public tip hybrid search.
@@ -14,7 +11,7 @@ export const PRE_FUSION_POOL_FLOOR = 50;
 export const COSINE_BLEND_RRF = 0.7;
 export const COSINE_BLEND_VECTOR = 0.3;
 
-export function recipeKey(candidate: RecipeCandidate): string {
+function recipeKey(candidate: RecipeCandidate): string {
   return `${candidate.id}:${candidate.chunk_id}`;
 }
 
@@ -28,26 +25,12 @@ export function rrfFusion(
   k: number = RRF_K,
   applyBoost = true,
 ): RecipeCandidate[] {
-  return rrfFusionWeighted(
-    lists.map((list) => ({ list, k })),
-    applyBoost,
-  );
-}
-
-/**
- * Weighted RRF. Each list contributes with its own effective k so a
- * lexical or vector arm can be tilted without re-weighting scores.
- */
-export function rrfFusionWeighted(
-  lists: readonly { list: readonly RecipeCandidate[]; k: number }[],
-  applyBoost = true,
-): RecipeCandidate[] {
   const scores = new Map<
     string,
     { result: RecipeCandidate; score: number; keywordHit: boolean }
   >();
 
-  for (const { list, k } of lists) {
+  for (const list of lists) {
     list.forEach((candidate, rank) => {
       const key = recipeKey(candidate);
       const existing = scores.get(key);
@@ -127,22 +110,4 @@ export function cosineReScore(
       };
     })
     .sort((left, right) => right.score - left.score);
-}
-
-export function effectiveRrfK(baseK: number, weight: number): number {
-  if (weight <= 0) return baseK;
-  return baseK / weight;
-}
-
-export function reciprocalRankFusion(
-  rankedLists: readonly (readonly string[])[],
-  k: number = RRF_K,
-): Map<string, number> {
-  const scores = new Map<string, number>();
-  for (const list of rankedLists) {
-    list.forEach((id, rank) => {
-      scores.set(id, (scores.get(id) ?? 0) + 1 / (k + rank));
-    });
-  }
-  return scores;
 }

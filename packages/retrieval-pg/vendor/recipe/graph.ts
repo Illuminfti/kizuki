@@ -20,12 +20,12 @@ export interface AdjacencyTarget {
  * Kizuki modification: unlabeled / invisible nodes are excluded by the
  * caller-supplied visible predicate. There is no fail-open path.
  */
-export function applyAdjacencyBoost(
-  results: readonly AdjacencyTarget[],
+export function applyAdjacencyBoost<T extends AdjacencyTarget>(
+  results: readonly T[],
   edges: readonly RecipeEdge[],
   visible: (id: string) => boolean,
   opts?: { topK?: number; floorThreshold?: number },
-): AdjacencyTarget[] {
+): T[] {
   if (results.length === 0) return [];
   const topK = opts?.topK ?? DEFAULT_TOP_K;
   const floor = opts?.floorThreshold;
@@ -73,9 +73,9 @@ export function applyAdjacencyBoost(
 }
 
 /**
- * Hop-limited neighbor walk. Neighbor score decays as 1/(1+hop) times
- * the inbound edge weight, forked from the public tip two-pass walk.
- * Depth is capped at 2. Invisible nodes are skipped (fail closed).
+ * Hop-limited neighbor walk. Depth is capped at 2. Invisible nodes are
+ * skipped (fail closed). Truncates when the collected edge count reaches
+ * the caller limit.
  */
 export function walkNeighbors(
   start: string,
@@ -94,7 +94,6 @@ export function walkNeighbors(
   const collected: RecipeEdge[] = [];
   const seen = new Set<string>([start]);
   let frontier = [start];
-  let truncated = false;
 
   for (let hop = 0; hop < depth; hop += 1) {
     const next: string[] = [];
@@ -119,9 +118,5 @@ export function walkNeighbors(
     frontier = next;
   }
 
-  return { edges: collected, truncated };
-}
-
-export function hopDecay(hop: number): number {
-  return 1 / (1 + hop);
+  return { edges: collected, truncated: false };
 }

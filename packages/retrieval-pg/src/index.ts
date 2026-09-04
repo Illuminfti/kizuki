@@ -28,7 +28,6 @@ export {
   AUTHORITY_WEIGHT,
   NEAR_DUPLICATE_JACCARD,
   RRF_K,
-  reciprocalRankFusion,
 } from "./rank";
 export { assertNoStoreTransaction, runStoreTransaction } from "./txn";
 
