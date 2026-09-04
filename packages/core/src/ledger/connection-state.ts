@@ -5,7 +5,6 @@ import {
   existsSync,
   mkdirSync,
   openSync,
-  readFileSync,
   readSync,
   readdirSync,
   rmSync,
@@ -322,6 +321,22 @@ export class ConnectionStateStore implements ConnectionStateReader {
     return connection;
   }
 
+  private readStatePath(path: string): Uint8Array {
+    const stats = assertRegularStateFile(path, this.directory);
+    if (stats.size > MAX_CONNECTION_STATE_BYTES) throw new LedgerError("connection state exceeds maximum size");
+    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      const bytes = new Uint8Array(stats.size);
+      let offset = 0;
+      while (offset < bytes.byteLength) {
+        const read = readSync(fd, bytes, offset, bytes.byteLength - offset, offset);
+        if (read <= 0) throw new LedgerError("connection state read made no progress");
+        offset += read;
+      }
+      return bytes;
+    } finally { closeSync(fd); }
+  }
+
   read(connection: Connection): Uint8Array | null {
     if (connection.secret_refs.length === 0) return null;
     if (connection.config.state_ref_index !== 0) {
@@ -338,25 +353,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
       throw new LedgerError("connection state journal is unresolved");
     }
     const path = connectionStatePath(this.directory, ref);
-    const stats = assertRegularStateFile(path, this.directory);
-    if (stats.size > MAX_CONNECTION_STATE_BYTES) {
-      throw new LedgerError("connection state exceeds maximum size");
-    }
-    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-    try {
-      const bytes = new Uint8Array(stats.size);
-      let offset = 0;
-      while (offset < bytes.byteLength) {
-        const read = readSync(fd, bytes, offset, bytes.byteLength - offset, offset);
-        if (read <= 0) {
-          throw new LedgerError("connection state read made no progress");
-        }
-        offset += read;
-      }
-      return bytes;
-    } finally {
-      closeSync(fd);
-    }
+    return this.readStatePath(path);
   }
 
   /**
@@ -416,7 +413,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
       if (options.verifyReplacement !== undefined) {
         const path = pending.pending.temporaryPath;
         if (path === null) throw new LedgerError(options.missingStateMessage);
-        options.verifyReplacement(previous, new Uint8Array(readFileSync(path)));
+        options.verifyReplacement(previous, this.readStatePath(path));
       }
       return this.save(
         db,

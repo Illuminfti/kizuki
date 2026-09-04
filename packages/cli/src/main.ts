@@ -60,13 +60,24 @@ export function readSecretPrompt(
       if (error !== undefined) reject(error);
       else resolve(characters.join(""));
     };
+    const flushDecoder = (): boolean => {
+      try {
+        if (decoder.decode().length > 0) throw new Error("unexpected text");
+        return true;
+      } catch {
+        finish(new UsageError("interactive sign-in received invalid terminal input"));
+        return false;
+      }
+    };
     const onData = (chunk: Uint8Array): void => {
       for (const byte of chunk) {
         if (byte === 3) {
+          if (!flushDecoder()) return;
           finish(new UsageError("interactive sign-in cancelled"));
           return;
         }
         if (byte === 10 || byte === 13) {
+          if (!flushDecoder()) return;
           finish();
           return;
         }
@@ -87,6 +98,7 @@ export function readSecretPrompt(
           continue;
         }
         if (byte === 8 || byte === 127) {
+          if (!flushDecoder()) return;
           if (characters.pop() !== undefined) output.write("\b \b");
           continue;
         }

@@ -42,7 +42,7 @@ describe("connection state", () => {
       assertSameImapIdentity(serializeImapState(STATE), serializeImapState({ ...STATE, username: "other@example.test" }));
     } catch (caught) { error = caught; }
     expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain("same mailbox identity");
+    expect((error as Error).message).toContain("does not match");
     expect((error as Error).message).not.toContain("other@example.test");
   });
   test("round-trips through the serialized bytes", () => {

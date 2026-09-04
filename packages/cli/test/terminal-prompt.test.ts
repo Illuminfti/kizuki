@@ -76,6 +76,17 @@ describe("secret terminal prompt", () => {
     expect(await pending).toBe("😀");
   });
 
+  test("refuses incomplete UTF-8 on submit or backspace", async () => {
+    for (const control of ["\n", "\x7f"]) {
+      const terminal = new CapturedTerminal();
+      const pending = readSecretPrompt(terminal, { write() {} }, "App password: ");
+      for (const listener of terminal.listeners) listener(Uint8Array.of(0xf0, 0x9f));
+      terminal.send(control);
+      await expect(pending).rejects.toThrow("invalid terminal input");
+      expect(terminal.rawModes).toEqual([true, false]);
+    }
+  });
+
   test("a parent Ctrl-C byte cancels a visible prompt in a real pseudo-terminal", async () => {
     const directory = mkdtempSync(join(tmpdir(), "kizuki-prompt-"));
     const program = join(directory, "prompt.ts");

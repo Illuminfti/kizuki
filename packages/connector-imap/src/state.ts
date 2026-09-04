@@ -149,6 +149,6 @@ export function assertSameImapIdentity(previous: Uint8Array, candidate: Uint8Arr
   const before = parseImapState(new TextDecoder("utf-8", { fatal: true }).decode(previous));
   const after = parseImapState(new TextDecoder("utf-8", { fatal: true }).decode(candidate));
   if (before.host.toLowerCase() !== after.host.toLowerCase() || before.port !== after.port || before.username !== after.username) {
-    throw new KizukiError("misconfigured", "kizuki.imap: re-sign-in must use the same mailbox identity; use a distinct source for another account");
+    throw new KizukiError("misconfigured", "kizuki.imap: mailbox identity does not match the existing connection");
   }
 }
