@@ -13,6 +13,7 @@ import {
 import type { Connection, Manifest, Sensitivity } from "@kizuki/core";
 import type { Database } from "bun:sqlite";
 import { getConnector } from "@kizuki/connectors";
+import { assertSameImapIdentity } from "@kizuki/connector-imap";
 import { UsageError, parseArguments, requirePositional } from "../args";
 import {
   ConnectionError,
@@ -119,6 +120,7 @@ export const connectCommand: Command = {
             connector,
             sanitizedSignInIo(io),
             sourceKey,
+            assertSameImapIdentity,
           );
         } catch (error) {
           // Authentication and transport implementations may include server

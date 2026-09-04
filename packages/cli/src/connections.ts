@@ -187,6 +187,7 @@ export async function enrollSignedInConnection(
   connector: Connector,
   io: SignInIo,
   sourceKey?: string,
+  verifyReplacement?: (previous: Uint8Array, candidate: Uint8Array) => void,
 ): Promise<Connection> {
   const manifest = connector.manifest();
   if (!manifest.auth_modes.includes("sign_in") || connector.signIn === undefined) {
@@ -206,7 +207,7 @@ export async function enrollSignedInConnection(
     throw new ConnectionError(`several connections for ${manifest.connector_id}; select a source before re-signing in`);
   }
   if (previous !== undefined) {
-    return store.replace(db, previous, connector, io);
+    return store.replace(db, previous, connector, io, verifyReplacement);
   }
   return enrollConnection(db, store, connector, io);
 }

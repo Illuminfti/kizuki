@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   openSync,
+  readFileSync,
   readSync,
   readdirSync,
   rmSync,
@@ -371,6 +372,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
       missingStateMessage: string;
       refuseDisconnected: boolean;
       implementationVersion: string;
+      verifyReplacement?: (previous: Uint8Array, candidate: Uint8Array) => void;
     },
   ): Promise<Connection> {
     this.recover(db);
@@ -403,12 +405,18 @@ export class ConnectionStateStore implements ConnectionStateReader {
     if (options.refuseDisconnected && persisted.disconnected_at !== null) {
       throw new LedgerError("connection is disconnected");
     }
-    this.read(persisted);
+    const previous = this.read(persisted);
+    if (previous === null) throw new LedgerError("connection state is missing");
     const pending = this.beginFor(persisted.source_key);
     try {
       await update(pending.writer);
       if (!pending.pending.written) {
         throw new LedgerError(options.missingStateMessage);
+      }
+      if (options.verifyReplacement !== undefined) {
+        const path = pending.pending.temporaryPath;
+        if (path === null) throw new LedgerError(options.missingStateMessage);
+        options.verifyReplacement(previous, new Uint8Array(readFileSync(path)));
       }
       return this.save(
         db,
@@ -436,6 +444,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
     connection: Connection,
     connector: Connector,
     io: SignInIo,
+    verifyReplacement?: (previous: Uint8Array, candidate: Uint8Array) => void,
   ): Promise<Connection> {
     if (connector.manifest().connector_id !== connection.connector_id) {
       throw new LedgerError("replacement connector does not match the connection");
@@ -452,6 +461,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
         // A re-sign-in is the owner reconnecting a source on purpose.
         refuseDisconnected: false,
         implementationVersion: connector.manifest().version,
+        ...(verifyReplacement === undefined ? {} : { verifyReplacement }),
       },
     );
   }

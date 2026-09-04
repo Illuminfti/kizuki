@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { KizukiError } from "@kizuki/core";
 import {
+  assertSameImapIdentity,
   DEFAULT_MAX_MESSAGE_BYTES,
   parseImapState,
   serializeImapState,
@@ -31,6 +32,19 @@ function reject(patch: Record<string, unknown>): KizukiError {
 }
 
 describe("connection state", () => {
+  test("permits password rotation but refuses another mailbox without exposing it", () => {
+    expect(() => assertSameImapIdentity(
+      serializeImapState(STATE),
+      serializeImapState({ ...STATE, password: "rotated" }),
+    )).not.toThrow();
+    let error: unknown;
+    try {
+      assertSameImapIdentity(serializeImapState(STATE), serializeImapState({ ...STATE, username: "other@example.test" }));
+    } catch (caught) { error = caught; }
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("same mailbox identity");
+    expect((error as Error).message).not.toContain("other@example.test");
+  });
   test("round-trips through the serialized bytes", () => {
     const bytes = serializeImapState(STATE);
     expect(bytes).toBeInstanceOf(Uint8Array);

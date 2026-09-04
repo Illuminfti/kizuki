@@ -28,6 +28,7 @@ export {
   DEFAULT_MAX_MESSAGE_BYTES,
   IMAP_STATE_SCHEMA,
   parseImapState,
+  assertSameImapIdentity,
   serializeImapState,
 } from "./state";
 export type { ImapState } from "./state";
