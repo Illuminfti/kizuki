@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+  chmod,
   mkdir,
   mkdtemp,
   rm,
+  symlink,
   unlink,
   utimes,
   writeFile,
@@ -305,6 +307,52 @@ describe("MarkdownFolderConnector", () => {
       });
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("an unreadable directory does not tombstone the files it hid", async () => {
+    const root = await makeTempDir();
+    const nested = path.join(root, "nested");
+    try {
+      await mkdir(nested);
+      await writeFile(path.join(root, "kept.md"), "kept\n");
+      await writeFile(path.join(nested, "hidden.md"), "hidden\n");
+      const connector = createMarkdownFolderConnector({ path: root });
+      const first = await connector.backfill(null);
+      expect(first.events.map((event) => event.source_record_id).sort()).toEqual(
+        ["kept.md", "nested/hidden.md"],
+      );
+      await chmod(nested, 0);
+      try {
+        const second = await connector.sync(first.cursor);
+        expect(second.events.some((event) => event.deleted)).toBe(false);
+        expect(
+          second.events.map((event) => event.source_record_id),
+        ).not.toContain("nested/hidden.md");
+      } finally {
+        await chmod(nested, 0o755);
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a symlinked root still sweeps the resolved folder", async () => {
+    const parent = await makeTempDir();
+    try {
+      const real = path.join(parent, "real");
+      const link = path.join(parent, "link");
+      await mkdir(real);
+      await writeFile(path.join(real, "note.md"), "via link\n");
+      await symlink(real, link);
+      const batch = await createMarkdownFolderConnector({ path: link }).backfill(
+        null,
+      );
+      expect(batch.events.map((event) => event.source_record_id)).toEqual([
+        "note.md",
+      ]);
+    } finally {
+      await rm(parent, { recursive: true, force: true });
     }
   });
 

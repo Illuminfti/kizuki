@@ -1,9 +1,10 @@
 import { resolve } from "node:path";
-import { applyConnectionSensitivity, runBackfill } from "@kizuki/core";
+import { applyConnectionSensitivity, runToCompletion } from "@kizuki/core";
 import { getConnector } from "@kizuki/connectors";
 import { UsageError, parseArguments, requirePositional } from "../args";
 import {
   ConnectionError,
+  blocksEnrollment,
   enrollHostConnection,
   listHostConnections,
   loadConnector,
@@ -42,7 +43,7 @@ export const importCommand: Command = {
         }
         await connector.connect(refuseSecrets);
         const health = await connector.health();
-        if (health.state !== "ok") {
+        if (blocksEnrollment(health.state)) {
           io.err(
             `error: ${connectorId} health=${health.state}: ${health.detail ?? ""}`,
           );
@@ -72,11 +73,12 @@ export const importCommand: Command = {
 
       const connector = await loadConnector(selected);
       const since = { accepted_at: new Date().toISOString(), event_id: "" };
-      const result = await runBackfill(
+      const result = await runToCompletion(
         ctx.db,
         connector,
         selected.connection.connector_id,
         selected.connection.source_key,
+        "backfill",
       );
       indexEventsSince(ctx.db, since);
       io.out(formatRunCounts(result));

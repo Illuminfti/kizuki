@@ -163,7 +163,7 @@ export function unixSecondsToIso(value: unknown, where: string): string {
   const seconds =
     typeof value === "string" && /^\d+$/.test(value)
       ? Number(value)
-      : typeof value === "number" && Number.isSafeInteger(value)
+      : typeof value === "number" && Number.isFinite(value)
         ? value
         : undefined;
   if (seconds === undefined || seconds <= 0 || seconds >= MAX_UNIX_SECONDS) {

@@ -197,9 +197,9 @@ export class MarkdownFolderConnector implements Connector {
 
     const tombstones: CaptureEventInput[] = [];
     if (previous !== undefined && !scan.truncated) {
-      const failed = new Set(scan.errors.map((error) => error.location));
+      const failed = scan.errors.map((error) => error.location);
       for (const relpath of [...previousFiles.keys()].sort(compareStrings)) {
-        if (current.has(relpath) || failed.has(relpath)) continue;
+        if (current.has(relpath) || hiddenByScanError(relpath, failed)) continue;
         tombstones.push(tombstone(relpath, observedAt));
       }
     }
@@ -327,9 +327,9 @@ function parseExclude(value: unknown): string[] {
 }
 
 async function rootIdentity(root: string): Promise<RootIdentity> {
-  let info;
+  let resolved: string;
   try {
-    info = await lstat(root);
+    resolved = await realpath(root);
   } catch (error) {
     throw new KizukiError(
       "misconfigured",
@@ -337,15 +337,14 @@ async function rootIdentity(root: string): Promise<RootIdentity> {
       { cause: error },
     );
   }
+  const info = await lstat(resolved);
   if (!info.isDirectory()) {
     throw new KizukiError(
       "misconfigured",
       `${MARKDOWN_FOLDER_CONNECTOR_ID}: path is not a directory`,
     );
   }
-  const resolved = await realpath(root);
-  const resolvedInfo = await lstat(resolved);
-  return { realpath: resolved, dev: resolvedInfo.dev, ino: resolvedInfo.ino };
+  return { realpath: resolved, dev: info.dev, ino: info.ino };
 }
 
 async function scanMarkdownFiles(
@@ -543,6 +542,17 @@ function isMarkdownName(name: string): boolean {
 
 function relpathOf(root: string, absolute: string): string {
   return path.relative(root, absolute).split(path.sep).join("/");
+}
+
+function hiddenByScanError(
+  relpath: string,
+  failed: readonly string[],
+): boolean {
+  for (const location of failed) {
+    if (location === "." || location === relpath) return true;
+    if (location.length > 0 && relpath.startsWith(`${location}/`)) return true;
+  }
+  return false;
 }
 
 function fileEvent(file: MarkdownFile, observedAt: string): CaptureEventInput {

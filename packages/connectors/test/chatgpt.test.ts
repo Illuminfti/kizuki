@@ -263,6 +263,28 @@ describe("parseChatGptExport", () => {
     ]);
   });
 
+  test("fractional unix create_time is kept", () => {
+    const result = parseChatGptExport(
+      JSON.stringify([
+        {
+          id: "c1",
+          mapping: {
+            n: {
+              message: {
+                author: { role: "user" },
+                content: { parts: ["frac"] },
+                create_time: 1_700_000_000.25,
+              },
+            },
+          },
+        },
+      ]),
+      OBSERVED_AT,
+    );
+    expect(result.errors).toEqual([]);
+    expect(result.events[0]?.occurred_at).toBe("2023-11-14T22:13:20.250Z");
+  });
+
   test("missing source timestamps are errors, not import time", () => {
     const result = parseChatGptExport(
       JSON.stringify([
@@ -329,6 +351,64 @@ describe("ChatGptImportConnector", () => {
           .filter((event) => event.deleted)
           .map((event) => event.source_record_id),
       ).toEqual([encodeSourceRecordId(["conversation-42", "message-b"])]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a dirty later export keeps prior ids until a clean parse can tombstone them", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-chatgpt-"));
+    try {
+      const file = path.join(root, "conversations.json");
+      await writeFile(file, JSON.stringify(INLINE_EXPORT));
+      const connector = createChatGptImportConnector({ path: file });
+      const first = await connector.backfill(null);
+      const kept = encodeSourceRecordId(["conversation-42", "message-a"]);
+      const dropped = encodeSourceRecordId(["conversation-42", "message-b"]);
+
+      await writeFile(
+        file,
+        JSON.stringify([
+          {
+            id: "conversation-42",
+            mapping: {
+              "message-a": INLINE_EXPORT[0]?.mapping["message-a"],
+              "message-b": {
+                message: {
+                  author: { role: "assistant" },
+                  content: { parts: ["no time"] },
+                },
+              },
+            },
+          },
+        ]),
+      );
+      const dirty = await connector.sync(first.cursor);
+      expect(dirty.events.some((event) => event.deleted)).toBe(false);
+      const dirtyCursor = JSON.parse(dirty.cursor ?? "{}") as {
+        records: Array<[string, string]>;
+      };
+      expect(dirtyCursor.records.map(([id]) => id).sort()).toEqual(
+        [dropped, kept].sort(),
+      );
+
+      await writeFile(
+        file,
+        JSON.stringify([
+          {
+            id: "conversation-42",
+            mapping: {
+              "message-a": INLINE_EXPORT[0]?.mapping["message-a"],
+            },
+          },
+        ]),
+      );
+      const clean = await connector.sync(dirty.cursor);
+      expect(
+        clean.events
+          .filter((event) => event.deleted)
+          .map((event) => event.source_record_id),
+      ).toEqual([dropped]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

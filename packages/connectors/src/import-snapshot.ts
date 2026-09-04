@@ -161,9 +161,23 @@ function drain(
     events.push(event);
   }
 
-  // A dirty parse cannot prove a record is gone: it may only have failed to
-  // understand it. Tombstones wait for a clean understanding of the file.
-  if (previous !== undefined && parsed.errors.length === 0) {
+  // Accounted warnings (unsupported_part, missing_id) ride along with an
+  // emitted event. Only a blocked record means we failed to understand the
+  // file well enough to prove something is gone.
+  const dirty = parsed.errors.some((error) =>
+    snapshotErrorBlocksProof(error.code),
+  );
+
+  // A dirty parse cannot prove a record is gone. Keep prior identities so a
+  // later clean export can still tombstone them.
+  const records = new Map<string, string>(
+    dirty && previous !== undefined ? previous.records : [],
+  );
+  for (const [sourceRecordId, hash] of current) {
+    records.set(sourceRecordId, hash);
+  }
+
+  if (previous !== undefined && !dirty) {
     for (const [sourceRecordId] of previous.records) {
       if (current.has(sourceRecordId)) continue;
       events.push(
@@ -177,11 +191,15 @@ function drain(
     connector_id: spec.connectorId,
     exhausted: true,
     export: identity,
-    records: [...current.entries()].sort(([a], [b]) =>
+    records: [...records.entries()].sort(([a], [b]) =>
       a < b ? -1 : a > b ? 1 : 0,
     ),
   };
   return { events, cursor: JSON.stringify(next) };
+}
+
+function snapshotErrorBlocksProof(code: string): boolean {
+  return code !== "unsupported_part" && code !== "missing_id";
 }
 
 async function readExport(

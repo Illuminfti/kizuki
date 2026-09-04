@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import {
+  readFileSync,
+  readdirSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { listConnections, openLedger } from "@kizuki/core";
 import { createHelpers } from "./helpers";
@@ -126,6 +132,26 @@ describe("connect", () => {
     const result = runCli(setup.env, "backfill", "markdown-folder");
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("several connections");
+  });
+
+  test("a degraded notes folder still enrolls", () => {
+    const setup = tempVault();
+    symlinkSync(join(setup.notes, "ada.md"), join(setup.notes, "also-ada.md"));
+    const result = runCli(
+      setup.env,
+      "connect",
+      "markdown-folder",
+      "--source",
+      setup.notes,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("health=degraded");
+    const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+    try {
+      expect(listConnections(db)).toHaveLength(1);
+    } finally {
+      db.close();
+    }
   });
 
   test("garbage state fails closed and never stores the source path in SQLite", () => {
