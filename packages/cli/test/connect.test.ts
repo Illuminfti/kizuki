@@ -14,7 +14,7 @@ const { cleanup, runCli, tempVault, writeNotes } = createHelpers();
 afterEach(cleanup);
 
 describe("connect", () => {
-  test("sign-in connectors are not enrollable", () => {
+  test("unwired sign-in connectors are not enrollable", () => {
     const setup = tempVault();
     const result = runCli(
       setup.env,
@@ -25,6 +25,14 @@ describe("connect", () => {
     );
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("not enrollable through this CLI");
+  });
+
+  test("IMAP enrollment refuses piped credentials", () => {
+    const setup = tempVault();
+    const result = runCli(setup.env, "connect", "imap");
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("interactive terminal required");
+    expect(result.stderr).not.toContain("password");
   });
 
   test("unknown connector lists known ids", () => {

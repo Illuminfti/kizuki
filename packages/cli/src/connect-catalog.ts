@@ -76,8 +76,8 @@ export async function printConnectionStatus(io: CliIo, json: boolean): Promise<n
       io.out(`Choose a source: ${INVOCATION} connect`);
     } else {
       for (const line of table([
-        ["Connector", "State", "Privacy", "Last run", "Stored", "Errors"],
-        ...connections.map((row) => [clean(row.connector_id), row.state, row.sensitivity,
+        ["Connector", "Source", "State", "Privacy", "Last run", "Stored", "Errors"],
+        ...connections.map((row) => [clean(row.connector_id), row.source_key, row.state, row.sensitivity,
           row.last_run === null ? "not synced yet" : clean(row.last_run), `${row.stored}`, `${row.errors}`]),
       ])) io.out(line);
       io.out(`Refresh: ${INVOCATION} sync`);

@@ -4,6 +4,7 @@ import { COMMANDS } from "./commands/index";
 import type { CliIo } from "./commands/index";
 import { printCommandHelp, printRootHelp, usageLines } from "./help";
 import { errorText } from "./output";
+import { createInterface } from "node:readline/promises";
 import {
   isRetiredOwnerGateVerb,
   retiredOwnerGateMessage,
@@ -17,17 +18,111 @@ function processEnv(): Record<string, string | undefined> {
   return env;
 }
 
+export interface SecretPromptInput {
+  isTTY?: boolean;
+  setRawMode?: (enabled: boolean) => void;
+  resume(): void;
+  on(event: "data", listener: (chunk: Uint8Array) => void): unknown;
+  off(event: "data", listener: (chunk: Uint8Array) => void): unknown;
+}
+
+export interface SecretPromptOutput {
+  write(text: string): unknown;
+}
+
+/**
+ * Read a secret without asking the terminal to conceal already-echoed input.
+ * Raw mode means the process receives bytes before the terminal echoes them;
+ * this function emits a mask only and restores the terminal on every exit.
+ */
+export function readSecretPrompt(
+  input: SecretPromptInput,
+  output: SecretPromptOutput,
+  question: string,
+): Promise<string> {
+  if (input.isTTY !== true || input.setRawMode === undefined) {
+    throw new UsageError("interactive sign-in requires a terminal");
+  }
+  output.write(question);
+  input.setRawMode(true);
+  input.resume();
+  return new Promise((resolve, reject) => {
+    const bytes: number[] = [];
+    let settled = false;
+    const finish = (error?: Error): void => {
+      if (settled) return;
+      settled = true;
+      input.off("data", onData);
+      input.setRawMode!(false);
+      output.write("\n");
+      if (error !== undefined) reject(error);
+      else resolve(Buffer.from(bytes).toString("utf8"));
+    };
+    const onData = (chunk: Uint8Array): void => {
+      for (const byte of chunk) {
+        if (byte === 3) {
+          finish(new UsageError("interactive sign-in cancelled"));
+          return;
+        }
+        if (byte === 10 || byte === 13) {
+          finish();
+          return;
+        }
+        if (byte === 8 || byte === 127) {
+          if (bytes.pop() !== undefined) output.write("\b \b");
+          continue;
+        }
+        if (byte >= 32) {
+          bytes.push(byte);
+          output.write("*");
+        }
+      }
+    };
+    input.on("data", onData);
+  });
+}
+
+export async function readVisiblePrompt(question: string): Promise<string> {
+  if (process.stdin.isTTY !== true) {
+    throw new UsageError("interactive sign-in requires a terminal");
+  }
+  const reader = createInterface({ input: process.stdin, output: process.stderr, terminal: true });
+  const controller = new AbortController();
+  const onSigint = (): void => controller.abort();
+  process.once("SIGINT", onSigint);
+  reader.once("SIGINT", onSigint);
+  try {
+    return await reader.question(question, { signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new UsageError("interactive sign-in cancelled");
+    }
+    throw error;
+  } finally {
+    process.off("SIGINT", onSigint);
+    reader.off("SIGINT", onSigint);
+    reader.close();
+  }
+}
+
 async function dispatch(argv: string[]): Promise<number> {
   const io: CliIo = {
     env: processEnv(),
     vaultOverride: null,
     stdinIsTTY: process.stdin.isTTY === true,
     stdoutIsTTY: process.stdout.isTTY === true,
+    stderrIsTTY: process.stderr.isTTY === true,
     out(line) {
       process.stdout.write(`${line}\n`);
     },
     err(line) {
       process.stderr.write(`${line}\n`);
+    },
+    async prompt(question, opts) {
+      if (opts?.secret) {
+        return readSecretPrompt(process.stdin, process.stderr, question);
+      }
+      return readVisiblePrompt(question);
     },
   };
 
@@ -89,14 +184,16 @@ async function dispatch(argv: string[]): Promise<number> {
   }
 }
 
-try {
-  process.exit(await dispatch(Bun.argv.slice(2)));
-} catch (error) {
-  if (error instanceof UsageError) {
-    process.stderr.write("usage: kizuki <verb> [options]\n");
-    process.exit(2);
-  } else {
-    process.stderr.write(`error: ${errorText(error)}\n`);
-    process.exit(1);
+if (import.meta.main) {
+  try {
+    process.exit(await dispatch(Bun.argv.slice(2)));
+  } catch (error) {
+    if (error instanceof UsageError) {
+      process.stderr.write("usage: kizuki <verb> [options]\n");
+      process.exit(2);
+    } else {
+      process.stderr.write(`error: ${errorText(error)}\n`);
+      process.exit(1);
+    }
   }
 }

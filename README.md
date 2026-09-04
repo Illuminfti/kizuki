@@ -31,7 +31,7 @@ and a stranger-proof installer are not done.
 | Undo / audit | Receipt list, TUI audit, `undo <receipt>`. |
 | Serve | Local loop, loopback HTTP, optional user-service install at `init`. |
 | MCP | Source entry point and native `kizuki-mcp` — stdio adapter. No policy of its own. |
-| Sign-in sources | Telegram and IMAP packages exist. This CLI will not enroll them. |
+| Sign-in sources | IMAP enrolls through a local terminal prompt; Telegram is not CLI-enrollable. |
 | Canon writer | Requires a configured model. Without one, doctor says so and the rest still runs. |
 | 1.0 proofs | Not claimed. The automated [artifact isolation proof](docs/stranger-proof.md) is a prerequisite, not a human stranger proof or estate cutover. |
 

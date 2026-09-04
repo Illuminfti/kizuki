@@ -31,6 +31,7 @@ const EXAMPLES: Readonly<Record<string, readonly string[]>> = {
   connect: [
     `${INVOCATION} connect`,
     `${INVOCATION} connect beeper --token-ref env:BEEPER_TOKEN`,
+    `${INVOCATION} connect imap`,
     `${INVOCATION} connect markdown-folder --source ./notes`,
     `${INVOCATION} connect status --json`,
   ],

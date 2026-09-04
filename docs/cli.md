@@ -63,12 +63,15 @@ Beeper messages, use `connect beeper` followed by `backfill beeper`.
 usage: kizuki connect [--list|status] [--json]
        kizuki connect <connector> --source PATH [--sensitivity public|personal|private]
        kizuki connect beeper --token-ref env:VAR|file:/absolute/path [--endpoint http://127.0.0.1:23373] [--sensitivity public|personal|private] [--json]
+       kizuki connect imap [--source KEY] [--sensitivity public|personal|private]
 ```
 
 Browse sources, inspect saved sync status, or enroll a source. Local Beeper
 enrollment checks its authenticated Desktop API before saving a secret
-reference. File sources remain supported. Other account sign-in flows are
-unavailable and labeled in the catalog. See [connection setup](connect.md).
+reference. IMAP enrollment uses a local interactive prompt and stores its
+opaque connector state in the owner-only connection-state store. File sources
+remain supported. Other account sign-in flows are unavailable and labeled in
+the catalog. See [connection setup](connect.md).
 
 Sensitivity is optional: trusted connector runs resolve each valid event
 against that connection's default, floor, owner label, and source hint.

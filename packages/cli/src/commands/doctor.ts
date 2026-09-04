@@ -232,11 +232,11 @@ async function collect(
       continue;
     }
     try {
-      const connector = await loadConnector(host);
+      const connector = await loadConnector(host, ctx.store);
       const health = await withDeadline(HEALTH_DEADLINE_MS, () => connector.health());
       connections.push({
         ...base,
-        path: host.state.config.path ?? host.state.config.base_url,
+        path: host.state.config.path ?? host.state.config.base_url ?? "managed local state",
         state: "present",
         health: health.state,
         problem: health.state === "ok" ? null : scrubDetail(health.detail ?? null),
@@ -245,7 +245,7 @@ async function collect(
       const message = errorText(error);
       connections.push({
         ...base,
-        path: host.state.config.path ?? host.state.config.base_url,
+        path: host.state.config.path ?? host.state.config.base_url ?? "managed local state",
         state: "present",
         health: message.includes("timed out") ? "timeout" : "misconfigured",
         problem: scrubDetail(message),

@@ -75,7 +75,7 @@ export const importCommand: Command = {
         };
       }
 
-      const connector = await loadConnector(selected);
+      const connector = await loadConnector(selected, ctx.store);
       const result = await runToCompletion(
         ctx.db,
         connector,
