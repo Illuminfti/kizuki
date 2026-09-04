@@ -230,17 +230,35 @@ describe("audit reducer", () => {
     });
     const missed = press(paged, [...chars("/nope"), named("enter")]);
     const empty = render(missed.state, { cols: 120, rows: 24, paint: paint(false) }).join("\n");
-    expect(empty).toContain("0 writes");
+    expect(empty).toContain("0+ writes");
     expect(empty).toContain("filter: nope");
     expect(empty).toMatch(/\+/);
     expect(empty).not.toMatch(/201–/);
 
     const hit = press(paged, [...chars("/grace"), named("enter")]);
     const matched = render(hit.state, { cols: 120, rows: 24, paint: paint(false) }).join("\n");
-    expect(matched).toContain("1 write");
+    expect(matched).toContain("1+ write");
     expect(matched).toContain("filter: grace");
     expect(matched).toMatch(/\+/);
     expect(matched).not.toMatch(/201–/);
+  });
+
+  test("a narrow header keeps the omitted marker when the vault name is long", () => {
+    const paged = initialState({
+      vaultName: "x".repeat(80),
+      today: "2026-09-02",
+      items: [item()],
+      pageOffset: 0,
+      pageSize: 200,
+      pageTruncated: true,
+    });
+    const frame = render(paged, { cols: 40, rows: 16, paint: paint(false) });
+    expect(stringWidth(frame[0] ?? "")).toBe(40);
+    expect(frame[0]).toContain("+");
+    const filtered = press(paged, [...chars(`/${"y".repeat(80)}`), named("enter")]);
+    const tight = render(filtered.state, { cols: 40, rows: 16, paint: paint(false) });
+    expect(stringWidth(tight[0] ?? "")).toBe(40);
+    expect(tight[0]).toContain("+");
   });
 
   test("] and [ emit page effects and never claim a silent complete set", () => {

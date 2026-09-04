@@ -56,7 +56,7 @@ function listedLabel(state: AuditState): string {
   const count = state.items.length;
   if (state.filter.length > 0) {
     const noun = count === 1 ? "write" : "writes";
-    return `${count} ${noun}${filtered}${more}`;
+    return `${count}${more} ${noun}${filtered}`;
   }
   if (count === 0) return "0 writes";
   const start = state.pageOffset + 1;
@@ -74,7 +74,9 @@ function header(state: AuditState, cols: number, p: Paint): string {
   const session = state.session.undone > 0 ? p.dim(`session undo ${state.session.undone}`) : "";
   const gap = cols - stringWidth(left) - stringWidth(session);
   if (gap >= 2) return left + " ".repeat(gap) + session;
-  return truncate(sanitize(`kizuki audit · ${state.vaultName} · ${listed}`), cols);
+  const raw = sanitize(`kizuki audit · ${state.vaultName} · ${listed}`);
+  if (!state.pageTruncated) return truncate(raw, cols);
+  return `${truncate(raw, Math.max(0, cols - 1), "…")}+`;
 }
 
 function listLines(state: AuditState, width: number, rows: number, p: Paint): string[] {
