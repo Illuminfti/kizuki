@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  accept,
   createVaultFts5Port,
   insertClaim,
   openLedger,
@@ -152,5 +153,147 @@ describe("RFC 0002 §16.4 purge and undo", () => {
       /kizuki\.retrieval\.fts5\s+checked 3\s+found 0\s+done/,
     );
     expect(verified.stdout).toMatch(/canon\s+pages rewritten 1\s+hold lifted/);
+  });
+
+  test("dry-run prints a plan and leaves events in place", () => {
+    const setup = tempVault();
+    writeFileSync(join(setup.notes, "acme.md"), "Grace runs partnerships at Acme.\n");
+    expect(
+      runCli(setup.env, "import", "markdown-folder", "--source", setup.notes).exitCode,
+    ).toBe(0);
+
+    const preview = runCli(
+      setup.env,
+      "purge",
+      "--connector",
+      "kizuki.markdown-folder",
+      "--record",
+      "acme.md",
+      "--reason",
+      "source deleted",
+      "--dry-run",
+    );
+    expect(preview.exitCode).toBe(0);
+    expect(preview.stdout).toContain("dry-run: 1 event");
+    expect(preview.stdout).not.toContain("purged 1 event");
+
+    const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+    expect(readSince(db, null, 20).events.length).toBeGreaterThan(0);
+    db.close();
+  });
+
+  test("dry-run --json --allow-empty reports ok for no match", () => {
+    const setup = tempVault();
+    const preview = runCli(
+      setup.env,
+      "purge",
+      "--event",
+      "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "--reason",
+      "no such event",
+      "--dry-run",
+      "--allow-empty",
+      "--json",
+    );
+    expect(preview.exitCode).toBe(0);
+    const body = JSON.parse(preview.stdout) as {
+      status: string;
+      data: { event_count: number; dry_run: boolean; uncertain_pages: string[] };
+    };
+    expect(body.status).toBe("ok");
+    expect(body.data.event_count).toBe(0);
+    expect(body.data.dry_run).toBe(true);
+    expect(body.data.uncertain_pages).toEqual([]);
+  });
+
+  test("dry-run no-match does not list leftover unreadable pages as uncertain", () => {
+    const setup = tempVault();
+    mkdirSync(join(setup.vault, "facts"), { recursive: true });
+    writeFileSync(join(setup.vault, "facts", "orphan.md"), "no frontmatter\n");
+    const preview = runCli(
+      setup.env,
+      "purge",
+      "--event",
+      "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "--reason",
+      "no such event",
+      "--dry-run",
+      "--allow-empty",
+      "--json",
+    );
+    expect(preview.exitCode).toBe(0);
+    const body = JSON.parse(preview.stdout) as {
+      status: string;
+      data: { event_count: number; uncertain_pages: string[] };
+    };
+    expect(body.status).toBe("ok");
+    expect(body.data.event_count).toBe(0);
+    expect(body.data.uncertain_pages).toEqual([]);
+  });
+
+  test("no-match purge exits nonzero and writes no receipt", () => {
+    const setup = tempVault();
+    const missing = runCli(
+      setup.env,
+      "purge",
+      "--event",
+      "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "--reason",
+      "no such event",
+    );
+    expect(missing.exitCode).toBe(1);
+    expect(missing.stderr).toContain("matched no events");
+    const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+    expect(
+      db.query<{ n: number }, []>("SELECT count(*) AS n FROM event_purges").get(),
+    ).toEqual({ n: 0 });
+    db.close();
+  });
+
+  test("purges a retired connector id that is no longer in the registry", () => {
+    const setup = tempVault();
+    const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+    const stored = accept(db, {
+      schema: "kizuki.event/v1",
+      connector_id: "retired.mail",
+      source_record_id: "retired-1",
+      kind: "message",
+      occurred_at: "2026-02-28T10:30:00Z",
+      observed_at: "2026-03-01T00:00:00Z",
+      text: "synthetic retired connector note",
+      subjects: [{ subject_id: "person:ada", role: "from" }],
+      deleted: false,
+      attachments: [],
+      metadata: { thread: "t-retired" },
+    });
+    expect(stored.status).toBe("stored");
+    db.close();
+
+    const purged = runCli(
+      setup.env,
+      "purge",
+      "--connector",
+      "retired.mail",
+      "--record",
+      "retired-1",
+      "--reason",
+      "connector removed",
+    );
+    expect(purged.exitCode).toBe(0);
+    expect(purged.stdout).toContain("purged 1 event");
+  });
+
+  test("broad connector purge requires --confirm", () => {
+    const setup = tempVault();
+    const refused = runCli(
+      setup.env,
+      "purge",
+      "--connector",
+      "kizuki.markdown-folder",
+      "--reason",
+      "account erased",
+    );
+    expect(refused.exitCode).toBe(2);
+    expect(refused.stderr).toContain("--confirm");
   });
 });

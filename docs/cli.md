@@ -162,13 +162,18 @@ weights.
 ## purge
 
 ```text
-usage: kizuki purge (--event ID | --subject ID [--include-aliases] | --connector ID [--record ID] | --verify RECEIPT) [--reason TEXT] [--json]
+usage: kizuki purge (--event ID | --subject ID [--include-aliases] | --connector ID [--record ID] | --verify RECEIPT) [--reason TEXT] [--dry-run] [--confirm] [--allow-empty] [--json]
 ```
 
-Physical deletion plus a receipt. `--reason` is required except `--verify`.
-Purged events are not resurrected by undo; canon rewrites stay reversible.
-`--verify` prints per-store absence proofs and `pending`/`done`/`failed`
-operation state.
+Physical deletion plus a receipt. `--reason` is required except `--verify`,
+and must be a trimmed 1–240 byte note without control characters. A selector
+that matches nothing exits nonzero unless `--allow-empty` is set; it never
+writes a completion receipt. `--dry-run` prints a bounded plan and writes
+nothing. Connector selectors use ledger identity, including retired ids.
+Broad subject or connector-only deletes require `--confirm`. Exact `--event`
+and `--connector --record` paths stay noninteractive. Purged events are not
+resurrected by undo; canon rewrites stay reversible. `--verify` prints
+per-store absence proofs and `pending`/`done`/`failed` operation state.
 
 ## export
 
