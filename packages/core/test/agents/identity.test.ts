@@ -470,7 +470,7 @@ describe("corrupt identity isolation", () => {
           "SELECT agent_id, grant_epoch FROM agent_grants",
         )
         .get();
-      if (stale === undefined) throw new Error("expected grant row");
+      if (stale === null) throw new Error("expected grant row");
 
       setGrant(writer, "reader-1", { tools: ["search"] });
       expect(authenticate(writer, created.token)?.kind).toBe("agent");
