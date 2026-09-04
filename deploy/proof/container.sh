@@ -37,7 +37,7 @@ fail() {
 # Waits for `kizuki serve status --json` to report a pid inside $CONTAINER.
 # Echoes the last status JSON it saw on success. Waits for the entrypoint's
 # own readiness marker first, so this loop's first `docker exec` cannot race
-# the entrypoint's own init/reindex step for the same sqlite file (see
+# the entrypoint's own `kizuki init` step for the same sqlite file (see
 # deploy/entrypoint.sh).
 wait_ready() {
   local attempt status_json pid
@@ -160,12 +160,49 @@ check_1_5() {
 }
 
 check_1_6() {
-  docker exec "$CONTAINER" kizuki import markdown-folder --source /fixtures --vault /vault >/dev/null \
-    || fail 1.6 ingest-works "import exited non-zero"
-  local hits
-  hits="$(docker exec "$CONTAINER" kizuki query acme --json --vault /vault 2>/dev/null | grep -c . || true)"
-  [ "${hits:-0}" -ge 1 ] || fail 1.6 ingest-works "query acme --json returned 0 hits"
-  pass 1.6 ingest-works
+  # Finding (2026-09-03, docs/deploy-box-tailscale.md "M1 Container floor"):
+  # a ledger event is only ever labeled from the connector's
+  # `sensitivity_hint` (packages/core/src/search/indexer.ts eventDocument);
+  # markdown-folder emits none, so every imported note is unlabeled and
+  # `query` withholds it fail-closed. This is the real floor behavior, not
+  # a bug this lane papers over, and this check asserts it rather than a
+  # search hit that would require writing canon outside the receipted
+  # writer.
+  local out1
+  out1="$(docker exec "$CONTAINER" kizuki import markdown-folder --source /fixtures --vault /vault)" \
+    || fail 1.6 ingest-works-fail-closed "first import exited non-zero"
+  case "$out1" in
+    *events_stored=3*) ;;
+    *) fail 1.6 ingest-works-fail-closed "first import stdout missing events_stored=3: $out1" ;;
+  esac
+  case "$out1" in
+    *errors=0*) ;;
+    *) fail 1.6 ingest-works-fail-closed "first import stdout missing errors=0: $out1" ;;
+  esac
+
+  local q_out q_err q_err_file
+  q_err_file="$(mktemp)"
+  q_out="$(docker exec "$CONTAINER" kizuki query acme --scope ledger --vault /vault 2>"$q_err_file")"
+  q_err="$(cat "$q_err_file")"
+  rm -f "$q_err_file"
+  [ -z "$q_out" ] || fail 1.6 ingest-works-fail-closed "query printed stdout when it should be silent: $q_out"
+  case "$q_err" in
+    *withheld=*) ;;
+    *) fail 1.6 ingest-works-fail-closed "query stderr missing 'withheld=': $q_err" ;;
+  esac
+
+  local out2
+  out2="$(docker exec "$CONTAINER" kizuki import markdown-folder --source /fixtures --vault /vault)" \
+    || fail 1.6 ingest-works-fail-closed "second import exited non-zero"
+  case "$out2" in
+    *events_stored=0*) ;;
+    *) fail 1.6 ingest-works-fail-closed "second import stdout missing events_stored=0: $out2" ;;
+  esac
+  case "$out2" in
+    *duplicates=3*) ;;
+    *) fail 1.6 ingest-works-fail-closed "second import stdout missing duplicates=3: $out2" ;;
+  esac
+  pass 1.6 ingest-works-fail-closed
 }
 
 check_1_7() {
@@ -189,7 +226,7 @@ check_1_7() {
 }
 
 check_1_8() {
-  local started_before started_after status_json pid ok hits
+  local started_before started_after status_json pid ok out3 doc
   started_before="$(docker inspect -f '{{.State.StartedAt}}' "$CONTAINER")"
   docker restart "$CONTAINER" >/dev/null
   status_json="$(wait_ready)" \
@@ -204,8 +241,25 @@ check_1_8() {
   [ "$pid" = "1" ] || fail 1.8 restart-survives "expected pid 1 after restart, got $pid"
   ok="$(printf '%s' "$status_json" | jq -r '.doctor.ok')"
   [ "$ok" = "true" ] || fail 1.8 restart-survives "doctor.ok=$ok after restart: $status_json"
-  hits="$(docker exec "$CONTAINER" kizuki query acme --json --vault /vault 2>/dev/null | grep -c . || true)"
-  [ "${hits:-0}" -ge 1 ] || fail 1.8 restart-survives "query lost its hit across restart"
+
+  # A third identical import proves the ledger (not a search hit) survived
+  # the restart: it must report the same three events as duplicates again.
+  out3="$(docker exec "$CONTAINER" kizuki import markdown-folder --source /fixtures --vault /vault)" \
+    || fail 1.8 restart-survives "import after restart exited non-zero"
+  case "$out3" in
+    *events_stored=0*) ;;
+    *) fail 1.8 restart-survives "import after restart missing events_stored=0: $out3" ;;
+  esac
+  case "$out3" in
+    *duplicates=3*) ;;
+    *) fail 1.8 restart-survives "import after restart missing duplicates=3: $out3" ;;
+  esac
+
+  doc="$(docker exec "$CONTAINER" kizuki doctor --vault /vault || true)"
+  case "$doc" in
+    *events=3*) ;;
+    *) fail 1.8 restart-survives "doctor after restart missing events=3: $doc" ;;
+  esac
   pass 1.8 restart-survives
 }
 
@@ -235,8 +289,10 @@ check_1_10() {
 check_1_11() {
   docker exec "$CONTAINER" kizuki export --out /vault/export --vault /vault >/dev/null \
     || fail 1.11 export-readable "export exited non-zero"
-  if ! docker exec "$CONTAINER" sh -c "grep -rIl acme /vault/export --include='*.md'" >/dev/null 2>&1; then
-    fail 1.11 export-readable "no exported .md file under /vault/export mentions acme"
+  docker exec "$CONTAINER" test -f /vault/export/ledger/events.jsonl \
+    || fail 1.11 export-readable "/vault/export/ledger/events.jsonl does not exist"
+  if ! docker exec "$CONTAINER" grep -q acme /vault/export/ledger/events.jsonl; then
+    fail 1.11 export-readable "/vault/export/ledger/events.jsonl does not mention acme"
   fi
   pass 1.11 export-readable
 }

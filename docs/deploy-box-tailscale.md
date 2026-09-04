@@ -103,12 +103,31 @@ Finish line, `deploy/proof/container.sh` (CI-runnable, Linux only):
 | 1.3 | Loop is PID 1 and alive. | `docker exec` `kizuki serve status --json` → `running: true`, `lease: "held"`. |
 | 1.4 | Health endpoint answers on loopback. | `curl -fsS 127.0.0.1:$PORT/health` inside the container → body `"ok":true`. |
 | 1.5 | Nothing listens off loopback. | `ss -ltn` inside the container shows no `0.0.0.0` or `[::]` listener. |
-| 1.6 | Ingest works. | `kizuki import markdown-folder --source /fixtures` exits 0; `kizuki query acme --json` returns ≥ 1 hit. |
+| 1.6 | Ingest works and fails closed. | `kizuki import markdown-folder --source /fixtures` exits 0 with stdout containing `events_stored=3` and `errors=0`; `kizuki query acme --scope ledger` exits 0, prints nothing on stdout, and its stderr contains `withheld=`; a second identical import exits 0 with stdout containing `events_stored=0` and `duplicates=3`. |
 | 1.7 | Doctor is honest. | `kizuki doctor` output contains `supervisor: none` and `canon writing: off`; no rail line contains `status=failed`. |
-| 1.8 | State survives restart. | `docker restart`; 1.3 and 1.6 pass again; `serve status --json` shows a new pid. |
+| 1.8 | State survives restart. | `docker restart`; 1.3 passes again; a third identical import exits 0 with stdout containing `events_stored=0` and `duplicates=3`; `kizuki doctor` output contains `events=3`. |
 | 1.9 | No plaintext secret in the image. | `docker history --no-trunc` and a filesystem grep for the value of `KIZUKI_MODEL_KEY` find nothing; `/vault/.kizuki/serve-token` mode is `0600`. |
 | 1.10 | Root filesystem is read-only. | `docker inspect` shows `ReadonlyRootfs: true`; `touch /usr/bin/x` inside fails. |
-| 1.11 | Export is a readable exit. | `kizuki export --out /vault/export` exits 0 and `/vault/export` contains a `.md` file mentioning `acme`. |
+| 1.11 | Export is a readable exit. | `kizuki export --out /vault/export` exits 0, `/vault/export/ledger/events.jsonl` exists, and it contains the string `acme`. |
+
+Finding (2026-09-03): row 1.6 above originally read "`kizuki query acme --json`
+returns ≥ 1 hit", written before this milestone was implemented. It was
+wrong. `packages/core/src/search/indexer.ts`'s `eventDocument` labels a
+ledger event's search sensitivity only from the connector's
+`sensitivity_hint`; `connector_sensitivity` (the per-connection floor set by
+`applyConnectionSensitivity`) is not consulted at index time. The
+`markdown-folder` connector's manifest sets `emits_sensitivity_hint: false`
+and never sets a hint on the events it emits, so every note this connector
+imports is indexed as `unlabeled`, and `ceilingSql` (`packages/core/src/
+query/sql.ts`) excludes anything without a recognized sensitivity from every
+`query` result regardless of the file's own frontmatter. On the zero-model
+floor this is not a defect to route around here: there is exactly one
+receipted writer for canon, and no CLI verb or container script may write
+canon or rebuild the derived search index outside it. So on M1, imported
+notes are real, queryable-by-nothing evidence in the ledger, and a `query`
+hit becomes observable only once M4 wires a model and a receipted write
+actually lands (see M4 check 4.3). This is a candidate issue for a future
+lane, not something this milestone fixes.
 
 ### M2 Tailnet access
 

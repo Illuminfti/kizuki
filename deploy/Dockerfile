@@ -19,12 +19,11 @@ COPY deploy/fixtures/notes /fixtures
 
 RUN bun install --frozen-lockfile && chown -R bun:bun /app
 
-COPY deploy/bin/kizuki deploy/bin/kizuki-mcp deploy/bin/kizuki-reindex /usr/local/bin/
+COPY deploy/bin/kizuki deploy/bin/kizuki-mcp /usr/local/bin/
 COPY deploy/entrypoint.sh /entrypoint.sh
 RUN chmod 0755 \
       /usr/local/bin/kizuki \
       /usr/local/bin/kizuki-mcp \
-      /usr/local/bin/kizuki-reindex \
       /entrypoint.sh \
     && mkdir -p /vault \
     && chown bun:bun /vault
