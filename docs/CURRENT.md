@@ -29,8 +29,9 @@ After
 `import`, claims are live and `tell --claim` can name them. Canon writing
 still requires a configured model; without one the sync rail leaves live
 claims unwritten and doctor says so. 1.0 is still stranger proof plus
-estate cutover (C1, RFC 0002 §1.3). Neither proof is in this tree. There
-is no `scripts/stranger-proof.sh`.
+estate cutover (C1, RFC 0002 §1.3). Neither proof is in this tree. The
+automated `scripts/stranger-proof.ts` artifact isolation check is a
+deterministic release prerequisite, not a human stranger proof.
 
 ## What is stale
 

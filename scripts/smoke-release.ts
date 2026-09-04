@@ -11,7 +11,7 @@ const release = resolve(root, "dist", `kizuki-${version}`, "bun-linux-x64-baseli
 const cli = join(release, "kizuki");
 const mcp = join(release, "kizuki-mcp");
 
-for (const required of [cli, mcp, join(release, "SHA256SUMS"), join(release, "README.txt")]) {
+for (const required of [cli, mcp, join(release, "SHA256SUMS"), join(release, "README.txt"), join(release, "BUILD.json")]) {
   if (!existsSync(required)) throw new Error(`release artifact is missing: ${required}`);
 }
 
@@ -71,7 +71,7 @@ try {
   if ((await session.exited) !== 0) throw new Error(`MCP smoke failed: ${stderr}`);
   if (!output.includes('"tools"')) throw new Error("MCP tools/list did not respond");
 
-  verifyChecksumManifest(release, ["kizuki", "kizuki-mcp", "README.txt"]);
+  verifyChecksumManifest(release, ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"]);
   process.stdout.write(`release smoke passed: ${release}\n`);
 } finally {
   rmSync(rootTemp, { force: true, recursive: true });

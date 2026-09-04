@@ -15,6 +15,7 @@ Related:
 - [product-context.md](product-context.md) — direction; not a shipping claim
 - [upstream-policy.md](upstream-policy.md) — retrieval credit and dependency rules
 - [legacy-import.md](legacy-import.md) — estate importers
+- [stranger-proof.md](stranger-proof.md) — automated native-artifact isolation prerequisite
 - [wave1/](wave1/) — historical lane specs; many are VOID or superseded
 
 1.0 is not tagged. RFC 0002 §1.3 still requires stranger proof and estate

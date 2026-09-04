@@ -26,6 +26,7 @@ jobs:
         run: |
           bun run build:release
           bun run smoke:release
+          bun run proof:artifact -- --report "$RUNNER_TEMP/kizuki-artifact-proof"
       - name: exact-head diff integrity
         run: |
           git fetch --no-tags origin main

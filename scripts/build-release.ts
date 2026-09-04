@@ -24,6 +24,24 @@ ensureReleaseDirectory(release);
 requireAbsent(output);
 const staging = mkdtempSync(join(dist, ".kizuki-release-"));
 
+const revision = Bun.spawnSync(["git", "rev-parse", "HEAD"], {
+  cwd: root,
+  stderr: "pipe",
+  stdout: "pipe",
+});
+const sourceSha = new TextDecoder().decode(revision.stdout).trim();
+if (revision.exitCode !== 0 || !/^[0-9a-f]{40}$/.test(sourceSha)) {
+  throw new Error("native builds require a Git revision");
+}
+const status = Bun.spawnSync(["git", "status", "--porcelain"], {
+  cwd: root,
+  stderr: "pipe",
+  stdout: "pipe",
+});
+if (status.exitCode !== 0 || new TextDecoder().decode(status.stdout).trim() !== "") {
+  throw new Error("native builds require a clean tracked Git tree");
+}
+
 const binaries = [
   { entrypoint: "packages/cli/src/main.ts", name: "kizuki" },
   { entrypoint: "packages/mcp/src/bin.ts", name: "kizuki-mcp" },
@@ -74,7 +92,17 @@ writeFileSync(
   ].join("\n") + "\n",
   "utf8",
 );
-const packaged = [...binaries.map(({ name }) => name), "README.txt"];
+writeFileSync(
+  resolve(staging, "BUILD.json"),
+  `${JSON.stringify({
+    schema: "kizuki.release-build/v1",
+    source_sha: sourceSha,
+    target,
+    bun_version: Bun.version,
+  }, null, 2)}\n`,
+  "utf8",
+);
+const packaged = [...binaries.map(({ name }) => name), "README.txt", "BUILD.json"];
 writeFileSync(resolve(staging, "SHA256SUMS"), checksumManifest(staging, packaged), "utf8");
 // The target was checked absent before staging. This rename publishes a complete package.
 requireAbsent(output);
