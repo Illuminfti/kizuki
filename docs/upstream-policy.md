@@ -1,6 +1,7 @@
 # Upstream attribution and integration policy
 
-Policy date: 2026-09-01; amended 2026-09-02; amended 2026-09-04  
+Policy date: 2026-09-01; amended 2026-09-02; amended 2026-09-04
+
 Scope: dependencies, adapters, reference implementations, evaluated projects,
 and any future code or assets incorporated into Kizuki
 
