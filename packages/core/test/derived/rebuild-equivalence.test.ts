@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { applyPurgeRewrite } from "../../src/canon/apply";
 import { rebuildDerived, refreshDerivedPage } from "../../src/derived";
-import { readDerivedMeta } from "../../src/derived-meta";
+import { readDerivedMeta, stampDerived } from "../../src/derived-meta";
 import { neighbors } from "../../src/graph/graph";
 import { indexEvent } from "../../src/search/indexer";
 import { search } from "../../src/search/query";
@@ -436,5 +436,61 @@ See [[Origin]].
         .sort(),
     ).toEqual(resolved);
     expect(readDerivedMeta(db, "graph")?.status).toBe("ok");
+  });
+
+  test("a complete incremental walk recounts a degraded graph stamp", () => {
+    const db = searchDb();
+    const vault = tempVault();
+    disposers.push(vault.dispose);
+    const origin = writeCanonPage(
+      vault.path,
+      "facts/origin.md",
+      {
+        id: "fact:origin",
+        title: "Origin",
+        type: "fact",
+        status: "active",
+        sensitivity: "personal",
+        taint: "clean",
+      },
+      "See [[Target]].",
+    );
+    writeCanonPage(
+      vault.path,
+      "facts/target.md",
+      {
+        id: "fact:target",
+        title: "Target",
+        type: "fact",
+        status: "active",
+        sensitivity: "personal",
+        taint: "clean",
+      },
+      "Destination.",
+    );
+    rebuildDerived(db, vault.path);
+    const edges = neighbors(db, "fact:origin").edges.length;
+    expect(edges).toBeGreaterThan(0);
+
+    stampDerived(db, {
+      layer: "graph",
+      generation: "schema-v10",
+      rebuilt_at: "2026-03-01T00:00:00.000Z",
+      doc_count: 0,
+      source_count: 0,
+      skipped_count: 0,
+      status: "degraded",
+    });
+    refreshDerivedPage(db, origin, vault.path);
+
+    const meta = readDerivedMeta(db, "graph");
+    expect(meta).toMatchObject({
+      status: "ok",
+      skipped_count: 0,
+      doc_count: edges,
+      source_count: 2,
+    });
+    expect(meta?.generation).not.toBe("schema-v10");
+    expect(meta?.canon_hash).not.toBeNull();
   });
 });

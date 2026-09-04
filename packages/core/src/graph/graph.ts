@@ -315,15 +315,31 @@ function stampGraphIncomplete(db: Database, skippedCount: number): void {
   });
 }
 
-function restoreGraphStamp(db: Database): void {
+function restoreGraphStamp(db: Database, pages: readonly CanonPage[]): void {
   const existing = readDerivedMeta(db, "graph");
   if (existing === null || existing.status === "ok") return;
-  stampDerived(db, {
-    ...existing,
-    status: "ok",
-    skipped_count: 0,
-    rebuilt_at: new Date().toISOString(),
-  });
+  const live = pages.filter(isLiveCanonPage);
+  const edges =
+    db
+      .query<{ count: number }, []>(
+        "SELECT count(*) AS count FROM graph_edges",
+      )
+      .get()?.count ?? 0;
+  stampDerived(
+    db,
+    stampGraph(
+      db,
+      {
+        generation: ulid(),
+        pages: live,
+        skipped: [],
+        rebuilt_at: new Date().toISOString(),
+        canon_hash: canonPagesHash(live),
+      },
+      live.length,
+      edges,
+    ),
+  );
 }
 
 /**
@@ -338,7 +354,7 @@ export function refreshPageEdges(
 ): void {
   if (skipped === 0) {
     replacePageEdges(db, pages);
-    restoreGraphStamp(db);
+    restoreGraphStamp(db, pages);
     return;
   }
   const index = linkIndexFromPages(pages);
@@ -364,7 +380,7 @@ export function removePageEdges(
 ): void {
   if (skipped === 0) {
     replacePageEdges(db, pages);
-    restoreGraphStamp(db);
+    restoreGraphStamp(db, pages);
     return;
   }
   db.query("DELETE FROM graph_edges WHERE src = ?").run(pageId);

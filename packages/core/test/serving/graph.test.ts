@@ -84,6 +84,55 @@ describe("serveGraph", () => {
     expect(envelope.denied).toEqual([]);
   });
 
+  test("a namespaced source dest is authorized or counted, not dropped", () => {
+    const eventId = storeEvent(
+      fixture.db,
+      "namespaced-source",
+      "2026-03-01T00:00:00Z",
+      "Namespaced kettle source",
+      "person:ada",
+      "private",
+    );
+    writeFileSync(
+      join(fixture.vaultPath, "facts/namespaced-source.md"),
+      serializePage({
+        data: {
+          id: "fact:namespaced-source",
+          title: "Namespaced source",
+          type: "fact",
+          status: "active",
+          sensitivity: "public",
+          taint: "clean",
+          sources: [`event:${eventId}`],
+        },
+        body: "Cites a namespaced ledger record.",
+      }),
+      "utf8",
+    );
+    rebuildGraph(fixture.db, fixture.vaultPath);
+
+    const owner = serveGraph(fixture.owner(), {
+      id: "fact:namespaced-source",
+      kinds: ["source"],
+    });
+    expect(owner.data?.edges).toEqual([
+      {
+        src: "fact:namespaced-source",
+        dst: `event:${eventId}`,
+        kind: "source",
+      },
+    ]);
+    expect(owner.denied).toEqual([]);
+
+    const limited = serveGraph(fixture.agent("reader-public"), {
+      id: "fact:namespaced-source",
+      kinds: ["source"],
+    });
+    expect(limited.data?.edges).toEqual([]);
+    expect(limited.denied).toEqual([{ reason: "above_ceiling", count: 1 }]);
+    expect(JSON.stringify(limited)).not.toContain(eventId);
+  });
+
   test("a withheld root answers with no edges and a single count", () => {
     const envelope = serveGraph(fixture.agent("reader-public"), {
       id: "fact:kettle",
