@@ -166,7 +166,7 @@ describe("receipt totality", () => {
         body: "Grace is based in Lisbon.",
       }),
     );
-    expect(edited.archive_path).toMatch(/^archive\/grace\.prev-\d+\.md$/);
+    expect(edited.archive_path).toMatch(/^archive\/people__grace\.md--.+\.md$/);
     expect(existsSync(join(vault, edited.archive_path as string))).toBe(true);
     expect(readBytes(vault, edited.archive_path as string)).toEqual(createdBytes);
     const editedBytes = readBytes(vault, edited.page_path);
@@ -182,7 +182,7 @@ describe("receipt totality", () => {
       }),
     );
     expect(archived.page_action).toBe("archive");
-    expect(archived.archive_path).toMatch(/^archive\/grace\.prev-\d+\.md$/);
+    expect(archived.archive_path).toMatch(/^archive\/people__grace\.md--.+\.md$/);
     expect(archived.archive_path).not.toBe(edited.archive_path);
     expect(readBytes(vault, archived.archive_path as string)).toEqual(editedBytes);
     expect(readFileSync(join(vault, archived.page_path), "utf8")).toContain('status: "archived"');

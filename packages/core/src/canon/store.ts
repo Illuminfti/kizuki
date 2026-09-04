@@ -15,7 +15,7 @@ import type { VaultPage } from "../vault/frontmatter";
 import { listCanonPagesReport } from "../vault/pages";
 import type { RetrievalPort } from "../contracts/retrieval";
 import { hashBytes } from "../vault/write";
-import { RECEIPTS_PATH, latestReceiptForPage } from "./receipts";
+import { RECEIPTS_PATH, getCanonReceipt, latestReceiptForPage } from "./receipts";
 import type { CanonReceipt } from "./receipts";
 import { initCanon } from "./schema";
 import type { MachineByteIntent } from "../ledger/event-origin";
@@ -61,24 +61,34 @@ export interface ExistingPage {
   page: VaultPage;
 }
 
-/** Reconstructed from PR427: only an actual ENOENT means the page is absent. */
 export class CanonPageUnreadable extends Error {
   override readonly name = "CanonPageUnreadable";
-  constructor(readonly relPath: string, readonly code: string) {
+
+  constructor(
+    readonly relPath: string,
+    readonly code: string,
+  ) {
     super("canon page is unreadable");
   }
 }
+
+function fsCode(error: unknown): string {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    const code = error.code;
+    if (typeof code === "string" && /^[A-Z][A-Z0-9_]+$/.test(code)) return code;
+  }
+  return "EIO";
+}
+
+
 export function readPage(io: CanonIo, relPath: string): ExistingPage | null {
   const path = join(io.vault_path, relPath);
   let bytes: Buffer;
   try {
     bytes = readFileSync(path);
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") return null;
-    throw new CanonPageUnreadable(
-      relPath, typeof code === "string" && /^[A-Z][A-Z0-9_]+$/.test(code) ? code : "EIO",
-    );
+    if (fsCode(error) === "ENOENT") return null;
+    throw new CanonPageUnreadable(relPath, fsCode(error));
   }
   const content = bytes.toString("utf8");
   return {
@@ -221,6 +231,32 @@ export function markReceiptReverted(
 export function deletePageIndex(db: Database, relPath: string): void {
   if (!tableExists(db, "page_index")) return;
   db.query("DELETE FROM page_index WHERE rel_path = ?").run(relPath);
+}
+
+/**
+ * page_index last_receipt/last_hash must agree with the receipt they name.
+ * A missing receipt or a hash that does not match that receipt is drift,
+ * not a hand edit (hand edits change the file, not the receipt row).
+ */
+export function inspectPageIndex(db: Database): string[] {
+  if (!tableExists(db, "page_index") || !tableExists(db, "canon_receipts")) return [];
+  const rows = db.query<PageIndexEntry, []>("SELECT * FROM page_index").all();
+  const failures: string[] = [];
+  for (const row of rows) {
+    if (row.last_receipt === null) continue;
+    const receipt = getCanonReceipt(db, row.last_receipt);
+    if (receipt === null) {
+      failures.push("page_index last_receipt missing");
+      continue;
+    }
+    if (receipt.page_path !== row.rel_path) {
+      failures.push("page_index last_receipt path mismatch");
+    }
+    if (receipt.after_hash !== row.last_hash) {
+      failures.push("page_index last_hash does not match receipt");
+    }
+  }
+  return failures;
 }
 
 function subjectKeyOf(data: Record<string, unknown>): string | null {

@@ -161,12 +161,32 @@ describe("vault health", () => {
     mkdirSync(join(vault, "people"), { recursive: true });
     writeFileSync(
       join(vault, "people/one.md"),
-      "---\nid: person:grace\ntype: person\n---\nOne\n",
+      [
+        "---",
+        "id: person:grace",
+        "title: Grace",
+        "type: person",
+        "status: active",
+        "sensitivity: personal",
+        "taint: clean",
+        "---",
+        "One\n",
+      ].join("\n"),
       "utf8",
     );
     writeFileSync(
       join(vault, "people/two.md"),
-      "---\nid: person:grace\ntype: person\n---\nTwo\n",
+      [
+        "---",
+        "id: person:grace",
+        "title: Grace two",
+        "type: person",
+        "status: active",
+        "sensitivity: personal",
+        "taint: clean",
+        "---",
+        "Two\n",
+      ].join("\n"),
       "utf8",
     );
     const db = openLedger(":memory:");
@@ -187,7 +207,7 @@ describe("vault health", () => {
     const loaded = loadItems(db, blocked);
     expect(loaded.items).toEqual([]);
     expect(loaded.health?.tone).toBe("error");
-    expect(loaded.health?.text).toContain("canon scan failed");
+    expect(loaded.health?.text).toContain("unusable");
     expect(loaded.health?.text).toContain("kizuki doctor");
     db.close();
   });
@@ -200,7 +220,17 @@ describe("vault health", () => {
     mkdirSync(join(vault, "archive", "people"), { recursive: true });
     writeFileSync(
       join(vault, "people/grace.md"),
-      "---\nid: person:grace\ntype: person\n---\nlive\n",
+      [
+        "---",
+        "id: person:grace",
+        "title: Grace",
+        "type: person",
+        "status: active",
+        "sensitivity: personal",
+        "taint: clean",
+        "---",
+        "live\n",
+      ].join("\n"),
       "utf8",
     );
     writeFileSync(

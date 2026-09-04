@@ -28,12 +28,12 @@ const MODEL_REF = "kizuki.llm.openai-compatible:synthetic-model@127.0.0.1";
 const EXPECTED_PAGE = [
   "---",
   `id: "${PAGE_ID}"`,
+  'title: "grace"',
   'type: "person"',
   'status: "active"',
   'sensitivity: "private"',
   'taint: "clean"',
   `sources: ["${EVENT_ID}"]`,
-  'title: "grace"',
   'x-subject-id: "markdown-folder:grace"',
   "---",
   "Works at acme. Contact: grace@acme.test.",

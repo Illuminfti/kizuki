@@ -478,10 +478,14 @@ export type {
   VaultInitErrorCode,
 } from "./vault/init";
 export {
+  CANONICAL_FRONTMATTER_KEYS,
+  MAX_FRONTMATTER_ARRAY_ITEMS,
+  MAX_FRONTMATTER_STRING_CHARS,
   PAGE_SENSITIVITIES,
   PAGE_STATUSES,
   PAGE_TAINTS,
   PAGE_TYPES,
+  validateFrontmatterValue,
   validatePage,
 } from "./vault/schema";
 export type {
@@ -490,7 +494,7 @@ export type {
   PageTaint,
   PageType,
 } from "./vault/schema";
-export { WRITERS, isWriter } from "./vault/write";
+export { WRITERS, archiveRelPath, isWriter } from "./vault/write";
 export type { CanonWriteCapability, Writer } from "./vault/write";
 
 export {
@@ -504,10 +508,12 @@ export {
   RECEIPT_KINDS,
   applyCanonV4,
   applyCanonWrite,
+  CanonPageUnreadable,
   chooseCandidate,
   createBudgetTracker,
   getCanonReceipt,
   initCanon,
+  inspectPageIndex,
   latestReceiptForPage,
   laterReceiptsForPage,
   listAuditReceipts,
@@ -545,12 +551,22 @@ export type {
 } from "./canon";
 export type { WritePageOptions } from "./vault/write";
 export {
+  MAX_CANON_DEPTH,
+  MAX_CANON_PAGES,
+  MAX_CANON_PAGE_BYTES,
+  MAX_CANON_WALK_BYTES,
+  SCAN_FAILURE_CODES,
   findPageById,
   isLiveCanonPage,
   listCanonPages,
   listCanonPagesReport,
 } from "./vault/pages";
-export type { CanonPage, CanonPageReport, SkippedPage } from "./vault/pages";
+export type {
+  CanonPage,
+  CanonPageReport,
+  ScanFailureCode,
+  SkippedPage,
+} from "./vault/pages";
 export { readDerivedMeta, stampDerived } from "./derived-meta";
 export type {
   DerivedLayer,

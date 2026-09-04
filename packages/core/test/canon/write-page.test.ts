@@ -5,6 +5,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -78,11 +79,12 @@ describe("writePage", () => {
 
     expect(readFileSync(path, "utf8")).toBe(serializePage(newPage));
     expect(revised.after_hash).toBe(hashFile(path));
-    const backups = readdirSync(join(root, "archive")).filter(
-      (name) => name.startsWith("ada.prev-") && name.endsWith(".md"),
+    const backups = readdirSync(join(root, "archive")).filter((name) =>
+      name.includes("entities__ada.md--"),
     );
     expect(backups).toHaveLength(1);
     expect(revised.archive_path).toBe(`archive/${backups[0]}`);
+    expect(revised.archive_path).toMatch(/^archive\/entities__ada\.md--receipt-\d+\.md$/);
     expect(readFileSync(join(root, revised.archive_path as string), "utf8")).toBe(oldContent);
     expect(readdirSync(join(root, "entities")).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
@@ -114,7 +116,7 @@ describe("writePage", () => {
     const page = parseFrontmatter(readFileSync(path, "utf8"));
     expect(page.data["status"]).toBe("archived");
     const revisions = readdirSync(join(root, "archive")).filter((name) =>
-      name.startsWith("ada.prev-"),
+      name.includes("entities__ada.md--"),
     );
     expect(revisions).toHaveLength(1);
     expect(readFileSync(join(root, "archive", revisions[0] as string), "utf8")).toBe(
@@ -197,6 +199,55 @@ describe("writePage", () => {
     expect(readFileSync(join(root, deleted.archive_path as string), "utf8")).toBe(
       serializePage(original),
     );
+  });
+
+  test("creates nested type directories and archives under the receipt id", () => {
+    const root = vault();
+    const path = join(root, "people", "projects", "nested.md");
+    const created = writePage(cap(), path, {
+      data: validData({ id: "project:nested", type: "project" }),
+      body: "Nested page.\n",
+    });
+    expect(created.archive_path).toBeNull();
+    expect(readFileSync(path, "utf8")).toContain("Nested page.");
+    expect(statSync(join(root, "people", "projects")).mode & 0o777).toBe(0o700);
+
+    const revised = writePage(
+      cap(),
+      path,
+      { data: validData({ id: "project:nested", type: "project", title: "Nested" }), body: "Updated.\n" },
+      { revision: true, expected_hash: created.after_hash },
+    );
+    expect(revised.archive_path).toMatch(
+      /^archive\/people__projects__nested\.md--receipt-\d+\.md$/,
+    );
+  });
+
+  test("two pages that share a basename keep distinct archive copies", () => {
+    const root = vault();
+    const first = join(root, "entities", "ada.md");
+    const second = join(root, "facts", "ada.md");
+    const one = writePage(cap(), first, { data: validData(), body: "Person.\n" });
+    const two = writePage(cap(), second, {
+      data: validData({ id: "fact:ada", type: "fact" }),
+      body: "Fact.\n",
+    });
+    writePage(
+      cap(),
+      first,
+      { data: validData(), body: "Person revised.\n" },
+      { revision: true, expected_hash: one.after_hash },
+    );
+    writePage(
+      cap(),
+      second,
+      { data: validData({ id: "fact:ada", type: "fact" }), body: "Fact revised.\n" },
+      { revision: true, expected_hash: two.after_hash },
+    );
+    const archives = readdirSync(join(root, "archive")).sort();
+    expect(archives.some((name) => name.startsWith("entities__ada.md--"))).toBe(true);
+    expect(archives.some((name) => name.startsWith("facts__ada.md--"))).toBe(true);
+    expect(archives).toHaveLength(2);
   });
 
   test("refuses to write through a symlink or to revise a missing page", () => {

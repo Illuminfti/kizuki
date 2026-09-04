@@ -26,6 +26,7 @@ function fixture() {
         type: "fact",
         status: "active",
         sensitivity: "personal",
+        taint: "clean",
         subjects: ["person:ada"],
         sources: ["event:source"],
       },

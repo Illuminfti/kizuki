@@ -120,11 +120,12 @@ function pageDoc(
 function recoverArchiveForHash(io: CanonIo, relPath: string, wantHash: string): string | null {
   const dir = join(io.vault_path, "archive");
   if (!existsSync(dir)) return null;
-  const stem = basename(relPath, extname(relPath));
-  const prefix = `${stem}.prev-`;
+  const encoded = `${relPath.replaceAll("/", "__")}--`;
+  const legacy = `${basename(relPath, extname(relPath))}.prev-`;
   let found: string | null = null;
   for (const name of readdirSync(dir)) {
-    if (!name.startsWith(prefix) || !name.endsWith(".md")) continue;
+    if (!name.endsWith(".md")) continue;
+    if (!name.startsWith(encoded) && !name.startsWith(legacy)) continue;
     const rel = `archive/${name}`;
     if (hashFile(join(io.vault_path, rel)) !== wantHash) continue;
     if (found === null || name > basename(found)) found = rel;

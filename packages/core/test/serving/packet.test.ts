@@ -280,9 +280,12 @@ describe("serveContextPacket", () => {
     expect(cause).toBeInstanceOf(CanonUnreadableError);
     const skipped =
       cause instanceof CanonUnreadableError ? cause.skipped : [];
-    expect(skipped).toHaveLength(1);
-    expect(skipped[0]?.relPath).toBe("entities/person-ada.md");
-    expect(skipped[0]?.reason).toContain("duplicate id");
+    expect(skipped).toHaveLength(2);
+    expect(skipped.map((entry) => entry.relPath).sort()).toEqual([
+      "entities/person-ada-copy.md",
+      "entities/person-ada.md",
+    ]);
+    expect(skipped.every((entry) => entry.reason.includes("duplicate id"))).toBe(true);
     // The caller still learns nothing about the vault's layout.
     expect(error.message).not.toContain("person-ada");
   });

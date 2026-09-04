@@ -54,13 +54,17 @@ export class CanonUnreadableError extends Error {
 
 /**
  * One vault walk and one hold read per served call. A page that cannot be
- * parsed makes the whole read refuse: serving a silently short list would
- * under-report canon without anyone noticing.
+ * read, parsed, or uniquely identified makes the whole read refuse: serving
+ * a silently short list would under-report canon without anyone noticing.
+ * Schema-invalid and oversized files are withheld and reported by doctor.
  */
 export function loadCanon(ctx: ServeContext): CanonIndex {
   const report = listCanonPagesReport(ctx.vaultPath);
-  if (report.skipped.length > 0) {
-    throw new CanonUnreadableError(report.skipped);
+  const fatal = report.skipped.filter(
+    (skipped) => skipped.code !== "invalid" && skipped.code !== "oversize",
+  );
+  if (fatal.length > 0) {
+    throw new CanonUnreadableError(fatal);
   }
   const byId = new Map<string, CanonPage>();
   const byPath = new Map<string, CanonPage>();

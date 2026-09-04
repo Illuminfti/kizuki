@@ -1,0 +1,67 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { applyCanonWrite } from "../../src/canon/apply";
+import { createBudgetTracker } from "../../src/canon/budget";
+import { initCanon } from "../../src/canon/schema";
+import { CanonPageUnreadable, inspectPageIndex, readPage } from "../../src/canon/store";
+import { serializePage } from "../../src/vault/frontmatter";
+import { hashBytes } from "../../src/vault/write";
+import { canonFixture, putEvent, storeClaim } from "./helpers";
+import type { CanonFixture } from "./helpers";
+
+const fixtures: CanonFixture[] = [];
+
+afterEach(() => {
+  for (const item of fixtures.splice(0)) item.dispose();
+});
+
+describe("canon storage p1", () => {
+  test("readPage treats a filesystem failure as unreadable, not missing", () => {
+    const live = canonFixture();
+    fixtures.push(live);
+    mkdirSync(join(live.vault, "people", "grace.md"), { recursive: true });
+    let error: unknown;
+    try {
+      readPage(live.io, "people/grace.md");
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(CanonPageUnreadable);
+    expect((error as CanonPageUnreadable).code).toBe("EISDIR");
+    expect(readPage(live.io, "people/missing.md")).toBeNull();
+  });
+
+  test("a write's after_hash is the hash of the bytes read back", async () => {
+    const live = canonFixture();
+    fixtures.push(live);
+    const eventId = putEvent(live.db);
+    const claim = await storeClaim(live.db, eventId);
+    const receipt = applyCanonWrite(
+      live.io,
+      claim,
+      { action: "create", rel_path: "people/grace.md" },
+      { writer: "loop", budget: createBudgetTracker({ canon_writes_per_run: 4 }) },
+    );
+    const onDisk = readPage(live.io, "people/grace.md");
+    expect(onDisk).not.toBeNull();
+    if (onDisk === null) return;
+    expect(receipt.after_hash).toBe(onDisk.hash);
+    expect(receipt.after_hash).toBe(hashBytes(Buffer.from(onDisk.content, "utf8")));
+    expect(onDisk.content).toBe(serializePage(onDisk.page));
+    expect(inspectPageIndex(live.db)).toEqual([]);
+  });
+
+  test("doctor reports a page_index row whose last_receipt is gone", () => {
+    const live = canonFixture();
+    fixtures.push(live);
+    initCanon(live.db);
+    live.db
+      .query(
+        `INSERT INTO page_index (page_id, rel_path, subject_key, last_receipt, last_hash)
+         VALUES ('page-1', 'people/grace.md', null, 'receipt-missing', 'abc')`,
+      )
+      .run();
+    expect(inspectPageIndex(live.db)).toEqual(["page_index last_receipt missing"]);
+  });
+});
