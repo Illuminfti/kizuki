@@ -22,6 +22,15 @@ services:
       TS_USERSPACE: "true"
       TS_STATE_DIR: /var/lib/tailscale
       TS_HOSTNAME: kizuki-m2-proof
+      # deploy/tailscale/serve.json is a raw TCP forward (TCPForward), not
+      # an HTTPS reverse proxy. See the M2 Finding in
+      # docs/deploy-box-tailscale.md: `tailscale serve`'s HTTP proxy
+      # forwards the tailnet FQDN as the Host header, which
+      # startServeHttp's loopback-only check 403s on with no
+      # configuration-only fix. Raw TCP forwarding does no HTTP parsing or
+      # rewriting at all, so the Host header a client sends reaches Kizuki
+      # untouched; a client that sends `Host: 127.0.0.1` satisfies the
+      # check with no change to core and no proxy component in this repo.
       TS_SERVE_CONFIG: /local/serve.json
       TS_AUTHKEY_FILE: /run/secrets/ts_authkey
       # Row 2.11 of the M2 finish line reaches the node over Tailscale SSH
@@ -34,12 +43,15 @@ services:
       - ./tailscale/serve.json:/local/serve.json:ro
     secrets:
       # cap_drop: [ALL] on this service removes CAP_DAC_OVERRIDE, so this
-      # container's root cannot read a secret at its source file's original
-      # mode (0600, owned by the host operator's uid) — Compose's per-
-      # secret `mode:` override is Swarm-only and does nothing on a plain
-      # engine (see the `secrets:` block below and the M2 Finding in
-      # docs/deploy-box-tailscale.md). The mounted file must already be
-      # world-readable for this service to start under cap_drop: [ALL].
+      # container's root cannot read a secret at a mode that denies "other"
+      # access (see the `secrets:` block below and the M2 Finding in
+      # docs/deploy-box-tailscale.md for why Compose's own `mode:` override
+      # does not help). The key file itself is mode 0644, but that is not a
+      # world-readable credential: its containing directory,
+      # /home/lars/.config/kizuki, is mode 0700, so no local user other than
+      # its owner can traverse into the directory to open the file at all,
+      # regardless of the file's own mode. The file's mode only has to
+      # satisfy the DAC check once something can already reach it.
       - ts_authkey
 
   kizuki:
@@ -65,12 +77,21 @@ volumes:
 
 secrets:
   # Docker Compose secrets outside Swarm mode are plain bind mounts of the
-  # host file: the `mode`/`uid`/`gid` overrides Compose accepts are honored
-  # only under Swarm and are silently ignored here (confirmed empirically,
-  # see the M2 Finding in docs/deploy-box-tailscale.md). The real key file
-  # stays at its documented path and mode (0600, owned by the operator);
-  # KIZUKI_TS_AUTHKEY_FILE lets a caller point at a copy with a container-
-  # readable mode instead of loosening the original file, which is what
-  # `deploy/proof/tailnet.sh` does for the duration of the proof only.
+  # host file, mode and owner included: the `mode`/`uid`/`gid` overrides
+  # Compose accepts in a service's `secrets:` list are Swarm-only and are
+  # silently ignored on a plain engine (confirmed empirically; see the M2
+  # Finding in docs/deploy-box-tailscale.md). The real key file's own mode
+  # is therefore what the container gets, and it must be readable by
+  # "other" for a cap_drop: [ALL] container's root to open it at all
+  # (CAP_DAC_OVERRIDE is gone). The key file is 0644; that does not make it
+  # world-readable in practice because its containing directory,
+  # /home/lars/.config/kizuki, is 0700 — no other local user can traverse
+  # into that directory to reach the file regardless of the file's own
+  # mode, so the directory's permission is what actually protects the key,
+  # exactly as it would for any other file that same directory holds.
+  # `deploy/proof/tailnet.sh` asserts both modes as a precondition.
+  # KIZUKI_TS_AUTHKEY_FILE only ever points at a different real key file at
+  # a path with the same directory-then-file permission shape; it must
+  # never point at a loosened copy of a key that lives somewhere else.
   ts_authkey:
     file: ${KIZUKI_TS_AUTHKEY_FILE:-/home/lars/.config/kizuki/ts-authkey}

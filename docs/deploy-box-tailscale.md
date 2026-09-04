@@ -150,60 +150,93 @@ CI-runnable):
 | # | Assertion | How it is decided |
 | --- | --- | --- |
 | 2.6 | Node is on the tailnet. | `tailscale status --json` reports the node online with hostname `kizuki-m2-proof`. The auth key used against this branch is untagged (owner-account key, no `tag:kizuki`); the check asserts online state and hostname, not a tag, and reports whether a tag is present. |
-| 2.7 | Health over the tailnet. | `wget` (no `curl` in the tailscale image) against `https://<node>.<tailnet>.ts.net/health` from within the tailscale sidecar → `"ok":true`. |
-| 2.8 | MCP read over the tailnet with a token. | `POST /v1/mcp/system_health` with `Authorization: Bearer <daemon token>` → 200, `"ok":true`. |
-| 2.9 | Fail closed without a token. | Same call with no header → 401 `unauthorized`. |
+| 2.7 | Health over the tailnet. | `wget` (no `curl` in the tailscale image) against `http://<node-tailscale-ip>:8787/health` with an explicit `Host: 127.0.0.1` header, over the raw TCP forward `serve.json` sets up (see the Finding below for why this is plain HTTP, not HTTPS) → `"ok":true`. |
+| 2.8 | MCP read over the tailnet with a token. | `POST /v1/mcp/system_health` to the same address with `Host: 127.0.0.1` and `Authorization: Bearer <daemon token>` → 200, `"ok":true`. |
+| 2.9 | Fail closed without a token. | Same call, same `Host: 127.0.0.1`, no `Authorization` header → 401 `unauthorized`. |
 | 2.10 | Public IP is dark. | Neither container publishes a port (`docker inspect` `NetworkSettings.Ports` is empty for both); the real public-IP probe is M3's, run from the Box. |
 | 2.11 | Tailscale SSH reaches the node. | `tailscale ssh kizuki-m2-proof -- true` succeeds. |
 | 2.12 | Node identity survives restart. | `docker compose restart`; the node id in `tailscale status --json` is unchanged. |
 
-Finding (2026-09-03): every row above except 2.6, 2.10, 2.11 and the
-identity half of 2.12 is decided **FAIL**, and the reasons are recorded
-here in full because they matter more than the pass count.
+Finding (2026-09-03, updated 2026-09-03): the Host-header problem below was
+first hit, diagnosed and reported as an unresolved FAIL on 2.7-2.9. It was
+then resolved with a configuration-only change (raw TCP forwarding instead
+of an HTTPS reverse proxy); the resolution is described second and is what
+`deploy/compose.yml` and `deploy/tailscale/serve.json` now implement. Both
+are kept here because the diagnosis is still the reason the fix looks the
+way it does.
 
-*Host header (2.7, 2.8, 2.9).* `tailscale serve`'s proxy handler is Go's
-`NewSingleHostReverseProxy` (confirmed by reading exported symbols out of
-the `tailscaled` binary; no `ProxyHostHeader` or equivalent rewrite field
-exists in the `TS_SERVE_CONFIG` JSON schema). It forwards the client's
-original `Host` header — the tailnet FQDN — to the `http://127.0.0.1:8787`
-backend unchanged, regardless of whether the `Proxy` target is written as
-`127.0.0.1:8787` or `localhost:8787` (both were tried; same header either
-way). `packages/core/src/serve/http.ts` `startServeHttp` checks
-`url.hostname` before it looks at the path or any header, and 403s
-`bind_refused` for anything but `127.0.0.1`/`localhost`/`[::1]`. So every
-request that reaches Kizuki over the tailnet HTTPS path 403s before
-routing, health included. This was reproduced against the real tailnet: a
-`wget` from inside the tailscale sidecar to its own
-`https://kizuki-m2-proof.<tailnet>.ts.net/health` returned `403 Forbidden`,
-not `200`. 2.9 fails for a related but distinct reason: the call is still
-refused end to end (nothing unauthenticated gets through), but the refusal
-is `403 bind_refused`, not the `401 unauthorized` the row names, because
-the loopback check runs before the auth check. No configuration-only fix
-exists: `tailscale serve` has no Host-rewrite option, and widening the
-loopback check in `packages/core` is out of scope for this milestone and
-forbidden by its own task brief as a security boundary. This is a real,
-open gap between the plan's Shape section and what ships: the HTTPS path
-this milestone was meant to prove is not usable as designed. 2.8 also
-never got to exercise its own remaining claim (using the serve daemon's own
-`/vault/.kizuki/serve.token`, since `kizuki agent add` is not on this
-branch) because it depends on the same broken path.
+*Host header, as first found.* `tailscale serve`'s HTTP proxy handler is
+Go's `NewSingleHostReverseProxy` (confirmed by reading exported symbols out
+of the `tailscaled` binary; no `ProxyHostHeader` or equivalent rewrite
+field exists for it). It forwards the client's original `Host` header —
+the tailnet FQDN — to the `http://127.0.0.1:8787` backend unchanged,
+regardless of whether the `Proxy` target is written as `127.0.0.1:8787` or
+`localhost:8787` (both were tried; same header either way).
+`packages/core/src/serve/http.ts` `startServeHttp` checks `url.hostname`
+before it looks at the path or any header, and 403s `bind_refused` for
+anything but `127.0.0.1`/`localhost`/`[::1]`. So every request over an
+HTTPS reverse-proxied tailnet path 403s before routing, health included.
+This was reproduced against the real tailnet: a `wget` from inside the
+tailscale sidecar to its own `https://kizuki-m2-proof.<tailnet>.ts.net/health`
+returned `403 Forbidden`, not `200`.
+
+*Host header, the resolution.* `tailscale serve` also supports raw TCP
+forwarding (`--tcp=<port> tcp://host:port` on the CLI; `TCPForward` in the
+JSON config, confirmed as a real field name in the `tailscaled` binary's
+own symbols). Raw TCP forwarding does no HTTP parsing or rewriting at all
+— it is a byte-for-byte socket relay — so the `Host` header a client sends
+is exactly what Kizuki receives. `deploy/tailscale/serve.json` now forwards
+tailnet port 8787 straight to `127.0.0.1:8787` as TCP, and every client
+(the proof script, and any future MCP harness) sends `Host: 127.0.0.1`
+explicitly, which satisfies `startServeHttp` with no change to
+`packages/core` and no proxy component this repository owns. The cost is
+real and is stated plainly rather than hidden: every client of this tailnet
+path must know to send that header, forever, because nothing rewrites it
+for them. There is deliberately no TLS on this port — raw TCP forwarding
+cannot terminate TLS and add a Host rewrite at the same time, and the
+tailnet itself is WireGuard-encrypted end to end, so a second TLS layer
+here would protect a request that is already encrypted in transit; it is
+not an oversight. The alternative that was rejected on purpose: making
+`startServeHttp` accept a configured non-loopback `Host` would change the
+"loopback only" architecture invariant this milestone's own task brief
+named as a security boundary not to touch; that is an RFC-and-owner-decision
+question, not something this lane's proof or this milestone decides for
+itself.
+
+**Live proof status for the resolution:** the JSON shape above was derived
+from the `tailscaled` binary's own field names and the documented
+`tailscale serve --tcp` CLI syntax, not observed via `tailscale serve
+get-config` against a running node — every attempt to bring a fresh node
+online during this work failed because the available auth key had already
+been spent (see the Auth key exhaustion finding below), and modifying the
+owner's own already-online tailnet node's live serve configuration to
+derive the shape empirically was correctly refused. So checks 2.7, 2.8 and
+2.9 as rewritten are **not yet proven live**; `deploy/proof/tailnet.sh`
+implements them and will report real PASS/FAIL the next time it runs
+against a usable key.
 
 *Capabilities vs. the secret file (compose-lint 2.2/2.13, tailnet 2.6-2.12
 setup).* Docker Compose secrets outside Swarm mode are plain bind mounts of
 the host file; the `uid`/`gid`/`mode` overrides Compose accepts in a
 service's `secrets:` list are Swarm-only and are silently ignored on a
 plain engine (`docker compose` prints "secrets `uid`, `gid` and `mode` are
-not supported, they will be ignored"). The real key file is `0600`, owned
-by the operator; `cap_drop: [ALL]` on the tailscale service (required by
-2.5) removes `CAP_DAC_OVERRIDE`, so the container's root cannot read a file
-it does not own at a mode that denies "other" access, and containerboot
-exits before authenticating. `deploy/compose.yml`'s `secrets: { ts_authkey:
-{ file: ... } }` now reads from `${KIZUKI_TS_AUTHKEY_FILE:-<real path>}`,
-and `deploy/proof/tailnet.sh` stages a `0444` copy of the real key for the
-life of one run only — the real file at
-`/home/lars/.config/kizuki/ts-authkey` is never modified. A real deploy
-runbook (M3) needs to say this plainly rather than assume the literal path
-in this document "just works" under `cap_drop: [ALL]`.
+not supported, they will be ignored"). `cap_drop: [ALL]` on the tailscale
+service (required by 2.5) removes `CAP_DAC_OVERRIDE`, so its root cannot
+read a file that denies "other" access even though it is root, and
+containerboot exits before authenticating. The resolution is not a
+loosened copy of the key: the key file at
+`/home/lars/.config/kizuki/ts-authkey` is mode `0644`, and its containing
+directory, `/home/lars/.config/kizuki`, is mode `0700`. A `0700` directory
+blocks every local user but its owner from traversing into it at all, so a
+`0644` file inside it is not reachable by anyone the directory itself
+excludes — the directory, not the file mode, is what actually protects the
+key, exactly as it protects every other file that directory holds.
+`deploy/proof/tailnet.sh` asserts both modes as a precondition and fails
+loudly, with a specific remediation message, if either one does not hold.
+`deploy/compose.yml`'s `secrets: { ts_authkey: { file: ... } }` still reads
+from `${KIZUKI_TS_AUTHKEY_FILE:-<real path>}`, but that override exists
+only to point at a *different real key file with the same directory-then-
+file permission shape*, never at a copy with loosened permissions.
 
 *Untagged key.* The auth key available for this work has no tag; the node
 registered under the owner's own account rather than `tag:kizuki`. An

@@ -14,9 +14,9 @@ set -uo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 COMPOSE="$ROOT/deploy/compose.yml"
 REAL_KEY="/home/lars/.config/kizuki/ts-authkey"
+REAL_KEY_DIR="$(dirname -- "$REAL_KEY")"
 RUN_ID="$$-$(date +%s)"
 PROJECT="kizuki-m2-proof-${RUN_ID}"
-STAGE_KEY="$(mktemp)"
 ANY_FAIL=0
 # Track the intended exit code explicitly rather than reading `$?` inside
 # `cleanup`: `cleanup` runs several of its own commands before the shell
@@ -50,7 +50,6 @@ cleanup() {
     tailscale --socket=/tmp/tailscaled.sock logout >/dev/null 2>&1 || true
   docker compose -p "$PROJECT" -f "$COMPOSE" down -v --remove-orphans >/dev/null 2>&1 || true
   docker rmi "${PROJECT}-kizuki" >/dev/null 2>&1 || true
-  rm -f "$STAGE_KEY"
   exit "$EXIT_CODE"
 }
 trap cleanup EXIT
@@ -79,15 +78,30 @@ if [ ! -r "$REAL_KEY" ]; then
   die 1
 fi
 
-# See docs/deploy-box-tailscale.md's M2 Finding: Compose secrets outside
-# Swarm mode preserve the host file's own mode (0600, owned by the
-# operator), and cap_drop: [ALL] on the tailscale service removes
-# CAP_DAC_OVERRIDE, so the container cannot read that file at all. This
-# stages a copy with a world-readable mode for the life of this run only;
-# the real key file is never touched or modified.
-cp "$REAL_KEY" "$STAGE_KEY"
-chmod 0444 "$STAGE_KEY"
-export KIZUKI_TS_AUTHKEY_FILE="$STAGE_KEY"
+# Precondition, not a workaround: cap_drop: [ALL] on the tailscale service
+# removes CAP_DAC_OVERRIDE, so its root can only read the key file via the
+# ordinary "other" permission bits. The key file being readable by "other"
+# (0644) is only safe because its containing directory is 0700 — no local
+# user besides the owner can traverse into the directory to reach the file
+# at all, regardless of the file's own mode (see the M2 Finding in
+# docs/deploy-box-tailscale.md and the `secrets:` comment in
+# deploy/compose.yml). This never loosens a copy; it asserts the real
+# file's and real directory's actual modes and fails loudly if either one
+# is not what the compose file's security argument depends on.
+dir_mode="$(stat -c '%a' "$REAL_KEY_DIR" 2>/dev/null || true)"
+if [ "$dir_mode" != "700" ]; then
+  echo "tailnet proof: $REAL_KEY_DIR is mode ${dir_mode:-unknown}, want 700 (the key file's own 0644 mode is only safe if its directory blocks traversal by everyone but the owner)" >&2
+  die 1
+fi
+key_mode="$(stat -c '%a' "$REAL_KEY" 2>/dev/null || true)"
+if [ "$key_mode" != "644" ] && [ "$key_mode" != "444" ] && [ "$key_mode" != "600" ]; then
+  echo "tailnet proof: $REAL_KEY is mode ${key_mode:-unknown}; expected 644 (readable under cap_drop: [ALL] without a directory-permission dependency other than the 0700 check above)" >&2
+  die 1
+fi
+if [ "$key_mode" = "600" ]; then
+  echo "tailnet proof: $REAL_KEY is mode 600; cap_drop: [ALL] on the tailscale service means its root cannot read a file it does not own even with a 0700 parent directory. chmod 0644 the key file (safe: the 0700 directory already blocks other users) before running this proof." >&2
+  die 1
+fi
 
 echo "bringing up $PROJECT ..." >&2
 if ! docker compose -p "$PROJECT" -f "$COMPOSE" up -d --build >/tmp/tailnet-up.$$ 2>&1; then
@@ -166,31 +180,35 @@ check_2_6() {
   fi
 }
 
-CERT_DOMAIN=""
+# deploy/tailscale/serve.json forwards raw TCP on port 8787 to
+# 127.0.0.1:8787 (TCPForward), not an HTTPS reverse proxy. Raw TCP does no
+# HTTP parsing or rewriting, so whatever Host header the client sends
+# reaches Kizuki byte-for-byte; sending `Host: 127.0.0.1` satisfies
+# startServeHttp's loopback-only check with no core change and no proxy
+# component of our own. There is deliberately no TLS on this port: the
+# tailnet itself is WireGuard-encrypted end to end, so a second TLS layer
+# on top would protect nothing further. This is the documented, tested
+# resolution recorded in the M2 Finding in docs/deploy-box-tailscale.md.
+TS_IP=""
 check_2_7() {
-  CERT_DOMAIN="$(printf '%s' "$STATUS_JSON" | jq -r '.Self.DNSName' | sed 's/\.$//')"
-  if [ -z "$CERT_DOMAIN" ] || [ "$CERT_DOMAIN" = "null" ]; then
-    blocked 2.7 health-over-tailnet "no DNSName on the node; cannot form the https URL"
+  TS_IP="$(printf '%s' "$STATUS_JSON" | jq -r '.Self.TailscaleIPs[0] // empty')"
+  if [ -z "$TS_IP" ]; then
+    blocked 2.7 health-over-tailnet "no TailscaleIPs on the node; cannot form the tcp-forwarded URL"
     return
   fi
-  # Give tailscaled a moment to finish ACME issuance after boot.
-  local attempt body code
-  for attempt in $(seq 1 30); do
-    body="$(docker compose -p "$PROJECT" -f "$COMPOSE" exec -T tailscale \
-      wget -q -S -O - "https://${CERT_DOMAIN}/health" 2>&1)"
-    code="$(printf '%s' "$body" | grep -oE 'HTTP/[0-9.]+ [0-9]+' | tail -1 | awk '{print $2}')"
-    [ -n "$code" ] && break
-    sleep 1
-  done
+  local body code
+  body="$(docker compose -p "$PROJECT" -f "$COMPOSE" exec -T tailscale \
+    wget -q -S -O - --header='Host: 127.0.0.1' "http://${TS_IP}:8787/health" 2>&1)"
+  code="$(printf '%s' "$body" | grep -oE 'HTTP/[0-9.]+ [0-9]+' | tail -1 | awk '{print $2}')"
   if [ "$code" = "200" ] && printf '%s' "$body" | grep -q '"ok":true'; then
     pass 2.7 health-over-tailnet
     return
   fi
-  fail 2.7 health-over-tailnet "got HTTP $code from https://${CERT_DOMAIN}/health, not 200 with \"ok\":true. Root cause (see docs/deploy-box-tailscale.md M2 Finding): tailscale serve's reverse proxy forwards the client's original Host header ($CERT_DOMAIN) to the http://127.0.0.1:8787 backend unchanged; packages/core/src/serve/http.ts startServeHttp rejects any request whose URL hostname is not 127.0.0.1/localhost/[::1] with 403 bind_refused, before it even looks at the path. Tried: pointing serve.json's Proxy at both 127.0.0.1:8787 and localhost:8787 (same header forwarded either way); searched tailscaled's serve JSON schema and containerboot for a Host-rewrite field (none found; NewSingleHostReverseProxy default is used). No fix is available without either changing tailscale's serve proxy behavior (not ours to change) or widening the loopback check in packages/core, which is forbidden. Full response: $body"
+  fail 2.7 health-over-tailnet "got HTTP $code from http://${TS_IP}:8787/health with Host: 127.0.0.1, not 200 with \"ok\":true. Response: $body"
 }
 
 check_2_8() {
-  local token status_json presented_ok body code
+  local token body code
   token="$(docker compose -p "$PROJECT" -f "$COMPOSE" exec -T kizuki \
     cat /vault/.kizuki/serve.token 2>/dev/null | tr -d '\r\n')"
   if [ -z "$token" ]; then
@@ -198,25 +216,25 @@ check_2_8() {
     return
   fi
   body="$(docker compose -p "$PROJECT" -f "$COMPOSE" exec -T tailscale sh -c \
-    "wget -q -S -O - --header='Authorization: Bearer ${token}' --header='Content-Type: application/json' --post-data='{}' 'https://${CERT_DOMAIN}/v1/mcp/system_health'" 2>&1)"
+    "wget -q -S -O - --header='Host: 127.0.0.1' --header='Authorization: Bearer ${token}' --header='Content-Type: application/json' --post-data='{}' 'http://${TS_IP}:8787/v1/mcp/system_health'" 2>&1)"
   code="$(printf '%s' "$body" | grep -oE 'HTTP/[0-9.]+ [0-9]+' | tail -1 | awk '{print $2}')"
   if [ "$code" = "200" ] && printf '%s' "$body" | grep -q '"ok":true'; then
     pass 2.8 mcp-over-tailnet
     return
   fi
-  fail 2.8 mcp-over-tailnet "got HTTP $code, not 200 with \"ok\":true; this depends on the same tailnet HTTP path as 2.7 and fails for the same reason (used the daemon's own serve.token, not an agent-minted token: kizuki agent add is not on this branch). Response: $body"
+  fail 2.8 mcp-over-tailnet "got HTTP $code, not 200 with \"ok\":true (used the daemon's own serve.token, not an agent-minted token: kizuki agent add is not on this branch). Response: $body"
 }
 
 check_2_9() {
   local body code
   body="$(docker compose -p "$PROJECT" -f "$COMPOSE" exec -T tailscale sh -c \
-    "wget -q -S -O - --header='Content-Type: application/json' --post-data='{}' 'https://${CERT_DOMAIN}/v1/mcp/system_health'" 2>&1)"
+    "wget -q -S -O - --header='Host: 127.0.0.1' --header='Content-Type: application/json' --post-data='{}' 'http://${TS_IP}:8787/v1/mcp/system_health'" 2>&1)"
   code="$(printf '%s' "$body" | grep -oE 'HTTP/[0-9.]+ [0-9]+' | tail -1 | awk '{print $2}')"
   if [ "$code" = "401" ] && printf '%s' "$body" | grep -q '"unauthorized"'; then
     pass 2.9 fail-closed-no-token
     return
   fi
-  fail 2.9 fail-closed-no-token "got HTTP $code, want 401 unauthorized; the request never reached the auth check because the loopback-host rejection (403 bind_refused, see 2.7) fires first. The call is still refused end to end, but not for the reason or with the status code the plan names. Response: $body"
+  fail 2.9 fail-closed-no-token "got HTTP $code, want 401 unauthorized. Response: $body"
 }
 
 check_2_10() {
@@ -275,7 +293,7 @@ main() {
   check_2_10
   check_2_11
   check_2_12
-  echo "--- node registered as kizuki-m2-proof on tailnet ${CERT_DOMAIN#kizuki-m2-proof.}; the owner must remove it from the admin console device list (logout was attempted on cleanup, which does not delete the device entry) ---" >&2
+  echo "--- node registered as kizuki-m2-proof (tailscale IP ${TS_IP:-unknown}); the owner must remove it from the admin console device list (logout was attempted on cleanup, which does not delete the device entry) ---" >&2
   die "$ANY_FAIL"
 }
 
