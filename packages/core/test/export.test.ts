@@ -28,6 +28,7 @@ import { revokeSourceGrant, resumeSourceRevocation, setSourceGrant } from "../sr
 import { purgeEvents } from "../src/ledger/purge";
 import { listSubjectAliases } from "../src/claims/identity";
 import { readVaultId } from "../src/serve/vault-id";
+import { serializePage } from "../src/vault/frontmatter";
 import { initVault } from "../src/vault/init";
 import { validEvent } from "./fixtures";
 
@@ -84,7 +85,20 @@ function populated() {
   writeFileSync(join(vaultPath, "z-last.txt"), "z\n");
   writeFileSync(join(vaultPath, "ä-umlaut.txt"), "ae\n");
   mkdirSync(join(vaultPath, "people"), { recursive: true });
-  writeFileSync(join(vaultPath, "people", "Ada.md"), "---\nid: ada\n---\n");
+  writeFileSync(
+    join(vaultPath, "people", "Ada.md"),
+    serializePage({
+      data: {
+        id: "ada",
+        title: "Ada",
+        type: "person",
+        status: "active",
+        sensitivity: "public",
+        taint: "clean",
+      },
+      body: "",
+    }),
+  );
   writeFileSync(join(vaultPath, ".kizuki", "private-state"), "excluded\n");
   return { db, vaultPath, remainingEventId: second.event.event_id, sourceKey };
 }
