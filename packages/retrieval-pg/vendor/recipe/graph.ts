@@ -74,9 +74,11 @@ export function applyAdjacencyBoost<T extends AdjacencyTarget>(
 
 /**
  * Hop-limited neighbor walk. Depth is capped at 2. Invisible nodes are
- * skipped (fail closed). Truncates when the collected edge count reaches
- * the caller limit, or when the per-hop frontier cap drops a node that
- * a later hop would have expanded.
+ * skipped (fail closed). Each stored edge is collected once, so a later
+ * hop does not echo the inbound link or spend the limit on a duplicate.
+ * Truncates when the unique edge count reaches the caller limit, or when
+ * the per-hop frontier cap drops a node that a later hop would have
+ * expanded.
  */
 export function walkNeighbors(
   start: string,
@@ -94,6 +96,7 @@ export function walkNeighbors(
 
   const collected: RecipeEdge[] = [];
   const seen = new Set<string>([start]);
+  const seenEdges = new Set<string>();
   let frontier = [start];
   let truncated = false;
 
@@ -105,6 +108,9 @@ export function walkNeighbors(
         if (edge.from !== node && edge.to !== node) continue;
         const other = edge.from === node ? edge.to : edge.from;
         if (!opts.visible(other)) continue;
+        const edgeKey = `${edge.from}\0${edge.to}\0${edge.type}`;
+        if (seenEdges.has(edgeKey)) continue;
+        seenEdges.add(edgeKey);
         collected.push(edge);
         if (collected.length >= opts.limit) {
           return { edges: collected.slice(0, opts.limit), truncated: true };

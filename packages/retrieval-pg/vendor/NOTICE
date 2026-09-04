@@ -33,6 +33,8 @@ Modifications marked relative to the public tip:
 - No telemetry, query cache, or network client.
 - No reranker and no local GGUF runtime (those remain Kizuki-own work).
 - Graph signals fail closed on unlabeled or over-ceiling nodes.
+- Neighbor walks collect each stored edge once so a later hop does not
+  echo the inbound link or spend the limit on a duplicate.
 
 The remainder of the upstream tree (CLI, admin UI, model SDKs, hosted
 cache, markdown mutation) is not vendored.

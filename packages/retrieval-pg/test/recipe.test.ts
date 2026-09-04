@@ -206,6 +206,43 @@ describe("vendored retrieval recipe", () => {
     expect(walked.truncated).toBe(false);
   });
 
+  test("two-hop walk does not echo the inbound edge or false-truncate", () => {
+    const edges = [
+      {
+        from: "page:a",
+        to: "person:hub",
+        type: "subject",
+        weight: 1,
+        provenance: ["event:a"],
+      },
+      {
+        from: "page:b",
+        to: "person:hub",
+        type: "subject",
+        weight: 1,
+        provenance: ["event:b"],
+      },
+      {
+        from: "page:c",
+        to: "person:hub",
+        type: "subject",
+        weight: 1,
+        provenance: ["event:c"],
+      },
+    ];
+    const walked = walkNeighbors("person:hub", edges, {
+      hops: 2,
+      limit: 4,
+      visible: () => true,
+    });
+    expect(walked.edges).toHaveLength(3);
+    expect(walked.truncated).toBe(false);
+    expect(
+      new Set(walked.edges.map((edge) => `${edge.from}->${edge.to}:${edge.type}`))
+        .size,
+    ).toBe(3);
+  });
+
   test("hop-cap truncation is declared when a later hop cannot expand", () => {
     const edges = Array.from({ length: NEIGHBOR_CAP_PER_HOP + 1 }, (_, i) => ({
       from: "person:hub",

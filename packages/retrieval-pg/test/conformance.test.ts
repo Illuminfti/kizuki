@@ -218,6 +218,22 @@ describe("kizuki.retrieval.embedded-pg conformance", () => {
       { hops: 1, limit: 10, ceiling: "public" },
     );
     expect(publicOnly.edges).toEqual([]);
+
+    const twoHop = await port.neighbors(
+      { entity_id: "person:grace" },
+      { hops: 2, limit: 10, ceiling: "private" },
+    );
+    const keys = twoHop.edges.map(
+      (edge) => `${edge.from}->${edge.to}:${edge.type}`,
+    );
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(
+      twoHop.edges.some(
+        (edge) =>
+          edge.from === "event:unlabeled" || edge.to === "event:unlabeled",
+      ),
+    ).toBe(false);
+    expect(twoHop.truncated).toBe(false);
   });
 
   test("verifyAbsent is a real lookup", async () => {
