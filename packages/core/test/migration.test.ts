@@ -8,8 +8,11 @@ import { applyCanonV4, initCanon } from "../src/canon/schema";
 import { getCanonReceipt } from "../src/canon/receipts";
 import { applyClaimsV3, initClaims } from "../src/claims/schema";
 import { neighbors } from "../src/graph/graph";
+import { initGraph } from "../src/graph/schema";
 import { applyConnectionsV8 } from "../src/ledger/connections-schema";
 import { openLedger } from "../src/ledger/db";
+import { tableExists } from "../src/ledger/schema";
+import { initSearch } from "../src/search/schema";
 import { searchResult } from "../src/search/query";
 import { accept, count } from "../src/ledger/ledger";
 import { validEvent } from "./fixtures";
@@ -890,11 +893,20 @@ describe("openLedger migrations", () => {
     }
   });
 
+  test("v10 does not invent search or graph on a fresh ledger", () => {
+    const db = openLedger(":memory:");
+    expect(tableExists(db, "search_docs")).toBe(false);
+    expect(tableExists(db, "search_documents")).toBe(false);
+    expect(tableExists(db, "graph_edges")).toBe(false);
+    db.close();
+  });
+
   test("v10 missing search_docs is projected from the companion", () => {
     const directory = mkdtempSync(join(tmpdir(), "kizuki-ledger-v10-fts-"));
     const path = join(directory, "ledger.sqlite");
     try {
       const first = openLedger(path);
+      initSearch(first);
       first.exec(`
         INSERT INTO search_documents (
           doc_id, scope, title, body, path, page_type, sensitivity,
@@ -944,6 +956,7 @@ describe("openLedger migrations", () => {
     const path = join(directory, "ledger.sqlite");
     try {
       const first = openLedger(path);
+      initSearch(first);
       first.exec(`
         INSERT INTO derived_meta (
           layer, generation, rebuilt_at, doc_count, source_count, skipped_count,
@@ -980,6 +993,7 @@ describe("openLedger migrations", () => {
     const path = join(directory, "ledger.sqlite");
     try {
       const first = openLedger(path);
+      initGraph(first);
       first.exec(`
         DROP TABLE graph_edges;
         CREATE TABLE graph_edges (

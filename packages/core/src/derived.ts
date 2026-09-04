@@ -38,13 +38,20 @@ export function applyDerivedV10(db: Database): void {
   const hadFts = tableExists(db, "search_docs");
   const hadCompanion = tableExists(db, "search_documents");
   const hadSearchMeta = readDerivedMeta(db, "search") !== null;
+  const hadGraph = tableExists(db, "graph_edges");
   const searchRestored = !hadFts && hadCompanion;
   const searchWiped =
     (hadFts && !hadCompanion) || (!hadFts && !hadCompanion && hadSearchMeta);
   const graphWiped = graphSchemaNeedsRebuild(db);
   const metaWiped = derivedMetaNeedsRebuild(db);
-  initSearch(db);
-  initGraph(db);
+  // A ledger-only vault stays ledger-only. Derived tables appear when a
+  // layer already existed, a companion can restore it, or a wipe left a stamp.
+  if (hadFts || hadCompanion || searchWiped || searchRestored || metaWiped) {
+    initSearch(db);
+  }
+  if (hadGraph || graphWiped || metaWiped) {
+    initGraph(db);
+  }
   if (searchRestored) projectSearchDocs(db);
   if (!searchWiped && !graphWiped && !metaWiped) return;
   const rebuiltAt = new Date().toISOString();
