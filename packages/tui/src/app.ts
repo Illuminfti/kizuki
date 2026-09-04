@@ -158,10 +158,7 @@ export function loadItems(
   filters: AuditFilters = {},
 ): LoadPage {
   const start = Math.max(0, offset);
-  // The core list applies contested/ambiguous predicates after loading; fetch its bounded maximum,
-  // then page the fully filtered result so a matching receipt cannot be displaced by earlier rows.
-  const matching = listAuditReceipts(db, { ...filters, limit: 10_000 });
-  const rows = matching.slice(start, start + PAGE_SIZE + 1);
+  const rows = listAuditReceipts(db, { ...filters, limit: PAGE_SIZE + 1, offset: start });
   const truncated = rows.length > PAGE_SIZE;
   const page = truncated ? rows.slice(0, PAGE_SIZE) : rows;
   return {

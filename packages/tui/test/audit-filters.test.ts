@@ -55,27 +55,28 @@ function frameTerminal(): { terminal: Terminal; frames: string[][]; close(): voi
 }
 
 describe("audit command filters", () => {
-  test("filter before paging keeps 201 matching receipts across reload pages", () => {
+  test("filter before paging reaches matching receipts beyond the old 10,000 ceiling", () => {
     const vault = mkdtempSync(join(tmpdir(), "kizuki-audit-filters-"));
     temporary.push(vault);
     initVault(vault);
     const db = openLedger(":memory:");
-    for (let index = 0; index < 201; index += 1) seedReceipt(db, index, "loop", "people/grace.md");
-    for (let index = 201; index < 405; index += 1) seedReceipt(db, index, "other", "people/linus.md");
+    for (let index = 0; index < 10_001; index += 1) seedReceipt(db, index, "loop", "people/grace.md");
+    for (let index = 10_001; index < 10_205; index += 1) seedReceipt(db, index, "other", "people/linus.md");
 
     const filters = { writer: "loop", page: "people/grace.md" };
     const first = loadItems(db, vault, 0, filters);
     const second = loadItems(db, vault, PAGE_SIZE, filters);
+    const oldest = loadItems(db, vault, 10_000, filters);
 
     expect(first.items).toHaveLength(PAGE_SIZE);
     expect(first.truncated).toBe(true);
-    expect(second.items).toHaveLength(1);
-    expect(second.truncated).toBe(false);
-    expect([...first.items, ...second.items]).toHaveLength(201);
-    expect([...first.items, ...second.items].every((item) => item.receipt.writer === "loop")).toBe(true);
-    expect([...first.items, ...second.items].every((item) => item.receipt.page_path === "people/grace.md")).toBe(true);
+    expect(second.items).toHaveLength(PAGE_SIZE);
+    expect(oldest.items).toHaveLength(1);
+    expect(oldest.truncated).toBe(false);
+    expect([...first.items, ...second.items, ...oldest.items].every((item) => item.receipt.writer === "loop")).toBe(true);
+    expect([...first.items, ...second.items, ...oldest.items].every((item) => item.receipt.page_path === "people/grace.md")).toBe(true);
     db.close();
-  });
+  }, 20_000);
 
   test("the command scope is visible and separate from local search", async () => {
     const vault = mkdtempSync(join(tmpdir(), "kizuki-audit-filter-frame-"));
