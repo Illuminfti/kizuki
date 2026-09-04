@@ -56,7 +56,7 @@ export function createTerminal(
   );
   let entered = false;
   let priorRaw: boolean | null = null;
-  let signalHost: SignalHost | null =
+  const signalHost: SignalHost | null =
     opts.signals === undefined ? (process as unknown as SignalHost) : opts.signals;
   let uninstallSignals: (() => void) | null = null;
 

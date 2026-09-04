@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { initialState, reduce } from "../src/model";
+import { applyItems, initialState, reduce } from "../src/model";
 import type { Effect } from "../src/model";
 import { render } from "../src/view";
 import { paint, sanitize, stringWidth } from "../src/ansi";
@@ -130,7 +130,6 @@ describe("audit reducer", () => {
       {
         title: "Grace \u001b[31mred\u001b[0m",
         currentBody: "quoted \u001b]0;title\u0007 capture\n",
-        evidence: ["> \u001b[1minjection\u001b[0m"],
       },
     );
     const start = state([hostile]);
@@ -183,22 +182,21 @@ describe("audit reducer", () => {
     expect(hit.state.items).toHaveLength(1);
   });
 
-  test("stale confirmation refuses to emit undo", () => {
+  test("applyItems cancels confirm when the bound receipt drifts", () => {
     const start = state([item({ after_hash: "a".repeat(64) })]);
     const confirming = press(start, chars("u"));
     expect(confirming.state.mode.name).toBe("confirm");
-    const moved = {
-      ...confirming.state,
-      items: [
-        {
-          ...confirming.state.items[0]!,
-          receipt: { ...confirming.state.items[0]!.receipt, after_hash: "b".repeat(64) },
-        },
-      ],
-    };
-    const refused = press(moved, [...chars("yes"), named("enter")]);
-    expect(refused.effects).toEqual([]);
-    expect(refused.state.notice?.text).toContain("stale confirmation");
+    const selected = confirming.state.items[0];
+    if (selected === undefined) throw new Error("expected a selected receipt");
+    const drifted = applyItems(confirming.state, [
+      {
+        ...selected,
+        receipt: { ...selected.receipt, after_hash: "b".repeat(64) },
+      },
+    ]);
+    expect(drifted.mode.name).toBe("list");
+    expect(drifted.notice?.text).toContain("selection changed");
+    expect(press(drifted, [...chars("yes"), named("enter")]).effects).toEqual([]);
   });
 
   test("] and [ emit page effects and never claim a silent complete set", () => {

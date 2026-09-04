@@ -1,7 +1,7 @@
 import { COLOR, padEnd, sanitize, stringWidth, truncate, wrap } from "./ansi";
 import type { Paint } from "./ansi";
 import { boundedDiff } from "./diff";
-import { EVIDENCE_CAP, currentItem, cursorRow } from "./model";
+import { EVIDENCE_CAP, currentItem } from "./model";
 import type { AuditItem, AuditState } from "./model";
 
 export interface RenderOptions {
@@ -207,12 +207,6 @@ function detailLines(state: AuditState, width: number, p: Paint): string[] {
       ),
     );
   }
-  if (item.evidence.length > 0) {
-    lines.push(metaLine("quoted", `${Math.min(item.evidence.length, EVIDENCE_CAP)}`, p));
-    for (const quote of item.evidence.slice(0, EVIDENCE_CAP)) {
-      lines.push(p.dim(truncate(sanitize(quote), width)));
-    }
-  }
   lines.push(rule(width, p));
   lines.push(...bodyLines(item, width, p));
   return lines;
@@ -310,5 +304,3 @@ export function viewportFor(
   const l = layout(cols, rows);
   return { listRows: l.bodyRows, detailRows: l.bodyRows };
 }
-
-export { cursorRow };

@@ -15,7 +15,6 @@ export interface AuditItem {
   title: string;
   priorBody: string | null;
   currentBody: string | null;
-  evidence: string[];
   loadError: string | null;
 }
 
@@ -79,13 +78,6 @@ export interface Viewport {
 export interface Step {
   state: AuditState;
   effects: Effect[];
-}
-
-export const WRITER_ORDER = ["loop", "correction", "revert", "import"] as const;
-
-function writerRank(writer: string): number {
-  const index = (WRITER_ORDER as readonly string[]).indexOf(writer);
-  return index === -1 ? WRITER_ORDER.length : index;
 }
 
 function filterHaystack(item: AuditItem): string {
@@ -173,10 +165,6 @@ export function currentItem(state: AuditState): AuditItem | null {
 export function cursorRow(state: AuditState): number {
   const headersAbove = state.groups.filter((g) => g.start <= state.cursor).length;
   return state.cursor + headersAbove;
-}
-
-export function listRowCount(state: AuditState): number {
-  return state.items.length + state.groups.length;
 }
 
 function clampCursor(state: AuditState, cursor: number): number {
@@ -435,20 +423,6 @@ export function reduce(state: AuditState, key: Key, viewport: Viewport): Step {
           }),
         );
       }
-      const item = currentItem(state);
-      if (
-        item === null ||
-        item.receipt.receipt_id !== mode.receiptId ||
-        item.receipt.after_hash !== mode.afterHash ||
-        item.receipt.page_path !== mode.pagePath
-      ) {
-        return step(
-          withNotice(listMode(state), {
-            text: "stale confirmation; receipt no longer matches the screen",
-            tone: "error",
-          }),
-        );
-      }
       return step(listMode(state), [
         {
           type: "undo",
@@ -463,5 +437,3 @@ export function reduce(state: AuditState, key: Key, viewport: Viewport): Step {
 
   return reduceList(state, key, viewport);
 }
-
-export { writerRank, filterHaystack };

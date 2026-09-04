@@ -16,8 +16,9 @@ retrieval (D13), or an owner-started daemon (D15).
 
 The TUI is the audit and undo interface. Its state machine and renderer should
 be pure; terminal I/O, editor launches, and persistence belong at explicit
-edges. It has no accept/reject path. `undo` is its only effect, and undo goes
-through the core receipt reverser.
+edges. It has no accept/reject path. The only write effect is `undo`, and undo
+goes through the core receipt reverser. `open`, `filter`, `page`, and `quit`
+do not write.
 
 ## Rules
 
@@ -30,10 +31,10 @@ through the core receipt reverser.
   approval step, an accept/reject path, a pending list or a batch
   confirmation: there is no owner review queue and there never will be one
   (docs/decision-log.md D10, RFC 0002 §7.3).
-- A batch undo must show and bind the exact selected receipts. Changes in
-  receipt state invalidate stale confirmation.
-- Never write canon or the database directly. The only effect the reducer
-  may emit is `undo`.
+- Undo binds the exact selected receipt id, after-hash, and page path.
+  Changes in receipt state invalidate stale confirmation.
+- Never write canon or the database directly. The only write effect the
+  reducer may emit is `undo`.
 - Keep wide and narrow layouts usable, deterministic, and bounded. Truncate
   safely without splitting escape handling or hiding the action being
   confirmed.
@@ -44,5 +45,6 @@ through the core receipt reverser.
 
 Exercise reducer transitions, rendering, sanitization, small terminal sizes,
 large and malformed input, editor round trips, stale selections,
-cancellation, failure cleanup, and proof that the reducer emits only `undo`.
+cancellation, failure cleanup, and proof that the reducer write effect is
+only `undo`.
 Then run TUI tests, typecheck, and the full repository gate.

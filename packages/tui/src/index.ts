@@ -4,13 +4,10 @@ export { pickEditor, editInEditor, parseEditorCommand } from "./editor";
 export {
   EVIDENCE_CAP,
   MAX_FILTER_NEEDLE,
-  WRITER_ORDER,
   applyItems,
   currentItem,
   cursorRow,
-  filterHaystack,
   initialState,
-  listRowCount,
   reduce,
   withNotice,
 } from "./model";
