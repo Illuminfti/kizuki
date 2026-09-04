@@ -17,7 +17,7 @@ import type { CaptureEvent } from "../../src/contracts/event";
 import type { ProposalInput } from "../../src/staging/proposals";
 import { write } from "../canon/helpers";
 import { validEvent } from "../fixtures";
-import { event, memoryDb, seedEvent, tempVault } from "./helpers";
+import { event, memoryDb, tempVault } from "./helpers";
 
 function candidateMetadata(
   overrides: Record<string, unknown> = {},

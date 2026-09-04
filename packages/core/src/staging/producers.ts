@@ -69,10 +69,13 @@ function entityProposal(
     body: `Stub entity page for \`${subjectRef}\`.`,
     frontmatter: {
       type: subjectPageType(subject.subject_id),
-      title: subject.display_name ?? handle,
+      title: handle,
       "x-handle": handle,
       "x-subject-id": subject.subject_id,
       "x-connector": event.connector_id,
+      ...(subject.display_name === undefined
+        ? {}
+        : { "x-display-name": subject.display_name }),
     },
     provenance: [event.event_id],
     subjects: [subjectRef],

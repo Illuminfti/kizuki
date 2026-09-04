@@ -315,17 +315,15 @@ function resolveProvenance(db: Database, ids: readonly string[]): void {
   if (!tableExists(db, "events")) {
     throw new StagingError("provenance: events table is missing");
   }
-  const unique = uniqueStrings(ids);
-  const placeholders = unique.map(() => "?").join(", ");
-  const row = db
-    .query<{ n: number }, string[]>(
-      `SELECT count(*) AS n FROM events WHERE event_id IN (${placeholders})`,
-    )
-    .get(...unique);
-  if (row === null || row.n !== unique.length) {
-    throw new StagingError(
-      "provenance: one or more event_ids do not resolve in the ledger",
-    );
+  const lookup = db.query<{ event_id: string }, [string]>(
+    "SELECT event_id FROM events WHERE event_id = ?",
+  );
+  for (const id of uniqueStrings(ids)) {
+    if (lookup.get(id) === null) {
+      throw new StagingError(
+        "provenance: one or more event_ids do not resolve in the ledger",
+      );
+    }
   }
 }
 
@@ -333,20 +331,22 @@ function loadEventFacts(
   db: Database,
   ids: readonly string[],
 ): { connector_ids: string[]; hints: unknown[] } {
-  const unique = uniqueStrings(ids);
-  const placeholders = unique.map(() => "?").join(", ");
-  const rows = db
-    .query<
-      { connector_id: string; sensitivity_hint: string | null },
-      string[]
-    >(
-      `SELECT connector_id, sensitivity_hint FROM events WHERE event_id IN (${placeholders})`,
-    )
-    .all(...unique);
-  return {
-    connector_ids: [...new Set(rows.map((row) => row.connector_id))],
-    hints: rows.map((row) => row.sensitivity_hint),
-  };
+  const lookup = db.query<
+    { connector_id: string; sensitivity_hint: string | null },
+    [string]
+  >("SELECT connector_id, sensitivity_hint FROM events WHERE event_id = ?");
+  const connector_ids: string[] = [];
+  const hints: unknown[] = [];
+  const seen = new Set<string>();
+  for (const id of uniqueStrings(ids)) {
+    const row = lookup.get(id);
+    if (row === null) continue;
+    hints.push(row.sensitivity_hint);
+    if (seen.has(row.connector_id)) continue;
+    seen.add(row.connector_id);
+    connector_ids.push(row.connector_id);
+  }
+  return { connector_ids, hints };
 }
 
 function resolveLabels(

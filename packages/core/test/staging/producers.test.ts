@@ -36,8 +36,9 @@ describe("proposalsForEvent", () => {
     const [ada] = proposalsForEvent(event());
     expect(ada?.frontmatter).toEqual({
       type: "person",
-      title: "Ada",
+      title: "ada",
       "x-handle": "ada",
+      "x-display-name": "Ada",
       "x-subject-id": "person:ada",
       "x-connector": "fixture",
     });
@@ -69,7 +70,13 @@ describe("proposalsForEvent", () => {
   test("the same subject seen twice dedupes onto one staged candidate", () => {
     const db = memoryDb([event(), event({ event_id: "01ARZ3NDEKTSV4RRFFQ69G5FB0", text: "later" })]);
     const first = proposalsForEvent(event())[0];
-    const later = event({ event_id: "01ARZ3NDEKTSV4RRFFQ69G5FB0", text: "later" });
+    const later = event({
+      event_id: "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+      text: "later",
+      subjects: [
+        { subject_id: "person:ada", role: "from", display_name: "Ada King" },
+      ],
+    });
     seedEvent(db, later);
     const second = proposalsForEvent(later)[0];
     if (first === undefined || second === undefined) {

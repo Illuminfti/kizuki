@@ -22,6 +22,7 @@ export function hashBody(body: string): string {
 const SIGNATURE_IGNORE_FRONTMATTER = new Set([
   "x-source-record-id",
   "x-capture-kind",
+  "x-display-name",
 ]);
 
 export function contentSignature(parts: {
