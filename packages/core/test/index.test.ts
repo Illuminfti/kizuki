@@ -7,6 +7,7 @@ describe("public surface", () => {
       "AGENT_SCHEMA_VERSION",
       "AUTHORITY_TIERS",
       "AUTH_MODES",
+      "BACKUP_SCHEMA",
       "BudgetExhausted",
       "CALIBRATION_BAND",
       "CANON_SCHEMA_VERSION",
@@ -375,6 +376,7 @@ describe("public surface", () => {
       "resolvePrincipal",
       "resolveSensitivity",
       "resolveTarget",
+      "restoreVault",
       "resupersedeClaim",
       "retryRetrievalOps",
       "reviveUncontestedSkipped",
@@ -454,6 +456,7 @@ describe("public surface", () => {
       "validateRetrievalQuery",
       "validateRetrievalResult",
       "validityOverlaps",
+      "verifyBackup",
       "verifyPurge",
       "withDeadline",
       "writeCheckpoint",
@@ -463,6 +466,7 @@ describe("public surface", () => {
 
   test("the schema tags are frozen strings", () => {
     expect(core.EVENT_SCHEMA).toBe("kizuki.event/v1");
+    expect(core.BACKUP_SCHEMA).toBe("kizuki.backup/v1");
     expect(core.CLAIM_SCHEMA).toBe("kizuki.claim/v1");
     expect(core.PROPOSAL_SCHEMA).toBe("kizuki.claim/v1");
     expect(core.CONNECTOR_SCHEMA).toBe("kizuki.connector/v1");

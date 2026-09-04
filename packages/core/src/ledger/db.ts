@@ -161,6 +161,8 @@ const MIGRATIONS: readonly Migration[] = [
   },
 ];
 
+export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
+
 function migrate(db: Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_version (

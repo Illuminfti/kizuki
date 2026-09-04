@@ -176,7 +176,18 @@ operation state.
 usage: kizuki export --out DIR
 ```
 
-Dumps vault files and ledger tables into an empty directory.
+Dumps vault files and ledger tables into an empty directory as
+`kizuki.backup/v1`. The destination must sit outside the source vault.
+
+## restore
+
+```text
+usage: kizuki restore --from DIR [--into DIR] [--verify]
+```
+
+Verifies a `kizuki.backup/v1` directory. With `--into` it restores into an
+empty target after that verification. `--from DIR` alone, or with `--verify`,
+checks hashes and completeness without writing.
 
 ## version
 
