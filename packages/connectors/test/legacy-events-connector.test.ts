@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { initVault, listClaims, openLedger, runBackfill, runSync } from "@kizuki/core";
+import { initVault, listClaims, openLedger, registerConnection, runBackfill, runSync } from "@kizuki/core";
 import { getCheckpoint } from "@kizuki/core";
 import { KizukiError } from "../src/errors";
 import { InMemoryLedger } from "../src/ledger";
@@ -260,11 +260,13 @@ describe("the run through a real ledger", () => {
     const db = openLedger(join(vault, ".kizuki", "kizuki.db"));
     try {
       const connector = createLegacyEventsConnector({ path: jsonlPath });
+      const source = "01JJ0000000000000000000004";
+      registerConnection(db, LEGACY_EVENTS_CONNECTOR_ID, source);
       const first = await runSync(
         db,
         connector,
         LEGACY_EVENTS_CONNECTOR_ID,
-        jsonlPath,
+        source,
       );
       expect(first.stored).toBe(9);
       expect(first.proposals_created).toBeGreaterThan(0);
@@ -290,7 +292,7 @@ describe("the run through a real ledger", () => {
         db,
         createLegacyEventsConnector({ path: jsonlPath }),
         LEGACY_EVENTS_CONNECTOR_ID,
-        jsonlPath,
+        source,
       );
       expect(second.stored).toBe(1);
       expect(second.withdrawn).toBeGreaterThan(0);
@@ -334,11 +336,13 @@ describe("a row the ledger would refuse", () => {
     const db = openLedger(join(vault, ".kizuki", "kizuki.db"));
     try {
       const connector = createLegacyEventsConnector({ path: jsonlPath });
+      const source = "01JJ0000000000000000000004";
+      registerConnection(db, LEGACY_EVENTS_CONNECTOR_ID, source);
       const run = await runBackfill(
         db,
         connector,
         LEGACY_EVENTS_CONNECTOR_ID,
-        jsonlPath,
+        source,
       );
       expect(run.errors).toEqual([]);
       expect(run.stored).toBe(2);
@@ -346,7 +350,7 @@ describe("a row the ledger would refuse", () => {
         { position: "120", reason: "occurred_at_invalid" },
       ]);
       expect(
-        getCheckpoint(db, LEGACY_EVENTS_CONNECTOR_ID, jsonlPath)?.cursor,
+        getCheckpoint(db, LEGACY_EVENTS_CONNECTOR_ID, source)?.cursor,
       ).not.toBeNull();
     } finally {
       db.close();

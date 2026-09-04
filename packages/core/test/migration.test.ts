@@ -182,6 +182,7 @@ describe("openLedger migrations", () => {
       { name: "secret_refs", pk: 0 },
       { name: "connected_at", pk: 0 },
       { name: "disconnected_at", pk: 0 },
+      { name: "implementation_version", pk: 0 },
     ]);
     db.close();
   });
@@ -307,7 +308,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(7);
+      expect(schemaVersion(upgraded)).toBe(8);
       const tables = upgraded
         .query<{ name: string }, []>(
           "SELECT name FROM sqlite_master WHERE type = 'table'",
@@ -327,6 +328,7 @@ describe("openLedger migrations", () => {
         "run_receipts",
         "leases",
         "budget_ledger",
+        "connection_runs",
       ]));
       expect(tables).not.toContain("rejections");
       expect(tables).not.toContain("promotions");
@@ -436,7 +438,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(7);
+      expect(schemaVersion(upgraded)).toBe(8);
       const receipts = upgraded
         .query<
           {
@@ -562,8 +564,8 @@ describe("openLedger migrations", () => {
       legacy.close();
       const upgraded = openLedger(path);
       expect(columns(upgraded, "canon_receipts")).toEqual(freshColumns);
-      expect(schemaVersion(fresh)).toBe(7);
-      expect(schemaVersion(upgraded)).toBe(7);
+      expect(schemaVersion(fresh)).toBe(8);
+      expect(schemaVersion(upgraded)).toBe(8);
       expect(columns(fresh, "connector_sensitivity")).toEqual([
         "at",
         "connector_id",
@@ -601,7 +603,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(7);
+      expect(schemaVersion(upgraded)).toBe(8);
       expect(
         upgraded
           .query<{ name: string }, []>(

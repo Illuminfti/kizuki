@@ -15,6 +15,7 @@ import { ConnectionStateStore } from "../src/ledger/connection-state";
 import { clearSwapDebris } from "../src/ledger/connection-state-files";
 import { enrollConnection } from "../src/ledger/enroll";
 import { LedgerError } from "../src/ledger/connections";
+import { sha256Hex } from "../src/util/hash";
 import {
   connector,
   enrolled,
@@ -79,6 +80,8 @@ describe("connection state recovery and locking", () => {
         connected_at: "2026-03-01T10:00:00.000Z",
         final_name: finalName,
         backup_name: backupName,
+        final_sha256: sha256Hex("second-envelope"),
+        final_bytes: new TextEncoder().encode("second-envelope").byteLength,
       }),
       { mode: 0o600 },
     );
@@ -143,6 +146,8 @@ describe("connection state recovery and locking", () => {
         connected_at: connection.connected_at,
         final_name: finalName,
         backup_name: backupName,
+        final_sha256: sha256Hex("second-envelope"),
+        final_bytes: new TextEncoder().encode("second-envelope").byteLength,
       }),
       { mode: 0o600 },
     );

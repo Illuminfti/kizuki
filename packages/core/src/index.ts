@@ -145,6 +145,14 @@ export type {
   SignInDisplay,
   ConnectionStateWriter,
   SyncBatch,
+  SyncBatchStatus,
+} from "./contracts/connector";
+export {
+  CONNECTOR_OPERATION_DEADLINE_MS,
+  CONNECTOR_SIGN_IN_DEADLINE_MS,
+  MAX_CURSOR_BYTES,
+  MAX_SYNC_BATCH_BYTES,
+  MAX_SYNC_BATCH_EVENTS,
 } from "./contracts/connector";
 
 export {
@@ -522,6 +530,7 @@ export { readCheckpoint, writeCheckpoint } from "./ledger/checkpoints";
 export { accept, count, readSince, replay } from "./ledger/ledger";
 export type {
   AcceptDependencies,
+  AcceptErrorKind,
   AcceptResult,
   LedgerCursor,
   ReplayFilter,
@@ -556,11 +565,28 @@ export {
   disconnect,
   getCheckpoint,
   getConnection,
+  inspectCheckpoints,
+  inspectConnections,
   listCheckpoints,
+  listConnectionRuns,
   listConnections,
+  recordConnectorRun,
+  registerConnection,
+  requireActiveConnection,
   saveCheckpoint,
 } from "./ledger/connections";
-export type { Checkpoint, Connection, ConnectionConfig } from "./ledger/connections";
+export type {
+  Checkpoint,
+  Connection,
+  ConnectionConfig,
+  ConnectionRun,
+  ConnectionRunStatus,
+  Inspected,
+} from "./ledger/connections";
+export { scopedSecretResolver } from "./ledger/secret-scope";
+export { assertConnectorBrowserUrl, guardedSignInIo } from "./ledger/sign-in-guard";
+export { DeadlineError, withDeadline } from "./util/deadline";
+export { sha256Hex } from "./util/hash";
 export {
   ConnectionStateStore,
   CONNECTION_CONFIG_SCHEMA,

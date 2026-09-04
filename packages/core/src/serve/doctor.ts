@@ -1,7 +1,10 @@
 import type { Database } from "bun:sqlite";
+import { join } from "node:path";
 import { isMachineOriginPath } from "../canon/origin";
 import { pendingRetrievalOps } from "../claims/store";
 import { readDerivedMeta } from "../derived-meta";
+import { ConnectionStateStore } from "../ledger/connection-state";
+import { inspectCheckpoints, inspectConnections } from "../ledger/connections";
 import { tableExists } from "../ledger/schema";
 import { inspectPurgeHealth } from "../ledger/purge";
 import { listCanonPagesReport } from "../vault/pages";
@@ -356,6 +359,27 @@ export function inspectServeDoctor(
   failures.push(...cal.failures);
   if (stores.orphan_run_receipts.length > 0) {
     failures.push(`orphan run receipts ${stores.orphan_run_receipts.length}`);
+  }
+  try {
+    const recovery = new ConnectionStateStore(join(vaultPath, ".kizuki")).recover(db);
+    if (recovery.unresolved.length > 0) {
+      failures.push(`connection state journals unresolved ${recovery.unresolved.length}`);
+    }
+    if (recovery.quarantined.length > 0) {
+      failures.push(`connection state journals quarantined ${recovery.quarantined.length}`);
+    }
+  } catch {
+    failures.push("connection state recovery failed");
+  }
+  for (const item of inspectConnections(db, { includeDisconnected: true })) {
+    if (!item.ok) {
+      failures.push(`connection ${item.connector_id} unreadable`);
+    }
+  }
+  for (const item of inspectCheckpoints(db)) {
+    if (!item.ok) {
+      failures.push(`checkpoint ${item.connector_id} unreadable`);
+    }
   }
   if (stores.degraded.includes("retrieval-ops-stale")) {
     failures.push("retrieval_ops older than SLA");
