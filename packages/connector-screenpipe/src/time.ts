@@ -152,7 +152,7 @@ export function localToUtc(local: string, timeZone: string): string | null {
       .sort((left, right) => left - right);
     const earliest = valid[0];
     if (earliest !== undefined) return new Date(earliest).toISOString();
-    return new Date(wall + (after - before) - after).toISOString();
+    return new Date(wall - before).toISOString();
   } catch {
     return null;
   }

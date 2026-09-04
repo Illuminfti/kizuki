@@ -98,27 +98,3 @@ function jsonSafe(value: unknown): string | number | boolean | null {
   }
   return String(value);
 }
-
-export function assertCompatibleIdentity(
-  cursorPath: string,
-  cursorFingerprint: string,
-  highWaterFrame: number,
-  highWaterTranscription: number,
-  lastFrameId: number,
-  lastTranscriptionId: number,
-  identity: DatabaseIdentity,
-): void {
-  if (
-    cursorPath !== identity.path ||
-    cursorFingerprint !== identity.fingerprint ||
-    identity.max_frame_id < lastFrameId ||
-    identity.max_transcription_id < lastTranscriptionId ||
-    identity.max_frame_id < highWaterFrame ||
-    identity.max_transcription_id < highWaterTranscription
-  ) {
-    throw new ScreenpipeConnectorError(
-      "reset_detected",
-      "kizuki.screenpipe: source database was replaced, rewound, or rebound; enroll a new connection and rebackfill",
-    );
-  }
-}

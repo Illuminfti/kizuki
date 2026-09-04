@@ -18,6 +18,7 @@ export {
   PLAN_PAGE,
   SCREENPIPE_CURSOR_SCHEMA,
   SKIP_DEGRADE_THRESHOLD,
+  assertCompatibleIdentity,
   encodeCursor,
   emptySkipped,
   initialCursor,

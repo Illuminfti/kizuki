@@ -19,6 +19,7 @@ import {
 import {
   BATCH_LIMIT,
   SKIP_DEGRADE_THRESHOLD,
+  assertCompatibleIdentity,
   encodeCursor,
   emptySkipped,
   initialCursor,
@@ -29,10 +30,7 @@ import {
 } from "./cursor";
 import { ScreenpipeConnectorError } from "./errors";
 import { FIXTURE_NOW, seedFixtureDatabase } from "./fixture";
-import {
-  assertCompatibleIdentity,
-  inspectIdentity,
-} from "./identity";
+import { inspectIdentity } from "./identity";
 import { classifyDatabaseError, openReadOnly } from "./open";
 import { planSourceRecords } from "./purge";
 import { seedAfterIds } from "./read";
@@ -68,7 +66,6 @@ export class ScreenpipeConnector implements Connector {
   #db: Database | null = null;
   #revoked = false;
   #lastSuccessAt: string | undefined;
-  #lastSkipped: SkippedCounters = emptySkipped();
   #totalSkipped: SkippedCounters = emptySkipped();
   #oldestSkippedFrameId = 0;
   #oldestSkippedTranscriptionId = 0;
@@ -212,15 +209,7 @@ export class ScreenpipeConnector implements Connector {
             )
           : parseCursor(cursor);
       if (cursor !== null) {
-        assertCompatibleIdentity(
-          current.db_path,
-          current.db_fingerprint,
-          current.high_water_frame,
-          current.high_water_transcription,
-          current.last_frame_id,
-          current.last_transcription_id,
-          identity,
-        );
+        assertCompatibleIdentity(current, identity);
       }
       if (mode === "sync") {
         current.snapshot_frame_max = Math.max(
@@ -242,7 +231,6 @@ export class ScreenpipeConnector implements Connector {
         identity.max_transcription_id,
       );
 
-      const before = { ...current.skipped };
       const now = this.#deps.now();
       const observedAt = new Date(now).toISOString();
       const boundary = new Date(
@@ -263,33 +251,20 @@ export class ScreenpipeConnector implements Connector {
         observedAt,
         this.#config,
       );
-      let nextFrame = frames.next();
-      let nextAudio = transcriptions.next();
       while (events.length < BATCH_LIMIT) {
-        const frame = nextFrame;
-        const audio = nextAudio;
-        if (frame === null && audio === null) break;
-        if (frame === null) {
-          if (audio === null) break;
+        const frame = frames.peek();
+        const audio = transcriptions.peek();
+        if (
+          frame !== null &&
+          (audio === null || comparePrepared(frame, audio) <= 0)
+        ) {
+          events.push(frame.event);
+          frames.take();
+        } else if (audio !== null) {
           events.push(audio.event);
-          if (events.length === BATCH_LIMIT) break;
-          nextAudio = transcriptions.next();
-          continue;
-        }
-        if (audio === null) {
-          events.push(frame.event);
-          if (events.length === BATCH_LIMIT) break;
-          nextFrame = frames.next();
-          continue;
-        }
-        if (comparePrepared(frame, audio) <= 0) {
-          events.push(frame.event);
-          if (events.length === BATCH_LIMIT) break;
-          nextFrame = frames.next();
+          transcriptions.take();
         } else {
-          events.push(audio.event);
-          if (events.length === BATCH_LIMIT) break;
-          nextAudio = transcriptions.next();
+          break;
         }
       }
 
@@ -299,7 +274,6 @@ export class ScreenpipeConnector implements Connector {
         frames.done && transcriptions.done,
       );
       this.#lastSuccessAt = observedAt;
-      this.#lastSkipped = skipDelta(before, current);
       this.#totalSkipped = { ...current.skipped };
       this.#oldestSkippedFrameId = current.oldest_skipped_frame_id;
       this.#oldestSkippedTranscriptionId =
@@ -356,33 +330,9 @@ function batchPhase(
   bothDone: boolean,
 ): ScreenpipeCursor["phase"] {
   if (eventCount === BATCH_LIMIT) return "continue";
-  if (paused && !bothDone) return "caught_up";
   if (bothDone) return "exhausted";
   if (paused) return "caught_up";
   return "continue";
-}
-
-function skipDelta(
-  before: SkippedCounters,
-  current: ScreenpipeCursor,
-): SkippedCounters {
-  return {
-    frames_without_text:
-      current.skipped.frames_without_text - before.frames_without_text,
-    frames_bad_timestamp:
-      current.skipped.frames_bad_timestamp - before.frames_bad_timestamp,
-    frames_offset_unknown:
-      current.skipped.frames_offset_unknown - before.frames_offset_unknown,
-    transcriptions_bad_timestamp:
-      current.skipped.transcriptions_bad_timestamp -
-      before.transcriptions_bad_timestamp,
-    transcriptions_bad_offset:
-      current.skipped.transcriptions_bad_offset -
-      before.transcriptions_bad_offset,
-    transcriptions_offset_unknown:
-      current.skipped.transcriptions_offset_unknown -
-      before.transcriptions_offset_unknown,
-  };
 }
 
 function formatSkipped(skipped: SkippedCounters): string {

@@ -142,30 +142,20 @@ export function parseCursor(cursor: string): ScreenpipeCursor {
     malformedCursor();
   }
   const skipped = parsed["skipped"];
-  if (
-    !isPlainObject(skipped) ||
-    !hasExactKeys(skipped, SKIPPED_KEYS) ||
-    !isCounter(skipped["frames_without_text"]) ||
-    !isCounter(skipped["frames_bad_timestamp"]) ||
-    !isCounter(skipped["frames_offset_unknown"]) ||
-    !isCounter(skipped["transcriptions_bad_timestamp"]) ||
-    !isCounter(skipped["transcriptions_bad_offset"]) ||
-    !isCounter(skipped["transcriptions_offset_unknown"])
-  ) {
+  if (!isPlainObject(skipped) || !hasExactKeys(skipped, SKIPPED_KEYS)) {
     malformedCursor();
+  }
+  const counters = emptySkipped();
+  for (const key of SKIPPED_KEYS) {
+    const count = skipped[key];
+    if (!isCounter(count)) malformedCursor();
+    counters[key] = count;
   }
   return canonicalCursor({
     schema: SCREENPIPE_CURSOR_SCHEMA,
     last_frame_id: parsed["last_frame_id"],
     last_transcription_id: parsed["last_transcription_id"],
-    skipped: {
-      frames_without_text: skipped["frames_without_text"],
-      frames_bad_timestamp: skipped["frames_bad_timestamp"],
-      frames_offset_unknown: skipped["frames_offset_unknown"],
-      transcriptions_bad_timestamp: skipped["transcriptions_bad_timestamp"],
-      transcriptions_bad_offset: skipped["transcriptions_bad_offset"],
-      transcriptions_offset_unknown: skipped["transcriptions_offset_unknown"],
-    },
+    skipped: counters,
     db_path: parsed["db_path"],
     db_fingerprint: parsed["db_fingerprint"],
     high_water_frame: parsed["high_water_frame"],
@@ -204,20 +194,35 @@ export function replayFrom(
 }
 
 export function recordSkippedFrame(cursor: ScreenpipeCursor, id: number): void {
-  if (cursor.oldest_skipped_frame_id === 0 || id < cursor.oldest_skipped_frame_id) {
-    cursor.oldest_skipped_frame_id = id;
-  }
+  cursor.oldest_skipped_frame_id = oldestId(cursor.oldest_skipped_frame_id, id);
 }
 
 export function recordSkippedTranscription(
   cursor: ScreenpipeCursor,
   id: number,
 ): void {
+  cursor.oldest_skipped_transcription_id = oldestId(
+    cursor.oldest_skipped_transcription_id,
+    id,
+  );
+}
+
+export function assertCompatibleIdentity(
+  cursor: ScreenpipeCursor,
+  identity: DatabaseIdentity,
+): void {
   if (
-    cursor.oldest_skipped_transcription_id === 0 ||
-    id < cursor.oldest_skipped_transcription_id
+    cursor.db_path !== identity.path ||
+    cursor.db_fingerprint !== identity.fingerprint ||
+    identity.max_frame_id < cursor.last_frame_id ||
+    identity.max_transcription_id < cursor.last_transcription_id ||
+    identity.max_frame_id < cursor.high_water_frame ||
+    identity.max_transcription_id < cursor.high_water_transcription
   ) {
-    cursor.oldest_skipped_transcription_id = id;
+    throw new ScreenpipeConnectorError(
+      "reset_detected",
+      "kizuki.screenpipe: source database was replaced, rewound, or rebound; enroll a new connection and rebackfill",
+    );
   }
 }
 
@@ -226,15 +231,7 @@ export function canonicalCursor(cursor: ScreenpipeCursor): ScreenpipeCursor {
     schema: SCREENPIPE_CURSOR_SCHEMA,
     last_frame_id: cursor.last_frame_id,
     last_transcription_id: cursor.last_transcription_id,
-    skipped: {
-      frames_without_text: cursor.skipped.frames_without_text,
-      frames_bad_timestamp: cursor.skipped.frames_bad_timestamp,
-      frames_offset_unknown: cursor.skipped.frames_offset_unknown,
-      transcriptions_bad_timestamp: cursor.skipped.transcriptions_bad_timestamp,
-      transcriptions_bad_offset: cursor.skipped.transcriptions_bad_offset,
-      transcriptions_offset_unknown:
-        cursor.skipped.transcriptions_offset_unknown,
-    },
+    skipped: { ...cursor.skipped },
     db_path: cursor.db_path,
     db_fingerprint: cursor.db_fingerprint,
     high_water_frame: cursor.high_water_frame,
@@ -245,6 +242,10 @@ export function canonicalCursor(cursor: ScreenpipeCursor): ScreenpipeCursor {
     oldest_skipped_transcription_id: cursor.oldest_skipped_transcription_id,
     phase: cursor.phase,
   };
+}
+
+function oldestId(current: number, id: number): number {
+  return current === 0 || id < current ? id : current;
 }
 
 function isCounter(value: unknown): value is number {

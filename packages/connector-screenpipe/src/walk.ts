@@ -1,3 +1,4 @@
+import type { Database } from "bun:sqlite";
 import type { CaptureEventInput } from "@kizuki/core";
 import type { ParsedScreenpipeConfig } from "./config";
 import {
@@ -34,13 +35,14 @@ export function comparePrepared(left: PreparedEvent, right: PreparedEvent): numb
 }
 
 export interface StreamWalker {
-  next(): PreparedEvent | null;
+  peek(): PreparedEvent | null;
+  take(): void;
   readonly paused: boolean;
   readonly done: boolean;
 }
 
 export function createFrameWalker(
-  db: Parameters<typeof readFrames>[0],
+  db: Database,
   cursor: ScreenpipeCursor,
   boundary: string,
   observedAt: string,
@@ -58,7 +60,7 @@ export function createFrameWalker(
 }
 
 export function createTranscriptionWalker(
-  db: Parameters<typeof readTranscriptions>[0],
+  db: Database,
   cursor: ScreenpipeCursor,
   boundary: string,
   observedAt: string,
@@ -75,7 +77,7 @@ export function createTranscriptionWalker(
   );
 }
 
-type PrepareResult<T> =
+type PrepareResult =
   | { kind: "emit"; prepared: PreparedEvent }
   | { kind: "skip" }
   | { kind: "pause" };
@@ -84,6 +86,7 @@ class RowWalker<T extends { id: number }> implements StreamWalker {
   #buffer: T[] = [];
   #index = 0;
   #after: number;
+  #pending: PreparedEvent | null | undefined;
   paused = false;
   done = false;
 
@@ -91,14 +94,28 @@ class RowWalker<T extends { id: number }> implements StreamWalker {
     afterId: number,
     private readonly throughId: number,
     private readonly readPage: (after: number, limit: number, through: number) => T[],
-    private readonly prepare: (row: T) => PrepareResult<T>,
+    private readonly prepare: (row: T) => PrepareResult,
     private readonly commitId: (id: number) => void,
   ) {
     this.#after = afterId;
     this.done = this.#after >= throughId;
   }
 
-  next(): PreparedEvent | null {
+  peek(): PreparedEvent | null {
+    if (this.#pending !== undefined) return this.#pending;
+    this.#pending = this.#pull();
+    return this.#pending;
+  }
+
+  take(): void {
+    const pending = this.peek();
+    if (pending === null) return;
+    this.commitId(pending.id);
+    this.#after = pending.id;
+    this.#pending = undefined;
+  }
+
+  #pull(): PreparedEvent | null {
     while (!this.paused && !this.done) {
       if (this.#index >= this.#buffer.length) this.#refill();
       if (this.done) return null;
@@ -111,8 +128,6 @@ class RowWalker<T extends { id: number }> implements StreamWalker {
       const prepared = this.prepare(row);
       switch (prepared.kind) {
         case "emit":
-          this.commitId(row.id);
-          this.#after = row.id;
           return prepared.prepared;
         case "skip":
           this.commitId(row.id);
@@ -147,22 +162,20 @@ function prepareFrame(
   boundary: string,
   observedAt: string,
   config: ParsedScreenpipeConfig,
-): PrepareResult<FrameRow> {
+): PrepareResult {
   const resolved = resolveTimestamp(row.timestamp, config.timezone);
   if ("reject" in resolved) {
-    if (resolved.reject === "offset_unknown") {
-      cursor.skipped.frames_offset_unknown += 1;
-    } else {
-      cursor.skipped.frames_bad_timestamp += 1;
-    }
-    recordSkippedFrame(cursor, row.id);
-    return { kind: "skip" };
+    return skipFrame(
+      cursor,
+      row.id,
+      resolved.reject === "offset_unknown"
+        ? "frames_offset_unknown"
+        : "frames_bad_timestamp",
+    );
   }
   if (resolved.iso > boundary) return { kind: "pause" };
   if (row.full_text === null || row.full_text.trim().length === 0) {
-    cursor.skipped.frames_without_text += 1;
-    recordSkippedFrame(cursor, row.id);
-    return { kind: "skip" };
+    return skipFrame(cursor, row.id, "frames_without_text");
   }
   return {
     kind: "emit",
@@ -184,22 +197,20 @@ function prepareTranscription(
   boundary: string,
   observedAt: string,
   config: ParsedScreenpipeConfig,
-): PrepareResult<TranscriptionRow> {
+): PrepareResult {
   const resolved = resolveTimestamp(row.timestamp, config.timezone);
   if ("reject" in resolved) {
-    if (resolved.reject === "offset_unknown") {
-      cursor.skipped.transcriptions_offset_unknown += 1;
-    } else {
-      cursor.skipped.transcriptions_bad_timestamp += 1;
-    }
-    recordSkippedTranscription(cursor, row.id);
-    return { kind: "skip" };
+    return skipTranscription(
+      cursor,
+      row.id,
+      resolved.reject === "offset_unknown"
+        ? "transcriptions_offset_unknown"
+        : "transcriptions_bad_timestamp",
+    );
   }
   const occurredAt = offsetSeconds(resolved.iso, row.start_time);
   if (occurredAt === null) {
-    cursor.skipped.transcriptions_bad_offset += 1;
-    recordSkippedTranscription(cursor, row.id);
-    return { kind: "skip" };
+    return skipTranscription(cursor, row.id, "transcriptions_bad_offset");
   }
   if (occurredAt > boundary) return { kind: "pause" };
   return {
@@ -214,4 +225,27 @@ function prepareTranscription(
       }),
     },
   };
+}
+
+function skipFrame(
+  cursor: ScreenpipeCursor,
+  id: number,
+  reason: "frames_offset_unknown" | "frames_bad_timestamp" | "frames_without_text",
+): PrepareResult {
+  cursor.skipped[reason] += 1;
+  recordSkippedFrame(cursor, id);
+  return { kind: "skip" };
+}
+
+function skipTranscription(
+  cursor: ScreenpipeCursor,
+  id: number,
+  reason:
+    | "transcriptions_offset_unknown"
+    | "transcriptions_bad_timestamp"
+    | "transcriptions_bad_offset",
+): PrepareResult {
+  cursor.skipped[reason] += 1;
+  recordSkippedTranscription(cursor, id);
+  return { kind: "skip" };
 }
