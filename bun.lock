@@ -22,6 +22,12 @@
         "@kizuki/tui": "workspace:*",
       },
     },
+    "packages/connector-beeper": {
+      "name": "@kizuki/connector-beeper",
+      "dependencies": {
+        "@kizuki/core": "workspace:*",
+      },
+    },
     "packages/connector-ics": {
       "name": "@kizuki/connector-ics",
       "dependencies": {
@@ -50,6 +56,7 @@
     "packages/connectors": {
       "name": "@kizuki/connectors",
       "dependencies": {
+        "@kizuki/connector-beeper": "workspace:*",
         "@kizuki/connector-ics": "workspace:*",
         "@kizuki/connector-imap": "workspace:*",
         "@kizuki/connector-screenpipe": "workspace:*",
@@ -100,6 +107,8 @@
     "@hono/node-server": ["@hono/node-server@2.1.1", "", { "peerDependencies": { "hono": "^4" } }, "sha512-ELuehkj5VCBdgEw9zs+ivkKwyzzUCSQuE96YmiPvn1ECBoZCczbFXJLeEGMTYjphP6gydh4pHMqEYPVMYUVgQg=="],
 
     "@kizuki/cli": ["@kizuki/cli@workspace:packages/cli"],
+
+    "@kizuki/connector-beeper": ["@kizuki/connector-beeper@workspace:packages/connector-beeper"],
 
     "@kizuki/connector-ics": ["@kizuki/connector-ics@workspace:packages/connector-ics"],
 

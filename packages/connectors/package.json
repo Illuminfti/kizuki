@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@kizuki/connector-ics": "workspace:*",
+    "@kizuki/connector-beeper": "workspace:*",
     "@kizuki/connector-imap": "workspace:*",
     "@kizuki/connector-screenpipe": "workspace:*",
     "@kizuki/connector-telegram": "workspace:*",

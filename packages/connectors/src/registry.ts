@@ -14,6 +14,12 @@ import {
 } from "@kizuki/connector-ics";
 import type { IcsConnectorConfig } from "@kizuki/connector-ics";
 import {
+  BEEPER_CONNECTOR_ID,
+  BEEPER_CURSOR_SCHEMA,
+  createBeeperConnector,
+} from "@kizuki/connector-beeper";
+import type { BeeperConnectorConfig } from "@kizuki/connector-beeper";
+import {
   IMAP_CONNECTOR_ID,
   IMAP_CURSOR_SCHEMA,
   createImapConnector,
@@ -256,6 +262,20 @@ const LOCAL: ManifestOverlay = {
 };
 
 enroll(
+  BEEPER_CONNECTOR_ID,
+  ["backfill", "sync", "tombstones", "fixture"],
+  "@kizuki/connector-beeper",
+  (config) => createBeeperConnector(config as BeeperConnectorConfig),
+  {
+    contract_minor: 1,
+    implementation: "@kizuki/connector-beeper",
+    allowed_egress: ["127.0.0.1"],
+    cursor_schema: BEEPER_CURSOR_SCHEMA,
+    default_sensitivity: "private",
+    sensitivity_floor: "personal",
+  },
+);
+enroll(
   SCREENPIPE_CONNECTOR_ID,
   ["backfill", "sync", "fixture"],
   "@kizuki/connector-screenpipe",
@@ -375,6 +395,10 @@ export function listConnectorDescriptors(): readonly PortDescriptor[] {
   return defaultConnectorRegistry.list();
 }
 
+export function getConnector(
+  id: typeof BEEPER_CONNECTOR_ID,
+  config: BeeperConnectorConfig,
+): Connector;
 export function getConnector(
   id: typeof SCREENPIPE_CONNECTOR_ID,
   config: ScreenpipeConfig,

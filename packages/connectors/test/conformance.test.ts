@@ -45,6 +45,7 @@ import {
 import type { ConformanceResult } from "../src/testkit";
 import { fixtureJsonl as jsonlFixture } from "../src/import-legacy-events/fixture";
 import { encodeState } from "@kizuki/connector-telegram";
+import { BEEPER_CONNECTOR_ID, createBeeperConnector } from "@kizuki/connector-beeper";
 import type { Connector } from "@kizuki/core";
 import {
   FakeImapServer,
@@ -139,6 +140,31 @@ function batteryFor(
     path: layout.markdown,
   });
   return {
+    [BEEPER_CONNECTOR_ID]: async () => {
+      let deleted = false;
+      const beeper = createBeeperConnector(
+        { token_secret_ref: "env:KIZUKI_BEEPER_FIXTURE_TOKEN" },
+        {
+          now: () => new Date("2026-01-01T00:00:00.000Z"),
+          fetch: async () =>
+            new Response(JSON.stringify({
+              items: [{
+                id: "fixture-message", accountID: "fixture-account", chatID: "fixture-chat",
+                senderID: "fixture-sender", sortKey: "1", timestamp: "2026-01-01T00:00:00.000Z",
+                text: deleted ? "" : "fixture message", ...(deleted ? { isDeleted: true } : {}),
+              }], hasMore: false,
+            })),
+        },
+      );
+      await beeper.connect(async () => "synthetic-fixture-token");
+      return runConformance(beeper, {
+        unavailable: { connector: createBeeperConnector({ token_secret_ref: "env:MISSING" }) },
+        tombstone: {
+          prepare: async () => (await beeper.backfill(null)).cursor,
+          mutate: async () => { deleted = true; },
+        },
+      });
+    },
     [MARKDOWN_FOLDER_CONNECTOR_ID]: () =>
       runConformance(markdown, {
         unavailable: missingPath(MARKDOWN_FOLDER_CONNECTOR_ID),
