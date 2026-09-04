@@ -2,6 +2,7 @@ import { ENTITY_PAGE_TYPES } from "../contracts/page-candidate";
 import type { PageCandidate } from "../contracts/page-candidate";
 import type { CaptureEvent } from "../contracts/event";
 import type { ProposalInput } from "./proposals";
+import { namespacedSubjectId } from "./subjects";
 
 /**
  * A migration's typed page. The body is the owner's own prose carried over
@@ -30,8 +31,8 @@ export function pageCandidateProposal(
 
   const subjects: string[] = [];
   for (const subject of event.subjects) {
-    if (!subjects.includes(subject.subject_id))
-      subjects.push(subject.subject_id);
+    const namespaced = namespacedSubjectId(event.connector_id, subject.subject_id);
+    if (!subjects.includes(namespaced)) subjects.push(namespaced);
   }
 
   return {
@@ -45,5 +46,10 @@ export function pageCandidateProposal(
     subjects,
     producer: "deterministic",
     confidence: candidate.confidence,
+    ...(event.sensitivity_hint === undefined
+      ? {}
+      : { sensitivity: event.sensitivity_hint }),
+    taint: "quoted",
+    authority: "connector_evidence",
   };
 }

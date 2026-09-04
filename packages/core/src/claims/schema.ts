@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { tableExists } from "../ledger/schema";
-import { claimKey } from "./hash";
+import { canonicalizeProducer, isProducer } from "../contracts/proposal";
+import { claimKey, contentSignature } from "./hash";
 
 /** RFC 0002 §18.1 — claims-core widens durable state to schema v3. */
 export const CLAIMS_SCHEMA_VERSION = 3;
@@ -43,7 +44,7 @@ const CLAIMS_INDEXES = `
 DROP INDEX IF EXISTS claims_idempotency;
 CREATE UNIQUE INDEX claims_idempotency
   ON claims (kind, coalesce(target, ''), body_hash)
-  WHERE kind <> 'purge_review';
+  WHERE status = 'live' AND kind <> 'purge_review';
 CREATE INDEX IF NOT EXISTS claims_by_key ON claims(claim_key, status, valid_from);
 CREATE INDEX IF NOT EXISTS claims_by_status ON claims(status, created_at);
 CREATE INDEX IF NOT EXISTS claims_by_subject ON claims(subject, status);
@@ -103,12 +104,10 @@ CREATE TABLE IF NOT EXISTS proposals (
   confidence  REAL NOT NULL,
   status      TEXT NOT NULL,
   created_at  TEXT NOT NULL,
-  body_hash   TEXT NOT NULL
+  body_hash   TEXT NOT NULL,
+  content_hash TEXT NOT NULL DEFAULT ''
 ) STRICT;
 DROP INDEX IF EXISTS proposals_idempotency;
-CREATE UNIQUE INDEX proposals_idempotency
-  ON proposals (kind, coalesce(target, ''), body_hash)
-  WHERE kind <> 'purge_review';
 CREATE INDEX IF NOT EXISTS proposals_by_status
   ON proposals (status, created_at);
 `;
@@ -240,7 +239,7 @@ export function syncCompatProposals(db: Database): void {
   db.exec(`
     INSERT OR IGNORE INTO proposals
       (proposal_id, kind, target, body, frontmatter, provenance, subjects,
-       producer, confidence, status, created_at, body_hash)
+       producer, confidence, status, created_at, body_hash, content_hash)
     SELECT
       claim_id, kind, target, body, frontmatter, provenance, subjects,
       CASE producer WHEN 'model' THEN 'llm' ELSE producer END,
@@ -254,7 +253,7 @@ export function syncCompatProposals(db: Database): void {
         WHEN 'reverted' THEN 'withdrawn'
         ELSE status
       END,
-      created_at, body_hash
+      created_at, body_hash, ''
     FROM claims;
   `);
 }
@@ -303,6 +302,7 @@ export function applyClaimsV3(db: Database): void {
   db.exec(SUPPORTING_TABLES);
   convertRejections(db);
   syncCompatProposals(db);
+  applyLegacyStagingIdempotency(db);
 }
 
 function claimsSurfaceReady(db: Database): boolean {
@@ -320,10 +320,126 @@ function claimsSurfaceReady(db: Database): boolean {
   );
 }
 
+function indexSql(db: Database, name: string): string | null {
+  return (
+    db
+      .query<{ sql: string | null }, [string]>(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
+      )
+      .get(name)?.sql ?? null
+  );
+}
+
+function backfillProposalContentHash(db: Database): void {
+  const rows = db
+    .query<
+      {
+        proposal_id: string;
+        kind: string;
+        target: string | null;
+        body: string;
+        frontmatter: string;
+        subjects: string;
+        producer: string;
+        confidence: number;
+        content_hash: string;
+      },
+      []
+    >(
+      `SELECT proposal_id, kind, target, body, frontmatter, subjects,
+              producer, confidence, content_hash
+         FROM proposals
+        WHERE content_hash IS NULL OR content_hash = ''`,
+    )
+    .all();
+  const update = db.query(
+    "UPDATE proposals SET content_hash = ? WHERE proposal_id = ?",
+  );
+  for (const row of rows) {
+    let frontmatter: Record<string, unknown> = {};
+    let subjects: string[] = [];
+    try {
+      const parsed: unknown = JSON.parse(row.frontmatter);
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        frontmatter = parsed as Record<string, unknown>;
+      }
+    } catch {
+      frontmatter = {};
+    }
+    try {
+      const parsed: unknown = JSON.parse(row.subjects);
+      if (Array.isArray(parsed) && parsed.every((item) => typeof item === "string")) {
+        subjects = parsed;
+      }
+    } catch {
+      subjects = [];
+    }
+    update.run(
+      contentSignature({
+        kind: row.kind,
+        target: row.target,
+        body: row.body,
+        frontmatter,
+        subjects,
+        producer: isProducer(row.producer)
+          ? canonicalizeProducer(row.producer)
+          : row.producer,
+        confidence: row.confidence,
+      }),
+      row.proposal_id,
+    );
+  }
+}
+
+/**
+ * Pending-only content-signature idempotency for the legacy proposals
+ * projection, and live-only claims uniqueness so a withdrawn row cannot
+ * occupy the slot of later evidence.
+ */
+export function applyLegacyStagingIdempotency(db: Database): void {
+  if (!tableExists(db, "proposals")) return;
+  addColumn(db, "proposals", "content_hash TEXT NOT NULL DEFAULT ''");
+  backfillProposalContentHash(db);
+  const proposalsSql = indexSql(db, "proposals_idempotency") ?? "";
+  if (!proposalsSql.includes("content_hash") || !proposalsSql.includes("pending")) {
+    db.exec("DROP INDEX IF EXISTS proposals_idempotency");
+    db.exec(
+      `CREATE UNIQUE INDEX proposals_idempotency
+         ON proposals (content_hash)
+         WHERE status = 'pending'`,
+    );
+  }
+  if (!tableExists(db, "claims")) return;
+  const claimsSql = indexSql(db, "claims_idempotency") ?? "";
+  if (!claimsSql.includes("status = 'live'")) {
+    db.exec("DROP INDEX IF EXISTS claims_idempotency");
+    db.exec(
+      `CREATE UNIQUE INDEX claims_idempotency
+         ON claims (kind, coalesce(target, ''), body_hash)
+         WHERE status = 'live' AND kind <> 'purge_review'`,
+    );
+  }
+}
+
+function stagingIdempotencyReady(db: Database): boolean {
+  if (!tableExists(db, "proposals") || !columnNames(db, "proposals").has("content_hash")) {
+    return false;
+  }
+  const proposalsSql = indexSql(db, "proposals_idempotency") ?? "";
+  const claimsSql = indexSql(db, "claims_idempotency") ?? "";
+  return (
+    proposalsSql.includes("content_hash") &&
+    proposalsSql.includes("pending") &&
+    claimsSql.includes("status = 'live'")
+  );
+}
+
 /** Cheap no-op once v3 exists. `applyClaimsV3` stays the migration path. */
 export function initClaims(db: Database): void {
-  if (claimsSurfaceReady(db)) {
-    return;
+  if (!claimsSurfaceReady(db)) {
+    applyClaimsV3(db);
   }
-  applyClaimsV3(db);
+  if (!stagingIdempotencyReady(db)) {
+    applyLegacyStagingIdempotency(db);
+  }
 }

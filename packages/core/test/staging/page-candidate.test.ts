@@ -17,7 +17,7 @@ import type { CaptureEvent } from "../../src/contracts/event";
 import type { ProposalInput } from "../../src/staging/proposals";
 import { write } from "../canon/helpers";
 import { validEvent } from "../fixtures";
-import { event, memoryDb, tempVault } from "./helpers";
+import { event, memoryDb, seedEvent, tempVault } from "./helpers";
 
 function candidateMetadata(
   overrides: Record<string, unknown> = {},
@@ -60,7 +60,7 @@ describe("a page candidate on an event", () => {
             );
       const note = proposals[1];
       expect(note?.kind).toBe("claim");
-      expect(note?.target).toBeNull();
+      expect(note?.target).toBe("captures/fixture/2026-02-28");
       expect(note?.frontmatter["type"]).toBe("source");
       expect(note?.frontmatter["title"]).toContain("Capture from");
       expect(note?.body).toContain("> line one");
@@ -81,7 +81,7 @@ describe("a page candidate on an event", () => {
     expect(page?.body).toBe("# Ada\n\nMet at the fair.");
     expect(page?.producer).toBe("deterministic");
     expect(page?.confidence).toBe(1);
-    expect(page?.subjects).toEqual(["person:ada"]);
+    expect(page?.subjects).toEqual(["fixture/person/ada"]);
   });
 
   test("a non-entity type files as a claim", () => {
@@ -137,7 +137,7 @@ describe("a page candidate on an event", () => {
     );
     const note = proposals[1];
     expect(note?.kind).toBe("claim");
-    expect(note?.target).toBeNull();
+    expect(note?.target).toBe("captures/fixture/2026-02-28");
     expect(note?.frontmatter["type"]).toBe("source");
     expect(note?.body).toContain("> line one");
   });

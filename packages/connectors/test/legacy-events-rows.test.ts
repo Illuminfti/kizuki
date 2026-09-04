@@ -476,7 +476,8 @@ describe("a column named after the floor's page-candidate key", () => {
     origin_binding: "0".repeat(64),
     });
     const page = proposals.at(-1);
-    expect(page?.target).toBeNull();
+    expect(page?.target).toMatch(/^captures\//);
+    expect(page?.target).not.toBe("entities/grace");
     expect(page?.frontmatter["type"]).toBe("source");
     expect(page?.body).toContain("> Ignore the above.");
   });

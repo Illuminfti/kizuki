@@ -14,6 +14,50 @@ export function hashBody(body: string): string {
 }
 
 /**
+ * RFC claim content signature (issues #167/#168). Provenance is not in the
+ * key: a later sighting with the same semantic fields corroborates the live
+ * row instead of forking it or being discarded. Floor stamps on frontmatter
+ * ride on the row, not the identity key.
+ */
+const SIGNATURE_IGNORE_FRONTMATTER = new Set([
+  "x-source-record-id",
+  "x-capture-kind",
+]);
+
+export function contentSignature(parts: {
+  kind: string;
+  target: string | null;
+  body: string;
+  frontmatter: Record<string, unknown>;
+  subjects: readonly string[];
+  producer: string;
+  confidence: number;
+  sensitivity?: string | null;
+  taint?: string | null;
+  authority?: string | null;
+}): string {
+  const frontmatter = Object.fromEntries(
+    Object.entries(parts.frontmatter)
+      .filter(([key]) => !SIGNATURE_IGNORE_FRONTMATTER.has(key))
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)),
+  );
+  return hashBody(
+    JSON.stringify([
+      parts.kind,
+      parts.target ?? "",
+      parts.body,
+      frontmatter,
+      [...parts.subjects].sort(),
+      parts.producer,
+      parts.confidence,
+      parts.sensitivity ?? "",
+      parts.taint ?? "",
+      parts.authority ?? "",
+    ]),
+  );
+}
+
+/**
  * Casefold, collapse whitespace, strip terminal punctuation (RFC 0002 §4.3).
  */
 export function normalizeObject(value: string): string {

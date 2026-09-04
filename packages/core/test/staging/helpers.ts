@@ -1,22 +1,50 @@
 import { Database } from "bun:sqlite";
 import type { CaptureEvent } from "../../src/contracts/event";
-import { openLedger } from "../../src/ledger/db";
 import { accept } from "../../src/ledger/ledger";
+import { openLedger } from "../../src/ledger/db";
 import { sha256Hex } from "../../src/util/hash";
 import { initSearch } from "../../src/search/schema";
 import { initStaging } from "../../src/staging/proposals";
 import type { ProposalInput } from "../../src/staging/proposals";
 export { tempVault } from "../helpers/vault";
 
+function acceptFixture(db: Database, fixture: CaptureEvent) {
+  const {
+    event_id,
+    content_hash,
+    content_hash_version,
+    text_hash,
+    origin,
+    origin_binding_version,
+    origin_binding_kind,
+    origin_binding,
+    ...input
+  } = fixture;
+  void content_hash;
+  return accept(db, input, { generateId: () => event_id });
+}
+
+export function seedEvent(
+  db: Database,
+  ev: CaptureEvent = event(),
+): CaptureEvent {
+  const result = acceptFixture(db, ev);
+  if (result.status === "duplicate") return ev;
+  if (result.status !== "stored") {
+    throw new Error(`expected stored event, got ${result.status}`);
+  }
+  return result.event;
+}
+
 export function memoryDb(events: CaptureEvent[] = [event()]): Database {
   const db = openLedger(":memory:");
   initStaging(db);
   initSearch(db);
   for (const fixture of events) {
-    const { event_id, content_hash, content_hash_version, text_hash, origin,
-      origin_binding_version, origin_binding_kind, origin_binding, ...input } = fixture;
-    const result = accept(db, input, { generateId: () => event_id });
-    if (result.status !== "stored") throw new Error("staging event fixture was not accepted");
+    const result = acceptFixture(db, fixture);
+    if (result.status !== "stored") {
+      throw new Error("staging event fixture was not accepted");
+    }
   }
   return db;
 }

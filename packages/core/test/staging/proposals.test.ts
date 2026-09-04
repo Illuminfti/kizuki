@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { getClaim } from "../../src/claims/store";
 import {
   StagingError,
@@ -8,7 +10,7 @@ import {
   listProposals,
   setProposalStatus,
 } from "../../src/staging/proposals";
-import { memoryDb, proposalInput } from "./helpers";
+import { event, memoryDb, proposalInput, seedEvent } from "./helpers";
 
 describe("fileProposal", () => {
   test("stores a pending proposal with its body hash", () => {
@@ -126,5 +128,103 @@ describe("setProposalStatus", () => {
         "accepted" as unknown as "withdrawn",
       ),
     ).toThrow(StagingError);
+  });
+
+  test("refuses promote, reject, and transitions off a terminal row", () => {
+    const db = memoryDb();
+    const stored = fileProposal(db, proposalInput());
+    if (stored.outcome !== "stored") throw new Error("expected stored");
+    expect(() =>
+      setProposalStatus(db, stored.proposal.proposal_id, "promoted"),
+    ).toThrow(/receipt-driven/);
+    expect(() =>
+      setProposalStatus(db, stored.proposal.proposal_id, "rejected", "no"),
+    ).toThrow(/receipt-driven/);
+    setProposalStatus(db, stored.proposal.proposal_id, "withdrawn");
+    expect(() =>
+      setProposalStatus(db, stored.proposal.proposal_id, "withdrawn"),
+    ).toThrow(/cannot withdraw a withdrawn/);
+  });
+});
+
+describe("legacy staging p1 holes", () => {
+  test("same body with different frontmatter or subjects is a new row", () => {
+    const db = memoryDb();
+    expect(fileProposal(db, proposalInput()).outcome).toBe("stored");
+    expect(
+      fileProposal(db, proposalInput({ frontmatter: { type: "fact", title: "other" } }))
+        .outcome,
+    ).toBe("stored");
+    expect(
+      fileProposal(db, proposalInput({ subjects: ["person:grace"] })).outcome,
+    ).toBe("stored");
+    expect(listProposals(db)).toHaveLength(3);
+  });
+
+  test("new provenance corroborates a pending row instead of discarding it", () => {
+    const db = memoryDb();
+    const later = event({
+      event_id: "01ARZ3NDEKTSV4RRFFQ69G5FB2",
+      source_record_id: "rec-later",
+    });
+    seedEvent(db, later);
+    const first = fileProposal(db, proposalInput());
+    const second = fileProposal(
+      db,
+      proposalInput({ provenance: [later.event_id] }),
+    );
+    expect(first.outcome).toBe("stored");
+    expect(second.outcome).toBe("duplicate");
+    if (first.outcome !== "stored" || second.outcome !== "duplicate") return;
+    expect(second.proposal.proposal_id).toBe(first.proposal.proposal_id);
+    expect(second.proposal.provenance).toEqual([
+      "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      later.event_id,
+    ]);
+    expect(getClaim(db, first.proposal.proposal_id)?.corroboration).toBe(2);
+  });
+
+  test("a withdrawn row does not block the same evidence later", () => {
+    const db = memoryDb();
+    const first = fileProposal(db, proposalInput());
+    if (first.outcome !== "stored") throw new Error("expected stored");
+    setProposalStatus(db, first.proposal.proposal_id, "withdrawn");
+    const again = fileProposal(db, proposalInput());
+    expect(again.outcome).toBe("stored");
+    if (again.outcome !== "stored") return;
+    expect(again.proposal.proposal_id).not.toBe(first.proposal.proposal_id);
+    expect(again.proposal.status).toBe("pending");
+    expect(getClaim(db, again.proposal.proposal_id)?.status).toBe("live");
+  });
+
+  test("rejects a non-string target, unknown frontmatter, and missing events", () => {
+    const db = memoryDb();
+    expect(() =>
+      fileProposal(
+        db,
+        proposalInput({ target: 12 as unknown as string }),
+      ),
+    ).toThrow(/target/);
+    expect(() =>
+      fileProposal(
+        db,
+        proposalInput({ frontmatter: { type: "fact", title: "x", secret: true } }),
+      ),
+    ).toThrow(/x-/);
+    expect(() =>
+      fileProposal(
+        db,
+        proposalInput({ provenance: ["01ARZ3NDEKTSV4RRFFQ69G5FFF"] }),
+      ),
+    ).toThrow(/do not resolve/);
+  });
+
+  test("fileProposal has no public suppression bypass", () => {
+    expect(fileProposal.length).toBe(2);
+    const source = readFileSync(
+      join(import.meta.dir, "../../src/staging/proposals.ts"),
+      "utf8",
+    );
+    expect(source).not.toContain("bypassSuppression");
   });
 });
