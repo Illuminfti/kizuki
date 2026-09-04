@@ -607,31 +607,33 @@ describe("restoreVault", () => {
   });
 
   test("refuses a backup that plants the control directory", () => {
-    const { db, vaultPath } = populated();
-    const backup = join(temporary("kizuki-export-parent-"), "dump");
-    const manifest = exportVault(db, vaultPath, backup);
-    const planted = join(backup, "vault", ".kizuki", "vault-id");
-    mkdirSync(join(backup, "vault", ".kizuki"), { recursive: true, mode: 0o700 });
-    writeFileSync(planted, "01plantedvaultid000000000001\n");
-    chmodSync(planted, 0o600);
-    const bytes = readFileSync(planted);
-    writeSignedManifest(backup, {
-      ...manifest,
-      files: {
-        ...manifest.files,
-        "vault/.kizuki/vault-id": {
-          count: 1,
-          sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex"),
-          size: bytes.byteLength,
-          mode: 0o600,
+    for (const plantedName of [".kizuki", ".Kizuki"] as const) {
+      const { db, vaultPath } = populated();
+      const backup = join(temporary("kizuki-export-parent-"), "dump");
+      const manifest = exportVault(db, vaultPath, backup);
+      const planted = join(backup, "vault", plantedName, "vault-id");
+      mkdirSync(join(backup, "vault", plantedName), { recursive: true, mode: 0o700 });
+      writeFileSync(planted, "01plantedvaultid000000000001\n");
+      chmodSync(planted, 0o600);
+      const bytes = readFileSync(planted);
+      writeSignedManifest(backup, {
+        ...manifest,
+        files: {
+          ...manifest.files,
+          [`vault/${plantedName}/vault-id`]: {
+            count: 1,
+            sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex"),
+            size: bytes.byteLength,
+            mode: 0o600,
+          },
         },
-      },
-    });
-    const target = join(temporary("kizuki-restore-parent-"), "vault");
-    expect(() => verifyBackup(backup)).toThrow(/control directory/);
-    expect(() => restoreVault(backup, target)).toThrow(/control directory/);
-    expect(existsSync(join(target, ".kizuki"))).toBe(false);
-    db.close();
+      });
+      const target = join(temporary("kizuki-restore-parent-"), "vault");
+      expect(() => verifyBackup(backup)).toThrow(/control directory/);
+      expect(() => restoreVault(backup, target)).toThrow(/control directory/);
+      expect(existsSync(join(target, ".kizuki"))).toBe(false);
+      db.close();
+    }
   });
 
   test("refuses a vault path that would escape the restore target", () => {

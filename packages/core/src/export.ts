@@ -380,12 +380,16 @@ function installStaging(staging: string, destination: string): void {
   renameSync(staging, destination);
 }
 
+function isControlDir(name: string): boolean {
+  return name.toLowerCase() === CONTROL_DIR;
+}
+
 function vaultFiles(directory: string): string[] {
   const files: string[] = [];
   for (const entry of readdirSync(directory, { withFileTypes: true }).sort(
     (left, right) => compareCodeUnits(left.name, right.name),
   )) {
-    if (entry.name === CONTROL_DIR || entry.isSymbolicLink()) continue;
+    if (isControlDir(entry.name) || entry.isSymbolicLink()) continue;
     const path = join(directory, entry.name);
     if (entry.isDirectory()) files.push(...vaultFiles(path));
     else if (entry.isFile()) files.push(path);
@@ -1018,7 +1022,7 @@ function verifyFiles(root: string, manifest: ExportManifest): void {
     const entry = manifest.files[key];
     if (entry === undefined) continue;
     const parts = splitBackupPath(key);
-    if (parts[0] === "vault" && parts.includes(CONTROL_DIR)) {
+    if (parts[0] === "vault" && parts.some(isControlDir)) {
       throw new Error(`backup must not include the control directory: ${key}`);
     }
     const path = pathUnder(root, parts);
