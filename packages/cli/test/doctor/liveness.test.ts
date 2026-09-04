@@ -153,11 +153,15 @@ describe("doctor liveness", () => {
 
     const doctor = runCli(setup.env, "doctor", "--json");
     expect(doctor.exitCode).toBe(0);
-    const report = JSON.parse(doctor.stdout) as {
-      ok: boolean;
-      problems: { page: string; error: string }[];
-      serve: { ok: boolean };
-    };
+    const report = (
+      JSON.parse(doctor.stdout) as {
+        data: {
+          ok: boolean;
+          problems: { page: string; error: string }[];
+          serve: { ok: boolean };
+        };
+      }
+    ).data;
     expect(report.ok).toBe(true);
     expect(report.serve.ok).toBe(true);
     expect(
@@ -176,9 +180,11 @@ describe("doctor liveness", () => {
     );
     expect(masked.exitCode).toBe(1);
     expect(masked.stdout).toContain("masked");
-    const maskedReport = JSON.parse(masked.stdout) as {
-      problems: { page: string; error: string }[];
-    };
+    const maskedReport = (
+      JSON.parse(masked.stdout) as {
+        data: { problems: { page: string; error: string }[] };
+      }
+    ).data;
     expect(
       maskedReport.problems.filter((problem) =>
         problem.page.startsWith("dashboards/brief-"),

@@ -85,13 +85,13 @@ async function dispatch(argv: string[]): Promise<number> {
 }
 
 try {
-  process.exitCode = await dispatch(Bun.argv.slice(2));
+  process.exit(await dispatch(Bun.argv.slice(2)));
 } catch (error) {
   if (error instanceof UsageError) {
     process.stderr.write("usage: kizuki <verb> [options]\n");
-    process.exitCode = 2;
+    process.exit(2);
   } else {
     process.stderr.write(`error: ${errorText(error)}\n`);
-    process.exitCode = 1;
+    process.exit(1);
   }
 }

@@ -14,6 +14,19 @@ const { cleanup, runCli, tempVault, writeNotes } = createHelpers();
 afterEach(cleanup);
 
 describe("connect", () => {
+  test("sign-in connectors are not enrollable", () => {
+    const setup = tempVault();
+    const result = runCli(
+      setup.env,
+      "connect",
+      "telegram",
+      "--source",
+      setup.notes,
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("not enrollable through this CLI");
+  });
+
   test("unknown connector lists known ids", () => {
     const setup = tempVault();
     const result = runCli(
@@ -26,6 +39,7 @@ describe("connect", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("unknown connector: not-a-connector");
     expect(result.stderr).toContain("kizuki.markdown-folder");
+    expect(result.stderr).not.toContain("kizuki.telegram");
   });
 
   test("missing directory persists nothing", () => {

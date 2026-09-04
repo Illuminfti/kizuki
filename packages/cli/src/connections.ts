@@ -83,12 +83,43 @@ export function decodeHostState(
   };
 }
 
-export function resolveConnectorId(input: string): string {
+function connectorAuthModes(id: string): readonly string[] | null {
+  for (const config of [{}, { path: "/var/empty" }] as const) {
+    try {
+      return getConnector(id, config).manifest().auth_modes;
+    } catch {
+      // Try the next shape; a constructor that cannot even emit a
+      // manifest is not a CLI enrollment path.
+    }
+  }
+  return null;
+}
+
+export function listEnrollableConnectorIds(): string[] {
+  return Object.keys(REGISTRY)
+    .sort()
+    .filter((id) => connectorAuthModes(id)?.includes("none") === true);
+}
+
+function resolveRegisteredId(input: string): string | null {
   if (input in REGISTRY) return input;
   const prefixed = `kizuki.${input}`;
   if (prefixed in REGISTRY) return prefixed;
-  const known = Object.keys(REGISTRY).sort().join(", ");
-  throw new ConnectionError(`unknown connector: ${input}; known: ${known}`);
+  return null;
+}
+
+export function resolveConnectorId(input: string): string {
+  const registered = resolveRegisteredId(input);
+  const enrollable = listEnrollableConnectorIds();
+  if (registered !== null && enrollable.includes(registered)) return registered;
+  if (registered !== null) {
+    throw new ConnectionError(
+      `sign-in for ${registered} is not enrollable through this CLI`,
+    );
+  }
+  throw new ConnectionError(
+    `unknown connector: ${input}; known: ${enrollable.join(", ")}`,
+  );
 }
 
 export async function enrollHostConnection(
@@ -97,6 +128,10 @@ export async function enrollHostConnection(
   connectorId: string,
   state: HostConnectionState,
 ): Promise<Connection> {
+  if (state.connector_id !== connectorId) {
+    throw new ConnectionError("connection state connector_id does not match");
+  }
+  decodeHostState(encodeHostState(state), connectorId);
   store.recover(db);
   const enrollment = store.begin();
   try {

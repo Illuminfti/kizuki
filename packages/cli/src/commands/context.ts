@@ -7,7 +7,7 @@ import {
 import type { PacketPurpose } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
 import { withVault } from "../context";
-import { jsonLine } from "../output";
+import { jsonEnvelope } from "../output";
 import type { CliIo, Command } from "./index";
 
 function parseBudget(raw: string): number {
@@ -49,7 +49,7 @@ export const contextCommand: Command = {
         },
       );
       if (parsed.flags.has("--json")) {
-        io.out(jsonLine(envelope));
+        io.out(jsonEnvelope("context", "ok", envelope));
         return 0;
       }
       io.out(envelope.data?.packet_md ?? "KIZUKI CONTEXT v1");

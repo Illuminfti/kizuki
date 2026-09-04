@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  accept,
   indexPage,
   initSearch,
   openLedger,
@@ -152,9 +153,78 @@ describe("query", () => {
 
     const result = runCli(setup.env, "query", "acme", "--json");
     expect(result.exitCode).toBe(0);
-    const hit = JSON.parse(result.stdout.trim()) as SearchHit;
-    expect(hit.scope).toBe("canon");
-    expect(hit.doc_id).toBeDefined();
-    expect(hit.snippet).toContain("acme");
+    const envelope = JSON.parse(result.stdout.trim()) as {
+      schema: string;
+      data: { hits: SearchHit[] };
+    };
+    expect(envelope.schema).toBe("kizuki.cli.query/v1");
+    const hit = envelope.data.hits[0];
+    expect(hit?.scope).toBe("canon");
+    expect(hit?.doc_id).toBeDefined();
+    expect(hit?.snippet).toContain("acme");
+  });
+
+  test("query refuses when canon receipts drift without a derived refresh", () => {
+    const setup = tempVault();
+    seedCanonPage(setup, {
+      id: "fact:receipt-drift",
+      relPath: "facts/receipt-drift.md",
+      body: "receiptdriftword",
+    });
+    expect(runCli(setup.env, "query", "receiptdriftword").exitCode).toBe(0);
+
+    const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+    try {
+      db.query(
+        `INSERT INTO canon_receipts (
+           receipt_id, claim_ids, provenance, sensitivity, page_path, kind,
+           after_hash, at, receipt_kind, page_action, writer, producer,
+           authority, confidence, taint, candidates, superseded, retrieval_ops
+         ) VALUES (?, '[]', '[]', 'personal', ?, 'claim',
+           'aaa', '2026-09-01T00:00:00Z', 'write', 'create', 'import',
+           'deterministic', 'connector_evidence', 1.0, 'quoted', '[]', '[]', '[]')`,
+      ).run("01RECEIPTDRIFT000000000001", "facts/receipt-drift.md");
+    } finally {
+      db.close();
+    }
+
+    const refused = runCli(setup.env, "query", "receiptdriftword");
+    expect(refused.exitCode).toBe(1);
+    expect(refused.stderr).toContain("index-behind-receipts");
+
+    const degraded = runCli(setup.env, "query", "receiptdriftword", "--degraded");
+    expect(degraded.exitCode).toBe(0);
+    expect(degraded.stderr).toContain("index-behind-receipts");
+  });
+
+  test("query refuses a stale index unless --degraded is set", () => {
+    const setup = tempVault();
+    const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+    try {
+      const accepted = accept(db, {
+        schema: "kizuki.event/v1",
+        connector_id: "fixture",
+        source_record_id: "stale-1",
+        kind: "message",
+        occurred_at: "2026-09-01T00:00:00Z",
+        observed_at: "2026-09-01T00:00:00Z",
+        text: "staleindexword",
+        subjects: [],
+        deleted: false,
+        attachments: [],
+        metadata: {},
+      });
+      expect(accepted.status).toBe("stored");
+    } finally {
+      db.close();
+    }
+
+    const refused = runCli(setup.env, "query", "staleindexword");
+    expect(refused.exitCode).toBe(1);
+    expect(refused.stderr).toContain("search index is stale");
+
+    const degraded = runCli(setup.env, "query", "staleindexword", "--degraded");
+    expect(degraded.exitCode).toBe(0);
+    expect(degraded.stderr).toContain("degraded=");
   });
 });

@@ -1,6 +1,7 @@
 import { UndoError, undoReceipt } from "@kizuki/core";
 import { UsageError, parseArguments, requirePositional } from "../args";
 import { withVault } from "../context";
+import { tryRefreshDerived } from "../derived";
 import type { CliIo, Command } from "./index";
 
 export const undoCommand: Command = {
@@ -24,6 +25,8 @@ export const undoCommand: Command = {
         io.out(`page_path=${revert.page_path}`);
         io.out(`before_hash=${revert.before_hash ?? ""}`);
         io.out(`after_hash=${revert.after_hash}`);
+        const derived = tryRefreshDerived(ctx.db, ctx.vaultPath);
+        for (const warning of derived.degraded) io.err(`degraded: ${warning}`);
         return 0;
       } catch (error) {
         if (error instanceof UndoError) {

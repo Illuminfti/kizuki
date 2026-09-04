@@ -17,7 +17,11 @@ const GROUPS: readonly { title: string; names: readonly string[] }[] = [
 const EXAMPLES: Readonly<Record<string, readonly string[]>> = {
   init: [`${INVOCATION} init ./vault`],
   import: [`${INVOCATION} import markdown-folder --source ./notes`],
-  query: [`${INVOCATION} query acme`, `${INVOCATION} query acme --scope canon`],
+  query: [
+    `${INVOCATION} query acme`,
+    `${INVOCATION} query acme --scope canon`,
+    `${INVOCATION} query acme --degraded`,
+  ],
   doctor: [`${INVOCATION} doctor`, `${INVOCATION} doctor --json`],
   connect: [`${INVOCATION} connect markdown-folder --source ./notes`],
   backfill: [`${INVOCATION} backfill markdown-folder`],
@@ -84,9 +88,7 @@ export function printRootHelp(
   write(`  ${INVOCATION} query acme`);
   write(`  ${INVOCATION} doctor`);
   write("");
-  write(
-    "Sign-in sources (Telegram, IMAP) are registered but not enrollable through this CLI yet.",
-  );
+  write("connect enrolls none-mode file sources only.");
   write(
     `${RETIRED_OWNER_GATE_VERBS.join(", ")} are retired. Use audit, undo, and tell.`,
   );
