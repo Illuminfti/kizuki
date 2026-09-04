@@ -418,7 +418,42 @@ describe("opaque state identity, bounds, and recovery", () => {
     db.close();
   });
 
-  test("a malformed journal is quarantined so other recoveries continue", async () => {
+  test("a malformed journal holds its source and does not block the others", async () => {
+    const directory = temporary();
+    const db = openLedger(":memory:");
+    const store = new ConnectionStateStore(directory);
+    const first = await enrollConnection(
+      db,
+      store,
+      connector(async (_io, state) => {
+        await state.write(new TextEncoder().encode("kept"));
+        return { display: "ada" };
+      }),
+      io,
+    );
+    const second = await enrollConnection(
+      db,
+      store,
+      connector(async (_io, state) => {
+        await state.write(new TextEncoder().encode("other"));
+        return { display: "grace" };
+      }),
+      io,
+    );
+    writeFileSync(
+      join(store.directory, `${first.source_key}.state.01ARZ3NDEKTSV4RRFFQ69G5FAV.journal`),
+      "not-json",
+      { mode: 0o600 },
+    );
+    const report = store.recover(db);
+    expect(report.unresolved).toHaveLength(1);
+    expect(report.quarantined).toEqual([]);
+    expect(() => store.read(first)).toThrow("unresolved");
+    expect(new TextDecoder().decode(store.read(second) ?? new Uint8Array())).toBe("other");
+    db.close();
+  });
+
+  test("a committed hash mismatch keeps the journal so read stays refused", async () => {
     const directory = temporary();
     const db = openLedger(":memory:");
     const store = new ConnectionStateStore(directory);
@@ -433,12 +468,22 @@ describe("opaque state identity, bounds, and recovery", () => {
     );
     writeFileSync(
       join(store.directory, `${saved.source_key}.state.01ARZ3NDEKTSV4RRFFQ69G5FAV.journal`),
-      "not-json",
+      JSON.stringify({
+        schema: "kizuki.connection-state-swap/v1",
+        connector_id: saved.connector_id,
+        source_key: saved.source_key,
+        connected_at: saved.connected_at,
+        final_name: `${saved.source_key}.state`,
+        backup_name: null,
+        final_sha256: "0".repeat(64),
+        final_bytes: 4,
+      }),
       { mode: 0o600 },
     );
     const report = store.recover(db);
-    expect(report.quarantined.length).toBe(1);
-    expect(new TextDecoder().decode(store.read(saved) ?? new Uint8Array())).toBe("kept");
+    expect(report.unresolved).toHaveLength(1);
+    expect(report.quarantined).toEqual([]);
+    expect(() => store.read(saved)).toThrow("unresolved");
     db.close();
   });
 

@@ -210,6 +210,37 @@ describe("runBatch", () => {
     expect(retried.errors).toEqual([]);
     db.close();
   });
+
+  test("a cascade failure does not skip later events in the batch", () => {
+    const db = database();
+    runBatch(db, { events: [validEvent()], cursor: "one" }, NOTHING);
+    db.exec(`
+      CREATE TRIGGER fail_withdraw
+      BEFORE UPDATE OF status ON proposals
+      WHEN NEW.status = 'withdrawn'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced cascade failure');
+      END
+    `);
+    const result = runBatch(
+      db,
+      {
+        events: [
+          { ...validEvent(), deleted: true, text: "" },
+          { ...validEvent(), source_record_id: "rec-2" },
+        ],
+        cursor: "two",
+      },
+      NOTHING,
+    );
+    expect(result.errors).toEqual(["forced cascade failure"]);
+    expect(result.stored).toBe(1);
+    expect(
+      db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM events").get()
+        ?.count,
+    ).toBe(2);
+    db.close();
+  });
 });
 
 describe("connector runs", () => {

@@ -32,6 +32,9 @@ const CORE_ULID_PATTERN = "[0-9A-HJKMNPQRSTVWXYZ]{26}";
 const STAGING_NAME = new RegExp(
   `^${CORE_ULID_PATTERN}\\.state\\.${CORE_ULID_PATTERN}\\.tmp$`,
 );
+const JOURNAL_NAME = new RegExp(
+  `^(${CORE_ULID_PATTERN})\\.state\\.${CORE_ULID_PATTERN}\\.journal$`,
+);
 /**
  * A staging file younger than this may belong to a writer another process is
  * running right now; only an older one is certainly the debris of a crash.
@@ -44,6 +47,24 @@ const CORE_ULID = new RegExp(`^${CORE_ULID_PATTERN}$`);
 
 export function isCoreUlid(value: string): boolean {
   return CORE_ULID.test(value);
+}
+
+/** Source key a swap journal filename locks, or null when it cannot bind one. */
+export function journalSourceKey(name: string): string | null {
+  return JOURNAL_NAME.exec(name)?.[1] ?? null;
+}
+
+/** Journal witnesses for this source in the store or its quarantine. */
+export function sourceJournalNames(directory: string, sourceKey: string): string[] {
+  const prefix = `${sourceKey}.state.`;
+  const match = (name: string): boolean =>
+    name.startsWith(prefix) && name.endsWith(".journal");
+  const found = readdirSync(directory).filter(match);
+  const quarantine = join(directory, "quarantine");
+  if (existsSync(quarantine)) {
+    found.push(...readdirSync(quarantine).filter(match));
+  }
+  return found;
 }
 
 export function stateRefFor(sourceKey: string): string {

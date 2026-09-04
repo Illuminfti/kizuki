@@ -160,7 +160,7 @@ export function runBatch(
       result.retractions_filed += event.retractions_filed;
     } catch (error) {
       result.errors.push(errorText(error));
-      return result;
+      if (error instanceof InfrastructureError) return result;
     }
   }
 

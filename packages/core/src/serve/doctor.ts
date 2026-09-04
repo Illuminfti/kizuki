@@ -362,6 +362,9 @@ export function inspectServeDoctor(
   }
   try {
     const recovery = new ConnectionStateStore(join(vaultPath, ".kizuki")).recover(db);
+    if (recovery.unresolved.length > 0) {
+      failures.push(`connection state journals unresolved ${recovery.unresolved.length}`);
+    }
     if (recovery.quarantined.length > 0) {
       failures.push(`connection state journals quarantined ${recovery.quarantined.length}`);
     }

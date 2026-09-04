@@ -25,6 +25,8 @@ import {
   connectionStatePath,
   fsyncDirectory,
   isCoreUlid,
+  journalSourceKey,
+  sourceJournalNames,
   restoreStateFile,
   stateRefFor,
   swapStateFile,
@@ -72,6 +74,7 @@ interface PendingState {
 
 export interface StateRecoveryReport {
   repaired: number;
+  unresolved: string[];
   quarantined: string[];
   swept: boolean;
 }
@@ -176,6 +179,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
   recover(db: Database): StateRecoveryReport {
     const report: StateRecoveryReport = {
       repaired: 0,
+      unresolved: [],
       quarantined: [],
       swept: false,
     };
@@ -188,6 +192,10 @@ export class ConnectionStateStore implements ConnectionStateReader {
           repairSwap(db, this.directory, name);
           report.repaired += 1;
         } catch {
+          if (journalSourceKey(name) !== null) {
+            report.unresolved.push(name);
+            continue;
+          }
           try {
             report.quarantined.push(quarantineJournal(this.directory, name));
           } catch {
@@ -325,12 +333,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
     if (ref === undefined) {
       throw new LedgerError("connection has no state reference");
     }
-    const unresolved = readdirSync(this.directory).filter(
-      (name) =>
-        name.endsWith(".journal") &&
-        name.startsWith(`${connection.source_key}.state.`),
-    );
-    if (unresolved.length > 0) {
+    if (sourceJournalNames(this.directory, connection.source_key).length > 0) {
       throw new LedgerError("connection state journal is unresolved");
     }
     const path = connectionStatePath(this.directory, ref);
