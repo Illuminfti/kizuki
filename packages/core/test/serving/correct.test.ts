@@ -309,11 +309,15 @@ describe("serveCorrect retires what the owner says is wrong", () => {
       "agent:reader-private",
     );
     expect(relayed.data?.answer).toContain("Relayed by reader-private");
+    const hashed = (value: string) => ({
+      len: value.length,
+      sha256: new Bun.CryptoHasher("sha256").update(value).digest("hex"),
+    });
     expect(
       listAudit(live.db, "reader-private", { limit: 1 })[0]?.query_shape[
         "claim_ids"
       ],
-    ).toEqual([relayed.data?.claim_id as string, wrong]);
+    ).toEqual([hashed(relayed.data?.claim_id as string), hashed(wrong)]);
 
     // The claim a low-ceiling agent may not read is one it may not retire.
     const other = await fileClaim(

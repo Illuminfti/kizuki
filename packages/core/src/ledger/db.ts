@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { applyAgentsV9 } from "../agents/schema";
 import { applyCanonV4 } from "../canon/schema";
 import { applyClaimsV3 } from "../claims/schema";
 import { applyServeV7 } from "../serve/schema";
@@ -153,6 +154,10 @@ const MIGRATIONS: readonly Migration[] = [
   {
     version: 8,
     apply: applyConnectionsV8,
+  },
+  {
+    version: 9,
+    apply: applyAgentsV9,
   },
 ];
 

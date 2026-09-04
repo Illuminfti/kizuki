@@ -1,5 +1,9 @@
 export {
+  AGENT_SCHEMA_VERSION,
   DEFAULT_GRANT,
+  LIFECYCLE_ACTIONS,
+  MAX_AUDIT_PAGE,
+  MAX_RATE_LIMIT_PER_MINUTE,
   OWNER,
   OWNER_AGENT_GRANT,
   SENSITIVITY_ORDER,
@@ -8,23 +12,29 @@ export {
 } from "./types";
 export type {
   Agent,
+  AgentFinding,
   AuditDenial,
   AuditItem,
+  AuditPage,
   AuditRow,
   DenyReason,
   Grant,
+  LifecycleAction,
   Principal,
   Sensitivity,
   Servable,
   Tool,
 } from "./types";
 
-export { initAgents } from "./schema";
+export { applyAgentsV9, initAgents } from "./schema";
 export {
   addAgent,
   authenticate,
+  countAgents,
   getAgent,
   listAgents,
+  listQuarantinedAgents,
+  resolvePrincipal,
   revokeAgent,
   rotateToken,
   setGrant,
@@ -39,7 +49,9 @@ export {
 export {
   checkRate,
   listAudit,
+  listAuditPage,
   recordAudit,
+  reserveAudit,
   shapeArguments,
   updateAudit,
 } from "./audit";

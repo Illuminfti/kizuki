@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { applyCanonV4, initCanon } from "../src/canon/schema";
 import { getCanonReceipt } from "../src/canon/receipts";
 import { applyClaimsV3, initClaims } from "../src/claims/schema";
+import { applyConnectionsV8 } from "../src/ledger/connections-schema";
 import { openLedger } from "../src/ledger/db";
 import { accept, count } from "../src/ledger/ledger";
 import { validEvent } from "./fixtures";
@@ -308,7 +309,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(8);
+      expect(schemaVersion(upgraded)).toBe(9);
       const tables = upgraded
         .query<{ name: string }, []>(
           "SELECT name FROM sqlite_master WHERE type = 'table'",
@@ -329,6 +330,9 @@ describe("openLedger migrations", () => {
         "leases",
         "budget_ledger",
         "connection_runs",
+        "agents",
+        "agent_grants",
+        "agent_audit",
       ]));
       expect(tables).not.toContain("rejections");
       expect(tables).not.toContain("promotions");
@@ -438,7 +442,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(8);
+      expect(schemaVersion(upgraded)).toBe(9);
       const receipts = upgraded
         .query<
           {
@@ -564,8 +568,8 @@ describe("openLedger migrations", () => {
       legacy.close();
       const upgraded = openLedger(path);
       expect(columns(upgraded, "canon_receipts")).toEqual(freshColumns);
-      expect(schemaVersion(fresh)).toBe(8);
-      expect(schemaVersion(upgraded)).toBe(8);
+      expect(schemaVersion(fresh)).toBe(9);
+      expect(schemaVersion(upgraded)).toBe(9);
       expect(columns(fresh, "connector_sensitivity")).toEqual([
         "at",
         "connector_id",
@@ -603,7 +607,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(8);
+      expect(schemaVersion(upgraded)).toBe(9);
       expect(
         upgraded
           .query<{ name: string }, []>(
@@ -627,6 +631,115 @@ describe("openLedger migrations", () => {
         "state",
         "store",
       ]);
+      upgraded.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("v7 leftover agent rows persist through v9 and fail closed", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-ledger-v7-agents-"));
+    const path = join(directory, "ledger.sqlite");
+    try {
+      const legacy = new Database(path);
+      legacy.exec(V2_SCHEMA);
+      applyClaimsV3(legacy);
+      applyCanonV4(legacy);
+      legacy.exec("UPDATE schema_version SET version = 7");
+      legacy.exec(`
+        CREATE TABLE agents (
+          agent_id TEXT PRIMARY KEY,
+          name TEXT NOT NULL UNIQUE,
+          token_hash TEXT NOT NULL UNIQUE,
+          created_at TEXT NOT NULL,
+          revoked_at TEXT
+        ) STRICT;
+        CREATE TABLE agent_grants (
+          agent_id TEXT PRIMARY KEY REFERENCES agents(agent_id),
+          ceiling TEXT NOT NULL,
+          types TEXT,
+          subjects TEXT,
+          since TEXT,
+          until TEXT,
+          tools TEXT NOT NULL,
+          rate_limit_per_minute INTEGER NOT NULL,
+          updated_at TEXT NOT NULL
+        ) STRICT;
+        INSERT INTO agents VALUES (
+          '01AGENT0000000000000000001',
+          'legacy-reader',
+          '${"ab".repeat(32)}',
+          '2026-01-01T00:00:00.000Z',
+          NULL
+        );
+        INSERT INTO agent_grants VALUES (
+          '01AGENT0000000000000000001',
+          'personal',
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          '["search"]',
+          60,
+          '2026-01-01T00:00:00.000Z'
+        );
+      `);
+      expect(
+        legacy
+          .query<{ name: string }, []>(
+            "SELECT name FROM pragma_table_info('agent_grants')",
+          )
+          .all()
+          .some(({ name }) => name === "grant_epoch"),
+      ).toBe(false);
+      legacy.close();
+
+      const upgraded = openLedger(path);
+      expect(schemaVersion(upgraded)).toBe(9);
+      const grant = upgraded
+        .query<
+          { relay_owner_corrections: number; grant_epoch: number },
+          []
+        >(
+          `SELECT relay_owner_corrections, grant_epoch FROM agent_grants
+            WHERE agent_id = '01AGENT0000000000000000001'`,
+        )
+        .get();
+      expect(grant).toEqual({ relay_owner_corrections: 0, grant_epoch: 1 });
+      upgraded.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("v8 connection databases gain agent tables at schema v9", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-ledger-v8-agents-"));
+    const path = join(directory, "ledger.sqlite");
+    try {
+      const leftover = new Database(path);
+      leftover.exec(V2_SCHEMA);
+      applyClaimsV3(leftover);
+      applyCanonV4(leftover);
+      applyConnectionsV8(leftover);
+      leftover.exec("UPDATE schema_version SET version = 8");
+      leftover.close();
+
+      const upgraded = openLedger(path);
+      expect(schemaVersion(upgraded)).toBe(9);
+      const tables = upgraded
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type = 'table'",
+        )
+        .all()
+        .map(({ name }) => name);
+      expect(tables).toEqual(
+        expect.arrayContaining([
+          "connection_runs",
+          "agents",
+          "agent_grants",
+          "agent_audit",
+        ]),
+      );
       upgraded.close();
     } finally {
       rmSync(directory, { recursive: true, force: true });
