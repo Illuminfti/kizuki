@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { accept, insertClaim, openLedger } from "@kizuki/core";
 import type { CaptureEventInput } from "@kizuki/core";
 import {
@@ -9,6 +9,7 @@ import {
 } from "../../../llm/test/fake-endpoint";
 import type { FakeEndpoint } from "../../../llm/test/fake-endpoint";
 import { createHelpers } from "../helpers";
+import type { CliResult } from "../helpers";
 
 /**
  * RFC 0002 §12.1 / docs/deploy-box-tailscale.md M4. Drives `kizuki serve`,
@@ -23,10 +24,55 @@ import { createHelpers } from "../helpers";
  * seeded through `kizuki import`. These fixtures seed one ledger event with
  * a real subject directly through `accept()`, the same pattern
  * `test/audit-undo.test.ts` already uses to drive `audit`/`undo` — the CLI
- * verb under test still runs only through `runCli`.
+ * verb under test still runs only through `runCli`/`runCliLive`.
+ *
+ * Every call below that must reach the in-process fake endpoint uses
+ * `runCliLive`, not `../helpers`' `runCli`. `runCli` shells out with
+ * `Bun.spawnSync`, which blocks this test file's own event loop — the same
+ * loop `startFakeEndpoint`'s `Bun.serve` needs to answer the child's
+ * request. Proven empirically (a standalone repro script, not committed):
+ * with `spawnSync` the child never got a response and hit its model
+ * deadline every time; switching only the spawn call to the async
+ * `Bun.spawn` below, with no other change, let the fake endpoint's handler
+ * run while the child waited, and the exact same request completed in
+ * under a second. `runCli` still drives the calls that need no live
+ * endpoint (4.1, 4.5, and the post-extraction `doctor`/`audit`/`undo` reads).
  */
 
 const { cleanup, runCli, tempVault } = createHelpers();
+
+const CLI_MAIN = resolve(import.meta.dir, "../../src/main.ts");
+
+async function runCliLive(
+  env: Record<string, string | undefined>,
+  ...args: string[]
+): Promise<CliResult> {
+  const spawnEnv: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (
+      value !== undefined &&
+      key !== "KIZUKI_CONFIG" &&
+      key !== "KIZUKI_VAULT" &&
+      key !== "XDG_CONFIG_HOME"
+    ) {
+      spawnEnv[key] = value;
+    }
+  }
+  for (const [key, value] of Object.entries(env)) {
+    if (value !== undefined) spawnEnv[key] = value;
+  }
+  const proc = Bun.spawn([process.execPath, CLI_MAIN, ...args], {
+    env: spawnEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  return { exitCode, stdout, stderr };
+}
 
 let endpoint: FakeEndpoint | null = null;
 
@@ -229,7 +275,7 @@ describe("kizuki serve model wiring (M4)", () => {
     });
     const env = { ...setup.env, [MODEL_KEY_ENV]: MODEL_KEY_VALUE };
 
-    const once = runCli(env, "serve", "--once", "--no-http", "--json");
+    const once = await runCliLive(env, "serve", "--once", "--no-http", "--json");
     expect(once.exitCode).toBe(0);
 
     const expectedModelRef = `kizuki.llm.openai-compatible:test-model@127.0.0.1`;
@@ -303,7 +349,7 @@ describe("kizuki serve model wiring (M4)", () => {
     );
     const env = { ...setup.env, [MODEL_KEY_ENV]: MODEL_KEY_VALUE };
 
-    const result = runCli(env, "serve", "run", "sync", "--json");
+    const result = await runCliLive(env, "serve", "run", "sync", "--json");
     expect(result.exitCode).toBe(0);
     const receipt = data<{ canon_writes: number; stopped: string | null; status: string }>(
       result.stdout,
@@ -335,7 +381,7 @@ describe("kizuki serve model wiring (M4)", () => {
     });
     const env = { ...setup.env, [MODEL_KEY_ENV]: MODEL_KEY_VALUE };
 
-    const down = runCli(env, "serve", "run", "sync", "--json");
+    const down = await runCliLive(env, "serve", "run", "sync", "--json");
     expect(down.exitCode).toBe(0);
     const downReceipt = data<{ canon_writes: number; stopped: string | null }>(down.stdout);
     // The deterministic entity claim seeded above still gets written — a
@@ -354,7 +400,7 @@ describe("kizuki serve model wiring (M4)", () => {
         claimFor(eventId, "person:grace", "Grace leads partnerships at Acme."),
       ]);
     }
-    const recovered = runCli(env, "serve", "run", "sync", "--json");
+    const recovered = await runCliLive(env, "serve", "run", "sync", "--json");
     expect(recovered.exitCode).toBe(0);
     const recoveredReceipt = data<{ canon_writes: number }>(recovered.stdout);
     expect(recoveredReceipt.canon_writes).toBe(1);
