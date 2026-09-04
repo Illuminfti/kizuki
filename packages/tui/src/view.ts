@@ -69,6 +69,7 @@ function header(state: AuditState, cols: number, p: Paint): string {
   const counts = state.groups.map((g) => `${g.count} ${g.label}`).join(", ");
   const listed = listedLabel(state);
   const left = [p.fgBold(COLOR.accent, "kizuki audit"), sanitize(state.vaultName), state.today, listed]
+    .concat(state.commandFilter ? [p.dim(`scope ${sanitize(state.commandFilter)}`)] : [])
     .concat(counts.length > 0 ? [p.dim(counts)] : [])
     .join(p.dim(" · "));
   const session = state.session.undone > 0 ? p.dim(`session undo ${state.session.undone}`) : "";

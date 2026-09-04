@@ -19,7 +19,10 @@ export interface AuditOptions {
   terminal?: Terminal;
   env?: Record<string, string | undefined>;
   now?: () => Date;
+  filters?: AuditFilters;
 }
+
+export type AuditFilters = Omit<NonNullable<Parameters<typeof listAuditReceipts>[1]>, "limit" | "offset">;
 
 export interface AuditSummary {
   undone: number;
@@ -148,9 +151,17 @@ function vaultHealth(vaultPath: string): Notice | null {
   }
 }
 
-export function loadItems(db: Database, vaultPath: string, offset = 0): LoadPage {
+export function loadItems(
+  db: Database,
+  vaultPath: string,
+  offset = 0,
+  filters: AuditFilters = {},
+): LoadPage {
   const start = Math.max(0, offset);
-  const rows = listAuditReceipts(db, { limit: PAGE_SIZE + 1, offset: start });
+  // The core list applies contested/ambiguous predicates after loading; fetch its bounded maximum,
+  // then page the fully filtered result so a matching receipt cannot be displaced by earlier rows.
+  const matching = listAuditReceipts(db, { ...filters, limit: 10_000 });
+  const rows = matching.slice(start, start + PAGE_SIZE + 1);
   const truncated = rows.length > PAGE_SIZE;
   const page = truncated ? rows.slice(0, PAGE_SIZE) : rows;
   return {
@@ -159,6 +170,18 @@ export function loadItems(db: Database, vaultPath: string, offset = 0): LoadPage
     truncated,
     health: vaultHealth(vaultPath),
   };
+}
+
+function describeFilters(filters: AuditFilters | undefined): string {
+  if (filters === undefined) return "";
+  return [
+    filters.since === undefined ? "" : `since ${filters.since}`,
+    filters.page === undefined ? "" : `page ${filters.page}`,
+    filters.writer === undefined ? "" : `writer ${filters.writer}`,
+    filters.contested ? "contested" : "",
+    filters.ambiguous ? "ambiguous" : "",
+    filters.reverted ? "reverted" : "",
+  ].filter(Boolean).join(" · ");
 }
 
 export async function runAudit(opts: AuditOptions): Promise<AuditSummary> {
@@ -172,12 +195,13 @@ export async function runAudit(opts: AuditOptions): Promise<AuditSummary> {
   const vaultName = basename(opts.vaultPath);
   const io: CanonIo = { db: opts.db, vault_path: opts.vaultPath };
 
-  const first = loadItems(opts.db, opts.vaultPath, 0);
+  const first = loadItems(opts.db, opts.vaultPath, 0, opts.filters);
   let state: AuditState = initialState({
     vaultName,
     today: now().toISOString().slice(0, 10),
     items: first.items,
     health: first.health,
+    commandFilter: describeFilters(opts.filters),
     pageOffset: first.offset,
     pageSize: PAGE_SIZE,
     pageTruncated: first.truncated,
@@ -189,7 +213,7 @@ export async function runAudit(opts: AuditOptions): Promise<AuditSummary> {
   };
 
   const reload = (offset = state.pageOffset): void => {
-    const loaded = loadItems(opts.db, opts.vaultPath, offset);
+    const loaded = loadItems(opts.db, opts.vaultPath, offset, opts.filters);
     state = applyItems(state, loaded.items, {
       offset: loaded.offset,
       truncated: loaded.truncated,

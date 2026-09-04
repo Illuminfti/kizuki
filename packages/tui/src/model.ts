@@ -57,6 +57,8 @@ export interface AuditState {
   notice: Notice | null;
   /** Persistent vault/load failure; not cleared by navigation. */
   health: Notice | null;
+  /** Command-level scope, distinct from the transient local `/` search. */
+  commandFilter: string;
   filter: string;
   pageOffset: number;
   pageSize: number;
@@ -131,6 +133,7 @@ export interface InitialStateInput {
   today: string;
   items: AuditItem[];
   health?: Notice | null;
+  commandFilter?: string;
   pageOffset?: number;
   pageSize?: number;
   pageTruncated?: boolean;
@@ -152,6 +155,7 @@ export function initialState(input: InitialStateInput): AuditState {
     mode: { name: "list" },
     notice: null,
     health: input.health ?? null,
+    commandFilter: input.commandFilter ?? "",
     filter: "",
     pageOffset: input.pageOffset ?? 0,
     pageSize: input.pageSize ?? input.items.length,
