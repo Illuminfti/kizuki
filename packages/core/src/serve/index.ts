@@ -70,7 +70,12 @@ export {
 export { addDailyBudget, budgetDay, listDailyBudget, readDailyBudget } from "./budget-ledger";
 export { ensureVaultId, readVaultId } from "./vault-id";
 export { readServeIntent, writeServeIntent } from "./intent";
-export { loadConfiguredModelRef, loadServeConfig } from "./config";
+export {
+  loadConfiguredModelRef,
+  loadLlmPortSelection,
+  loadServeConfig,
+} from "./config";
+export type { ConfiguredLlmPort } from "./config";
 export {
   launchdLabel,
   launchdPlistPath,

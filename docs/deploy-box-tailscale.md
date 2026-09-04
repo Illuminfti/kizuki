@@ -401,13 +401,77 @@ Finish line, `bun test packages/cli/test/serve/model-wiring.test.ts`
 | # | Assertion | How it is decided |
 | --- | --- | --- |
 | 4.1 | Off by default. | Fresh vault, no `[ports]`: `serve --once` writes 0 canon receipts; `doctor` prints `canon writing: off (no model configured …)`. |
-| 4.2 | On when configured. | `[ports] llm = "kizuki.llm.openai-compatible"` pointing at the fake: `doctor` prints `canon writing: on (kizuki.llm.openai-compatible:<model>@127.0.0.1)`. |
-| 4.3 | A write is receipted and attributed. | After import plus `serve --once`, `audit --json` has ≥ 1 receipt with `writer` = the loop writer and `model_ref` equal to 4.2's string. |
+| 4.2 | On when configured. | `[ports.llm]` a table with `id = "kizuki.llm.openai-compatible"` (see the 2026-09-04 M4 finding below for why this is a table, not the bare string this row originally showed) pointing at the fake: `doctor` prints `canon writing: on (kizuki.llm.openai-compatible:<model>@127.0.0.1)`. |
+| 4.3 | A write is receipted and attributed. | With a ledger event carrying a real subject (see the finding: `markdown-folder` cannot supply one) plus `serve --once`, `audit --json` has ≥ 1 receipt with `writer` = the loop writer and `model_ref` equal to 4.2's string. |
 | 4.4 | The write is reversible. | `undo <receipt>` exits 0 and the page bytes equal the receipt's `before` hash. |
 | 4.5 | Plaintext key fails closed. | `secret_ref = "sk-literal"` makes `serve` exit non-zero with `config_invalid` before any rail runs. |
-| 4.6 | Budget holds. | `[budget] canon_writes_per_run = 1` with two extractable fixtures yields exactly 1 receipt and a `budget_exhausted` run receipt. |
+| 4.6 | Budget holds. | `[budget] canon_writes_per_run = 1` with two extractable fixtures yields exactly 1 receipt and a run receipt whose `stopped` field is `budget:canon_writes_per_run` (see the finding below for why this row's original wording, `budget_exhausted`, does not match the field `BudgetExhausted` actually stamps). |
 | 4.7 | Model down is not empty. | Fake endpoint returning 503: run receipt records `unavailable`; the checkpoint does not advance (RFC 0002 §1.1 E11). |
-| 4.8 | Container path. | `deploy/proof/container.sh --with-model` starts the fake endpoint inside the container and 4.2 to 4.4 pass there; with `--network none` still on. |
+| 4.8 | Container path. | Deferred; out of scope for the M4 worktree. `deploy/` does not exist on that branch (it lives on the deployment branches), so `deploy/proof/container.sh --with-model` cannot be built or run there. This is a scope boundary between lanes, not a finding against the M4 implementation. |
+
+Finding (2026-09-04): established empirically, in the M4 worktree, before this
+section's checks were implemented.
+
+- Suspect 1 confirmed. `loadConfiguredModelRef` produced a label
+  (`<port_id>:<model>`, no host) that reached `doctor` and every receipt, but
+  nothing resolved the `llm` port or called a model: `kizuki serve` never
+  built a `RailHooks.producer` or `.claims`, so `kizuki.producer.model` was
+  reachable from tests but not from the CLI. A model reference is not a
+  model call, confirmed by reading `packages/cli/src/commands/serve.ts` and
+  `packages/core/src/serve/rails.ts` before implementing, then by running
+  `bun test packages/cli/test/serve/cli.test.ts` on the pre-M4 head and
+  observing `serve --once` write zero canon receipts with a model reference
+  configured but no producer wired.
+- Suspect 2 confirmed and was a real defect. `doctor`'s `canon writing: on`
+  line was driven purely by the config string, independent of whether
+  extraction ever ran or the endpoint was reachable. Fixed as part of this
+  lane by making `loadConfiguredModelRef` share one parser
+  (`loadLlmPortSelection`) with the code that binds the real port, and by
+  making `kizuki serve` actually bind and call that port, so the two labels
+  can no longer name a different model and the "on" line now corresponds to
+  a wired producer, not just a config value.
+- Suspect 3, row corrections applied above: the illustrative `[ports] llm =
+  "..."` snippet in this row and in §12.1's own prose does not parse the way
+  the shipped code reads it — `packages/cli/src/vault-config.ts` and
+  `packages/core/src/serve/config.ts` both expect `[ports.llm]` as a table
+  carrying its own `id` field, because TOML cannot both assign `ports.llm` a
+  string value under `[ports]` and later redefine it as a table under
+  `[ports.llm]`. The `budget_exhausted` reject reason named in RFC 0002 §4.2
+  is a producer-level `RejectReason`, distinct from the run receipt's
+  `stopped` field that `packages/core/src/canon/budget.ts`'s
+  `BudgetExhausted` actually sets (`budget:<which limit>`); row 4.6 above now
+  asserts the field that exists.
+- A finding beyond the plan's own checklist: `packages/connectors/src/
+  markdown-folder/index.ts` never sets `subjects` on any event it emits
+  (already recorded once, in the M1 finding above, for sensitivity). The
+  model producer's `unknown_subject` filter (`packages/core/src/producer/
+  model.ts`) means a model-drafted claim can never survive extraction from
+  markdown-folder-sourced evidence, no matter how M4 wires the model — there
+  is currently no CLI-reachable connector that supplies a real subject.
+  `packages/cli/test/serve/model-wiring.test.ts` seeds events with subjects
+  directly through the public `accept`/`insertClaim` core APIs (the same
+  composition `packages/cli/test/audit-undo.test.ts` already uses), the same
+  way a subject-aware connector would once one exists; this is not a defect
+  this lane fixes, since `packages/connectors/` is out of scope for it.
+- A finding about the model producer's write-target rule, load-bearing for
+  the fixtures above: `kizuki.producer.model` never mints a fresh typed
+  page. `resolveTarget` (`packages/core/src/canon/arbiter.ts`) creates a page
+  only for `CREATE_KINDS`, which a model draft's `kind` is never one of; a
+  model-drafted claim can only edit or extend a page a subject already has.
+  In production that page comes from the deterministic producer's own
+  entity proposal at ingest time (`packages/core/src/staging/producers.ts`
+  `entityProposal`); the CLI test fixtures seed the same shape of entity
+  claim directly for the same reason `audit-undo.test.ts` already does.
+- Host-environment finding, not a code defect: on this Windows worktree,
+  `mkdirSync(path, { mode: 0o700 })` does not set POSIX permission bits
+  (verified directly: a freshly created directory reports mode `666`
+  regardless of the requested mode), so `assertVaultControl`
+  (`packages/core/src/vault/init.ts`) refuses every vault a CLI subprocess
+  touches. This is not new: it already blocks the entire pre-existing
+  `packages/cli/test/serve/` and `packages/cli/test/doctor/` suites on this
+  host, confirmed by running them unmodified. `packages/cli/test/serve/
+  model-wiring.test.ts` could not be run to a green result on this host for
+  that reason; see the lane's handoff for what was verified instead.
 
 ### M5 `kizuki agent add`
 

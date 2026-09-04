@@ -889,6 +889,7 @@ export {
   listRunReceipts,
   listSchedules,
   loadConfiguredModelRef,
+  loadLlmPortSelection,
   loadServeConfig,
   orphanJournalReceipts,
   persistRunReceipt,
@@ -924,6 +925,7 @@ export {
   uninstallServeService,
   writeServeIntent,
 } from "./serve";
+export type { ConfiguredLlmPort } from "./serve";
 export type {
   CalibrationDoctor,
   CrashPoint,

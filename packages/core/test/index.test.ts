@@ -315,6 +315,7 @@ describe("public surface", () => {
       "listSupersessions",
       "listUnwrittenLiveClaims",
       "loadConfiguredModelRef",
+      "loadLlmPortSelection",
       "loadServeConfig",
       "loopbackTransport",
       "markClaimReverted",

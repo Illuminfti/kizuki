@@ -20,8 +20,44 @@ function text(value: unknown, fallback: string): string {
 /**
  * A configured model is a non-empty `[ports.llm] model` that is not `none`.
  * Absence stays off: doctor must not infer a model from a leftover receipt.
+ * The label is `<port_id>:<model>` and, when `base_url` names a host,
+ * `<port_id>:<model>@<host>` per RFC 0002 §12.1 — the same string a bound
+ * `kizuki.llm/v1` port reports as its own `model_ref`. This reads the same
+ * `[ports.llm]` table `loadLlmPortSelection` binds a real port from, so the
+ * two can never name a different model.
  */
 export function loadConfiguredModelRef(vaultPath: string): string | null {
+  const selection = loadLlmPortSelection(vaultPath);
+  if (selection === null) return null;
+  const model = selection.config["model"];
+  if (typeof model !== "string" || model.length === 0 || model === "none") {
+    return null;
+  }
+  const baseUrl = selection.config["base_url"];
+  let host: string | null = null;
+  if (typeof baseUrl === "string") {
+    try {
+      host = new URL(baseUrl).hostname;
+    } catch {
+      host = null;
+    }
+  }
+  return host === null ? `${selection.id}:${model}` : `${selection.id}:${model}@${host}`;
+}
+
+export interface ConfiguredLlmPort {
+  readonly id: string;
+  /** The raw `[ports.llm]` table minus `id`, unredacted, for binding the real port. */
+  readonly config: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * The full `[ports.llm]` selection, unredacted, for a caller that binds the
+ * real `kizuki.llm/v1` port. Absence, `"kizuki.llm.none"`, or an empty
+ * table all mean no model is configured — the same floor
+ * `loadConfiguredModelRef` reads, kept in one parser so the two never drift.
+ */
+export function loadLlmPortSelection(vaultPath: string): ConfiguredLlmPort | null {
   const path = serveConfigPath(vaultPath);
   if (!existsSync(path)) return null;
   let parsed: unknown;
@@ -32,15 +68,21 @@ export function loadConfiguredModelRef(vaultPath: string): string | null {
   }
   if (!isPlainObject(parsed)) return null;
   const ports = isPlainObject(parsed["ports"]) ? parsed["ports"] : {};
-  const llm = isPlainObject(ports["llm"]) ? ports["llm"] : {};
-  const model = llm["model"];
-  if (typeof model !== "string" || model.length === 0 || model === "none") {
-    return null;
+  const raw = ports["llm"];
+  if (typeof raw === "string") {
+    return raw.length === 0 || raw === "kizuki.llm.none" ? null : { id: raw, config: {} };
   }
-  const port = typeof llm["id"] === "string" && llm["id"].length > 0
-    ? llm["id"]
-    : "kizuki.llm.openai-compatible";
-  return `${port}:${model}`;
+  if (!isPlainObject(raw)) return null;
+  const id =
+    typeof raw["id"] === "string" && raw["id"].length > 0
+      ? raw["id"]
+      : "kizuki.llm.openai-compatible";
+  if (id === "kizuki.llm.none") return null;
+  const config: Record<string, unknown> = {};
+  for (const [field, value] of Object.entries(raw)) {
+    if (field !== "id") config[field] = value;
+  }
+  return { id, config };
 }
 
 export function loadServeConfig(vaultPath: string): ServeConfig {

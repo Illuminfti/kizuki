@@ -19,6 +19,7 @@
         "@kizuki/connectors": "workspace:*",
         "@kizuki/core": "workspace:*",
         "@kizuki/embed-gguf": "workspace:*",
+        "@kizuki/llm": "workspace:*",
         "@kizuki/tui": "workspace:*",
       },
     },
