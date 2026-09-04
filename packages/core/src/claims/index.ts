@@ -56,7 +56,6 @@ export { CLAIMS_SCHEMA_VERSION, applyClaimsV3, initClaims } from "./schema";
 export {
   IDENTITY_LINK_STATUSES,
   IDENTITY_MERGE_MIN,
-  initIdentity,
   listLiveConflicts,
   listSubjectAliases,
   upsertIdentityLink,

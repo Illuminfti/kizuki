@@ -81,15 +81,11 @@ function orderedPair(
     : { subject_a: right, subject_b: left };
 }
 
-export function initIdentity(db: Database): void {
-  initClaims(db);
-}
-
 export function upsertIdentityLink(
   db: Database,
   input: UpsertIdentityLinkInput,
 ): IdentityLink {
-  initIdentity(db);
+  initClaims(db);
   const left = subjectId("subject_a", input.subject_a);
   const right = subjectId("subject_b", input.subject_b);
   const pair = orderedPair(left, right);

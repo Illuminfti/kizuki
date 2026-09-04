@@ -20,7 +20,7 @@ import { tryWriteFlock } from "./flock";
 import { redactReceiptError } from "./receipts";
 
 /** One sync pass never materializes more than this many unwritten claims. */
-export const WRITE_PASS_LIMIT = 32;
+const WRITE_PASS_LIMIT = 32;
 
 export interface WritePassResult {
   readonly revived: number;
@@ -182,7 +182,7 @@ async function runWritePassLocked(
   };
 }
 
-export async function fileProducedDrafts(
+async function fileProducedDrafts(
   io: ClaimsIo,
   drafts: readonly ClaimDraft[],
   producer: Claim["producer"],
