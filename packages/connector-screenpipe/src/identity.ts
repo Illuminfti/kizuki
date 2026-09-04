@@ -1,7 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { ScreenpipeConnectorError } from "./errors";
 import { toSafeNumber } from "./read";
-import { REQUIRED_COLUMN_CONTRACTS } from "./schema";
 
 export interface DatabaseIdentity {
   path: string;
@@ -23,28 +22,6 @@ export function inspectIdentity(
 }
 
 export function schemaFingerprint(db: Database): string {
-  const parts: string[] = [];
-  for (const table of Object.keys(REQUIRED_COLUMN_CONTRACTS)) {
-    const columns = db
-      .query<{ name: unknown; type: unknown; notnull: unknown; pk: unknown }, []>(
-        `PRAGMA table_info(${table})`,
-      )
-      .all()
-      .map((row) => ({
-        name: row.name,
-        type: row.type,
-        notnull: jsonSafe(row.notnull),
-        pk: jsonSafe(row.pk),
-      }));
-    parts.push(`${table}:${JSON.stringify(columns)}`);
-    const indexes = db
-      .query<{ name: unknown; origin: unknown }, []>(
-        `PRAGMA index_list(${table})`,
-      )
-      .all()
-      .map((row) => ({ name: row.name, origin: row.origin }));
-    parts.push(`indexes:${table}:${JSON.stringify(indexes)}`);
-  }
   const first = db
     .query<{ version: unknown; installed_on: unknown }, []>(
       `SELECT version, installed_on
@@ -54,14 +31,11 @@ export function schemaFingerprint(db: Database): string {
         LIMIT 1`,
     )
     .get();
-  parts.push(
-    `migration:${JSON.stringify(
-      first === undefined || first === null
-        ? null
-        : { version: jsonSafe(first.version), installed_on: first.installed_on },
-    )}`,
-  );
-  return new Bun.CryptoHasher("sha256").update(parts.join("|")).digest("hex");
+  const payload =
+    first === undefined || first === null
+      ? "none"
+      : `${jsonSafe(first.version)}\0${String(first.installed_on)}`;
+  return new Bun.CryptoHasher("sha256").update(payload).digest("hex");
 }
 
 export function tableMaxId(

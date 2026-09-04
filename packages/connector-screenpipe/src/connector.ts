@@ -32,7 +32,6 @@ import { ScreenpipeConnectorError } from "./errors";
 import { FIXTURE_NOW, seedFixtureDatabase } from "./fixture";
 import { inspectIdentity } from "./identity";
 import { classifyDatabaseError, openReadOnly } from "./open";
-import { planSourceRecords } from "./purge";
 import { seedAfterIds } from "./read";
 import { assertSchema, inspectSchema } from "./schema";
 import {
@@ -314,14 +313,6 @@ export function createScreenpipeConnector(
   config: ScreenpipeConfig,
 ): ScreenpipeConnector {
   return new ScreenpipeConnector(config);
-}
-
-export function planUnreachableSourceRecords(
-  db: Database,
-  subjectId: string,
-  now?: () => number,
-): string[] {
-  return planSourceRecords(db, subjectId, now).ids;
 }
 
 function batchPhase(

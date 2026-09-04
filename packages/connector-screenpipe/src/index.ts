@@ -34,7 +34,6 @@ export type {
 export {
   ScreenpipeConnector,
   createScreenpipeConnector,
-  planUnreachableSourceRecords,
 } from "./connector";
 export { ScreenpipeConnectorError } from "./errors";
 export type { ScreenpipeErrorCode } from "./errors";
@@ -58,7 +57,10 @@ export {
 } from "./map";
 export type { MapOptions } from "./map";
 export { BUSY_TIMEOUT_MS, openReadOnly } from "./open";
-export { planSourceRecords } from "./purge";
+export {
+  planSourceRecords,
+  planSourceRecords as planUnreachableSourceRecords,
+} from "./purge";
 export type { PlanScan } from "./purge";
 export {
   readFrames,

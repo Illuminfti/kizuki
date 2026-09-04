@@ -22,10 +22,15 @@ export function planSourceRecords(
   const deadline = now() + PLAN_DEADLINE_MS;
   const app = prefixedValue(subjectId, "screenpipe:app:");
   if (app !== null) {
-    const names = distinctText(db, "frames", "app_name", deadline, now).filter(
-      (name) => slug(name) === app,
+    return planByDistinctName(
+      db,
+      "frames",
+      "app_name",
+      app,
+      "frame",
+      deadline,
+      now,
     );
-    return pageIdsForValues(db, "frames", "app_name", names, "frame", deadline, now);
   }
   const site = prefixedValue(subjectId, "screenpipe:site:");
   if (site !== null) return pageSiteIds(db, site, deadline, now);
@@ -47,18 +52,11 @@ export function planSourceRecords(
   }
   const device = prefixedValue(subjectId, "screenpipe:audio-device:");
   if (device !== null) {
-    const names = distinctText(
+    return planByDistinctName(
       db,
       "audio_transcriptions",
       "device",
-      deadline,
-      now,
-    ).filter((name) => slug(name) === device);
-    return pageIdsForValues(
-      db,
-      "audio_transcriptions",
-      "device",
-      names,
+      device,
       "transcription",
       deadline,
       now,
@@ -104,6 +102,32 @@ function pageSiteIds(
     if (rows.length < PLAN_PAGE) break;
   }
   return { ids, truncated };
+}
+
+function planByDistinctName(
+  db: Database,
+  table: "frames" | "audio_transcriptions",
+  column: "app_name" | "device",
+  slugValue: string,
+  prefix: "frame" | "transcription",
+  deadline: number,
+  now: () => number,
+): PlanScan {
+  const names = distinctText(db, table, column, deadline, now);
+  const matched = names.values.filter((name) => slug(name) === slugValue);
+  const plan = pageIdsForValues(
+    db,
+    table,
+    column,
+    matched,
+    prefix,
+    deadline,
+    now,
+  );
+  return {
+    ids: plan.ids,
+    truncated: names.truncated || plan.truncated,
+  };
 }
 
 function pageIdsForValues(
@@ -174,9 +198,9 @@ function distinctText(
   column: "app_name" | "device",
   deadline: number,
   now: () => number,
-): string[] {
-  if (now() >= deadline) return [];
-  return db
+): { values: string[]; truncated: boolean } {
+  if (now() >= deadline) return { values: [], truncated: true };
+  const rows = db
     .query<{ value: unknown }, [number]>(
       `SELECT DISTINCT ${column} AS value
          FROM ${table}
@@ -184,9 +208,14 @@ function distinctText(
         ORDER BY ${column}
         LIMIT ?`,
     )
-    .all(DISTINCT_SCAN_CAP)
-    .map(({ value }) => value)
-    .filter((value): value is string => typeof value === "string");
+    .all(DISTINCT_SCAN_CAP + 1);
+  return {
+    values: rows
+      .slice(0, DISTINCT_SCAN_CAP)
+      .map(({ value }) => value)
+      .filter((value): value is string => typeof value === "string"),
+    truncated: rows.length > DISTINCT_SCAN_CAP || now() >= deadline,
+  };
 }
 
 function planId(value: unknown): number {

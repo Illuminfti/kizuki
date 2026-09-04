@@ -44,7 +44,10 @@ describe("ScreenpipeConnector source purge", () => {
 
     expect(
       planUnreachableSourceRecords(fixture.writer, "screenpipe:app:acme-mail"),
-    ).toEqual(["frame:1", "frame:4", "frame:5"]);
+    ).toEqual({
+      ids: ["frame:1", "frame:4", "frame:5"],
+      truncated: false,
+    });
   });
 
   test("a site plan matches by host only", async () => {
@@ -65,7 +68,10 @@ describe("ScreenpipeConnector source purge", () => {
         fixture.writer,
         "screenpipe:site:mail.acme.example",
       ),
-    ).toEqual(["frame:2", "frame:9"]);
+    ).toEqual({
+      ids: ["frame:2", "frame:9"],
+      truncated: false,
+    });
   });
 
   test("a speaker plan and a device plan", async () => {
@@ -73,13 +79,13 @@ describe("ScreenpipeConnector source purge", () => {
 
     expect(
       planUnreachableSourceRecords(fixture.writer, "screenpipe:speaker:1"),
-    ).toEqual(["transcription:1"]);
+    ).toEqual({ ids: ["transcription:1"], truncated: false });
     expect(
       planUnreachableSourceRecords(
         fixture.writer,
         "screenpipe:audio-device:display-audio-output",
       ),
-    ).toEqual(["transcription:2"]);
+    ).toEqual({ ids: ["transcription:2"], truncated: false });
   });
 
   test("an unknown subject yields an empty plan", async () => {
@@ -98,9 +104,10 @@ describe("ScreenpipeConnector source purge", () => {
       "screenpipe:speaker:0",
       "screenpipe:speaker:-1",
     ]) {
-      expect(planUnreachableSourceRecords(fixture.writer, subject_id)).toEqual(
-        [],
-      );
+      expect(planUnreachableSourceRecords(fixture.writer, subject_id)).toEqual({
+        ids: [],
+        truncated: false,
+      });
     }
   });
 
@@ -145,7 +152,9 @@ describe("ScreenpipeConnector source purge", () => {
       `screenpipe:app:app-${String(DISTINCT_SCAN_CAP + 25).padStart(4, "0")}`,
     );
     expect(included.ids).toEqual(["frame:1"]);
+    expect(included.truncated).toBe(true);
     expect(excluded.ids).toEqual([]);
+    expect(excluded.truncated).toBe(true);
   });
 
   test("planning never writes", async () => {

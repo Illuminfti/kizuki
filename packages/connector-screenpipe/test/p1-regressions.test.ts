@@ -217,6 +217,38 @@ describe("screenpipe P1 regressions", () => {
     await connector.revoke();
   });
 
+  test("a compatible additive migration does not reset an existing cursor", async () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    insertFrame(fixture.writer, {
+      id: 1,
+      timestamp: "2026-01-01T00:00:00Z",
+      fullText: "keep going",
+    });
+    const connector = new ScreenpipeConnector(
+      { path: fixture.path, settle_seconds: 0 },
+      fixtureDeps("2026-01-09T00:00:00.000Z"),
+    );
+    const first = await connector.backfill(null);
+    fixture.writer.exec("ALTER TABLE frames ADD COLUMN extra_note TEXT");
+    fixture.writer.exec(
+      "CREATE INDEX idx_frames_extra_note ON frames(extra_note)",
+    );
+    fixture.writer
+      .query(
+        `INSERT INTO _sqlx_migrations
+           (version, description, installed_on, success, checksum, execution_time)
+         VALUES (?, 'additive fixture', ?, 1, X'', 0)`,
+      )
+      .run(20260904000000, "2026-09-04T00:00:00Z");
+
+    const continued = await connector.sync(first.cursor);
+    expect(continued.events).toEqual([]);
+    const health = await connector.health();
+    expect(health.state).toBe("ok");
+    expect(health.detail).toContain("newer than verified");
+    await connector.revoke();
+  });
+
   test("a rebound path is reset_detected", async () => {
     const original = createFixtureDatabase();
     const replacement = createFixtureDatabase();

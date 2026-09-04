@@ -73,8 +73,10 @@ private floor.
 - Screenpipe does not expose a per-row deletion log. The manifest declares
   `tombstones: false` and `purge: false`. `purgeSource()` throws
   `not_supported`. `planUnreachableSourceRecords()` is a read-only planning
-  helper, capped at 10,000 ids and a two-second deadline, and never deletes
-  source rows. Ledger purge is the path that removes imported evidence.
+  helper: it returns `{ ids, truncated }`, is capped at 10,000 ids and a
+  two-second deadline, and never deletes source rows. `truncated: true` means
+  the id list may be incomplete. Ledger purge is the path that removes
+  imported evidence.
 - This package must not attach to screenpipe's live database.
 - Timezone-less source timestamps are not assigned UTC. They are quarantined
   unless `timezone` is set to an IANA name or `±HH:MM` offset. Invalid or
@@ -85,9 +87,11 @@ private floor.
   permanently. Skip and parse-error counters live on the cursor and in
   health; parse errors degrade health. `replayFrom(cursor, { frame, transcription })`
   rewinds a stream id without dropping database identity.
-- Cursors bind to the resolved path plus a schema/migration fingerprint and
-  source high-water marks. Replacing, rewinding, or rebinding the database
-  fails with `reset_detected`. Re-enroll and rebackfill.
+- Cursors bind to the resolved path, the first successful migration
+  (version and `installed_on`), and source high-water marks. Compatible
+  additive upgrades keep the existing cursor. Replacing, rewinding, or
+  rebinding the database fails with `reset_detected`. Re-enroll and
+  rebackfill.
 - Screen text and transcripts longer than 65,536 JavaScript code units are
   cut and marked with `metadata.text_truncated: true`.
 - The optional `since` setting compares normalized instants, not lexical
