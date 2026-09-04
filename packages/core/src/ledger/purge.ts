@@ -907,13 +907,22 @@ async function reconcileOps(
 
 function readHoldSources(vaultPath: string, relPath: string): string[] | null {
   const path = join(vaultPath, relPath);
-  if (!existsSync(path)) return [];
+  if (!existsSync(path)) return null;
   try {
     return pageSources(parseFrontmatter(readFileSync(path, "utf8")).data["sources"]);
   } catch (error) {
     if (error instanceof SyntaxError) return null;
     throw error;
   }
+}
+
+function matchablePagePaths(vaultPath: string): Set<string> {
+  if (vaultPath === ":memory:" || vaultPath.length === 0) return new Set();
+  const paths = new Set<string>();
+  for (const page of listCanonPagesReport(vaultPath).pages) {
+    if (pageSources(page.data["sources"]) !== null) paths.add(page.relPath);
+  }
+  return paths;
 }
 
 function purgedCitations(db: Database, sources: readonly string[]): string[] {
@@ -941,6 +950,7 @@ function rewriteHolds(
   const rewritten: PurgeRewriteRef[] = [];
   const holds = readHolds(db);
   if (holds.length === 0) return rewritten;
+  const matchable = matchablePagePaths(vaultPath);
   const io: CanonIo = {
     db,
     vault_path: vaultPath,
@@ -954,7 +964,7 @@ function rewriteHolds(
     if (sources === null) continue;
     const toRemove = purgedCitations(db, sources);
     if (toRemove.length === 0) {
-      liftHold(db, hold.page_path);
+      if (matchable.has(hold.page_path)) liftHold(db, hold.page_path);
       continue;
     }
     const purged = new Set(toRemove);

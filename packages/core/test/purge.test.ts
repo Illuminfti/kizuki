@@ -395,6 +395,93 @@ describe("purgeEvents", () => {
     db.close();
   });
 
+  test("does not lift a hold on an id-less page with no sources", async () => {
+    const db = openLedger(":memory:");
+    const target = storedEvent(db, event("target"));
+    const vaultPath = temporaryVault();
+    const raw = [
+      "---",
+      "title: noid",
+      "type: fact",
+      "status: active",
+      "sensitivity: personal",
+      "taint: clean",
+      "---",
+      "",
+      "id-less page\n",
+    ].join("\n");
+    writeFileSync(join(vaultPath, "facts", "noid.md"), raw);
+    const outcome = await runPurge(
+      db,
+      vaultPath,
+      { event_id: target.event_id },
+      "record request",
+    );
+    expect(outcome.uncertain_pages).toEqual(["facts/noid.md"]);
+    expect(outcome.rewritten).toEqual([]);
+    expect(isHeld(db, "facts/noid.md")).toBe(true);
+    expect(readFileSync(join(vaultPath, "facts", "noid.md"), "utf8")).toBe(raw);
+    db.close();
+  });
+
+  test("does not lift a hold when the held file is missing", async () => {
+    const db = openLedger(":memory:");
+    const first = storedEvent(db, event("first"));
+    const vaultPath = temporaryVault();
+    writeFileSync(join(vaultPath, "facts", "gone.md"), "no frontmatter\n");
+    await runPurge(db, vaultPath, { event_id: first.event_id }, "record request");
+    expect(isHeld(db, "facts/gone.md")).toBe(true);
+    rmSync(join(vaultPath, "facts", "gone.md"));
+
+    const second = storedEvent(db, event("second"));
+    const later = await runPurge(
+      db,
+      vaultPath,
+      { event_id: second.event_id },
+      "later request",
+    );
+    expect(later.rewritten).toEqual([]);
+    expect(isHeld(db, "facts/gone.md")).toBe(true);
+    db.close();
+  });
+
+  test("lifts a leftover hold once the page is readable and cites nothing purged", async () => {
+    const db = openLedger(":memory:");
+    const first = storedEvent(db, event("first"));
+    const vaultPath = temporaryVault();
+    writeFileSync(join(vaultPath, "facts", "held.md"), "no frontmatter\n");
+    await runPurge(db, vaultPath, { event_id: first.event_id }, "record request");
+    writeFileSync(
+      join(vaultPath, "facts", "held.md"),
+      serializePage({
+        data: {
+          id: "page-held",
+          title: "held",
+          type: "fact",
+          status: "active",
+          sensitivity: "personal",
+          taint: "clean",
+          sources: [],
+        },
+        body: "clean\n",
+      }),
+      "utf8",
+    );
+    const second = storedEvent(db, event("second"));
+    const later = await runPurge(
+      db,
+      vaultPath,
+      { event_id: second.event_id },
+      "later request",
+    );
+    expect(later.rewritten).toEqual([]);
+    expect(isHeld(db, "facts/held.md")).toBe(false);
+    expect(readFileSync(join(vaultPath, "facts", "held.md"), "utf8")).toContain(
+      "clean",
+    );
+    db.close();
+  });
+
   test("removes matching derived search and graph rows through real schemas", () => {
     const db = openLedger(":memory:");
     const source = storedEvent(db, event("search-source"));
