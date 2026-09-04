@@ -106,6 +106,32 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function timeoutError(): PortError {
+  return new PortError("timeout", "model request timed out", true);
+}
+
+/** Keep the caller's one deadline authoritative, including injected transports. */
+async function beforeDeadline<T>(work: Promise<T>, deadline: number): Promise<T> {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw timeoutError();
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(timeoutError()), remaining);
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        // A nonconforming transport may resolve after its timeout. Never
+        // accept that late success merely because its timer ran first.
+        if (Date.now() >= deadline) reject(timeoutError());
+        else resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 function transportToError(result: Extract<TransportResult, { ok: false }>): never {
   if (result.kind === "transport") {
     if (result.failure === "timeout") {
@@ -130,13 +156,11 @@ async function resolveApiKey(
   let value: string;
   try {
     value = await ctx.secrets(secretRef);
-  } catch (error) {
-    if (error instanceof PortError) throw error;
+  } catch {
     throw new PortError(
       "unavailable",
       "secret reference did not resolve",
       false,
-      { cause: error },
     );
   }
   if (!isNonEmptyString(value)) {
@@ -192,22 +216,22 @@ export function createOpenAiCompatibleLlmPort(
     async complete(request: LlmRequest): Promise<LlmResponse> {
       assertOpen();
       const validated = validateRequest(request);
-      const apiKey = await resolveApiKey(ctx, config.secret_ref);
       const deadline = Date.now() + Math.min(config.timeout_ms, validated.deadline_ms);
+      const apiKey = await beforeDeadline(resolveApiKey(ctx, config.secret_ref), deadline);
       const body = buildWireBody(config, validated);
 
       let attempt = 0;
       let last: TransportResult | undefined;
       while (attempt <= config.max_retries) {
         const remaining = deadline - Date.now();
-        if (remaining <= 0) throw new PortError("timeout", "model request timed out", true);
-        last = await transport({
+        if (remaining <= 0) throw timeoutError();
+        last = await beforeDeadline(transport({
           url,
           api_key: apiKey,
           timeout_ms: remaining,
           max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
           body,
-        });
+        }), deadline);
         if (last.ok) {
           return parseChatCompletion(last.body, config.model);
         }
@@ -223,8 +247,8 @@ export function createOpenAiCompatibleLlmPort(
             ? DEFAULT_RETRY_MS
             : Math.min(last.retry_after_ms ?? DEFAULT_RETRY_MS, RETRY_CAP_MS);
         const remainingBeforeWait = deadline - Date.now();
-        if (remainingBeforeWait <= 0) throw new PortError("timeout", "model request timed out", true);
-        await sleep(Math.min(wait, remainingBeforeWait));
+        if (remainingBeforeWait <= 0) throw timeoutError();
+        await beforeDeadline(sleep(Math.min(wait, remainingBeforeWait)), deadline);
         attempt += 1;
       }
       if (last === undefined || last.ok) {

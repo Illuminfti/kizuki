@@ -111,6 +111,14 @@ async function readBoundedBody(response: Response, limit: number): Promise<strin
   return new TextDecoder().decode(combined);
 }
 
+async function cancelBody(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // Cancellation is best effort; the response is still rejected locally.
+  }
+}
+
 /**
  * The single fetch of `@kizuki/llm`. Callers must pass a user-configured
  * URL; this function does not choose a host.
@@ -147,6 +155,7 @@ export const fetchTransport: ChatTransport = async (request) => {
     announced !== null &&
     announced > request.max_response_bytes
   ) {
+    await cancelBody(response);
     return { ok: false, kind: "transport", status: 0, failure: "too_large" };
   }
 

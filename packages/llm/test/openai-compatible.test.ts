@@ -147,6 +147,51 @@ describe("openai-compatible port", () => {
     }
   });
 
+  test("secret failures are bounded and never retain provider error details", async () => {
+    const canary = "secret-provider-canary";
+    let fetched = 0;
+    const transport: ChatTransport = async () => {
+      fetched += 1;
+      return { ok: true, kind: "ok", status: 200, body: {} };
+    };
+    const temporary = temporaryLlmContext(
+      OPENAI_COMPATIBLE_LLM_DESCRIPTOR,
+      { base_url: "http://127.0.0.1:9/v1", model: "synthetic", secret_ref: "env:KEY" },
+      async () => { throw new PortError("unavailable", canary, false, { cause: new Error(canary) }); },
+    );
+    try {
+      const port = createOpenAiCompatibleLlmPort(temporary.ctx, { transport });
+      let thrown: unknown;
+      try { await port.complete(SAMPLE_REQUEST); } catch (error) { thrown = error; }
+      expect(thrown).toMatchObject({ code: "unavailable", message: "secret reference did not resolve" });
+      expect((thrown as Error).cause).toBeUndefined();
+      expect(Object.values(thrown as object).join(" ")).not.toContain(canary);
+      expect(fetched).toBe(0);
+    } finally {
+      temporary.cleanup();
+    }
+  });
+
+  test("the complete deadline includes a slow secret resolver", async () => {
+    let fetched = 0;
+    const transport: ChatTransport = async () => {
+      fetched += 1;
+      return { ok: true, kind: "ok", status: 200, body: {} };
+    };
+    const temporary = temporaryLlmContext(
+      OPENAI_COMPATIBLE_LLM_DESCRIPTOR,
+      { base_url: "http://127.0.0.1:9/v1", model: "synthetic", secret_ref: "env:KEY" },
+      async () => { await Bun.sleep(90); return CANARY_KEY; },
+    );
+    try {
+      const port = createOpenAiCompatibleLlmPort(temporary.ctx, { transport });
+      await expect(port.complete({ ...SAMPLE_REQUEST, deadline_ms: 40 })).rejects.toMatchObject({ code: "timeout" });
+      expect(fetched).toBe(0);
+    } finally {
+      temporary.cleanup();
+    }
+  });
+
   test("retries a 429 once and then succeeds", async () => {
     const calls: number[] = [];
     const transport: ChatTransport = async () => {
@@ -198,6 +243,29 @@ describe("openai-compatible port", () => {
       await expect(port.complete({ ...SAMPLE_REQUEST, deadline_ms: 80 })).rejects.toMatchObject({ code: "timeout" });
       expect(Date.now() - started).toBeLessThan(300);
       expect(fake.requests).toHaveLength(1);
+    } finally {
+      temporary.cleanup();
+    }
+  });
+
+  test("a transport that ignores its timeout cannot return a late success", async () => {
+    let calls = 0;
+    const transport: ChatTransport = async () => {
+      calls += 1;
+      await Bun.sleep(72);
+      return { ok: true, kind: "ok", status: 200, body: {
+        model: "synthetic", choices: [{ message: { role: "assistant", content: SYNTHETIC_TEXT } }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      } };
+    };
+    const temporary = temporaryLlmContext(OPENAI_COMPATIBLE_LLM_DESCRIPTOR, {
+      base_url: "http://127.0.0.1:9/v1", model: "synthetic", max_retries: 0,
+    });
+    try {
+      const port = createOpenAiCompatibleLlmPort(temporary.ctx, { transport });
+      await expect(port.complete({ ...SAMPLE_REQUEST, deadline_ms: 40 })).rejects.toMatchObject({ code: "timeout" });
+      await Bun.sleep(80);
+      expect(calls).toBe(1);
     } finally {
       temporary.cleanup();
     }
