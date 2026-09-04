@@ -57,13 +57,17 @@ function populated() {
 
   const sourceKey = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
   db.query(
-    "INSERT INTO connections (connector_id, source_key, config, secret_refs, connected_at, disconnected_at) VALUES (?, ?, ?, ?, ?, NULL)",
+    `INSERT INTO connections
+       (connector_id, source_key, config, secret_refs, connected_at, disconnected_at,
+        implementation_version)
+     VALUES (?, ?, ?, ?, ?, NULL, ?)`,
   ).run(
     "fixture",
     sourceKey,
     '{"schema":"kizuki.connection-config/v1","state_ref_index":null}',
     "[]",
     new Date().toISOString(),
+    "fixture@1",
   );
   saveCheckpoint(db, "fixture", sourceKey, "next", "sync", {
     stored: 1,
@@ -276,9 +280,9 @@ describe("exportVault", () => {
       "plain vault file\n",
     );
     expect(existsSync(join(outDir, "vault", ".kizuki"))).toBe(false);
-    expect(readFileSync(join(outDir, "connections.jsonl"), "utf8")).not.toContain(
-      "resolved_secret",
-    );
+    const connections = readFileSync(join(outDir, "connections.jsonl"), "utf8");
+    expect(connections).not.toContain("resolved_secret");
+    expect(connections).toContain("fixture@1");
     db.close();
   });
 
@@ -449,6 +453,13 @@ describe("restoreVault", () => {
         .query<{ count: number }, []>("SELECT COUNT(*) AS count FROM connections")
         .get()?.count,
     ).toBe(1);
+    expect(
+      restored
+        .query<{ implementation_version: string }, []>(
+          "SELECT implementation_version FROM connections",
+        )
+        .get()?.implementation_version,
+    ).toBe("fixture@1");
     restored.close();
     db.close();
   });
@@ -592,6 +603,34 @@ describe("restoreVault", () => {
         .get()?.body,
     ).toBe(body);
     restored.close();
+    db.close();
+  });
+
+  test("refuses a backup that plants the control directory", () => {
+    const { db, vaultPath } = populated();
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    const manifest = exportVault(db, vaultPath, backup);
+    const planted = join(backup, "vault", ".kizuki", "vault-id");
+    mkdirSync(join(backup, "vault", ".kizuki"), { recursive: true, mode: 0o700 });
+    writeFileSync(planted, "01plantedvaultid000000000001\n");
+    chmodSync(planted, 0o600);
+    const bytes = readFileSync(planted);
+    writeSignedManifest(backup, {
+      ...manifest,
+      files: {
+        ...manifest.files,
+        "vault/.kizuki/vault-id": {
+          count: 1,
+          sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex"),
+          size: bytes.byteLength,
+          mode: 0o600,
+        },
+      },
+    });
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    expect(() => verifyBackup(backup)).toThrow(/control directory/);
+    expect(() => restoreVault(backup, target)).toThrow(/control directory/);
+    expect(existsSync(join(target, ".kizuki"))).toBe(false);
     db.close();
   });
 

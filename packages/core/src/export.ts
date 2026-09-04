@@ -45,6 +45,7 @@ const PAGE = 256;
 const CHUNK = 65_536;
 const STAGING_MARK = ".kizuki-backup-";
 const INCOMPLETE = ".kizuki-backup-incomplete";
+const CONTROL_DIR = ".kizuki";
 const FORBIDDEN_KEYS = new Set([
   "resolved_secret",
   "client_secret",
@@ -165,6 +166,7 @@ interface ConnectionRow {
   secret_refs: string;
   connected_at: string;
   disconnected_at: string | null;
+  implementation_version: string;
 }
 
 interface CheckpointRow {
@@ -383,7 +385,7 @@ function vaultFiles(directory: string): string[] {
   for (const entry of readdirSync(directory, { withFileTypes: true }).sort(
     (left, right) => compareCodeUnits(left.name, right.name),
   )) {
-    if (entry.name === ".kizuki" || entry.isSymbolicLink()) continue;
+    if (entry.name === CONTROL_DIR || entry.isSymbolicLink()) continue;
     const path = join(directory, entry.name);
     if (entry.isDirectory()) files.push(...vaultFiles(path));
     else if (entry.isFile()) files.push(path);
@@ -677,14 +679,18 @@ function* pageConnections(db: Database): Generator<Record<string, unknown>> {
     if (after === null) {
       rows = db
         .query<ConnectionRow, [number]>(
-          `SELECT * FROM connections
+          `SELECT connector_id, source_key, config, secret_refs,
+                  connected_at, disconnected_at, implementation_version
+           FROM connections
            ORDER BY connector_id, source_key LIMIT ?`,
         )
         .all(PAGE);
     } else {
       rows = db
         .query<ConnectionRow, [string, string, string, number]>(
-          `SELECT * FROM connections
+          `SELECT connector_id, source_key, config, secret_refs,
+                  connected_at, disconnected_at, implementation_version
+           FROM connections
            WHERE connector_id > ?
               OR (connector_id = ? AND source_key > ?)
            ORDER BY connector_id, source_key LIMIT ?`,
@@ -700,6 +706,7 @@ function* pageConnections(db: Database): Generator<Record<string, unknown>> {
         secret_refs: JSON.parse(row.secret_refs) as unknown,
         connected_at: row.connected_at,
         disconnected_at: row.disconnected_at,
+        implementation_version: row.implementation_version,
       };
     }
     const last: ConnectionRow | undefined = rows.at(-1);
@@ -1010,7 +1017,11 @@ function verifyFiles(root: string, manifest: ExportManifest): void {
   for (const key of Object.keys(manifest.files).sort(compareCodeUnits)) {
     const entry = manifest.files[key];
     if (entry === undefined) continue;
-    const path = pathUnder(root, splitBackupPath(key));
+    const parts = splitBackupPath(key);
+    if (parts[0] === "vault" && parts.includes(CONTROL_DIR)) {
+      throw new Error(`backup must not include the control directory: ${key}`);
+    }
+    const path = pathUnder(root, parts);
     if (!existsSync(path) || lstatSync(path).isSymbolicLink()) {
       throw new Error(`backup file is missing: ${key}`);
     }
@@ -1228,8 +1239,9 @@ function insertConnectionRow(db: Database, raw: Record<string, unknown>): void {
   }
   db.query(
     `INSERT INTO connections
-       (connector_id, source_key, config, secret_refs, connected_at, disconnected_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+       (connector_id, source_key, config, secret_refs, connected_at, disconnected_at,
+        implementation_version)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     asString(raw.connector_id, "connector_id"),
     asString(raw.source_key, "source_key"),
@@ -1237,6 +1249,7 @@ function insertConnectionRow(db: Database, raw: Record<string, unknown>): void {
     JSON.stringify(refs),
     asString(raw.connected_at, "connected_at"),
     asStringOrNull(raw.disconnected_at, "disconnected_at"),
+    asString(raw.implementation_version ?? "", "implementation_version"),
   );
 }
 
@@ -1363,7 +1376,7 @@ export function restoreVault(
       }
     }
 
-    const db = openLedger(join(staging, ".kizuki", "kizuki.db"));
+    const db = openLedger(join(staging, CONTROL_DIR, "kizuki.db"));
     try {
       options.onProgress?.("ledger");
       db.transaction(() => {
