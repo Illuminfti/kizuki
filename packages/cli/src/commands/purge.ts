@@ -3,7 +3,11 @@ import type { PurgeFilter } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
 import { resolveConnectorId } from "../connections";
 import { withVault } from "../context";
+import { jsonEnvelope } from "../output";
 import type { CliIo, Command } from "./index";
+
+export const PURGE_IRREVERSIBLE =
+  "Purge physically deletes event evidence. Undo cannot resurrect purged events. Canon rewrites stay reversible by receipt.";
 
 function plural(count: number, noun: string): string {
   return count === 1 ? `${count} ${noun}` : `${count} ${noun}s`;
@@ -16,8 +20,9 @@ function pad(value: string, width: number): string {
 export const purgeCommand: Command = {
   name: "purge",
   usage:
-    "purge (--event ID | --subject ID [--include-aliases] | --connector ID [--record ID] | --verify RECEIPT) [--reason TEXT]",
-  summary: "physically delete matching events, hold affected pages, and prove absence",
+    "purge (--event ID | --subject ID [--include-aliases] | --connector ID [--record ID] | --verify RECEIPT) [--reason TEXT] [--json]",
+  summary:
+    "physically delete matching events, hold affected pages, and prove absence",
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, {
       options: [
@@ -28,9 +33,10 @@ export const purgeCommand: Command = {
         "--reason",
         "--verify",
       ],
-      flags: ["--include-aliases"],
+      flags: ["--include-aliases", "--json"],
     });
     if (parsed.positionals.length !== 0) throw new UsageError(this.usage);
+    const asJson = parsed.flags.has("--json");
 
     const verifyId = parsed.options.get("--verify");
     if (verifyId !== undefined) {
@@ -46,16 +52,33 @@ export const purgeCommand: Command = {
       }
       return withVault(io, async (ctx) => {
         const report = await verifyPurge(ctx.db, ctx.vaultPath, verifyId);
-        for (const proof of report.proofs) {
-          const status = proof.found.length === 0 ? "ok" : "found";
+        if (asJson) {
           io.out(
-            `${pad(proof.store, 23)} checked ${proof.checked}  found ${proof.found.length}   ${status}`,
+            jsonEnvelope(report.ok ? "purge" : "purge", report.ok ? "ok" : "error", {
+              ...report,
+              ops: report.proofs.map((proof) => ({
+                store: proof.store,
+                state: proof.found.length === 0 ? "done" : "failed",
+                checked: proof.checked,
+                found: proof.found,
+              })),
+            }),
           );
+        } else {
+          for (const proof of report.proofs) {
+            const status = proof.found.length === 0 ? "done" : "failed";
+            io.out(
+              `${pad(proof.store, 23)} checked ${proof.checked}  found ${proof.found.length}   ${status}`,
+            );
+          }
+          const hold = report.hold_lifted ? "hold lifted" : "hold remains";
+          io.out(
+            `${pad("canon", 23)} pages rewritten ${report.pages_rewritten}    ${hold}`,
+          );
+          if (!report.ok) {
+            io.err(`retry: kizuki purge --verify ${verifyId}`);
+          }
         }
-        const hold = report.hold_lifted ? "hold lifted" : "hold remains";
-        io.out(
-          `${pad("canon", 23)} pages rewritten ${report.pages_rewritten}    ${hold}`,
-        );
         return report.ok ? 0 : 1;
       });
     }
@@ -88,16 +111,31 @@ export const purgeCommand: Command = {
     }
 
     return withVault(io, async (ctx) => {
+      io.err(PURGE_IRREVERSIBLE);
       const outcome = await runPurge(ctx.db, ctx.vaultPath, filter, reason, {
         include_aliases: includeAliases,
       });
-      io.out(
-        `purged ${plural(outcome.receipts.length, "event")}; held ${plural(outcome.canon_holds.length, "page")}; ${plural(outcome.purge_ops.length, "store op")} pending`,
-      );
-      const receipt = outcome.receipts[0];
-      if (receipt !== undefined) {
-        io.out(`receipt ${receipt.receipt_id}`);
-        if (includeAliases) io.out(receipt.reason);
+      if (asJson) {
+        io.out(
+          jsonEnvelope("purge", "ok", {
+            ...outcome,
+            irreversible_events: true,
+            undo_restores_canon_only: true,
+          }),
+        );
+      } else {
+        io.out(
+          `purged ${plural(outcome.receipts.length, "event")}; held ${plural(outcome.canon_holds.length, "page")}; ${plural(outcome.purge_ops.length, "store op")} pending`,
+        );
+        const receipt = outcome.receipts[0];
+        if (receipt !== undefined) {
+          io.out(`receipt ${receipt.receipt_id}`);
+          if (includeAliases) io.out(receipt.reason);
+        }
+        io.out(PURGE_IRREVERSIBLE);
+        for (const op of outcome.purge_ops) {
+          io.out(`op ${op.store} state=${op.state}`);
+        }
       }
       return 0;
     });

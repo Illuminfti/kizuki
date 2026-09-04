@@ -1,9 +1,10 @@
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import {
   detectSupervisorKind,
   ensureVaultId,
   initVault,
   installServeService,
+  openLedger,
   realSupervisorHost,
   serveExecHint,
   writeServeIntent,
@@ -11,6 +12,7 @@ import {
 import { UsageError, parseArguments, requirePositional } from "../args";
 import {
   type KizukiConfig,
+  cloneVaults,
   configPath,
   readConfig,
   writeConfig,
@@ -37,12 +39,16 @@ export const initCommand: Command = {
 
     const vaultPath = resolve(rawPath);
     initVault(vaultPath);
+    ensureVaultId(vaultPath);
+    const ledger = openLedger(join(vaultPath, ".kizuki", "kizuki.db"));
+    ledger.close();
 
     let wrote = false;
     if (!parsed.flags.has("--no-default")) {
       if (config.default_vault === undefined || parsed.flags.has("--default")) {
         const next: KizukiConfig = {
-          vaults: { ...config.vaults },
+          schema: config.schema,
+          vaults: cloneVaults(config.vaults),
           default_vault: vaultPath,
         };
         writeConfig(path, next);
@@ -50,7 +56,6 @@ export const initCommand: Command = {
       }
     }
 
-    ensureVaultId(vaultPath);
     const kind = detectSupervisorKind(io.env);
     if (parsed.flags.has("--no-service")) {
       writeServeIntent(vaultPath, "opted-out");
@@ -66,7 +71,11 @@ export const initCommand: Command = {
       const entry = resolve(import.meta.dir, "../main.ts");
       const host = realSupervisorHost(
         kind,
-        io.env.HOME ?? io.env.XDG_CONFIG_HOME ?? "",
+        io.env.HOME && io.env.HOME.length > 0
+          ? io.env.HOME
+          : io.env.XDG_CONFIG_HOME && io.env.XDG_CONFIG_HOME.length > 0
+            ? io.env.XDG_CONFIG_HOME
+            : "",
         `${bun} ${entry} serve --vault ${vaultPath}`,
       );
       const installed = installServeService(vaultPath, host);

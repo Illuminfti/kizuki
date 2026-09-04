@@ -12,7 +12,7 @@ import {
   resolveConnectorId,
 } from "../connections";
 import { withVault } from "../context";
-import { indexEventsSince } from "../derived";
+import { tryRefreshDerived } from "../derived";
 import { formatRunCounts } from "../output";
 import type { CliIo, Command } from "./index";
 
@@ -72,7 +72,6 @@ export const importCommand: Command = {
       }
 
       const connector = await loadConnector(selected);
-      const since = { accepted_at: new Date().toISOString(), event_id: "" };
       const result = await runToCompletion(
         ctx.db,
         connector,
@@ -80,9 +79,10 @@ export const importCommand: Command = {
         selected.connection.source_key,
         "backfill",
       );
-      indexEventsSince(ctx.db, since);
+      const derived = tryRefreshDerived(ctx.db, ctx.vaultPath);
       io.out(formatRunCounts(result));
       for (const text of result.errors) io.err(`error: ${text}`);
+      for (const warning of derived.degraded) io.err(`degraded: ${warning}`);
       return result.errors.length > 0 ? 1 : 0;
     });
   },

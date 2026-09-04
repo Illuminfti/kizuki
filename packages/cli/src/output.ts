@@ -1,12 +1,45 @@
 import { sanitize } from "@kizuki/tui";
 import type { RunResult } from "@kizuki/core";
 
+export type CliJsonStatus = "ok" | "degraded" | "error";
+
+export interface CliJsonError {
+  code: string;
+  message: string;
+}
+
+export interface CliJsonEnvelope<T> {
+  schema: string;
+  status: CliJsonStatus;
+  data: T;
+  degraded: string[];
+  warnings: string[];
+  error?: CliJsonError;
+}
+
 export function clean(text: string): string {
   return sanitize(text).replace(/\s+/g, " ").trim();
 }
 
-export function jsonLine(value: unknown): string {
-  return JSON.stringify(value);
+export function jsonEnvelope<T>(
+  command: string,
+  status: CliJsonStatus,
+  data: T,
+  extras: {
+    degraded?: string[];
+    warnings?: string[];
+    error?: CliJsonError;
+  } = {},
+): string {
+  const body: CliJsonEnvelope<T> = {
+    schema: `kizuki.cli.${command}/v1`,
+    status,
+    data,
+    degraded: extras.degraded ?? [],
+    warnings: extras.warnings ?? [],
+  };
+  if (extras.error !== undefined) body.error = extras.error;
+  return JSON.stringify(body);
 }
 
 export function table(rows: string[][]): string[] {

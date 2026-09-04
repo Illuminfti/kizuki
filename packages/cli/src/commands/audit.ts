@@ -2,7 +2,7 @@ import { listAuditReceipts } from "@kizuki/core";
 import { runAudit } from "@kizuki/tui";
 import { UsageError, parseArguments } from "../args";
 import { withVault } from "../context";
-import { jsonLine, table } from "../output";
+import { jsonEnvelope, table } from "../output";
 import type { CliIo, Command } from "./index";
 
 function shortHash(hash: string | null): string {
@@ -52,7 +52,7 @@ export const auditCommand: Command = {
       });
 
       if (parsed.flags.has("--json")) {
-        for (const row of rows) io.out(jsonLine(row));
+        io.out(jsonEnvelope("audit", "ok", { receipts: rows }));
         return 0;
       }
 

@@ -119,11 +119,9 @@ function sha256File(path: string): string {
   return new Bun.CryptoHasher("sha256").update(readFileSync(path)).digest("hex");
 }
 
-function parseJsonLines(stdout: string): Record<string, unknown>[] {
-  return stdout
-    .split("\n")
-    .filter((line) => line.length > 0)
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
+function parseAuditReceipts(stdout: string): Record<string, unknown>[] {
+  const envelope = JSON.parse(stdout) as { data: { receipts: Record<string, unknown>[] } };
+  return envelope.data.receipts;
 }
 
 describe("kizuki audit and undo", () => {
@@ -138,7 +136,7 @@ describe("kizuki audit and undo", () => {
     const listed = runCli(setup.env, "audit", "--json");
     expect(listed.exitCode).toBe(0);
     expect(listed.stderr).toBe("");
-    const rows = parseJsonLines(listed.stdout);
+    const rows = parseAuditReceipts(listed.stdout);
     expect(rows.length).toBeGreaterThanOrEqual(2);
     const edited = rows.find((row) => row.receipt_id === written.editedId);
     const created = rows.find((row) => row.receipt_id === written.createdId);
@@ -172,7 +170,7 @@ describe("kizuki audit and undo", () => {
     expect(sha256File(page)).toBe(written.editedBefore);
     expect(sha256File(page)).toBe(written.createdAfter);
 
-    const afterUndo = parseJsonLines(runCli(setup.env, "audit", "--json").stdout);
+    const afterUndo = parseAuditReceipts(runCli(setup.env, "audit", "--json").stdout);
     const original = afterUndo.find((row) => row.receipt_id === written.editedId);
     expect(typeof original?.reverted_by).toBe("string");
     expect(original?.reverted_by).not.toBe("");

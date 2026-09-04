@@ -110,6 +110,56 @@ describe("config", () => {
     expect(readFileSync(env.KIZUKI_CONFIG ?? "", "utf8")).toContain(third);
   });
 
+  test("unset HOME and XDG refuse a relative config path", () => {
+    const result = runCli(
+      {
+        HOME: "",
+        XDG_CONFIG_HOME: "",
+        KIZUKI_CONFIG: undefined,
+      },
+      "query",
+      "x",
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("no user config directory");
+  });
+
+  test("relative HOME is refused", () => {
+    const result = runCli({ HOME: "relative-home", XDG_CONFIG_HOME: "" }, "query", "x");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("HOME must be an absolute path");
+  });
+
+  test("prototype and dotted alias keys are rejected", () => {
+    const env = isolatedEnv();
+    const path = env.KIZUKI_CONFIG ?? "";
+    writeFileSync(
+      path,
+      `schema = "kizuki.cli.config/v1"\n\n[vaults]\n__proto__ = "/tmp/nope"\n`,
+    );
+    const proto = runCli(env, "query", "x");
+    expect(proto.exitCode).toBe(1);
+    expect(proto.stderr).toContain("invalid vault alias");
+
+    writeFileSync(
+      path,
+      `schema = "kizuki.cli.config/v1"\n\n[vaults]\n"lab.prod" = "/tmp/nope"\n`,
+    );
+    const dotted = runCli(env, "query", "x");
+    expect(dotted.exitCode).toBe(1);
+    expect(dotted.stderr).toContain("invalid vault alias");
+  });
+
+  test("config writes are atomic and round-trip aliases", () => {
+    const env = isolatedEnv();
+    const first = join(tempDir(), "first");
+    expect(runCli(env, "init", first).exitCode).toBe(0);
+    const text = readFileSync(env.KIZUKI_CONFIG ?? "", "utf8");
+    expect(text).toContain('schema = "kizuki.cli.config/v1"');
+    expect(text).toContain("[vaults]");
+    expect(text).not.toMatch(/constructor\s*=/);
+  });
+
   test("--default and --no-default together is a usage error", () => {
     const result = runCli(
       isolatedEnv(),

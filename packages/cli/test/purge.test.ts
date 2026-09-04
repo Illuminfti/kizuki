@@ -135,9 +135,11 @@ describe("RFC 0002 §16.4 purge and undo", () => {
       "source deleted",
     );
     expect(purged.exitCode).toBe(0);
+    expect(purged.stderr).toContain("Undo cannot resurrect purged events");
     expect(purged.stdout).toContain(
       "purged 1 event; held 1 page; 1 store op pending",
     );
+    expect(purged.stdout).toContain("Undo cannot resurrect purged events");
     const receipt = purged.stdout.match(/receipt ([0-9A-HJKMNP-TV-Z]{26})/)?.[1];
     expect(receipt).toBeDefined();
     if (receipt === undefined) return;
@@ -147,7 +149,7 @@ describe("RFC 0002 §16.4 purge and undo", () => {
     // Import's live leftover is retracted with the event; verify then
     // proves absence of the three docs this test indexed (event, page, claim).
     expect(verified.stdout).toMatch(
-      /kizuki\.retrieval\.fts5\s+checked 3\s+found 0\s+ok/,
+      /kizuki\.retrieval\.fts5\s+checked 3\s+found 0\s+done/,
     );
     expect(verified.stdout).toMatch(/canon\s+pages rewritten 1\s+hold lifted/);
   });

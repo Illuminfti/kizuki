@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { ConnectionStateStore, initSearch, openLedger } from "@kizuki/core";
+import { ConnectionStateStore, initSearch, openLedger, readVaultId } from "@kizuki/core";
 import type { CliIo } from "./commands/index";
 import {
   type KizukiConfig,
@@ -29,26 +29,69 @@ export function resolveVault(
 
 function resolveVaultOverride(value: string, config: KizukiConfig): string {
   if (!value.includes("/")) {
-    const named = config.vaults[value];
-    if (named === undefined) {
+    if (!Object.hasOwn(config.vaults, value)) {
       const known = Object.keys(config.vaults).sort();
       throw new Error(
         `unknown vault: ${value}; known: ${known.join(", ") || "(none)"}`,
       );
+    }
+    const named = config.vaults[value];
+    if (named === undefined) {
+      throw new Error(`unknown vault: ${value}`);
     }
     return resolve(named);
   }
   return resolve(value);
 }
 
+function peekLedgerIdentity(dbPath: string): void {
+  const peek = new Database(dbPath, { readonly: true });
+  try {
+    const tables = peek
+      .query<{ name: string }, []>(
+        "SELECT name FROM sqlite_master WHERE type = 'table'",
+      )
+      .all()
+      .map((row) => row.name);
+    const names = new Set(tables);
+    if (!names.has("schema_version") || !names.has("events")) {
+      throw new Error(
+        `vault ledger is not a Kizuki database: ${dbPath}; run: kizuki init`,
+      );
+    }
+    const version = peek
+      .query<{ version: number }, []>("SELECT version FROM schema_version LIMIT 1")
+      .get();
+    if (version === null || !Number.isInteger(version.version) || version.version < 1) {
+      throw new Error(
+        `vault ledger has no usable schema version: ${dbPath}; run: kizuki init`,
+      );
+    }
+  } finally {
+    peek.close();
+  }
+}
+
 export function assertVault(path: string): string {
   const absolutePath = resolve(path);
-  if (
-    !existsSync(join(absolutePath, ".kizuki")) ||
-    !existsSync(join(absolutePath, "archive"))
-  ) {
-    throw new Error(`vault is not initialized: ${absolutePath}`);
+  const control = join(absolutePath, ".kizuki");
+  const archive = join(absolutePath, "archive");
+  const dbPath = join(control, "kizuki.db");
+  if (!existsSync(control) || !existsSync(archive)) {
+    throw new Error(`vault is not initialized: ${absolutePath}; run: kizuki init ${absolutePath}`);
   }
+  const identity = readVaultId(absolutePath);
+  if (identity === null) {
+    throw new Error(
+      `vault identity missing: ${absolutePath}; run: kizuki init ${absolutePath}`,
+    );
+  }
+  if (!existsSync(dbPath) || !statSync(dbPath).isFile()) {
+    throw new Error(
+      `vault ledger missing: ${absolutePath}; run: kizuki init ${absolutePath}`,
+    );
+  }
+  peekLedgerIdentity(dbPath);
   return absolutePath;
 }
 

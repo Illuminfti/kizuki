@@ -11,9 +11,16 @@ bun packages/cli/src/main.ts help <verb>
 If a bin alias `kizuki` is on `PATH`, it is the same entry
 (`packages/cli/src/main.ts`). `npm i -g kizuki` is not supported.
 
-Global option: `--vault <path|name>` on every verb. Config is
+Global option: `--vault <path|name>` on every verb. User config is
 `$KIZUKI_CONFIG`, else `$XDG_CONFIG_HOME/kizuki/config.toml`, else
-`$HOME/.config/kizuki/config.toml`.
+`$HOME/.config/kizuki/config.toml`. HOME and XDG paths must be absolute;
+an unset environment fails closed instead of writing beside the working
+directory. Vault aliases are `[A-Za-z][A-Za-z0-9_-]{0,63}`. Writes are
+atomic under a lock. Port, model, budget, and sensitivity selection live
+in `<vault>/.kizuki/serve.toml` and appear in `doctor`.
+
+`--json` prints a `kizuki.cli.<verb>/v1` envelope with `status`, `data`,
+`degraded`, and `warnings`. Diagnostics stay on stderr.
 
 Exit codes: `0` success, `1` runtime failure, `2` usage / unknown / retired
 verb. Promised output is on stdout. Diagnostics go to stderr.
@@ -30,9 +37,11 @@ This page documents the verbs that exist on this revision.
 usage: kizuki init <path> [--default | --no-default] [--no-service]
 ```
 
-Creates a vault, writes `default_vault` unless `--no-default`, and installs
-`kizuki serve` as a user service when a supervisor is present. `--no-service`
-records an opt-out. With no supervisor, prints the exact `serve` command.
+Creates a vault, writes a vault identity marker, writes `default_vault`
+unless `--no-default`, and installs `kizuki serve` as a user service when
+a supervisor is present. `--no-service` records an opt-out. With no
+supervisor, prints the exact `serve` command. Later verbs refuse a
+directory that is not a Kizuki vault.
 
 ## import
 
@@ -40,8 +49,8 @@ records an opt-out. With no supervisor, prints the exact `serve` command.
 usage: kizuki import <connector> --source PATH
 ```
 
-Enrolls a `none`-mode source and backfills it. Sign-in connectors refuse with
-`sign-in for <id> is not wired yet`.
+Enrolls a `none`-mode source and backfills it to exhaustion. Sign-in
+connectors are not in the CLI enrollment list.
 
 ## connect
 
@@ -49,7 +58,8 @@ Enrolls a `none`-mode source and backfills it. Sign-in connectors refuse with
 usage: kizuki connect <connector> --source PATH [--sensitivity public|personal|private]
 ```
 
-Enroll only. Sensitivity is optional; unlabeled evidence is not served.
+Enroll a none-mode file source only. Sensitivity is optional; unlabeled
+evidence is not served. Sign-in connectors refuse enrollment.
 
 ## backfill / sync
 
@@ -58,18 +68,21 @@ usage: kizuki backfill <connector> [--source PATH|KEY]
 usage: kizuki sync [connector] [--source PATH|KEY]
 ```
 
-Historical sweep vs incremental sweep. `sync` with no connector runs every
-active connection.
+Historical sweep vs incremental sweep. Each selected connection is drained
+until the connector reports exhaustion. `--source` requires an explicit
+connector. A named connector with no rows exits `1` (`no_connections`).
+One connection failure does not skip the rest.
 
 ## query
 
 ```text
-usage: kizuki query <text> [--scope canon|ledger|all] [--limit N] [--json]
+usage: kizuki query <text> [--scope canon|ledger|all] [--limit N] [--json] [--degraded]
 ```
 
 FTS floor. Ceiling is `private`. Unlabeled hits are withheld on stderr
-(`withheld=N (no sensitivity label)`). Zero labeled hits and zero withheld
-prints `0 hits` on stderr.
+(`withheld=N (no sensitivity label)`). A stale or partial index exits `1`
+unless `--degraded` is set. Zero labeled hits and zero withheld prints
+`0 hits` on stderr.
 
 ## doctor
 
@@ -149,10 +162,13 @@ weights.
 ## purge
 
 ```text
-usage: kizuki purge (--event ID | --subject ID [--include-aliases] | --connector ID [--record ID] | --verify RECEIPT) [--reason TEXT]
+usage: kizuki purge (--event ID | --subject ID [--include-aliases] | --connector ID [--record ID] | --verify RECEIPT) [--reason TEXT] [--json]
 ```
 
 Physical deletion plus a receipt. `--reason` is required except `--verify`.
+Purged events are not resurrected by undo; canon rewrites stay reversible.
+`--verify` prints per-store absence proofs and `pending`/`done`/`failed`
+operation state.
 
 ## export
 
