@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   Connector,
   HealthReport,
@@ -11,9 +14,9 @@ import type { CaptureEventInput } from "../src/contracts/event";
 import { applyConnectionSensitivity } from "../src/sensitivity/store";
 import { accept, readSince } from "../src/ledger/ledger";
 import { openLedger } from "../src/ledger/db";
-import { registerConnection } from "../src/ledger/connections";
+import { getConnection, registerConnection } from "../src/ledger/connections";
 import { runBackfill } from "../src/ingest/run";
-import { indexEvent } from "../src/search/indexer";
+import { indexEvent, rebuildSearch } from "../src/search/indexer";
 import { search } from "../src/search/query";
 import { validEvent } from "./fixtures";
 
@@ -55,11 +58,18 @@ function manifest(): Manifest {
   };
 }
 
-function setup(event: CaptureEventInput, seeded = true) {
+function setup(
+  event: CaptureEventInput,
+  seeded = true,
+  source = SOURCE,
+  requested?: "private",
+) {
   const db = openLedger(":memory:");
-  const connection = registerConnection(db, "fixture", SOURCE);
+  const connection = registerConnection(db, "fixture", source);
   const configured = manifest();
-  if (seeded) applyConnectionSensitivity(db, connection, configured);
+  if (seeded) {
+    applyConnectionSensitivity(db, connection, configured, requested);
+  }
   return { db, connector: new FixtureConnector({ events: [event], cursor: null }, configured) };
 }
 
@@ -117,5 +127,50 @@ describe("connector-run sensitivity resolution", () => {
     expect(search(imported.db, "private-import", { ceiling: "personal" })).toEqual([]);
     expect(search(imported.db, "private-import", { ceiling: "private" })).toHaveLength(1);
     imported.db.close();
+  });
+
+  test("keeps policies isolated by source_key and snapshots the first accepted label", async () => {
+    const secondSource = "01JJ0000000000000000000002";
+    const personal = setup({ ...validEvent(), source_record_id: "personal" });
+    await runBackfill(personal.db, personal.connector, "fixture", SOURCE);
+    const connection = registerConnection(personal.db, "fixture", secondSource);
+    applyConnectionSensitivity(personal.db, connection, manifest(), "private");
+    const privateConnector = new FixtureConnector(
+      { events: [{ ...validEvent(), source_record_id: "private" }], cursor: null },
+      manifest(),
+    );
+    await runBackfill(personal.db, privateConnector, "fixture", secondSource);
+    const labels = readSince(personal.db, null, 10).events.map((event) => [
+      event.source_record_id,
+      event.sensitivity_hint,
+    ]);
+    expect(labels).toContainEqual(["personal", "personal"]);
+    expect(labels).toContainEqual(["private", "private"]);
+
+    const firstConnection = getConnection(personal.db, "fixture", SOURCE);
+    if (firstConnection === null) throw new Error("expected first connection");
+    applyConnectionSensitivity(personal.db, firstConnection, manifest(), "private");
+    await runBackfill(personal.db, personal.connector, "fixture", SOURCE);
+    expect(readSince(personal.db, null, 10).events).toHaveLength(2);
+    expect(
+      readSince(personal.db, null, 10).events.find(
+        (event) => event.source_record_id === "personal",
+      )?.sensitivity_hint,
+    ).toBe("personal");
+    personal.db.close();
+  });
+
+  test("rebuild preserves the accepted label instead of consulting current policy", async () => {
+    const imported = setup({ ...validEvent(), text: "replay-private", sensitivity_hint: "private" });
+    await runBackfill(imported.db, imported.connector, "fixture", SOURCE);
+    const vault = mkdtempSync(join(tmpdir(), "kizuki-ingest-sensitivity-"));
+    try {
+      rebuildSearch(imported.db, vault);
+      expect(search(imported.db, "replay-private", { ceiling: "personal" })).toEqual([]);
+      expect(search(imported.db, "replay-private", { ceiling: "private" })).toHaveLength(1);
+    } finally {
+      rmSync(vault, { force: true, recursive: true });
+      imported.db.close();
+    }
   });
 });
