@@ -259,6 +259,30 @@ describe("MarkdownFolderConnector", () => {
     }
   });
 
+  test("a tombstones-phase cursor still emits files that appeared later", async () => {
+    const root = await makeTempDir();
+    try {
+      await writeFile(path.join(root, "kept.md"), "kept\n");
+      const connector = createMarkdownFolderConnector({ path: root });
+      const first = await connector.backfill(null);
+      const stuck = JSON.parse(first.cursor ?? "{}") as {
+        phase: string;
+        exhausted: boolean;
+      };
+      stuck.phase = "tombstones";
+      stuck.exhausted = false;
+
+      await writeFile(path.join(root, "later.md"), "later\n");
+      const second = await connector.sync(JSON.stringify(stuck));
+      expect(second.events.map((event) => event.source_record_id)).toEqual([
+        "later.md",
+      ]);
+      expect(second.events[0]?.deleted).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("page-sized backfills exhaust explicitly", async () => {
     const root = await makeTempDir();
     try {

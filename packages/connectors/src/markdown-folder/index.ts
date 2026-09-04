@@ -204,15 +204,18 @@ export class MarkdownFolderConnector implements Connector {
       }
     }
 
-    const inTombstones = previous?.phase === "tombstones";
+    // Phase is a pager hint. New or changed files always emit first; a
+    // leftover tombstones cursor must not swallow them.
+    const pagingTombstones =
+      previous?.phase === "tombstones" && fileEvents.length === 0;
     const fileAfter =
-      inTombstones || previous?.exhausted ? null : (previous?.after ?? null);
+      pagingTombstones || previous?.exhausted ? null : (previous?.after ?? null);
     const fileFrom = indexAfter(fileEvents, fileAfter);
-    const filePage = inTombstones
+    const filePage = pagingTombstones
       ? []
       : fileEvents.slice(fileFrom, fileFrom + this.pageSize);
     const filesDone =
-      inTombstones || fileFrom + filePage.length >= fileEvents.length;
+      pagingTombstones || fileFrom + filePage.length >= fileEvents.length;
 
     const processed = new Map(previousFiles);
     for (const event of filePage) {
@@ -261,7 +264,14 @@ export class MarkdownFolderConnector implements Connector {
       };
     }
 
-    const tombstoneAfter = inTombstones ? (previous?.after ?? null) : null;
+    if (tombstones.length === 0) {
+      return {
+        events: [],
+        cursor: nextCursor(!scan.truncated, "files", null),
+      };
+    }
+
+    const tombstoneAfter = pagingTombstones ? (previous?.after ?? null) : null;
     const tombstoneFrom = indexAfter(tombstones, tombstoneAfter);
     const tombstonePage = tombstones.slice(
       tombstoneFrom,
