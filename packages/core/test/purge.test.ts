@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Database } from "bun:sqlite";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CaptureEventInput } from "../src/contracts/event";
@@ -228,6 +228,86 @@ describe("purgeEvents", () => {
     expect(
       db.query<{ n: number }, []>("SELECT count(*) AS n FROM canon_holds").get(),
     ).toEqual({ n: 1 });
+    db.close();
+  });
+
+  test("does not rewrite uncertain pages or lift their holds", async () => {
+    const db = openLedger(":memory:");
+    const target = storedEvent(db, event("target"));
+    const vaultPath = temporaryVault();
+    writeFileSync(
+      join(vaultPath, "facts", "bad-sources.md"),
+      [
+        "---",
+        "id: page-bad-sources",
+        "title: bad",
+        "type: fact",
+        "status: active",
+        "sensitivity: personal",
+        "taint: clean",
+        "sources: 123",
+        "---",
+        "",
+        "unreadable sources\n",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(vaultPath, "facts", "first.md"),
+      serializePage({
+        data: {
+          id: "page-dup",
+          title: "first",
+          type: "fact",
+          status: "active",
+          sensitivity: "personal",
+          taint: "clean",
+          sources: ["unrelated"],
+        },
+        body: "first copy\n",
+      }),
+      "utf8",
+    );
+    writeFileSync(
+      join(vaultPath, "facts", "second.md"),
+      serializePage({
+        data: {
+          id: "page-dup",
+          title: "second",
+          type: "fact",
+          status: "active",
+          sensitivity: "personal",
+          taint: "clean",
+          sources: [target.event_id],
+        },
+        body: "duplicate copy\n",
+      }),
+      "utf8",
+    );
+    const outcome = await runPurge(
+      db,
+      vaultPath,
+      { event_id: target.event_id },
+      "record request",
+    );
+    expect(outcome.receipts.map(({ event_id }) => event_id)).toEqual([
+      target.event_id,
+    ]);
+    expect(outcome.uncertain_pages.sort()).toEqual([
+      "facts/bad-sources.md",
+      "facts/second.md",
+    ]);
+    expect(outcome.rewritten).toEqual([]);
+    expect(
+      db
+        .query<{ page_path: string }, []>(
+          "SELECT page_path FROM canon_holds ORDER BY page_path",
+        )
+        .all()
+        .map(({ page_path }) => page_path),
+    ).toEqual(["facts/bad-sources.md", "facts/second.md"]);
+    expect(readFileSync(join(vaultPath, "facts", "second.md"), "utf8")).toContain(
+      target.event_id,
+    );
     db.close();
   });
 

@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { applyPurgeRewrite } from "../canon/apply";
 import type { CanonIo } from "../canon";
+import { CanonWriteError } from "../canon/errors";
 import { getClaim, listClaims, markClaimsAfterPurge } from "../claims/store";
 import { PortError } from "../contracts/ports";
 import type { Claim } from "../contracts/proposal";
@@ -908,6 +909,7 @@ function rewriteHolds(
   vaultPath: string,
   purgedIds: readonly string[],
   options: PurgeRunOptions,
+  skipPaths: ReadonlySet<string>,
 ): PurgeRewriteRef[] {
   const rewritten: PurgeRewriteRef[] = [];
   const holds = readHolds(db);
@@ -923,6 +925,7 @@ function rewriteHolds(
     ...(options.retrieval !== undefined ? { retrieval: options.retrieval } : {}),
   };
   for (const hold of holds) {
+    if (skipPaths.has(hold.page_path)) continue;
     const pageClaims = citing.filter((claim) => {
       if (claim.target !== null && hold.page_path.startsWith(claim.target)) {
         return true;
@@ -943,6 +946,9 @@ function rewriteHolds(
       });
     } catch (error) {
       if (error instanceof SyntaxError) continue;
+      if (error instanceof CanonWriteError && error.code === "decision_stale") {
+        continue;
+      }
       throw error;
     }
     rewritten.push({ page_path: hold.page_path, receipt_id: receipt.receipt_id });
@@ -976,6 +982,7 @@ export async function runPurge(
     vaultPath,
     phase1.receipts.map((receipt) => receipt.event_id),
     options,
+    new Set(phase1.uncertain_pages),
   );
   return phase1;
 }

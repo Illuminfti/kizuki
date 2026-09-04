@@ -164,10 +164,11 @@ export const purgeCommand: Command = {
           include_aliases: includeAliases,
         });
         if (asJson) {
+          const empty = preview.event_count === 0;
           io.out(
             jsonEnvelope(
               "purge",
-              preview.event_count === 0 ? "error" : "ok",
+              empty && !allowEmpty ? "error" : "ok",
               { ...preview, dry_run: true },
             ),
           );

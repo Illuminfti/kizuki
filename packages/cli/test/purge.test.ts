@@ -182,6 +182,29 @@ describe("RFC 0002 §16.4 purge and undo", () => {
     db.close();
   });
 
+  test("dry-run --json --allow-empty reports ok for no match", () => {
+    const setup = tempVault();
+    const preview = runCli(
+      setup.env,
+      "purge",
+      "--event",
+      "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "--reason",
+      "no such event",
+      "--dry-run",
+      "--allow-empty",
+      "--json",
+    );
+    expect(preview.exitCode).toBe(0);
+    const body = JSON.parse(preview.stdout) as {
+      status: string;
+      data: { event_count: number; dry_run: boolean };
+    };
+    expect(body.status).toBe("ok");
+    expect(body.data.event_count).toBe(0);
+    expect(body.data.dry_run).toBe(true);
+  });
+
   test("no-match purge exits nonzero and writes no receipt", () => {
     const setup = tempVault();
     const missing = runCli(
