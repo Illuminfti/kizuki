@@ -3,12 +3,15 @@ import {
   ConnectionStateStore,
   disconnect,
   freezeManifest,
+  getCheckpoint,
   listConnections,
   openLedger,
+  writeResumeCursor,
 } from "@kizuki/core";
 import type { ConnectionStateWriter, Connector, SignInIo } from "@kizuki/core";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { serializeImapState } from "../../connector-imap/src/state";
+import { assertSameImapIdentity, serializeImapState } from "../../connector-imap/src/state";
 import { createImapConnector } from "../../connector-imap/src/connector";
 import { FakeImapServer } from "../../connector-imap/src/testing/fake-imap";
 import { memoryDialer } from "../../connector-imap/src/testing/memory-dialer";
@@ -68,6 +71,37 @@ function prompts(values: readonly string[]): SignInIo {
 }
 
 describe("IMAP interactive enrollment", () => {
+  test("refuses a changed mailbox before replacing its state or checkpoint", async () => {
+    const setup = tempVault();
+    const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+    const directory = join(setup.vault, ".kizuki", "connections");
+    const store = new ConnectionStateStore(directory);
+    const state = fixtureState();
+    const connectorFor = (candidate: typeof state) => signedInConnector(async () => new TextDecoder().decode(serializeImapState(candidate)));
+    try {
+      const first = await enrollSignedInConnection(db, store, connectorFor(state), prompts([]));
+      writeResumeCursor(db, first.connector_id, first.source_key, "checkpoint");
+      const before = store.read(first)!;
+      for (const candidate of [
+        { ...state, username: "other@example.test" },
+        { ...state, host: "other.example.test" },
+        { ...state, port: 1993 },
+      ]) {
+        await expect(enrollSignedInConnection(db, store, connectorFor(candidate), prompts([]), first.source_key, assertSameImapIdentity)).rejects.toThrow("same mailbox identity");
+        expect(store.read(first)).toEqual(before);
+        expect(getCheckpoint(db, first.connector_id, first.source_key)?.cursor).toBe("checkpoint");
+        expect(listConnections(db)).toHaveLength(1);
+        expect(readdirSync(directory).filter((name) => !name.endsWith(".tmp"))).toHaveLength(1);
+      }
+      const rotated = await enrollSignedInConnection(db, store, connectorFor({ ...state, password: "rotated" }), prompts([]), first.source_key, assertSameImapIdentity);
+      expect(rotated.source_key).toBe(first.source_key);
+      expect(getCheckpoint(db, first.connector_id, first.source_key)?.cursor).toBe("checkpoint");
+      disconnect(db, first.connector_id, first.source_key);
+      const reconnected = await enrollSignedInConnection(db, store, connectorFor({ ...state, password: "again" }), prompts([]), first.source_key, assertSameImapIdentity);
+      expect(reconnected.disconnected_at).toBeNull();
+      expect(getCheckpoint(db, first.connector_id, first.source_key)?.cursor).toBe("checkpoint");
+    } finally { db.close(); }
+  });
   test("stores only core-minted opaque sign-in state", async () => {
     const setup = tempVault();
     const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
