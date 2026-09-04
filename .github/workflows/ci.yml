@@ -53,3 +53,5 @@ jobs:
         run: bash scripts/ci-restrict-origin-refs.sh
       - name: container floor proof
         run: bash deploy/proof/container.sh
+      - name: compose lint proof
+        run: bash deploy/proof/compose-lint.sh

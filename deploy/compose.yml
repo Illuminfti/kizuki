@@ -1,7 +1,47 @@
-# M1 container floor only (docs/deploy-box-tailscale.md). The tailscale
-# sidecar, network_mode: service:tailscale, and TS_STATE_DIR volume are M2;
-# they are not added here.
+# M1 container floor plus M2 tailnet access (docs/deploy-box-tailscale.md).
+#
+# Shape: two services share one network namespace. `tailscale` is the only
+# service with a route to anything outside the box; `kizuki` keeps M1's
+# hardening (read-only rootfs, cap_drop: [ALL], no capabilities, no
+# devices) and gets `network_mode: service:tailscale` instead of its own
+# network, so it publishes no `ports:` of its own and tailscaled reaches it
+# on 127.0.0.1 — the exact host `packages/core/src/serve/http.ts`
+# `startServeHttp` already accepts. Userspace networking
+# (`TS_USERSPACE=true`) means neither service needs `NET_ADMIN` or
+# `/dev/net/tun`.
 services:
+  tailscale:
+    image: tailscale/tailscale@sha256:8c42c4574ab066384fcb72f69e086a2ff1dd3652eb6f56856cee34bcf0d2f680
+    entrypoint: ["/local/entrypoint.sh"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp
+    environment:
+      TS_USERSPACE: "true"
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_HOSTNAME: kizuki-m2-proof
+      TS_SERVE_CONFIG: /local/serve.json
+      TS_AUTHKEY_FILE: /run/secrets/ts_authkey
+      # Row 2.11 of the M2 finish line reaches the node over Tailscale SSH
+      # (see the M2 Finding: the harness transport is HTTP/2.8, not stdio
+      # over a shell, so this is the node's own login, not a Kizuki path).
+      TS_EXTRA_ARGS: --ssh
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - ./tailscale/entrypoint.sh:/local/entrypoint.sh:ro
+      - ./tailscale/serve.json:/local/serve.json:ro
+    secrets:
+      # cap_drop: [ALL] on this service removes CAP_DAC_OVERRIDE, so this
+      # container's root cannot read a secret at its source file's original
+      # mode (0600, owned by the host operator's uid) — Compose's per-
+      # secret `mode:` override is Swarm-only and does nothing on a plain
+      # engine (see the `secrets:` block below and the M2 Finding in
+      # docs/deploy-box-tailscale.md). The mounted file must already be
+      # world-readable for this service to start under cap_drop: [ALL].
+      - ts_authkey
+
   kizuki:
     build:
       context: ..
@@ -9,6 +49,9 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
     tmpfs:
       - /tmp
     volumes:
@@ -18,3 +61,16 @@ services:
 
 volumes:
   kizuki-vault: {}
+  tailscale-state: {}
+
+secrets:
+  # Docker Compose secrets outside Swarm mode are plain bind mounts of the
+  # host file: the `mode`/`uid`/`gid` overrides Compose accepts are honored
+  # only under Swarm and are silently ignored here (confirmed empirically,
+  # see the M2 Finding in docs/deploy-box-tailscale.md). The real key file
+  # stays at its documented path and mode (0600, owned by the operator);
+  # KIZUKI_TS_AUTHKEY_FILE lets a caller point at a copy with a container-
+  # readable mode instead of loosening the original file, which is what
+  # `deploy/proof/tailnet.sh` does for the duration of the proof only.
+  ts_authkey:
+    file: ${KIZUKI_TS_AUTHKEY_FILE:-/home/lars/.config/kizuki/ts-authkey}

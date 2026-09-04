@@ -13,6 +13,7 @@ const SECRET_RULES: readonly { id: string; pattern: RegExp }[] = [
   { id: "github-fine-grained-pat", pattern: /\bgithub_pat_[A-Za-z0-9_]{20,}\b/ },
   { id: "github-oauth", pattern: /\bgho_[A-Za-z0-9]{36}\b/ },
   { id: "slack-token", pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/ },
+  { id: "tailscale-authkey", pattern: /\btskey-[a-z]+-[A-Za-z0-9]{10,}\b/ },
 ];
 
 function scanLines(path: string, text: string): SecretFinding[] {

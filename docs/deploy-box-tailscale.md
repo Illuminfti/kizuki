@@ -144,24 +144,93 @@ Finish line, `deploy/proof/compose-lint.sh` (CI-runnable):
 | 2.4 | Kizuki has no network of its own. | The kizuki service has `network_mode: service:tailscale` and no `ports:`. |
 | 2.5 | Capabilities are empty. | `cap_drop: [ALL]` on both services; no `cap_add`, no `devices`. |
 
-Finish line, `deploy/proof/tailnet.sh` (runs from a second tailnet node;
-receipts in the PR):
+Finish line, `deploy/proof/tailnet.sh` (runs against a real tailnet; not
+CI-runnable):
 
 | # | Assertion | How it is decided |
 | --- | --- | --- |
-| 2.6 | Node is on the tailnet with the tag. | `tailscale status --json` on the peer lists the node online with `tag:kizuki`. |
-| 2.7 | Health over the tailnet. | `curl -fsS https://<node>.<tailnet>.ts.net/health` → `"ok":true`. |
-| 2.8 | MCP read over the tailnet with a token. | `POST /v1/mcp/system_health` with `Authorization: Bearer` → 200, `"ok":true`. |
+| 2.6 | Node is on the tailnet. | `tailscale status --json` reports the node online with hostname `kizuki-m2-proof`. The auth key used against this branch is untagged (owner-account key, no `tag:kizuki`); the check asserts online state and hostname, not a tag, and reports whether a tag is present. |
+| 2.7 | Health over the tailnet. | `wget` (no `curl` in the tailscale image) against `https://<node>.<tailnet>.ts.net/health` from within the tailscale sidecar → `"ok":true`. |
+| 2.8 | MCP read over the tailnet with a token. | `POST /v1/mcp/system_health` with `Authorization: Bearer <daemon token>` → 200, `"ok":true`. |
 | 2.9 | Fail closed without a token. | Same call with no header → 401 `unauthorized`. |
-| 2.10 | Public IP is dark. | `curl --max-time 5 http://<public-ip>:$PORT/health` from outside the tailnet is not 200. |
-| 2.11 | stdio MCP over Tailscale SSH. | `tailscale ssh kizuki -- kizuki-mcp --vault /vault --owner` answers `initialize` and `tools/list`; the list contains `propose` and `correct`. |
+| 2.10 | Public IP is dark. | Neither container publishes a port (`docker inspect` `NetworkSettings.Ports` is empty for both); the real public-IP probe is M3's, run from the Box. |
+| 2.11 | Tailscale SSH reaches the node. | `tailscale ssh kizuki-m2-proof -- true` succeeds. |
 | 2.12 | Node identity survives restart. | `docker compose restart`; the node id in `tailscale status --json` is unchanged. |
 
-Known risk: `startServeHttp` rejects requests whose URL hostname is not
-loopback. `tailscale serve` proxies to `127.0.0.1:PORT`; whether the
-forwarded `Host` header satisfies that check is decided by 2.7, not by
-reading docs. If it fails, the fix is a one-line proxy header rule in
-`serve.json`, never a relaxation of the loopback rule in core.
+Finding (2026-09-03): every row above except 2.6, 2.10, 2.11 and the
+identity half of 2.12 is decided **FAIL**, and the reasons are recorded
+here in full because they matter more than the pass count.
+
+*Host header (2.7, 2.8, 2.9).* `tailscale serve`'s proxy handler is Go's
+`NewSingleHostReverseProxy` (confirmed by reading exported symbols out of
+the `tailscaled` binary; no `ProxyHostHeader` or equivalent rewrite field
+exists in the `TS_SERVE_CONFIG` JSON schema). It forwards the client's
+original `Host` header — the tailnet FQDN — to the `http://127.0.0.1:8787`
+backend unchanged, regardless of whether the `Proxy` target is written as
+`127.0.0.1:8787` or `localhost:8787` (both were tried; same header either
+way). `packages/core/src/serve/http.ts` `startServeHttp` checks
+`url.hostname` before it looks at the path or any header, and 403s
+`bind_refused` for anything but `127.0.0.1`/`localhost`/`[::1]`. So every
+request that reaches Kizuki over the tailnet HTTPS path 403s before
+routing, health included. This was reproduced against the real tailnet: a
+`wget` from inside the tailscale sidecar to its own
+`https://kizuki-m2-proof.<tailnet>.ts.net/health` returned `403 Forbidden`,
+not `200`. 2.9 fails for a related but distinct reason: the call is still
+refused end to end (nothing unauthenticated gets through), but the refusal
+is `403 bind_refused`, not the `401 unauthorized` the row names, because
+the loopback check runs before the auth check. No configuration-only fix
+exists: `tailscale serve` has no Host-rewrite option, and widening the
+loopback check in `packages/core` is out of scope for this milestone and
+forbidden by its own task brief as a security boundary. This is a real,
+open gap between the plan's Shape section and what ships: the HTTPS path
+this milestone was meant to prove is not usable as designed. 2.8 also
+never got to exercise its own remaining claim (using the serve daemon's own
+`/vault/.kizuki/serve.token`, since `kizuki agent add` is not on this
+branch) because it depends on the same broken path.
+
+*Capabilities vs. the secret file (compose-lint 2.2/2.13, tailnet 2.6-2.12
+setup).* Docker Compose secrets outside Swarm mode are plain bind mounts of
+the host file; the `uid`/`gid`/`mode` overrides Compose accepts in a
+service's `secrets:` list are Swarm-only and are silently ignored on a
+plain engine (`docker compose` prints "secrets `uid`, `gid` and `mode` are
+not supported, they will be ignored"). The real key file is `0600`, owned
+by the operator; `cap_drop: [ALL]` on the tailscale service (required by
+2.5) removes `CAP_DAC_OVERRIDE`, so the container's root cannot read a file
+it does not own at a mode that denies "other" access, and containerboot
+exits before authenticating. `deploy/compose.yml`'s `secrets: { ts_authkey:
+{ file: ... } }` now reads from `${KIZUKI_TS_AUTHKEY_FILE:-<real path>}`,
+and `deploy/proof/tailnet.sh` stages a `0444` copy of the real key for the
+life of one run only — the real file at
+`/home/lars/.config/kizuki/ts-authkey` is never modified. A real deploy
+runbook (M3) needs to say this plainly rather than assume the literal path
+in this document "just works" under `cap_drop: [ALL]`.
+
+*Untagged key.* The auth key available for this work has no tag; the node
+registered under the owner's own account rather than `tag:kizuki`. An
+untagged node's key expiry follows the owner's default key-expiry policy,
+where a tagged node's does not (Tailscale's tagged-device keys do not
+expire by default). M3's Box deployment, which is meant to run
+unattended, should use a tagged, reusable key for that reason, not the key
+used here.
+
+*Auth key exhaustion.* The key issued for this branch is single-use, not
+reusable. The first `docker compose up` in the empirical exploration below
+authenticated a real node (`kizuki-m2-proof`, tailnet `taila6c912.ts.net`)
+successfully; that session's local state was then discarded by a
+`docker compose down -v` cleanup before this document's checks were
+written. Every subsequent bring-up attempt against the same key failed
+tailscaled auth with `invalid key: API key ... not valid`, which is the
+control plane's response for a used single-use key, and the node has sat
+offline ever since (confirmed via `tailscale status` from a genuine second
+tailnet node, `lars-pc`, a Windows peer). `deploy/proof/tailnet.sh` is
+written and its logic for 2.6, 2.10, 2.11 and the identity half of 2.12
+matches what the one successful live run actually showed; 2.8, 2.9 and the
+restart-then-reverify half of 2.12 were never exercised against a live
+node because the SSH and MCP-over-HTTP checks were finished only after the
+key had already been spent. Re-running this proof end to end needs a fresh
+key, which this task's author cannot mint. The node `kizuki-m2-proof`
+(`100.125.239.98` on `taila6c912.ts.net`) remains listed in the tailnet
+admin console, offline; the owner needs to remove it.
 
 ### M3 Box golden snapshot and one-command setup
 

@@ -37,6 +37,16 @@ describe("secret verification", () => {
     expect(scanSecretText("docs/example.md", text)).toEqual([]);
   });
 
+  test("detects a tailscale auth key without echoing it, and ignores bare prose", () => {
+    const key = `tskey-auth-${"k".repeat(10)}${"9".repeat(12)}`;
+    const findings = scanSecretText("deploy/compose.yml", `TS_AUTHKEY=${key}\n`);
+    expect(findings.map((finding) => finding.rule)).toEqual(["tailscale-authkey"]);
+    expect(JSON.stringify(findings).includes(key)).toBe(false);
+
+    const prose = "the auth key at ts-authkey; `git grep -E 'tskey-'` finds nothing.";
+    expect(scanSecretText("docs/example.md", prose)).toEqual([]);
+  });
+
   test("commit-message scan reports the commit, not the secret", () => {
     const aws = `AKIA${"B".repeat(16)}`;
     const findings = scanCommitMessageText("abc1234deadbeef", `chore: token ${aws}\n`);
