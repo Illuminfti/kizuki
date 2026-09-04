@@ -74,20 +74,6 @@ export function parseJsonArray(source: string, label: string): unknown[] {
   return parsed;
 }
 
-export function normalizedDate(
-  value: unknown,
-  fallback: string,
-  unit: "seconds" | "date",
-): string {
-  const raw =
-    unit === "seconds" && typeof value === "number" ? value * 1000 : value;
-  if (typeof raw === "number" || typeof raw === "string") {
-    const date = new Date(raw);
-    if (!Number.isNaN(date.getTime())) return date.toISOString();
-  }
-  return fallback;
-}
-
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }

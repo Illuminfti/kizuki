@@ -105,7 +105,10 @@ describe("connect", () => {
       setup.notes,
     );
     expect(byPath.exitCode).toBe(0);
-    expect(byPath.stdout).toContain("duplicates=3");
+    // Same connection, same exhausted cursor: an unchanged folder is a
+    // no-op. A second enrollment would have stored three new events.
+    expect(byPath.stdout).toContain("events_stored=0");
+    expect(byPath.stdout).toContain("duplicates=0");
   });
 
   test("two connections of one connector require --source", () => {

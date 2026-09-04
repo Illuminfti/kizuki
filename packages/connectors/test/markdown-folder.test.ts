@@ -49,7 +49,10 @@ describe("MarkdownFolderConnector", () => {
           subjects: [],
           deleted: false,
           attachments: [],
-          metadata: { relpath: "alpha.md", size: Buffer.byteLength("# Alpha\n") },
+          metadata: expect.objectContaining({
+            relpath: "alpha.md",
+            size: Buffer.byteLength("# Alpha\n"),
+          }),
         }),
         expect.objectContaining({
           schema: "kizuki.event/v1",
@@ -60,10 +63,10 @@ describe("MarkdownFolderConnector", () => {
           subjects: [],
           deleted: false,
           attachments: [],
-          metadata: {
+          metadata: expect.objectContaining({
             relpath: "nested/beta.md",
             size: Buffer.byteLength("βeta\n"),
-          },
+          }),
         }),
       ]);
       for (const event of batch.events) {
@@ -145,8 +148,177 @@ describe("MarkdownFolderConnector", () => {
         subjects: [],
         deleted: true,
         attachments: [],
-        metadata: { relpath: "removed.md" },
+        metadata: { relpath: "removed.md", snapshot: "absent" },
       });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("same-mtime changed bytes are still emitted", async () => {
+    const root = await makeTempDir();
+    try {
+      const file = path.join(root, "note.md");
+      await writeFile(file, "before\n");
+      const stamp = new Date("2026-01-01T00:00:00Z");
+      await utimes(file, stamp, stamp);
+      const connector = createMarkdownFolderConnector({ path: root });
+      const first = await connector.backfill(null);
+      await writeFile(file, "after\n");
+      await utimes(file, stamp, stamp);
+      const second = await connector.sync(first.cursor);
+      expect(second.events.map((event) => event.text)).toEqual(["after\n"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a cursor from another root is rejected", async () => {
+    const firstRoot = await makeTempDir();
+    const secondRoot = await makeTempDir();
+    try {
+      await writeFile(path.join(firstRoot, "a.md"), "a\n");
+      await writeFile(path.join(secondRoot, "a.md"), "a\n");
+      const first = await createMarkdownFolderConnector({
+        path: firstRoot,
+      }).backfill(null);
+      try {
+        await createMarkdownFolderConnector({ path: secondRoot }).sync(
+          first.cursor,
+        );
+        throw new Error("expected a foreign cursor to be rejected");
+      } catch (error) {
+        expect(String(error)).toContain("does not belong to this root");
+      }
+    } finally {
+      await rm(firstRoot, { recursive: true, force: true });
+      await rm(secondRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("a __proto__.md file is tracked as data, not a prototype key", async () => {
+    const root = await makeTempDir();
+    try {
+      await writeFile(path.join(root, "__proto__.md"), "hostile\n");
+      await writeFile(path.join(root, "ok.md"), "fine\n");
+      const connector = createMarkdownFolderConnector({ path: root });
+      const batch = await connector.backfill(null);
+      expect(batch.events.map((event) => event.source_record_id).sort()).toEqual(
+        ["__proto__.md", "ok.md"],
+      );
+      const cursor = JSON.parse(batch.cursor ?? "{}") as {
+        files: Array<[string, { sha256: string }]>;
+      };
+      expect(cursor.files.map(([relpath]) => relpath).sort()).toEqual([
+        "__proto__.md",
+        "ok.md",
+      ]);
+      expect(Object.prototype).not.toHaveProperty("sha256");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("hidden and vendor directories are skipped", async () => {
+    const root = await makeTempDir();
+    try {
+      await mkdir(path.join(root, ".git"));
+      await mkdir(path.join(root, "node_modules"));
+      await writeFile(path.join(root, ".hidden.md"), "no\n");
+      await writeFile(path.join(root, ".git", "readme.md"), "git\n");
+      await writeFile(path.join(root, "node_modules", "pkg.md"), "dep\n");
+      await writeFile(path.join(root, "kept.md"), "yes\n");
+      const batch = await createMarkdownFolderConnector({ path: root }).backfill(
+        null,
+      );
+      expect(batch.events.map((event) => event.source_record_id)).toEqual([
+        "kept.md",
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("invalid UTF-8 is isolated and not accepted as replacement text", async () => {
+    const root = await makeTempDir();
+    try {
+      await writeFile(path.join(root, "good.md"), "ok\n");
+      await writeFile(path.join(root, "bad.md"), Buffer.from([0xff, 0xfe, 0x00]));
+      const connector = createMarkdownFolderConnector({ path: root });
+      const batch = await connector.backfill(null);
+      expect(batch.events.map((event) => event.source_record_id)).toEqual([
+        "good.md",
+      ]);
+      const health = await connector.health();
+      expect(health.state).toBe("degraded");
+      expect(health.detail ?? "").toContain("not_utf8");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("page-sized backfills exhaust explicitly", async () => {
+    const root = await makeTempDir();
+    try {
+      await Promise.all(
+        ["a.md", "b.md", "c.md", "d.md"].map((name) =>
+          writeFile(path.join(root, name), `${name}\n`),
+        ),
+      );
+      const connector = createMarkdownFolderConnector({
+        path: root,
+        page_size: 2,
+      });
+      const first = await connector.backfill(null);
+      const firstCursor = JSON.parse(first.cursor ?? "{}") as {
+        exhausted: boolean;
+        phase: string;
+      };
+      expect(first.events).toHaveLength(2);
+      expect(firstCursor.exhausted).toBe(false);
+
+      const second = await connector.backfill(first.cursor);
+      const secondCursor = JSON.parse(second.cursor ?? "{}") as {
+        exhausted: boolean;
+      };
+      expect(second.events).toHaveLength(2);
+      expect(secondCursor.exhausted).toBe(true);
+
+      const third = await connector.backfill(second.cursor);
+      expect(third.events).toEqual([]);
+      expect(JSON.parse(third.cursor ?? "{}")).toMatchObject({ exhausted: true });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("an empty root returns an exhausted cursor", async () => {
+    const root = await makeTempDir();
+    try {
+      const batch = await createMarkdownFolderConnector({ path: root }).backfill(
+        null,
+      );
+      expect(batch.events).toEqual([]);
+      expect(JSON.parse(batch.cursor ?? "{}")).toMatchObject({
+        exhausted: true,
+        files: [],
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("an unreadable file does not abort the rest of the scan", async () => {
+    const root = await makeTempDir();
+    try {
+      await writeFile(path.join(root, "ok.md"), "ok\n");
+      await mkdir(path.join(root, "blocked.md"));
+      const batch = await createMarkdownFolderConnector({ path: root }).backfill(
+        null,
+      );
+      expect(batch.events.map((event) => event.source_record_id)).toEqual([
+        "ok.md",
+      ]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
