@@ -3,23 +3,27 @@ import type {
   RetrievalDoc,
   RetrievalHit,
 } from "@kizuki/core";
+import {
+  AUTHORITY_RANK,
+  AUTHORITY_WEIGHT,
+  NEAR_DUPLICATE_JACCARD,
+  RRF_K,
+  applyAdjacencyBoost,
+  collapseToDocuments,
+  cosineReScore,
+  dedupResults,
+  rrfFusion,
+} from "../vendor/recipe";
+import type { RecipeCandidate, RecipeEdge } from "../vendor/recipe";
 
-export const RRF_K = 60;
-export const NEAR_DUPLICATE_JACCARD = 0.86;
-
-export const AUTHORITY_WEIGHT: Readonly<Record<RetrievalAuthority, number>> = {
-  owner_correction: 1.4,
-  owner_authored: 1.2,
-  connector_evidence: 1.0,
-  model_inference: 0.8,
-};
-
-export const AUTHORITY_RANK: Readonly<Record<RetrievalAuthority, number>> = {
-  owner_correction: 0,
-  owner_authored: 1,
-  connector_evidence: 2,
-  model_inference: 3,
-};
+export {
+  AUTHORITY_RANK,
+  AUTHORITY_WEIGHT,
+  NEAR_DUPLICATE_JACCARD,
+  RRF_K,
+  cosineSimilarity,
+  reciprocalRankFusion,
+} from "../vendor/recipe";
 
 export function tokenize(text: string): string[] {
   return text.toLowerCase().match(/[a-z0-9]+/g) ?? [];
@@ -59,83 +63,11 @@ export function snippetFor(query: string, text: string): string {
   return `${prefix}${text.slice(start, end)}${suffix}`;
 }
 
-export function cosine(left: Float32Array, right: Float32Array): number {
-  if (left.length !== right.length || left.length === 0) return 0;
-  let dot = 0;
-  let leftNorm = 0;
-  let rightNorm = 0;
-  for (let index = 0; index < left.length; index += 1) {
-    const a = left[index] ?? 0;
-    const b = right[index] ?? 0;
-    dot += a * b;
-    leftNorm += a * a;
-    rightNorm += b * b;
-  }
-  if (leftNorm === 0 || rightNorm === 0) return 0;
-  return dot / (Math.sqrt(leftNorm) * Math.sqrt(rightNorm));
-}
-
-export function characterTrigrams(text: string): Set<string> {
-  const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
-  const grams = new Set<string>();
-  if (normalized.length < 3) {
-    if (normalized.length > 0) grams.add(normalized);
-    return grams;
-  }
-  for (let index = 0; index <= normalized.length - 3; index += 1) {
-    grams.add(normalized.slice(index, index + 3));
-  }
-  return grams;
-}
-
-export function jaccard(left: Set<string>, right: Set<string>): number {
-  if (left.size === 0 && right.size === 0) return 1;
-  let intersection = 0;
-  for (const item of left) {
-    if (right.has(item)) intersection += 1;
-  }
-  const union = left.size + right.size - intersection;
-  return union === 0 ? 0 : intersection / union;
-}
-
-export function reciprocalRankFusion(
-  rankedLists: readonly (readonly string[])[],
-  k: number = RRF_K,
-): Map<string, number> {
-  const scores = new Map<string, number>();
-  for (const list of rankedLists) {
-    list.forEach((id, index) => {
-      scores.set(id, (scores.get(id) ?? 0) + 1 / (k + index + 1));
-    });
-  }
-  return scores;
-}
-
 export function applyTierWeight(
   fused: number,
   authority: RetrievalAuthority,
 ): number {
   return fused * AUTHORITY_WEIGHT[authority];
-}
-
-export function filterNearDuplicates(
-  ranked: readonly RetrievalHit[],
-  docs: ReadonlyMap<string, RetrievalDoc>,
-): RetrievalHit[] {
-  const kept: RetrievalHit[] = [];
-  const keptGrams: Set<string>[] = [];
-  for (const hit of ranked) {
-    const doc = docs.get(hit.doc_id);
-    if (doc === undefined) continue;
-    const grams = characterTrigrams(`${doc.title} ${doc.text}`);
-    const duplicate = keptGrams.some(
-      (existing) => jaccard(existing, grams) >= NEAR_DUPLICATE_JACCARD,
-    );
-    if (duplicate) continue;
-    kept.push(hit);
-    keptGrams.push(grams);
-  }
-  return kept;
 }
 
 export function compareHits(left: RetrievalHit, right: RetrievalHit): number {
@@ -144,4 +76,76 @@ export function compareHits(left: RetrievalHit, right: RetrievalHit): number {
     AUTHORITY_RANK[left.authority] - AUTHORITY_RANK[right.authority];
   if (authority !== 0) return authority;
   return left.doc_id.localeCompare(right.doc_id);
+}
+
+export function candidateFromDoc(
+  doc: RetrievalDoc,
+  score: number,
+  opts: {
+    chunk_id?: number;
+    keyword_hit?: boolean;
+    text?: string;
+    vector?: Float32Array | null;
+  } = {},
+): RecipeCandidate {
+  return {
+    id: doc.doc_id,
+    title: doc.title,
+    text: opts.text ?? doc.text,
+    kind: doc.kind,
+    authority: doc.authority,
+    chunk_id: opts.chunk_id ?? 0,
+    keyword_hit: opts.keyword_hit ?? false,
+    score,
+    vector: opts.vector ?? null,
+  };
+}
+
+export function finalizeRecipe(opts: {
+  lexical: readonly RecipeCandidate[];
+  vector: readonly RecipeCandidate[] | null;
+  queryVector: Float32Array | null;
+  edges: readonly RecipeEdge[];
+  visible: (id: string) => boolean;
+}): RecipeCandidate[] {
+  const lists: RecipeCandidate[][] = [[...opts.lexical]];
+  if (opts.vector !== null && opts.vector.length > 0) {
+    lists.push([...opts.vector]);
+  }
+  let fused = rrfFusion(lists, RRF_K, true);
+  if (opts.queryVector !== null) {
+    fused = cosineReScore(fused, opts.queryVector);
+  }
+  const boosted = applyAdjacencyBoost(fused, opts.edges, opts.visible);
+  const boostedRows = fused.map((row) => {
+    const match = boosted.find((item) => item.id === row.id);
+    return match === undefined ? row : { ...row, score: match.score };
+  });
+  boostedRows.sort((left, right) => right.score - left.score);
+  return collapseToDocuments(dedupResults(boostedRows));
+}
+
+export function hitsFromCandidates(
+  candidates: readonly RecipeCandidate[],
+  docs: ReadonlyMap<string, RetrievalDoc>,
+  query: string,
+  limit: number,
+): RetrievalHit[] {
+  const hits: RetrievalHit[] = [];
+  for (const candidate of candidates) {
+    const doc = docs.get(candidate.id);
+    if (doc === undefined || doc.sensitivity === null) continue;
+    hits.push({
+      doc_id: candidate.id,
+      score: candidate.score,
+      snippet: snippetFor(query, doc.text),
+      kind: doc.kind,
+      sensitivity: doc.sensitivity,
+      taint: doc.taint,
+      authority: doc.authority,
+    });
+    if (hits.length >= limit) break;
+  }
+  hits.sort(compareHits);
+  return hits;
 }

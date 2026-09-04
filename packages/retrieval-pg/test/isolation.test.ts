@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 
 const SRC = join(import.meta.dir, "../src");
+const VENDOR = join(import.meta.dir, "../vendor");
 
 function walk(directory: string): string[] {
   const out: string[] = [];
@@ -19,7 +20,7 @@ function walk(directory: string): string[] {
 
 describe("retrieval-pg isolation", () => {
   test("sources do not import the ledger, fetch, or spawn a process", () => {
-    const files = walk(SRC);
+    const files = [...walk(SRC), ...walk(VENDOR)];
     expect(files.length).toBeGreaterThan(0);
     for (const path of files) {
       expect(existsSync(path)).toBe(true);

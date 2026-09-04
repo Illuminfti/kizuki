@@ -18,7 +18,6 @@ import type {
   PortDescriptor,
   PortHealth,
   RetrievalDoc,
-  RetrievalHit,
   RetrievalMutationReport,
   RetrievalPort,
   RetrievalQuery,
@@ -30,18 +29,16 @@ import { EMBEDDED_RETRIEVAL_DESCRIPTOR } from "./descriptor";
 import { WriterLease } from "./lease";
 import type { LeaseReceipt } from "./lease";
 import {
-  applyTierWeight,
-  compareHits,
-  cosine,
-  filterNearDuplicates,
+  candidateFromDoc,
+  finalizeRecipe,
+  hitsFromCandidates,
   lexicalScore,
-  reciprocalRankFusion,
-  snippetFor,
 } from "./rank";
+import { cosineSimilarity, pushDegraded, walkNeighbors } from "../vendor/recipe";
+import type { RecipeCandidate, RecipeEdge } from "../vendor/recipe";
 import {
   chunkDocument,
   engineMismatch,
-  storedFromDoc,
   EmbeddedStore,
 } from "./store";
 import type {
@@ -198,60 +195,50 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
     }
 
     const visible = this.visibleDocs(validated);
+    const docs = new Map(visible.map((doc) => [doc.doc_id, doc]));
+    const edges = this.recipeEdges();
+    const nodeVisible = (id: string): boolean => this.nodeVisible(id, validated.ceiling);
+
     const lexicalStarted = Date.now();
-    const lexicalRanked = this.rankLexical(validated.text, visible);
+    const lexicalCandidates = this.lexicalCandidates(validated.text, visible);
     timings.lexical = Date.now() - lexicalStarted;
+    if (lexicalCandidates.length === 0 && validated.text.trim().length > 0) {
+      pushDegraded(degraded, "keyword-zero");
+    }
 
-    let fusedIds: string[];
-    let scores = new Map<string, number>();
+    let vectorCandidates: RecipeCandidate[] | null = null;
+    let queryVector: Float32Array | null = null;
+    const vectorEnabled =
+      validated.mode !== "lexical" &&
+      this.embedding !== undefined &&
+      !this.spaceMismatch();
 
-    if (
-      validated.mode === "lexical" ||
-      this.embedding === undefined ||
-      this.spaceMismatch()
-    ) {
-      fusedIds = lexicalRanked;
-      lexicalRanked.forEach((id, index) => {
-        scores.set(id, 1 / (60 + index + 1));
-      });
-    } else {
+    if (vectorEnabled) {
       const vectorStarted = Date.now();
       const queryVectors = await this.embedQuery(validated.text);
-      const vectorRanked = this.rankVector(queryVectors, visible);
+      queryVector = queryVectors[0] ?? null;
+      vectorCandidates = this.vectorCandidates(queryVectors, visible);
       timings.vector = Date.now() - vectorStarted;
-      if (validated.mode === "vector") {
-        fusedIds = vectorRanked;
-        vectorRanked.forEach((id, index) => {
-          scores.set(id, 1 / (60 + index + 1));
-        });
-      } else {
-        scores = reciprocalRankFusion([lexicalRanked, vectorRanked]);
-        fusedIds = [...scores.entries()]
-          .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
-          .map(([id]) => id);
-      }
     }
 
     this.assertDeadline(started, validated.deadline_ms);
 
-    const docs = new Map(visible.map((doc) => [doc.doc_id, doc]));
-    const rawHits: RetrievalHit[] = fusedIds.flatMap((id) => {
-      const doc = docs.get(id);
-      if (doc === undefined || doc.sensitivity === null) return [];
-      return [
-        {
-          doc_id: id,
-          score: applyTierWeight(scores.get(id) ?? 0, doc.authority),
-          snippet: snippetFor(validated.text, doc.text),
-          kind: doc.kind,
-          sensitivity: doc.sensitivity,
-          taint: doc.taint,
-          authority: doc.authority,
-        },
-      ];
+    const finalized = finalizeRecipe({
+      lexical:
+        validated.mode === "vector" && vectorCandidates !== null
+          ? []
+          : lexicalCandidates,
+      vector: vectorEnabled ? vectorCandidates : null,
+      queryVector: vectorEnabled ? queryVector : null,
+      edges,
+      visible: nodeVisible,
     });
-    rawHits.sort(compareHits);
-    const hits = filterNearDuplicates(rawHits, docs).slice(0, validated.limit);
+    const hits = hitsFromCandidates(
+      finalized,
+      docs,
+      validated.text,
+      validated.limit,
+    );
 
     return {
       hits,
@@ -303,42 +290,23 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
       return { entity: entity.entity_id, edges: [], truncated: false };
     }
 
-    const seen = new Set<string>([entity.entity_id]);
-    let frontier = [entity.entity_id];
-    const collected: RetrievalGraphEdge[] = [];
-    let truncated = false;
-
-    for (let hop = 0; hop < options.hops; hop += 1) {
-      const next: string[] = [];
-      for (const node of frontier) {
-        for (const edge of this.store.graph.edges) {
-          if (edge.from !== node && edge.to !== node) continue;
-          const other = edge.from === node ? edge.to : edge.from;
-          if (!this.nodeVisible(other, options.ceiling)) continue;
-          collected.push({
-            from: edge.from,
-            to: edge.to,
-            type: edge.type,
-            weight: edge.weight,
-            provenance: [...edge.provenance],
-          });
-          if (collected.length >= options.limit) {
-            truncated = true;
-            return {
-              entity: entity.entity_id,
-              edges: collected.slice(0, options.limit),
-              truncated,
-            };
-          }
-          if (!seen.has(other)) {
-            seen.add(other);
-            next.push(other);
-          }
-        }
-      }
-      frontier = next;
-    }
-    return { entity: entity.entity_id, edges: collected, truncated };
+    const walked = walkNeighbors(entity.entity_id, this.recipeEdges(), {
+      hops: options.hops,
+      limit: options.limit,
+      visible: (id) => this.nodeVisible(id, options.ceiling),
+    });
+    const edges: RetrievalGraphEdge[] = walked.edges.map((edge) => ({
+      from: edge.from,
+      to: edge.to,
+      type: edge.type,
+      weight: edge.weight,
+      provenance: [...edge.provenance],
+    }));
+    return {
+      entity: entity.entity_id,
+      edges,
+      truncated: walked.truncated,
+    };
   }
 
   async health(): Promise<PortHealth> {
@@ -641,40 +609,76 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
     });
   }
 
-  private rankLexical(text: string, docs: readonly StoredDoc[]): string[] {
+  private lexicalCandidates(
+    text: string,
+    docs: readonly StoredDoc[],
+  ): RecipeCandidate[] {
     return [...docs]
-      .map((doc) => ({ id: doc.doc_id, score: lexicalScore(text, doc) }))
+      .map((doc) => ({
+        doc,
+        score: lexicalScore(text, doc),
+      }))
       .filter((row) => text.trim().length === 0 || row.score > 0)
       .sort((left, right) => {
         if (right.score !== left.score) return right.score - left.score;
-        return left.id.localeCompare(right.id);
+        return left.doc.doc_id.localeCompare(right.doc.doc_id);
       })
-      .map((row) => row.id);
+      .map((row) =>
+        candidateFromDoc(row.doc, row.score, { keyword_hit: true }),
+      );
   }
 
-  private rankVector(
+  private vectorCandidates(
     queryVectors: readonly Float32Array[],
     docs: readonly StoredDoc[],
-  ): string[] {
+  ): RecipeCandidate[] {
     const query = queryVectors[0];
     if (query === undefined) return [];
     const space = this.embedding?.space().id;
-    return [...docs]
-      .map((doc) => {
-        let best = 0;
-        for (const chunk of doc.chunks) {
-          if (chunk.vector === null) continue;
-          if (space !== undefined && chunk.space !== space) continue;
-          best = Math.max(best, cosine(query, Float32Array.from(chunk.vector)));
-        }
-        return { id: doc.doc_id, score: best };
-      })
-      .filter((row) => row.score > 0)
-      .sort((left, right) => {
-        if (right.score !== left.score) return right.score - left.score;
-        return left.id.localeCompare(right.id);
-      })
-      .map((row) => row.id);
+    const candidates: RecipeCandidate[] = [];
+    for (const doc of docs) {
+      const chunks =
+        doc.chunks.length > 0
+          ? doc.chunks
+          : [
+              {
+                chunk_id: `${doc.doc_id}:0`,
+                index: 0,
+                text: doc.text,
+                vector: null,
+                embedded_at: null,
+                space: null,
+              },
+            ];
+      for (const chunk of chunks) {
+        if (chunk.vector === null) continue;
+        if (space !== undefined && chunk.space !== space) continue;
+        const vector = Float32Array.from(chunk.vector);
+        const score = cosineSimilarity(query, vector);
+        if (score <= 0) continue;
+        candidates.push(
+          candidateFromDoc(doc, score, {
+            chunk_id: chunk.index,
+            text: chunk.text,
+            vector,
+          }),
+        );
+      }
+    }
+    return candidates.sort((left, right) => {
+      if (right.score !== left.score) return right.score - left.score;
+      return left.id.localeCompare(right.id);
+    });
+  }
+
+  private recipeEdges(): RecipeEdge[] {
+    return this.store.graph.edges.map((edge) => ({
+      from: edge.from,
+      to: edge.to,
+      type: edge.type,
+      weight: edge.weight,
+      provenance: [...edge.provenance],
+    }));
   }
 
   private spaceMismatch(): boolean {

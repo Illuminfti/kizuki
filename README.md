@@ -240,10 +240,11 @@ Invariants, storage, and the frozen ingress live in
 ## Retrieval credit
 
 The hybrid retrieval recipe — reciprocal rank fusion, layered near-duplicate
-filtering, and tier-weighted finalization — is documented in
-[GBrain](https://github.com/garrytan/gbrain). Kizuki does not depend on that
-project. The accepted design is a clean reimplementation with prominent
-credit; a permitted fork remains open for the entity graph only. See
+filtering, authority-weighted finalization, and the entity-graph walk — is
+a permitted fork of [GBrain](https://github.com/garrytan/gbrain) at public
+commit `8c70f6255047a7647adb30b1d6333a48068d9fa5`, vendored under
+`packages/retrieval-pg/vendor/`. Kizuki does not depend on that project as a
+registry package. Rerank and local GGUF remain Kizuki's own work. See
 [docs/upstream-policy.md](docs/upstream-policy.md).
 
 ## License

@@ -22,9 +22,12 @@ settled 2026-09-02.
 | D14 | 2026-09-02 | MCP correct | Serving exposes two write tools: `propose` and `correct`. Conversational correction is the human path. |
 | D15 | 2026-09-02 | Daemon at init | `kizuki init` installs `kizuki serve` as an always-on user service. The CLI still runs when the daemon is down. |
 | D16 | 2026-09-02 | Modular monolith with ports | One process. Every replaceable component sits behind a versioned port, a registry, and a shared conformance suite. |
+| D17 | 2026-09-04 | Retrieval permitted fork | Owner override: stop treating clean-reimplementation-only as the final word for the retrieval engine. Fork the public upstream tip (reachable default branch) of the retrieval recipe and entity graph into `@kizuki/retrieval-pg` as a permitted fork behind `kizuki.retrieval/v1`. Hybrid when embeddings exist; FTS otherwise, with declared degradation. Rerank and local GGUF remain Kizuki-own. Do not use the unreachable fork snapshot named in the D13 implementation notes. Do not invent a second product. |
 
 D9–D16 supersede any earlier Gate 0 answer that made the owner the only
 consumer of a review queue, or that forbade scheduled canon writes.
+D17 amends the D13 implementation-facts paragraph below; it does not
+rewrite the 2026-09-02 D13 row.
 
 ## Rules for agents (binding)
 
@@ -67,6 +70,17 @@ retrieval recipe with prominent credit and keeps a permitted fork open for
 the entity graph, and §9.4 assigns the local embedding and rerank path to
 Kizuki's own work using QMD's model stack. That resolution stands unless
 the owner overrides it here.
+
+## Owner amendment to D13 (2026-09-04)
+
+The owner overrode the clean-reimplementation-only selection. D17 records
+the new boundary: a permitted fork of the public tip's retrieval recipe
+and entity graph into `@kizuki/retrieval-pg` (`packages/retrieval-pg/vendor/`),
+pinned at public `master` `8c70f6255047a7647adb30b1d6333a48068d9fa5`
+(package 0.48.2.0). The D13 facts above remain true: the engine is still
+unpublished to a package registry; the unreachable snapshot must still
+not be used; rerank and local GGUF remain Kizuki-own. The change is the
+boundary, not those facts.
 
 ## Campaign-scope decisions (owner, 2026-09-02, round 1)
 
