@@ -26,7 +26,7 @@ test("reads the local search API, paginates backward, and uses stable source ide
   const two = await value.backfill(one.cursor);
   expect(two.cursor).toBeNull();
   expect(two.events[0]).toMatchObject({ deleted: true, text: "" });
-  expect(seen.map((url) => [url.pathname, url.searchParams.get("direction"), url.searchParams.get("limit"), url.searchParams.get("cursor")])).toEqual([["/v1/messages/search", "before", "200", null], ["/v1/messages/search", "before", "200", "older"]]);
+  expect(seen.map((url) => [url.pathname, url.searchParams.get("direction"), url.searchParams.get("limit"), url.searchParams.get("cursor")])).toEqual([["/v1/messages/search", "before", "20", null], ["/v1/messages/search", "before", "20", "older"]]);
 });
 
 test("does not infer tombstones from records absent from a later page", async () => {
@@ -44,6 +44,35 @@ test("maps attachment or system messages with optional text and sender without f
   const batch = await value.backfill(null);
   expect(batch.events[0]).toMatchObject({ text: "", subjects: [{ subject_id: 'beeper:chat:["a1","c1"]', role: "about" }] });
   expect(batch.events[0]?.metadata).toMatchObject({ sender_id: null });
+});
+
+test("preserves safe attachment references without downloading or storing provider URLs", async () => {
+  const value = await connected(async () => reply({
+    items: [{
+      id: "attachment", accountID: "a1", chatID: "c1", sortKey: "003", timestamp: "2026-01-02T03:06:05Z",
+      attachments: [
+        { type: "img", id: "mxc://beeper/media", fileName: "photo.png", fileSize: 12, mimeType: "image/png", srcURL: "https://signed.invalid/download?token=private", posterImg: "/private/preview" },
+        { type: "audio", fileName: "voice.ogg", mimeType: "audio/ogg" },
+      ],
+    }], hasMore: false,
+  }));
+  const event = (await value.backfill(null)).events[0]!;
+  expect(event.text).toBe("");
+  expect(event.attachments).toEqual([
+    { attachment_id: "mxc://beeper/media", media_type: "image/png", filename: "photo.png", byte_size: 12 },
+    { attachment_id: 'beeper:attachment:["a1","c1","attachment",1]', media_type: "audio/ogg", filename: "voice.ogg" },
+  ]);
+  expect(JSON.stringify(event)).not.toContain("signed.invalid");
+  expect(JSON.stringify(event)).not.toContain("/private/preview");
+});
+
+test("refuses malformed attachment pages and clears attachment references on tombstones", async () => {
+  const invalidSize = await connected(async () => reply({ items: [{ ...first, attachments: [{ type: "img", fileSize: -1 }] }], hasMore: false }));
+  await expect(invalidSize.backfill(null)).rejects.toThrow("malformed message");
+  const tooMany = await connected(async () => reply({ items: [{ ...first, attachments: Array.from({ length: 101 }, () => ({ type: "unknown" })) }], hasMore: false }));
+  await expect(tooMany.backfill(null)).rejects.toThrow("malformed message");
+  const tombstone = await connected(async () => reply({ items: [{ ...deleted, attachments: [{ type: "img", id: "mxc://gone" }] }], hasMore: false }));
+  expect((await tombstone.backfill(null)).events[0]).toMatchObject({ deleted: true, attachments: [] });
 });
 
 test("uses unambiguous tuple identities across colon-containing provider identifiers", async () => {
@@ -78,7 +107,9 @@ test("health probes local Beeper with the token and distinguishes rejection, out
 test("refuses malformed pages and looping cursors without advancing", async () => {
   const malformed = await connected(async () => reply({ items: [{}], hasMore: false }));
   await expect(malformed.backfill(null)).rejects.toThrow("malformed message");
-  const looping = await connected(async () => reply({ items: [], hasMore: true, oldestCursor: "same" }));
+  const empty = await connected(async () => reply({ items: [], hasMore: true, oldestCursor: "next" }));
+  await expect(empty.backfill(null)).rejects.toThrow("empty page claims more history");
+  const looping = await connected(async () => reply({ items: [first], hasMore: true, oldestCursor: "same" }));
   await expect(looping.backfill(JSON.stringify({ schema: "kizuki.beeper-cursor/v1", cursor: "same" }))).rejects.toThrow("invalid pagination cursor");
 });
 

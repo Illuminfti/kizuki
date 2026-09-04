@@ -28,7 +28,7 @@ export function tokenResolver(
     } else {
       let fd: number | undefined;
       try {
-        fd = openSync(parsed.value, constants.O_RDONLY | constants.O_NOFOLLOW);
+        fd = openSync(parsed.value, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
         const stat = fstatSync(fd);
         if (!stat.isFile() || stat.size > MAX_SECRET_BYTES || (stat.mode & 0o077) !== 0) {
           throw new Error("invalid secret file");

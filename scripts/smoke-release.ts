@@ -39,13 +39,20 @@ try {
 
   if (!run(cli, ["version"], env).includes(version)) throw new Error("wrong CLI version");
   if (!run(cli, ["--help"], env).includes("usage: kizuki")) throw new Error("CLI help missing");
+  const catalog = JSON.parse(run(cli, ["connect", "--json"], env)) as {
+    data: { sources: { id: string; available: boolean }[] };
+  };
+  if (!catalog.data.sources.some((source) => source.id === "kizuki.beeper" && source.available)) {
+    throw new Error("Beeper is missing from the compiled connection catalog");
+  }
   run(cli, ["init", vault, "--no-service"], env);
   run(cli, ["import", "markdown-folder", "--source", notes, "--vault", vault], env);
   const query = run(cli, ["query", "Ada", "--vault", vault], env);
   if (!query.includes("Ada")) {
     throw new Error(`imported note was not queryable: ${query}`);
   }
-  run(cli, ["context", "--query", "Ada", "--vault", vault], env);
+  const context = run(cli, ["context", "--query", "Ada", "--vault", vault], env);
+  if (!context.includes("Ada")) throw new Error("imported note is missing from compiled context");
   run(cli, ["serve", "--once", "--no-http", "--vault", vault], env);
 
   const session = Bun.spawn([mcp, "--vault", vault, "--owner"], {

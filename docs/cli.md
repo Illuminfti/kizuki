@@ -87,6 +87,8 @@ Historical sweep vs incremental sweep. Each selected connection is drained
 until the connector reports exhaustion. `--source` requires an explicit
 connector. A named connector with no rows exits `1` (`no_connections`).
 One connection failure does not skip the rest.
+The Beeper connector conservatively rescans available history on each completed
+sync cycle to observe edits and explicit tombstones; unchanged records deduplicate.
 
 ## query
 

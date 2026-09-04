@@ -5,7 +5,8 @@ registry package, release signature, or proof of a supported 1.0 installer.
 
 ## Build and verify
 
-Use the Bun version recorded in `.bun-version`:
+Use the Bun version recorded in `.bun-version`; the build refuses a different
+runtime. CI builds and smoke-tests the native package after the repository gate.
 
 ```bash
 bun install --frozen-lockfile
@@ -13,6 +14,7 @@ bun run build:release
 cd dist/kizuki-0.1.0/bun-linux-x64-baseline
 sha256sum -c SHA256SUMS
 ./kizuki --help
+./kizuki init ./vault --no-service
 ./kizuki-mcp --vault ./vault --owner
 ```
 

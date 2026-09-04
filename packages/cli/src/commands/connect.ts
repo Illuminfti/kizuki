@@ -1,9 +1,14 @@
 import { resolve } from "node:path";
 import {
   applyConnectionSensitivity,
+  getConnectorSensitivity,
   isSensitivity,
+  policyFromManifest,
+  SENSITIVITY_ORDER,
+  stricter,
 } from "@kizuki/core";
-import type { Sensitivity } from "@kizuki/core";
+import type { Connection, Manifest, Sensitivity } from "@kizuki/core";
+import type { Database } from "bun:sqlite";
 import { getConnector } from "@kizuki/connectors";
 import { UsageError, parseArguments, requirePositional } from "../args";
 import {
@@ -32,6 +37,15 @@ function parseSensitivityFlag(raw: string | undefined): Sensitivity | undefined 
   return raw;
 }
 
+function checkRequestedSensitivity(db: Database, manifest: Manifest, requested: Sensitivity | undefined, connection?: Connection): void {
+  if (requested === undefined) return;
+  const saved = connection === undefined ? null : getConnectorSensitivity(db, connection.connector_id, connection.source_key);
+  const floor = stricter(policyFromManifest(manifest).sensitivity_floor, saved?.floor ?? "public");
+  if (SENSITIVITY_ORDER[requested] < SENSITIVITY_ORDER[floor]) {
+    throw new UsageError(`--sensitivity cannot be below this connection's ${floor} floor`);
+  }
+}
+
 export const connectCommand: Command = {
   name: "connect",
   usage: "connect [--list|status] [--json]\n       kizuki connect <connector> --source PATH [--sensitivity public|personal|private]\n       kizuki connect beeper --token-ref env:VAR|file:/absolute/path [--endpoint http://127.0.0.1:23373] [--sensitivity public|personal|private] [--json]",
@@ -55,26 +69,26 @@ export const connectCommand: Command = {
       if (ref === undefined || !validTokenRef(ref) || parsed.options.has("--source")) {
         throw new UsageError("connect beeper --token-ref env:VAR|file:/absolute/path [--endpoint http://127.0.0.1:23373]");
       }
-      const endpoint = (parsed.options.get("--endpoint") ?? "http://127.0.0.1:23373").replace(/\/$/, "");
+      const rawEndpoint = parsed.options.get("--endpoint") ?? "http://127.0.0.1:23373";
       const requested = parseSensitivityFlag(parsed.options.get("--sensitivity"));
       const connectorId = "kizuki.beeper";
+      const connector = getConnector(connectorId, { base_url: rawEndpoint, token_secret_ref: ref });
+      const endpoint = new URL(rawEndpoint).origin;
       const state: HostConnectionState = { schema: "kizuki.cli.connection-state/v1", connector_id: connectorId,
         config: { base_url: endpoint, token_secret_ref: ref } };
-      const connector = getConnector(connectorId, state.config);
       return withVault(io, async (ctx) => {
         const hosts = listHostConnections(ctx.db, ctx.store, connectorId);
         if (hosts.some((item) => item.state === null)) {
           throw new ConnectionError("An existing Beeper connection has missing or unreadable state. Run kizuki doctor and restore its connection state before enrolling another source.");
         }
+        const existing = hosts.find((item) => item.state?.config.base_url === endpoint);
+        checkRequestedSensitivity(ctx.db, connector.manifest(), requested, existing?.connection);
         await connector.connect(tokenResolver(ref, io.env));
         const health = await connector.health();
         if (blocksEnrollment(health.state)) {
           io.err(`Beeper is ${health.state}. Open Beeper Desktop, enable its Desktop API, and check your approved connection token.`);
           return 1;
         }
-        const existing = hosts.find(
-          (item) => item.state?.config.base_url === endpoint,
-        );
         let connection;
         if (existing === undefined) {
           connection = await enrollHostConnection(ctx.db, ctx.store, connectorId, state);
@@ -116,6 +130,7 @@ export const connectCommand: Command = {
       );
       if (existing !== undefined && existing.state !== null) {
         const connector = await loadConnector(existing);
+        checkRequestedSensitivity(ctx.db, connector.manifest(), requested, existing.connection);
         const health = await connector.health();
         if (blocksEnrollment(health.state)) {
           io.err(
@@ -136,6 +151,7 @@ export const connectCommand: Command = {
       }
 
       const connector = getConnector(connectorId, { path: absolute });
+      checkRequestedSensitivity(ctx.db, connector.manifest(), requested);
       if (!connector.manifest().auth_modes.includes("none")) {
         throw new ConnectionError(
           `sign-in for ${connectorId} is not wired yet`,

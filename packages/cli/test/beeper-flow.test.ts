@@ -32,8 +32,9 @@ test("Beeper enrollment, paginated recall, dedupe and unavailable sync preserve 
     const url = new URL(request.url);
     paths.push(url.pathname);
     if (unavailable) return new Response("unavailable", { status: 503 });
-    if (url.pathname === "/v1/info") return Response.json({ app: "Beeper", version: "fixture" });
+    if (url.pathname === "/v1/info") return Response.json({ app: { name: "Beeper", version: "fixture" }, server: { status: "running" } });
     if (url.pathname !== "/v1/messages/search") return new Response("not found", { status: 404 });
+    if (Number(url.searchParams.get("limit")) > 20) return new Response("limit exceeds maximum", { status: 400 });
     const older = url.searchParams.has("cursor");
     return Response.json({ items: [{ id: older ? "second" : "first", accountID: "test-account",
       chatID: "test-chat", senderID: "test-sender", sortKey: older ? "1" : "2",
@@ -43,10 +44,23 @@ test("Beeper enrollment, paginated recall, dedupe and unavailable sync preserve 
   const endpoint = `http://127.0.0.1:${server.port}`;
   const connectArgs = ["connect", "beeper", "--token-ref", "env:BEEPER_TOKEN", "--endpoint", endpoint, "--json"];
   try {
+    const unsafe = await cli(env, ...connectArgs, "--sensitivity", "public");
+    expect(unsafe.exitCode).toBe(2);
+    expect(paths).toHaveLength(0);
+    const beforeEnrollment = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+    expect(listConnections(beforeEnrollment)).toHaveLength(0);
+    beforeEnrollment.close();
     const connected = await cli(env, ...connectArgs);
     expect(connected.exitCode).toBe(0);
     const sourceKey = JSON.parse(connected.stdout).data.source_key as string;
     expect(JSON.parse((await cli(env, ...connectArgs)).stdout).data.source_key).toBe(sourceKey);
+    expect((await cli(env, ...connectArgs, "--sensitivity", "private")).exitCode).toBe(0);
+    const savedPath = join(setup.vault, ".kizuki", "connections", `${sourceKey}.state`);
+    const priorState = readFileSync(savedPath, "utf8");
+    const lower = await cli({ ...env, NEW_TOKEN: token }, "connect", "beeper", "--endpoint", endpoint,
+      "--token-ref", "env:NEW_TOKEN", "--sensitivity", "personal");
+    expect(lower.exitCode).toBe(2);
+    expect(readFileSync(savedPath, "utf8")).toBe(priorState);
     const backfill = await cli(env, "backfill", "beeper");
     expect(backfill.exitCode).toBe(0);
     expect(backfill.stdout).toContain("stored=2");

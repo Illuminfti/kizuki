@@ -1,12 +1,16 @@
 import { HealthReport, KizukiError, freezeManifest, isPlainObject } from "@kizuki/core";
-import type { CaptureEventInput, Connector, Cursor, Manifest, SecretResolver, SyncBatch } from "@kizuki/core";
+import type { AttachmentRef, CaptureEventInput, Connector, Cursor, Manifest, SecretResolver, SyncBatch } from "@kizuki/core";
 import { BEEPER_CURSOR_SCHEMA, encodeBeeperCursor, parseBeeperCursor } from "./cursor";
 
 export const BEEPER_CONNECTOR_ID = "kizuki.beeper" as const;
 const DEFAULT_BASE_URL = "http://127.0.0.1:23373";
-const PAGE_LIMIT = 200;
+const PAGE_LIMIT = 20;
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const TIMEOUT_MS = 15_000;
+const MAX_ATTACHMENTS = 100;
+const MAX_ATTACHMENT_ID_BYTES = 2 * 1024;
+const MAX_FILENAME_BYTES = 512;
+const MAX_MEDIA_TYPE_BYTES = 256;
 
 export interface BeeperConnectorConfig { base_url?: string; token_secret_ref: string; }
 export type BeeperFetch = (input: URL, init: RequestInit) => Promise<Response>;
@@ -22,7 +26,8 @@ const MANIFEST: Manifest = freezeManifest({
 });
 
 interface Config { baseUrl: URL; tokenRef: string; }
-interface Message { id: string; accountID: string; chatID: string; senderID?: string; sortKey: string; timestamp: string; text?: string; isDeleted?: boolean; editedTimestamp?: string; }
+interface Message { id: string; accountID: string; chatID: string; senderID?: string; sortKey: string; timestamp: string; text?: string; attachments: Attachment[]; isDeleted?: boolean; editedTimestamp?: string; }
+interface Attachment { id?: string; fileName?: string; fileSize?: number; mimeType?: string; type: "unknown" | "img" | "video" | "audio"; }
 interface Page { items: Message[]; hasMore: boolean; oldestCursor?: string; newestCursor?: string; }
 
 export class BeeperConnector implements Connector {
@@ -70,7 +75,7 @@ export class BeeperConnector implements Connector {
     throw new KizukiError("not_supported", "kizuki.beeper: source-side deletion is not supported by this read-only connector");
   }
   async fixture(): Promise<CaptureEventInput[]> {
-    return [mapMessage({ id: "message-1", accountID: "account-1", chatID: "chat-1", senderID: "user-1", sortKey: "1", timestamp: "2026-01-02T03:04:05.000Z", text: "Synthetic Beeper message" }, "2026-01-02T03:04:06.000Z")];
+    return [mapMessage({ id: "message-1", accountID: "account-1", chatID: "chat-1", senderID: "user-1", sortKey: "1", timestamp: "2026-01-02T03:04:05.000Z", text: "Synthetic Beeper message", attachments: [] }, "2026-01-02T03:04:06.000Z")];
   }
   async #advance(cursor: Cursor | null): Promise<SyncBatch> {
     this.#assertConnected();
@@ -139,6 +144,7 @@ function parsePage(text: string): Page {
   let raw: unknown; try { raw = JSON.parse(text); } catch { throw new KizukiError("parse_error", "kizuki.beeper: malformed response"); }
   if (!isPlainObject(raw) || !Array.isArray(raw.items) || typeof raw.hasMore !== "boolean" || raw.items.length > PAGE_LIMIT) throw new KizukiError("parse_error", "kizuki.beeper: malformed response");
   const items = raw.items.map(parseMessage);
+  if (raw.hasMore && items.length === 0) throw new KizukiError("parse_error", "kizuki.beeper: empty page claims more history");
   const oldestCursor = optionalCursor(raw.oldestCursor); const newestCursor = optionalCursor(raw.newestCursor);
   if (raw.hasMore && oldestCursor === undefined) throw new KizukiError("parse_error", "kizuki.beeper: malformed pagination response");
   return { items, hasMore: raw.hasMore, ...(oldestCursor === undefined ? {} : { oldestCursor }), ...(newestCursor === undefined ? {} : { newestCursor }) };
@@ -148,9 +154,27 @@ function parseMessage(raw: unknown): Message {
   if (!isPlainObject(raw)) throw malformedMessage();
   const identifiers = ["id", "accountID", "chatID", "sortKey", "timestamp"] as const;
   if (!identifiers.every((key) => typeof raw[key] === "string" && raw[key].length > 0) || (raw.senderID !== undefined && typeof raw.senderID !== "string") || (raw.text !== undefined && typeof raw.text !== "string") || Number.isNaN(Date.parse(raw.timestamp as string)) || (raw.isDeleted !== undefined && typeof raw.isDeleted !== "boolean") || (raw.editedTimestamp !== undefined && typeof raw.editedTimestamp !== "string")) throw malformedMessage();
-  return { id: raw.id as string, accountID: raw.accountID as string, chatID: raw.chatID as string, ...(typeof raw.senderID === "string" ? { senderID: raw.senderID } : {}), sortKey: raw.sortKey as string, timestamp: new Date(raw.timestamp as string).toISOString(), ...(typeof raw.text === "string" ? { text: raw.text } : {}), ...(raw.isDeleted === true ? { isDeleted: true } : {}), ...(raw.editedTimestamp === undefined ? {} : { editedTimestamp: raw.editedTimestamp as string }) };
+  return { id: raw.id as string, accountID: raw.accountID as string, chatID: raw.chatID as string, ...(typeof raw.senderID === "string" ? { senderID: raw.senderID } : {}), sortKey: raw.sortKey as string, timestamp: new Date(raw.timestamp as string).toISOString(), ...(typeof raw.text === "string" ? { text: raw.text } : {}), attachments: parseAttachments(raw.attachments), ...(raw.isDeleted === true ? { isDeleted: true } : {}), ...(raw.editedTimestamp === undefined ? {} : { editedTimestamp: raw.editedTimestamp as string }) };
 }
 function malformedMessage(): KizukiError { return new KizukiError("parse_error", "kizuki.beeper: malformed message"); }
+function parseAttachments(raw: unknown): Attachment[] {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw) || raw.length > MAX_ATTACHMENTS) throw malformedMessage();
+  return raw.map((value) => {
+    if (!isPlainObject(value) || !isAttachmentType(value.type) || !optionalNonEmptyText(value.id, MAX_ATTACHMENT_ID_BYTES) || !optionalText(value.fileName, MAX_FILENAME_BYTES) || !optionalNonEmptyText(value.mimeType, MAX_MEDIA_TYPE_BYTES) || !optionalSize(value.fileSize)) throw malformedMessage();
+    return {
+      type: value.type,
+      ...(typeof value.id === "string" ? { id: value.id } : {}),
+      ...(typeof value.fileName === "string" ? { fileName: value.fileName } : {}),
+      ...(typeof value.fileSize === "number" ? { fileSize: value.fileSize } : {}),
+      ...(typeof value.mimeType === "string" ? { mimeType: value.mimeType } : {}),
+    };
+  });
+}
+function isAttachmentType(value: unknown): value is Attachment["type"] { return value === "unknown" || value === "img" || value === "video" || value === "audio"; }
+function optionalText(value: unknown, maximum: number): boolean { return value === undefined || (typeof value === "string" && new TextEncoder().encode(value).byteLength <= maximum); }
+function optionalNonEmptyText(value: unknown, maximum: number): boolean { return value === undefined || (typeof value === "string" && value.length > 0 && new TextEncoder().encode(value).byteLength <= maximum); }
+function optionalSize(value: unknown): boolean { return value === undefined || (typeof value === "number" && Number.isSafeInteger(value) && value >= 0); }
 function isInfoResponse(value: unknown): boolean {
   return isPlainObject(value) && isPlainObject(value.app) && isPlainObject(value.server)
     && typeof value.app.name === "string" && value.app.name.length > 0
@@ -160,6 +184,14 @@ function isInfoResponse(value: unknown): boolean {
 function mapMessage(message: Message, observed_at: string): CaptureEventInput {
   const deleted = message.isDeleted === true;
   const accountChat = JSON.stringify([message.accountID, message.chatID]);
-  return { schema: "kizuki.event/v1", connector_id: BEEPER_CONNECTOR_ID, source_record_id: JSON.stringify([message.accountID, message.chatID, message.id]), kind: "message", occurred_at: message.timestamp, observed_at, text: deleted ? "" : (message.text ?? ""), subjects: [ ...(message.senderID === undefined ? [] : [{ subject_id: `beeper:sender:${JSON.stringify([message.accountID, message.senderID])}`, role: "from" as const }]), { subject_id: `beeper:chat:${accountChat}`, role: "about" } ], sensitivity_hint: "private", deleted, attachments: [], metadata: { source_kind: "beeper", account_id: message.accountID, chat_id: message.chatID, message_id: message.id, sender_id: message.senderID ?? null, sort_key: message.sortKey, edited_timestamp: message.editedTimestamp ?? null } };
+  return { schema: "kizuki.event/v1", connector_id: BEEPER_CONNECTOR_ID, source_record_id: JSON.stringify([message.accountID, message.chatID, message.id]), kind: "message", occurred_at: message.timestamp, observed_at, text: deleted ? "" : (message.text ?? ""), subjects: [ ...(message.senderID === undefined ? [] : [{ subject_id: `beeper:sender:${JSON.stringify([message.accountID, message.senderID])}`, role: "from" as const }]), { subject_id: `beeper:chat:${accountChat}`, role: "about" } ], sensitivity_hint: "private", deleted, attachments: deleted ? [] : attachmentRefs(message), metadata: { source_kind: "beeper", account_id: message.accountID, chat_id: message.chatID, message_id: message.id, sender_id: message.senderID ?? null, sort_key: message.sortKey, edited_timestamp: message.editedTimestamp ?? null } };
+}
+function attachmentRefs(message: Message): AttachmentRef[] {
+  return message.attachments.map((attachment, index) => ({
+    attachment_id: attachment.id ?? `beeper:attachment:${JSON.stringify([message.accountID, message.chatID, message.id, index])}`,
+    media_type: attachment.mimeType ?? "application/octet-stream",
+    ...(attachment.fileName === undefined ? {} : { filename: attachment.fileName }),
+    ...(attachment.fileSize === undefined ? {} : { byte_size: attachment.fileSize }),
+  }));
 }
 function unavailable(detail: string): KizukiError { return new KizukiError("unreachable", `kizuki.beeper: ${detail}`); }

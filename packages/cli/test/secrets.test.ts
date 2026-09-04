@@ -22,12 +22,14 @@ describe("connection token references", () => {
     const group = join(dir, "group");
     const huge = join(dir, "huge");
     const link = join(dir, "link");
+    const fifo = join(dir, "fifo");
     writeFileSync(safe, "private-token\n", { mode: 0o600 });
     writeFileSync(group, "group-token\n", { mode: 0o600 }); chmodSync(group, 0o640);
     writeFileSync(huge, "x".repeat(16_385), { mode: 0o600 });
     symlinkSync(safe, link);
+    expect(Bun.spawnSync(["mkfifo", "-m", "600", fifo]).exitCode).toBe(0);
     await expect(tokenResolver(`file:${safe}`, {})(`file:${safe}`)).resolves.toBe("private-token");
-    for (const path of [group, huge, link]) {
+    for (const path of [group, huge, link, fifo]) {
       await expect(tokenResolver(`file:${path}`, {})(`file:${path}`)).rejects.toThrow("owner-only regular file");
     }
   });

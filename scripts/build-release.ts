@@ -3,6 +3,10 @@ import { join, resolve } from "node:path";
 import { checksumManifest, ensureReleaseDirectory, requireAbsent } from "./release-artifacts";
 
 const root = resolve(import.meta.dir, "..");
+const pinnedBun = (await Bun.file(resolve(root, ".bun-version")).text()).trim();
+if (Bun.version !== pinnedBun) {
+  throw new Error(`native builds require Bun ${pinnedBun}; current runtime is ${Bun.version}`);
+}
 const version = (await Bun.file(resolve(root, "packages/cli/package.json")).json() as {
   version: string;
 }).version;
