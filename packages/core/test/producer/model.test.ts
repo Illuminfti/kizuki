@@ -15,6 +15,7 @@ import {
 } from "../../src/producer/model";
 import {
   FAKE_MODEL_REF,
+  GRACE,
   GRACE_EVENT,
   TOM,
   TOM_EVENT,
@@ -196,22 +197,40 @@ describe("kizuki.producer.model", () => {
     });
   });
 
-  test("a subject the input never named is dropped, not minted", async () => {
+  test("a draft cannot borrow evidence from an event that does not name its subject", async () => {
     const llm = scriptedLlm(() =>
       responseText([draft(), draft({ subject: "acme-mail:invented" })]),
     );
     await withProducer(llm, async (producer) => {
       const result = await producer.produce(input([GRACE_EVENT]));
-      expect(result.status).toBe("ok");
-      if (result.status !== "ok") return;
-      expect(result.claims).toEqual([draft()]);
-      expect(result.dropped).toEqual([
-        {
-          reason: "unknown_subject",
-          subject: "acme-mail:invented",
-          event_ids: [GRACE_EVENT.event_id],
+      expect(result).toMatchObject({ status: "rejected", reason: "provenance_not_cited" });
+    });
+  });
+
+  test("each request carries only that batch's event subjects and known claims", async () => {
+    const llm = scriptedLlm(() => responseText([draft()]));
+    await withProducer(llm, async (producer) => {
+      const request = input([GRACE_EVENT]);
+      const result = await producer.produce({
+        ...request,
+        context: {
+          ...request.context,
+          subjects: [...request.context.subjects, ...TOM_EVENT.subjects],
+          known_claims: [{
+            claim_id: "01JKNOWNCLAIM00000000000000",
+            subject: TOM,
+            predicate: "location.based_in",
+            object: "Lisbon",
+            polarity: "positive",
+            confidence: 0.9,
+          }],
         },
-      ]);
+      });
+      expect(result.status).toBe("ok");
+      const quoted = llm.requests[0]!.messages[1]!.content;
+      expect(quoted).toContain(GRACE);
+      expect(quoted).not.toContain(TOM);
+      expect(quoted).not.toContain("01JKNOWNCLAIM00000000000000");
     });
   });
 

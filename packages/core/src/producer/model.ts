@@ -435,18 +435,25 @@ export function createModelProducerPort(
       }
 
       const predicates = new Set(input.context.predicates);
-      const knownSubjects = new Set(
-        input.context.subjects.map((subject) => subject.subject_id),
-      );
 
       for (const batch of batches) {
         assertOpen();
+        // Context is scoped per request. A subject or claim from another
+        // batch must never become evidence for this batch's model call.
+        const batchSubjects = new Map<string, SubjectRef>();
+        for (const event of batch.events) {
+          for (const subject of event.subjects) batchSubjects.set(subject.subject_id, subject);
+        }
+        const scopedSubjects = [...batchSubjects.values()];
+        const scopedKnownClaims = input.context.known_claims.filter(
+          (claim) => claim.subject !== null && batchSubjects.has(claim.subject),
+        );
         const nonce = newFenceNonce();
         const messages = buildExtractionMessages(
           {
             events: batch.events,
-            subjects: input.context.subjects,
-            known_claims: input.context.known_claims,
+            subjects: scopedSubjects,
+            known_claims: scopedKnownClaims,
             predicates: input.context.predicates,
           },
           nonce,
@@ -493,14 +500,19 @@ export function createModelProducerPort(
         }
 
         const batchEventIds = new Set(batch.events.map((event) => event.event_id));
-        const batchSubjects = new Set(knownSubjects);
-        for (const event of batch.events) {
-          for (const subject of event.subjects) batchSubjects.add(subject.subject_id);
-        }
+        const subjectsByEvent = new Map(
+          batch.events.map((event) => [
+            event.event_id,
+            new Set(event.subjects.map((subject) => subject.subject_id)),
+          ]),
+        );
         const sources = batch.events.map((event) => event.text);
 
         for (const draft of parsed.claims) {
           if (!draft.event_ids.every((id) => batchEventIds.has(id))) {
+            return { status: "rejected", reason: "provenance_not_cited", usage };
+          }
+          if (!draft.event_ids.every((id) => subjectsByEvent.get(id)?.has(draft.subject) === true)) {
             return { status: "rejected", reason: "provenance_not_cited", usage };
           }
           if (containsVerbatimCapture(draft.body, sources)) {
