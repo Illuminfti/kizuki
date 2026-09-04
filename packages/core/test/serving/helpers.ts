@@ -11,6 +11,9 @@ import {
 } from "../../src/agents";
 import { TOOLS } from "../../src/agents";
 import type { Grant, Principal, Tool } from "../../src/agents";
+import type { Sensitivity } from "../../src/agents/types";
+import { applyCanonWrite, createBudgetTracker, resolveTarget } from "../../src/canon";
+import { getClaim } from "../../src/claims/store";
 import { rebuildDerived } from "../../src/derived";
 import { initGraph } from "../../src/graph/schema";
 import { saveCheckpoint } from "../../src/ledger/connections";
@@ -18,9 +21,8 @@ import { openLedger } from "../../src/ledger/db";
 import { accept } from "../../src/ledger/ledger";
 import { purgeEvents } from "../../src/ledger/purge";
 import { initSearch } from "../../src/search/schema";
-import { ownerPromote } from "../../src/staging/promote";
-import { fileProposal, initStaging } from "../../src/staging/proposals";
 import type { ServeContext } from "../../src/serving/types";
+import { fileProposal, initStaging } from "../../src/staging/proposals";
 import { ulid } from "../../src/util/ulid";
 import { serializePage } from "../../src/vault/frontmatter";
 import { initVault } from "../../src/vault/init";
@@ -236,6 +238,33 @@ function writePages(vaultPath: string): void {
   );
 }
 
+function writeFiledCanon(
+  db: Database,
+  vaultPath: string,
+  claimId: string,
+  sensitivity?: Sensitivity,
+): { page_path: string } {
+  if (sensitivity !== undefined) {
+    db.query("UPDATE claims SET status = 'live', sensitivity = ? WHERE claim_id = ?").run(
+      sensitivity,
+      claimId,
+    );
+  } else {
+    db.query("UPDATE claims SET status = 'live' WHERE claim_id = ?").run(claimId);
+  }
+  const claim = getClaim(db, claimId);
+  if (claim === null) throw new Error(`fixture claim ${claimId} is missing`);
+  const io = { db, vault_path: vaultPath };
+  const decision = resolveTarget(io, claim);
+  if (decision.action === "skip") {
+    throw new Error(`fixture claim ${claimId} was not written: ${decision.reason}`);
+  }
+  return applyCanonWrite(io, claim, decision, {
+    writer: "import",
+    budget: createBudgetTracker({ canon_writes_per_run: 1 }),
+  });
+}
+
 function makeHeldPage(
   db: Database,
   vaultPath: string,
@@ -254,9 +283,12 @@ function makeHeldPage(
   if (filed.outcome !== "stored") {
     throw new Error(`fixture hold proposal: ${filed.outcome}`);
   }
-  const receipt = ownerPromote(db, vaultPath, filed.proposal.proposal_id, {
-    sensitivity: "public",
-  });
+  const receipt = writeFiledCanon(
+    db,
+    vaultPath,
+    filed.proposal.proposal_id,
+    "public",
+  );
   purgeEvents(db, vaultPath, { event_id: eventId }, "fixture purge");
   return receipt.page_path;
 }

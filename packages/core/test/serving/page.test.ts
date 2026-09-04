@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { applyCanonWrite, createBudgetTracker, resolveTarget } from "../../src/canon";
+import { getClaim } from "../../src/claims/store";
 import { serveGetPage } from "../../src/serving/page";
-import { ownerPromote } from "../../src/staging/promote";
 import { fileProposal } from "../../src/staging/proposals";
 import type { GetPageArgs } from "../../src/serving/page";
 import { ServeError } from "../../src/serving/types";
@@ -137,12 +138,18 @@ describe("serveGetPage", () => {
       confidence: 1,
     });
     if (filed.outcome !== "stored") throw new Error(filed.outcome);
-    const receipt = ownerPromote(
-      fixture.db,
-      fixture.vaultPath,
-      filed.proposal.proposal_id,
-      { sensitivity: "public" },
-    );
+    fixture.db
+      .query("UPDATE claims SET status = 'live', sensitivity = ? WHERE claim_id = ?")
+      .run("public", filed.proposal.proposal_id);
+    const stored = getClaim(fixture.db, filed.proposal.proposal_id);
+    if (stored === null) throw new Error("filed claim is missing");
+    const io = { db: fixture.db, vault_path: fixture.vaultPath };
+    const decision = resolveTarget(io, stored);
+    if (decision.action === "skip") throw new Error(decision.reason);
+    const receipt = applyCanonWrite(io, stored, decision, {
+      writer: "import",
+      budget: createBudgetTracker({ canon_writes_per_run: 1 }),
+    });
 
     const written = serveGetPage(fixture.owner(), { path: receipt.page_path });
     expect(receipt.page_path).toBe("facts/receipted.md");

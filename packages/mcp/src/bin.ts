@@ -2,7 +2,6 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { initAgents, initGraph, initSearch, openLedger, resolvePort } from "@kizuki/core";
 import type { Principal, RetrievalPort } from "@kizuki/core";
-import { initStaging } from "@kizuki/core/staging";
 import { ownerPrincipal, principalFromToken } from "./principal";
 import { runStdio } from "./stdio";
 
@@ -81,7 +80,6 @@ export async function main(argv: string[]): Promise<void> {
   if (!existsSync(stateDir)) refuse("vault is not initialized");
 
   const db = openLedger(join(stateDir, "kizuki.db"));
-  initStaging(db);
   initSearch(db);
   initGraph(db);
   initAgents(db);

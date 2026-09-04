@@ -18,7 +18,6 @@ import {
   serializePage,
 } from "@kizuki/core";
 import type { Grant, Principal, ServeContext } from "@kizuki/core";
-import { initStaging } from "@kizuki/core/staging";
 
 export interface McpFixture {
   vaultPath: string;
@@ -57,7 +56,6 @@ export function mcpFixture(): McpFixture {
   const vaultPath = mkdtempSync(join(tmpdir(), "kizuki-mcp-"));
   initVault(vaultPath);
   const db = openLedger(join(vaultPath, ".kizuki", "kizuki.db"));
-  initStaging(db);
   initSearch(db);
   initGraph(db);
   initAgents(db);

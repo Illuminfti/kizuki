@@ -5,10 +5,11 @@ import {
   PAGE_CANDIDATE_KEY,
   PAGE_CANDIDATE_SCHEMA,
 } from "../../src/contracts/page-candidate";
+import { applyCanonWrite, createBudgetTracker, resolveTarget } from "../../src/canon";
 import { getCanonReceipt } from "../../src/canon/receipts";
+import { getClaim } from "../../src/claims/store";
 import { accept } from "../../src/ledger/ledger";
 import { proposalsForEvent } from "../../src/staging/producers";
-import { ownerPromote } from "../../src/staging/promote";
 import { fileProposal } from "../../src/staging/proposals";
 import { validatePage } from "../../src/vault/schema";
 import { parseFrontmatter } from "../../src/vault/frontmatter";
@@ -169,10 +170,9 @@ describe("a page candidate on an event", () => {
 });
 
 /**
- * The receipted writer is the only door into canon; `promote` is the shim the
- * leftover verbs still call it through. Nothing here supplies a label: a
- * migrated page carries the lattice bottom (RFC 0002 section 8.1), never an
- * owner keystroke.
+ * The receipted writer is the only door into canon. Nothing here supplies a
+ * label: a migrated page carries the lattice bottom (RFC 0002 section 8.1),
+ * never an owner keystroke.
  */
 describe("a migrated page through the receipted writer", () => {
   function staged(
@@ -189,12 +189,25 @@ describe("a migrated page through the receipted writer", () => {
     return filed.proposal.proposal_id;
   }
 
+  function writeFiled(db: ReturnType<typeof memoryDb>, vaultPath: string, id: string) {
+    db.query("UPDATE claims SET status = 'live' WHERE claim_id = ?").run(id);
+    const claim = getClaim(db, id);
+    if (claim === null) throw new Error("filed claim is missing");
+    const io = { db, vault_path: vaultPath };
+    const decision = resolveTarget(io, claim);
+    if (decision.action === "skip") throw new Error(decision.reason);
+    return applyCanonWrite(io, claim, decision, {
+      writer: "import",
+      budget: createBudgetTracker({ canon_writes_per_run: 1 }),
+    });
+  }
+
   test("writes the target path with the mapped frontmatter and provenance", () => {
     const db = memoryDb();
     const vault = tempVault();
     try {
       const id = staged(db);
-      const receipt = ownerPromote(db, vault.path, id, {});
+      const receipt = writeFiled(db, vault.path, id);
 
       expect(receipt.page_path).toBe("entities/ada.md");
       expect(receipt.sensitivity).toBe("private");
@@ -224,7 +237,7 @@ describe("a migrated page through the receipted writer", () => {
           target: `pages/${type}`,
           title: `A ${type}`,
         });
-        const receipt = ownerPromote(db, vault.path, id, {});
+        const receipt = writeFiled(db, vault.path, id);
         const page = parseFrontmatter(
           readFileSync(join(vault.path, receipt.page_path), "utf8"),
         );
@@ -241,11 +254,11 @@ describe("a migrated page through the receipted writer", () => {
     const vault = tempVault();
     try {
       const first = staged(db, {}, "first body");
-      const written = ownerPromote(db, vault.path, first, {});
+      const written = writeFiled(db, vault.path, first);
       expect(written.before_hash).toBeNull();
 
       const second = staged(db, { title: "Ada L." }, "an edited body");
-      const revised = ownerPromote(db, vault.path, second, {});
+      const revised = writeFiled(db, vault.path, second);
 
       expect(revised.page_path).toBe(written.page_path);
       expect(revised.before_hash).toBe(written.after_hash);

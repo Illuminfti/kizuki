@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
 import { openLedger, runBackfill, runToCompletion } from "@kizuki/core";
-import { initStaging } from "@kizuki/core/staging";
 import { parseCursor } from "../src/cursor";
 import { fixtureAccount } from "../src/fixture";
 import type { TelegramMessage } from "../src/api";
@@ -11,9 +10,7 @@ const FEBRUARY = Date.parse("2026-02-01T00:00:00.000Z");
 const SOURCE = "01JJ0000000000000000000000";
 
 function ledger() {
-  const db = openLedger(":memory:");
-  initStaging(db);
-  return db;
+  return openLedger(":memory:");
 }
 
 function counts(calls: { method: string }[], method: string): number {

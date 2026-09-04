@@ -1,7 +1,11 @@
 import { Database } from "bun:sqlite";
 import { initClaims } from "../claims/schema";
 import { canonicalizeProducer, isProducer, PROPOSAL_KINDS } from "../contracts/proposal";
-import type { Producer, ProposalKind } from "../contracts/proposal";
+import type {
+  FrontmatterValue,
+  Producer,
+  ProposalKind,
+} from "../contracts/proposal";
 import { tableExists } from "../ledger/schema";
 import { ulid } from "../util/ulid";
 
@@ -19,8 +23,7 @@ export const STAGING_STATUSES = [
 ] as const;
 export type StagingStatus = (typeof STAGING_STATUSES)[number];
 
-export type FrontmatterScalar = string | number | boolean;
-export type FrontmatterValue = FrontmatterScalar | FrontmatterScalar[];
+export type { FrontmatterScalar, FrontmatterValue } from "../contracts/proposal";
 
 export interface ProposalInput {
   kind: ProposalKind;

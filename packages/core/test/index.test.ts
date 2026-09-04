@@ -292,6 +292,7 @@ describe("public surface", () => {
       "policyForSourceClass",
       "policyFromManifest",
       "predicateIds",
+      "proposalsForEvent",
       "pruneRunReceipts",
       "purgeEvents",
       "queryServeService",
