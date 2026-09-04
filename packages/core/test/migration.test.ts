@@ -890,6 +890,91 @@ describe("openLedger migrations", () => {
     }
   });
 
+  test("v10 missing search_docs is projected from the companion", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-ledger-v10-fts-"));
+    const path = join(directory, "ledger.sqlite");
+    try {
+      const first = openLedger(path);
+      first.exec(`
+        INSERT INTO search_documents (
+          doc_id, scope, title, body, path, page_type, sensitivity,
+          taint, authority, occurred_at, connector_id, subjects, provenance
+        ) VALUES (
+          'page:fact:tea', 'canon', 'Tea', 'kettleword', 'facts/tea.md', 'fact',
+          'public', 'clean', 'owner_authored', '2026-01-01T00:00:00Z', '',
+          '[]', '[]'
+        );
+        INSERT INTO derived_meta (
+          layer, generation, rebuilt_at, doc_count, source_count, skipped_count,
+          status, ledger_watermark, canon_hash, port_id, contract, space
+        ) VALUES (
+          'search', 'gen-1', '2026-01-01T00:00:00Z', 1, 1, 0, 'ok',
+          NULL, NULL, 'kizuki.retrieval.fts5', 'kizuki.retrieval/v1', NULL
+        );
+        DROP TABLE search_docs;
+      `);
+      first.close();
+
+      const reopened = openLedger(path);
+      expect(schemaVersion(reopened)).toBe(10);
+      expect(searchResult(reopened, "kettleword")).toEqual({
+        hits: [
+          expect.objectContaining({
+            doc_id: "page:fact:tea",
+            title: "Tea",
+          }),
+        ],
+        degraded: [],
+      });
+      expect(
+        reopened
+          .query<{ status: string }, []>(
+            "SELECT status FROM derived_meta WHERE layer = 'search'",
+          )
+          .get()?.status,
+      ).toBe("ok");
+      reopened.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("v10 missing search_docs without a companion is stamped degraded", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-ledger-v10-fts-gap-"));
+    const path = join(directory, "ledger.sqlite");
+    try {
+      const first = openLedger(path);
+      first.exec(`
+        INSERT INTO derived_meta (
+          layer, generation, rebuilt_at, doc_count, source_count, skipped_count,
+          status, ledger_watermark, canon_hash, port_id, contract, space
+        ) VALUES (
+          'search', 'gen-1', '2026-01-01T00:00:00Z', 1, 1, 0, 'ok',
+          NULL, NULL, 'kizuki.retrieval.fts5', 'kizuki.retrieval/v1', NULL
+        );
+        DROP TABLE search_docs;
+        DROP TABLE search_documents;
+      `);
+      first.close();
+
+      const reopened = openLedger(path);
+      expect(searchResult(reopened, "kettleword")).toEqual({
+        hits: [],
+        degraded: ["index-degraded"],
+      });
+      expect(
+        reopened
+          .query<{ status: string }, []>(
+            "SELECT status FROM derived_meta WHERE layer = 'search'",
+          )
+          .get()?.status,
+      ).toBe("degraded");
+      reopened.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   test("v10 graph missing dest_sensitivity is wiped on reopen", () => {
     const directory = mkdtempSync(join(tmpdir(), "kizuki-ledger-v10-dest-"));
     const path = join(directory, "ledger.sqlite");

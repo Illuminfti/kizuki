@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import {
   derivedMetaNeedsRebuild,
+  readDerivedMeta,
   stampDerived,
 } from "./derived-meta";
 import {
@@ -11,6 +12,7 @@ import type { GraphRebuildResult } from "./graph/graph";
 import { graphSchemaNeedsRebuild, initGraph } from "./graph/schema";
 import { tableExists } from "./ledger/schema";
 import {
+  projectSearchDocs,
   rebuildSearchLayer,
   removeDoc,
   replacePage,
@@ -32,12 +34,17 @@ export interface DerivedRebuildResult {
 }
 
 export function applyDerivedV10(db: Database): void {
+  const hadFts = tableExists(db, "search_docs");
+  const hadCompanion = tableExists(db, "search_documents");
+  const hadSearchMeta = readDerivedMeta(db, "search") !== null;
+  const searchRestored = !hadFts && hadCompanion;
   const searchWiped =
-    tableExists(db, "search_docs") && !tableExists(db, "search_documents");
+    (hadFts && !hadCompanion) || (!hadFts && !hadCompanion && hadSearchMeta);
   const graphWiped = graphSchemaNeedsRebuild(db);
   const metaWiped = derivedMetaNeedsRebuild(db);
   initSearch(db);
   initGraph(db);
+  if (searchRestored) projectSearchDocs(db);
   if (!searchWiped && !graphWiped && !metaWiped) return;
   const rebuiltAt = new Date().toISOString();
   const stamp = (layer: "search" | "graph"): void => {

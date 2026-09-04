@@ -271,22 +271,27 @@ function stampSearch(
   };
 }
 
+/** FTS is a projection of search_documents. */
+export function projectSearchDocs(db: Database): void {
+  db.exec("DELETE FROM search_docs");
+  db.exec(
+    `INSERT INTO search_docs (${DOCUMENT_COLUMNS})
+     SELECT ${DOCUMENT_COLUMNS} FROM search_documents`,
+  );
+}
+
 /** Rebuild the search layer. Caller owns the transaction. */
 export function rebuildSearchLayer(
   db: Database,
   input: SearchRebuildInput,
 ): SearchRebuildResult {
   const livePages = input.pages.filter(isLiveCanonPage);
-  db.exec("DELETE FROM search_docs");
   db.exec("DELETE FROM search_documents");
   for (const page of livePages) insertDocument(db, pageDocument(page));
   for (const event of replayLive(db, {})) {
     insertDocument(db, eventDocument(event));
   }
-  db.exec(
-    `INSERT INTO search_docs (${DOCUMENT_COLUMNS})
-     SELECT ${DOCUMENT_COLUMNS} FROM search_documents`,
-  );
+  projectSearchDocs(db);
   const counts = db
     .query<{ scope: string; count: number }, []>(
       "SELECT scope, count(*) AS count FROM search_documents GROUP BY scope",
