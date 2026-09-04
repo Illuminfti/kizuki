@@ -37,6 +37,8 @@ export const PREDICATE_REGISTRY: readonly PredicateSpec[] = [
   { id: "tool.abandoned", cardinality: "multi", value_kind: "string", subject_kinds: ["person"] },
   { id: "skill.has", cardinality: "multi", value_kind: "string", subject_kinds: ["person"] },
   { id: "health.metric", cardinality: "multi", value_kind: "string", subject_kinds: ["person"] },
+  { id: "outcome.reached", cardinality: "multi", value_kind: "string", subject_kinds: ["person", "project"] },
+  { id: "outcome.missed", cardinality: "multi", value_kind: "string", subject_kinds: ["person", "project"] },
 ];
 
 const BY_ID = new Map(PREDICATE_REGISTRY.map((entry) => [entry.id, entry]));

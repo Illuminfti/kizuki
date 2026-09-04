@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHelpers } from "../helpers";
 
@@ -82,7 +82,60 @@ describe("doctor liveness", () => {
     expect(result.stdout).toContain(
       "canon writing: off (no model configured — connectors, ledger, search, timeline and undo still work)",
     );
+    expect(result.stdout).toContain("claims live=");
+    expect(result.stdout).toContain("filed=");
+    expect(result.stdout).toContain("written=");
+    expect(result.stdout).toContain("unwritten=");
+    expect(result.stdout).toContain("derived search=");
+    expect(result.stdout).toContain("writers loop=0 correction=0 import=0 revert=0");
+    expect(result.stdout).toContain("origin machine=0 human=0");
+    expect(result.stdout).toContain("calibration write_rate=-");
     expect(result.exitCode).toBe(0);
+  });
+
+  test("doctor reports canon writing on from a configured model ref", () => {
+    const setup = tempVault();
+    writeFileSync(
+      join(setup.vault, ".kizuki", "serve.toml"),
+      '[ports.llm]\nid = "kizuki.llm.openai-compatible"\nmodel = "synthetic@local"\n',
+    );
+    const result = runCli(setup.env, "doctor");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "canon writing: on (kizuki.llm.openai-compatible:synthetic@local)",
+    );
+  });
+
+  test("doctor does not treat KIZUKI_MODEL_REF as a configured write path", () => {
+    const setup = tempVault();
+    const result = runCli(
+      {
+        ...setup.env,
+        KIZUKI_MODEL_REF: "kizuki.llm.openai-compatible:synthetic@local",
+      },
+      "doctor",
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("canon writing: off");
+    expect(result.stdout).not.toContain("canon writing: on");
+  });
+
+  test("doctor stamps stay redacted and do not echo captured text", () => {
+    const setup = tempVault();
+    const imported = runCli(
+      setup.env,
+      "import",
+      "markdown-folder",
+      "--source",
+      setup.notes,
+    );
+    expect(imported.exitCode).toBe(0);
+    const result = runCli(setup.env, "doctor");
+    expect(result.stdout).toContain("writers loop=");
+    expect(result.stdout).toContain("origin machine=");
+    expect(result.stdout).not.toContain("river-stone kernel");
+    expect(result.stdout).not.toContain("moth-lantern patch");
+    expect(result.stderr).not.toMatch(/sk-[A-Za-z0-9]{10,}/);
   });
 
   test("serve --once writes a doctor-valid brief and does not fail doctor for that file", () => {

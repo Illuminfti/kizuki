@@ -1,8 +1,11 @@
 import type { Database } from "bun:sqlite";
+import { isMachineOriginPath } from "../canon/origin";
 import { pendingRetrievalOps } from "../claims/store";
+import { readDerivedMeta } from "../derived-meta";
 import { tableExists } from "../ledger/schema";
 import { inspectPurgeHealth } from "../ledger/purge";
-import { loadServeConfig } from "./config";
+import { listCanonPagesReport } from "../vault/pages";
+import { loadConfiguredModelRef, loadServeConfig } from "./config";
 import { readServeIntent } from "./intent";
 import { listRunReceipts, orphanJournalReceipts } from "./receipts";
 import { listSchedules } from "./schema";
@@ -192,6 +195,48 @@ function modelDoctor(
   };
 }
 
+function countWriterRoles(db: Database): StoreDoctor["writers"] {
+  const writers = {
+    loop: 0,
+    correction: 0,
+    import: 0,
+    revert: 0,
+  };
+  if (!tableExists(db, "canon_receipts")) return writers;
+  const rows = db
+    .query<{ writer: string; n: number }, []>(
+      "SELECT writer, COUNT(*) AS n FROM canon_receipts GROUP BY writer",
+    )
+    .all();
+  for (const row of rows) {
+    switch (row.writer) {
+      case "loop":
+      case "correction":
+      case "import":
+      case "revert":
+        writers[row.writer] = row.n;
+        break;
+      default:
+        break;
+    }
+  }
+  return writers;
+}
+
+function countOriginPages(vaultPath: string): StoreDoctor["origin"] {
+  const report = listCanonPagesReport(vaultPath);
+  let machine = 0;
+  let human = 0;
+  for (const relPath of [
+    ...report.pages.map((page) => page.relPath),
+    ...report.skipped.map((page) => page.relPath),
+  ]) {
+    if (isMachineOriginPath(relPath)) machine += 1;
+    else human += 1;
+  }
+  return { machine, human };
+}
+
 function storeDoctor(
   db: Database,
   vaultPath: string,
@@ -229,12 +274,26 @@ function storeDoctor(
     degraded.push("retrieval-ops-stale");
   }
   if (!purge.ok) degraded.push("purge-unhealthy");
+  const search = readDerivedMeta(db, "search");
+  const graph = readDerivedMeta(db, "graph");
   return {
     pending_retrieval_ops: pendingRetrieval.length,
     oldest_retrieval_op_age_s: oldestRetrievalAge,
     pending_purge_ops: pendingPurge,
     oldest_purge_op_age_s: ageSeconds(oldestPurge, now),
     orphan_run_receipts: orphanJournalReceipts(db, vaultPath),
+    derived: {
+      search: {
+        rebuilt_at: search?.rebuilt_at ?? null,
+        doc_count: search?.doc_count ?? 0,
+      },
+      graph: {
+        rebuilt_at: graph?.rebuilt_at ?? null,
+        doc_count: graph?.doc_count ?? 0,
+      },
+    },
+    writers: countWriterRoles(db),
+    origin: countOriginPages(vaultPath),
     degraded,
   };
 }
@@ -277,7 +336,8 @@ export function inspectServeDoctor(
   const usedToday = receipts
     .filter((receipt) => receipt.finished_at.startsWith(now.slice(0, 10)))
     .reduce((sum, receipt) => sum + receipt.canon_writes, 0);
-  const model = modelDoctor(receipts, options.model_ref, config.canon_writes_per_day, usedToday);
+  const modelRef = options.model_ref ?? loadConfiguredModelRef(vaultPath);
+  const model = modelDoctor(receipts, modelRef, config.canon_writes_per_day, usedToday);
   const stores = storeDoctor(db, vaultPath, now);
   const cal = calibration(db, receipts, now);
   const failures: string[] = [];

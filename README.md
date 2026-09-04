@@ -57,12 +57,12 @@ Config is `$KIZUKI_CONFIG`, else `$XDG_CONFIG_HOME/kizuki/config.toml`, else
 `$HOME/.config/kizuki/config.toml`. Only `default_vault` and named `[vaults]`
 are read. Every verb accepts `--vault <path|name>`.
 
-`import` stores events and files claims. It does not write canon. `query` of
-unlabeled ledger text prints nothing on stdout and reports `withheld=N` on
-stderr — that is fail-closed, not a broken search. `doctor` lists filed
-(ingest) claims and live claims separately. `tell --claim` needs a **live**
-claim; after a folder import those rows are filed, not live, until the
-receipted writer runs (a configured model) or a prior correction minted one.
+`import` stores events and files **live** claims. It does not write canon.
+`query` of unlabeled ledger text prints nothing on stdout and reports
+`withheld=N` on stderr — that is fail-closed, not a broken search. `doctor`
+lists live claims (for `tell --claim`) separately from leftover skipped
+rows. After a folder import those rows are live; the receipted writer
+materializes them only when a model is configured.
 
 ```bash
 bun packages/cli/src/main.ts tell "the name is Ada" --claim LIVE_CLAIM_ID
@@ -85,6 +85,7 @@ bun packages/cli/src/main.ts help <verb>
 | Create a vault | `init <path>` |
 | Ingest a folder or export | `import <connector> --source PATH` |
 | Search labeled text | `query <text>` |
+| Compile a context packet | `context [--purpose …]` |
 | Health | `doctor` |
 | Correct a claim | `tell "<statement>" --claim CLAIM_ID` |
 | Reverse a write | `undo <receipt_id>` |

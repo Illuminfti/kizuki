@@ -597,6 +597,79 @@ export function countClaims(
   );
 }
 
+/** Live claims the receipted writer has not yet materialized. */
+export function countUnwrittenLiveClaims(db: Database): number {
+  if (!tableExists(db, "claims")) return 0;
+  return (
+    db
+      .query<{ n: number }, []>(
+        `SELECT count(*) AS n FROM claims
+          WHERE status = 'live' AND receipt_id IS NULL`,
+      )
+      .get()?.n ?? 0
+  );
+}
+
+/** Live claims bound to a canon receipt. */
+export function countWrittenLiveClaims(db: Database): number {
+  if (!tableExists(db, "claims")) return 0;
+  return (
+    db
+      .query<{ n: number }, []>(
+        `SELECT count(*) AS n FROM claims
+          WHERE status = 'live' AND receipt_id IS NOT NULL`,
+      )
+      .get()?.n ?? 0
+  );
+}
+
+/**
+ * Oldest-first live claims with no receipt. One pass never walks the whole
+ * backlog: the next run resumes after what the budget absorbed.
+ */
+export function listUnwrittenLiveClaims(
+  db: Database,
+  limit = 32,
+): Claim[] {
+  if (!tableExists(db, "claims")) return [];
+  const bound = Number.isSafeInteger(limit) && limit > 0 ? limit : 32;
+  return db
+    .query<ClaimRow, [number]>(
+      `SELECT * FROM claims
+        WHERE status = 'live' AND receipt_id IS NULL
+        ORDER BY created_at, claim_id
+        LIMIT ?`,
+    )
+    .all(bound)
+    .map(rowToClaim);
+}
+
+/**
+ * Leftover Wave 1 ingest mapped pending proposals onto `skipped`. Those
+ * rows did not lose a conflict — they never got a chance. Lift them to
+ * live so the receipted writer can act. A skip that lost to a live peer
+ * on the same `claim_key` stays skipped.
+ */
+export function reviveUncontestedSkipped(db: Database): number {
+  initClaims(db);
+  const result = db
+    .query<{ changes: number }, []>(
+      `UPDATE claims SET status = 'live'
+        WHERE status = 'skipped'
+          AND retracted_at IS NULL
+          AND superseded_by IS NULL
+          AND (
+            claim_key IS NULL
+            OR claim_key NOT IN (
+              SELECT claim_key FROM claims
+               WHERE status = 'live' AND claim_key IS NOT NULL
+            )
+          )`,
+    )
+    .run();
+  return result.changes;
+}
+
 export function getClaim(db: Database, claimId: string): Claim | null {
   if (!tableExists(db, "claims")) return null;
   const row = db

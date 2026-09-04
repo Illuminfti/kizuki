@@ -77,11 +77,14 @@ prints `0 hits` on stderr.
 usage: kizuki doctor [--json]
 ```
 
-Vault path, event count, claim counts, live claim ids (for `tell --claim`),
-filed ingest claims (not live), connections, receipts, holds, serve rails,
+Vault path, event count, claim counts (filed/live/written/unwritten), live
+claim ids (for `tell --claim`), leftover skipped rows, connections,
+checkpoints, derived-index freshness, writer ROLE stamps, machine vs human
+origin counts, calibration/liveness probes, receipts, holds, serve rails,
 and `canon writing: on|off`. Off when no model is configured. Exit 1 when
-the report is not ok. After a folder import, expect filed claims and
-`tell --claim needs a live claim` until the writer has run.
+the report is not ok. After a folder import, expect live claims; the writer
+still needs a model before those claims become pages. Loop creates land
+under `auto/`; human pages stay where they are.
 
 ## tell
 
@@ -90,9 +93,19 @@ usage: kizuki tell "<statement>" [--claim CLAIM_ID] [--since TIME] [--until TIME
 ```
 
 Owner correction. `--claim` is required and must name a **live** claim;
-`doctor` lists live ids separately from filed ingest rows. Rewrites affected
-canon in the same pass. No model required. Prints an undo line when a
-receipt is minted.
+`doctor` lists live ids separately from leftover skipped rows. Rewrites
+affected canon in the same pass. No model required. Prints an undo line
+when a receipt is minted.
+
+## context
+
+```text
+usage: kizuki context [--purpose session|recall|correction|audit] [--budget N] [--query TEXT] [--json]
+```
+
+Purpose-scoped compilation of canon, graph, timeline, and working-knowledge
+claims with provenance stamps and a token budget. Same engine as MCP
+`context_packet`. Does not write canon.
 
 ## undo
 
@@ -167,6 +180,5 @@ Stdio adapter. Tokens never travel on argv.
 
 ## Not CLI verbs
 
-`context`, `timeline`, `rebuild`, and `agent add` are not registered. Timeline
-and context packets exist as MCP / core serving functions. Derived rebuild is
-a library call.
+`timeline`, `rebuild`, and `agent add` are not registered. Timeline exists
+as an MCP / core serving function. Derived rebuild is a library call.

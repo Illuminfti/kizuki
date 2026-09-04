@@ -144,6 +144,8 @@ describe("RFC 0002 §16.4 purge and undo", () => {
 
     const verified = runCli(setup.env, "purge", "--verify", receipt);
     expect(verified.exitCode).toBe(0);
+    // Import's live leftover is retracted with the event; verify then
+    // proves absence of the three docs this test indexed (event, page, claim).
     expect(verified.stdout).toMatch(
       /kizuki\.retrieval\.fts5\s+checked 3\s+found 0\s+ok/,
     );

@@ -3,6 +3,8 @@ import {
   PURGE_SLA_SECONDS,
   count,
   countClaims,
+  countUnwrittenLiveClaims,
+  countWrittenLiveClaims,
   detectSupervisorKind,
   doctorVault,
   getCanonReceipt,
@@ -38,7 +40,11 @@ interface DoctorReport {
   config: string;
   vault: string;
   events: number;
-  claims: Record<ClaimStatus, number>;
+  claims: Record<ClaimStatus, number> & {
+    filed: number;
+    written: number;
+    unwritten: number;
+  };
   live_claims: DoctorClaim[];
   filed_claims: DoctorClaim[];
   connections: DoctorConnection[];
@@ -169,7 +175,9 @@ async function collect(
     env.HOME ?? env.XDG_CONFIG_HOME ?? "",
     `kizuki serve --vault ${vaultPath}`,
   );
-  const serve = inspectServeDoctor(ctx.db, vaultPath, { supervisor: host });
+  const serve = inspectServeDoctor(ctx.db, vaultPath, {
+    supervisor: host,
+  });
   const ok =
     vault.counts.invalid === 0 &&
     orphans.length === 0 &&
@@ -197,7 +205,12 @@ async function collect(
     config,
     vault: vaultPath,
     events: count(ctx.db),
-    claims,
+    claims: {
+      ...claims,
+      filed: countClaims(ctx.db, { status: "skipped" }),
+      written: countWrittenLiveClaims(ctx.db),
+      unwritten: countUnwrittenLiveClaims(ctx.db),
+    },
     live_claims: liveClaims,
     filed_claims: filedClaims,
     connections,
@@ -216,7 +229,21 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   io.out(`vault=${report.vault}`);
   io.out(`events=${report.events}`);
   io.out(
-    `claims live=${report.claims.live} superseded=${report.claims.superseded} skipped=${report.claims.skipped} purged=${report.claims.purged}`,
+    `claims live=${report.claims.live} filed=${report.claims.filed} written=${report.claims.written} unwritten=${report.claims.unwritten} superseded=${report.claims.superseded} skipped=${report.claims.skipped} purged=${report.claims.purged}`,
+  );
+  const derived = report.serve.stores.derived;
+  io.out(
+    `derived search=${derived.search.rebuilt_at ?? "never"} docs=${derived.search.doc_count} graph=${derived.graph.rebuilt_at ?? "never"} docs=${derived.graph.doc_count}`,
+  );
+  const writers = report.serve.stores.writers;
+  io.out(
+    `writers loop=${writers.loop} correction=${writers.correction} import=${writers.import} revert=${writers.revert}`,
+  );
+  const origin = report.serve.stores.origin;
+  io.out(`origin machine=${origin.machine} human=${origin.human}`);
+  const calibration = report.serve.calibration;
+  io.out(
+    `calibration write_rate=${calibration.write_rate === null ? "-" : calibration.write_rate.toFixed(3)} spread=${calibration.confidence_spread === null ? "-" : calibration.confidence_spread.toFixed(3)} failures=${calibration.failures.length}`,
   );
   for (const claim of report.live_claims) {
     io.out(
@@ -255,7 +282,7 @@ function printHuman(io: CliIo, report: DoctorReport): void {
     io.out(`next: kizuki tell "<statement>" --claim ${firstLive.claim_id}`);
   } else if (report.filed_claims.length > 0) {
     io.out(
-      "next: ingest filed claims; tell --claim needs a live claim. the writer is off until a model is configured.",
+      "next: leftover skipped claims are not live; tell --claim needs a live claim. the writer is off until a model is configured.",
     );
   }
 }

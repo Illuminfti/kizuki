@@ -76,6 +76,18 @@ CREATE TABLE IF NOT EXISTS retrieval_ops (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS retrieval_ops_pending
   ON retrieval_ops(state, created_at);
+CREATE TABLE IF NOT EXISTS identity_links (
+  subject_a TEXT NOT NULL,
+  subject_b TEXT NOT NULL,
+  score REAL NOT NULL,
+  evidence TEXT NOT NULL,
+  status TEXT NOT NULL,
+  decided_by TEXT NOT NULL,
+  receipt_id TEXT,
+  at TEXT NOT NULL,
+  PRIMARY KEY (subject_a, subject_b)
+) STRICT;
+CREATE INDEX IF NOT EXISTS identity_links_by_b ON identity_links(subject_b);
 `;
 
 const COMPAT_PROPOSALS = `
@@ -302,6 +314,7 @@ function claimsSurfaceReady(db: Database): boolean {
     tableExists(db, "claim_supersessions") &&
     tableExists(db, "claim_bindings") &&
     tableExists(db, "retrieval_ops") &&
+    tableExists(db, "identity_links") &&
     tableExists(db, "proposals")
   );
 }
