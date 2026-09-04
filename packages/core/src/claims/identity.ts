@@ -162,6 +162,7 @@ export function listSubjectAliases(
   db: Database,
   subject: string,
   limit = 16,
+  canRead?: (link: IdentityLink) => boolean,
 ): SubjectAlias[] {
   if (!tableExists(db, "identity_links")) return [];
   const bound = Number.isSafeInteger(limit) && limit > 0 ? limit : 16;
@@ -172,16 +173,31 @@ export function listSubjectAliases(
         subject_b: string;
         score: number;
         status: string;
+        evidence: string;
+        decided_by: string;
+        receipt_id: string | null;
+        at: string;
       },
       [string, string, number]
     >(
-      `SELECT subject_a, subject_b, score, status FROM identity_links
+      `SELECT subject_a, subject_b, score, status, evidence, decided_by, receipt_id, at FROM identity_links
         WHERE (subject_a = ? OR subject_b = ?)
           AND status IN ('candidate', 'merged')
         ORDER BY score DESC, subject_a, subject_b
         LIMIT ?`,
     )
-    .all(subject, subject, bound)
+    .all(subject, subject, canRead === undefined ? bound : 400)
+    .filter((row) => {
+      if (canRead === undefined) return true;
+      let evidence: unknown;
+      try { evidence = JSON.parse(row.evidence); } catch { return false; }
+      if (!Array.isArray(evidence) || evidence.length === 0 ||
+          !evidence.every((id): id is string => typeof id === "string" && id.length > 0)) {
+        return false;
+      }
+      return canRead({ ...row, evidence, status: row.status as IdentityLinkStatus });
+    })
+    .slice(0, bound)
     .map((row) => ({
       subject: row.subject_a === subject ? row.subject_b : row.subject_a,
       score: row.score,
@@ -212,7 +228,7 @@ function toConflict(claim: Claim): ConflictClaim | null {
  */
 export function listLiveConflicts(
   db: Database,
-  opts: { subject?: string; limit?: number } = {},
+  opts: { subject?: string; limit?: number; canRead?: (claim: Claim) => boolean } = {},
 ): LiveConflict[] {
   if (!tableExists(db, "claims")) return [];
   const bound = Number.isSafeInteger(opts.limit) && (opts.limit ?? 0) > 0
@@ -223,7 +239,7 @@ export function listLiveConflicts(
     keyed: true,
     ...(opts.subject === undefined ? {} : { subject: opts.subject }),
     limit: 400,
-  });
+  }).filter((claim) => opts.canRead?.(claim) ?? true);
   const byKey = new Map<string, typeof live>();
   for (const claim of live) {
     if (claim.claim_key === null) continue;

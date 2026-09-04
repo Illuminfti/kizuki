@@ -138,7 +138,9 @@ claims with provenance stamps and a token budget. Same engine as MCP
 `context_packet`. Does not write canon. Empty packets keep the machine header
 on stdout and offer a next step on stderr. If gathering fails, the CLI returns
 exit 1 and reports `degraded` in JSON instead of presenting the header as a
-complete packet.
+complete packet. Claims and derived statements follow the live grant and
+[context privacy rules](context-privacy.md), including fail-closed provenance
+and bounded audit coverage.
 
 ## undo
 
