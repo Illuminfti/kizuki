@@ -161,12 +161,9 @@ function drain(
     events.push(event);
   }
 
-  // Accounted warnings (unsupported_part, missing_id) ride along with an
-  // emitted event. Only a blocked record means we failed to understand the
-  // file well enough to prove something is gone.
-  const dirty = parsed.errors.some((error) =>
-    snapshotErrorBlocksProof(error.code),
-  );
+  // unsupported_part rides with an emitted event that kept its real id.
+  // missing_id (and every other code) is not proof a prior id is gone.
+  const dirty = parsed.errors.some((error) => error.code !== "unsupported_part");
 
   // A dirty parse cannot prove a record is gone. Keep prior identities so a
   // later clean export can still tombstone them.
@@ -196,10 +193,6 @@ function drain(
     ),
   };
   return { events, cursor: JSON.stringify(next) };
-}
-
-function snapshotErrorBlocksProof(code: string): boolean {
-  return code !== "unsupported_part" && code !== "missing_id";
 }
 
 async function readExport(

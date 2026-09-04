@@ -182,6 +182,13 @@ export function parseChatGptExport(
         String(rawConversation["create_time"] ?? ""),
         mappingFingerprint(rawConversation["mapping"]),
       ]);
+    if (rawId === undefined) {
+      errors.push({
+        location: `conversations[${conversationIndex}]`,
+        code: "missing_id",
+        reason: "conversation id is missing; used a content fallback",
+      });
+    }
     const mapping = rawConversation["mapping"];
     if (!isPlainObject(mapping)) {
       errors.push({
@@ -283,6 +290,13 @@ export function parseChatGptExport(
               occurredAt,
               typeof rawNode["parent"] === "string" ? rawNode["parent"] : "",
             ]);
+      if (rawNodeId.length === 0) {
+        errors.push({
+          location: `${conversationId}/node`,
+          code: "missing_id",
+          reason: "node id is missing; used a content fallback",
+        });
+      }
       const sourceRecordId = encodeSourceRecordId([conversationId, nodeId]);
       const fingerprint = `${occurredAt}\n${extracted.text}\n${extracted.attachments
         .map((attachment) => attachment.attachment_id)

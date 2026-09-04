@@ -230,6 +230,7 @@ describe("parseChatGptExport", () => {
     expect(first.events.map((event) => event.source_record_id).sort()).toEqual(
       second.events.map((event) => event.source_record_id).sort(),
     );
+    expect(first.errors.some((error) => error.code === "missing_id")).toBe(true);
   });
 
   test("duplicate and conflicting node ids are reported, not collapsed", () => {
@@ -409,6 +410,38 @@ describe("ChatGptImportConnector", () => {
           .filter((event) => event.deleted)
           .map((event) => event.source_record_id),
       ).toEqual([dropped]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("an export that drops conversation ids does not tombstone the prior records", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-chatgpt-"));
+    try {
+      const file = path.join(root, "conversations.json");
+      await writeFile(file, JSON.stringify(INLINE_EXPORT));
+      const connector = createChatGptImportConnector({ path: file });
+      const first = await connector.backfill(null);
+      const priorIds = first.events.map((event) => event.source_record_id);
+
+      await writeFile(
+        file,
+        JSON.stringify([
+          {
+            title: "Inline fixture",
+            create_time: 1_700_000_000,
+            mapping: INLINE_EXPORT[0]?.mapping,
+          },
+        ]),
+      );
+      const second = await connector.sync(first.cursor);
+      expect(second.events.some((event) => event.deleted)).toBe(false);
+      const cursor = JSON.parse(second.cursor ?? "{}") as {
+        records: Array<[string, string]>;
+      };
+      expect(priorIds.every((id) => cursor.records.some(([kept]) => kept === id))).toBe(
+        true,
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }

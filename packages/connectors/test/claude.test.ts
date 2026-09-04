@@ -252,4 +252,40 @@ describe("ClaudeImportConnector", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  test("an export that drops uuids does not tombstone the prior records", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-claude-"));
+    try {
+      const file = path.join(root, "conversations.json");
+      await writeFile(file, JSON.stringify(INLINE_EXPORT));
+      const connector = createClaudeImportConnector({ path: file });
+      const first = await connector.backfill(null);
+      const priorIds = first.events.map((event) => event.source_record_id);
+
+      await writeFile(
+        file,
+        JSON.stringify([
+          {
+            name: "Inline fixture",
+            created_at: "2026-03-01T08:00:00-05:00",
+            chat_messages: INLINE_EXPORT[0]?.chat_messages.map((message) => ({
+              sender: message?.sender,
+              text: message?.text,
+              created_at: message?.created_at,
+            })),
+          },
+        ]),
+      );
+      const second = await connector.sync(first.cursor);
+      expect(second.events.some((event) => event.deleted)).toBe(false);
+      const cursor = JSON.parse(second.cursor ?? "{}") as {
+        records: Array<[string, string]>;
+      };
+      expect(priorIds.every((id) => cursor.records.some(([kept]) => kept === id))).toBe(
+        true,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
