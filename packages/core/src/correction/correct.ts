@@ -28,7 +28,7 @@ import type { CorrectInput, CorrectIo, CorrectResult, CorrectTarget } from "./ty
 
 const STATEMENT_MAX = 2000;
 const TARGET_REQUIRED_HINT =
-  'kizuki tell "…" --claim <id>  (see kizuki audit).';
+  'kizuki tell "…" --claim <id>  (see kizuki doctor).';
 
 function nowOf(io: CorrectIo): string {
   return io.now?.() ?? new Date().toISOString();

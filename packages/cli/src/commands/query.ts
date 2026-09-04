@@ -75,6 +75,9 @@ export const queryCommand: Command = {
         for (const hit of hits) io.out(jsonLine(hit));
         return 0;
       }
+      if (hits.length === 0 && withheld === 0) {
+        io.err("0 hits");
+      }
       for (const hit of hits) io.out(formatHit(hit));
       return 0;
     });

@@ -28,7 +28,7 @@ function parseSensitivityFlag(raw: string | undefined): Sensitivity | undefined 
 export const connectCommand: Command = {
   name: "connect",
   usage: "connect <connector> --source PATH [--sensitivity public|personal|private]",
-  summary: "enroll a none-mode source as an opaque host-authored connection",
+  summary: "enroll a file source (sign-in sources are not wired yet)",
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, { options: ["--source", "--sensitivity"] });
     const [rawId] = requirePositional(parsed.positionals, 1);

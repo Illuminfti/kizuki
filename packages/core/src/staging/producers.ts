@@ -131,8 +131,8 @@ export function proposalsForEvent(
 
 /**
  * A source tombstone cascades to staging: every open proposal citing the event
- * is withdrawn. Promoted proposals are untouched here — canon retraction goes
- * through the owner's review queue via `cascadeTombstone`.
+ * is withdrawn. Claims already written into canon are untouched here —
+ * retraction goes through `cascadeTombstone` and the receipted writer.
  */
 export function withdrawForTombstone(db: Database, eventId: string): string[] {
   const withdraw = db.transaction((): string[] => {

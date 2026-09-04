@@ -24,8 +24,8 @@ export const backfillCommand: Command = {
         parsed.options.get("--source"),
       );
       const connector = await loadConnector(selected);
-      // Same-process clock: a wall-clock step backwards is recovered by the
-      // later rebuild verb. Index only rows accepted at or after this instant.
+      // Same-process clock: a wall-clock step backwards is recovered by a
+      // later derived rebuild. Index only rows accepted at or after this instant.
       const since = { accepted_at: new Date().toISOString(), event_id: "" };
       const result = await runBackfill(
         ctx.db,

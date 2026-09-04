@@ -20,7 +20,7 @@ import type { CliIo, Command } from "./index";
 export const initCommand: Command = {
   name: "init",
   usage: "init <path> [--default | --no-default] [--no-service]",
-  summary: "create a vault, set default_vault, and install kizuki serve",
+  summary: "create a vault and install the local serve loop",
   async run(io: CliIo, args: string[]): Promise<number> {
     const path = configPath(io.env);
     const config = readConfig(path);
@@ -77,6 +77,7 @@ export const initCommand: Command = {
       }
     }
     if (wrote) io.out(`default_vault set in ${path}`);
+    io.out("next: import a file source, then query and doctor");
     return 0;
   },
 };

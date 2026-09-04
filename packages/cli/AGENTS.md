@@ -25,12 +25,12 @@ connector policy.
   canon directly from a command handler.
 - Preserve the receipted-writer boundary (docs/decision-log.md D9, D10;
   RFC 0002 §2.1). Agents propose claims and relay owner corrections; no CLI
-  verb writes a page except through core undo or the leftover Wave 1
-  `promote` path, which is a transitional implementation a named lane
-  removes, not the product gate. `review` / `promote` / `reject` are not the
-  owner path and must not be presented as one; the accepted verbs are
-  `audit`, `tell`, `undo`, `context`, `timeline`, `rebuild`, `models` and
-  `serve` (RFC 0002 §2.5).
+  verb writes a page except through core `tell` / `correct` or `undo`.
+  `review` / `promote` / `reject` are retired and must exit 2 with a pointer
+  to `audit`, `undo`, and `tell`. Public verbs on this revision are those
+  registered in `src/commands/index.ts`. `context`, `timeline`, and
+  `rebuild` are not CLI verbs; those reads live as MCP / core serving
+  functions.
 - Keep argument parsing, orchestration, and presentation separable and testable.
 - Use deterministic exit codes and stable, actionable errors.
 - Reserve stdout for the command's promised output. Send diagnostics and
