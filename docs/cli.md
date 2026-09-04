@@ -79,10 +79,12 @@ usage: kizuki doctor [--json]
 
 Vault path, event count, claim counts (filed/live/written/unwritten), live
 claim ids (for `tell --claim`), leftover skipped rows, connections,
-checkpoints, derived-index freshness, receipts, holds, serve rails, and
-`canon writing: on|off`. Off when no model is configured. Exit 1 when the
-report is not ok. After a folder import, expect live claims; the writer
-still needs a model before those claims become pages.
+checkpoints, derived-index freshness, writer ROLE stamps, machine vs human
+origin counts, calibration/liveness probes, receipts, holds, serve rails,
+and `canon writing: on|off`. Off when no model is configured. Exit 1 when
+the report is not ok. After a folder import, expect live claims; the writer
+still needs a model before those claims become pages. Loop creates land
+under `auto/`; human pages stay where they are.
 
 ## tell
 

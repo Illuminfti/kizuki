@@ -1,3 +1,5 @@
+import { isMachineOriginPath } from "../canon/origin";
+import { listValidityGaps } from "../claims/gaps";
 import { listLiveConflicts, listSubjectAliases } from "../claims/identity";
 import { listClaims } from "../claims/store";
 import { neighbors } from "../graph/graph";
@@ -36,7 +38,8 @@ const GRAPH_CHUNKS = 10;
  * envelope to prose must not flatten the trust it carries (RFC 0002 §10.6).
  */
 function canonBlock(chunk: CanonChunk): string {
-  const stamps = `s=${chunk.sensitivity} taint=${chunk.taint} auth=${chunk.authority ?? "none"}`;
+  const origin = isMachineOriginPath(chunk.path) ? "machine" : "human";
+  const stamps = `s=${chunk.sensitivity} taint=${chunk.taint} auth=${chunk.authority ?? "none"} origin=${origin}`;
   return (
     `- [page:${chunk.page_id}] ${stamps} :: ${chunk.title}\n` +
     `### ${chunk.title} (${chunk.path}, ${stamps}) [page:${chunk.page_id}]\n` +
@@ -233,10 +236,21 @@ export function collectPieces(
     for (const conflict of conflicts) {
       pieces.push({
         section: "claims",
-        heading: "## working knowledge",
+        heading: "## counterevidence",
         block:
           `- conflict key=${conflict.claim_key.slice(0, 12)} live=${conflict.claims.length}` +
           ` :: ${conflict.claims.map((item) => item.claim_id).join(",")}\n`,
+      });
+    }
+    const gaps = listValidityGaps(ctx.db, {
+      ...(wanted?.[0] === undefined ? {} : { subject: wanted[0] }),
+      limit: 8,
+    });
+    for (const gap of gaps) {
+      pieces.push({
+        section: "claims",
+        heading: "## counterevidence",
+        block: `- gap key=${gap.claim_key.slice(0, 12)} after=${gap.after} before=${gap.before}\n`,
       });
     }
     const aliasRoots = wanted ?? live.map((claim) => claim.subject).filter(

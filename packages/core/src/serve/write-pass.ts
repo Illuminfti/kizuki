@@ -4,7 +4,9 @@ import {
   applyCanonWrite,
   resolveTarget,
   type BudgetTracker,
+  type TargetDecision,
 } from "../canon";
+import { machineOriginPath } from "../canon/origin";
 import type { Claim } from "../contracts/proposal";
 import type { ProducerPort } from "../contracts/producer";
 import { insertClaim } from "../claims/store";
@@ -13,6 +15,8 @@ import {
   listUnwrittenLiveClaims,
   reviveUncontestedSkipped,
 } from "../claims/store";
+import { mineLiveDrafts } from "./extract";
+import { tryWriteFlock } from "./flock";
 import { redactReceiptError } from "./receipts";
 
 /** One sync pass never materializes more than this many unwritten claims. */
@@ -41,12 +45,54 @@ function modelConfigured(modelRef: string | null | undefined): boolean {
   return typeof modelRef === "string" && modelRef.length > 0;
 }
 
+/** Loop creates go under auto/; edits of a human page stay on that page. */
+function segregateLoopDecision(decision: TargetDecision): TargetDecision {
+  switch (decision.action) {
+    case "create":
+      return { ...decision, rel_path: machineOriginPath(decision.rel_path) };
+    case "edit":
+    case "supersede":
+    case "skip":
+    case "conflict":
+      return decision;
+    default: {
+      const _exhaustive: never = decision;
+      return _exhaustive;
+    }
+  }
+}
+
 /**
  * Ingest leftovers become live, then the receipted writer materializes
  * unwritten live claims under the same budget the rail already charged.
  * No model configured: claims stay live and unwritten; doctor says so.
  */
 export async function runWritePass(
+  db: Database,
+  vaultPath: string,
+  options: WritePassOptions,
+): Promise<WritePassResult> {
+  const lock = tryWriteFlock(vaultPath);
+  if (lock === null) {
+    return {
+      revived: 0,
+      claims_extracted: 0,
+      claims_written: 0,
+      claims_deduped: 0,
+      claims_superseded: 0,
+      canon_writes: 0,
+      stopped: "lock:busy",
+      errors: [],
+    };
+  }
+  try {
+    return await runWritePassLocked(db, vaultPath, options);
+  } finally {
+    lock.release();
+  }
+}
+
+async function runWritePassLocked(
   db: Database,
   vaultPath: string,
   options: WritePassOptions,
@@ -61,11 +107,34 @@ export async function runWritePass(
   const errors: string[] = [];
 
   if (options.producer !== undefined && options.claims !== undefined) {
-    // A bound producer is the host's to invoke. This pass does not invent
-    // events to extract; the caller feeds produce() before handing drafts in
-    // as live claims. The hook exists so a future extract rail can share
-    // this write path without a second applyCanonWrite.
-    extracted = 0;
+    const mined = await mineLiveDrafts(db, options.producer);
+    switch (mined.mined.status) {
+      case "unavailable":
+        stopped = `model:${mined.mined.reason}`;
+        break;
+      case "rejected":
+        errors.push(mined.mined.reason);
+        break;
+      case "empty":
+        break;
+      case "ok": {
+        const filed = await fileProducedDrafts(
+          options.claims,
+          mined.drafts,
+          "model",
+          options.model_ref ?? null,
+        );
+        extracted = mined.mined.count;
+        written += filed.written;
+        deduped += filed.deduped;
+        superseded += filed.superseded;
+        break;
+      }
+      default: {
+        const _exhaustive: never = mined.mined;
+        return _exhaustive;
+      }
+    }
   }
 
   if (!modelConfigured(options.model_ref)) {
@@ -76,7 +145,7 @@ export async function runWritePass(
       claims_deduped: deduped,
       claims_superseded: superseded,
       canon_writes: 0,
-      stopped: null,
+      stopped,
       errors,
     };
   }
@@ -85,7 +154,7 @@ export async function runWritePass(
   const pending = listUnwrittenLiveClaims(db, WRITE_PASS_LIMIT);
   for (const claim of pending) {
     try {
-      const decision = resolveTarget(io, claim);
+      const decision = segregateLoopDecision(resolveTarget(io, claim));
       if (decision.action === "skip") continue;
       applyCanonWrite(io, claim, decision, {
         writer: "loop",

@@ -192,6 +192,16 @@ export interface StoreDoctor {
     readonly search: { rebuilt_at: string | null; doc_count: number };
     readonly graph: { rebuilt_at: string | null; doc_count: number };
   };
+  readonly writers: {
+    readonly loop: number;
+    readonly correction: number;
+    readonly import: number;
+    readonly revert: number;
+  };
+  readonly origin: {
+    readonly machine: number;
+    readonly human: number;
+  };
   readonly degraded: string[];
 }
 

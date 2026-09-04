@@ -93,6 +93,8 @@ export { dueRails, runRail, runServeOnce } from "./rails";
 export type { RailHooks, RailSyncResult, RunRailOptions } from "./rails";
 export { WRITE_PASS_LIMIT, fileProducedDrafts, runWritePass } from "./write-pass";
 export type { WritePassOptions, WritePassResult } from "./write-pass";
+export { shouldAdvanceExtractCursor } from "./tri-state";
+export type { ExtractMine } from "./tri-state";
 export {
   describeSupervisorNone,
   inspectServeDoctor,

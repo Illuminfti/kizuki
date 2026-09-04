@@ -87,6 +87,9 @@ describe("doctor liveness", () => {
     expect(result.stdout).toContain("written=");
     expect(result.stdout).toContain("unwritten=");
     expect(result.stdout).toContain("derived search=");
+    expect(result.stdout).toContain("writers loop=0 correction=0 import=0 revert=0");
+    expect(result.stdout).toContain("origin machine=0 human=0");
+    expect(result.stdout).toContain("calibration write_rate=-");
     expect(result.exitCode).toBe(0);
   });
 
@@ -103,6 +106,24 @@ describe("doctor liveness", () => {
     expect(result.stdout).toContain(
       "canon writing: on (kizuki.llm.openai-compatible:synthetic@local)",
     );
+  });
+
+  test("doctor stamps stay redacted and do not echo captured text", () => {
+    const setup = tempVault();
+    const imported = runCli(
+      setup.env,
+      "import",
+      "markdown-folder",
+      "--source",
+      setup.notes,
+    );
+    expect(imported.exitCode).toBe(0);
+    const result = runCli(setup.env, "doctor");
+    expect(result.stdout).toContain("writers loop=");
+    expect(result.stdout).toContain("origin machine=");
+    expect(result.stdout).not.toContain("river-stone kernel");
+    expect(result.stdout).not.toContain("moth-lantern patch");
+    expect(result.stderr).not.toMatch(/sk-[A-Za-z0-9]{10,}/);
   });
 
   test("serve --once writes a doctor-valid brief and does not fail doctor for that file", () => {

@@ -73,7 +73,8 @@ describe("write pass", () => {
     const claim = getClaim(db, filed.proposal.proposal_id);
     expect(claim?.status).toBe("live");
     expect(claim?.receipt_id).toBeString();
-    expect(existsSync(join(path, "people", "grace.md"))).toBe(true);
+    expect(existsSync(join(path, "auto", "people", "grace.md"))).toBe(true);
+    expect(existsSync(join(path, "people", "grace.md"))).toBe(false);
     db.close();
   });
 
@@ -100,7 +101,7 @@ describe("write pass", () => {
     expect(receipt.model.model_ref).toBe(
       "kizuki.llm.openai-compatible:synthetic@local",
     );
-    expect(existsSync(join(path, "people", "grace.md"))).toBe(true);
+    expect(existsSync(join(path, "auto", "people", "grace.md"))).toBe(true);
     db.close();
   });
 
@@ -158,6 +159,73 @@ describe("write pass", () => {
     expect(getClaim(db, filed.proposal.proposal_id)?.status).toBe("skipped");
     expect(reviveUncontestedSkipped(db)).toBe(1);
     expect(getClaim(db, filed.proposal.proposal_id)?.status).toBe("live");
+    db.close();
+  });
+
+  test("an edit of a human page stays on that page", async () => {
+    const { path, db } = vault();
+    mkdirSync(join(path, "people"), { recursive: true });
+    writeFileSync(
+      join(path, "people", "grace.md"),
+      [
+        "---",
+        "id: person:grace",
+        "title: Grace",
+        "type: person",
+        "status: active",
+        "sensitivity: personal",
+        "taint: clean",
+        "---",
+        "",
+        "Grace keeps the partnership notes.",
+        "",
+      ].join("\n"),
+    );
+    const eventId = putEvent(db);
+    fileProposal(db, {
+      kind: "claim",
+      target: "people/grace",
+      body: "Grace runs partnerships at Acme.",
+      frontmatter: { type: "person", title: "Grace" },
+      provenance: [eventId],
+      subjects: ["person:grace"],
+      producer: "deterministic",
+      confidence: 0.8,
+    });
+    const result = await runWritePass(db, path, {
+      budget: createBudgetTracker({ canon_writes_per_run: 8 }),
+      model_ref: "kizuki.llm.openai-compatible:synthetic@local",
+    });
+    // A page with no receipt is owner prose: the loop skips it and
+    // does not open a parallel auto/ copy.
+    expect(result.canon_writes).toBe(0);
+    expect(existsSync(join(path, "people", "grace.md"))).toBe(true);
+    expect(existsSync(join(path, "auto", "people", "grace.md"))).toBe(false);
+    db.close();
+  });
+
+  test("a held write-pass flock returns lock:busy and writes nothing", async () => {
+    const { path, db } = vault();
+    mkdirSync(join(path, ".kizuki"), { recursive: true });
+    writeFileSync(join(path, ".kizuki", "write-pass.lock"), `${process.pid}\n`);
+    const eventId = putEvent(db);
+    fileProposal(db, {
+      kind: "claim",
+      target: "people/grace",
+      body: "Grace runs partnerships at Acme.",
+      frontmatter: { type: "person", title: "Grace" },
+      provenance: [eventId],
+      subjects: ["person:grace"],
+      producer: "deterministic",
+      confidence: 0.8,
+    });
+    const result = await runWritePass(db, path, {
+      budget: createBudgetTracker({ canon_writes_per_run: 8 }),
+      model_ref: "kizuki.llm.openai-compatible:synthetic@local",
+    });
+    expect(result.stopped).toBe("lock:busy");
+    expect(result.canon_writes).toBe(0);
+    expect(existsSync(join(path, "auto", "people", "grace.md"))).toBe(false);
     db.close();
   });
 });

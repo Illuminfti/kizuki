@@ -238,6 +238,16 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   io.out(
     `derived search=${derived.search.rebuilt_at ?? "never"} docs=${derived.search.doc_count} graph=${derived.graph.rebuilt_at ?? "never"} docs=${derived.graph.doc_count}`,
   );
+  const writers = report.serve.stores.writers;
+  io.out(
+    `writers loop=${writers.loop} correction=${writers.correction} import=${writers.import} revert=${writers.revert}`,
+  );
+  const origin = report.serve.stores.origin;
+  io.out(`origin machine=${origin.machine} human=${origin.human}`);
+  const calibration = report.serve.calibration;
+  io.out(
+    `calibration write_rate=${calibration.write_rate === null ? "-" : calibration.write_rate.toFixed(3)} spread=${calibration.confidence_spread === null ? "-" : calibration.confidence_spread.toFixed(3)} failures=${calibration.failures.length}`,
+  );
   for (const claim of report.live_claims) {
     io.out(
       `claim ${claim.claim_id} target=${claim.target ?? "-"} predicate=${claim.predicate ?? "-"}`,

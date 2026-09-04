@@ -135,6 +135,14 @@ describe("serve doctor", () => {
     expect(report.model.detail).toContain("connectors, ledger, search, timeline and undo still work");
     expect(report.stores.derived.search.rebuilt_at).toBeNull();
     expect(report.stores.derived.graph.doc_count).toBe(0);
+    expect(report.stores.writers).toEqual({
+      loop: 0,
+      correction: 0,
+      import: 0,
+      revert: 0,
+    });
+    expect(report.stores.origin).toEqual({ machine: 0, human: 0 });
+    expect(report.calibration.failures).toEqual([]);
     db.close();
   });
 

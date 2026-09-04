@@ -69,6 +69,8 @@ export type {
   SubjectAlias,
   UpsertIdentityLinkInput,
 } from "./identity";
+export { listValidityGaps } from "./gaps";
+export type { ValidityGap } from "./gaps";
 export {
   countClaims,
   countUnwrittenLiveClaims,

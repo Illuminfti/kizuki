@@ -25,7 +25,12 @@ export { serveGraph } from "./graph";
 export type { GraphArgs, GraphData } from "./graph";
 export { serveHealth } from "./health";
 export type { HealthData } from "./health";
-export { PACKET_PURPOSES, PACKET_SECTIONS, serveContextPacket } from "./packet";
+export {
+  PACKET_PURPOSES,
+  PACKET_SECTIONS,
+  PACKET_TOKENIZER_ID,
+  serveContextPacket,
+} from "./packet";
 export type { ContextPacketArgs, ContextPacketData } from "./packet";
 export type { PacketPurpose, PacketSection } from "./sections";
 export { servePropose } from "./propose";

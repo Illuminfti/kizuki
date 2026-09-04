@@ -24,6 +24,12 @@ import type { CanonChunk, Envelope, QuotedChunk, ServeContext } from "./types";
 
 export { PACKET_PURPOSES, PACKET_SECTIONS };
 
+/** Pinned estimator: Unicode code points / 4. Budget math must not drift.
+ * The id lives on the envelope (not the header) so the 50-token floor still
+ * buys an identifiable header and nothing else.
+ */
+export const PACKET_TOKENIZER_ID = "kizuki.packet.chars-div-4/v1";
+
 const MAX_QUERY_CHARS = 512;
 const MAX_SUBJECTS = 16;
 /**
@@ -73,6 +79,9 @@ export interface ContextPacketData {
   purpose: PacketPurpose;
   delivery: "full" | "unchanged";
   packet_hash: string;
+  /** Same digest as packet_hash; named for If-None-Match / retain-prefix clients. */
+  etag: string;
+  tokenizer: typeof PACKET_TOKENIZER_ID;
   /** The vault's claims epoch this packet was built under. */
   claims_epoch: number;
   valid_until: string;
@@ -247,6 +256,8 @@ export function serveContextPacket(
           purpose,
           delivery: "full",
           packet_hash: hashBody(""),
+          etag: hashBody(""),
+          tokenizer: PACKET_TOKENIZER_ID,
           claims_epoch: epoch,
           valid_until: validUntil,
           status,
@@ -310,6 +321,8 @@ export function serveContextPacket(
           purpose,
           delivery: unchanged ? "unchanged" : "full",
           packet_hash: packetHash,
+          etag: packetHash,
+          tokenizer: PACKET_TOKENIZER_ID,
           claims_epoch: epoch,
           valid_until: validUntil,
           status,
