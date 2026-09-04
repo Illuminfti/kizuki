@@ -999,6 +999,19 @@ function catchUpHolds(
     left.page_path < right.page_path ? -1 : left.page_path > right.page_path ? 1 : 0,
   );
   outcome.uncertain_pages = [...new Set([...outcome.uncertain_pages, ...matched.uncertain])].sort();
+  const latePages = matched.affected
+    .filter((page) => page.id.length > 0)
+    .map((page) => `page:${page.id}`);
+  for (const op of outcome.purge_ops) {
+    if (op.state !== "pending") continue;
+    const extra = latePages.filter((id) => !op.ids.includes(id));
+    if (extra.length === 0) continue;
+    op.ids = [...op.ids, ...extra];
+    db.query("UPDATE purge_ops SET ids = ? WHERE op_id = ?").run(
+      JSON.stringify(op.ids),
+      op.op_id,
+    );
+  }
 }
 
 function rewriteHolds(
