@@ -197,9 +197,13 @@ describe("canon write capability", () => {
     expect(Object.keys(core)).not.toContain("writePage");
     expect(Object.keys(core)).not.toContain("grantCanonWrite");
     expect(Object.keys(core)).not.toContain("applyRevertWrite");
+    expect(Object.keys(core)).not.toContain("ownerPromote");
+    expect(Object.keys(core)).not.toContain("promote");
     expect(Object.keys(contracts)).not.toContain("writePage");
     expect(Object.keys(staging)).not.toContain("writePage");
     expect(Object.keys(staging)).not.toContain("grantCanonWrite");
+    expect(Object.keys(staging)).not.toContain("ownerPromote");
+    expect(Object.keys(staging)).not.toContain("promote");
     const index = SRC.find(({ path }) => path === "core/src/index.ts") as Source;
     expect(index.text).not.toMatch(/\bwritePage\b/);
     expect(index.text).not.toMatch(/\bgrantCanonWrite\b/);

@@ -10,9 +10,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { initVault, openLedger, runBackfill, runSync } from "@kizuki/core";
+import { initVault, listClaims, openLedger, runBackfill, runSync } from "@kizuki/core";
 import { getCheckpoint } from "@kizuki/core";
-import { initStaging, listProposals } from "@kizuki/core/staging";
 import { KizukiError } from "../src/errors";
 import { InMemoryLedger } from "../src/ledger";
 import {
@@ -253,7 +252,6 @@ describe("the run through a real ledger", () => {
     const vault = join(root, "vault");
     initVault(vault);
     const db = openLedger(join(vault, ".kizuki", "kizuki.db"));
-    initStaging(db);
     try {
       const connector = createLegacyEventsConnector({ path: jsonlPath });
       const first = await runSync(
@@ -264,9 +262,9 @@ describe("the run through a real ledger", () => {
       );
       expect(first.stored).toBe(9);
       expect(first.proposals_created).toBeGreaterThan(0);
-      const beforeIds = listProposals(db, { status: "pending" }).map(
-        (proposal) => proposal.proposal_id,
-      );
+      const beforeIds = listClaims(db, { status: "skipped" })
+        .filter((claim) => claim.retracted_at === null)
+        .map((claim) => claim.claim_id);
       expect(beforeIds.length).toBeGreaterThan(0);
 
       appendFileSync(
@@ -323,7 +321,6 @@ describe("a row the ledger would refuse", () => {
     const vault = join(root, "vault");
     initVault(vault);
     const db = openLedger(join(vault, ".kizuki", "kizuki.db"));
-    initStaging(db);
     try {
       const connector = createLegacyEventsConnector({ path: jsonlPath });
       const run = await runBackfill(

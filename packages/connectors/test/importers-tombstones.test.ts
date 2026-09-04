@@ -5,7 +5,6 @@ import os from "node:os";
 import path from "node:path";
 import { openLedger, replay, runBackfill, runSync } from "@kizuki/core";
 import type { CaptureEvent, Connector } from "@kizuki/core";
-import { initStaging } from "@kizuki/core/staging";
 import {
   OMNIVORE_FIXTURE_FILES,
   createOmnivoreImportConnector,
@@ -35,9 +34,7 @@ interface Scenario {
 }
 
 function openVault(): Database {
-  const db = openLedger(":memory:");
-  initStaging(db);
-  return db;
+  return openLedger(":memory:");
 }
 
 function stored(db: Database): CaptureEvent[] {

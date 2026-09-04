@@ -6,14 +6,16 @@ import {
   PAGE_CANDIDATE_SCHEMA,
 } from "../../src/contracts/page-candidate";
 import { getCanonReceipt } from "../../src/canon/receipts";
+import { insertClaim } from "../../src/claims/store";
+import type { Claim } from "../../src/contracts/proposal";
 import { accept } from "../../src/ledger/ledger";
 import { proposalsForEvent } from "../../src/staging/producers";
-import { ownerPromote } from "../../src/staging/promote";
 import { fileProposal } from "../../src/staging/proposals";
 import { validatePage } from "../../src/vault/schema";
 import { parseFrontmatter } from "../../src/vault/frontmatter";
 import type { CaptureEvent } from "../../src/contracts/event";
 import type { ProposalInput } from "../../src/staging/proposals";
+import { write } from "../canon/helpers";
 import { validEvent } from "../fixtures";
 import { event, memoryDb, tempVault } from "./helpers";
 
@@ -169,32 +171,31 @@ describe("a page candidate on an event", () => {
 });
 
 /**
- * The receipted writer is the only door into canon; `promote` is the shim the
- * leftover verbs still call it through. Nothing here supplies a label: a
- * migrated page carries the lattice bottom (RFC 0002 section 8.1), never an
- * owner keystroke.
+ * The receipted writer is the only door into canon. Nothing here supplies a
+ * label: a migrated page carries the lattice bottom (RFC 0002 section 8.1),
+ * never an owner keystroke.
  */
 describe("a migrated page through the receipted writer", () => {
-  function staged(
+  async function staged(
     db: ReturnType<typeof memoryDb>,
     overrides: Record<string, unknown> = {},
     text = "Met at the fair.",
-  ): string {
+  ): Promise<Claim> {
     const stored = accept(db, { ...validEvent(), text, metadata: candidateMetadata(overrides) });
     if (stored.status !== "stored") throw new Error("expected a stored event");
     const [, input] = granted(stored.event);
     if (input === undefined) throw new Error("expected a candidate proposal");
-    const filed = fileProposal(db, input);
-    if (filed.outcome !== "stored") throw new Error("expected a stored proposal");
-    return filed.proposal.proposal_id;
+    const filed = await insertClaim({ db }, input);
+    if (filed.outcome !== "stored") throw new Error(`expected a stored claim, got ${filed.outcome}`);
+    return filed.claim;
   }
 
-  test("writes the target path with the mapped frontmatter and provenance", () => {
+  test("writes the target path with the mapped frontmatter and provenance", async () => {
     const db = memoryDb();
     const vault = tempVault();
     try {
-      const id = staged(db);
-      const receipt = ownerPromote(db, vault.path, id, {});
+      const claim = await staged(db);
+      const receipt = write({ db, vault_path: vault.path }, claim, { writer: "import" });
 
       expect(receipt.page_path).toBe("entities/ada.md");
       expect(receipt.sensitivity).toBe("private");
@@ -214,17 +215,17 @@ describe("a migrated page through the receipted writer", () => {
     }
   });
 
-  test("every page type the floor stages passes validatePage", () => {
+  test("every page type the floor stages passes validatePage", async () => {
     for (const type of ["person", "fact", "rollup"]) {
       const db = memoryDb();
       const vault = tempVault();
       try {
-        const id = staged(db, {
+        const claim = await staged(db, {
           type,
           target: `pages/${type}`,
           title: `A ${type}`,
         });
-        const receipt = ownerPromote(db, vault.path, id, {});
+        const receipt = write({ db, vault_path: vault.path }, claim, { writer: "import" });
         const page = parseFrontmatter(
           readFileSync(join(vault.path, receipt.page_path), "utf8"),
         );
@@ -236,16 +237,16 @@ describe("a migrated page through the receipted writer", () => {
     }
   });
 
-  test("a re-imported page edits the page it already wrote", () => {
+  test("a re-imported page edits the page it already wrote", async () => {
     const db = memoryDb();
     const vault = tempVault();
     try {
-      const first = staged(db, {}, "first body");
-      const written = ownerPromote(db, vault.path, first, {});
+      const first = await staged(db, {}, "first body");
+      const written = write({ db, vault_path: vault.path }, first, { writer: "import" });
       expect(written.before_hash).toBeNull();
 
-      const second = staged(db, { title: "Ada L." }, "an edited body");
-      const revised = ownerPromote(db, vault.path, second, {});
+      const second = await staged(db, { title: "Ada L." }, "an edited body");
+      const revised = write({ db, vault_path: vault.path }, second, { writer: "import" });
 
       expect(revised.page_path).toBe(written.page_path);
       expect(revised.before_hash).toBe(written.after_hash);

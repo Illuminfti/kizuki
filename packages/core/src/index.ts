@@ -47,6 +47,8 @@ export type {
   ClaimPolarity,
   ClaimStatus,
   ClaimTaint,
+  FrontmatterScalar,
+  FrontmatterValue,
   Producer,
   Proposal,
   ProposalKind,
@@ -558,6 +560,7 @@ export {
   runSync,
   runToCompletion,
 } from "./ingest/run";
+export { proposalsForEvent } from "./staging/producers";
 export { exportVault } from "./export";
 export type { ExportManifest, ExportManifestEntry } from "./export";
 

@@ -1,4 +1,4 @@
-import type { FrontmatterValue } from "../staging/proposals";
+import type { FrontmatterValue } from "./proposal";
 import { isPlainObject } from "../util/validate";
 import type { ValidationResult } from "../util/validate";
 import { PAGE_TYPES } from "../vault/schema";

@@ -2,7 +2,6 @@ import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { ConnectionStateStore, initSearch, openLedger } from "@kizuki/core";
-import { initStaging } from "@kizuki/core/staging";
 import type { CliIo } from "./commands/index";
 import {
   type KizukiConfig,
@@ -55,7 +54,6 @@ export function assertVault(path: string): string {
 
 export function openVaultDb(vaultPath: string): Database {
   const db = openLedger(join(vaultPath, ".kizuki", "kizuki.db"));
-  initStaging(db);
   initSearch(db);
   return db;
 }

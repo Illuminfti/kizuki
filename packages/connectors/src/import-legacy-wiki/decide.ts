@@ -1,6 +1,6 @@
 import { targetProblem } from "@kizuki/core";
 import type { PageType, SubjectRef } from "@kizuki/core";
-import type { FrontmatterValue } from "@kizuki/core/staging";
+import type { FrontmatterValue } from "@kizuki/core";
 import {
   sanitizeLine,
   slug,

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { Database } from "bun:sqlite";
 import {
   chmodSync,
   existsSync,
@@ -14,7 +15,6 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { initVault, isPlainObject, openLedger, runBatch } from "@kizuki/core";
-import { initStaging, listProposals } from "@kizuki/core/staging";
 import type { CaptureEventInput } from "@kizuki/core";
 import { KizukiError } from "../src/errors";
 import { InMemoryLedger } from "../src/ledger";
@@ -35,6 +35,15 @@ const SENTINEL = "a-secret-outside-the-wiki";
 
 /** What this connector's manifest grants: it stages typed pages, not quotes. */
 const GRANTED = { page_candidates: true };
+
+function proposalTargets(db: Database, status: "pending" | "withdrawn"): (string | null)[] {
+  return db
+    .query<{ target: string | null }, [string]>(
+      "SELECT target FROM proposals WHERE status = ?",
+    )
+    .all(status)
+    .map((row) => row.target);
+}
 
 function target(event: CaptureEventInput | undefined): string | undefined {
   const candidate = event?.metadata["page_candidate"];
@@ -266,11 +275,8 @@ describe("backfill and sync", () => {
       null,
     );
     const db = openLedger(":memory:");
-    initStaging(db);
     runBatch(db, first, GRANTED);
-    expect(
-      listProposals(db, { status: "pending" }).map((row) => row.target),
-    ).toContain("entities/ada");
+    expect(proposalTargets(db, "pending")).toContain("entities/ada");
 
     // The owner decides the estate's people are not pages after all.
     writeMapping({
@@ -296,12 +302,8 @@ describe("backfill and sync", () => {
     });
 
     runBatch(db, second, GRANTED);
-    expect(
-      listProposals(db, { status: "pending" }).map((row) => row.target),
-    ).not.toContain("entities/ada");
-    expect(listProposals(db, { status: "withdrawn" }).length).toBeGreaterThan(
-      0,
-    );
+    expect(proposalTargets(db, "pending")).not.toContain("entities/ada");
+    expect(proposalTargets(db, "withdrawn").length).toBeGreaterThan(0);
 
     // Once: the snapshot no longer carries a page it has already withdrawn.
     const third = await connector.sync(second.cursor);
