@@ -7,7 +7,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { editInEditor, pickEditor } from "../src/editor";
+import { editInEditor, parseEditorCommand, pickEditor } from "../src/editor";
 
 const temporary: string[] = [];
 
@@ -49,5 +49,24 @@ describe("editor", () => {
     expect(() => editInEditor(fakeEditor("exit 3"), "x", "id")).toThrow(
       "exited with 3",
     );
+  });
+
+  test("parseEditorCommand keeps quoted paths with spaces as one argument", () => {
+    expect(parseEditorCommand('"/tmp/Visual Studio Code/code" -w')).toEqual([
+      "/tmp/Visual Studio Code/code",
+      "-w",
+    ]);
+    expect(parseEditorCommand("'/tmp/my editor' +1")).toEqual(["/tmp/my editor", "+1"]);
+    expect(parseEditorCommand("code\\ -w")).toEqual(["code -w"]);
+    expect(() => parseEditorCommand('"unclosed')).toThrow("unclosed quote");
+  });
+
+  test("editInEditor invokes an executable whose path contains a space", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kizuki-editor-space-"));
+    temporary.push(dir);
+    const file = join(dir, "my editor.sh");
+    writeFileSync(file, '#!/bin/sh\nprintf "changed" > "$1"\n', "utf8");
+    chmodSync(file, 0o755);
+    expect(editInEditor(`"${file}"`, "original", "spaced")).toBe("changed");
   });
 });

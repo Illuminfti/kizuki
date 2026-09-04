@@ -1,5 +1,5 @@
 /**
- * Terminal text primitives. Everything the review screen prints passes
+ * Terminal text primitives. Everything the audit screen prints passes
  * through here, so width math is done once and captured text (which is
  * attacker-controlled input, invariant 7) can never carry an escape sequence
  * into the owner's terminal.
@@ -8,11 +8,21 @@
 export const ESC = "\x1b";
 export const CSI = `${ESC}[`;
 
-const CSI_PATTERN = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
-const OSC_PATTERN = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g;
+const ST = "(?:\\x07|\\x1b\\\\|\\x9c)";
+const CSI_PATTERN = /\x1b\[[0-9;:<=>?]*[ -/]*[@-~]|\x9b[0-9;:<=>?]*[ -/]*[@-~]/g;
+const OSC_PATTERN = new RegExp(`\\x1b\\][\\s\\S]*?${ST}|\\x9d[\\s\\S]*?${ST}`, "g");
+const STRING_SEQ_PATTERN = new RegExp(
+  `\\x1b[PX^_][\\s\\S]*?(?:\\x1b\\\\|\\x9c)|\\x90[\\s\\S]*?(?:\\x1b\\\\|\\x9c)|\\x98[\\s\\S]*?(?:\\x1b\\\\|\\x9c)|\\x9e[\\s\\S]*?(?:\\x1b\\\\|\\x9c)|\\x9f[\\s\\S]*?(?:\\x1b\\\\|\\x9c)`,
+  "g",
+);
+const OTHER_ESC_PATTERN = /\x1b./g;
 
 export function stripAnsi(text: string): string {
-  return text.replace(OSC_PATTERN, "").replace(CSI_PATTERN, "");
+  return text
+    .replace(OSC_PATTERN, "")
+    .replace(STRING_SEQ_PATTERN, "")
+    .replace(CSI_PATTERN, "")
+    .replace(OTHER_ESC_PATTERN, "");
 }
 
 /** Removes every control character except newline; ESC never survives. */
@@ -95,12 +105,14 @@ export function truncate(text: string, width: number, ellipsis = "…"): string 
   return out + ellipsis;
 }
 
-/** Pads plain or styled text to exactly `width` columns, truncating plain text if needed. */
+/** Pads or hard-caps a line to exactly `width` columns. Overflow is truncated after stripping ANSI. */
 export function padEnd(text: string, width: number): string {
+  if (width <= 0) return "";
   const current = stringWidth(text);
-  if (current >= width) {
-    return stripAnsi(text) === text ? truncate(text, width, "") : text;
+  if (current > width) {
+    return truncate(stripAnsi(text), width, "");
   }
+  if (current === width) return text;
   return text + " ".repeat(width - current);
 }
 

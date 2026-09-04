@@ -1,13 +1,13 @@
-export { runAudit, loadItems, toAuditItem } from "./app";
-export type { AuditOptions, AuditSummary } from "./app";
-export { pickEditor, editInEditor } from "./editor";
+export { runAudit, loadItems, toAuditItem, PAGE_SIZE } from "./app";
+export type { AuditOptions, AuditSummary, LoadPage } from "./app";
+export { pickEditor, editInEditor, parseEditorCommand } from "./editor";
 export {
-  WRITER_ORDER,
+  EVIDENCE_CAP,
+  MAX_FILTER_NEEDLE,
   applyItems,
   currentItem,
   cursorRow,
   initialState,
-  listRowCount,
   reduce,
   withNotice,
 } from "./model";
@@ -24,11 +24,11 @@ export type {
 export { layout, render, viewportFor } from "./view";
 export type { Layout, RenderOptions } from "./view";
 export { createTerminal } from "./terminal";
-export type { Terminal } from "./terminal";
-export { parseKeys } from "./keys";
+export type { CloseReason, SignalHost, Terminal, TerminalOptions } from "./terminal";
+export { createKeyStream, parseKeys } from "./keys";
 export type { Key, KeyName } from "./keys";
-export { diffLines } from "./diff";
-export type { DiffLine } from "./diff";
+export { DIFF_CHAR_CAP, DIFF_LINE_CAP, boundedDiff, diffLines } from "./diff";
+export type { BoundedDiff, DiffLine } from "./diff";
 export {
   COLOR,
   charWidth,

@@ -161,4 +161,41 @@ describe("toAuditItem", () => {
     expect(item.currentBody).not.toContain("Initech");
     db.close();
   });
+
+  test("listAuditReceipts offset pages newest-first without silently dropping the tail", async () => {
+    const vault = mkdtempSync(join(tmpdir(), "kizuki-audit-page-"));
+    temporary.push(vault);
+    initVault(vault);
+    const db = openLedger(":memory:");
+    const accepted = accept(db, fixtureEvent());
+    if (accepted.status !== "stored") throw new Error("event");
+    const eventId = accepted.event.event_id;
+    const io = { db, vault_path: vault };
+    const createdClaim = await storeClaim(db, eventId);
+    applyCanonWrite(io, createdClaim, resolveTarget(io, createdClaim), {
+      writer: "loop",
+      budget: createBudgetTracker({ canon_writes_per_run: 8 }),
+    });
+    const editedClaim = await storeClaim(db, eventId, {
+      kind: "edit",
+      predicate: null,
+      object: null,
+      body: "Grace leads partnerships at Acme.",
+      frontmatter: { title: "Grace (Acme)" },
+    });
+    applyCanonWrite(io, editedClaim, resolveTarget(io, editedClaim), {
+      writer: "loop",
+      budget: createBudgetTracker({ canon_writes_per_run: 8 }),
+    });
+    const all = listAuditReceipts(db);
+    expect(all.length).toBeGreaterThanOrEqual(2);
+    const first = listAuditReceipts(db, { limit: 1, offset: 0 });
+    const second = listAuditReceipts(db, { limit: 1, offset: 1 });
+    expect(first).toHaveLength(1);
+    expect(second).toHaveLength(1);
+    expect(first[0]?.receipt_id).toBe(all[0]?.receipt_id);
+    expect(second[0]?.receipt_id).toBe(all[1]?.receipt_id);
+    expect(first[0]?.receipt_id).not.toBe(second[0]?.receipt_id);
+    db.close();
+  });
 });
