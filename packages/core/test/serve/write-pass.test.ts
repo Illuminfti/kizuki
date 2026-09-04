@@ -7,6 +7,7 @@ import { getClaim, reviveUncontestedSkipped } from "../../src/claims/store";
 import type { ProduceResult, ProducerPort } from "../../src/contracts/producer";
 import { openLedger } from "../../src/ledger/db";
 import { runRail } from "../../src/serve/rails";
+import { readExtractCursor } from "../../src/serve/extract";
 import { runWritePass } from "../../src/serve/write-pass";
 import { fileProposal } from "../../src/staging/proposals";
 import { initVault } from "../../src/vault/init";
@@ -408,5 +409,53 @@ describe("write pass", () => {
     });
     expect(dropped.claims_rejected).toEqual({ unknown_predicate: 1 });
     db.close();
+  });
+
+  test("draft durability converges across insertion and cursor-commit failures", async () => {
+    for (const point of ["first", "between", "cursor"] as const) {
+      const { path, db } = vault();
+      putEvent(db, { source_record_id: `seed-${point}` });
+      await runWritePass(db, path, boundWriteOptions(
+        db,
+        createBudgetTracker({ canon_writes_per_run: 8 }),
+      ));
+      const before = readExtractCursor(db);
+      const grace = putEvent(db, { source_record_id: `grace-${point}` });
+      const ada = putEvent(db, { source_record_id: `ada-${point}` });
+      const producer = stubProducer({
+        status: "ok",
+        claims: [
+          {
+            kind: "claim", subject: "person:grace", predicate: "employment.works_at", object: "Acme",
+            polarity: "positive", body: "Grace works at Acme.", valid_from: null, valid_to: null,
+            confidence: 0.8, sensitivity: "personal", event_ids: [grace],
+          },
+          {
+            kind: "claim", subject: "person:ada", predicate: "employment.works_at", object: "Acme",
+            polarity: "positive", body: "Ada works at Acme.", valid_from: null, valid_to: null,
+            confidence: 0.8, sensitivity: "personal", event_ids: [ada],
+          },
+        ],
+        usage: { calls: 1, input_tokens: 10, output_tokens: 4 },
+      });
+      const options = {
+        budget: createBudgetTracker({ canon_writes_per_run: 8 }),
+        model_ref: "kizuki.llm.openai-compatible:synthetic@local",
+        claims: { db }, producer,
+      };
+      const trigger = point === "first"
+        ? "BEFORE INSERT ON claims WHEN NEW.subject = 'person:grace'"
+        : point === "between"
+          ? "BEFORE INSERT ON claims WHEN NEW.subject = 'person:ada'"
+          : "BEFORE UPDATE ON checkpoints WHEN NEW.connector_id = 'kizuki.producer.model' AND NEW.source_key = 'extract'";
+      db.exec(`CREATE TRIGGER fail_${point} ${trigger} BEGIN SELECT RAISE(ABORT, 'injected'); END`);
+      await expect(runWritePass(db, path, options)).rejects.toThrow("injected");
+      expect(readExtractCursor(db)).toBe(before);
+      db.exec(`DROP TRIGGER fail_${point}`);
+      await runWritePass(db, path, options);
+      expect(readExtractCursor(db)).not.toBe(before);
+      expect(db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM claims WHERE producer = 'model'").get()?.count).toBe(2);
+      db.close();
+    }
   });
 });

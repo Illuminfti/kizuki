@@ -16,7 +16,7 @@ import {
   reviveUncontestedSkipped,
 } from "../claims/store";
 import type { ClaimsIo } from "../claims/store";
-import { mineLiveDrafts } from "./extract";
+import { commitExtractCursor, mineLiveDrafts } from "./extract";
 import { tryWriteFlock } from "./flock";
 import { redactReceiptError } from "./receipts";
 
@@ -192,8 +192,12 @@ async function runWritePassLocked(
       case "rejected":
         errors.push(mined.mined.reason);
         break;
-      case "empty":
+      case "empty": {
+        if (!commitExtractCursor(db, mined) && mined.cursor !== null) {
+          errors.push("extract cursor changed before commit");
+        }
         break;
+      }
       case "ok": {
         const filed = await fileProducedDrafts(
           options.claims,
@@ -204,6 +208,9 @@ async function runWritePassLocked(
         extracted = mined.mined.count;
         deduped += filed.deduped;
         superseded += filed.superseded;
+        if (!commitExtractCursor(db, mined)) {
+          errors.push("extract cursor changed before commit");
+        }
         break;
       }
       default: {

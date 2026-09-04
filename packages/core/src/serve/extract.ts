@@ -35,6 +35,10 @@ export function shouldAdvanceExtractCursor(result: ExtractMine): boolean {
 export interface MineResult {
   readonly mined: ExtractMine;
   readonly drafts: readonly ClaimDraft[];
+  /** The checkpoint observed before the model call. */
+  readonly previous_cursor: string | null;
+  /** The batch boundary that may be committed after every draft is durable. */
+  readonly cursor: LedgerCursor | null;
 }
 
 function parseCursor(raw: string | null): LedgerCursor | null {
@@ -59,17 +63,24 @@ function quoted(event: CaptureEvent): QuotedEvent {
   };
 }
 
-function persistCursor(db: Database, cursor: LedgerCursor): void {
-  writeCheckpoint(
-    db,
-    MODEL_PRODUCER_ID,
-    EXTRACT_SOURCE_KEY,
-    `${cursor.accepted_at}\t${cursor.event_id}`,
-  );
-}
-
 export function readExtractCursor(db: Database): string | null {
   return readCheckpoint(db, MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY);
+}
+
+/**
+ * Commit only the boundary that was read before the model call. A concurrent
+ * extraction pass may have advanced the checkpoint while this pass was filing
+ * drafts; in that case this pass leaves it alone and its idempotent drafts can
+ * be retried safely.
+ */
+export function commitExtractCursor(db: Database, mined: MineResult): boolean {
+  if (!shouldAdvanceExtractCursor(mined.mined) || mined.cursor === null) return false;
+  const cursor = `${mined.cursor.accepted_at}\t${mined.cursor.event_id}`;
+  return db.transaction(() => {
+    if (readExtractCursor(db) !== mined.previous_cursor) return false;
+    writeCheckpoint(db, MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY, cursor);
+    return true;
+  }).immediate();
 }
 
 /**
@@ -80,10 +91,11 @@ export async function mineLiveDrafts(
   db: Database,
   producer: ProducerPort,
 ): Promise<MineResult> {
-  const cursor = parseCursor(readExtractCursor(db));
+  const previous_cursor = readExtractCursor(db);
+  const cursor = parseCursor(previous_cursor);
   const batch = readSince(db, cursor, EXTRACT_BATCH);
   if (batch.events.length === 0 || batch.cursor === null) {
-    return { mined: { status: "empty" }, drafts: [] };
+    return { mined: { status: "empty" }, drafts: [], previous_cursor, cursor: null };
   }
 
   // Packet text that later lands in the ledger is history, not extract input.
@@ -91,16 +103,16 @@ export async function mineLiveDrafts(
     (event) => !event.deleted && !event.text.includes("KIZUKI CONTEXT v1"),
   );
   if (usable.length === 0) {
-    persistCursor(db, batch.cursor);
-    return { mined: { status: "empty" }, drafts: [] };
+    return { mined: { status: "empty" }, drafts: [], previous_cursor, cursor: batch.cursor };
   }
 
   const known = listClaims(db, { status: "live", keyed: true, limit: 32 });
+  const subjects = new Set(usable.flatMap((event) => event.subjects.map((subject) => subject.subject_id)));
   const produced = await producer.produce({
     events: usable.map(quoted),
     context: {
-      subjects: batch.events.flatMap((event) => event.subjects),
-      known_claims: known.map((claim) => ({
+      subjects: usable.flatMap((event) => event.subjects),
+      known_claims: known.filter((claim) => claim.subject !== null && subjects.has(claim.subject)).map((claim) => ({
         claim_id: claim.claim_id,
         subject: claim.subject,
         predicate: claim.predicate,
@@ -139,6 +151,5 @@ export async function mineLiveDrafts(
     }
   }
 
-  if (shouldAdvanceExtractCursor(mined)) persistCursor(db, batch.cursor);
-  return { mined, drafts };
+  return { mined, drafts, previous_cursor, cursor: batch.cursor };
 }
