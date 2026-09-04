@@ -2,13 +2,15 @@ import { isRfc3339 } from "../util/time";
 import {
   cloneExactJson,
   isPlainObject,
+  snapshotDataArray,
+  snapshotDataRecord,
   utf8ByteLength,
 } from "../util/validate";
 import type { ValidationResult } from "../util/validate";
 
 export const EVENT_SCHEMA = "kizuki.event/v1" as const;
 
-export const EVENT_LIMITS = {
+export const EVENT_LIMITS = Object.freeze({
   identifierBytes: 256,
   displayNameBytes: 512,
   filenameBytes: 1024,
@@ -25,7 +27,7 @@ export const EVENT_LIMITS = {
   metadataBytes: 1_048_576,
   eventBytes: 2_097_152,
   attachmentByteSizeMax: Number.MAX_SAFE_INTEGER,
-} as const;
+} as const);
 
 const EVENT_INPUT_KEYS = [
   "schema",
@@ -187,22 +189,20 @@ function validateSubject(
   path: string,
   errors: string[],
 ): SubjectRef | undefined {
-  if (!isPlainObject(raw)) {
-    errors.push(`${path}: must be an object`);
-    return undefined;
-  }
+  const data = snapshotDataRecord(raw, path, errors);
+  if (data === undefined) return undefined;
   const unknownBefore = errors.length;
-  rejectUnknownKeys(raw, path, SUBJECT_KEYS, errors);
+  rejectUnknownKeys(data, path, SUBJECT_KEYS, errors);
   let failed = errors.length > unknownBefore;
   if (
-    !checkString(raw["subject_id"], `${path}.subject_id`, errors, EVENT_LIMITS.identifierBytes, {
+    !checkString(data["subject_id"], `${path}.subject_id`, errors, EVENT_LIMITS.identifierBytes, {
       required: true,
       allowEmpty: false,
     })
   ) {
     failed = true;
   }
-  const role = raw["role"];
+  const role = data["role"];
   if (
     typeof role !== "string" ||
     !(SUBJECT_ROLES as readonly string[]).includes(role)
@@ -210,7 +210,7 @@ function validateSubject(
     errors.push(`${path}.role: must be one of ${SUBJECT_ROLES.join(" | ")}`);
     failed = true;
   }
-  const displayName = raw["display_name"];
+  const displayName = data["display_name"];
   if (
     displayName !== undefined &&
     !checkString(displayName, `${path}.display_name`, errors, EVENT_LIMITS.displayNameBytes, {
@@ -222,7 +222,7 @@ function validateSubject(
   }
   if (failed) return undefined;
   return freezeRecord({
-    subject_id: raw["subject_id"] as string,
+    subject_id: data["subject_id"] as string,
     role: role as SubjectRole,
     ...(typeof displayName === "string" ? { display_name: displayName } : {}),
   });
@@ -233,16 +233,14 @@ function validateAttachment(
   path: string,
   errors: string[],
 ): AttachmentRef | undefined {
-  if (!isPlainObject(raw)) {
-    errors.push(`${path}: must be an object`);
-    return undefined;
-  }
+  const data = snapshotDataRecord(raw, path, errors);
+  if (data === undefined) return undefined;
   const unknownBefore = errors.length;
-  rejectUnknownKeys(raw, path, ATTACHMENT_KEYS, errors);
+  rejectUnknownKeys(data, path, ATTACHMENT_KEYS, errors);
   let failed = errors.length > unknownBefore;
   if (
     !checkString(
-      raw["attachment_id"],
+      data["attachment_id"],
       `${path}.attachment_id`,
       errors,
       EVENT_LIMITS.identifierBytes,
@@ -252,14 +250,14 @@ function validateAttachment(
     failed = true;
   }
   if (
-    !checkString(raw["media_type"], `${path}.media_type`, errors, EVENT_LIMITS.mediaTypeBytes, {
+    !checkString(data["media_type"], `${path}.media_type`, errors, EVENT_LIMITS.mediaTypeBytes, {
       required: true,
       allowEmpty: false,
     })
   ) {
     failed = true;
   }
-  const filename = raw["filename"];
+  const filename = data["filename"];
   if (
     filename !== undefined &&
     !checkString(filename, `${path}.filename`, errors, EVENT_LIMITS.filenameBytes, {
@@ -269,7 +267,7 @@ function validateAttachment(
   ) {
     failed = true;
   }
-  const byteSize = raw["byte_size"];
+  const byteSize = data["byte_size"];
   if (byteSize !== undefined) {
     if (
       typeof byteSize !== "number" ||
@@ -285,8 +283,8 @@ function validateAttachment(
   }
   if (failed) return undefined;
   return freezeRecord({
-    attachment_id: raw["attachment_id"] as string,
-    media_type: raw["media_type"] as string,
+    attachment_id: data["attachment_id"] as string,
+    media_type: data["media_type"] as string,
     ...(typeof filename === "string" ? { filename } : {}),
     ...(typeof byteSize === "number" ? { byte_size: byteSize } : {}),
   });
@@ -331,11 +329,17 @@ function rejectDuplicateAttachments(
 export function validateEventInput(
   input: unknown,
 ): ValidationResult<CaptureEventInput> {
-  const errors: string[] = [];
-
-  if (!isPlainObject(input)) {
-    return { ok: false, errors: ["event: must be a plain object"] };
+  try {
+    return validateSnapshot(input);
+  } catch {
+    return { ok: false, errors: ["event: input could not be read as plain data"] };
   }
+}
+
+function validateSnapshot(raw: unknown): ValidationResult<CaptureEventInput> {
+  const errors: string[] = [];
+  const input = snapshotDataRecord(raw, "event", errors);
+  if (input === undefined) return { ok: false, errors };
   rejectUnknownKeys(input, "event", EVENT_INPUT_KEYS, errors);
 
   if (input["schema"] !== EVENT_SCHEMA) {
@@ -364,12 +368,8 @@ export function validateEventInput(
   });
 
   const subjects: SubjectRef[] = [];
-  const rawSubjects = input["subjects"];
-  if (!Array.isArray(rawSubjects)) {
-    errors.push("subjects: must be an array");
-  } else if (rawSubjects.length > EVENT_LIMITS.subjectCount) {
-    errors.push(`subjects: exceeds max count ${EVENT_LIMITS.subjectCount}`);
-  } else {
+  const rawSubjects = snapshotDataArray(input["subjects"], "subjects", EVENT_LIMITS.subjectCount, errors);
+  if (rawSubjects !== undefined) {
     rawSubjects.forEach((raw, i) => {
       const subject = validateSubject(raw, `subjects[${i}]`, errors);
       if (subject !== undefined) subjects.push(subject);
@@ -393,12 +393,8 @@ export function validateEventInput(
   }
 
   const attachments: AttachmentRef[] = [];
-  const rawAttachments = input["attachments"];
-  if (!Array.isArray(rawAttachments)) {
-    errors.push("attachments: must be an array");
-  } else if (rawAttachments.length > EVENT_LIMITS.attachmentCount) {
-    errors.push(`attachments: exceeds max count ${EVENT_LIMITS.attachmentCount}`);
-  } else {
+  const rawAttachments = snapshotDataArray(input["attachments"], "attachments", EVENT_LIMITS.attachmentCount, errors);
+  if (rawAttachments !== undefined) {
     rawAttachments.forEach((raw, i) => {
       const attachment = validateAttachment(raw, `attachments[${i}]`, errors);
       if (attachment !== undefined) attachments.push(attachment);

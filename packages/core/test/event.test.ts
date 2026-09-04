@@ -421,7 +421,7 @@ describe("validateEventInput normalization", () => {
     expect(Object.getPrototypeOf(result.value.metadata)).toBeNull();
   });
 
-  test("reads accessors once into plain data", () => {
+  test("rejects metadata accessors without executing them", () => {
     let reads = 0;
     const metadata = {
       get token() {
@@ -430,12 +430,8 @@ describe("validateEventInput normalization", () => {
       },
     };
     const result = validateEventInput({ ...rawEvent(), metadata });
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error("unreachable");
-    expect(result.value.metadata).toEqual({ token: "first" });
-    expect(reads).toBe(1);
-    expect(result.value.metadata["token"]).toBe("first");
-    expect(reads).toBe(1);
+    expect(result.ok).toBe(false);
+    expect(reads).toBe(0);
   });
 
   test("accepts the same subject_id under different roles", () => {
@@ -708,3 +704,94 @@ function nest(depth: number): Record<string, unknown> {
   }
   return current;
 }
+
+
+describe("event input remains passive data", () => {
+  for (const location of ["event", "subject", "attachment", "subjects array", "attachments array", "metadata array"] as const) {
+    test(`rejects a changing getter in ${location} without executing it`, () => {
+      const event = rawEvent();
+      const subject = { subject_id: "person:ada", role: "about" };
+      const attachment = { attachment_id: "file-1", media_type: "text/plain" };
+      const subjects = [subject];
+      const attachments = [attachment];
+      const metadataArray = ["safe"];
+      event["subjects"] = subjects;
+      event["attachments"] = attachments;
+      event["metadata"] = { values: metadataArray };
+      const [target, key]: [object, string] = location === "event" ? [event, "connector_id"]
+        : location === "subject" ? [subject, "subject_id"]
+        : location === "attachment" ? [attachment, "media_type"]
+        : location === "subjects array" ? [subjects, "0"]
+        : location === "attachments array" ? [attachments, "0"] : [metadataArray, "0"];
+      let reads = 0;
+      Object.defineProperty(target, key, { enumerable: true, configurable: true, get() {
+        reads += 1;
+        return reads === 1 ? "valid" : "x".repeat(EVENT_LIMITS.identifierBytes + 1);
+      } });
+      expect(validateEventInput(event).ok).toBe(false);
+      expect(reads).toBe(0);
+    });
+  }
+
+  for (const field of ["subjects", "attachments", "metadata"] as const) {
+    for (const shape of ["sparse", "index boundary", "named", "hidden", "symbol"] as const) {
+      test(`rejects ${shape} properties in ${field} arrays`, () => {
+        const items: unknown[] = [];
+        if (shape === "sparse") items.length = 1;
+        else Object.defineProperty(items, shape === "index boundary" ? "4294967295"
+          : shape === "symbol" ? Symbol("private") : "extra", {
+          value: "must not disappear", enumerable: shape !== "hidden",
+        });
+        const event = rawEvent();
+        event[field] = field === "metadata" ? { items } : items;
+        expect(validateEventInput(event).ok).toBe(false);
+      });
+    }
+  }
+
+  for (const field of ["event", "subject", "attachment", "metadata"] as const) {
+    test(`rejects hidden and symbol properties on ${field} records`, () => {
+      for (const key of ["hidden", Symbol("secret")]) {
+        const event = rawEvent();
+        const target = field === "event" ? event
+          : field === "subject" ? { subject_id: "person:ada", role: "about" }
+          : field === "attachment" ? { attachment_id: "a", media_type: "text/plain" } : {};
+        if (field === "subject") event["subjects"] = [target];
+        if (field === "attachment") event["attachments"] = [target];
+        if (field === "metadata") event["metadata"] = target;
+        Object.defineProperty(target, key, { value: "must not disappear" });
+        expect(validateEventInput(event).ok).toBe(false);
+      }
+    });
+  }
+
+  test("unreadable proxy input fails with a data-free validation error", () => {
+    const { proxy, revoke } = Proxy.revocable(rawEvent(), {});
+    revoke();
+    expect(validateEventInput(proxy)).toEqual({ ok: false, errors: ["event: input could not be read as plain data"] });
+    const throws = new Proxy(rawEvent(), { ownKeys() { throw new Error("secret input"); } });
+    expect(JSON.stringify(validateEventInput(throws))).not.toContain("secret input");
+    expect(validateEventInput(throws).ok).toBe(false);
+  });
+
+  test("hashing and persistence receive frozen copies of all event containers", () => {
+    const event = rawEvent();
+    const subject = { subject_id: "person:ada", role: "about" };
+    const attachment = { attachment_id: "a", media_type: "text/plain" };
+    event["subjects"] = [subject];
+    event["attachments"] = [attachment];
+    const result = validateEventInput(event);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    subject.subject_id = "changed";
+    attachment.attachment_id = "changed";
+    event["connector_id"] = "changed";
+    expect(result.value.subjects[0]?.subject_id).toBe("person:ada");
+    expect(result.value.attachments[0]?.attachment_id).toBe("a");
+    expect(result.value.connector_id).not.toBe("changed");
+    for (const value of [result.value, result.value.subjects, result.value.subjects[0], result.value.attachments, result.value.attachments[0]]) {
+      expect(Object.isFrozen(value)).toBe(true);
+    }
+    expect(Object.isFrozen(EVENT_LIMITS)).toBe(true);
+  });
+});

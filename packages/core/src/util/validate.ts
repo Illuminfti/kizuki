@@ -32,6 +32,73 @@ export function isPlainObject(v: unknown): v is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
+/** Capture own data properties without invoking caller-owned accessors. */
+export function snapshotDataRecord(
+  value: unknown,
+  path: string,
+  errors: string[],
+  maxKeys = Number.MAX_SAFE_INTEGER,
+): Record<string, unknown> | undefined {
+  if (!isPlainObject(value)) {
+    errors.push(`${path}: must be a plain object`);
+    return undefined;
+  }
+  const keys = Reflect.ownKeys(value);
+  if (keys.length > maxKeys) {
+    errors.push(`${path}: exceeds max key count ${maxKeys}`);
+    return undefined;
+  }
+  const out = Object.create(null) as Record<string, unknown>;
+  for (const key of keys) {
+    if (typeof key !== "string") {
+      errors.push(`${path}: symbol keys are not JSON`);
+      return undefined;
+    }
+    const property = Object.getOwnPropertyDescriptor(value, key);
+    if (property === undefined || !property.enumerable || !("value" in property)) {
+      errors.push(`${path}: only enumerable data properties are allowed`);
+      return undefined;
+    }
+    out[key] = property.value;
+  }
+  return Object.freeze(out);
+}
+
+/** A dense data array; reject named, hidden, symbol and accessor properties. */
+export function snapshotDataArray(
+  value: unknown,
+  path: string,
+  maxLength: number,
+  errors: string[],
+): readonly unknown[] | undefined {
+  if (!Array.isArray(value)) {
+    errors.push(`${path}: must be an array`);
+    return undefined;
+  }
+  const length = Object.getOwnPropertyDescriptor(value, "length")?.value;
+  if (!Number.isSafeInteger(length) || length < 0 || length > maxLength) {
+    errors.push(`${path}: exceeds max array length ${maxLength}`);
+    return undefined;
+  }
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== length + 1 || keys.some((key) =>
+    key !== "length" && (typeof key !== "string" || !/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= length)
+  )) {
+    errors.push(`${path}: sparse arrays and extra properties are not JSON`);
+    return undefined;
+  }
+  const items: unknown[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const property = Object.getOwnPropertyDescriptor(value, String(index));
+    if (property === undefined || !property.enumerable || !("value" in property)) {
+      errors.push(`${path}[${index}]: only enumerable data properties are allowed`);
+      return undefined;
+    }
+    items.push(property.value);
+  }
+  return Object.freeze(items);
+}
+
 export function isNonEmptyString(v: unknown): v is string {
   return typeof v === "string" && v.length > 0;
 }
@@ -139,33 +206,17 @@ function cloneArray(
   budget: JsonBudget,
   stack: WeakSet<object>,
 ): ExactJson[] | undefined {
-  if (value.length > limits.maxArrayLength) {
-    errors.push(`${path}: exceeds max array length ${limits.maxArrayLength}`);
-    return undefined;
-  }
-  const named = Object.keys(value).filter((key) => {
-    const index = Number(key);
-    return !Number.isInteger(index) || index < 0 || String(index) !== key;
-  });
-  if (named.length > 0) {
-    errors.push(`${path}: extra enumerable properties are not JSON`);
-    return undefined;
-  }
-  for (let index = 0; index < value.length; index += 1) {
-    if (!Object.hasOwn(value, index)) {
-      errors.push(`${path}[${index}]: sparse arrays are not JSON`);
-      return undefined;
-    }
-  }
+  const snapshot = snapshotDataArray(value, path, limits.maxArrayLength, errors);
+  if (snapshot === undefined) return undefined;
 
   stack.add(value);
   charge(budget, 2, path, limits, errors);
   const items: ExactJson[] = [];
   let failed = false;
-  for (let index = 0; index < value.length; index += 1) {
+  for (let index = 0; index < snapshot.length; index += 1) {
     if (index > 0) charge(budget, 1, path, limits, errors);
     const item = walkExactJson(
-      value[index],
+      snapshot[index],
       `${path}[${index}]`,
       depth + 1,
       limits,
@@ -189,15 +240,9 @@ function cloneObject(
   budget: JsonBudget,
   stack: WeakSet<object>,
 ): { [key: string]: ExactJson } | undefined {
-  const keys = Object.keys(value);
-  if (keys.length > limits.maxKeysPerObject) {
-    errors.push(`${path}: exceeds max key count ${limits.maxKeysPerObject}`);
-    return undefined;
-  }
-  if (Object.getOwnPropertyNames(value).length !== keys.length) {
-    errors.push(`${path}: hidden properties are not JSON`);
-    return undefined;
-  }
+  const snapshot = snapshotDataRecord(value, path, errors, limits.maxKeysPerObject);
+  if (snapshot === undefined) return undefined;
+  const keys = Object.keys(snapshot);
 
   stack.add(value);
   charge(budget, 2, path, limits, errors);
@@ -218,7 +263,7 @@ function cloneObject(
     if (index > 0) charge(budget, 1, path, limits, errors);
     charge(budget, utf8ByteLength(JSON.stringify(key)) + 1, path, limits, errors);
     const cloned = walkExactJson(
-      value[key],
+      snapshot[key],
       `${path}.${clipPathKey(key)}`,
       depth + 1,
       limits,
