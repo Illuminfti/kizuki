@@ -163,6 +163,33 @@ describe("kizuki.retrieval.embedded-pg conformance", () => {
     }
   });
 
+  test("owner_correction outranks a stronger lexical model inference", async () => {
+    const { port } = openPort();
+    await port.upsert([
+      {
+        ...SYNTHETIC_DOCS[0]!,
+        doc_id: "page:inferred-partnerships",
+        title: "Partnerships memo",
+        text: "partnerships partnerships partnerships",
+        authority: "model_inference",
+        sensitivity: "personal",
+      },
+      {
+        ...PRIVATE_CORRECTION,
+        sensitivity: "personal",
+        text: "partnerships correction",
+      },
+    ]);
+    const ranked = await port.search({
+      ...SYNTHETIC_QUERY,
+      text: "partnerships",
+      scope: {},
+      ceiling: "personal",
+    });
+    expect(ranked.hits[0]?.doc_id).toBe("page:private-correction");
+    expect(ranked.hits[0]?.authority).toBe("owner_correction");
+  });
+
   test("hybrid with a fixture embedder fuses lexical and vector ranks", async () => {
     const { port } = openPort(new FixtureEmbeddingPort());
     await port.upsert(SYNTHETIC_DOCS);
