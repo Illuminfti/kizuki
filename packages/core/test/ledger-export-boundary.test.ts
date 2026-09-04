@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
+const REPO = resolve(import.meta.dir, "../../..");
 const ROOTS = [
   "packages/cli/src",
   "packages/mcp/src",
@@ -27,7 +28,7 @@ describe("ledger export boundary", () => {
   test("production sources do not import openLedger from the public barrel", () => {
     const hits: string[] = [];
     for (const root of ROOTS) {
-      for (const file of walk(join("/workspace", root))) {
+      for (const file of walk(join(REPO, root))) {
         const text = readFileSync(file, "utf8");
         const statements = text.split(/import\s+/);
         for (const statement of statements) {
