@@ -1,11 +1,8 @@
 import { expect, test } from "bun:test";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import {
-  ConnectionStateStore,
-  enrollConnection,
-  openLedger,
-} from "@kizuki/core";
+import { ConnectionStateStore, enrollConnection } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import {
   FIXTURE_SESSION,
   fixtureAccount,

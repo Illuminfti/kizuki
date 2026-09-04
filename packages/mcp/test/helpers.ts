@@ -13,12 +13,12 @@ import {
   initGraph,
   initSearch,
   initVault,
-  openLedger,
   rebuildDerived,
   revokeAgent,
   serializePage,
 } from "@kizuki/core";
 import type { Grant, Principal, ServeContext } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 
 export interface McpFixture {
   vaultPath: string;

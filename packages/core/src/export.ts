@@ -42,6 +42,7 @@ import { isUlid, ulid } from "./util/ulid";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "./ledger/db";
 import { eventFromRow, parseEventRecord, type LegacyEventRecord } from "./ledger/event-record";
 import { bindLegacyEventOrigins, installEventIdentityGuards } from "./ledger/event-identity-schema";
+import { readSchemaVersion } from "./ledger/integrity";
 import { PURGE_SCHEMA_VERSION } from "./ledger/purge-schema";
 import { tableExists } from "./ledger/schema";
 import { SENSITIVITY_SCHEMA_VERSION } from "./sensitivity/schema";
@@ -473,11 +474,7 @@ function vaultFiles(directory: string): string[] {
 }
 
 function ledgerSchemaVersion(db: Database): number {
-  return (
-    db
-      .query<{ version: number }, []>("SELECT version FROM schema_version LIMIT 1")
-      .get()?.version ?? 0
-  );
+  return readSchemaVersion(db);
 }
 
 function supportedSchemaVersions(ledgerVersion = LEDGER_SCHEMA_VERSION): BackupSchemaVersions {

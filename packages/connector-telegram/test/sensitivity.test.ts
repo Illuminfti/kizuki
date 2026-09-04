@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { DEFAULT_GRANT, openLedger, setSourceGrant, registerConnection, runToCompletion, timeline } from "@kizuki/core";
+import { DEFAULT_GRANT, setSourceGrant, registerConnection, runToCompletion, timeline } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { TELEGRAM_CONNECTOR_ID } from "../src/map";
 import { connected } from "./helpers";
 

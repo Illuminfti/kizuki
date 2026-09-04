@@ -15,6 +15,7 @@ import {
   requireActiveConnection,
   type ConnectionRunStatus,
 } from "../ledger/connections";
+import { LedgerStoreError } from "../ledger/errors";
 import { accept } from "../ledger/ledger";
 import { resolveSensitivity } from "../sensitivity/resolve";
 import { getConnectorSensitivity } from "../sensitivity/store";
@@ -84,9 +85,6 @@ function processEvent(
       };
       const accepted = accept(db, input, source === undefined ? {} : { source });
       if (accepted.status === "error") {
-        if (accepted.kind === "infrastructure") {
-          throw new InfrastructureError(accepted.error);
-        }
         result.errors.push(accepted.error);
         return result;
       }
@@ -169,7 +167,9 @@ export function runBatch(
       result.retractions_filed += event.retractions_filed;
     } catch (error) {
       result.errors.push(errorText(error));
-      if (error instanceof InfrastructureError) return result;
+      if (error instanceof LedgerStoreError || error instanceof InfrastructureError) {
+        return result;
+      }
     }
   }
 

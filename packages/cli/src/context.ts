@@ -6,11 +6,11 @@ import {
   assertVaultControl,
   ensureVaultId,
   initSearch,
-  openLedger,
   PortError,
   readVaultId,
 } from "@kizuki/core";
 import type { RetrievalPort } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/internal";
 import { openConfiguredRetrieval } from "./retrieval-runtime";
 import type { CliIo } from "./commands/index";
 import {
@@ -69,10 +69,10 @@ function peekLedgerIdentity(dbPath: string): void {
         `vault ledger is not a Kizuki database: ${dbPath}; run: kizuki init`,
       );
     }
-    const version = peek
-      .query<{ version: number }, []>("SELECT version FROM schema_version LIMIT 1")
-      .get();
-    if (version === null || !Number.isInteger(version.version) || version.version < 1) {
+    const versions = peek
+      .query<{ version: number }, []>("SELECT version FROM schema_version")
+      .all();
+    if (versions.length !== 1 || !Number.isInteger(versions[0]?.version) || (versions[0]?.version ?? 0) < 1) {
       throw new Error(
         `vault ledger has no usable schema version: ${dbPath}; run: kizuki init`,
       );

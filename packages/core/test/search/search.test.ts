@@ -2,14 +2,14 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { stampDerived } from "../../src/derived-meta";
 import { MAX_RETRIEVAL_LIMIT } from "../../src/contracts/retrieval";
+import { stampDerived } from "../../src/derived-meta";
 import { indexEvent, indexPage, rebuildSearch, removeDoc } from "../../src/search/indexer";
 import { search, searchResult, toFtsQuery } from "../../src/search/query";
 import { initSearch } from "../../src/search/schema";
+import { computeContentHash, sha256Hex } from "../../src/util/hash";
 import { serializePage } from "../../src/vault/frontmatter";
 import type { CanonPage } from "../../src/vault/pages";
-import { computeContentHash, sha256Hex } from "../../src/util/hash";
 import { computeOriginBinding } from "../../src/ledger/event-origin-binding";
 import { searchDb, storedEvent, tempVault } from "./helpers";
 

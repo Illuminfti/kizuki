@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { openLedger } from "../../src/ledger/db";
-import { readCheckpoint } from "../../src/ledger/checkpoints";
+import { readRailCursor } from "../../src/ledger/checkpoints";
 import { advanceExtractCheckpoint } from "../../src/serve/extract-checkpoint";
 
 const sourceRoot = join(import.meta.dir, "../../src");
@@ -26,7 +26,7 @@ test("extract checkpoint advancement is transaction-owned and validates its curs
     expect(() => advanceExtractCheckpoint(db, "extract", "frontier")).toThrow(
       "extraction checkpoint advancement requires a transaction",
     );
-    expect(readCheckpoint(db, "kizuki.producer.model", "extract")).toBeNull();
+    expect(readRailCursor(db, "kizuki.producer.model", "extract")).toBeNull();
     expect(() => db.transaction(() => advanceExtractCheckpoint(db, "other" as "extract", "frontier")).immediate()).toThrow(
       "invalid extraction checkpoint key",
     );
@@ -34,7 +34,7 @@ test("extract checkpoint advancement is transaction-owned and validates its curs
       "extraction checkpoint cursor must be non-empty",
     );
     db.transaction(() => advanceExtractCheckpoint(db, "extract", "frontier")).immediate();
-    expect(readCheckpoint(db, "kizuki.producer.model", "extract")).toBe("frontier");
+    expect(readRailCursor(db, "kizuki.producer.model", "extract")).toBe("frontier");
   } finally {
     db.close();
   }
@@ -45,6 +45,10 @@ test("only extraction owns the private checkpoint writer", () => {
   const resumeWriterImporters = sourceFiles(sourceRoot)
     .filter(path => readFileSync(path, "utf8").includes("writeResumeCursor"))
     .map(path => relative(sourceRoot, path));
-  expect(resumeWriterImporters.sort()).toEqual(["ledger/connections.ts", "serve/extract-checkpoint.ts"]);
+  expect(resumeWriterImporters.sort()).toEqual([
+    "ledger/checkpoints.ts",
+    "ledger/connections.ts",
+    "serve/extract-checkpoint.ts",
+  ]);
   expect(readFileSync(join(sourceRoot, "index.ts"), "utf8")).not.toContain("writeCheckpoint");
 });

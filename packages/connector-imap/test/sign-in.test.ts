@@ -13,11 +13,11 @@ import {
   ConnectionStateStore,
   KizukiError,
   enrollConnection,
-  openLedger,
   runBackfill,
   setSourceGrant,
 } from "@kizuki/core";
 import type { SignInIo } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { IMAP_CONNECTOR_ID, createImapConnector } from "../src/connector";
 import { parseImapState } from "../src/state";
 import { FakeImapServer } from "../src/testing/fake-imap";

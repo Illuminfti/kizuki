@@ -2,14 +2,8 @@ import { fixtureConsent } from "./helpers";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-  accept,
-  createVaultFts5Port,
-  insertClaim,
-  openLedger,
-  readSince,
-  serializePage,
-} from "@kizuki/core";
+import { accept, createVaultFts5Port, insertClaim, readSince, serializePage } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { createHelpers } from "./helpers";
 
 const { cleanup, runCli, tempVault } = createHelpers();
