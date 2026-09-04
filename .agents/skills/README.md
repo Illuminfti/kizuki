@@ -21,6 +21,7 @@ a SQLite-only rule for derived retrieval (D13); an owner-started daemon
 | Skill | Use when |
 | --- | --- |
 | `orient-repository` | Starting non-trivial work, recovering a handoff, or checking collision risk |
+| `run-lane` | Executing one numbered milestone, module or step from a plan to a deterministic finish line |
 | `implement-change` | Building or repairing a bounded behavior |
 | `diagnose-failure` | A failure cause is uncertain or a previous fix did not hold |
 | `review-change` | Reviewing an exact branch or pull-request head |

@@ -338,6 +338,7 @@ Open the matching canonical playbook before performing the task:
 | Task | Skill |
 | --- | --- |
 | Establish live context and collision risk | `.agents/skills/orient-repository/SKILL.md` |
+| Execute one lane of a plan to its finish line | `.agents/skills/run-lane/SKILL.md` |
 | Implement or repair a bounded change | `.agents/skills/implement-change/SKILL.md` |
 | Diagnose a failure without shotgun edits | `.agents/skills/diagnose-failure/SKILL.md` |
 | Review a branch or pull request | `.agents/skills/review-change/SKILL.md` |
