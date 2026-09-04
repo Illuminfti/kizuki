@@ -324,6 +324,23 @@ describe("authority is re-read on every served call", () => {
     ).toHaveLength(2);
   });
 
+  test("a tool-not-granted flood is still metered", () => {
+    const ctx = live.agent("slow");
+    setGrant(live.db, "slow", { tools: ["search"] });
+
+    expect(refusal(() => gate(ctx, "timeline", {}, emptyRun)).code).toBe(
+      "tool_not_granted",
+    );
+    expect(refusal(() => gate(ctx, "timeline", {}, emptyRun)).code).toBe(
+      "tool_not_granted",
+    );
+    const third = refusal(() => gate(ctx, "timeline", {}, emptyRun));
+    expect(third.code).toBe("rate_limited");
+    expect(
+      listAudit(live.db, "slow", { limit: 1 })[0]?.denied,
+    ).toEqual([{ id: "tool:timeline", reason: "rate_limited" }]);
+  });
+
   test("a grant narrowed mid-session applies to the next call", () => {
     const ctx = live.agent("reader-private");
     expect(gate(ctx, "search", { query: "kettle" }, emptyRun).tool).toBe(

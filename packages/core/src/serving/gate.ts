@@ -1,5 +1,4 @@
 import {
-  recordAudit,
   reserveAudit,
   resolvePrincipal,
   toolAllowed,
@@ -154,24 +153,6 @@ function boundedForAudit(withheld: AuditDenial[]): AuditDenial[] {
   ];
 }
 
-function auditRefusal(
-  ctx: ServeContext,
-  tool: Tool,
-  args: Record<string, unknown>,
-  reason: DenyReason,
-  at: string,
-): void {
-  recordAudit(
-    ctx.db,
-    ctx.principal,
-    tool,
-    args,
-    [],
-    [{ id: `tool:${tool}`, reason }],
-    at,
-  );
-}
-
 /**
  * Authority is read from the store on every call, never taken from the
  * context a client connected with. A stdio session outlives the grant it
@@ -203,43 +184,16 @@ function servedItems(canon: CanonChunk[], quoted: QuotedChunk[]): AuditItem[] {
   ];
 }
 
-/** The reserved row a call fills in, or the refusal that took its place. */
-type Reservation =
-  | { kind: "reserved"; audit_id: string }
-  | { kind: "rate_limited"; retry_after_seconds: number };
-
-/**
- * The rolling count and the row it produces are one transaction. Checking the
- * limit and only recording the row after the tool has run leaves a window in
- * which every concurrent call reads the same count and every one of them
- * passes: for the write tools, which await a claim store, that window is the
- * whole call.
- */
-function reserve(
-  live: ServeContext,
-  tool: Tool,
-  bag: () => Record<string, unknown>,
-  at: string,
-): Reservation {
-  const reserved = reserveAudit(live.db, live.principal, tool, bag(), at);
-  if (!reserved.allow) {
-    return {
-      kind: "rate_limited",
-      retry_after_seconds: reserved.retry_after_seconds,
-    };
-  }
-  return { kind: "reserved", audit_id: reserved.audit_id };
-}
-
 interface Entered {
   live: ServeContext;
   audit_id: string;
 }
 
 /**
- * The single enforcement point below the prompt layer: current authority,
- * then tool allowlist, then rate limit. Every path out of here — served,
- * refused or failed — leaves a row behind.
+ * The single enforcement point below the prompt layer. The rolling count
+ * and the row are one reservation — a revoked client's stale limit still
+ * bounds it — then the row is marked unknown_agent or tool_not_granted
+ * when those apply. Every path out of here leaves that one row behind.
  */
 function enter(
   ctx: ServeContext,
@@ -247,40 +201,33 @@ function enter(
   args: Record<string, unknown>,
   at: string,
 ): Entered {
-  // Only a refusal audits the raw bag; a served call audits it with the ids
-  // the call created merged in, so the shaping happens once either way.
-  const bag = (): Record<string, unknown> => boundedArguments(args);
-
+  const bag = boundedArguments(args);
   const live = liveContext(ctx);
-  // Every refusal writes a row, so the limit is checked before the refusal
-  // is decided. The grant a revoked client connected with is stale, but a
-  // stale limit still bounds it: the alternative is one unmetered row per
-  // call from the identity that has just lost its authority.
+  const reserved = reserveAudit(
+    ctx.db,
+    live?.principal ?? ctx.principal,
+    tool,
+    bag,
+    at,
+  );
+  if (!reserved.allow) {
+    throw new ServeError("rate_limited", "rate limited", {
+      retry_after_seconds: reserved.retry_after_seconds,
+    });
+  }
   if (live === null) {
-    const metered = reserve(ctx, tool, bag, at);
-    if (metered.kind === "rate_limited") {
-      throw new ServeError("rate_limited", "rate limited", {
-        retry_after_seconds: metered.retry_after_seconds,
-      });
-    }
-    updateAudit(ctx.db, metered.audit_id, bag(), [], [
+    updateAudit(ctx.db, reserved.audit_id, bag, [], [
       { id: `tool:${tool}`, reason: "unknown_agent" },
     ]);
     throw new ServeError("unknown_agent", "unknown agent");
   }
-
   if (!toolAllowed(live.principal.grant, tool)) {
-    auditRefusal(live, tool, bag(), "tool_not_granted", at);
+    updateAudit(live.db, reserved.audit_id, bag, [], [
+      { id: `tool:${tool}`, reason: "tool_not_granted" },
+    ]);
     throw new ServeError("tool_not_granted", "tool not granted");
   }
-
-  const metered = reserve(live, tool, bag, at);
-  if (metered.kind === "rate_limited") {
-    throw new ServeError("rate_limited", "rate limited", {
-      retry_after_seconds: metered.retry_after_seconds,
-    });
-  }
-  return { live, audit_id: metered.audit_id };
+  return { live, audit_id: reserved.audit_id };
 }
 
 /** Whatever `run` threw becomes an audited refusal with a stable message. */
