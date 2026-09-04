@@ -10,10 +10,12 @@ import type {
 import { computeContentHash } from "../util/hash";
 import { ulid } from "../util/ulid";
 
+export type AcceptErrorKind = "validation" | "infrastructure";
+
 export type AcceptResult =
   | { status: "stored"; event: CaptureEvent }
   | { status: "duplicate" }
-  | { status: "error"; error: string };
+  | { status: "error"; error: string; kind: AcceptErrorKind };
 
 export interface AcceptDependencies {
   generateId?: () => string;
@@ -118,7 +120,11 @@ export function accept(
 ): AcceptResult {
   const validation = validateEventInput(input);
   if (!validation.ok) {
-    return { status: "error", error: validation.errors.join("; ") };
+    return {
+      status: "error",
+      error: validation.errors.join("; "),
+      kind: "validation",
+    };
   }
 
   try {
@@ -159,6 +165,7 @@ export function accept(
         return {
           status: "error",
           error: `event_id collision for ${eventId}: ${detail}`,
+          kind: "validation",
         };
       }
 
@@ -209,8 +216,23 @@ export function accept(
       return { status: "stored", event: fromRow(stored) };
     }).immediate();
   } catch (error) {
-    return { status: "error", error: errorText(error) };
+    return {
+      status: "error",
+      error: errorText(error),
+      kind: isInfrastructureError(error) ? "infrastructure" : "validation",
+    };
   }
+}
+
+function isInfrastructureError(error: unknown): boolean {
+  const code =
+    error instanceof Error && "code" in error && typeof error.code === "string"
+      ? error.code
+      : "";
+  const text = error instanceof Error ? error.message : String(error);
+  return /SQLITE_(BUSY|LOCKED|CORRUPT|IOERR|FULL|CANTOPEN|READONLY|NOTADB|CONSTRAINT_FOREIGNKEY)/.test(
+    `${code} ${text}`,
+  );
 }
 
 export function readSince(

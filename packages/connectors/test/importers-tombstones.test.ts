@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { openLedger, replay, runBackfill, runSync } from "@kizuki/core";
+import { openLedger, registerConnection, replay, runBackfill, runSync } from "@kizuki/core";
 import type { CaptureEvent, Connector } from "@kizuki/core";
 import {
   OMNIVORE_FIXTURE_FILES,
@@ -20,7 +20,7 @@ import {
 } from "../src/import-whatsapp";
 
 const CHAT_FILE = "WhatsApp Chat with Acme Planning.txt";
-const SOURCE_KEY = "src";
+const SOURCE_KEY = "01JJ0000000000000000000003";
 
 interface Scenario {
   /** Writes the whole export over the configured path. */
@@ -116,7 +116,9 @@ async function withScenario(
   const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-tombstone-"));
   const db = openVault();
   try {
-    await body(await build(root), db);
+    const scenario = await build(root);
+    registerConnection(db, scenario.connector_id, SOURCE_KEY);
+    await body(scenario, db);
   } finally {
     db.close();
     await rm(root, { recursive: true, force: true });
@@ -218,6 +220,7 @@ test("a file appearing beside an export does not fork the message", async () => 
       date_order: "mdy",
     });
     const id = connector.manifest().connector_id;
+    registerConnection(db, id, SOURCE_KEY);
 
     // The media folder was not copied in yet: the message imports with no
     // attachment, exactly as a "without media" export would.
@@ -253,6 +256,7 @@ test("a content file appearing later does not fork the item", async () => {
     );
     const connector = createOmnivoreImportConnector({ path: root });
     const id = connector.manifest().connector_id;
+    registerConnection(db, id, SOURCE_KEY);
 
     expect((await runBackfill(db, connector, id, SOURCE_KEY)).stored).toBe(1);
     expect(stored(db)[0]?.attachments).toEqual([]);
@@ -278,6 +282,7 @@ test("an edited record is a new version, never a deletion", async () => {
       `${header}\nA title,https://example.com/a,1767225600,notes,${status}\n`;
     const connector = createPocketImportConnector({ path: file });
     const id = connector.manifest().connector_id;
+    registerConnection(db, id, SOURCE_KEY);
 
     await writeFile(file, row("unread"));
     expect((await runBackfill(db, connector, id, SOURCE_KEY)).stored).toBe(1);
@@ -318,6 +323,7 @@ test("a repeat's number is a position, and a subset renumbers it", async () => {
     const lines = POCKET_FIXTURE_EXPORT.trimEnd().split("\n");
     const connector = createPocketImportConnector({ path: file });
     const id = connector.manifest().connector_id;
+    registerConnection(db, id, SOURCE_KEY);
 
     await writeFile(file, POCKET_FIXTURE_EXPORT);
     expect((await runBackfill(db, connector, id, SOURCE_KEY)).stored).toBe(4);

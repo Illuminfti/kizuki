@@ -3,6 +3,17 @@ import { isRfc3339 } from "../util/time";
 
 export const CONNECTOR_SCHEMA = "kizuki.connector/v1" as const;
 
+/** Opaque resume tokens larger than this are refused before any persist. */
+export const MAX_CURSOR_BYTES = 8 * 1024;
+/** One SyncBatch may not materialize more events than this. */
+export const MAX_SYNC_BATCH_EVENTS = 1_000;
+/** Serialized event payload ceiling for one SyncBatch. */
+export const MAX_SYNC_BATCH_BYTES = 4 * 1024 * 1024;
+/** Host-side bound for backfill/sync/health/revoke. */
+export const CONNECTOR_OPERATION_DEADLINE_MS = 60_000;
+/** Host-side bound for interactive sign-in, including a browser hop. */
+export const CONNECTOR_SIGN_IN_DEADLINE_MS = 300_000;
+
 export const HEALTH_STATES = [
   "ok",
   "degraded",
@@ -189,10 +200,18 @@ export class HealthReport {
 /** Resolves a `secret_ref` URI to plaintext at call time; core never stores the value. */
 export type SecretResolver = (secret_ref: string) => Promise<string>;
 
+export type SyncBatchStatus = "ok" | "unavailable";
+
 export interface SyncBatch {
   events: CaptureEventInput[];
   /** Checkpoint to resume from; `null` once the source is exhausted. */
   cursor: Cursor | null;
+  /**
+   * Absent means ok. `unavailable` is not an empty page: the host must not
+   * advance the checkpoint (RFC 0002 E11 / tri-state).
+   */
+  status?: SyncBatchStatus;
+  detail?: string;
 }
 
 export interface PurgePlan {

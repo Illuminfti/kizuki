@@ -48,7 +48,10 @@ export function canonicalSerialize(event: CaptureEventInput): string {
  * `event_id`-collision check both rest on this function alone.
  */
 export function computeContentHash(input: CaptureEventInput): string {
-  return new Bun.CryptoHasher("sha256")
-    .update(canonicalSerialize(input))
-    .digest("hex");
+  return sha256Hex(canonicalSerialize(input));
+}
+
+/** Hex SHA-256 of bytes or UTF-8 text. Used for event identity and opaque state. */
+export function sha256Hex(input: string | Uint8Array): string {
+  return new Bun.CryptoHasher("sha256").update(input).digest("hex");
 }

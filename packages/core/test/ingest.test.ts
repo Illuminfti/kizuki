@@ -12,7 +12,7 @@ import {
   PAGE_CANDIDATE_KEY,
   PAGE_CANDIDATE_SCHEMA,
 } from "../src/contracts/page-candidate";
-import { getCheckpoint } from "../src/ledger/connections";
+import { getCheckpoint, registerConnection } from "../src/ledger/connections";
 import { openLedger } from "../src/ledger/db";
 import {
   runBackfill,
@@ -117,9 +117,12 @@ function candidate(over: Partial<CaptureEventInput> = {}): CaptureEventInput {
   };
 }
 
+const SOURCE = "01JJ0000000000000000000001";
+
 function database() {
   const db = openLedger(":memory:");
   initStaging(db);
+  registerConnection(db, "fixture", SOURCE);
   return db;
 }
 
@@ -214,20 +217,20 @@ describe("connector runs", () => {
     const db = database();
     const connector = new FixtureConnector({ events: [validEvent()], cursor: "next" });
     expect(await connector.fixture()).toEqual([validEvent()]);
-    const result = await runBackfill(db, connector, "fixture", "/source/a");
+    const result = await runBackfill(db, connector, "fixture", SOURCE);
     expect(result.stored).toBe(1);
-    expect(getCheckpoint(db, "fixture", "/source/a")?.last_result).toEqual(
+    expect(getCheckpoint(db, "fixture", SOURCE)?.last_result).toEqual(
       result,
     );
-    expect(getCheckpoint(db, "fixture", "/source/a")?.mode).toBe("backfill");
+    expect(getCheckpoint(db, "fixture", SOURCE)?.mode).toBe("backfill");
     db.close();
   });
 
   test("a second backfill is all duplicates and creates no proposals", async () => {
     const db = database();
     const connector = new FixtureConnector({ events: [validEvent()], cursor: null });
-    await runBackfill(db, connector, "fixture", "/source/a");
-    const second = await runBackfill(db, connector, "fixture", "/source/a");
+    await runBackfill(db, connector, "fixture", SOURCE);
+    const second = await runBackfill(db, connector, "fixture", SOURCE);
     expect(second.stored).toBe(0);
     expect(second.duplicates).toBe(1);
     expect(second.proposals_created).toBe(0);
@@ -238,8 +241,8 @@ describe("connector runs", () => {
   test("backfill resumes from the stored composite checkpoint", async () => {
     const db = database();
     const connector = new FixtureConnector({ events: [], cursor: "after-backfill" });
-    await runBackfill(db, connector, "fixture", "/source/a");
-    await runBackfill(db, connector, "fixture", "/source/a");
+    await runBackfill(db, connector, "fixture", SOURCE);
+    await runBackfill(db, connector, "fixture", SOURCE);
     expect(connector.backfillCursors).toEqual([null, "after-backfill"]);
     db.close();
   });
@@ -253,12 +256,12 @@ describe("connector runs", () => {
         cursor: "after-sync",
       },
     );
-    await runBackfill(db, connector, "fixture", "/source/a");
-    const synced = await runSync(db, connector, "fixture", "/source/a");
+    await runBackfill(db, connector, "fixture", SOURCE);
+    const synced = await runSync(db, connector, "fixture", SOURCE);
     expect(connector.syncCursors).toEqual(["resume-here"]);
     expect(synced.cursor).toBe("after-sync");
-    expect(getCheckpoint(db, "fixture", "/source/a")?.mode).toBe("sync");
-    expect(getCheckpoint(db, "fixture", "/source/a")?.last_result).toEqual(
+    expect(getCheckpoint(db, "fixture", SOURCE)?.mode).toBe("sync");
+    expect(getCheckpoint(db, "fixture", SOURCE)?.last_result).toEqual(
       synced,
     );
     db.close();
@@ -273,7 +276,7 @@ describe("connector runs", () => {
         cursor: "after-tombstone",
       },
     );
-    await runBackfill(db, connector, "fixture", "/source/a");
+    await runBackfill(db, connector, "fixture", SOURCE);
     db.exec(`
       CREATE TRIGGER fail_withdraw
       BEFORE UPDATE OF status ON proposals
@@ -283,21 +286,21 @@ describe("connector runs", () => {
       END
     `);
 
-    const failed = await runSync(db, connector, "fixture", "/source/a");
+    const failed = await runSync(db, connector, "fixture", SOURCE);
     expect(failed.errors).toEqual(["forced cascade failure"]);
-    expect(getCheckpoint(db, "fixture", "/source/a")?.cursor).toBe(
+    expect(getCheckpoint(db, "fixture", SOURCE)?.cursor).toBe(
       "before-tombstone",
     );
 
     db.exec("DROP TRIGGER fail_withdraw");
-    const retried = await runSync(db, connector, "fixture", "/source/a");
+    const retried = await runSync(db, connector, "fixture", SOURCE);
     expect(retried.errors).toEqual([]);
     expect(retried.withdrawn).toBe(2);
     expect(connector.syncCursors).toEqual([
       "before-tombstone",
       "before-tombstone",
     ]);
-    expect(getCheckpoint(db, "fixture", "/source/a")?.cursor).toBe(
+    expect(getCheckpoint(db, "fixture", SOURCE)?.cursor).toBe(
       "after-tombstone",
     );
     db.close();
@@ -341,12 +344,12 @@ describe("runToCompletion", () => {
       page(3, 1),
       { events: [], cursor: "page-3" },
     ]);
-    const result = await runToCompletion(db, connector, "fixture", "src-1", "backfill");
+    const result = await runToCompletion(db, connector, "fixture", SOURCE, "backfill");
     expect(result.stored).toBe(5);
     expect(result.errors).toEqual([]);
     expect(result.cursor).toBe("page-3");
     expect(connector.cursors).toEqual([null, "page-1", "page-2", "page-3"]);
-    expect(getCheckpoint(db, "fixture", "src-1")?.cursor).toBe("page-3");
+    expect(getCheckpoint(db, "fixture", SOURCE)?.cursor).toBe("page-3");
     db.close();
   });
 
@@ -357,11 +360,11 @@ describe("runToCompletion", () => {
       cursor: "page-2",
     };
     const connector = new ScriptedConnector([page(1, 1), broken, page(3, 1)]);
-    const result = await runToCompletion(db, connector, "fixture", "src-1", "backfill");
+    const result = await runToCompletion(db, connector, "fixture", SOURCE, "backfill");
     expect(result.stored).toBe(1);
     expect(result.errors).toHaveLength(1);
     expect(result.cursor).toBe("page-1");
-    expect(getCheckpoint(db, "fixture", "src-1")?.cursor).toBe("page-1");
+    expect(getCheckpoint(db, "fixture", SOURCE)?.cursor).toBe("page-1");
     expect(connector.cursors).toEqual([null, "page-1"]);
     db.close();
   });
@@ -372,7 +375,7 @@ describe("runToCompletion", () => {
       page(1, 1),
       { ...page(2, 1), cursor: "page-1" },
     ]);
-    const result = await runToCompletion(db, connector, "fixture", "src-1", "backfill");
+    const result = await runToCompletion(db, connector, "fixture", SOURCE, "backfill");
     expect(result.errors).toEqual(["run made no progress"]);
     expect(result.stored).toBe(2);
     db.close();
@@ -387,7 +390,7 @@ describe("runToCompletion", () => {
       db,
       connector,
       "fixture",
-      "src-1",
+      SOURCE,
       "backfill",
       { maxBatches: 3 },
     );
@@ -402,7 +405,7 @@ describe("runToCompletion", () => {
     const connector = new ScriptedConnector([page(1, 1)]);
     for (const maxBatches of [0, -1, 1.5, Number.NaN, 2 ** 53]) {
       await expect(
-        runToCompletion(db, connector, "fixture", "src-1", "backfill", {
+        runToCompletion(db, connector, "fixture", SOURCE, "backfill", {
           maxBatches,
         }),
       ).rejects.toBeInstanceOf(TypeError);
@@ -410,7 +413,7 @@ describe("runToCompletion", () => {
     // A bound that would never be reached is worse than no bound at all, so
     // the run does not begin and no checkpoint is touched.
     expect(connector.cursors).toEqual([]);
-    expect(getCheckpoint(db, "fixture", "src-1")).toBeNull();
+    expect(getCheckpoint(db, "fixture", SOURCE)).toBeNull();
     db.close();
   });
 
@@ -424,12 +427,12 @@ describe("runToCompletion", () => {
       { events: [], cursor: "page-1" },
       page(2, 2),
     ]);
-    const result = await runToCompletion(db, connector, "fixture", "src-1", "backfill");
+    const result = await runToCompletion(db, connector, "fixture", SOURCE, "backfill");
     expect(result.stored).toBe(0);
     expect(result.errors).toEqual([]);
     expect(result.cursor).toBe("page-1");
     expect(connector.cursors).toEqual([null]);
-    expect(getCheckpoint(db, "fixture", "src-1")?.cursor).toBe("page-1");
+    expect(getCheckpoint(db, "fixture", SOURCE)?.cursor).toBe("page-1");
     db.close();
   });
 
@@ -448,7 +451,7 @@ describe("runToCompletion", () => {
         return Promise.resolve({ events: [], cursor: `pass-${tick}` });
       }
     })({ events: [], cursor: null });
-    const result = await runToCompletion(db, connector, "fixture", "src-1", "sync");
+    const result = await runToCompletion(db, connector, "fixture", SOURCE, "sync");
     expect(result.errors).toEqual([]);
     expect(connector.calls).toEqual([null]);
     expect(result.cursor).toBe("pass-1");
@@ -462,7 +465,7 @@ describe("runToCompletion", () => {
       { events: page(1, 1).events, cursor: "page-2" },
       { events: [], cursor: "page-3" },
     ]);
-    const result = await runToCompletion(db, connector, "fixture", "src-1", "backfill");
+    const result = await runToCompletion(db, connector, "fixture", SOURCE, "backfill");
     expect(result.stored).toBe(1);
     expect(result.duplicates).toBe(1);
     expect(result.cursor).toBe("page-3");
@@ -476,7 +479,7 @@ describe("runToCompletion", () => {
       page(1, 1),
       { events: [{ ...validEvent(), source_record_id: "last" }], cursor: null },
     ]);
-    const result = await runToCompletion(db, connector, "fixture", "src-1", "backfill");
+    const result = await runToCompletion(db, connector, "fixture", SOURCE, "backfill");
     expect(result.stored).toBe(2);
     expect(result.cursor).toBeNull();
     db.close();
@@ -496,13 +499,13 @@ describe("runToCompletion", () => {
         return Promise.resolve(page(this.#position, 2));
       }
     })({ events: [], cursor: null });
-    const result = await runToCompletion(db, connector, "fixture", "src-1", "backfill");
+    const result = await runToCompletion(db, connector, "fixture", SOURCE, "backfill");
     expect(result.stored).toBe(4);
     expect(result.errors).toEqual(["the source is unreachable"]);
     // The durable checkpoint is what a caller resumes from, so it is what the
     // interrupted run reports.
     expect(result.cursor).toBe("page-2");
-    expect(getCheckpoint(db, "fixture", "src-1")?.cursor).toBe("page-2");
+    expect(getCheckpoint(db, "fixture", SOURCE)?.cursor).toBe("page-2");
     db.close();
   });
 });
@@ -519,12 +522,12 @@ describe("a batch that does not match the enrolled connection", () => {
       undefined,
       { connector_id: "elsewhere", page_candidates: true },
     );
-    const result = await runBackfill(db, connector, "fixture", "/source/a");
+    const result = await runBackfill(db, connector, "fixture", SOURCE);
     expect(result.errors).toEqual([
       "fixture: manifest connector_id does not match the enrolled connection",
     ]);
     expect(result.stored).toBe(0);
-    expect(getCheckpoint(db, "fixture", "/source/a")?.cursor).toBeNull();
+    expect(getCheckpoint(db, "fixture", SOURCE)?.cursor).toBeNull();
     expect(listProposals(db)).toEqual([]);
     db.close();
   });
@@ -539,7 +542,7 @@ describe("a batch that does not match the enrolled connection", () => {
       undefined,
       { page_candidates: true },
     );
-    const result = await runBackfill(db, connector, "fixture", "/source/a");
+    const result = await runBackfill(db, connector, "fixture", SOURCE);
     expect(result.errors).toEqual([
       "fixture: batch carries an event from another connector",
     ]);
@@ -561,7 +564,7 @@ describe("a batch that does not match the enrolled connection", () => {
         cursor: "next",
       },
     );
-    const result = await runSync(db, connector, "fixture", "/source/a");
+    const result = await runSync(db, connector, "fixture", SOURCE);
     expect(result.errors).toEqual([
       "fixture: batch carries a kind the manifest does not declare",
     ]);
@@ -582,7 +585,7 @@ describe("a batch that does not match the enrolled connection", () => {
       undefined,
       { page_candidates: true },
     );
-    const result = await runBackfill(db, connector, "fixture", "/source/a");
+    const result = await runBackfill(db, connector, "fixture", SOURCE);
     expect(result.errors).toEqual([]);
     expect(result.proposals_created).toBe(1);
     const [staged] = listProposals(db);

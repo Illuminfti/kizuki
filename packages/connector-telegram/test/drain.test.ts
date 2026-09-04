@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { openLedger, runBackfill, runToCompletion } from "@kizuki/core";
+import { openLedger, registerConnection, runBackfill, runToCompletion } from "@kizuki/core";
 import { parseCursor } from "../src/cursor";
 import { fixtureAccount } from "../src/fixture";
 import type { TelegramMessage } from "../src/api";
@@ -10,7 +10,9 @@ const FEBRUARY = Date.parse("2026-02-01T00:00:00.000Z");
 const SOURCE = "01JJ0000000000000000000000";
 
 function ledger() {
-  return openLedger(":memory:");
+  const db = openLedger(":memory:");
+  registerConnection(db, TELEGRAM_CONNECTOR_ID, SOURCE);
+  return db;
 }
 
 function counts(calls: { method: string }[], method: string): number {

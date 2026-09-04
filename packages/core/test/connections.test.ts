@@ -19,6 +19,7 @@ import {
   listConnections,
 } from "../src/ledger/connections";
 import { openLedger } from "../src/ledger/db";
+import { sha256Hex } from "../src/util/hash";
 import { connector, io, temporaryDirectories } from "./connections-helpers";
 
 const { temporary, cleanup } = temporaryDirectories("kizuki-connection-state-");
@@ -398,6 +399,7 @@ describe("opaque connector connection state", () => {
       secret_refs: [`file:connections/${sourceKey}.state`],
       connected_at: new Date().toISOString(),
       disconnected_at: null,
+      implementation_version: "",
     };
     await expect(
       store.replace(
@@ -442,6 +444,8 @@ describe("opaque connector connection state", () => {
         connected_at: "2998-01-01T00:00:00.000Z",
         final_name: finalName,
         backup_name: backupName,
+        final_sha256: sha256Hex("crash-new-token"),
+        final_bytes: new TextEncoder().encode("crash-new-token").byteLength,
       }),
     );
     store.recover(db);
@@ -476,6 +480,8 @@ describe("opaque connector connection state", () => {
         connected_at: "2997-01-01T00:00:00.000Z",
         final_name: finalName,
         backup_name: backupName,
+        final_sha256: sha256Hex("pre-rename-new-token"),
+        final_bytes: new TextEncoder().encode("pre-rename-new-token").byteLength,
       }),
     );
 

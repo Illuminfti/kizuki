@@ -1,16 +1,22 @@
 import {
   closeSync,
+  constants,
   existsSync,
   fsyncSync,
+  lstatSync,
   openSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
-  statSync,
   writeSync,
+  type Stats,
 } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { LedgerError } from "./connections";
+
+export const MAX_CONNECTION_STATE_BYTES = 1024 * 1024;
+export const MAX_JOURNAL_BYTES = 16 * 1024;
 
 type ChunkWriter = (
   fd: number,
@@ -55,6 +61,33 @@ export function connectionStatePath(directory: string, ref: string): string {
   return path;
 }
 
+export function assertContainedPath(path: string, directory: string): void {
+  const realDir = realpathSync(directory);
+  let realFile: string;
+  try {
+    realFile = realpathSync(path);
+  } catch {
+    realFile = resolve(path);
+  }
+  if (realFile !== realDir && !realFile.startsWith(realDir + sep)) {
+    throw new LedgerError("connection state ref escapes the store");
+  }
+}
+
+export function assertRegularStateFile(path: string, directory: string): Stats {
+  let stats: Stats;
+  try {
+    stats = lstatSync(path);
+  } catch {
+    throw new LedgerError("connection state is missing");
+  }
+  if (stats.isSymbolicLink() || !stats.isFile()) {
+    throw new LedgerError("connection state is not a regular file");
+  }
+  assertContainedPath(path, directory);
+  return stats;
+}
+
 /** Internal test seam; this module is not re-exported from the public package. */
 export function writeAll(
   fd: number,
@@ -74,7 +107,7 @@ export function writeAll(
 export function writeDurableFile(path: string, bytes: Uint8Array): void {
   let fd: number | undefined;
   try {
-    fd = openSync(path, "wx", 0o600);
+    fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
     writeAll(fd, bytes);
     fsyncSync(fd);
   } catch (error) {
@@ -107,21 +140,31 @@ export function fsyncDirectory(directory: string): void {
 export function sweepAbandonedStaging(
   directory: string,
   owned: ReadonlySet<string>,
+  options: { abandonAfterMs?: number } = {},
 ): void {
   const now = Date.now();
+  const abandonAfterMs = options.abandonAfterMs ?? ABANDONED_STAGING_MS;
   let removed = false;
   for (const name of readdirSync(directory)) {
-    if (!STAGING_NAME.test(name)) continue;
+    if (!STAGING_NAME.test(name) && !name.endsWith(".rollback")) continue;
+    if (name === "quarantine") continue;
     const path = join(directory, name);
     if (owned.has(path)) continue;
     let age: number;
     try {
-      age = now - statSync(path).mtimeMs;
+      const stats = lstatSync(path);
+      if (stats.isSymbolicLink() || (!stats.isFile() && !stats.isDirectory())) {
+        rmSync(path, { force: true });
+        removed = true;
+        continue;
+      }
+      if (!stats.isFile()) continue;
+      age = now - stats.mtimeMs;
     } catch {
       // Swapped or swept by another writer between the listing and this stat.
       continue;
     }
-    if (age < ABANDONED_STAGING_MS) continue;
+    if (age < abandonAfterMs) continue;
     rmSync(path, { force: true });
     removed = true;
   }

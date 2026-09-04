@@ -1,11 +1,14 @@
 import type { Database } from "bun:sqlite";
 import {
   chmodSync,
+  constants,
   existsSync,
   mkdirSync,
-  readFileSync,
+  openSync,
+  readSync,
   readdirSync,
   rmSync,
+  closeSync,
 } from "node:fs";
 import { basename, join } from "node:path";
 import type {
@@ -13,8 +16,11 @@ import type {
   Connector,
   SignInIo,
 } from "../contracts/connector";
+import { sha256Hex } from "../util/hash";
 import { ulid } from "../util/ulid";
 import {
+  MAX_CONNECTION_STATE_BYTES,
+  assertRegularStateFile,
   clearSwapDebris,
   connectionStatePath,
   fsyncDirectory,
@@ -25,7 +31,11 @@ import {
   sweepAbandonedStaging,
   writeDurableFile,
 } from "./connection-state-files";
-import { repairSwap, type SwapJournal } from "./connection-state-journal";
+import {
+  quarantineJournal,
+  repairSwap,
+  type SwapJournal,
+} from "./connection-state-journal";
 import {
   commitConnectionRow,
   nextConnectedAt,
@@ -33,15 +43,16 @@ import {
   type ConnectionExpectation,
 } from "./connection-state-rows";
 import { LedgerError, getConnection, type Connection } from "./connections";
+import { runGuardedSignIn } from "./sign-in-guard";
 
 export { writeAll } from "./connection-state-files";
+export { MAX_CONNECTION_STATE_BYTES };
 
 export const CONNECTION_CONFIG_SCHEMA = "kizuki.connection-config/v1" as const;
 export const NULL_CONNECTION_CONFIG =
   '{"schema":"kizuki.connection-config/v1","state_ref_index":null}' as const;
 export const STATE_CONNECTION_CONFIG =
   '{"schema":"kizuki.connection-config/v1","state_ref_index":0}' as const;
-export const MAX_CONNECTION_STATE_BYTES = 1024 * 1024;
 
 export interface ConnectionStateReader {
   /** Trusted-host-only resolver; it never appears in exports or connector data. */
@@ -55,6 +66,14 @@ interface PendingState {
   temporaryPath: string | null;
   written: boolean;
   completed: boolean;
+  digest: string | null;
+  byteLength: number;
+}
+
+export interface StateRecoveryReport {
+  repaired: number;
+  quarantined: string[];
+  swept: boolean;
 }
 
 /** The caller offered a row the store has already moved past. */
@@ -94,6 +113,8 @@ export class ConnectionStateStore implements ConnectionStateReader {
       temporaryPath: null,
       written: false,
       completed: false,
+      digest: null,
+      byteLength: 0,
     };
     this.minted.add(sourceKey);
     this.handles.add(pending);
@@ -122,6 +143,8 @@ export class ConnectionStateStore implements ConnectionStateReader {
             writeDurableFile(temporary, state);
             pending.temporaryPath = temporary;
             pending.written = true;
+            pending.digest = sha256Hex(state);
+            pending.byteLength = state.byteLength;
             this.staging.add(temporary);
           } catch (error) {
             rmSync(temporary, { force: true });
@@ -150,21 +173,33 @@ export class ConnectionStateStore implements ConnectionStateReader {
   }
 
   /** Repairs an interrupted state swap before the next trusted enrollment. */
-  recover(db: Database): void {
-    const journals = readdirSync(this.directory).filter((name) =>
-      name.endsWith(".journal"),
-    );
-    if (journals.length > 0) {
-      // A journal is only crash debris once no writer is standing over it, and
-      // the write lock is what tells the two apart across processes.
-      writeLocked(db, () => {
-        for (const name of journals) repairSwap(db, this.directory, name);
-      });
-    }
-    sweepAbandonedStaging(this.directory, this.staging);
+  recover(db: Database): StateRecoveryReport {
+    const report: StateRecoveryReport = {
+      repaired: 0,
+      quarantined: [],
+      swept: false,
+    };
+    writeLocked(db, () => {
+      const journals = readdirSync(this.directory).filter((name) =>
+        name.endsWith(".journal"),
+      );
+      for (const name of journals) {
+        try {
+          repairSwap(db, this.directory, name);
+          report.repaired += 1;
+        } catch {
+          try {
+            report.quarantined.push(quarantineJournal(this.directory, name));
+          } catch {
+            report.quarantined.push(name);
+          }
+        }
+      }
+      sweepAbandonedStaging(this.directory, this.staging);
+      report.swept = true;
+    });
+    return report;
   }
-
-
 
   /**
    * `expect` is the row the caller validated before it staged bytes. Committing
@@ -176,6 +211,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
     connectorId: string,
     pending: PendingState,
     expect?: ConnectionExpectation,
+    implementationVersion = "",
   ): Connection {
     if (
       !this.handles.has(pending) ||
@@ -222,6 +258,9 @@ export class ConnectionStateStore implements ConnectionStateReader {
             throw new LedgerError("connection state staging is missing");
           }
           journalPath = `${pending.finalPath}.${ulid()}.journal`;
+          if (pending.digest === null) {
+            throw new LedgerError("connection state digest is missing");
+          }
           const journal: SwapJournal = {
             schema: "kizuki.connection-state-swap/v1",
             connector_id: connectorId,
@@ -229,6 +268,8 @@ export class ConnectionStateStore implements ConnectionStateReader {
             connected_at: connectedAt,
             final_name: basename(pending.finalPath),
             backup_name: backupPath === null ? null : basename(backupPath),
+            final_sha256: pending.digest,
+            final_bytes: pending.byteLength,
           };
           swapStateFile(this.directory, {
             finalPath: pending.finalPath,
@@ -249,6 +290,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
             : NULL_CONNECTION_CONFIG,
           secretRefs: pending.written ? [pending.ref] : [],
           connectedAt,
+          implementationVersion,
           expect,
         });
       }, undoSwap);
@@ -283,11 +325,34 @@ export class ConnectionStateStore implements ConnectionStateReader {
     if (ref === undefined) {
       throw new LedgerError("connection has no state reference");
     }
-    const path = connectionStatePath(this.directory, ref);
-    if (!existsSync(path)) {
-      throw new LedgerError("connection state is missing");
+    const unresolved = readdirSync(this.directory).filter(
+      (name) =>
+        name.endsWith(".journal") &&
+        name.startsWith(`${connection.source_key}.state.`),
+    );
+    if (unresolved.length > 0) {
+      throw new LedgerError("connection state journal is unresolved");
     }
-    return new Uint8Array(readFileSync(path));
+    const path = connectionStatePath(this.directory, ref);
+    const stats = assertRegularStateFile(path, this.directory);
+    if (stats.size > MAX_CONNECTION_STATE_BYTES) {
+      throw new LedgerError("connection state exceeds maximum size");
+    }
+    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      const bytes = new Uint8Array(stats.size);
+      let offset = 0;
+      while (offset < bytes.byteLength) {
+        const read = readSync(fd, bytes, offset, bytes.byteLength - offset, offset);
+        if (read <= 0) {
+          throw new LedgerError("connection state read made no progress");
+        }
+        offset += read;
+      }
+      return bytes;
+    } finally {
+      closeSync(fd);
+    }
   }
 
   /**
@@ -299,7 +364,11 @@ export class ConnectionStateStore implements ConnectionStateReader {
     db: Database,
     connection: Connection,
     update: (writer: ConnectionStateWriter) => Promise<void>,
-    options: { missingStateMessage: string; refuseDisconnected: boolean },
+    options: {
+      missingStateMessage: string;
+      refuseDisconnected: boolean;
+      implementationVersion: string;
+    },
   ): Promise<Connection> {
     this.recover(db);
     const persisted = getConnection(
@@ -338,10 +407,16 @@ export class ConnectionStateStore implements ConnectionStateReader {
       if (!pending.pending.written) {
         throw new LedgerError(options.missingStateMessage);
       }
-      return this.save(db, persisted.connector_id, pending.pending, {
-        connected_at: persisted.connected_at,
-        disconnected_at: persisted.disconnected_at,
-      });
+      return this.save(
+        db,
+        persisted.connector_id,
+        pending.pending,
+        {
+          connected_at: persisted.connected_at,
+          disconnected_at: persisted.disconnected_at,
+        },
+        options.implementationVersion,
+      );
     } catch (error) {
       this.discard(pending.pending);
       throw error;
@@ -359,21 +434,21 @@ export class ConnectionStateStore implements ConnectionStateReader {
     connector: Connector,
     io: SignInIo,
   ): Promise<Connection> {
-    const signIn = connector.signIn;
-    if (typeof signIn !== "function") {
-      throw new LedgerError("connector does not implement interactive sign-in");
+    if (connector.manifest().connector_id !== connection.connector_id) {
+      throw new LedgerError("replacement connector does not match the connection");
     }
     return this.swap(
       db,
       connection,
       async (writer) => {
-        await signIn.call(connector, io, writer);
+        await runGuardedSignIn(connector, io, writer);
       },
       {
         missingStateMessage:
           "replacement sign-in did not provide connection state",
         // A re-sign-in is the owner reconnecting a source on purpose.
         refuseDisconnected: false,
+        implementationVersion: connector.manifest().version,
       },
     );
   }
@@ -394,6 +469,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
     return this.swap(db, connection, update, {
       missingStateMessage: "state rewrite did not provide connection state",
       refuseDisconnected: true,
+      implementationVersion: connection.implementation_version,
     });
   }
 }

@@ -3,6 +3,7 @@ import { applyCanonV4 } from "../canon/schema";
 import { applyClaimsV3 } from "../claims/schema";
 import { applyServeV7 } from "../serve/schema";
 import { applySensitivityV6 } from "../sensitivity/schema";
+import { applyConnectionsV8 } from "./connections-schema";
 import { applyPurgeV5 } from "./purge-schema";
 
 interface Migration {
@@ -148,6 +149,10 @@ const MIGRATIONS: readonly Migration[] = [
   {
     version: 7,
     apply: applyServeV7,
+  },
+  {
+    version: 8,
+    apply: applyConnectionsV8,
   },
 ];
 

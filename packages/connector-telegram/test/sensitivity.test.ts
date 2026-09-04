@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { DEFAULT_GRANT, openLedger, runToCompletion, timeline } from "@kizuki/core";
+import { DEFAULT_GRANT, openLedger, registerConnection, runToCompletion, timeline } from "@kizuki/core";
 import { TELEGRAM_CONNECTOR_ID } from "../src/map";
 import { connected } from "./helpers";
 
@@ -7,7 +7,9 @@ const FEBRUARY = Date.parse("2026-02-01T00:00:00.000Z");
 const SOURCE = "01JJ0000000000000000000000";
 
 function ledger() {
-  return openLedger(":memory:");
+  const db = openLedger(":memory:");
+  registerConnection(db, TELEGRAM_CONNECTOR_ID, SOURCE);
+  return db;
 }
 
 /**

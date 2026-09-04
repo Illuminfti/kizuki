@@ -77,6 +77,7 @@ describe("non-interactive state rewrite", () => {
           secret_refs: [`file:connections/${sourceKey}.state`],
           connected_at: new Date().toISOString(),
           disconnected_at: null,
+          implementation_version: "",
         },
         (writer) => writer.write(new TextEncoder().encode("attacker-state")),
       ),
