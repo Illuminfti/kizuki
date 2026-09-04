@@ -144,6 +144,10 @@ describe("construction", () => {
       schema: "kizuki.connector/v1",
       connector_id: LEGACY_WIKI_CONNECTOR_ID,
       version: "0.1.0",
+      contract_minor: 1,
+      implementation: "@kizuki/connectors",
+      allowed_egress: [],
+      cursor_schema: "kizuki.legacy-wiki-cursor/v1",
       kinds: ["page"],
       capabilities: {
         backfill: true,
@@ -155,6 +159,8 @@ describe("construction", () => {
       },
       required_secrets: [],
       emits_sensitivity_hint: true,
+      default_sensitivity: "private",
+      sensitivity_floor: "personal",
       auth_modes: ["none"],
     });
   });

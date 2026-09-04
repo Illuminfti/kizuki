@@ -15,7 +15,7 @@ import { readBoundedUtf8File } from "./read";
 import { recordContentHash, sha256Hex } from "./source-id";
 import { errorMessage } from "./util";
 
-const IMPORT_SNAPSHOT_CURSOR_SCHEMA =
+export const IMPORT_SNAPSHOT_CURSOR_SCHEMA =
   "kizuki.import-snapshot.cursor/v1" as const;
 
 export interface SnapshotParse {

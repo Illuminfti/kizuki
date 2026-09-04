@@ -1,4 +1,9 @@
-import { HealthReport, isPlainObject } from "@kizuki/core";
+import {
+  HealthReport,
+  freezeManifest,
+  isPlainObject,
+  policyForConnector,
+} from "@kizuki/core";
 import type {
   CaptureEventInput,
   ConnectionStateWriter,
@@ -27,6 +32,7 @@ import { notConnected, notSignedIn, revoked } from "./refusals";
 import { disconnectQuietly, openSession } from "./session";
 import type { SessionDeps } from "./session";
 import { enroll, waitSeconds } from "./sign-in";
+import { TELEGRAM_CURSOR_SCHEMA } from "./cursor";
 import { walk } from "./walk";
 import type { DialogListing } from "./walk";
 
@@ -45,10 +51,14 @@ export interface TelegramDeps extends SessionDeps {
   sleep: (ms: number) => Promise<void>;
 }
 
-const MANIFEST: Manifest = {
+const MANIFEST: Manifest = freezeManifest({
   schema: "kizuki.connector/v1",
   connector_id: TELEGRAM_CONNECTOR_ID,
   version: TELEGRAM_CONNECTOR_VERSION,
+  contract_minor: 1,
+  implementation: "@kizuki/connector-telegram",
+  allowed_egress: ["telegram.org"],
+  cursor_schema: TELEGRAM_CURSOR_SCHEMA,
   kinds: ["message"],
   capabilities: {
     backfill: true,
@@ -62,8 +72,9 @@ const MANIFEST: Manifest = {
   // The session is created by sign-in, not required up front.
   required_secrets: [],
   emits_sensitivity_hint: true,
+  ...policyForConnector(TELEGRAM_CONNECTOR_ID),
   auth_modes: ["sign_in"],
-};
+});
 
 export class TelegramConnector implements Connector {
   readonly #stateRef: string | null;
@@ -221,6 +232,7 @@ export class TelegramConnector implements Connector {
   }
 
   async revoke(): Promise<void> {
+    if (this.#revoked) return;
     const api = this.#api;
     // Nothing here reached Telegram, so the session is still live there. A
     // quiet success would have the host record an access that never ended.

@@ -17,4 +17,12 @@ test("testkit subpath exports the helpers tests need", () => {
   expect(typeof testkit.seedFixtureDatabase).toBe("function");
   expect(Array.isArray(testkit.CHATGPT_FIXTURE_EXPORT)).toBe(true);
   expect(Array.isArray(testkit.CLAUDE_FIXTURE_EXPORT)).toBe(true);
+  expect(typeof testkit.hangingConnector).toBe("function");
+  expect(typeof testkit.dishonestPurgeConnector).toBe("function");
+});
+
+test("production entrypoint does not export conformance fixtures", () => {
+  expect("hangingConnector" in production).toBe(false);
+  expect("dishonestPurgeConnector" in production).toBe(false);
+  expect("mutableManifestConnector" in production).toBe(false);
 });
