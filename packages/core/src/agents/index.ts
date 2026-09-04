@@ -30,6 +30,7 @@ export { applyAgentsV9, initAgents } from "./schema";
 export {
   addAgent,
   authenticate,
+  countAgents,
   getAgent,
   listAgents,
   listQuarantinedAgents,

@@ -222,6 +222,63 @@ function tryDecodeGrant(row: AgentGrantRow): Grant | null {
   }
 }
 
+function tryRead<T>(read: () => T): T | undefined {
+  try {
+    return read();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Fields that still decode are kept. Fields that do not become the closed
+ * value — public, empty scopes, no tools, rate 1, no relay — never the
+ * default new-agent grant, which would widen a locked-down row.
+ */
+function repairBase(row: AgentGrantRow): Grant {
+  const types = tryRead(() =>
+    validateScope(parseStringArray(row.types, "types"), "types"),
+  );
+  const subjects = tryRead(() =>
+    validateScope(parseStringArray(row.subjects, "subjects"), "subjects"),
+  );
+  const tools = tryRead(() => {
+    const parsed = parseStringArray(row.tools, "tools");
+    if (
+      parsed === null ||
+      !parsed.every((tool) => (TOOLS as readonly string[]).includes(tool))
+    ) {
+      throw new TypeError("tools");
+    }
+    return parsed as Tool[];
+  });
+  const since = tryRead(() => {
+    if (row.since !== null) rfc3339Millis(row.since, "since");
+    return row.since;
+  });
+  const until = tryRead(() => {
+    if (row.until !== null) rfc3339Millis(row.until, "until");
+    return row.until;
+  });
+  return {
+    ceiling: Object.prototype.hasOwnProperty.call(SENSITIVITY_ORDER, row.ceiling)
+      ? (row.ceiling as Grant["ceiling"])
+      : "public",
+    types: types !== undefined ? types : [],
+    subjects: subjects !== undefined ? subjects : [],
+    since: since !== undefined ? since : null,
+    until: until !== undefined ? until : null,
+    tools: tools ?? [],
+    rate_limit_per_minute:
+      Number.isSafeInteger(row.rate_limit_per_minute) &&
+      row.rate_limit_per_minute >= 1 &&
+      row.rate_limit_per_minute <= MAX_RATE_LIMIT_PER_MINUTE
+        ? row.rate_limit_per_minute
+        : 1,
+    relay_owner_corrections: row.relay_owner_corrections === 1,
+  };
+}
+
 function grantEpoch(row: AgentGrantRow): number {
   return Number.isSafeInteger(row.grant_epoch) && row.grant_epoch >= 1
     ? row.grant_epoch
@@ -418,6 +475,28 @@ export function listQuarantinedAgents(db: Database): AgentFinding[] {
     }));
 }
 
+/** Census of every stored identity, including rows `listAgents` skips. */
+export function countAgents(db: Database): {
+  total: number;
+  revoked: number;
+  quarantined: number;
+} {
+  listAgents(db);
+  const row = db
+    .query<{ total: number; revoked: number; quarantined: number }, []>(
+      `SELECT count(*) AS total,
+              count(revoked_at) AS revoked,
+              count(quarantined_at) AS quarantined
+         FROM agents`,
+    )
+    .get();
+  return {
+    total: row?.total ?? 0,
+    revoked: row?.revoked ?? 0,
+    quarantined: row?.quarantined ?? 0,
+  };
+}
+
 export function setGrant(
   db: Database,
   name: string,
@@ -426,8 +505,8 @@ export function setGrant(
   return db.transaction((): Grant => {
     const row = grantRowByName(db, name);
     if (row === null) throw new Error(`agent ${name} does not exist`);
-    const before = decodeGrant(row);
-    const grant = mergeGrant(before, patch);
+    const before = tryDecodeGrant(row);
+    const grant = mergeGrant(before ?? repairBase(row), patch);
     const at = new Date().toISOString();
     const epoch = grantEpoch(row) + 1;
     db.query<
@@ -452,7 +531,18 @@ export function setGrant(
       at,
       row.agent_id,
     );
-    recordLifecycle(db, row.agent_id, "agent.grant", { before, after: grant }, at);
+    db.query<never, [string]>(
+      `UPDATE agents
+          SET quarantined_at = NULL, quarantine_reason = NULL
+        WHERE agent_id = ?`,
+    ).run(row.agent_id);
+    recordLifecycle(
+      db,
+      row.agent_id,
+      "agent.grant",
+      before === null ? { after: grant } : { before, after: grant },
+      at,
+    );
     return grant;
   }).immediate();
 }

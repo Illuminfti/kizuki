@@ -10,6 +10,7 @@ import {
   TOOLS,
   addAgent,
   authenticate,
+  countAgents,
   getAgent,
   initAgents,
   listAgents,
@@ -396,6 +397,59 @@ describe("corrupt identity isolation", () => {
         reason: "invalid_grant",
       }),
     ]);
+    expect(countAgents(db)).toEqual({ total: 2, revoked: 0, quarantined: 1 });
+
+    const repaired = setGrant(db, "reader-bad", { tools: ["search"] });
+    expect(repaired.tools).toEqual(["search"]);
+    expect(repaired.ceiling).toBe("personal");
+    expect(listQuarantinedAgents(db)).toEqual([]);
+    expect(authenticate(db, bad.token)?.grant.tools).toEqual(["search"]);
+    expect(countAgents(db)).toEqual({ total: 2, revoked: 0, quarantined: 0 });
+    db.close();
+  });
+
+  test("a one-field repair keeps the scopes that still decode", () => {
+    const db = agentsDb();
+    const created = addAgent(db, "reader-scoped", {
+      ceiling: "public",
+      subjects: ["person:ada"],
+      types: ["person"],
+      rate_limit_per_minute: 3,
+      relay_owner_corrections: false,
+    });
+    db.query("UPDATE agent_grants SET tools = ? WHERE agent_id = ?").run(
+      '["not-a-tool"]',
+      created.agent.agent_id,
+    );
+
+    const repaired = setGrant(db, "reader-scoped", { tools: ["search"] });
+    expect(repaired).toEqual({
+      ceiling: "public",
+      types: ["person"],
+      subjects: ["person:ada"],
+      since: null,
+      until: null,
+      tools: ["search"],
+      rate_limit_per_minute: 3,
+      relay_owner_corrections: false,
+    });
+    db.close();
+  });
+
+  test("fields that cannot be read fail closed instead of taking the default grant", () => {
+    const db = agentsDb();
+    addAgent(db, "reader-broken");
+    db.query(
+      `UPDATE agent_grants
+          SET types = ?, subjects = ?, tools = ?
+        WHERE agent_id = (SELECT agent_id FROM agents WHERE name = ?)`,
+    ).run('["!!!"]', '["!!!"]', '["not-a-tool"]', "reader-broken");
+
+    const repaired = setGrant(db, "reader-broken", { tools: ["search"] });
+    expect(repaired.tools).toEqual(["search"]);
+    expect(repaired.types).toEqual([]);
+    expect(repaired.subjects).toEqual([]);
+    expect(repaired.ceiling).toBe("personal");
     db.close();
   });
 });

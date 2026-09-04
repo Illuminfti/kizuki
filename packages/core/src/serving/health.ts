@@ -1,4 +1,4 @@
-import { listAgents } from "../agents";
+import { countAgents } from "../agents";
 import type { Sensitivity, Tool } from "../agents";
 import { countClaims, pendingRetrievalOps } from "../claims/store";
 import { readDerivedMeta } from "../derived-meta";
@@ -52,7 +52,7 @@ export interface HealthData {
       retractions_filed: number;
     } | null;
   }[];
-  agents: { total: number; revoked: number };
+  agents: { total: number; revoked: number; quarantined: number };
 }
 
 export function serveHealth(ctx: ServeContext): Envelope<HealthData> {
@@ -102,7 +102,7 @@ export function serveHealth(ctx: ServeContext): Envelope<HealthData> {
         };
       });
 
-      const agents = listAgents(ctx.db);
+      const agents = countAgents(ctx.db);
       return {
         canon: [],
         quoted: [],
@@ -131,10 +131,7 @@ export function serveHealth(ctx: ServeContext): Envelope<HealthData> {
             graph: readDerivedMeta(ctx.db, "graph")?.rebuilt_at ?? null,
           },
           connections,
-          agents: {
-            total: agents.length,
-            revoked: agents.filter((agent) => agent.revoked_at !== null).length,
-          },
+          agents,
         },
       };
     },
