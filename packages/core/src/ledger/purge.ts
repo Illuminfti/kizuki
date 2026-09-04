@@ -17,6 +17,7 @@ import { removeDoc } from "../search/indexer";
 import { withdrawForTombstone } from "../staging/producers";
 import { sha256Hex } from "../util/hash";
 import { ulid } from "../util/ulid";
+import { parseFrontmatter } from "../vault/frontmatter";
 import { listCanonPagesReport } from "../vault/pages";
 import type { CanonPage } from "../vault/pages";
 import { initPurgeOps, PURGE_SLA_SECONDS } from "./purge-schema";
@@ -904,18 +905,42 @@ async function reconcileOps(
   return listOps(db, receiptId);
 }
 
+function readHoldSources(vaultPath: string, relPath: string): string[] | null {
+  const path = join(vaultPath, relPath);
+  if (!existsSync(path)) return [];
+  try {
+    return pageSources(parseFrontmatter(readFileSync(path, "utf8")).data["sources"]);
+  } catch (error) {
+    if (error instanceof SyntaxError) return null;
+    throw error;
+  }
+}
+
+function purgedCitations(db: Database, sources: readonly string[]): string[] {
+  if (!tableExists(db, "event_purges") || sources.length === 0) return [];
+  return db
+    .query<{ event_id: string }, string[]>(
+      `SELECT event_id FROM event_purges
+        WHERE event_id IN (${sources.map(() => "?").join(", ")})
+        ORDER BY event_id`,
+    )
+    .all(...sources)
+    .map((row) => row.event_id);
+}
+
+function liftHold(db: Database, pagePath: string): void {
+  if (!tableExists(db, "canon_holds")) return;
+  db.query("DELETE FROM canon_holds WHERE page_path = ?").run(pagePath);
+}
+
 function rewriteHolds(
   db: Database,
   vaultPath: string,
-  purgedIds: readonly string[],
   options: PurgeRunOptions,
-  skipPaths: ReadonlySet<string>,
 ): PurgeRewriteRef[] {
   const rewritten: PurgeRewriteRef[] = [];
   const holds = readHolds(db);
   if (holds.length === 0) return rewritten;
-  const purged = new Set(purgedIds);
-  const citing = claimsCiting(db, purgedIds);
   const io: CanonIo = {
     db,
     vault_path: vaultPath,
@@ -925,14 +950,21 @@ function rewriteHolds(
     ...(options.retrieval !== undefined ? { retrieval: options.retrieval } : {}),
   };
   for (const hold of holds) {
-    if (skipPaths.has(hold.page_path)) continue;
-    const pageClaims = citing.filter((claim) => {
+    const sources = readHoldSources(vaultPath, hold.page_path);
+    if (sources === null) continue;
+    const toRemove = purgedCitations(db, sources);
+    if (toRemove.length === 0) {
+      liftHold(db, hold.page_path);
+      continue;
+    }
+    const purged = new Set(toRemove);
+    const matchingClaims = claimsCiting(db, toRemove).filter((claim) => {
       if (claim.target !== null && hold.page_path.startsWith(claim.target)) {
         return true;
       }
       return claim.provenance.some((id) => purged.has(id));
     });
-    const purgedClaims = pageClaims.filter((claim) => {
+    const purgedClaims = matchingClaims.filter((claim) => {
       const stored = getClaim(db, claim.claim_id);
       return stored?.status === "purged";
     });
@@ -940,7 +972,7 @@ function rewriteHolds(
     try {
       receipt = applyPurgeRewrite(io, {
         rel_path: hold.page_path,
-        purged_event_ids: purgedIds,
+        purged_event_ids: toRemove,
         purged_claim_ids: purgedClaims.map((claim) => claim.claim_id),
         purged_claim_bodies: purgedClaims.map((claim) => claim.body),
       });
@@ -977,13 +1009,7 @@ export async function runPurge(
   if (receiptId !== undefined) {
     phase1.purge_ops = await reconcileOps(db, receiptId, binding, clock);
   }
-  phase1.rewritten = rewriteHolds(
-    db,
-    vaultPath,
-    phase1.receipts.map((receipt) => receipt.event_id),
-    options,
-    new Set(phase1.uncertain_pages),
-  );
+  phase1.rewritten = rewriteHolds(db, vaultPath, options);
   return phase1;
 }
 

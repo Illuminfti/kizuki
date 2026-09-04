@@ -10,6 +10,7 @@ import { accept, count, readSince } from "../src/ledger/ledger";
 import {
   PURGE_REASON_MAX_BYTES,
   PurgeError,
+  isHeld,
   listHistoricalConnectorIds,
   normalizePurgeReason,
   previewPurge,
@@ -296,7 +297,9 @@ describe("purgeEvents", () => {
       "facts/bad-sources.md",
       "facts/second.md",
     ]);
-    expect(outcome.rewritten).toEqual([]);
+    expect(outcome.rewritten.map(({ page_path }) => page_path)).toEqual([
+      "facts/second.md",
+    ]);
     expect(
       db
         .query<{ page_path: string }, []>(
@@ -304,10 +307,91 @@ describe("purgeEvents", () => {
         )
         .all()
         .map(({ page_path }) => page_path),
-    ).toEqual(["facts/bad-sources.md", "facts/second.md"]);
-    expect(readFileSync(join(vaultPath, "facts", "second.md"), "utf8")).toContain(
+    ).toEqual(["facts/bad-sources.md"]);
+    expect(readFileSync(join(vaultPath, "facts", "second.md"), "utf8")).not.toContain(
       target.event_id,
     );
+    db.close();
+  });
+
+  test("a later purge does not lift an unreadable hold with the new event ids", async () => {
+    const db = openLedger(":memory:");
+    const first = storedEvent(db, event("first"));
+    const vaultPath = temporaryVault();
+    writeFileSync(join(vaultPath, "facts", "orphan.md"), "no frontmatter\n");
+    await runPurge(db, vaultPath, { event_id: first.event_id }, "record request");
+    expect(
+      db.query<{ n: number }, []>("SELECT count(*) AS n FROM canon_holds").get(),
+    ).toEqual({ n: 1 });
+
+    const second = storedEvent(db, event("second"));
+    const later = await runPurge(
+      db,
+      vaultPath,
+      { event_id: second.event_id },
+      "later request",
+    );
+    expect(later.rewritten).toEqual([]);
+    expect(isHeld(db, "facts/orphan.md")).toBe(true);
+    expect(readFileSync(join(vaultPath, "facts", "orphan.md"), "utf8")).toBe(
+      "no frontmatter\n",
+    );
+    db.close();
+  });
+
+  test("a repaired hold is rewritten from event_purges, not the later selector", async () => {
+    const db = openLedger(":memory:");
+    const first = storedEvent(db, event("first"));
+    const vaultPath = temporaryVault();
+    writeFileSync(
+      join(vaultPath, "facts", "held.md"),
+      [
+        "---",
+        "id: page-held",
+        "title: held",
+        "type: fact",
+        "status: active",
+        "sensitivity: personal",
+        "taint: clean",
+        "sources: 123",
+        "---",
+        "",
+        "blocked\n",
+      ].join("\n"),
+    );
+    await runPurge(db, vaultPath, { event_id: first.event_id }, "record request");
+    writeFileSync(
+      join(vaultPath, "facts", "held.md"),
+      serializePage({
+        data: {
+          id: "page-held",
+          title: "held",
+          type: "fact",
+          status: "active",
+          sensitivity: "personal",
+          taint: "clean",
+          sources: [first.event_id],
+        },
+        body: "repaired\n",
+      }),
+      "utf8",
+    );
+    const second = storedEvent(db, event("second"));
+    const later = await runPurge(
+      db,
+      vaultPath,
+      { event_id: second.event_id },
+      "later request",
+    );
+    expect(later.rewritten.map(({ page_path }) => page_path)).toEqual([
+      "facts/held.md",
+    ]);
+    expect(
+      db.query<{ n: number }, []>("SELECT count(*) AS n FROM canon_holds").get(),
+    ).toEqual({ n: 0 });
+    const page = readFileSync(join(vaultPath, "facts", "held.md"), "utf8");
+    expect(page).not.toContain(first.event_id);
+    expect(page).not.toContain(second.event_id);
     db.close();
   });
 
