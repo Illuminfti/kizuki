@@ -74,6 +74,7 @@ function walkExactJson(
   budget: JsonBudget,
   stack: WeakSet<object>,
 ): ExactJson | undefined {
+  if (budget.overflowed) return undefined;
   if (value === null) {
     charge(budget, 4, path, limits, errors);
     return null;
