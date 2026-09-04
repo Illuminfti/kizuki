@@ -14,7 +14,7 @@ export { gate } from "./gate";
 export type { Served } from "./gate";
 
 export { serveSearch } from "./search";
-export type { SearchArgs } from "./search";
+export type { SearchArgs, SearchData } from "./search";
 export { serveGetPage } from "./page";
 export type { GetPageArgs } from "./page";
 export { ENTITY_TYPES, serveEntities } from "./entities";

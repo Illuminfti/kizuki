@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { applyAgentsV9 } from "../agents/schema";
 import { applyCanonV4 } from "../canon/schema";
 import { applyClaimsV3 } from "../claims/schema";
+import { applyDerivedV10 } from "../derived";
 import { applyServeV7 } from "../serve/schema";
 import { applySensitivityV6 } from "../sensitivity/schema";
 import { applyConnectionsV8 } from "./connections-schema";
@@ -159,6 +160,10 @@ const MIGRATIONS: readonly Migration[] = [
     version: 9,
     apply: applyAgentsV9,
   },
+  {
+    version: 10,
+    apply: applyDerivedV10,
+  },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
@@ -185,7 +190,13 @@ function migrate(db: Database): void {
   }
 
   const pending = MIGRATIONS.filter(({ version }) => version > current);
-  if (pending.length === 0) return;
+  if (pending.length === 0) {
+    // Same-version derived schema still needs a wipe.
+    db.transaction(() => {
+      applyDerivedV10(db);
+    }).immediate();
+    return;
+  }
 
   db.transaction(() => {
     for (const migration of pending) {

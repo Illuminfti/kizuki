@@ -532,7 +532,10 @@ describe("purgeEvents", () => {
     initGraph(db);
     indexEvent(db, source);
     db.query(
-      "INSERT INTO graph_edges (src, dst, kind) VALUES (?, ?, ?), (?, ?, ?)",
+      `INSERT INTO graph_edges
+         (src, dst, kind, sensitivity, taint, authority, provenance)
+       VALUES (?, ?, ?, 'public', 'quoted', 'connector_evidence', '[]'),
+              (?, ?, ?, 'public', 'quoted', 'connector_evidence', '[]')`,
     ).run(
       "fact:one",
       source.event_id,

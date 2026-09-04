@@ -34,6 +34,7 @@ import {
   finalizeRecipe,
   hitsFromCandidates,
   lexicalScore,
+  MAX_WALK_DEPTH,
   pushDegraded,
   walkNeighbors,
   type RecipeCandidate,
@@ -281,7 +282,12 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
   ): Promise<GraphResult> {
     this.assertOpen();
     requireRetrievalCapability(this.descriptor, "graph");
-    if (options.hops < 1 || options.limit < 1) {
+    if (
+      options.hops < 1 ||
+      options.hops > MAX_WALK_DEPTH ||
+      options.limit < 1 ||
+      options.limit > MAX_RETRIEVAL_LIMIT
+    ) {
       throw new PortError("config_invalid", "graph query is invalid", false);
     }
     const start = this.store.graph.entities[entity.entity_id];

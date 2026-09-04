@@ -224,8 +224,10 @@ export {
   FTS5_RETRIEVAL_DESCRIPTOR,
   FTS5_RETRIEVAL_ID,
   Fts5RetrievalPort,
+  bareRetrievalId,
   createFts5RetrievalPort,
   registerFts5RetrievalPort,
+  retrievalDocId,
 } from "./retrieval";
 export {
   EMBEDDING_CAPABILITIES,
@@ -514,10 +516,20 @@ export type {
   UndoReceiptOptions,
 } from "./canon";
 export type { WritePageOptions } from "./vault/write";
-export { findPageById, listCanonPages, listCanonPagesReport } from "./vault/pages";
+export {
+  findPageById,
+  isLiveCanonPage,
+  listCanonPages,
+  listCanonPagesReport,
+} from "./vault/pages";
 export type { CanonPage, CanonPageReport, SkippedPage } from "./vault/pages";
-export { readDerivedMeta } from "./derived-meta";
-export type { DerivedLayer, DerivedMeta } from "./derived-meta";
+export { readDerivedMeta, stampDerived } from "./derived-meta";
+export type {
+  DerivedLayer,
+  DerivedMeta,
+  DerivedStamp,
+  DerivedStatus,
+} from "./derived-meta";
 
 export { canonicalSerialize, computeContentHash } from "./util/hash";
 export { isRfc3339 } from "./util/time";
@@ -527,7 +539,14 @@ export type { ValidationResult } from "./util/validate";
 
 export { openLedger } from "./ledger/db";
 export { readCheckpoint, writeCheckpoint } from "./ledger/checkpoints";
-export { accept, count, readSince, replay } from "./ledger/ledger";
+export {
+  accept,
+  count,
+  latestLedgerCursor,
+  readSince,
+  replay,
+  replayLive,
+} from "./ledger/ledger";
 export type {
   AcceptDependencies,
   AcceptErrorKind,
@@ -636,6 +655,7 @@ export {
   rebuildSearch,
   removeDoc,
   search,
+  searchResult,
   toFtsQuery,
 } from "./search";
 export type {
@@ -643,6 +663,7 @@ export type {
   SearchHit,
   SearchOptions,
   SearchRebuildResult,
+  SearchResult,
 } from "./search";
 
 export { initGraph, neighbors, rebuildGraph } from "./graph";
@@ -657,7 +678,11 @@ export type {
 export { timeline } from "./query";
 export type { TimelineEntry, TimelineOptions } from "./query";
 
-export { rebuildDerived } from "./derived";
+export {
+  rebuildDerived,
+  refreshDerivedPage,
+  removeDerivedPage,
+} from "./derived";
 export type { DerivedRebuildResult } from "./derived";
 
 export { diffLines } from "./util/diff";
@@ -785,6 +810,7 @@ export type {
   QuotedChunk,
   RewrittenPage,
   SearchArgs,
+  SearchData,
   ServeContext,
   Served,
   TimelineArgs,

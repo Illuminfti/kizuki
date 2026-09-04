@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { stampDerived } from "../../src/derived-meta";
 import { serveGetPage } from "../../src/serving/page";
 import { serveSearch } from "../../src/serving/search";
+import type { SearchData } from "../../src/serving/search";
 import { ServeError } from "../../src/serving/types";
 import type { Envelope } from "../../src/serving/types";
 import { serveFixture } from "./helpers";
@@ -16,11 +18,11 @@ afterAll(() => {
   fixture.dispose();
 });
 
-function pageIds(envelope: Envelope): string[] {
+function pageIds(envelope: Envelope<SearchData>): string[] {
   return envelope.canon.map((chunk) => chunk.page_id).sort();
 }
 
-function eventIds(envelope: Envelope): string[] {
+function eventIds(envelope: Envelope<SearchData>): string[] {
   return envelope.quoted.map((chunk) => chunk.event_id).sort();
 }
 
@@ -49,6 +51,7 @@ describe("serveSearch enforces the grant below the prompt layer", () => {
       query: "kettle",
     });
     expect(pageIds(priv)).toContain("fact:kettle");
+    expect(priv.data).toBeUndefined();
   });
 
   test("an unlabeled page is withheld from every principal, owner included", () => {
@@ -174,6 +177,31 @@ describe("serveSearch enforces the grant below the prompt layer", () => {
     expect(envelope.canon).toEqual([]);
     expect(envelope.quoted).toEqual([]);
     expect(envelope.denied).toEqual([]);
+    expect(envelope.data).toEqual({ degraded: ["query-empty"] });
+  });
+
+  test("a degraded search index is named on the envelope", () => {
+    const isolated = serveFixture();
+    try {
+      isolated.db.exec("DROP TABLE search_docs");
+      stampDerived(isolated.db, {
+        layer: "search",
+        generation: "schema-v10",
+        rebuilt_at: "2026-03-01T00:00:00.000Z",
+        doc_count: 0,
+        source_count: 0,
+        skipped_count: 0,
+        status: "degraded",
+      });
+      const envelope = serveSearch(isolated.owner(), { query: "kettle" });
+      expect(envelope.canon).toEqual([]);
+      expect(envelope.quoted).toEqual([]);
+      expect(envelope.data).toEqual({
+        degraded: ["index-degraded"],
+      });
+    } finally {
+      isolated.dispose();
+    }
   });
 
   test("a page carrying capture is served as canon, stamped as capture", () => {

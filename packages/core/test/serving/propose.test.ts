@@ -6,6 +6,7 @@ import {
   listClaims,
   pendingRetrievalOps,
 } from "../../src/claims/store";
+import { retrievalDocId } from "../../src/retrieval/ids";
 import { serveHealth } from "../../src/serving/health";
 import { servePropose } from "../../src/serving/propose";
 import type { ProposeArgs } from "../../src/serving/propose";
@@ -109,7 +110,9 @@ describe("servePropose files a claim for the receipted writer", () => {
     const claimId = filed.data?.claim_id ?? "";
     // The port the host bound is the one the claim reaches: serving holds it
     // for the process, it does not open its own.
-    expect((await port.verifyAbsent([claimId])).found).toEqual([claimId]);
+    expect((await port.verifyAbsent([retrievalDocId("claim", claimId)])).found).toEqual([
+      retrievalDocId("claim", claimId),
+    ]);
   });
 
   test("a refresh that fails degrades the write, it does not fail it", async () => {
@@ -149,7 +152,9 @@ describe("servePropose files a claim for the receipted writer", () => {
       candidate(live, "The kettle is indexed."),
     );
     expect(refiled.data?.outcome).toBe("duplicate");
-    expect((await port.verifyAbsent([claimId])).found).toEqual([claimId]);
+    expect((await port.verifyAbsent([retrievalDocId("claim", claimId)])).found).toEqual([
+      retrievalDocId("claim", claimId),
+    ]);
     expect(pendingRetrievalOps(live.db)).toEqual([]);
   });
 

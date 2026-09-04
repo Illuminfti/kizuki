@@ -4,7 +4,7 @@ import type { RecipeEdge, RecipeGraphWalk } from "./types";
 export const ADJACENCY_BOOST = 1.05;
 export const ADJACENCY_MIN_HITS = 2;
 export const DEFAULT_TOP_K = 20;
-const MAX_WALK_DEPTH = 2;
+export const MAX_WALK_DEPTH = 2;
 export const NEIGHBOR_CAP_PER_HOP = 50;
 
 export interface AdjacencyTarget {

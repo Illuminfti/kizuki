@@ -5,6 +5,7 @@ import { listLiveConflicts, listSubjectAliases } from "../claims/identity";
 import { listClaims } from "../claims/store";
 import { neighbors } from "../graph/graph";
 import { timeline } from "../query/timeline";
+import { bareRetrievalId } from "../retrieval/ids";
 import { search } from "../search/query";
 import type { SearchOptions } from "../search/query";
 import { stringArray } from "../vault/pages";
@@ -16,7 +17,6 @@ import {
   excerptOf,
   loadCanon,
   pageDecision,
-  resolveLink,
 } from "./canon";
 import { ENTITY_TYPES } from "./entities";
 import {
@@ -158,7 +158,7 @@ export function collectPieces(
         ...(request.types === undefined ? {} : { types: request.types }),
       };
       for (const hit of search(ctx.db, request.query, opts)) {
-        const page = index.byId.get(hit.doc_id);
+        const page = index.byId.get(bareRetrievalId(hit.doc_id));
         if (page !== undefined) candidates.push(page);
       }
     }
@@ -207,9 +207,10 @@ export function collectPieces(
       for (const edge of neighbors(ctx.db, rootId, {
         depth: 1,
         kinds: ["wikilink"],
+        ceiling: grant.ceiling,
       }).edges) {
         if (added === GRAPH_CHUNKS) break;
-        const target = resolveLink(index, edge.dst);
+        const target = index.byId.get(edge.dst);
         if (target === undefined || packed.has(target.id)) continue;
         if (!eligible(target)) continue;
         const decision = pageDecision(index, grant, target);

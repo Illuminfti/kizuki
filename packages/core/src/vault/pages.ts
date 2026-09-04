@@ -26,6 +26,11 @@ export function stringArray(value: unknown): string[] {
     : [];
 }
 
+/** Live canon only. Draft and archived pages are absent from derived layers. */
+export function isLiveCanonPage(page: CanonPage): boolean {
+  return page.data["status"] === "active";
+}
+
 function compareName(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
@@ -91,6 +96,15 @@ export function listCanonPagesReport(vaultPath: string): CanonPageReport {
 
 export function listCanonPages(vaultPath: string): CanonPage[] {
   return listCanonPagesReport(vaultPath).pages;
+}
+
+/** Stable hash of live page identity and path. Shared by search and graph stamps. */
+export function canonPagesHash(pages: readonly CanonPage[]): string {
+  const material = pages
+    .map((page) => `${page.id}\t${page.relPath}`)
+    .sort()
+    .join("\n");
+  return new Bun.CryptoHasher("sha256").update(material).digest("hex");
 }
 
 export function findPageById(vaultPath: string, id: string): CanonPage | null {
