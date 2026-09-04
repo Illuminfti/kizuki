@@ -4,36 +4,38 @@ import { appendFile, mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promi
 import os from "node:os";
 import path from "node:path";
 import {
-  CHATGPT_FIXTURE_EXPORT,
   CHATGPT_IMPORT_CONNECTOR_ID,
-  CLAUDE_FIXTURE_EXPORT,
   CLAUDE_IMPORT_CONNECTOR_ID,
   ICS_CONNECTOR_ID,
   IMAP_CONNECTOR_ID,
   LEGACY_EVENTS_CONNECTOR_ID,
-  LEGACY_EVENTS_FIXTURE,
   LEGACY_WIKI_CONNECTOR_ID,
-  LEGACY_WIKI_FIXTURE,
   MARKDOWN_FOLDER_CONNECTOR_ID,
-  OMNIVORE_FIXTURE_FILES,
   OMNIVORE_IMPORT_CONNECTOR_ID,
-  POCKET_FIXTURE_EXPORT,
   POCKET_IMPORT_CONNECTOR_ID,
   REGISTRY,
   SCREENPIPE_CONNECTOR_ID,
   TELEGRAM_CONNECTOR_ID,
   TelegramConnector,
-  WHATSAPP_FIXTURE_FILES,
-  WHATSAPP_FIXTURE_TIMEZONE,
   WHATSAPP_IMPORT_CONNECTOR_ID,
   createIcsConnector,
   createImapConnector,
   getConnector,
-  runConformance,
   scriptedDeps,
-  seedFixtureDatabase,
 } from "../src";
-import type { ConformanceResult } from "../src";
+import {
+  CHATGPT_FIXTURE_EXPORT,
+  CLAUDE_FIXTURE_EXPORT,
+  LEGACY_EVENTS_FIXTURE,
+  LEGACY_WIKI_FIXTURE,
+  OMNIVORE_FIXTURE_FILES,
+  POCKET_FIXTURE_EXPORT,
+  WHATSAPP_FIXTURE_FILES,
+  WHATSAPP_FIXTURE_TIMEZONE,
+  runConformance,
+  seedFixtureDatabase,
+} from "../src/testkit";
+import type { ConformanceResult } from "../src/testkit";
 import { fixtureJsonl as jsonlFixture } from "../src/import-legacy-events/fixture";
 import { encodeState } from "@kizuki/connector-telegram";
 import type { Connector } from "@kizuki/core";
@@ -128,12 +130,44 @@ function batteryFor(
           mutate: async () => unlink(layout.deletedMarkdown),
         },
       }),
-    [CHATGPT_IMPORT_CONNECTOR_ID]: plain(
-      getConnector(CHATGPT_IMPORT_CONNECTOR_ID, { path: layout.chatGpt }),
-    ),
-    [CLAUDE_IMPORT_CONNECTOR_ID]: plain(
-      getConnector(CLAUDE_IMPORT_CONNECTOR_ID, { path: layout.claude }),
-    ),
+    [CHATGPT_IMPORT_CONNECTOR_ID]: () => {
+      const chatgpt = getConnector(CHATGPT_IMPORT_CONNECTOR_ID, {
+        path: layout.chatGpt,
+      });
+      return runConformance(chatgpt, {
+        tombstone: {
+          prepare: async () => (await chatgpt.backfill(null)).cursor,
+          mutate: async () =>
+            writeFile(
+              layout.chatGpt,
+              JSON.stringify(CHATGPT_FIXTURE_EXPORT.slice(0, 1)),
+            ),
+        },
+      });
+    },
+    [CLAUDE_IMPORT_CONNECTOR_ID]: () => {
+      const claude = getConnector(CLAUDE_IMPORT_CONNECTOR_ID, {
+        path: layout.claude,
+      });
+      return runConformance(claude, {
+        tombstone: {
+          prepare: async () => (await claude.backfill(null)).cursor,
+          mutate: async () =>
+            writeFile(
+              layout.claude,
+              JSON.stringify([
+                {
+                  ...CLAUDE_FIXTURE_EXPORT[0],
+                  chat_messages: CLAUDE_FIXTURE_EXPORT[0]?.chat_messages.slice(
+                    0,
+                    1,
+                  ),
+                },
+              ]),
+            ),
+        },
+      });
+    },
     [SCREENPIPE_CONNECTOR_ID]: plain(
       getConnector(SCREENPIPE_CONNECTOR_ID, {
         path: layout.screenpipe,

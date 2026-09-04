@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { KizukiError as CoreKizukiError } from "@kizuki/core";
 import type { KizukiErrorCode } from "@kizuki/core";
 import type { Connector } from "@kizuki/core";
-import { KizukiError, runConformance } from "../src";
+import { KizukiError } from "../src";
+import { runConformance } from "../src/testkit";
 
 function secretRequiringConnector(): Connector {
   return {

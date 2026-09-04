@@ -1,4 +1,4 @@
-import { runBackfill } from "@kizuki/core";
+import { runToCompletion } from "@kizuki/core";
 import { UsageError, parseArguments, requirePositional } from "../args";
 import { loadConnector, resolveConnectorId, selectConnection } from "../connections";
 import { withVault } from "../context";
@@ -27,11 +27,12 @@ export const backfillCommand: Command = {
       // Same-process clock: a wall-clock step backwards is recovered by a
       // later derived rebuild. Index only rows accepted at or after this instant.
       const since = { accepted_at: new Date().toISOString(), event_id: "" };
-      const result = await runBackfill(
+      const result = await runToCompletion(
         ctx.db,
         connector,
         selected.connection.connector_id,
         selected.connection.source_key,
+        "backfill",
       );
       indexEventsSince(ctx.db, since);
       io.out(formatRunCounts(result));

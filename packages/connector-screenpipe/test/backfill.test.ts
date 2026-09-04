@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import path from "node:path";
-import { InMemoryLedger } from "../../connectors/src";
+import { InMemoryLedger } from "../../connectors/src/testkit";
 import {
   BATCH_LIMIT,
   ScreenpipeConnector,

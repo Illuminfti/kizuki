@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { runConformance } from "../../connectors/src";
+import { runConformance } from "../../connectors/src/testkit";
 import { ScreenpipeConnector } from "../src";
 import {
   cleanupFixtureDatabases,

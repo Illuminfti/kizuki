@@ -1,6 +1,11 @@
 import type { Database } from "bun:sqlite";
 import { isAbsolute, resolve } from "node:path";
-import type { Connector, Connection, SecretResolver } from "@kizuki/core";
+import type {
+  Connector,
+  Connection,
+  HealthState,
+  SecretResolver,
+} from "@kizuki/core";
 import { ConnectionStateStore, isPlainObject, listConnections } from "@kizuki/core";
 import { REGISTRY, getConnector } from "@kizuki/connectors";
 import { errorText } from "./output";
@@ -201,6 +206,11 @@ export function selectConnection(
 export const refuseSecrets: SecretResolver = async (ref) => {
   throw new ConnectionError(`no secret configured for ${ref}`);
 };
+
+/** A usable source may be degraded; only closed states block enrollment. */
+export function blocksEnrollment(state: HealthState): boolean {
+  return state !== "ok" && state !== "degraded";
+}
 
 export async function loadConnector(
   selected: HostConnection,
