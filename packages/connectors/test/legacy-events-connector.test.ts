@@ -262,10 +262,10 @@ describe("the run through a real ledger", () => {
       );
       expect(first.stored).toBe(9);
       expect(first.proposals_created).toBeGreaterThan(0);
-      const beforeIds = listClaims(db, { status: "skipped" })
-        .filter((claim) => claim.retracted_at === null)
-        .map((claim) => claim.claim_id);
-      expect(beforeIds.length).toBeGreaterThan(0);
+      const cited = listClaims(db, { status: "live" }).filter((claim) =>
+        claim.body.includes("It is on."),
+      );
+      expect(cited.length).toBeGreaterThan(0);
 
       appendFileSync(
         jsonlPath,
@@ -288,6 +288,11 @@ describe("the run through a real ledger", () => {
       );
       expect(second.stored).toBe(1);
       expect(second.withdrawn).toBeGreaterThan(0);
+      expect(
+        listClaims(db, { status: "live" }).filter((claim) =>
+          claim.body.includes("It is on."),
+        ),
+      ).toEqual([]);
     } finally {
       db.close();
     }
