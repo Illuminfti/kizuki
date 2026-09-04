@@ -21,11 +21,13 @@ MCP `correct`) is the update path a person actually uses.
 ## What this revision ships
 
 The public CLI, file ingest, FTS query, doctor, tell/undo/audit, serve
-loopback, and MCP stdio adapter. Capture never writes canon. Sign-in
-connectors are not enrollable through this CLI. After `import`, claims are
-filed (not live); `tell --claim` needs a live claim. 1.0 is still stranger
-proof plus estate cutover (C1, RFC 0002 §1.3). Neither proof is in this
-tree. There is no `scripts/stranger-proof.sh`.
+loopback, context packets, and MCP stdio adapter. Capture never writes
+canon. Sign-in connectors are not enrollable through this CLI. After
+`import`, claims are live and `tell --claim` can name them. Canon writing
+still requires a configured model; without one the sync rail leaves live
+claims unwritten and doctor says so. 1.0 is still stranger proof plus
+estate cutover (C1, RFC 0002 §1.3). Neither proof is in this tree. There
+is no `scripts/stranger-proof.sh`.
 
 ## What is stale
 

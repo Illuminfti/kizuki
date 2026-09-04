@@ -1,8 +1,9 @@
 import type { Database } from "bun:sqlite";
 import { pendingRetrievalOps } from "../claims/store";
+import { readDerivedMeta } from "../derived-meta";
 import { tableExists } from "../ledger/schema";
 import { inspectPurgeHealth } from "../ledger/purge";
-import { loadServeConfig } from "./config";
+import { loadConfiguredModelRef, loadServeConfig } from "./config";
 import { readServeIntent } from "./intent";
 import { listRunReceipts, orphanJournalReceipts } from "./receipts";
 import { listSchedules } from "./schema";
@@ -229,12 +230,24 @@ function storeDoctor(
     degraded.push("retrieval-ops-stale");
   }
   if (!purge.ok) degraded.push("purge-unhealthy");
+  const search = readDerivedMeta(db, "search");
+  const graph = readDerivedMeta(db, "graph");
   return {
     pending_retrieval_ops: pendingRetrieval.length,
     oldest_retrieval_op_age_s: oldestRetrievalAge,
     pending_purge_ops: pendingPurge,
     oldest_purge_op_age_s: ageSeconds(oldestPurge, now),
     orphan_run_receipts: orphanJournalReceipts(db, vaultPath),
+    derived: {
+      search: {
+        rebuilt_at: search?.rebuilt_at ?? null,
+        doc_count: search?.doc_count ?? 0,
+      },
+      graph: {
+        rebuilt_at: graph?.rebuilt_at ?? null,
+        doc_count: graph?.doc_count ?? 0,
+      },
+    },
     degraded,
   };
 }
@@ -277,7 +290,8 @@ export function inspectServeDoctor(
   const usedToday = receipts
     .filter((receipt) => receipt.finished_at.startsWith(now.slice(0, 10)))
     .reduce((sum, receipt) => sum + receipt.canon_writes, 0);
-  const model = modelDoctor(receipts, options.model_ref, config.canon_writes_per_day, usedToday);
+  const modelRef = options.model_ref ?? loadConfiguredModelRef(vaultPath);
+  const model = modelDoctor(receipts, modelRef, config.canon_writes_per_day, usedToday);
   const stores = storeDoctor(db, vaultPath, now);
   const cal = calibration(db, receipts, now);
   const failures: string[] = [];

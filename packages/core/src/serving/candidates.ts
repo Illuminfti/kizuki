@@ -1,3 +1,5 @@
+import { listLiveConflicts, listSubjectAliases } from "../claims/identity";
+import { listClaims } from "../claims/store";
 import { neighbors } from "../graph/graph";
 import { timeline } from "../query/timeline";
 import { search } from "../search/query";
@@ -35,11 +37,22 @@ const GRAPH_CHUNKS = 10;
  */
 function canonBlock(chunk: CanonChunk): string {
   const stamps = `s=${chunk.sensitivity} taint=${chunk.taint} auth=${chunk.authority ?? "none"}`;
-  return `### ${chunk.title} (${chunk.path}, ${stamps}) [page:${chunk.page_id}]\n${chunk.excerpt}\n`;
+  return (
+    `- [page:${chunk.page_id}] ${stamps} :: ${chunk.title}\n` +
+    `### ${chunk.title} (${chunk.path}, ${stamps}) [page:${chunk.page_id}]\n` +
+    `${chunk.excerpt}\n`
+  );
 }
 
 function quotedBlock(chunk: QuotedChunk): string {
-  return `> ${chunk.text} (ev:${chunk.event_id} ${chunk.connector_id} ${chunk.kind} ${chunk.occurred_at})\n`;
+  return (
+    `- [event:${chunk.event_id}] tainted src=${chunk.connector_id} ::\n` +
+    `> ${chunk.text} (ev:${chunk.event_id} ${chunk.connector_id} ${chunk.kind} ${chunk.occurred_at})\n`
+  );
+}
+
+function confidenceLabel(value: number): string {
+  return value.toFixed(2);
 }
 
 /** One renderable unit of a packet, with the chunk the envelope reports. */
@@ -185,6 +198,64 @@ export function collectPieces(
         block: quotedBlock(chunk),
         quoted: chunk,
       });
+    }
+  }
+
+  if (request.include.includes("claims")) {
+    const wanted = request.subjects;
+    const live = listClaims(ctx.db, {
+      status: "live",
+      keyed: true,
+      limit: CANDIDATE_LIMIT,
+    }).filter((claim) => {
+      if (wanted === undefined) return true;
+      return (
+        (claim.subject !== null && wanted.includes(claim.subject)) ||
+        claim.subjects.some((subject) => wanted.includes(subject))
+      );
+    });
+    for (const claim of live) {
+      const object = claim.object ?? "";
+      const line =
+        `- [claim:${claim.claim_id}] c=${confidenceLabel(claim.confidence)}` +
+        ` s=${claim.sensitivity} auth=${claim.authority} status=${claim.status}` +
+        ` :: ${claim.subject ?? "-"} ${claim.predicate ?? "-"} ${object}\n`;
+      pieces.push({
+        section: "claims",
+        heading: "## working knowledge",
+        block: line,
+      });
+    }
+    const conflicts = listLiveConflicts(ctx.db, {
+      ...(wanted?.[0] === undefined ? {} : { subject: wanted[0] }),
+      limit: 8,
+    });
+    for (const conflict of conflicts) {
+      pieces.push({
+        section: "claims",
+        heading: "## working knowledge",
+        block:
+          `- conflict key=${conflict.claim_key.slice(0, 12)} live=${conflict.claims.length}` +
+          ` :: ${conflict.claims.map((item) => item.claim_id).join(",")}\n`,
+      });
+    }
+    const aliasRoots = wanted ?? live.map((claim) => claim.subject).filter(
+      (subject): subject is string => subject !== null,
+    );
+    const seenAlias = new Set<string>();
+    for (const root of aliasRoots.slice(0, 8)) {
+      for (const alias of listSubjectAliases(ctx.db, root, 8)) {
+        const key = `${root}~${alias.subject}`;
+        if (seenAlias.has(key)) continue;
+        seenAlias.add(key);
+        pieces.push({
+          section: "claims",
+          heading: "## working knowledge",
+          block:
+            `- alias ${root} ~ ${alias.subject} score=${confidenceLabel(alias.score)}` +
+            ` status=${alias.status}\n`,
+        });
+      }
     }
   }
 

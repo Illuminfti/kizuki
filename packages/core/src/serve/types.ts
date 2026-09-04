@@ -188,6 +188,10 @@ export interface StoreDoctor {
   readonly pending_purge_ops: number;
   readonly oldest_purge_op_age_s: number | null;
   readonly orphan_run_receipts: string[];
+  readonly derived: {
+    readonly search: { rebuilt_at: string | null; doc_count: number };
+    readonly graph: { rebuilt_at: string | null; doc_count: number };
+  };
   readonly degraded: string[];
 }
 

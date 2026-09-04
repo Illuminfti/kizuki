@@ -168,14 +168,20 @@ function validateInput(input: ProposalInput): void {
 
 function compatStatusToClaim(status: StagingStatus): string {
   switch (status) {
+    case "pending":
+      // A filed claim is live. There is no review queue and no pending
+      // holding pen: the receipted writer acts on live rows (RFC 0002 §4.3).
+      return "live";
     case "promoted":
       return "live";
     case "rejected":
       return "superseded";
     case "withdrawn":
       return "skipped";
-    default:
-      return "skipped";
+    default: {
+      const _exhaustive: never = status;
+      return _exhaustive;
+    }
   }
 }
 

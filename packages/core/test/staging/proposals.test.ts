@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { getClaim } from "../../src/claims/store";
 import {
   StagingError,
   fileProposal,
@@ -22,6 +23,16 @@ describe("fileProposal", () => {
     expect(getProposal(db, result.proposal.proposal_id)).toEqual(
       result.proposal,
     );
+    expect(getClaim(db, result.proposal.proposal_id)?.status).toBe("live");
+  });
+
+  test("ingest leftovers become a live claim, not a skipped queue row", () => {
+    const db = memoryDb();
+    const result = fileProposal(db, proposalInput());
+    if (result.outcome !== "stored") throw new Error("expected stored");
+    const claim = getClaim(db, result.proposal.proposal_id);
+    expect(claim?.status).toBe("live");
+    expect(claim?.receipt_id).toBeNull();
   });
 
   test("refiling identical content is a duplicate, not a second row", () => {

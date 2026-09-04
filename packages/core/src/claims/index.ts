@@ -54,11 +54,30 @@ export {
 export type { PredicateCardinality, PredicateSpec } from "./predicates";
 export { CLAIMS_SCHEMA_VERSION, applyClaimsV3, initClaims } from "./schema";
 export {
+  IDENTITY_LINK_STATUSES,
+  IDENTITY_MERGE_MIN,
+  initIdentity,
+  listLiveConflicts,
+  listSubjectAliases,
+  upsertIdentityLink,
+} from "./identity";
+export type {
+  IdentityLink,
+  IdentityLinkStatus,
+  LiveConflict,
+  LiveConflictMember,
+  SubjectAlias,
+  UpsertIdentityLinkInput,
+} from "./identity";
+export {
   countClaims,
+  countUnwrittenLiveClaims,
+  countWrittenLiveClaims,
   getClaim,
   insertClaim,
   listClaims,
   listSupersessions,
+  listUnwrittenLiveClaims,
   markClaimReverted,
   markClaimsAfterPurge,
   markClaimsPurged,
@@ -66,6 +85,7 @@ export {
   reinstateClaim,
   resupersedeClaim,
   retryRetrievalOps,
+  reviveUncontestedSkipped,
   supersedeLiveGroup,
   supersessionsForReceipt,
 } from "./store";

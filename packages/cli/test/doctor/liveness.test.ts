@@ -82,7 +82,27 @@ describe("doctor liveness", () => {
     expect(result.stdout).toContain(
       "canon writing: off (no model configured — connectors, ledger, search, timeline and undo still work)",
     );
+    expect(result.stdout).toContain("claims live=");
+    expect(result.stdout).toContain("filed=");
+    expect(result.stdout).toContain("written=");
+    expect(result.stdout).toContain("unwritten=");
+    expect(result.stdout).toContain("derived search=");
     expect(result.exitCode).toBe(0);
+  });
+
+  test("doctor reports canon writing on from a configured model ref", () => {
+    const setup = tempVault();
+    const result = runCli(
+      {
+        ...setup.env,
+        KIZUKI_MODEL_REF: "kizuki.llm.openai-compatible:synthetic@local",
+      },
+      "doctor",
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "canon writing: on (kizuki.llm.openai-compatible:synthetic@local)",
+    );
   });
 
   test("serve --once writes a doctor-valid brief and does not fail doctor for that file", () => {

@@ -66,10 +66,14 @@ describe("kizuki CLI stranger loop", () => {
     expect(doctor.stdout).toContain("status=ok");
     expect(doctor.stdout).not.toContain("proposals pending=");
     expect(doctor.stdout).not.toContain("retraction-pending");
-    expect(doctor.stdout).toContain("filed ");
-    expect(doctor.stdout).toContain("tell --claim needs a live claim");
+    expect(doctor.stdout).toContain("claims live=");
+    expect(doctor.stdout).toContain("filed=");
+    expect(doctor.stdout).toContain("unwritten=");
+    expect(doctor.stdout).toContain("derived search=");
+    expect(doctor.stdout).toContain("next: kizuki tell");
+    expect(doctor.stdout).not.toContain("tell --claim needs a live claim");
     expect(doctor.stdout.split("\n").some((line) => line.startsWith("claim "))).toBe(
-      false,
+      true,
     );
 
     rmSync(join(setup.notes, "linus.md"));

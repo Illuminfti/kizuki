@@ -133,6 +133,8 @@ describe("serve doctor", () => {
     expect(report.model.canon_writing).toBe("off");
     expect(report.model.detail).toContain("no model configured");
     expect(report.model.detail).toContain("connectors, ledger, search, timeline and undo still work");
+    expect(report.stores.derived.search.rebuilt_at).toBeNull();
+    expect(report.stores.derived.graph.doc_count).toBe(0);
     db.close();
   });
 

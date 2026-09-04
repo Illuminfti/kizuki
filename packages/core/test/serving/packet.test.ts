@@ -237,6 +237,7 @@ describe("serveContextPacket", () => {
       canon: 0,
       graph: 0,
       timeline: 0,
+      claims: 0,
     });
     expect(listAudit(live.db, "owner", { limit: 1 })[0]?.tool).toBe(
       "context_packet",
@@ -363,5 +364,85 @@ describe("the packet is scoped by the grant, not by the request", () => {
       }
     }
     expect(drifted).toEqual([]);
+  });
+});
+
+describe("LifeOS-calibre packet compilation", () => {
+  test("purpose=correction compiles working knowledge with confidence stamps", async () => {
+    const live = newFixture();
+    await servePropose(live.agent("reader-private"), {
+      kind: "claim",
+      target: "facts:works-at",
+      body: "Ada works at Acme.",
+      subjects: ["person:ada"],
+      subject: "person:ada",
+      predicate: "employment.works_at",
+      object: "Acme",
+      provenance: [live.events["public"] as string],
+    });
+    const envelope = serveContextPacket(live.owner(), {
+      purpose: "correction",
+      subjects: ["person:ada"],
+      budget_tokens: 2_000,
+    });
+    expect(envelope.data?.purpose).toBe("correction");
+    expect(envelope.data?.delivery).toBe("full");
+    expect(envelope.data?.packet_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(envelope.data?.packet_md).toContain("## working knowledge");
+    expect(envelope.data?.packet_md).toContain("[claim:");
+    expect(envelope.data?.packet_md).toContain("c=");
+    expect(envelope.data?.packet_md).toContain("auth=");
+    expect((envelope.data?.sections.claims ?? 0) > 0).toBe(true);
+  });
+
+  test("a delta-capable client retains the prefix when the body is unchanged", () => {
+    const ctx = newFixture().owner();
+    const first = serveContextPacket(ctx, {
+      query: "kettle",
+      budget_tokens: 450,
+    });
+    const hash = first.data?.packet_hash ?? "";
+    const epoch = first.data?.claims_epoch ?? 0;
+    const again = serveContextPacket(ctx, {
+      query: "kettle",
+      budget_tokens: 450,
+      capabilities: ["delta"],
+      retain_prefix: true,
+      prior_hash: hash,
+      epoch,
+    });
+    expect(again.data?.delivery).toBe("unchanged");
+    expect(again.data?.packet_md).toContain("UNCHANGED");
+    expect(again.data?.tokens_estimate ?? 0).toBeLessThan(
+      first.data?.tokens_estimate ?? 0,
+    );
+    expect(again.data?.packet_hash).toBe(hash);
+  });
+
+  test("delta delivery is refused without the advertised capability", () => {
+    const ctx = newFixture().owner();
+    const first = serveContextPacket(ctx, { query: "kettle" });
+    const hash = first.data?.packet_hash;
+    const epoch = first.data?.claims_epoch;
+    const again = serveContextPacket(ctx, {
+      query: "kettle",
+      retain_prefix: true,
+      ...(hash === undefined ? {} : { prior_hash: hash }),
+      ...(epoch === undefined ? {} : { epoch }),
+    });
+    expect(again.data?.delivery).toBe("full");
+    expect(again.data?.packet_md).not.toContain("UNCHANGED");
+  });
+
+  test("quoted lines carry a tainted source label", () => {
+    const ctx = newFixture().owner();
+    const packet = serveContextPacket(ctx, {
+      include: ["timeline"],
+      since: "2026-02-28T00:00:00Z",
+      until: "2026-03-01T00:00:00Z",
+      budget_tokens: 2_000,
+    }).data?.packet_md ?? "";
+    expect(packet).toContain("tainted src=");
+    expect(packet).toContain("[event:");
   });
 });
