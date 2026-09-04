@@ -16,8 +16,6 @@ interface SchemaVersionRow {
   version: number;
 }
 
-export const LEDGER_SCHEMA_VERSION = 7;
-
 const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -157,6 +155,8 @@ const MIGRATIONS: readonly Migration[] = [
     apply: applyConnectionsV8,
   },
 ];
+
+export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
 
 function migrate(db: Database): void {
   db.exec(`
