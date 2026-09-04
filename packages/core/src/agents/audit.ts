@@ -395,10 +395,10 @@ export function recordLifecycle(
   const args = emptyObject();
   args["action"] = action;
   if (change.before !== undefined) {
-    args["before_sha256"] = sha256(JSON.stringify(change.before));
+    args["before"] = JSON.stringify(change.before);
   }
   if (change.after !== undefined) {
-    args["after_sha256"] = sha256(JSON.stringify(change.after));
+    args["after"] = JSON.stringify(change.after);
   }
   return insertAudit(db, agentId, action, args, [], [], stamped, null);
 }

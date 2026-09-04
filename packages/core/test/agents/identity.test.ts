@@ -23,6 +23,7 @@ import {
   toolAllowed,
 } from "../../src/agents";
 import type { Grant } from "../../src/agents";
+import { sha256 } from "../../src/agents/hash";
 import { agentsDb } from "./helpers";
 
 describe("initAgents", () => {
@@ -508,10 +509,14 @@ describe("lifecycle audit", () => {
       "agent.create",
     ]);
     const grantRow = listAudit(db, "reader-1").find((row) => row.tool === "agent.grant");
-    const shape = JSON.stringify(grantRow?.query_shape ?? {});
-    expect(shape).toContain("before_sha256");
-    expect(shape).toContain("after_sha256");
-    expect(shape).not.toContain("public");
+    const before = JSON.stringify(DEFAULT_GRANT);
+    const after = JSON.stringify({ ...DEFAULT_GRANT, ceiling: "public" });
+    expect(grantRow?.query_shape).toEqual({
+      action: { len: "agent.grant".length, sha256: sha256("agent.grant") },
+      before: { len: before.length, sha256: sha256(before) },
+      after: { len: after.length, sha256: sha256(after) },
+    });
+    expect(JSON.stringify(grantRow?.query_shape ?? {})).not.toContain("public");
     db.close();
   });
 });
