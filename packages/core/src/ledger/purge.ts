@@ -123,6 +123,8 @@ export interface PurgePhaseOptions {
   allow_empty?: boolean;
   /** When set, phase 1 records a purge_op for this store. `null` skips it. */
   retrieval_store?: string | null;
+  /** Test seam: runs after the pre-lock snapshot, before the write transaction. */
+  after_canon_snapshot?: () => void;
 }
 
 export interface PurgeRunOptions extends PurgePhaseOptions {
@@ -475,10 +477,14 @@ export function previewPurge(
   const normalized = normalizePurgeReason(reason);
   const includeAliases = options.include_aliases === true;
   const candidates = loadCandidates(db, filter, includeAliases);
-  const purgedIds = new Set(candidates.map((row) => row.event_id));
-  const snapshot = collectCanonSnapshot(vaultPath);
-  const matched = matchPages(snapshot, purgedIds);
   const connectors = [...new Set(candidates.map((row) => row.connector_id))].sort();
+  const matched =
+    candidates.length === 0
+      ? { affected: [] as CanonPage[], uncertain: [] as string[] }
+      : matchPages(
+          collectCanonSnapshot(vaultPath),
+          new Set(candidates.map((row) => row.event_id)),
+        );
   return {
     filter,
     reason: normalized,
@@ -733,6 +739,7 @@ export function purgeEvents(
     );
   }
   const snapshot = collectCanonSnapshot(vaultPath);
+  options.after_canon_snapshot?.();
   const retrievalStore = resolveRetrievalStore(vaultPath, options);
 
   const outcome = db.transaction((): PurgeOutcome => {
@@ -747,11 +754,7 @@ export function purgeEvents(
     }
 
     const purgedIds = new Set(candidates.map((row) => row.event_id));
-    const matched = matchPages(snapshot, purgedIds);
-    const holdPaths = new Set([
-      ...matched.affected.map((page) => page.relPath),
-      ...matched.uncertain,
-    ]);
+    const { matched, holdPaths } = holdPathsFor(snapshot, purgedIds);
     assertSnapshotStillHolds(vaultPath, snapshot, holdPaths);
 
     const purgedAt = nowIso(options.now);
@@ -776,16 +779,10 @@ export function purgeEvents(
         : recordedReason;
 
     for (const relPath of holdPaths) {
-      db.query(
-        `INSERT OR IGNORE INTO canon_holds
-           (page_path, proposal_id, reason, held_at)
-         VALUES (?, ?, ?, ?)`,
-      ).run(relPath, batchReceipt, holdReason, purgedAt);
+      insertHold(db, relPath, batchReceipt, holdReason, purgedAt);
       holds.push({ page_path: relPath, proposal_id: batchReceipt });
     }
-    holds.sort((left, right) =>
-      left.page_path < right.page_path ? -1 : left.page_path > right.page_path ? 1 : 0,
-    );
+    holds.sort(compareHoldPath);
 
     for (const candidate of candidates) {
       const receipt: PurgeReceipt = {
@@ -872,6 +869,7 @@ export function purgeEvents(
     db,
     outcome.receipts.map((receipt) => receipt.event_id),
   );
+  catchUpHolds(db, vaultPath, outcome);
   return outcome;
 }
 
@@ -940,6 +938,66 @@ function purgedCitations(db: Database, sources: readonly string[]): string[] {
 function liftHold(db: Database, pagePath: string): void {
   if (!tableExists(db, "canon_holds")) return;
   db.query("DELETE FROM canon_holds WHERE page_path = ?").run(pagePath);
+}
+
+function insertHold(
+  db: Database,
+  pagePath: string,
+  proposalId: string,
+  reason: string,
+  heldAt: string,
+): void {
+  db.query(
+    `INSERT OR IGNORE INTO canon_holds
+       (page_path, proposal_id, reason, held_at)
+     VALUES (?, ?, ?, ?)`,
+  ).run(pagePath, proposalId, reason, heldAt);
+}
+
+function holdPathsFor(
+  snapshot: readonly PageFingerprint[],
+  purgedIds: ReadonlySet<string>,
+): { matched: { affected: CanonPage[]; uncertain: string[] }; holdPaths: Set<string> } {
+  const matched = matchPages(snapshot, purgedIds);
+  return {
+    matched,
+    holdPaths: new Set([
+      ...matched.affected.map((page) => page.relPath),
+      ...matched.uncertain,
+    ]),
+  };
+}
+
+function compareHoldPath(
+  left: { page_path: string },
+  right: { page_path: string },
+): number {
+  return left.page_path < right.page_path ? -1 : left.page_path > right.page_path ? 1 : 0;
+}
+
+/** After the write lock drops, hold pages the pre-lock snapshot missed. */
+function catchUpHolds(
+  db: Database,
+  vaultPath: string,
+  outcome: PurgeOutcome,
+): void {
+  const eventIds = outcome.receipts.map((receipt) => receipt.event_id);
+  const batch = outcome.receipts[0];
+  if (eventIds.length === 0 || batch === undefined) return;
+  const { matched, holdPaths } = holdPathsFor(
+    collectCanonSnapshot(vaultPath),
+    new Set(eventIds),
+  );
+  const already = new Set(outcome.canon_holds.map((hold) => hold.page_path));
+  for (const relPath of holdPaths) {
+    insertHold(db, relPath, batch.receipt_id, batch.reason, batch.purged_at);
+    if (!already.has(relPath)) {
+      outcome.canon_holds.push({ page_path: relPath, proposal_id: batch.receipt_id });
+      already.add(relPath);
+    }
+  }
+  outcome.canon_holds.sort(compareHoldPath);
+  outcome.uncertain_pages = [...new Set([...outcome.uncertain_pages, ...matched.uncertain])].sort();
 }
 
 function rewriteHolds(

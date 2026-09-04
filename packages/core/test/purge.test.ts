@@ -445,6 +445,49 @@ describe("purgeEvents", () => {
     db.close();
   });
 
+  test("holds and rewrites a page created after the pre-lock snapshot", async () => {
+    const db = openLedger(":memory:");
+    const target = storedEvent(db, event("target"));
+    const vaultPath = temporaryVault();
+    const outcome = await runPurge(
+      db,
+      vaultPath,
+      { event_id: target.event_id },
+      "record request",
+      {
+        after_canon_snapshot: () => {
+          writeFileSync(
+            join(vaultPath, "facts", "late.md"),
+            serializePage({
+              data: {
+                id: "page-late",
+                title: "late",
+                type: "fact",
+                status: "active",
+                sensitivity: "personal",
+                taint: "clean",
+                sources: [target.event_id],
+              },
+              body: "appeared during purge\n",
+            }),
+            "utf8",
+          );
+        },
+      },
+    );
+    expect(outcome.canon_holds.map(({ page_path }) => page_path)).toEqual([
+      "facts/late.md",
+    ]);
+    expect(outcome.rewritten.map(({ page_path }) => page_path)).toEqual([
+      "facts/late.md",
+    ]);
+    expect(isHeld(db, "facts/late.md")).toBe(false);
+    expect(readFileSync(join(vaultPath, "facts", "late.md"), "utf8")).not.toContain(
+      target.event_id,
+    );
+    db.close();
+  });
+
   test("lifts a leftover hold once the page is readable and cites nothing purged", async () => {
     const db = openLedger(":memory:");
     const first = storedEvent(db, event("first"));
@@ -581,6 +624,24 @@ describe("purgeEvents", () => {
       "connector removed",
     ).receipts;
     expect(receipts.map(({ connector_id }) => connector_id)).toEqual(["retired.mail"]);
+    expect(count(db)).toBe(1);
+    db.close();
+  });
+
+  test("a no-match preview does not list unrelated uncertain pages", () => {
+    const db = openLedger(":memory:");
+    storedEvent(db, event("keep", { connector_id: "calendar" }));
+    const vaultPath = temporaryVault();
+    writeFileSync(join(vaultPath, "facts", "orphan.md"), "no frontmatter\n");
+    const preview = previewPurge(
+      db,
+      vaultPath,
+      { connector_id: "mail" },
+      "no match",
+    );
+    expect(preview.event_count).toBe(0);
+    expect(preview.affected_pages).toEqual([]);
+    expect(preview.uncertain_pages).toEqual([]);
     expect(count(db)).toBe(1);
     db.close();
   });

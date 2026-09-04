@@ -198,11 +198,37 @@ describe("RFC 0002 §16.4 purge and undo", () => {
     expect(preview.exitCode).toBe(0);
     const body = JSON.parse(preview.stdout) as {
       status: string;
-      data: { event_count: number; dry_run: boolean };
+      data: { event_count: number; dry_run: boolean; uncertain_pages: string[] };
     };
     expect(body.status).toBe("ok");
     expect(body.data.event_count).toBe(0);
     expect(body.data.dry_run).toBe(true);
+    expect(body.data.uncertain_pages).toEqual([]);
+  });
+
+  test("dry-run no-match does not list leftover unreadable pages as uncertain", () => {
+    const setup = tempVault();
+    mkdirSync(join(setup.vault, "facts"), { recursive: true });
+    writeFileSync(join(setup.vault, "facts", "orphan.md"), "no frontmatter\n");
+    const preview = runCli(
+      setup.env,
+      "purge",
+      "--event",
+      "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "--reason",
+      "no such event",
+      "--dry-run",
+      "--allow-empty",
+      "--json",
+    );
+    expect(preview.exitCode).toBe(0);
+    const body = JSON.parse(preview.stdout) as {
+      status: string;
+      data: { event_count: number; uncertain_pages: string[] };
+    };
+    expect(body.status).toBe("ok");
+    expect(body.data.event_count).toBe(0);
+    expect(body.data.uncertain_pages).toEqual([]);
   });
 
   test("no-match purge exits nonzero and writes no receipt", () => {
