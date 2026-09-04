@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { AuditDenial, Grant } from "../agents";
+import { bareRetrievalId } from "../retrieval/ids";
 import { search } from "../search/query";
 import type { SearchHit, SearchOptions } from "../search/query";
 import {
@@ -64,7 +65,7 @@ function classify(
   const result: Classification = { canon: [], quoted: [], withheld: [] };
   const live = liveEventIds(
     db,
-    hits.filter((hit) => hit.scope === "ledger").map((hit) => hit.doc_id),
+    hits.filter((hit) => hit.scope === "ledger").map((hit) => bareRetrievalId(hit.doc_id)),
   );
 
   for (const hit of hits) {
@@ -72,7 +73,7 @@ function classify(
     seen.add(hit.doc_id);
 
     if (hit.scope === "canon") {
-      const page = index.byId.get(hit.doc_id);
+      const page = index.byId.get(bareRetrievalId(hit.doc_id));
       // A stale index row is not a denial: the page is simply gone.
       if (page === undefined || !eligible(page)) continue;
       const decision = pageDecision(index, grant, page);
@@ -88,7 +89,7 @@ function classify(
       continue;
     }
 
-    if (!live.has(hit.doc_id)) continue;
+    if (!live.has(bareRetrievalId(hit.doc_id))) continue;
     const source = ledgerHitSource(hit);
     const decision = eventDecision(grant, source);
     if (!decision.allow) {

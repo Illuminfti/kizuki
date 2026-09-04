@@ -109,6 +109,68 @@ describe("graph rebuild", () => {
     ]);
   });
 
+  test("resolves a unique wikilink title to the page id", () => {
+    const db = new Database(":memory:");
+    const path = vault();
+    writeCanon(path, "target", "fact:target", "Destination.", { title: "Target" });
+    writeCanon(path, "origin", "fact:origin", "See [[Target]] and [[Missing]].");
+
+    rebuildGraph(db, path);
+
+    expect(edgeRows(db)).toEqual([
+      { src: "fact:origin", dst: "Missing", kind: "wikilink" },
+      { src: "fact:origin", dst: "fact:target", kind: "wikilink" },
+    ]);
+  });
+
+  test("stores sensitivity and provenance on every edge", () => {
+    const db = new Database(":memory:");
+    const path = vault();
+    writeCanon(path, "origin", "fact:origin", "See [[Target]].", {
+      sensitivity: "private",
+      taint: "quoted",
+      sources: ["event:one"],
+    });
+    rebuildGraph(db, path);
+    expect(
+      db
+        .query<
+          { sensitivity: string; taint: string; provenance: string },
+          []
+        >(
+          "SELECT sensitivity, taint, provenance FROM graph_edges",
+        )
+        .get(),
+    ).toEqual({
+      sensitivity: "private",
+      taint: "quoted",
+      provenance: '["event:one"]',
+    });
+  });
+
+  test("rebuild omits archived pages", () => {
+    const db = new Database(":memory:");
+    const path = vault();
+    writeCanon(path, "live", "fact:live", "See [[Target]].");
+    writeCanon(path, "old", "fact:old", "See [[Target]].", { status: "archived" });
+    expect(rebuildGraph(db, path).pages).toBe(1);
+    expect(edgeRows(db).map(({ src }) => src)).toEqual(["fact:live"]);
+  });
+
+  test("hides private edges below a public ceiling", () => {
+    const db = new Database(":memory:");
+    initGraph(db);
+    db.exec(`
+      INSERT INTO graph_edges (src, dst, kind, sensitivity, taint, authority, provenance)
+      VALUES ('hub', 'secret', 'subject', 'private', 'clean', 'owner_authored', '[]');
+      INSERT INTO graph_edges (src, dst, kind, sensitivity, taint, authority, provenance)
+      VALUES ('hub', 'open', 'subject', 'public', 'clean', 'owner_authored', '[]');
+    `);
+    expect(neighbors(db, "hub", { ceiling: "public" }).edges.map(({ dst }) => dst)).toEqual([
+      "open",
+    ]);
+  });
+
   test("adds subject and source edges from frontmatter", () => {
     const db = new Database(":memory:");
     const path = vault();
@@ -151,10 +213,14 @@ describe("neighbors", () => {
     const db = new Database(":memory:");
     initGraph(db);
     db.exec(`
-      INSERT INTO graph_edges VALUES ('a', 'b', 'wikilink');
-      INSERT INTO graph_edges VALUES ('c', 'a', 'subject');
-      INSERT INTO graph_edges VALUES ('b', 'd', 'source');
-      INSERT INTO graph_edges VALUES ('d', 'e', 'wikilink');
+      INSERT INTO graph_edges (src, dst, kind, sensitivity, taint, authority, provenance)
+      VALUES ('a', 'b', 'wikilink', 'public', 'clean', 'owner_authored', '[]');
+      INSERT INTO graph_edges (src, dst, kind, sensitivity, taint, authority, provenance)
+      VALUES ('c', 'a', 'subject', 'public', 'clean', 'owner_authored', '[]');
+      INSERT INTO graph_edges (src, dst, kind, sensitivity, taint, authority, provenance)
+      VALUES ('b', 'd', 'source', 'public', 'clean', 'owner_authored', '[]');
+      INSERT INTO graph_edges (src, dst, kind, sensitivity, taint, authority, provenance)
+      VALUES ('d', 'e', 'wikilink', 'public', 'clean', 'owner_authored', '[]');
     `);
     return db;
   }
@@ -202,8 +268,10 @@ describe("neighbors", () => {
     const db = new Database(":memory:");
     initGraph(db);
     db.exec(`
-      INSERT INTO graph_edges VALUES ('a', 'b', 'wikilink');
-      INSERT INTO graph_edges VALUES ('x', 'y', 'wikilink');
+      INSERT INTO graph_edges (src, dst, kind, sensitivity, taint, authority, provenance)
+      VALUES ('a', 'b', 'wikilink', 'public', 'clean', 'owner_authored', '[]');
+      INSERT INTO graph_edges (src, dst, kind, sensitivity, taint, authority, provenance)
+      VALUES ('x', 'y', 'wikilink', 'public', 'clean', 'owner_authored', '[]');
     `);
     const select = db.query.bind(db);
     let scanned = 0;
@@ -224,7 +292,8 @@ describe("neighbors", () => {
     const db = new Database(":memory:");
     initGraph(db);
     const insert = db.query<never, [string, string, string]>(
-      "INSERT INTO graph_edges (src, dst, kind) VALUES (?, ?, ?)",
+      `INSERT INTO graph_edges (src, dst, kind, sensitivity, taint, authority, provenance)
+       VALUES (?, ?, ?, 'public', 'clean', 'owner_authored', '[]')`,
     );
     insert.run("hub", "Z-node", "subject");
     insert.run("hub", "a-node", "subject");
@@ -239,12 +308,18 @@ describe("neighbors", () => {
     expect(() => neighbors(db, "hub", { limit: -1 })).toThrow(RangeError);
   });
 
+  test("rejects a limit above MAX_RETRIEVAL_LIMIT", () => {
+    expect(() => neighbors(linkedDb(), "a", { limit: 101 })).toThrow(RangeError);
+  });
+
   test("orders edges by code point, not locale", () => {
     const db = new Database(":memory:");
     initGraph(db);
     db.exec(`
-      INSERT INTO graph_edges VALUES ('hub', 'a-node', 'subject');
-      INSERT INTO graph_edges VALUES ('hub', 'Z-node', 'subject');
+      INSERT INTO graph_edges (src, dst, kind, sensitivity, taint, authority, provenance)
+      VALUES ('hub', 'a-node', 'subject', 'public', 'clean', 'owner_authored', '[]');
+      INSERT INTO graph_edges (src, dst, kind, sensitivity, taint, authority, provenance)
+      VALUES ('hub', 'Z-node', 'subject', 'public', 'clean', 'owner_authored', '[]');
     `);
     expect(neighbors(db, "hub").edges.map(({ dst }) => dst)).toEqual([
       "Z-node",

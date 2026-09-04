@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { runRetrievalConformance } from "../../src/contracts/conformance/retrieval";
 import type { RetrievalConformanceHarness } from "../../src/contracts/conformance/retrieval";
 import { PortError } from "../../src/contracts/ports";
+import { validateRetrievalDoc } from "../../src/contracts/retrieval";
 import type { PortContext } from "../../src/contracts/ports";
 import { listPorts } from "../../src/contracts/registry";
 import type { RetrievalDoc, RetrievalPort } from "../../src/contracts/retrieval";
@@ -242,5 +244,37 @@ describe("kizuki.retrieval.fts5", () => {
       "claim:grace-email",
       "page:grace",
     ]);
+  });
+
+  test("rejects a bare document id", () => {
+    expect(() =>
+      validateRetrievalDoc({
+        ...SYNTHETIC_DOCS[0],
+        doc_id: "grace",
+      }),
+    ).toThrow(PortError);
+  });
+
+  test("upsert replaces by primary key instead of duplicating", async () => {
+    const { port, ctx } = openPort();
+    await port.upsert([SYNTHETIC_DOCS[0]!]);
+    await port.upsert([
+      { ...SYNTHETIC_DOCS[0]!, title: "Grace revised", text: "Grace runs partnerships at Acme." },
+    ]);
+    const db = new Database(join(ctx.data_dir, FTS5_RETRIEVAL_STORE_REL));
+    expect(
+      db
+        .query<{ count: number }, []>(
+          "SELECT count(*) AS count FROM search_documents WHERE doc_id = 'page:grace'",
+        )
+        .get()?.count,
+    ).toBe(1);
+    db.close();
+    const result = await port.search({
+      ...SYNTHETIC_QUERY,
+      text: "revised",
+      scope: {},
+    });
+    expect(result.hits.map(({ doc_id }) => doc_id)).toEqual(["page:grace"]);
   });
 });

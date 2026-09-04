@@ -5,6 +5,7 @@ import { listLiveConflicts, listSubjectAliases } from "../claims/identity";
 import { listClaims } from "../claims/store";
 import { neighbors } from "../graph/graph";
 import { timeline } from "../query/timeline";
+import { bareRetrievalId } from "../retrieval/ids";
 import { search } from "../search/query";
 import type { SearchOptions } from "../search/query";
 import { stringArray } from "../vault/pages";
@@ -158,7 +159,7 @@ export function collectPieces(
         ...(request.types === undefined ? {} : { types: request.types }),
       };
       for (const hit of search(ctx.db, request.query, opts)) {
-        const page = index.byId.get(hit.doc_id);
+        const page = index.byId.get(bareRetrievalId(hit.doc_id));
         if (page !== undefined) candidates.push(page);
       }
     }

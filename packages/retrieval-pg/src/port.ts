@@ -281,7 +281,12 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
   ): Promise<GraphResult> {
     this.assertOpen();
     requireRetrievalCapability(this.descriptor, "graph");
-    if (options.hops < 1 || options.limit < 1) {
+    if (
+      options.hops < 1 ||
+      options.hops > 8 ||
+      options.limit < 1 ||
+      options.limit > MAX_RETRIEVAL_LIMIT
+    ) {
       throw new PortError("config_invalid", "graph query is invalid", false);
     }
     const start = this.store.graph.entities[entity.entity_id];

@@ -11,7 +11,7 @@ import type { Envelope, ServeContext } from "./types";
 
 const GRAPH_EDGE_KINDS = ["wikilink", "subject", "source"] as const;
 
-const MAX_EDGES = 500;
+const MAX_EDGES = 100;
 
 export interface GraphArgs {
   id: string;
@@ -95,6 +95,7 @@ export function serveGraph(
 
       const found = neighbors(ctx.db, id, {
         depth,
+        limit: MAX_EDGES,
         ...(kinds === undefined ? {} : { kinds }),
       });
       const facts = readServableEvents(

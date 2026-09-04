@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Sensitivity } from "../agents/types";
 import type { RetrievalDoc, RetrievalPort, RetrievalQuery } from "../contracts/retrieval";
+import { bareRetrievalId, retrievalDocId } from "../retrieval/ids";
 import type {
   AuthorityTier,
   CanonicalProducer,
@@ -467,7 +468,7 @@ async function nominateSemantic(
   for (const hit of result.hits) {
     if (hit.kind !== "claim") continue;
     if (hit.score < CLAIM_DEDUP_MIN) continue;
-    const candidate = getClaim(io.db, hit.doc_id);
+    const candidate = getClaim(io.db, bareRetrievalId(hit.doc_id));
     if (candidate === null) continue;
     const pair = scoreClaimPair(incoming.body, candidate.body, space);
     if (pair < CLAIM_DEDUP_MIN) continue;
@@ -478,7 +479,7 @@ async function nominateSemantic(
 
 function retrievalDoc(claim: Claim): RetrievalDoc {
   return {
-    doc_id: claim.claim_id,
+    doc_id: retrievalDocId("claim", claim.claim_id),
     kind: "claim",
     title: claim.predicate ?? claim.kind,
     text: claim.body,

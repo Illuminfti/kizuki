@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { rebuildDerived } from "../src/derived";
-import { readDerivedMeta } from "../src/derived-meta";
+import { readDerivedMeta, stampDerived } from "../src/derived-meta";
 import { openLedger } from "../src/ledger/db";
 import { serializePage } from "../src/vault/frontmatter";
 import { searchDb, storedEvent, tempVault } from "./search/helpers";
@@ -61,6 +61,10 @@ describe("rebuildDerived", () => {
     rebuildDerived(db, vaultPath);
     expect(readDerivedMeta(db, "search")?.doc_count).toBe(2);
     expect(readDerivedMeta(db, "graph")?.doc_count).toBe(3);
+    expect(readDerivedMeta(db, "search")?.generation).toBe(
+      readDerivedMeta(db, "graph")?.generation,
+    );
+    expect(readDerivedMeta(db, "search")?.status).toBe("ok");
   });
 
   test("rebuilds search and graph in one call", () => {
@@ -79,6 +83,7 @@ describe("rebuildDerived", () => {
 
     db.exec(`
       DROP TABLE search_docs;
+      DROP TABLE search_documents;
       DROP TABLE graph_edges;
       DROP TABLE derived_meta;
     `);
@@ -122,5 +127,35 @@ describe("rebuildDerived", () => {
     expect(result.graph.skipped.map(({ relPath }) => relPath)).toEqual([
       "facts/orphan.md",
     ]);
+    expect(result.search.status).toBe("degraded");
+    expect(result.graph.status).toBe("degraded");
+    expect(result.generation).toBe(result.search.generation);
+    expect(result.generation).toBe(result.graph.generation);
+  });
+
+  test("rejects a forged derived stamp", () => {
+    const { db } = fixture();
+    expect(() =>
+      stampDerived(db, {
+        layer: "search",
+        generation: "g",
+        rebuilt_at: "2026-09-02T12:00:00.000Z",
+        doc_count: -1,
+        source_count: 0,
+        skipped_count: 0,
+        status: "ok",
+      }),
+    ).toThrow(RangeError);
+    expect(() =>
+      stampDerived(db, {
+        layer: "search",
+        generation: "g",
+        rebuilt_at: "2099-01-01T00:00:00.000Z",
+        doc_count: 0,
+        source_count: 0,
+        skipped_count: 0,
+        status: "ok",
+      }),
+    ).toThrow(RangeError);
   });
 });

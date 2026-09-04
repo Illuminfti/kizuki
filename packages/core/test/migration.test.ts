@@ -309,7 +309,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(9);
+      expect(schemaVersion(upgraded)).toBe(10);
       const tables = upgraded
         .query<{ name: string }, []>(
           "SELECT name FROM sqlite_master WHERE type = 'table'",
@@ -442,7 +442,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(9);
+      expect(schemaVersion(upgraded)).toBe(10);
       const receipts = upgraded
         .query<
           {
@@ -568,8 +568,8 @@ describe("openLedger migrations", () => {
       legacy.close();
       const upgraded = openLedger(path);
       expect(columns(upgraded, "canon_receipts")).toEqual(freshColumns);
-      expect(schemaVersion(fresh)).toBe(9);
-      expect(schemaVersion(upgraded)).toBe(9);
+      expect(schemaVersion(fresh)).toBe(10);
+      expect(schemaVersion(upgraded)).toBe(10);
       expect(columns(fresh, "connector_sensitivity")).toEqual([
         "at",
         "connector_id",
@@ -607,7 +607,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(9);
+      expect(schemaVersion(upgraded)).toBe(10);
       expect(
         upgraded
           .query<{ name: string }, []>(
@@ -695,7 +695,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(9);
+      expect(schemaVersion(upgraded)).toBe(10);
       const grant = upgraded
         .query<
           { relay_owner_corrections: number; grant_epoch: number },
@@ -725,7 +725,7 @@ describe("openLedger migrations", () => {
       leftover.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(9);
+      expect(schemaVersion(upgraded)).toBe(10);
       const tables = upgraded
         .query<{ name: string }, []>(
           "SELECT name FROM sqlite_master WHERE type = 'table'",
@@ -740,6 +740,74 @@ describe("openLedger migrations", () => {
           "agent_audit",
         ]),
       );
+      upgraded.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("v7 databases rebuild derived_meta and graph identity at schema v10", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-ledger-v7-"));
+    const path = join(directory, "ledger.sqlite");
+    try {
+      const legacy = new Database(path);
+      legacy.exec(V2_SCHEMA);
+      applyClaimsV3(legacy);
+      applyCanonV4(legacy);
+      legacy.exec(`
+        CREATE TABLE derived_meta (
+          layer TEXT PRIMARY KEY,
+          rebuilt_at TEXT NOT NULL,
+          doc_count INTEGER NOT NULL
+        ) STRICT;
+        INSERT INTO derived_meta VALUES ('search', '2026-01-01T00:00:00Z', 1);
+        CREATE TABLE graph_edges (
+          src TEXT NOT NULL,
+          dst TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          PRIMARY KEY (src, dst, kind)
+        ) STRICT;
+        INSERT INTO graph_edges VALUES ('fact:one', 'fact:two', 'wikilink');
+        CREATE VIRTUAL TABLE search_docs USING fts5(page_id, body);
+        INSERT INTO search_docs (page_id, body) VALUES ('fact:one', 'stale');
+        UPDATE schema_version SET version = 7;
+      `);
+      legacy.close();
+
+      const upgraded = openLedger(path);
+      expect(schemaVersion(upgraded)).toBe(10);
+      expect(
+        upgraded
+          .query<{ name: string }, [string]>("SELECT name FROM pragma_table_info(?)")
+          .all("derived_meta")
+          .map(({ name }) => name)
+          .sort(),
+      ).toEqual([
+        "canon_hash",
+        "contract",
+        "doc_count",
+        "generation",
+        "layer",
+        "ledger_watermark",
+        "port_id",
+        "rebuilt_at",
+        "skipped_count",
+        "source_count",
+        "space",
+        "status",
+      ]);
+      expect(
+        upgraded
+          .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM derived_meta")
+          .get()?.n,
+      ).toBe(0);
+      expect(
+        upgraded
+          .query<{ name: string }, []>(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('graph_edges', 'search_docs', 'search_documents')",
+          )
+          .all(),
+      ).toEqual([]);
       upgraded.close();
     } finally {
       rmSync(directory, { recursive: true, force: true });

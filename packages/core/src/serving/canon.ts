@@ -4,7 +4,7 @@ import type { AuthorityTier } from "../contracts/proposal";
 import { isAuthorityTier } from "../contracts/proposal";
 import { readHolds } from "../ledger/purge";
 import { tableExists } from "../ledger/schema";
-import { listCanonPagesReport, stringArray } from "../vault/pages";
+import { isLiveCanonPage, listCanonPagesReport, stringArray } from "../vault/pages";
 import type { CanonPage, SkippedPage } from "../vault/pages";
 import { PAGE_TAINTS } from "../vault/schema";
 import type { PageTaint } from "../vault/schema";
@@ -107,7 +107,7 @@ export function loadCanon(ctx: ServeContext): CanonIndex {
 
 /** A retracted page is absent, not a policy denial: `draft` and `archived` never count. */
 export function eligible(page: CanonPage): boolean {
-  return page.data["status"] === "active";
+  return isLiveCanonPage(page);
 }
 
 export function pageServable(index: CanonIndex, page: CanonPage): Servable {

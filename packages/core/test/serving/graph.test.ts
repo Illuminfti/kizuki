@@ -40,7 +40,7 @@ describe("serveGraph", () => {
       id: "fact:linked",
       kinds: ["wikilink"],
     });
-    expect(targets(owner)).toEqual(["Grace", "Nowhere"]);
+    expect(targets(owner)).toEqual(["Nowhere", "person:grace"]);
     expect(owner.denied).toEqual([]);
 
     const limited = serveGraph(fixture.agent("reader-public"), {
@@ -109,7 +109,7 @@ describe("serveGraph", () => {
     });
     expect(envelope.data?.edges).toContainEqual({
       src: "fact:linked",
-      dst: "Grace",
+      dst: "person:grace",
       kind: "wikilink",
     });
   });
@@ -164,7 +164,7 @@ describe("serveGraph", () => {
       id: "fact:many",
       kinds: ["wikilink"],
     });
-    expect(envelope.data?.edges).toHaveLength(500);
+    expect(envelope.data?.edges).toHaveLength(100);
     expect(envelope.data?.truncated).toBe(true);
   });
 });

@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { authorize } from "../agents";
 import type { DenyReason, Grant, Sensitivity, Servable } from "../agents";
 import type { TimelineEntry } from "../query/timeline";
+import { bareRetrievalId } from "../retrieval/ids";
 import type { SearchHit } from "../search/query";
 import { placeholders } from "../util/sql";
 import { asSensitivity } from "./canon";
@@ -155,7 +156,7 @@ export function timelineSource(entry: TimelineEntry): QuotedSource {
 
 export function ledgerHitSource(hit: SearchHit): QuotedSource {
   return {
-    event_id: hit.doc_id,
+    event_id: bareRetrievalId(hit.doc_id),
     connector_id: hit.connector_id,
     kind: hit.page_type,
     occurred_at: hit.occurred_at,

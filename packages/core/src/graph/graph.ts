@@ -1,9 +1,23 @@
 import type { Database } from "bun:sqlite";
+import { SENSITIVITY_ORDER } from "../agents/types";
+import type { Sensitivity } from "../agents/types";
+import { MAX_RETRIEVAL_LIMIT } from "../contracts/retrieval";
+import type { RetrievalAuthority } from "../contracts/retrieval";
 import { stampDerived } from "../derived-meta";
+import type { DerivedStamp } from "../derived-meta";
+import { latestLedgerCursor } from "../ledger/ledger";
+import { ulid } from "../util/ulid";
 import { compareText } from "../util/order";
 import { placeholders } from "../util/sql";
-import { listCanonPagesReport, stringArray } from "../vault/pages";
-import type { SkippedPage } from "../vault/pages";
+import {
+  canonPagesHash,
+  isLiveCanonPage,
+  listCanonPagesReport,
+  stringArray,
+} from "../vault/pages";
+import type { CanonPage, SkippedPage } from "../vault/pages";
+import { linkIndexFromPages, resolveWikilink } from "./resolve";
+import type { LinkIndex } from "./resolve";
 import { initGraph } from "./schema";
 
 export type GraphEdgeKind = "wikilink" | "subject" | "source";
@@ -14,17 +28,28 @@ export interface GraphEdge {
   kind: GraphEdgeKind;
 }
 
+export interface GraphRebuildInput {
+  generation: string;
+  pages: readonly CanonPage[];
+  skipped: readonly SkippedPage[];
+  rebuilt_at: string;
+  canon_hash: string | null;
+}
+
 export interface GraphRebuildResult {
   pages: number;
   edges: number;
   skipped: SkippedPage[];
   rebuilt_at: string;
+  generation: string;
+  status: "ok" | "degraded";
 }
 
 export interface NeighborOptions {
   depth?: 1 | 2;
   kinds?: GraphEdgeKind[];
   limit?: number;
+  ceiling?: Sensitivity;
 }
 
 export interface NeighborResult {
@@ -33,7 +58,16 @@ export interface NeighborResult {
   truncated: boolean;
 }
 
-const DEFAULT_NEIGHBOR_LIMIT = 1000;
+interface StoredEdge {
+  src: string;
+  dst: string;
+  kind: GraphEdgeKind;
+  sensitivity: string;
+  taint: "clean" | "quoted";
+  authority: RetrievalAuthority;
+  provenance: string;
+}
+
 const FRONTIER_CHUNK = 500;
 
 function withoutCodeSpans(body: string): string {
@@ -111,42 +145,158 @@ function wikilinks(body: string): string[] {
   return targets;
 }
 
+function pageSensitivity(page: CanonPage): string {
+  const value = page.data["sensitivity"];
+  return value === "public" || value === "personal" || value === "private"
+    ? value
+    : "unlabeled";
+}
+
+function pageTaint(page: CanonPage): "clean" | "quoted" {
+  return page.data["taint"] === "quoted" ? "quoted" : "clean";
+}
+
+function pageEdges(page: CanonPage, index: LinkIndex): StoredEdge[] {
+  const provenance = JSON.stringify(stringArray(page.data["sources"]));
+  const sensitivity = pageSensitivity(page);
+  const taint = pageTaint(page);
+  const edges: StoredEdge[] = [];
+  const seen = new Set<string>();
+  const push = (dst: string, kind: GraphEdgeKind) => {
+    const key = `${dst}\u0000${kind}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    edges.push({
+      src: page.id,
+      dst,
+      kind,
+      sensitivity,
+      taint,
+      authority: "owner_authored",
+      provenance,
+    });
+  };
+  for (const target of wikilinks(page.body)) {
+    push(resolveWikilink(index, target) ?? target, "wikilink");
+  }
+  for (const subject of stringArray(page.data["subjects"])) {
+    push(subject, "subject");
+  }
+  for (const source of stringArray(page.data["sources"])) {
+    push(source, "source");
+  }
+  return edges;
+}
+
+function insertEdge(db: Database, edge: StoredEdge): void {
+  db.query<
+    never,
+    [string, string, GraphEdgeKind, string, string, string, string]
+  >(
+    `INSERT OR IGNORE INTO graph_edges
+       (src, dst, kind, sensitivity, taint, authority, provenance)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    edge.src,
+    edge.dst,
+    edge.kind,
+    edge.sensitivity,
+    edge.taint,
+    edge.authority,
+    edge.provenance,
+  );
+}
+
+export function removePageEdges(db: Database, pageId: string): void {
+  db.query<never, [string]>("DELETE FROM graph_edges WHERE src = ?").run(pageId);
+}
+
+export function replacePageEdges(
+  db: Database,
+  page: CanonPage,
+  index: LinkIndex,
+): void {
+  removePageEdges(db, page.id);
+  if (!isLiveCanonPage(page)) return;
+  for (const edge of pageEdges(page, index)) insertEdge(db, edge);
+}
+
+function stampGraph(
+  db: Database,
+  input: GraphRebuildInput,
+  pages: number,
+  edges: number,
+): DerivedStamp {
+  const watermark = latestLedgerCursor(db);
+  return {
+    layer: "graph",
+    generation: input.generation,
+    rebuilt_at: input.rebuilt_at,
+    doc_count: edges,
+    source_count: pages,
+    skipped_count: input.skipped.length,
+    status: input.skipped.length > 0 ? "degraded" : "ok",
+    ledger_watermark:
+      watermark === null
+        ? null
+        : `${watermark.accepted_at}\t${watermark.event_id}`,
+    canon_hash: input.canon_hash,
+    port_id: "kizuki.retrieval.fts5",
+    contract: "kizuki.retrieval/v1",
+    space: null,
+  };
+}
+
+function snapshotGraphInput(vaultPath: string): GraphRebuildInput {
+  const report = listCanonPagesReport(vaultPath);
+  const live = report.pages.filter(isLiveCanonPage);
+  return {
+    generation: ulid(),
+    pages: live,
+    skipped: report.skipped,
+    rebuilt_at: new Date().toISOString(),
+    canon_hash: canonPagesHash(live),
+  };
+}
+
+/** Rebuild the graph layer. Caller owns the transaction. */
+export function rebuildGraphLayer(
+  db: Database,
+  input: GraphRebuildInput,
+): GraphRebuildResult {
+  const live = input.pages.filter(isLiveCanonPage);
+  const index = linkIndexFromPages(live);
+  db.exec("DELETE FROM graph_edges");
+  for (const page of live) {
+    for (const edge of pageEdges(page, index)) insertEdge(db, edge);
+  }
+  const edges =
+    db
+      .query<{ count: number }, []>(
+        "SELECT count(*) AS count FROM graph_edges",
+      )
+      .get()?.count ?? 0;
+  stampDerived(db, stampGraph(db, input, live.length, edges));
+  return {
+    pages: live.length,
+    edges,
+    skipped: [...input.skipped],
+    rebuilt_at: input.rebuilt_at,
+    generation: input.generation,
+    status: input.skipped.length > 0 ? "degraded" : "ok",
+  };
+}
+
 export function rebuildGraph(
   db: Database,
-  vaultPath: string,
+  vaultPathOrInput: string | GraphRebuildInput,
 ): GraphRebuildResult {
   initGraph(db);
-  const { pages, skipped } = listCanonPagesReport(vaultPath);
-  const rebuiltAt = new Date().toISOString();
-  let edges = 0;
-
-  db.transaction(() => {
-    db.exec("DELETE FROM graph_edges");
-    const insert = db.query<never, [string, string, GraphEdgeKind]>(
-      "INSERT OR IGNORE INTO graph_edges (src, dst, kind) VALUES (?, ?, ?)",
-    );
-    for (const page of pages) {
-      for (const target of wikilinks(page.body)) {
-        insert.run(page.id, target, "wikilink");
-      }
-      for (const subject of stringArray(page.data["subjects"])) {
-        insert.run(page.id, subject, "subject");
-      }
-      for (const source of stringArray(page.data["sources"])) {
-        insert.run(page.id, source, "source");
-      }
-    }
-
-    edges =
-      db
-        .query<{ count: number }, []>(
-          "SELECT count(*) AS count FROM graph_edges",
-        )
-        .get()?.count ?? 0;
-    stampDerived(db, "graph", rebuiltAt, edges);
-  }).immediate();
-
-  return { pages: pages.length, edges, skipped, rebuilt_at: rebuiltAt };
+  const input =
+    typeof vaultPathOrInput === "string"
+      ? snapshotGraphInput(vaultPathOrInput)
+      : vaultPathOrInput;
+  return db.transaction(() => rebuildGraphLayer(db, input)).immediate();
 }
 
 function chunks<T>(items: T[], size: number): T[][] {
@@ -161,23 +311,36 @@ function incidentEdges(
   db: Database,
   ids: string[],
   kinds: GraphEdgeKind[] | undefined,
+  ceiling: Sensitivity | undefined,
+  remaining: number,
 ): GraphEdge[] {
-  if (ids.length === 0 || kinds?.length === 0) return [];
+  if (ids.length === 0 || kinds?.length === 0 || remaining <= 0) return [];
   const collected: GraphEdge[] = [];
   for (const group of chunks(ids, FRONTIER_CHUNK)) {
+    if (collected.length >= remaining) break;
     const idSlots = placeholders(group.length);
-    const bindings: string[] = [...group, ...group];
-    let kindClause = "";
+    const bindings: (string | number)[] = [...group, ...group];
+    const extra: string[] = [];
     if (kinds !== undefined) {
-      kindClause = ` AND kind IN (${placeholders(kinds.length)})`;
+      extra.push(`kind IN (${placeholders(kinds.length)})`);
       bindings.push(...kinds);
     }
+    if (ceiling !== undefined) {
+      extra.push(`sensitivity != 'unlabeled'`);
+      extra.push(
+        `CASE sensitivity WHEN 'public' THEN 0 WHEN 'personal' THEN 1 WHEN 'private' THEN 2 ELSE 99 END <= ?`,
+      );
+      bindings.push(SENSITIVITY_ORDER[ceiling]);
+    }
+    const extraSql = extra.length === 0 ? "" : ` AND ${extra.join(" AND ")}`;
+    bindings.push(remaining - collected.length);
     collected.push(
       ...db
-        .query<GraphEdge, string[]>(
+        .query<GraphEdge, (string | number)[]>(
           `SELECT src, dst, kind FROM graph_edges
-           WHERE (src IN (${idSlots}) OR dst IN (${idSlots}))${kindClause}
-           ORDER BY src, dst, kind`,
+           WHERE (src IN (${idSlots}) OR dst IN (${idSlots}))${extraSql}
+           ORDER BY src, dst, kind
+           LIMIT ?`,
         )
         .all(...bindings),
     );
@@ -186,8 +349,14 @@ function incidentEdges(
 }
 
 function validLimit(limit: number): number {
-  if (!Number.isInteger(limit) || limit < 0) {
-    throw new RangeError("neighbors limit must be a non-negative integer");
+  if (
+    !Number.isInteger(limit) ||
+    limit < 0 ||
+    limit > MAX_RETRIEVAL_LIMIT
+  ) {
+    throw new RangeError(
+      `neighbors limit must be an integer between 0 and ${MAX_RETRIEVAL_LIMIT}`,
+    );
   }
   return limit;
 }
@@ -201,7 +370,7 @@ export function neighbors(
   if (depth !== 1 && depth !== 2) {
     throw new RangeError("neighbors depth must be 1 or 2");
   }
-  const limit = validLimit(opts.limit ?? DEFAULT_NEIGHBOR_LIMIT);
+  const limit = validLimit(opts.limit ?? MAX_RETRIEVAL_LIMIT);
   if (limit === 0 || opts.kinds?.length === 0) {
     return { id, edges: [], truncated: false };
   }
@@ -213,7 +382,13 @@ export function neighbors(
   let truncated = false;
 
   for (let level = 0; level < depth && !truncated; level += 1) {
-    const available = incidentEdges(db, frontier, opts.kinds);
+    const available = incidentEdges(
+      db,
+      frontier,
+      opts.kinds,
+      opts.ceiling,
+      limit - result.length + 1,
+    );
     const next: string[] = [];
     for (const edge of available) {
       const key = `${edge.src}\u0000${edge.dst}\u0000${edge.kind}`;
