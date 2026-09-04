@@ -262,9 +262,15 @@ describe("graph rebuild", () => {
       { src: "fact:origin", dst: "fact:target", kind: "wikilink" },
     ]);
 
-    removeDerivedPage(db, "fact:target");
+    writeCanon(path, "target", "fact:target", "Destination.", {
+      title: "Target",
+      status: "archived",
+    });
+    removeDerivedPage(db, "fact:target", path);
 
-    expect(edgeRows(db)).toEqual([]);
+    expect(edgeRows(db)).toEqual([
+      { src: "fact:origin", dst: "Target", kind: "wikilink" },
+    ]);
   });
 });
 

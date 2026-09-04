@@ -2,10 +2,8 @@ import type { Database } from "bun:sqlite";
 import {
   rebuildGraphLayer,
   replacePageEdges,
-  removePageEdges,
 } from "./graph/graph";
 import type { GraphRebuildResult } from "./graph/graph";
-import { linkIndexFromPages } from "./graph/resolve";
 import { initGraph } from "./graph/schema";
 import {
   rebuildSearchLayer,
@@ -61,18 +59,21 @@ export function refreshDerivedPage(
   initSearch(db);
   initGraph(db);
   const pages = listCanonPagesReport(vaultPath).pages;
-  const index = linkIndexFromPages(pages);
   db.transaction(() => {
     replacePage(db, page);
-    replacePageEdges(db, page, index, pages);
+    replacePageEdges(db, pages);
   }).immediate();
 }
 
-export function removeDerivedPage(db: Database, pageId: string): void {
+export function removeDerivedPage(
+  db: Database,
+  pageId: string,
+  vaultPath: string,
+): void {
   initSearch(db);
   initGraph(db);
   db.transaction(() => {
     removeDoc(db, "canon", pageId);
-    removePageEdges(db, pageId);
+    replacePageEdges(db, listCanonPagesReport(vaultPath).pages);
   }).immediate();
 }

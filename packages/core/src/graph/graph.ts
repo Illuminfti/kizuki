@@ -207,26 +207,16 @@ function insertEdge(db: Database, edge: StoredEdge): void {
   );
 }
 
-export function removePageEdges(db: Database, pageId: string): void {
-  db.query<never, [string, string]>(
-    "DELETE FROM graph_edges WHERE src = ? OR dst = ?",
-  ).run(pageId, pageId);
-}
-
+/** Project every live page's edges. Same write as a graph rebuild. */
 export function replacePageEdges(
   db: Database,
-  page: CanonPage,
-  index: LinkIndex,
   pages: readonly CanonPage[],
 ): void {
-  removePageEdges(db, page.id);
-  if (!isLiveCanonPage(page)) return;
-  for (const edge of pageEdges(page, index)) insertEdge(db, edge);
-  for (const other of pages) {
-    if (other.id === page.id || !isLiveCanonPage(other)) continue;
-    for (const edge of pageEdges(other, index)) {
-      if (edge.dst === page.id) insertEdge(db, edge);
-    }
+  const index = linkIndexFromPages(pages);
+  db.exec("DELETE FROM graph_edges");
+  for (const page of pages) {
+    if (!isLiveCanonPage(page)) continue;
+    for (const edge of pageEdges(page, index)) insertEdge(db, edge);
   }
 }
 
@@ -274,11 +264,7 @@ export function rebuildGraphLayer(
   input: GraphRebuildInput,
 ): GraphRebuildResult {
   const live = input.pages.filter(isLiveCanonPage);
-  const index = linkIndexFromPages(live);
-  db.exec("DELETE FROM graph_edges");
-  for (const page of live) {
-    for (const edge of pageEdges(page, index)) insertEdge(db, edge);
-  }
+  replacePageEdges(db, live);
   const edges =
     db
       .query<{ count: number }, []>(

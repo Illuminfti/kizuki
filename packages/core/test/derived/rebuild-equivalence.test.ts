@@ -160,6 +160,72 @@ describe("derived rebuild equivalence", () => {
     ).toEqual(["fact:origin|fact:target|wikilink"]);
   });
 
+  test("refreshing a page rewrites other pages when resolution changes", () => {
+    const db = searchDb();
+    const vault = tempVault();
+    disposers.push(vault.dispose);
+    const origin = writeCanonPage(
+      vault.path,
+      "facts/origin.md",
+      {
+        id: "fact:origin",
+        title: "Origin",
+        type: "fact",
+        status: "active",
+        sensitivity: "personal",
+        taint: "clean",
+      },
+      "See [[Target]].",
+    );
+    refreshDerivedPage(db, origin, vault.path);
+    expect(
+      neighbors(db, "fact:origin").edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`),
+    ).toEqual(["fact:origin|Target|wikilink"]);
+
+    const target = writeCanonPage(
+      vault.path,
+      "facts/target.md",
+      {
+        id: "fact:target",
+        title: "Target",
+        type: "fact",
+        status: "active",
+        sensitivity: "personal",
+        taint: "clean",
+      },
+      "Destination.",
+    );
+    refreshDerivedPage(db, target, vault.path);
+    const resolved = ["fact:origin|fact:target|wikilink"];
+    expect(
+      neighbors(db, "fact:origin").edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`),
+    ).toEqual(resolved);
+    rebuildDerived(db, vault.path);
+    expect(
+      neighbors(db, "fact:origin").edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`),
+    ).toEqual(resolved);
+
+    writeCanonPage(
+      vault.path,
+      "facts/target.md",
+      { ...target.data, title: "Other" },
+      target.body,
+    );
+    refreshDerivedPage(
+      db,
+      { ...target, data: { ...target.data, title: "Other" } },
+      vault.path,
+    );
+    const raw = ["fact:origin|Target|wikilink"];
+    expect(
+      neighbors(db, "fact:origin").edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`),
+    ).toEqual(raw);
+    rebuildDerived(db, vault.path);
+    expect(
+      neighbors(db, "fact:origin").edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`),
+    ).toEqual(raw);
+  });
+
   test("purged and archived pages are absent after rebuild", () => {
     const db = searchDb();
     const vault = tempVault();
@@ -273,6 +339,6 @@ describe("derived rebuild equivalence", () => {
     expect(neighbors(db, "fact:tea").edges).toEqual([]);
     expect(
       neighbors(db, "fact:kettle").edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`),
-    ).toEqual([]);
+    ).toEqual(["fact:kettle|Tea|wikilink"]);
   });
 });

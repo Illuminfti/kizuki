@@ -1,7 +1,6 @@
 export {
   neighbors,
   rebuildGraph,
-  removePageEdges,
   replacePageEdges,
 } from "./graph";
 export type {

@@ -541,7 +541,7 @@ export function applyRevertWrite(
       expected_hash: input.expected_hash,
     });
     if (existing !== null && typeof existing.page.data["id"] === "string") {
-      removeDerivedPage(io.db, existing.page.data["id"]);
+      removeDerivedPage(io.db, existing.page.data["id"], io.vault_path);
     }
     return outcome;
   }
@@ -672,7 +672,7 @@ export function applyPurgeRewrite(
   })();
   if (pageId !== null) {
     if (nothingRemains) {
-      removeDerivedPage(io.db, pageId);
+      removeDerivedPage(io.db, pageId, io.vault_path);
     } else {
       refreshDerivedPage(
         io.db,
