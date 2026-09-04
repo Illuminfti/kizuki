@@ -13,8 +13,8 @@ function shortHash(hash: string | null): string {
 export const auditCommand: Command = {
   name: "audit",
   usage:
-    "audit [--since TIME] [--page PATH] [--writer NAME] [--contested] [--ambiguous] [--reverted] [--json]",
-  summary: "list receipted writes, or open the audit TUI",
+    "audit [--since TIME] [--page PATH] [--writer NAME] [--contested] [--ambiguous] [--reverted] [--list] [--json]",
+  summary: "see what changed, inspect its sources, and undo a write",
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, {
       options: ["--since", "--page", "--writer"],
@@ -29,25 +29,29 @@ export const auditCommand: Command = {
       !parsed.flags.has("--list");
 
     return withVault(io, async (ctx) => {
-      if (interactive) {
-        const summary = await runAudit({
-          db: ctx.db,
-          vaultPath: ctx.vaultPath,
-        });
-        io.out(`session undone=${summary.undone}`);
-        return 0;
-      }
-
       const since = parsed.options.get("--since");
       const page = parsed.options.get("--page");
       const writer = parsed.options.get("--writer");
-      const rows = listAuditReceipts(ctx.db, {
+      const filters = {
         ...(since !== undefined ? { since } : {}),
         ...(page !== undefined ? { page } : {}),
         ...(writer !== undefined ? { writer } : {}),
         ...(parsed.flags.has("--contested") ? { contested: true } : {}),
         ...(parsed.flags.has("--ambiguous") ? { ambiguous: true } : {}),
         ...(parsed.flags.has("--reverted") ? { reverted: true } : {}),
+      };
+      if (interactive) {
+        const summary = await runAudit({
+          db: ctx.db,
+          vaultPath: ctx.vaultPath,
+          filters,
+        });
+        io.out(`session undone=${summary.undone}`);
+        return 0;
+      }
+
+      const rows = listAuditReceipts(ctx.db, {
+        ...filters,
         limit: 5000,
       });
 

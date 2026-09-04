@@ -129,7 +129,7 @@ bun packages/cli/src/main.ts help <verb>
 | Health | `doctor` |
 | Correct a claim | `tell "<statement>" --claim CLAIM_ID` |
 | Reverse a write | `undo <receipt_id>` |
-| Inspect receipts | `audit` (`--list` or `--json` without a TTY; `d` toggles diff detail in the interactive view) |
+| Inspect receipts | `audit` (`--list` or `--json` without a TTY; the diff appears first, and `d` reveals receipt hashes and provenance) |
 | Incremental sync | `sync` |
 | Local loop | `serve` (loopback HTTP unless `--no-http`) |
 | Delete with a receipt | `purge --event\|--subject\|--connector … --reason TEXT` |

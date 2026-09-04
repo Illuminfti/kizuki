@@ -72,6 +72,11 @@ async function dispatch(argv: string[]): Promise<number> {
     return 2;
   }
 
+  if (args.length === 1 && args[0] === "--help") {
+    printCommandHelp(io.out, command);
+    return 0;
+  }
+
   try {
     return await command.run(io, args);
   } catch (error) {

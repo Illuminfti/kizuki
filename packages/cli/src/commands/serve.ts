@@ -1,4 +1,3 @@
-import { resolve } from "node:path";
 import {
   detectSupervisorKind,
   inspectServeDoctor,
@@ -19,12 +18,7 @@ import { UsageError, parseArguments } from "../args";
 import { withVault } from "../context";
 import { jsonEnvelope } from "../output";
 import type { CliIo, Command } from "./index";
-
-function execStart(vaultPath: string): string {
-  const bun = process.execPath;
-  const entry = resolve(import.meta.dir, "../main.ts");
-  return `${bun} ${entry} serve --vault ${vaultPath}`;
-}
+import { serveArgs } from "../runtime";
 
 function homeOf(io: CliIo): string {
   return io.env.HOME ?? io.env.XDG_CONFIG_HOME ?? "";
@@ -44,7 +38,7 @@ export const serveCommand: Command = {
 
     return withVault(io, async (ctx) => {
       const kind = detectSupervisorKind(io.env);
-      const host = realSupervisorHost(kind, homeOf(io), execStart(ctx.vaultPath));
+      const host = realSupervisorHost(kind, homeOf(io), serveArgs(ctx.vaultPath));
 
       if (parsed.flags.has("--install")) {
         if (kind === "none") {

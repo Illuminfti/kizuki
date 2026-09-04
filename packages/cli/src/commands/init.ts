@@ -21,6 +21,7 @@ import {
   writeConfig,
 } from "../config";
 import type { CliIo, Command } from "./index";
+import { serveArgs } from "../runtime";
 
 export const initCommand: Command = {
   name: "init",
@@ -90,8 +91,6 @@ export const initCommand: Command = {
       io.out("supervisor: none (loop runs only while you run it)");
       io.out(`run: ${serveExecHint(vaultPath)}`);
     } else {
-      const bun = process.execPath;
-      const entry = resolve(import.meta.dir, "../main.ts");
       const host = realSupervisorHost(
         kind,
         io.env.HOME && io.env.HOME.length > 0
@@ -99,7 +98,7 @@ export const initCommand: Command = {
           : io.env.XDG_CONFIG_HOME && io.env.XDG_CONFIG_HOME.length > 0
             ? io.env.XDG_CONFIG_HOME
             : "",
-        `${bun} ${entry} serve --vault ${vaultPath}`,
+        serveArgs(vaultPath),
       );
       const installed = installServeService(vaultPath, host);
       io.out(vaultPath);
