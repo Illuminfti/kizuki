@@ -15,8 +15,6 @@ export interface CanonIndex {
   byId: Map<string, CanonPage>;
   /** Vault-relative path with forward slashes, as the walk produced it. */
   byPath: Map<string, CanonPage>;
-  /** Lower-cased title, for resolving wikilink text. */
-  byTitle: Map<string, CanonPage[]>;
   holds: Set<string>;
   /** Authority of the newest receipt per page path; absent when unwritten. */
   authority: Map<string, AuthorityTier>;
@@ -86,20 +84,14 @@ export function loadCanon(ctx: ServeContext): CanonIndex {
   }
   const byId = new Map<string, CanonPage>();
   const byPath = new Map<string, CanonPage>();
-  const byTitle = new Map<string, CanonPage[]>();
   for (const page of report.pages) {
     byId.set(page.id, page);
     byPath.set(page.relPath, page);
-    const title = (stringField(page, "title") ?? "").toLowerCase();
-    const bucket = byTitle.get(title);
-    if (bucket === undefined) byTitle.set(title, [page]);
-    else bucket.push(page);
   }
   return {
     pages: report.pages,
     byId,
     byPath,
-    byTitle,
     holds: new Set(readHolds(ctx.db).map((hold) => hold.page_path)),
     authority: readAuthority(ctx),
   };
@@ -140,22 +132,6 @@ export function pageDecision(
   return decision.allow
     ? { allow: true, sensitivity: label, taint }
     : { allow: false, reason: decision.reason };
-}
-
-/**
- * Wikilink text names a page by id, by path, or by title, in that order. The
- * packet's related section and the graph tool must resolve a link the same
- * way, so the precedence lives with the index it reads.
- */
-export function resolveLink(
-  index: CanonIndex,
-  target: string,
-): CanonPage | undefined {
-  return (
-    index.byId.get(target) ??
-    index.byPath.get(`${target}.md`) ??
-    index.byTitle.get(target.toLowerCase())?.[0]
-  );
 }
 
 export function canonChunk(

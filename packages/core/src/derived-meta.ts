@@ -88,20 +88,6 @@ export function initDerivedMeta(db: Database): void {
   db.exec(DERIVED_META_SCHEMA);
 }
 
-export function applyDerivedV10(db: Database): void {
-  initDerivedMeta(db);
-  if (tableExists(db, "search_docs") && !tableExists(db, "search_documents")) {
-    db.exec("DROP TABLE search_docs");
-  }
-  if (tableExists(db, "graph_edges")) {
-    const columns = db
-      .query<{ name: string }, []>("PRAGMA table_info(graph_edges)")
-      .all();
-    if (!columns.some((column) => column.name === "sensitivity")) {
-      db.exec("DROP TABLE graph_edges");
-    }
-  }
-}
 
 function assertStamp(stamp: DerivedStamp): void {
   if (!isDerivedLayer(stamp.layer)) {

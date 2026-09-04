@@ -448,6 +448,14 @@ describe("search policy and filters", () => {
     });
   });
 
+  test("a missing search table is empty and index-degraded", () => {
+    const db = new Database(":memory:");
+    expect(searchResult(db, "anything")).toEqual({
+      hits: [],
+      degraded: ["index-degraded"],
+    });
+  });
+
   test("declares index-degraded when derived_meta is not ok", () => {
     const db = searchDb();
     indexPage(db, page("fact:one", "degradeword"));

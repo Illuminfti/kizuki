@@ -191,6 +191,15 @@ describe("graph rebuild", () => {
       taint: "quoted",
       provenance: '["event:one"]',
     });
+    writeCanon(path, "Target", "fact:target", "Dest.", { sensitivity: "personal" });
+    rebuildGraph(db, path);
+    expect(
+      db
+        .query<{ dest_sensitivity: string | null }, []>(
+          "SELECT dest_sensitivity FROM graph_edges WHERE dst = 'fact:target'",
+        )
+        .get()?.dest_sensitivity,
+    ).toBe("personal");
   });
 
   test("rebuild omits archived pages", () => {
@@ -214,6 +223,29 @@ describe("graph rebuild", () => {
     expect(neighbors(db, "hub", { ceiling: "public" }).edges.map(({ dst }) => dst)).toEqual([
       "open",
     ]);
+  });
+
+  test("hides a resolved dest above the ceiling without consuming the cap", () => {
+    const db = new Database(":memory:");
+    initGraph(db);
+    db.exec(`
+      INSERT INTO graph_edges (src, dst, kind, sensitivity, dest_sensitivity, taint, authority, provenance)
+      VALUES ('hub', 'secret', 'wikilink', 'public', 'private', 'clean', 'owner_authored', '[]');
+      INSERT INTO graph_edges (src, dst, kind, sensitivity, dest_sensitivity, taint, authority, provenance)
+      VALUES ('hub', 'open', 'wikilink', 'public', 'public', 'clean', 'owner_authored', '[]');
+    `);
+    expect(neighbors(db, "hub", { ceiling: "public" }).edges.map(({ dst }) => dst)).toEqual([
+      "open",
+    ]);
+  });
+
+  test("a missing graph table is an empty walk", () => {
+    const db = new Database(":memory:");
+    expect(neighbors(db, "hub")).toEqual({
+      id: "hub",
+      edges: [],
+      truncated: false,
+    });
   });
 
   test("adds subject and source edges from frontmatter", () => {

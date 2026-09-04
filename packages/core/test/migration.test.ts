@@ -7,8 +7,10 @@ import { applyAgentsV9 } from "../src/agents/schema";
 import { applyCanonV4, initCanon } from "../src/canon/schema";
 import { getCanonReceipt } from "../src/canon/receipts";
 import { applyClaimsV3, initClaims } from "../src/claims/schema";
+import { neighbors } from "../src/graph/graph";
 import { applyConnectionsV8 } from "../src/ledger/connections-schema";
 import { openLedger } from "../src/ledger/db";
+import { searchResult } from "../src/search/query";
 import { accept, count } from "../src/ledger/ledger";
 import { validEvent } from "./fixtures";
 
@@ -792,9 +794,14 @@ describe("openLedger migrations", () => {
       ]);
       expect(
         upgraded
-          .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM derived_meta")
-          .get()?.n,
-      ).toBe(0);
+          .query<{ layer: string; status: string }, []>(
+            "SELECT layer, status FROM derived_meta ORDER BY layer",
+          )
+          .all(),
+      ).toEqual([
+        { layer: "graph", status: "degraded" },
+        { layer: "search", status: "degraded" },
+      ]);
       expect(
         upgraded
           .query<{ name: string }, []>(
@@ -860,17 +867,81 @@ describe("openLedger migrations", () => {
       ]);
       expect(
         upgraded
-          .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM derived_meta")
-          .get()?.n,
-      ).toBe(0);
-      expect(
-        upgraded
-          .query<{ name: string }, []>(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('graph_edges', 'search_docs', 'search_documents')",
+          .query<{ layer: string; status: string }, []>(
+            "SELECT layer, status FROM derived_meta ORDER BY layer",
           )
           .all(),
-      ).toEqual([]);
+      ).toEqual([
+        { layer: "graph", status: "degraded" },
+        { layer: "search", status: "degraded" },
+      ]);
+      expect(searchResult(upgraded, "stale")).toEqual({
+        hits: [],
+        degraded: ["index-degraded"],
+      });
+      expect(neighbors(upgraded, "fact:one")).toEqual({
+        id: "fact:one",
+        edges: [],
+        truncated: false,
+      });
       upgraded.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("v10 graph missing dest_sensitivity is wiped on reopen", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-ledger-v10-dest-"));
+    const path = join(directory, "ledger.sqlite");
+    try {
+      const first = openLedger(path);
+      first.exec(`
+        DROP TABLE graph_edges;
+        CREATE TABLE graph_edges (
+          src TEXT NOT NULL,
+          dst TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          sensitivity TEXT NOT NULL,
+          taint TEXT NOT NULL CHECK (taint IN ('clean', 'quoted')),
+          authority TEXT NOT NULL,
+          provenance TEXT NOT NULL,
+          PRIMARY KEY (src, dst, kind)
+        ) STRICT;
+        INSERT INTO graph_edges
+          VALUES ('hub', 'secret', 'wikilink', 'public', 'clean', 'owner_authored', '[]');
+      `);
+      first.close();
+
+      const reopened = openLedger(path);
+      expect(schemaVersion(reopened)).toBe(10);
+      expect(
+        reopened
+          .query<{ name: string }, [string]>(
+            "SELECT name FROM pragma_table_info(?)",
+          )
+          .all("graph_edges")
+          .map(({ name }) => name),
+      ).toContain("dest_sensitivity");
+      expect(neighbors(reopened, "hub")).toEqual({
+        id: "hub",
+        edges: [],
+        truncated: false,
+      });
+      expect(
+        reopened
+          .query<{ status: string }, []>(
+            "SELECT status FROM derived_meta WHERE layer = 'graph'",
+          )
+          .get()?.status,
+      ).toBe("degraded");
+      expect(
+        reopened
+          .query<{ status: string }, []>(
+            "SELECT status FROM derived_meta WHERE layer = 'search'",
+          )
+          .get()?.status,
+      ).toBeUndefined();
+      reopened.close();
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

@@ -1,10 +1,15 @@
 import type { Database } from "bun:sqlite";
 import {
+  derivedMetaNeedsRebuild,
+  stampDerived,
+} from "./derived-meta";
+import {
   rebuildGraphLayer,
   replacePageEdges,
 } from "./graph/graph";
 import type { GraphRebuildResult } from "./graph/graph";
-import { initGraph } from "./graph/schema";
+import { graphSchemaNeedsRebuild, initGraph } from "./graph/schema";
+import { tableExists } from "./ledger/schema";
 import {
   rebuildSearchLayer,
   removeDoc,
@@ -24,6 +29,30 @@ export interface DerivedRebuildResult {
   search: SearchRebuildResult;
   graph: GraphRebuildResult;
   generation: string;
+}
+
+export function applyDerivedV10(db: Database): void {
+  const searchWiped =
+    tableExists(db, "search_docs") && !tableExists(db, "search_documents");
+  const graphWiped = graphSchemaNeedsRebuild(db);
+  const metaWiped = derivedMetaNeedsRebuild(db);
+  initSearch(db);
+  initGraph(db);
+  if (!searchWiped && !graphWiped && !metaWiped) return;
+  const rebuiltAt = new Date().toISOString();
+  const stamp = (layer: "search" | "graph"): void => {
+    stampDerived(db, {
+      layer,
+      generation: "schema-v10",
+      rebuilt_at: rebuiltAt,
+      doc_count: 0,
+      source_count: 0,
+      skipped_count: 0,
+      status: "degraded",
+    });
+  };
+  if (searchWiped || metaWiped) stamp("search");
+  if (graphWiped || metaWiped) stamp("graph");
 }
 
 export function rebuildDerived(

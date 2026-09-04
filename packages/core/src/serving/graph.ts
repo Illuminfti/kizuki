@@ -2,7 +2,7 @@ import type { AuditDenial, Grant } from "../agents";
 import { neighbors } from "../graph/graph";
 import type { GraphEdge, GraphEdgeKind } from "../graph/graph";
 import { enumOf, identifier } from "./arguments";
-import { eligible, loadCanon, pageDecision, resolveLink } from "./canon";
+import { eligible, loadCanon, pageDecision } from "./canon";
 import type { CanonIndex } from "./canon";
 import { auditArguments, gate } from "./gate";
 import type { Served } from "./gate";
@@ -85,8 +85,9 @@ function classifyGraph(
 
     switch (edge.kind) {
       case "wikilink": {
-        const target = resolveLink(index, edge.dst);
-        // Unresolved link text is the servable page's own prose.
+        const target = index.byId.get(edge.dst);
+        // Raw leftover text is the servable page's own prose. Resolution
+        // already happened at index time.
         if (target === undefined) {
           if (collect) kept.push(edge);
           continue;

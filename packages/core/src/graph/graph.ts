@@ -6,6 +6,7 @@ import type { RetrievalAuthority } from "../contracts/retrieval";
 import { stampDerived } from "../derived-meta";
 import type { DerivedStamp } from "../derived-meta";
 import { latestLedgerCursor } from "../ledger/ledger";
+import { tableExists } from "../ledger/schema";
 import { ulid } from "../util/ulid";
 import { compareText } from "../util/order";
 import { placeholders } from "../util/sql";
@@ -63,6 +64,7 @@ interface StoredEdge {
   dst: string;
   kind: GraphEdgeKind;
   sensitivity: string;
+  dest_sensitivity: string | null;
   taint: "clean" | "quoted";
   authority: RetrievalAuthority;
   provenance: string;
@@ -156,7 +158,11 @@ function pageTaint(page: CanonPage): "clean" | "quoted" {
   return page.data["taint"] === "quoted" ? "quoted" : "clean";
 }
 
-function pageEdges(page: CanonPage, index: LinkIndex): StoredEdge[] {
+function pageEdges(
+  page: CanonPage,
+  index: LinkIndex,
+  byId: ReadonlyMap<string, CanonPage>,
+): StoredEdge[] {
   const provenance = JSON.stringify(stringArray(page.data["sources"]));
   const sensitivity = pageSensitivity(page);
   const taint = pageTaint(page);
@@ -166,11 +172,13 @@ function pageEdges(page: CanonPage, index: LinkIndex): StoredEdge[] {
     const key = `${dst}\u0000${kind}`;
     if (seen.has(key)) return;
     seen.add(key);
+    const dest = kind === "wikilink" ? byId.get(dst) : undefined;
     edges.push({
       src: page.id,
       dst,
       kind,
       sensitivity,
+      dest_sensitivity: dest === undefined ? null : pageSensitivity(dest),
       taint,
       authority: "owner_authored",
       provenance,
@@ -191,16 +199,17 @@ function pageEdges(page: CanonPage, index: LinkIndex): StoredEdge[] {
 function insertEdge(db: Database, edge: StoredEdge): void {
   db.query<
     never,
-    [string, string, GraphEdgeKind, string, string, string, string]
+    [string, string, GraphEdgeKind, string, string | null, string, string, string]
   >(
     `INSERT OR IGNORE INTO graph_edges
-       (src, dst, kind, sensitivity, taint, authority, provenance)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       (src, dst, kind, sensitivity, dest_sensitivity, taint, authority, provenance)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     edge.src,
     edge.dst,
     edge.kind,
     edge.sensitivity,
+    edge.dest_sensitivity,
     edge.taint,
     edge.authority,
     edge.provenance,
@@ -213,10 +222,13 @@ export function replacePageEdges(
   pages: readonly CanonPage[],
 ): void {
   const index = linkIndexFromPages(pages);
+  const byId = new Map(
+    pages.filter(isLiveCanonPage).map((page) => [page.id, page]),
+  );
   db.exec("DELETE FROM graph_edges");
   for (const page of pages) {
     if (!isLiveCanonPage(page)) continue;
-    for (const edge of pageEdges(page, index)) insertEdge(db, edge);
+    for (const edge of pageEdges(page, index, byId)) insertEdge(db, edge);
   }
 }
 
@@ -322,10 +334,11 @@ function incidentEdges(
     }
     if (ceiling !== undefined) {
       extra.push(`sensitivity != 'unlabeled'`);
+      extra.push(`${sensitivityRankSql("sensitivity")} <= ?`);
       extra.push(
-        `CASE sensitivity WHEN 'public' THEN 0 WHEN 'personal' THEN 1 WHEN 'private' THEN 2 ELSE 99 END <= ?`,
+        `(dest_sensitivity IS NULL OR (dest_sensitivity != 'unlabeled' AND ${sensitivityRankSql("dest_sensitivity")} <= ?))`,
       );
-      bindings.push(SENSITIVITY_ORDER[ceiling]);
+      bindings.push(SENSITIVITY_ORDER[ceiling], SENSITIVITY_ORDER[ceiling]);
     }
     const extraSql = extra.length === 0 ? "" : ` AND ${extra.join(" AND ")}`;
     bindings.push(remaining - collected.length);
@@ -341,6 +354,10 @@ function incidentEdges(
     );
   }
   return collected;
+}
+
+function sensitivityRankSql(column: string): string {
+  return `CASE ${column} WHEN 'public' THEN 0 WHEN 'personal' THEN 1 WHEN 'private' THEN 2 ELSE 99 END`;
 }
 
 function validLimit(limit: number): number {
@@ -367,6 +384,9 @@ export function neighbors(
   }
   const limit = validLimit(opts.limit ?? MAX_RETRIEVAL_LIMIT);
   if (limit === 0 || opts.kinds?.length === 0) {
+    return { id, edges: [], truncated: false };
+  }
+  if (!tableExists(db, "graph_edges")) {
     return { id, edges: [], truncated: false };
   }
 

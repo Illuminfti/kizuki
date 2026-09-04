@@ -4,6 +4,7 @@ import type { Sensitivity } from "../agents/types";
 import { MAX_RETRIEVAL_LIMIT } from "../contracts/retrieval";
 import type { RetrievalAuthority } from "../contracts/retrieval";
 import { readDerivedMeta } from "../derived-meta";
+import { tableExists } from "../ledger/schema";
 import { ceilingSql, instantBound, instantSql } from "../query/sql";
 import { placeholders } from "../util/sql";
 import type { DocScope } from "./indexer";
@@ -154,6 +155,9 @@ export function searchResult(
   const meta = readDerivedMeta(db, "search");
   if (meta !== null && meta.status !== "ok") {
     degraded.push(`index-${meta.status}`);
+  }
+  if (!tableExists(db, "search_docs")) {
+    return { hits: [], degraded: [...degraded, "index-degraded"] };
   }
 
   const clauses = ["search_docs MATCH ?"];

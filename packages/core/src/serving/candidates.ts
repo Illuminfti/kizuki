@@ -17,7 +17,6 @@ import {
   excerptOf,
   loadCanon,
   pageDecision,
-  resolveLink,
 } from "./canon";
 import { ENTITY_TYPES } from "./entities";
 import {
@@ -211,7 +210,7 @@ export function collectPieces(
         ceiling: grant.ceiling,
       }).edges) {
         if (added === GRAPH_CHUNKS) break;
-        const target = resolveLink(index, edge.dst);
+        const target = index.byId.get(edge.dst);
         if (target === undefined || packed.has(target.id)) continue;
         if (!eligible(target)) continue;
         const decision = pageDecision(index, grant, target);

@@ -209,6 +209,125 @@ describe("serveGraph", () => {
     expect(JSON.stringify(limited)).not.toContain("aaa-secret");
   });
 
+  test("a leftover wikilink stays prose when an archived page shares the title", () => {
+    writeFileSync(
+      join(fixture.vaultPath, "facts/ghost-link.md"),
+      serializePage({
+        data: {
+          id: "fact:ghost-link",
+          title: "Ghost link",
+          type: "fact",
+          status: "active",
+          sensitivity: "public",
+          taint: "clean",
+        },
+        body: "See [[Ghost]].",
+      }),
+      "utf8",
+    );
+    writeFileSync(
+      join(fixture.vaultPath, "facts/ghost.md"),
+      serializePage({
+        data: {
+          id: "fact:ghost",
+          title: "Ghost",
+          type: "fact",
+          status: "archived",
+          sensitivity: "public",
+          taint: "clean",
+        },
+        body: "A retracted ghost.",
+      }),
+      "utf8",
+    );
+    rebuildGraph(fixture.db, fixture.vaultPath);
+
+    const envelope = serveGraph(fixture.owner(), {
+      id: "fact:ghost-link",
+      kinds: ["wikilink"],
+    });
+    expect(envelope.data?.edges).toEqual([
+      { src: "fact:ghost-link", dst: "Ghost", kind: "wikilink" },
+    ]);
+    expect(envelope.denied).toEqual([]);
+    expect(JSON.stringify(envelope)).not.toContain("fact:ghost");
+  });
+
+  test("a public reader is not capped by private outgoing dests", () => {
+    const destLinks = [
+      ...Array.from({ length: 100 }, (_value, index) => `[[Out secret ${index}]]`),
+      "[[Out open]]",
+    ].join(" ");
+    writeFileSync(
+      join(fixture.vaultPath, "facts/out-hub.md"),
+      serializePage({
+        data: {
+          id: "fact:out-hub",
+          title: "Out hub",
+          type: "fact",
+          status: "active",
+          sensitivity: "public",
+          taint: "clean",
+        },
+        body: destLinks,
+      }),
+      "utf8",
+    );
+    for (let index = 0; index < 100; index += 1) {
+      writeFileSync(
+        join(fixture.vaultPath, `facts/out-secret-${index}.md`),
+        serializePage({
+          data: {
+            id: `fact:aaa-out-secret-${index}`,
+            title: `Out secret ${index}`,
+            type: "fact",
+            status: "active",
+            sensitivity: "private",
+            taint: "clean",
+          },
+          body: "A private dest.",
+        }),
+        "utf8",
+      );
+    }
+    writeFileSync(
+      join(fixture.vaultPath, "facts/out-open.md"),
+      serializePage({
+        data: {
+          id: "fact:zzz-out-open",
+          title: "Out open",
+          type: "fact",
+          status: "active",
+          sensitivity: "public",
+          taint: "clean",
+        },
+        body: "A public dest.",
+      }),
+      "utf8",
+    );
+    rebuildGraph(fixture.db, fixture.vaultPath);
+
+    const owner = serveGraph(fixture.owner(), {
+      id: "fact:out-hub",
+      kinds: ["wikilink"],
+    });
+    const ownerDests = (owner.data?.edges ?? []).map((edge) => edge.dst);
+    expect(owner.data?.edges).toHaveLength(100);
+    expect(owner.data?.truncated).toBe(true);
+    expect(ownerDests).not.toContain("fact:zzz-out-open");
+
+    const limited = serveGraph(fixture.agent("reader-public"), {
+      id: "fact:out-hub",
+      kinds: ["wikilink"],
+    });
+    expect((limited.data?.edges ?? []).map((edge) => edge.dst)).toEqual([
+      "fact:zzz-out-open",
+    ]);
+    expect(limited.data?.truncated).toBe(false);
+    expect(limited.denied).toEqual([{ reason: "above_ceiling", count: 100 }]);
+    expect(JSON.stringify(limited)).not.toContain("aaa-out-secret");
+  });
+
   test("the edge list is capped and reports the truncation", () => {
     const links = Array.from(
       { length: 520 },
