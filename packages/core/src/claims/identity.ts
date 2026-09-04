@@ -163,6 +163,7 @@ export function listSubjectAliases(
   subject: string,
   limit = 16,
   canRead?: (link: IdentityLink) => boolean,
+  onInvalid?: (left: string, right: string) => void,
 ): SubjectAlias[] {
   if (!tableExists(db, "identity_links")) return [];
   const bound = Number.isSafeInteger(limit) && limit > 0 ? limit : 16;
@@ -189,12 +190,16 @@ export function listSubjectAliases(
     .all(subject, subject, canRead === undefined ? bound : 400)
     .filter((row) => {
       if (canRead === undefined) return true;
-      if (row.evidence.length > 16_384) return false;
+      const invalid = (): false => {
+        onInvalid?.(row.subject_a, row.subject_b);
+        return false;
+      };
+      if (typeof row.evidence !== "string" || row.evidence.length > 16_384) return invalid();
       let evidence: unknown;
-      try { evidence = JSON.parse(row.evidence); } catch { return false; }
+      try { evidence = JSON.parse(row.evidence); } catch { return invalid(); }
       if (!Array.isArray(evidence) || evidence.length === 0 ||
           !evidence.every((id): id is string => typeof id === "string" && id.length > 0)) {
-        return false;
+        return invalid();
       }
       return canRead({ ...row, evidence, status: row.status as IdentityLinkStatus });
     })

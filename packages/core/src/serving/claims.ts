@@ -130,10 +130,15 @@ export function claimReader(db: Database, grant: Grant) {
     return true;
   }
 
+  function invalidAlias(left: string, right: string): void {
+    const id = aliasId(left, right);
+    denied.set(id, { id, reason: "held" });
+  }
+
   function auditAlias(left: string, right: string): AuditItem[] {
     const item = aliases.get(aliasId(left, right));
     return item === undefined ? [] : [item];
   }
 
-  return { canRead, canReadAlias, denied, auditClaim, auditGroup, auditAlias };
+  return { canRead, canReadAlias, invalidAlias, denied, auditClaim, auditGroup, auditAlias };
 }

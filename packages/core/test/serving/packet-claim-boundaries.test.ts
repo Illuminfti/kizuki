@@ -280,3 +280,22 @@ test("withheld aliases record stable redacted reasons in response and access aud
   const scoped = listAudit(f.db, "subjected", { kind: "access" })[0];
   expect(scoped?.denied).toContainEqual({ id: associationId("person:other-identity"), reason: "subject_out_of_scope" });
 });
+
+
+test("invalid persisted alias evidence is withheld and audited before decoding", async () => {
+  const f = fixture();
+  await claim(f, "visible");
+  const malformed = ["{", "null", "{}", "[]", '["valid",null]', '[""]', JSON.stringify(["x".repeat(16_385)])];
+  for (const [index, evidence] of malformed.entries()) {
+    alias(f, `person:invalid-evidence-${index}`, [f.events["public"] as string]);
+    f.db.query("UPDATE identity_links SET evidence = ? WHERE subject_b = ?").run(evidence, `person:invalid-evidence-${index}`);
+  }
+  const response = packet(f, "reader-public");
+  expect(JSON.stringify(response)).not.toContain("invalid-evidence-");
+  const audit = listAudit(f.db, "reader-public", { kind: "access" })[0];
+  for (const index of malformed.keys()) {
+    const id = `identity:${sha256(JSON.stringify(["person:ada", `person:invalid-evidence-${index}`].sort()))}`;
+    expect(audit?.denied).toContainEqual({ id: sha256(id), reason: "held" });
+  }
+  expect(JSON.stringify(audit)).not.toContain("invalid-evidence-");
+});

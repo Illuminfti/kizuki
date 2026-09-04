@@ -310,7 +310,7 @@ export function collectPieces(
     );
     const seenAlias = new Set<string>();
     for (const root of aliasRoots.slice(0, 8)) {
-      for (const alias of listSubjectAliases(ctx.db, root, 8, reader.canReadAlias)) {
+      for (const alias of listSubjectAliases(ctx.db, root, 8, reader.canReadAlias, reader.invalidAlias)) {
         const key = JSON.stringify([root, alias.subject].sort());
         if (seenAlias.has(key)) continue;
         seenAlias.add(key);
