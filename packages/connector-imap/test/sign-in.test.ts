@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  existsSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -62,6 +63,15 @@ function scriptedIo(answers: string[]): ScriptedIo {
     async openUrl() {},
   };
   return io;
+}
+
+function ledgerBytes(dbPath: string): Buffer {
+  const parts = [readFileSync(dbPath)];
+  for (const suffix of ["-wal", "-shm"] as const) {
+    const side = `${dbPath}${suffix}`;
+    if (existsSync(side)) parts.push(readFileSync(side));
+  }
+  return Buffer.concat(parts);
 }
 
 function server(options: { password?: string } = {}): FakeImapServer {
@@ -365,7 +375,7 @@ describe("interactive sign-in", () => {
     ]);
     db.close();
 
-    const raw = readFileSync(dbPath);
+    const raw = ledgerBytes(dbPath);
     expect(raw.includes(Buffer.from(FIXTURE_PASSWORD))).toBe(false);
     expect(raw.includes(Buffer.from("mail.acme.example"))).toBe(false);
   });
@@ -405,7 +415,7 @@ describe("interactive sign-in", () => {
     expect(JSON.stringify(connections)).not.toContain(FIXTURE_USERNAME);
     db.close();
 
-    const raw = readFileSync(dbPath);
+    const raw = ledgerBytes(dbPath);
     expect(raw.includes(Buffer.from(FIXTURE_PASSWORD))).toBe(false);
     expect(raw.includes(Buffer.from("mail.acme.example"))).toBe(false);
     // The README says so plainly: the checkpoint cursor is keyed by folder and
