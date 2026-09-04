@@ -14,17 +14,30 @@
 # reach itself" is not "a peer can reach it". See the M2 Finding in
 # docs/deploy-box-tailscale.md for the full account of why this changed.
 #
-# Requires, on whatever machine runs this script: a POSIX shell, and
-# `tailscale`, `curl`, `nc`, `jq` on PATH, with this machine already
-# authenticated onto the same tailnet as the target box under a *different*
-# node identity. No path specific to one operating system or one operator's
-# machine is hard-coded; use whichever peer has these tools (a Box VM, a
-# Linux peer, or an operator machine with Git Bash and the Tailscale CLI on
-# PATH).
+# Requires, on whatever machine runs this script: a POSIX shell (with
+# `awk`/`grep`, assumed present alongside bash itself), plus `tailscale` and
+# `curl` on PATH, with this machine already authenticated onto the same
+# tailnet as the target box under a *different* node identity. That is the
+# full dependency list on purpose: an earlier version of this script also
+# needed `nc` and `jq`, and on this branch's own operator machine (Windows,
+# Git Bash) those two are not installed, which would have made the proof
+# unrunnable from the one machine most likely to run it. `nc` is replaced by
+# a `curl telnet://` connect probe (see `peer_tcp_open` below) and `jq` is
+# replaced by narrow `awk` field matching on `tailscale status`'s own
+# plain-text columns, not a general JSON parse — `tailscale status --json`'s
+# own `--help` text warns its shape is unstable across releases, so avoiding
+# it here is not a loss. No path specific to one operating system or one
+# operator's machine is hard-coded; use whichever peer has these two tools
+# (a Box VM, a Linux peer, or an operator machine with Git Bash and the
+# Tailscale CLI on PATH).
 #
 # Target node: the first argument, or $KIZUKI_TAILNET_NODE, or
 # kizuki-m2-proof (this milestone's fixture hostname) as the default.
 # Target port: $KIZUKI_TAILNET_PORT, default 8787.
+# Box public address (2.10 only): the second argument, or
+# $KIZUKI_BOX_PUBLIC_IP. Unlike the tailnet target, this script has no way
+# to discover a public IP on its own; whoever provisioned the box must
+# supply it.
 #
 # Prints one `PASS <n> <label>`, `FAIL <n> <label> <reason>` or
 # `BLOCKED <n> <label> <reason>` line per check. Does NOT exit non-zero on
@@ -35,6 +48,7 @@ set -uo pipefail
 
 TARGET="${1:-${KIZUKI_TAILNET_NODE:-kizuki-m2-proof}}"
 PORT="${KIZUKI_TAILNET_PORT:-8787}"
+BOX_PUBLIC_IP="${KIZUKI_BOX_PUBLIC_IP:-${2:-}}"
 ANY_FAIL=0
 
 pass() {
@@ -51,30 +65,42 @@ blocked() {
   ANY_FAIL=1
 }
 
-for bin in tailscale curl nc jq; do
+for bin in tailscale curl; do
   command -v "$bin" >/dev/null 2>&1 || {
     echo "tailnet proof: '$bin' not found on PATH. This script must run from a machine that is itself a tailnet peer (a Box VM, a Linux peer, or an operator machine with the Tailscale CLI installed), not from inside the box under test." >&2
     exit 1
   }
 done
 
-STATUS_JSON=""
+STATUS_LINE=""
 TS_IP=""
 
-# Polls THIS peer's own view of $TARGET (via this machine's own `tailscale
-# status --json`, never the target's own opinion of itself) for up to 60s.
-# There is no "docker compose up" to wait on here: the target is a
-# different machine, already started (or not) by its own deployment: this
-# only observes it.
+# The one line of `tailscale status --self=false` (peers only, so this
+# peer's own entry can never match) whose hostname column equals $TARGET,
+# or empty if there is none. `--self=false` is what makes a self-probe
+# structurally impossible here, not a hostname string comparison that a
+# future edit could get wrong.
+peer_line() {
+  tailscale status --self=false 2>/dev/null | awk -v h="$TARGET" '$2 == h { print; exit }'
+}
+
+# Polls THIS peer's own view of $TARGET for up to 60s. There is no
+# "docker compose up" to wait on here: the target is a different machine,
+# already started (or not) by its own deployment; this only observes it.
+# Tailscale's plain-text status marks a disconnected peer's line with the
+# literal word "offline" in its last column (this was not independently
+# re-verified against a genuinely offline peer during this work — no such
+# peer was available — and is asserted here on the strength of Tailscale's
+# documented column semantics; if that ever proves wrong, the practical
+# effect is a check that BLOCKs or times out rather than one that passes
+# when it should not, since absence of a matching, non-"offline" line is
+# exactly what treats a target as unreachable below).
 wait_target_online() {
-  local attempt json peer online
+  local attempt line
   for attempt in $(seq 1 60); do
-    json="$(tailscale status --json 2>/dev/null || true)"
-    peer="$(printf '%s' "$json" | jq -r --arg n "$TARGET" \
-      '(.Peer // {}) | to_entries[] | select(.value.HostName == $n) | .value' 2>/dev/null || true)"
-    online="$(printf '%s' "$peer" | jq -r '.Online // empty' 2>/dev/null || true)"
-    if [ "$online" = "true" ]; then
-      printf '%s' "$peer"
+    line="$(peer_line)"
+    if [ -n "$line" ] && ! printf '%s' "$line" | grep -qw offline; then
+      printf '%s' "$line"
       return 0
     fi
     sleep 1
@@ -82,32 +108,42 @@ wait_target_online() {
   return 1
 }
 
+# True (exit 0) iff a real TCP connection to host:port was established,
+# distinct from curl's own notion of "the telnet operation finished OK".
+# curl's telnet:// handler waits for input after connecting and reports the
+# same exit code (28, timeout) whether the handshake never completed or it
+# completed and then just sat idle waiting for a line to send — so the exit
+# code alone cannot tell "open port, no response yet" from "filtered or
+# closed port". curl -v's own "Established connection to" line is the real
+# TCP-connect signal (confirmed empirically against a known-open and a
+# known-closed port on this branch); grepping for it, not the exit code, is
+# what actually distinguishes the two. `nc -z` did this directly; this is
+# its curl-only replacement so the proof does not need `nc` installed.
+peer_tcp_open() {
+  local host="$1" port="$2"
+  curl --max-time 3 -sS -v "telnet://${host}:${port}" 2>&1 | grep -q 'Established connection'
+}
+
 check_2_6() {
-  local self_name
-  self_name="$(tailscale status --json 2>/dev/null | jq -r '.Self.HostName // empty')"
-  if [ -n "$self_name" ] && [ "$self_name" = "$TARGET" ]; then
+  local self_line
+  self_line="$(tailscale status --peers=false 2>/dev/null | awk -v h="$TARGET" '$2 == h { print; exit }')"
+  if [ -n "$self_line" ]; then
     blocked 2.6 node-online "target ($TARGET) is this peer's own hostname; this proof must run from a machine other than the node under test, or it re-creates the self-probe it exists to avoid"
     return
   fi
-  local peer
-  peer="$(wait_target_online)" || {
-    fail 2.6 node-online "$TARGET never reported Online:true within 60s, as seen from this peer's own tailscale status"
+  local line
+  line="$(wait_target_online)" || {
+    fail 2.6 node-online "$TARGET never showed as online in this peer's own 'tailscale status' within 60s"
     return
   }
-  STATUS_JSON="$peer"
-  TS_IP="$(printf '%s' "$STATUS_JSON" | jq -r '.TailscaleIPs[0] // empty')"
+  STATUS_LINE="$line"
+  TS_IP="$(printf '%s' "$line" | awk '{print $1}')"
   if [ -z "$TS_IP" ]; then
-    fail 2.6 node-online "$TARGET is online but this peer's status has no TailscaleIPs for it"
+    fail 2.6 node-online "$TARGET is listed but this peer's status has no address for it"
     return
   fi
   pass 2.6 node-online
-  local tags
-  tags="$(printf '%s' "$STATUS_JSON" | jq -r '.Tags // empty')"
-  if [ -z "$tags" ] || [ "$tags" = "null" ]; then
-    echo "  note: $TARGET is untagged in this peer's view of it (no Tags); the plan named a tag:kizuki assertion, the key used for this branch does not carry one" >&2
-  else
-    echo "  tags: $tags" >&2
-  fi
+  echo "  as seen by this peer: $line" >&2
 }
 
 # Shared by 2.7, 2.11 and 2.14: an HTTP GET of /health directly from this
@@ -193,15 +229,26 @@ check_2_9() {
 }
 
 check_2_10() {
-  # "Neither container publishes a port" needed docker inspect access to
-  # the box's own containers, which a same-machine version of this script
-  # had because it had just started them itself. A peer-only proof has no
-  # docker access to a remote box at all, so it cannot observe
-  # NetworkSettings.Ports directly; this row is BLOCKED here rather than
-  # faked. The real public-IP-is-dark probe belongs to M3, run from outside
-  # the box against its actual public IP, which is the assertion this row
-  # was always meant to lead to.
-  blocked 2.10 public-ip-dark "this peer-only proof has no docker access to the remote box's containers; verifying no port is published on the box's public IP is M3's box-level probe, not something observable from a tailnet peer"
+  # "Public IP is dark" never actually needed docker: that was only how a
+  # same-machine version of this script happened to approximate it, by
+  # inspecting NetworkSettings.Ports on containers it had just started
+  # itself. The real assertion is peer-testable directly: given the box's
+  # public address, try to connect to it and require refusal. Tailscale
+  # being installed on this peer does not route an arbitrary public IP
+  # through the tailnet (that address is not a tailnet address at all), so
+  # a direct probe genuinely exercises the public path, not the tailnet one.
+  # This BLOCKs only for a missing input, not by construction: it becomes a
+  # real check the moment whoever provisioned the box (M3) passes the
+  # address in.
+  if [ -z "$BOX_PUBLIC_IP" ]; then
+    blocked 2.10 public-ip-dark "no public address supplied (second argument or \$KIZUKI_BOX_PUBLIC_IP); whoever provisioned the box must supply its public IP, since a tailnet peer has no way to discover it on its own"
+    return
+  fi
+  if peer_tcp_open "$BOX_PUBLIC_IP" "$PORT"; then
+    fail 2.10 public-ip-dark "TCP connect to ${BOX_PUBLIC_IP}:${PORT} (the box's public address) succeeded; nothing should be reachable off the tailnet"
+    return
+  fi
+  pass 2.10 public-ip-dark
 }
 
 check_2_11() {
@@ -264,13 +311,11 @@ check_2_14() {
     blocked 2.14 only-served-ports-reachable "$TARGET did not answer /health just now (got HTTP ${health_code:-none}); an unreachable node would make every port look contained for the wrong reason"
     return
   fi
-  local port desc rc out
+  local port desc
   for entry in "9999:a port nothing listens on" "22:a port a neighbor's SSH might listen on"; do
     port="${entry%%:*}"
     desc="${entry#*:}"
-    out="$(nc -z -w 3 "$TS_IP" "$port" 2>&1)"
-    rc=$?
-    if [ "$rc" -eq 0 ]; then
+    if peer_tcp_open "$TS_IP" "$port"; then
       fail 2.14 only-served-ports-reachable "TCP connect to ${TS_IP}:${port} (${desc}) succeeded; only ports in serve.json should be reachable"
       return
     fi
@@ -281,34 +326,35 @@ check_2_14() {
 check_2_12() {
   # This peer-only proof does not own the box's lifecycle: it has no docker
   # compose access to the remote box to trigger a restart itself, unlike an
-  # earlier same-machine version of this script. What it can still honestly
-  # assert, from this peer's own tailscale status, is that the node id it
-  # observed in 2.6 is unchanged right now. A true restart-survives-identity
+  # earlier same-machine version of this script. Without a JSON parser it
+  # also has no access to Tailscale's own stable NodeID field (dropping the
+  # `jq` dependency traded that away — see the M2 Finding); the tailnet
+  # address from the plain-text `tailscale status` columns is the narrower
+  # identity signal available instead. It survives a normal restart but
+  # would very likely change if TS_STATE_DIR were wiped and the node
+  # re-registered from scratch, so it is a reasonable, if weaker, proxy for
+  # "this is still the same node". A true restart-survives-identity
   # assertion needs the restart to happen out of band (an operator, or M3's
-  # box bootstrap) while this id is compared before and after; composing
-  # that is a follow-up gap this script does not paper over by pretending
-  # to restart a box it does not control.
-  if [ -z "$STATUS_JSON" ]; then
-    blocked 2.12 restart-keeps-identity "2.6 did not establish node status; nothing to compare"
+  # box bootstrap) while this address is compared before and after;
+  # composing that is a follow-up gap this script does not paper over by
+  # pretending to restart a box it does not control.
+  if [ -z "$TS_IP" ]; then
+    blocked 2.12 restart-keeps-identity "2.6 did not establish $TARGET's address; nothing to compare"
     return
   fi
-  local id_before id_after peer
-  id_before="$(printf '%s' "$STATUS_JSON" | jq -r '.ID // empty')"
-  if [ -z "$id_before" ]; then
-    blocked 2.12 restart-keeps-identity "no node ID in $TARGET's status as seen from this peer"
-    return
-  fi
-  peer="$(wait_target_online)" || {
+  local ip_before ip_after line
+  ip_before="$TS_IP"
+  line="$(wait_target_online)" || {
     fail 2.12 restart-keeps-identity "$TARGET is not observable from this peer right now"
     return
   }
-  id_after="$(printf '%s' "$peer" | jq -r '.ID // empty')"
-  if [ "$id_before" != "$id_after" ]; then
-    fail 2.12 restart-keeps-identity "node id changed: $id_before -> $id_after"
+  ip_after="$(printf '%s' "$line" | awk '{print $1}')"
+  if [ "$ip_before" != "$ip_after" ]; then
+    fail 2.12 restart-keeps-identity "tailnet address changed: $ip_before -> $ip_after"
     return
   fi
   pass 2.12 restart-keeps-identity
-  echo "  note: this peer-side proof does not trigger the box's restart itself (no docker/compose access to a remote box); it only confirms the node id is unchanged right now. A real restart-survives-identity run needs the restart to happen out of band while this comparison runs before and after." >&2
+  echo "  note: this peer-side proof does not trigger the box's restart itself (no docker/compose access to a remote box); it only confirms the tailnet address is unchanged right now. A real restart-survives-identity run needs the restart to happen out of band while this comparison runs before and after." >&2
 }
 
 main() {

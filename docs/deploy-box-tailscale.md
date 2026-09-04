@@ -150,14 +150,14 @@ Finding below for why it no longer brings the box up itself):
 
 | # | Assertion | How it is decided |
 | --- | --- | --- |
-| 2.6 | Node is on the tailnet. | This peer's own `tailscale status --json` reports the target (`kizuki-m2-proof` by default) as an online `Peer` entry, distinct from `Self`. The auth key used against this branch is untagged (owner-account key, no `tag:kizuki`); the check asserts online state and hostname, not a tag, and reports whether a tag is present. Sets the target's tailnet IP for every later check. |
+| 2.6 | Node is on the tailnet. | This peer's own `tailscale status --self=false` (plain text, not `--json`) reports the target (`kizuki-m2-proof` by default) as a line whose hostname column matches and whose status column is not `offline`; `--self=false` excludes this peer's own entry entirely, which is what makes a self-probe structurally impossible here rather than a hostname comparison a future edit could get wrong. Sets the target's tailnet address for every later check. |
 | 2.7 | Health over the tailnet. | `curl`, run directly on the peer (no `docker compose exec` wrapper — see the Finding), against `http://<node-tailscale-ip>:8787/health` with an explicit `Host: 127.0.0.1` header, over the raw TCP forward `serve.json` sets up (see the older Finding below for why this is plain HTTP, not HTTPS) → `"ok":true`. |
 | 2.8 | MCP read over the tailnet with a token. | `POST /v1/mcp/system_health` from the peer to the same address with `Host: 127.0.0.1` and `Authorization: Bearer <daemon token>` → 200, `"ok":true`. The token comes from `KIZUKI_DAEMON_TOKEN` in the peer's environment (see the Finding: a peer with no shell access to the box has no other way to learn it); BLOCKED, not FAIL, if it is absent. |
 | 2.9 | Fail closed without a token. | Same call from the peer, same `Host: 127.0.0.1`, no `Authorization` header → 401 `unauthorized`. |
-| 2.10 | Public IP is dark. | BLOCKED by design: a peer-only proof has no docker access to the remote box's containers to read `NetworkSettings.Ports`. The real public-IP-is-dark probe is M3's, run from outside the box against its actual public IP. |
+| 2.10 | Public IP is dark. | From the peer, a `curl telnet://` connect probe against the box's *public* address (not its tailnet address) and the kizuki port must be refused or time out. The public address is supplied by whoever provisioned the box, via a second argument or `$KIZUKI_BOX_PUBLIC_IP` — a tailnet peer has no way to discover it on its own — so this BLOCKs only when that input is missing, not by construction; it becomes a real check the moment M3 passes the address in. |
 | 2.11 | 2.11 no-shell-exposed: SSH is refused. | With the node confirmed up (2.6 having passed, and `/health` re-checked immediately before the attempt so a failure cannot be mistaken for "nothing is reachable"), `tailscale ssh kizuki-m2-proof -- true` run from the peer's own `tailscale` binary must fail to establish a session. PASS only on that refusal; FAIL if a session succeeds. |
-| 2.12 | Node identity is stable, as observed by a peer. | The node id in this peer's own `tailscale status --json` for the target is unchanged across two reads. A peer-only proof cannot trigger the box's restart itself (no docker/compose access to a remote box), so the full restart-survives-identity assertion needs the restart to happen out of band while this comparison runs before and after; see the Finding. |
-| 2.14 | 2.14 only-served-ports-reachable. | From the peer, after re-confirming `/health` reachability, a TCP connect to a node port not named in `serve.json` (one nothing listens on, and one a neighbor in the shared namespace might plausibly run) must be refused or time out, under a short explicit timeout. |
+| 2.12 | Node identity is stable, as observed by a peer. | The target's tailnet address in this peer's own `tailscale status` is unchanged across two reads (the narrower identity signal available without a JSON parser — see the Finding). A peer-only proof cannot trigger the box's restart itself (no docker/compose access to a remote box), so the full restart-survives-identity assertion needs the restart to happen out of band while this comparison runs before and after; see the Finding. |
+| 2.14 | 2.14 only-served-ports-reachable. | From the peer, after re-confirming `/health` reachability, a `curl telnet://` connect probe against a node port not named in `serve.json` (one nothing listens on, and one a neighbor in the shared namespace might plausibly run) must be refused or time out, under a short explicit timeout. |
 
 Finding (2026-09-03, updated 2026-09-03): the Host-header problem below was
 first hit, diagnosed and reported as an unresolved FAIL on 2.7-2.9. It was
@@ -209,20 +209,54 @@ means the script has real gaps it did not have before, and they are
 recorded rather than hidden: it has no docker or filesystem access to the
 remote box, so 2.8 needs the daemon token supplied out-of-band via
 `KIZUKI_DAEMON_TOKEN` (the box has no shell to read it from — see the
-shell-removal finding above), 2.10's "no port published" assertion is
-BLOCKED here and left fully to M3's own public-IP probe, and 2.12 can only
-observe identity stability, not trigger and verify a restart, since it does
-not own the box's lifecycle. 2.6 and 2.12 keep reading the target's own
-status, which is legitimately a node-status read rather than a network
-reachability claim — the fix is specifically that they now read it via the
-*peer's* own `tailscale status --json` output about that target, never via
-a shell into the target's own container. Correspondingly, `container.sh`
-and `compose-lint.sh` are not run from this machine: Docker is not
+shell-removal finding above), and 2.12 can only observe identity stability,
+not trigger and verify a restart, since it does not own the box's lifecycle.
+2.6 and 2.12 keep reading the target's own status, which is legitimately a
+node-status read rather than a network reachability claim — the fix is
+specifically that they now read it via the *peer's* own `tailscale status`
+output about that target, never via a shell into the target's own
+container. Correspondingly, `container.sh` and `compose-lint.sh` are not
+run from this machine: Docker is not
 installed on the Windows host this branch was authored from, only inside a
 WSL distro that was used for local shell experiments and is not itself a
 tailnet peer distinct from the operator's own identity; both proofs already
 run in CI on a Linux runner, which is the right place for them, and this
 document does not claim a local result for either.
+
+Finding (2026-09-04, second correction): two problems in the rewrite above
+were caught in review. First, 2.10 had been left permanently `BLOCKED`
+rather than genuinely fixed — its comment conflated the *old*
+implementation (docker inspect on locally-started containers) with the
+actual assertion, which is peer-testable directly: given the box's public
+address, connect to it and require refusal, since Tailscale being installed
+on a peer does not route an arbitrary public IP through the tailnet. Because
+`blocked()` also sets the script's failure flag, an unconditionally blocked
+check meant `tailnet.sh` could never exit 0 regardless of the box's actual
+state — a finish line that can never be reached is not a finish line. 2.10
+is rewritten to take the box's public address from a second argument or
+`$KIZUKI_BOX_PUBLIC_IP`, `curl telnet://` it on the kizuki port, and PASS
+when the connection is refused or times out; it now BLOCKs only when that
+address is missing, which is an honest inability to know the answer rather
+than a check with no route to PASS. Second, this branch's own operator
+machine (Windows, Git Bash) has `tailscale` and `curl` but not `nc` or
+`jq` — the two extra dependencies the first rewrite added would have made
+the proof unrunnable from the one machine most likely to run it. `nc -z` is
+replaced by `peer_tcp_open`, a `curl telnet://` connect probe that greps
+curl's own `-v` output for "Established connection to" rather than trusting
+curl's exit code (which, for the `telnet://` scheme, is the same timeout
+code whether the TCP handshake never completed or it completed and curl
+then just sat idle waiting for input — confirmed empirically against a
+known-open and a known-closed port on this branch). `jq` is replaced by
+narrow `awk` field matching on `tailscale status`'s plain-text columns
+(`tailscale status --json`'s own `--help` text warns its shape is unstable
+across releases, so this is not a downgrade in stability); `tailscale
+status --self=false` excludes this peer's own entry by construction, which
+is what makes checks 2.6 and 2.12 structurally unable to match themselves
+rather than a hostname string comparison a future edit could weaken. The
+one real capability this traded away is Tailscale's stable per-node ID
+field, which is not present in the plain-text columns; 2.12 now compares
+the target's tailnet address instead, a narrower but still meaningful proxy
+for "still the same node" (documented at the check itself).
 
 *Host header, as first found.* `tailscale serve`'s HTTP proxy handler is
 Go's `NewSingleHostReverseProxy` (confirmed by reading exported symbols out
