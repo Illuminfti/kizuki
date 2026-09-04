@@ -79,6 +79,10 @@ describe("manifest and empty config", () => {
       schema: "kizuki.connector/v1",
       connector_id: "kizuki.ics",
       version: "0.1.0",
+      contract_minor: 1,
+      implementation: "@kizuki/connector-ics",
+      allowed_egress: [],
+      cursor_schema: "kizuki.ics-cursor/v1",
       kinds: ["calendar_event"],
       capabilities: {
         backfill: true,
@@ -89,6 +93,8 @@ describe("manifest and empty config", () => {
       },
       required_secrets: [],
       emits_sensitivity_hint: true,
+      default_sensitivity: "private",
+      sensitivity_floor: "personal",
       auth_modes: ["none", "sign_in"],
     });
   });
@@ -97,11 +103,9 @@ describe("manifest and empty config", () => {
     const connector = createIcsConnector({}, { now: NOW });
     expect((await connector.fixture()).length).toBeGreaterThan(0);
     expect((await connector.health()).state).toBe("disabled");
-    expect(await connector.purgeSource("email:ada@acme.example")).toEqual({
-      subject_id: "email:ada@acme.example",
-      source_record_ids: [],
-      unreachable_source_record_ids: [],
-    });
+    await expect(
+      connector.purgeSource("email:ada@acme.example"),
+    ).rejects.toMatchObject({ code: "not_supported" });
     await expect(connector.backfill(null)).rejects.toThrow(KizukiError);
     await expect(connector.sync(null)).rejects.toThrow(KizukiError);
   });

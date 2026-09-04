@@ -4,7 +4,9 @@ import {
   HealthReport,
   KizukiError,
   computeContentHash,
+  freezeManifest,
   isPlainObject,
+  policyForConnector,
 } from "@kizuki/core";
 import type {
   CaptureEventInput,
@@ -21,6 +23,7 @@ import type {
 } from "@kizuki/core";
 import {
   HASH_PREFIX_CHARS,
+  ICS_CURSOR_SCHEMA,
   decodeIcsCursor,
   emptyIcsCursor,
   encodeIcsCursor,
@@ -47,10 +50,14 @@ export interface IcsConnectorDeps {
   now?: () => Date;
 }
 
-const MANIFEST: Manifest = {
+const MANIFEST: Manifest = freezeManifest({
   schema: "kizuki.connector/v1",
   connector_id: ICS_CONNECTOR_ID,
   version: "0.1.0",
+  contract_minor: 1,
+  implementation: "@kizuki/connector-ics",
+  allowed_egress: [],
+  cursor_schema: ICS_CURSOR_SCHEMA,
   kinds: ["calendar_event"],
   capabilities: {
     backfill: true,
@@ -61,8 +68,9 @@ const MANIFEST: Manifest = {
   },
   required_secrets: [],
   emits_sensitivity_hint: true,
+  ...policyForConnector(ICS_CONNECTOR_ID),
   auth_modes: ["none", "sign_in"],
-};
+});
 
 const HEALTH_BY_CODE: Record<string, HealthState> = {
   unauthenticated: "unauthenticated",
@@ -413,12 +421,12 @@ export class IcsConnector implements Connector {
   }
 
   /** The calendar is the owner's file or feed; purge is ledger-side only. */
-  async purgeSource(subject_id: string): Promise<PurgePlan> {
-    return {
-      subject_id,
-      source_record_ids: [],
-      unreachable_source_record_ids: [],
-    };
+  async purgeSource(_subject_id: string): Promise<PurgePlan> {
+    throw new KizukiError(
+      "not_supported",
+      `${ICS_CONNECTOR_ID}: purge is not supported`,
+      { retryable: false },
+    );
   }
 
   async fixture(): Promise<CaptureEventInput[]> {

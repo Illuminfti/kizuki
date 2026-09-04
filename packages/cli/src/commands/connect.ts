@@ -8,6 +8,7 @@ import { getConnector } from "@kizuki/connectors";
 import { UsageError, parseArguments, requirePositional } from "../args";
 import {
   ConnectionError,
+  blocksEnrollment,
   enrollHostConnection,
   listHostConnections,
   loadConnector,
@@ -28,7 +29,7 @@ function parseSensitivityFlag(raw: string | undefined): Sensitivity | undefined 
 export const connectCommand: Command = {
   name: "connect",
   usage: "connect <connector> --source PATH [--sensitivity public|personal|private]",
-  summary: "enroll a none-mode source as an opaque host-authored connection",
+  summary: "enroll a file source (sign-in sources are not wired yet)",
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, { options: ["--source", "--sensitivity"] });
     const [rawId] = requirePositional(parsed.positionals, 1);
@@ -47,7 +48,7 @@ export const connectCommand: Command = {
       if (existing !== undefined && existing.state !== null) {
         const connector = await loadConnector(existing);
         const health = await connector.health();
-        if (health.state !== "ok") {
+        if (blocksEnrollment(health.state)) {
           io.err(
             `error: ${connectorId} health=${health.state}: ${health.detail ?? ""}`,
           );
@@ -60,7 +61,7 @@ export const connectCommand: Command = {
           requested,
         );
         io.out(
-          `connected ${connectorId} source=${existing.connection.source_key} path=${absolute} health=ok`,
+          `connected ${connectorId} source=${existing.connection.source_key} path=${absolute} health=${health.state}`,
         );
         return 0;
       }
@@ -73,7 +74,7 @@ export const connectCommand: Command = {
       }
       await connector.connect(refuseSecrets);
       const health = await connector.health();
-      if (health.state !== "ok") {
+      if (blocksEnrollment(health.state)) {
         io.err(
           `error: ${connectorId} health=${health.state}: ${health.detail ?? ""}`,
         );
@@ -97,7 +98,7 @@ export const connectCommand: Command = {
         requested,
       );
       io.out(
-        `connected ${connectorId} source=${connection.source_key} path=${absolute} health=ok`,
+        `connected ${connectorId} source=${connection.source_key} path=${absolute} health=${health.state}`,
       );
       return 0;
     });

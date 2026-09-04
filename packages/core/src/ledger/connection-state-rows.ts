@@ -103,6 +103,7 @@ export interface ConnectionRowWrite {
   config: string;
   secretRefs: string[];
   connectedAt: string;
+  implementationVersion: string;
   /** The row the caller validated; absent for a first enrollment. */
   expect: ConnectionExpectation | undefined;
 }
@@ -120,24 +121,27 @@ export function commitConnectionRow(
   if (write.expect === undefined) {
     db.query(
       `INSERT INTO connections
-         (connector_id, source_key, config, secret_refs, connected_at, disconnected_at)
-       VALUES (?, ?, ?, ?, ?, NULL)
+         (connector_id, source_key, config, secret_refs, connected_at, disconnected_at, implementation_version)
+       VALUES (?, ?, ?, ?, ?, NULL, ?)
        ON CONFLICT (connector_id, source_key) DO UPDATE SET
          config = excluded.config, secret_refs = excluded.secret_refs,
-         connected_at = excluded.connected_at, disconnected_at = NULL`,
+         connected_at = excluded.connected_at, disconnected_at = NULL,
+         implementation_version = excluded.implementation_version`,
     ).run(
       write.connectorId,
       write.sourceKey,
       write.config,
       refs,
       write.connectedAt,
+      write.implementationVersion,
     );
     return;
   }
   const result = db
     .query(
       `UPDATE connections
-          SET config = ?, secret_refs = ?, connected_at = ?, disconnected_at = NULL
+          SET config = ?, secret_refs = ?, connected_at = ?, disconnected_at = NULL,
+              implementation_version = ?
         WHERE connector_id = ? AND source_key = ?
           AND connected_at = ? AND disconnected_at IS ?`,
     )
@@ -145,6 +149,7 @@ export function commitConnectionRow(
       write.config,
       refs,
       write.connectedAt,
+      write.implementationVersion,
       write.connectorId,
       write.sourceKey,
       write.expect.connected_at,

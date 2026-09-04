@@ -17,7 +17,7 @@ import {
 } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
 import { withVault } from "../context";
-import { jsonLine } from "../output";
+import { jsonEnvelope } from "../output";
 import type { CliIo, Command } from "./index";
 
 function execStart(vaultPath: string): string {
@@ -54,7 +54,7 @@ export const serveCommand: Command = {
           return 0;
         }
         const result = installServeService(ctx.vaultPath, host);
-        if (parsed.flags.has("--json")) io.out(jsonLine(result));
+        if (parsed.flags.has("--json")) io.out(jsonEnvelope("serve", "ok", result));
         else {
           io.out(`supervisor=${result.status.kind} state=${result.status.state}`);
           if (result.unitPath !== null) io.out(`unit=${result.unitPath}`);
@@ -64,7 +64,7 @@ export const serveCommand: Command = {
 
       if (parsed.flags.has("--uninstall")) {
         const result = uninstallServeService(ctx.vaultPath, host);
-        if (parsed.flags.has("--json")) io.out(jsonLine(result));
+        if (parsed.flags.has("--json")) io.out(jsonEnvelope("serve", "ok", result));
         else io.out(`supervisor=${result.status.kind} state=${result.status.state} removed=${result.removed}`);
         return 0;
       }
@@ -74,7 +74,9 @@ export const serveCommand: Command = {
         const doctor = inspectServeDoctor(ctx.db, ctx.vaultPath, { supervisor: host });
         const pid = readServePid(ctx.vaultPath);
         const body = { pid, supervisor, doctor };
-        if (parsed.flags.has("--json")) io.out(jsonLine(body));
+        if (parsed.flags.has("--json")) {
+          io.out(jsonEnvelope("serve", doctor.ok ? "ok" : "error", body));
+        }
         else {
           io.out(`pid=${pid ?? "none"} supervisor=${supervisor.kind} state=${supervisor.state}`);
           io.out(supervisor.detail);
@@ -106,7 +108,15 @@ export const serveCommand: Command = {
             ? { crashAfter }
             : {}),
         });
-        if (parsed.flags.has("--json")) io.out(jsonLine(receipt));
+        if (parsed.flags.has("--json")) {
+          io.out(
+            jsonEnvelope(
+              "serve",
+              receipt.status === "failed" ? "error" : receipt.status === "ok" ? "ok" : "degraded",
+              receipt,
+            ),
+          );
+        }
         else io.out(`rail=${receipt.rail} status=${receipt.status} run_id=${receipt.run_id}`);
         return receipt.status === "failed" ? 1 : 0;
       }
@@ -130,7 +140,7 @@ export const serveCommand: Command = {
       });
       if (parsed.flags.has("--json")) {
         io.out(
-          jsonLine({
+          jsonEnvelope("serve", "ok", {
             receipts: result.receipts,
             http:
               result.http === null

@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { PAGE_CANDIDATE_KEY, validateEventInput } from "@kizuki/core";
-import { proposalsForEvent } from "@kizuki/core/staging";
+import { PAGE_CANDIDATE_KEY, proposalsForEvent, validateEventInput } from "@kizuki/core";
 import type { CaptureEventInput } from "@kizuki/core";
 import {
   LEGACY_EVENTS_FIXTURE,

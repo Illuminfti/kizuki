@@ -2,8 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { stampDerived } from "../../src/derived-meta";
+import { MAX_RETRIEVAL_LIMIT } from "../../src/contracts/retrieval";
 import { indexEvent, indexPage, rebuildSearch, removeDoc } from "../../src/search/indexer";
-import { search, toFtsQuery } from "../../src/search/query";
+import { search, searchResult, toFtsQuery } from "../../src/search/query";
 import { initSearch } from "../../src/search/schema";
 import { serializePage } from "../../src/vault/frontmatter";
 import type { CanonPage } from "../../src/vault/pages";
@@ -29,6 +31,7 @@ function page(
       id,
       title: `Title ${id}`,
       type: "fact",
+      status: "active",
       sensitivity: "personal",
       ...overrides,
     },
@@ -85,7 +88,7 @@ describe("toFtsQuery", () => {
     const db = searchDb();
     indexPage(db, page("fact:dated", "Meeting on 2026-02-03 at noon."));
     expect(search(db, "2026-02-03").map(({ doc_id }) => doc_id)).toEqual([
-      "fact:dated",
+      "page:fact:dated",
     ]);
   });
 
@@ -117,7 +120,7 @@ describe("search indexing", () => {
     indexPage(db, page("fact:one", "new wording"));
 
     expect(search(db, "old")).toEqual([]);
-    expect(search(db, "new").map(({ doc_id }) => doc_id)).toEqual(["fact:one"]);
+    expect(search(db, "new").map(({ doc_id }) => doc_id)).toEqual(["page:fact:one"]);
     expect(
       db.query<{ count: number }, []>("SELECT count(*) AS count FROM search_docs").get(),
     ).toEqual({ count: 1 });
@@ -144,7 +147,7 @@ describe("search indexing", () => {
     indexPage(db, page("fact:prefix", "A telescope reveals distant worlds."));
 
     const [hit] = search(db, "tele*");
-    expect(hit?.doc_id).toBe("fact:prefix");
+    expect(hit?.doc_id).toBe("page:fact:prefix");
     expect(hit?.snippet).toContain("[telescope]");
   });
 
@@ -152,7 +155,7 @@ describe("search indexing", () => {
     const db = searchDb();
     indexPage(db, page("fact:cafe", "The café closes at dusk."));
     expect(search(db, "cafe").map(({ doc_id }) => doc_id)).toEqual([
-      "fact:cafe",
+      "page:fact:cafe",
     ]);
   });
 
@@ -168,8 +171,8 @@ describe("search indexing", () => {
     );
 
     expect(search(db, "UniqueKeyword").map(({ doc_id }) => doc_id)).toEqual([
-      "fact:title",
-      "fact:body",
+      "page:fact:title",
+      "page:fact:body",
     ]);
   });
 
@@ -181,10 +184,10 @@ describe("search indexing", () => {
 
     expect(
       search(db, "ledger").map(({ scope, doc_id }) => `${scope}:${doc_id}`),
-    ).toEqual([`ledger:${event.event_id}`]);
+    ).toEqual([`ledger:event:${event.event_id}`]);
     expect(
       search(db, "canon").map(({ scope, doc_id }) => `${scope}:${doc_id}`),
-    ).toEqual([`canon:${event.event_id}`]);
+    ).toEqual([`canon:page:${event.event_id}`]);
 
     removeDoc(db, "canon", event.event_id);
     expect(search(db, "canon")).toEqual([]);
@@ -329,7 +332,7 @@ describe("search policy and filters", () => {
       search(policyDb(), "shared", { ceiling: "personal" }).map(
         ({ doc_id }) => doc_id,
       ),
-    ).toEqual(["fact:personal", "fact:public"]);
+    ).toEqual(["page:fact:personal", "page:fact:public"]);
   });
 
   test("public ceiling hides personal, private, and unlabeled documents", () => {
@@ -337,7 +340,7 @@ describe("search policy and filters", () => {
       search(policyDb(), "shared", { ceiling: "public" }).map(
         ({ doc_id }) => doc_id,
       ),
-    ).toEqual(["fact:public"]);
+    ).toEqual(["page:fact:public"]);
   });
 
   test.todo(
@@ -345,7 +348,7 @@ describe("search policy and filters", () => {
     () => {
       expect(
         search(policyDb(), "shared").map(({ doc_id }) => doc_id),
-      ).not.toContain("fact:unlabeled");
+      ).not.toContain("page:fact:unlabeled");
     },
   );
 
@@ -362,7 +365,7 @@ describe("search policy and filters", () => {
         types: ["topic"],
         excludePaths: [held.relPath],
       }).map(({ doc_id }) => doc_id),
-    ).toEqual(["topic:kept"]);
+    ).toEqual(["page:topic:kept"]);
   });
 
   test("time and subject filters select matching ledger events", () => {
@@ -388,7 +391,7 @@ describe("search policy and filters", () => {
         until: "2026-03-01T00:00:00Z",
         subjects: ["person:grace"],
       }).map(({ doc_id }) => doc_id),
-    ).toEqual([later.event_id]);
+    ).toEqual([`event:${later.event_id}`]);
   });
 
   test("compares since and until as instants, not raw strings", () => {
@@ -407,7 +410,7 @@ describe("search policy and filters", () => {
       })
         .map(({ doc_id, scope }) => `${scope}:${doc_id}`)
         .sort(),
-    ).toEqual([`canon:fact:empty`, `ledger:${offset.event_id}`].sort());
+    ).toEqual([`canon:page:fact:empty`, `ledger:event:${offset.event_id}`].sort());
     expect(
       search(db, "windowword", { since: "2026-02-03T00:00:00Z" }).map(
         ({ scope }) => scope,
@@ -424,5 +427,139 @@ describe("search policy and filters", () => {
     expect(() => search(db, "windowword", { until: "garbage" })).toThrow(
       RangeError,
     );
+  });
+
+  test("caps limit at MAX_RETRIEVAL_LIMIT before SQL", () => {
+    expect(() => search(searchDb(), "word", { limit: MAX_RETRIEVAL_LIMIT + 1 })).toThrow(
+      RangeError,
+    );
+  });
+
+  test("ledger hits are quoted and canon hits carry taint", () => {
+    const db = searchDb();
+    indexPage(db, page("fact:clean", "taintword", { taint: "clean" }));
+    const event = storedEvent(db, "quoted-src", { text: "taintword captured" });
+    indexEvent(db, event);
+    const hits = search(db, "taintword");
+    expect(hits.find((hit) => hit.scope === "canon")?.taint).toBe("clean");
+    expect(hits.find((hit) => hit.scope === "ledger")).toMatchObject({
+      taint: "quoted",
+      doc_id: `event:${event.event_id}`,
+    });
+  });
+
+  test("a missing search table is empty and index-degraded", () => {
+    const db = new Database(":memory:");
+    expect(searchResult(db, "anything")).toEqual({
+      hits: [],
+      degraded: ["index-degraded"],
+    });
+  });
+
+  test("declares index-degraded when derived_meta is not ok", () => {
+    const db = searchDb();
+    indexPage(db, page("fact:one", "degradeword"));
+    stampDerived(db, {
+      layer: "search",
+      generation: "gen-1",
+      rebuilt_at: "2026-09-02T12:00:00.000Z",
+      doc_count: 1,
+      source_count: 1,
+      skipped_count: 1,
+      status: "degraded",
+    });
+    expect(searchResult(db, "degradeword").degraded).toContain("index-degraded");
+  });
+});
+
+describe("search live eligibility and identity", () => {
+  test("refuses to index an archived page and removes a stale row", () => {
+    const db = searchDb();
+    indexPage(db, page("fact:gone", "vanishing archived"));
+    expect(search(db, "vanishing")).toHaveLength(1);
+    indexPage(
+      db,
+      page("fact:gone", "vanishing archived", { status: "archived" }),
+    );
+    expect(search(db, "vanishing")).toEqual([]);
+  });
+
+  test("rebuild omits archived pages", () => {
+    const db = searchDb();
+    const vault = tempVault();
+    disposers.push(vault.dispose);
+    writeCanon(
+      vault.path,
+      "facts/live.md",
+      {
+        id: "fact:live",
+        title: "Live",
+        type: "fact",
+        status: "active",
+        sensitivity: "public",
+      },
+      "liveword",
+    );
+    writeCanon(
+      vault.path,
+      "facts/old.md",
+      {
+        id: "fact:old",
+        title: "Old",
+        type: "fact",
+        status: "archived",
+        sensitivity: "public",
+      },
+      "liveword archived",
+    );
+    expect(rebuildSearch(db, vault.path).pages).toBe(1);
+    expect(search(db, "liveword").map(({ doc_id }) => doc_id)).toEqual([
+      "page:fact:live",
+    ]);
+  });
+
+  test("search_documents enforces unique doc_id", () => {
+    const db = searchDb();
+    indexPage(db, page("fact:one", "once"));
+    expect(() =>
+      db.exec(
+        `INSERT INTO search_documents (
+           doc_id, scope, title, body, path, page_type, sensitivity,
+           taint, authority, occurred_at, connector_id, subjects, provenance
+         ) VALUES (
+           'page:fact:one', 'canon', 'x', 'y', 'p', 'fact', 'public',
+           'clean', 'owner_authored', '', '', '[]', '[]'
+         )`,
+      ),
+    ).toThrow();
+  });
+
+  test("a skipped rebuild stamps degraded, not ok", () => {
+    const db = searchDb();
+    const vault = tempVault();
+    disposers.push(vault.dispose);
+    writeCanon(
+      vault.path,
+      "facts/ok.md",
+      {
+        id: "fact:ok",
+        title: "Ok",
+        type: "fact",
+        status: "active",
+        sensitivity: "public",
+      },
+      "okword",
+    );
+    writeFileSync(join(vault.path, "facts", "bad.md"), "no frontmatter\n");
+    const result = rebuildSearch(db, vault.path);
+    expect(result.status).toBe("degraded");
+    expect(result.skipped).toHaveLength(1);
+    expect(
+      db
+        .query<{ status: string }, []>(
+          "SELECT status FROM derived_meta WHERE layer = 'search'",
+        )
+        .get()?.status,
+    ).toBe("degraded");
   });
 });

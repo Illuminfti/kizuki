@@ -1,0 +1,44 @@
+Copyright (c) 2026 Garry Tan
+
+This directory is a permitted derivative of the MIT-licensed retrieval
+recipe and entity-graph helpers at public commit
+8c70f6255047a7647adb30b1d6333a48068d9fa5 (package 0.48.2.0), evaluated
+2026-09-04. The upstream product name and canonical URL appear only in
+README.md and docs/upstream-policy.md, as required by the repository
+attribution gate.
+
+Vendored algorithm files (Kizuki TypeScript adaptations of the public tip):
+
+- recipe/rrf.ts       from src/core/search/hybrid.ts
+                      (RRF_K = 60, normalize, authority boost, 0.7/0.3 cosine blend)
+- recipe/dedup.ts     from src/core/search/dedup.ts
+                      (four-layer near-duplicate post-filter)
+- recipe/degrade.ts   from src/core/search/hybrid.ts
+                      (declared-degradation envelope)
+- recipe/tier.ts      Kizuki mapping that replaces path-derived source boosts
+- recipe/graph.ts     from src/core/search/graph-signals.ts and
+                      src/core/search/two-pass.ts (adjacency + hop walk)
+- recipe/types.ts     Kizuki port document/hit shapes
+- recipe/index.ts     package surface
+
+Modifications marked relative to the public tip:
+
+- Product identifiers rewritten so they do not appear in this tree.
+- SearchResult / BrainEngine types replaced by kizuki.retrieval/v1 shapes.
+- Path-derived source-boost maps and personal slug prefixes were not copied.
+- Authority is an orthogonal ranking axis: owner_correction outranks
+  owner_authored, connector_evidence, then model_inference.
+- Sensitivity is enforced by the port; unlabeled documents are never served.
+- No environment-variable ranking overrides.
+- No telemetry, query cache, or network client.
+- No reranker and no local GGUF runtime (those remain Kizuki-own work).
+- Graph signals fail closed on unlabeled or over-ceiling nodes.
+- RRF keeps the vector-bearing representation when lexical and vector arms
+  contribute the same chunk, so cosine re-scoring cannot silently discard it.
+- Adjacency and type-diversity accounting are document-level; duplicate chunks
+  cannot impersonate independent documents or crowd distinct documents out.
+- Hop walks emit each stored edge once and report truncation only when another
+  eligible edge exists beyond the requested limit.
+
+The remainder of the upstream tree (CLI, admin UI, model SDKs, hosted
+cache, markdown mutation) is not vendored.

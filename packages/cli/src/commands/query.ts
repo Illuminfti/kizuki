@@ -2,7 +2,8 @@ import type { SearchHit, SearchOptions } from "@kizuki/core";
 import { listCanonPages, readHolds, search } from "@kizuki/core";
 import { UsageError, parseArguments, requirePositional } from "../args";
 import { withVault } from "../context";
-import { clean, jsonLine } from "../output";
+import { indexFreshness } from "../derived";
+import { clean, jsonEnvelope } from "../output";
 import type { CliIo, Command } from "./index";
 
 const SCOPES = ["canon", "ledger", "all"] as const;
@@ -27,12 +28,12 @@ function formatHit(hit: SearchHit): string {
 
 export const queryCommand: Command = {
   name: "query",
-  usage: "query <text> [--scope canon|ledger|all] [--limit N] [--json]",
+  usage: "query <text> [--scope canon|ledger|all] [--limit N] [--json] [--degraded]",
   summary: "search labeled canon and ledger text through the FTS floor",
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, {
       options: ["--scope", "--limit"],
-      flags: ["--json"],
+      flags: ["--json", "--degraded"],
     });
     const [text] = requirePositional(parsed.positionals, 1);
     if (text === undefined) throw new UsageError(this.usage);
@@ -43,8 +44,17 @@ export const queryCommand: Command = {
     }
     const rawLimit = parsed.options.get("--limit");
     const limit = rawLimit === undefined ? 20 : parseLimit(rawLimit);
+    const allowDegraded = parsed.flags.has("--degraded");
 
     return withVault(io, async (ctx) => {
+      const freshness = indexFreshness(ctx.db, ctx.vaultPath);
+      if (!freshness.fresh && !allowDegraded) {
+        io.err(
+          `error: search index is stale (${freshness.degraded.join(", ")}); run a sync/import or pass --degraded`,
+        );
+        return 1;
+      }
+
       let pages;
       try {
         pages = listCanonPages(ctx.vaultPath);
@@ -70,10 +80,23 @@ export const queryCommand: Command = {
       if (withheld > 0) {
         io.err(`withheld=${withheld} (no sensitivity label)`);
       }
+      if (!freshness.fresh) {
+        io.err(`degraded=${freshness.degraded.join(",")}`);
+      }
 
       if (parsed.flags.has("--json")) {
-        for (const hit of hits) io.out(jsonLine(hit));
+        io.out(
+          jsonEnvelope(
+            "query",
+            freshness.fresh ? "ok" : "degraded",
+            { hits, withheld },
+            { degraded: freshness.degraded },
+          ),
+        );
         return 0;
+      }
+      if (hits.length === 0 && withheld === 0) {
+        io.err("0 hits");
       }
       for (const hit of hits) io.out(formatHit(hit));
       return 0;

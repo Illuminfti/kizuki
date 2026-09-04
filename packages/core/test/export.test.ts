@@ -1,18 +1,31 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  chmodSync,
   existsSync,
+  lstatSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { exportVault } from "../src/export";
+import {
+  BACKUP_SCHEMA,
+  exportVault,
+  restoreVault,
+  verifyBackup,
+  type ExportManifest,
+  type ExportManifestEntry,
+} from "../src/export";
 import { saveCheckpoint } from "../src/ledger/connections";
-import { openLedger } from "../src/ledger/db";
+import { LEDGER_SCHEMA_VERSION, openLedger } from "../src/ledger/db";
 import { accept } from "../src/ledger/ledger";
 import { purgeEvents } from "../src/ledger/purge";
+import { readVaultId } from "../src/serve/vault-id";
 import { initVault } from "../src/vault/init";
 import { validEvent } from "./fixtures";
 
@@ -44,13 +57,17 @@ function populated() {
 
   const sourceKey = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
   db.query(
-    "INSERT INTO connections (connector_id, source_key, config, secret_refs, connected_at, disconnected_at) VALUES (?, ?, ?, ?, ?, NULL)",
+    `INSERT INTO connections
+       (connector_id, source_key, config, secret_refs, connected_at, disconnected_at,
+        implementation_version)
+     VALUES (?, ?, ?, ?, ?, NULL, ?)`,
   ).run(
     "fixture",
     sourceKey,
     '{"schema":"kizuki.connection-config/v1","state_ref_index":null}',
     "[]",
     new Date().toISOString(),
+    "fixture@1",
   );
   saveCheckpoint(db, "fixture", sourceKey, "next", "sync", {
     stored: 1,
@@ -62,37 +79,196 @@ function populated() {
     cursor: "next",
   });
   writeFileSync(join(vaultPath, "notes.txt"), "plain vault file\n");
+  writeFileSync(join(vaultPath, "z-last.txt"), "z\n");
+  writeFileSync(join(vaultPath, "ä-umlaut.txt"), "ae\n");
+  mkdirSync(join(vaultPath, "people"), { recursive: true });
+  writeFileSync(join(vaultPath, "people", "Ada.md"), "---\nid: ada\n---\n");
   writeFileSync(join(vaultPath, ".kizuki", "private-state"), "excluded\n");
-  return { db, vaultPath };
+  return { db, vaultPath, remainingEventId: second.event.event_id, sourceKey };
+}
+
+function insertFixtureClaim(
+  db: ReturnType<typeof openLedger>,
+  body: string,
+  claimId = "01EXPORTCLAIM00000000000001",
+): void {
+  const at = "2026-01-01T00:00:00.000Z";
+  db.query(
+    `INSERT INTO claims
+       (claim_id, kind, target, body, frontmatter, provenance, subjects,
+        producer, confidence, status, created_at, body_hash,
+        subject, predicate, object, polarity, claim_key, authority,
+        sensitivity, taint, model_ref, valid_from, valid_to, asserted_at,
+        retracted_at, superseded_by, receipt_id, corroboration, last_confirmed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    claimId,
+    "claim",
+    "people/ada",
+    body,
+    "{}",
+    "[]",
+    '["person:ada"]',
+    "deterministic",
+    0.9,
+    "live",
+    at,
+    "bodyhash",
+    "person:ada",
+    "employment.works_at",
+    "acme",
+    "positive",
+    "person:ada|employment.works_at",
+    "connector_evidence",
+    "personal",
+    "quoted",
+    null,
+    at,
+    null,
+    at,
+    null,
+    null,
+    null,
+    1,
+    null,
+  );
+}
+
+function writeSignedManifest(
+  backup: string,
+  manifest: Omit<ExportManifest, "manifest_sha256">,
+): ExportManifest {
+  const files: Record<string, ExportManifestEntry> = {};
+  for (const key of Object.keys(manifest.files).sort((left, right) =>
+    left < right ? -1 : left > right ? 1 : 0,
+  )) {
+    const entry = manifest.files[key];
+    if (entry !== undefined) files[key] = entry;
+  }
+  const unsigned = {
+    schema: manifest.schema,
+    vault_id: manifest.vault_id,
+    created_at: manifest.created_at,
+    schema_versions: manifest.schema_versions,
+    snapshot: manifest.snapshot,
+    complete: manifest.complete,
+    files,
+  };
+  const signed: ExportManifest = {
+    ...unsigned,
+    manifest_sha256: new Bun.CryptoHasher("sha256")
+      .update(`${JSON.stringify(unsigned, null, 2)}\n`)
+      .digest("hex"),
+  };
+  writeFileSync(join(backup, "manifest.json"), `${JSON.stringify(signed, null, 2)}\n`);
+  chmodSync(join(backup, "manifest.json"), 0o600);
+  return signed;
+}
+
+function insertFixtureReceipt(
+  db: ReturnType<typeof openLedger>,
+  kind = "purge_review",
+): void {
+  db.query(
+    `INSERT INTO canon_receipts
+       (receipt_id, claim_ids, provenance, sensitivity, page_path, kind,
+        before_hash, after_hash, at, receipt_kind, page_action, archive_path,
+        writer, producer, model_ref, authority, confidence, taint,
+        candidates, superseded, retrieval_ops, reverts, reverted_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    "01EXPORTRECEIPTKIND000000001",
+    "[]",
+    "[]",
+    "personal",
+    "people/Ada.md",
+    kind,
+    null,
+    "afterhash",
+    "2026-01-01T00:00:00.000Z",
+    "write",
+    "edit",
+    null,
+    "loop",
+    "deterministic",
+    null,
+    "connector_evidence",
+    1,
+    "quoted",
+    "[]",
+    "[]",
+    "[]",
+    null,
+    null,
+  );
+}
+
+function utf8BodyOnChunkBoundary(): string {
+  const empty = JSON.stringify({
+    schema: "kizuki.claim/v1",
+    claim_id: "01EXPORTUTF8CLAIM0000000001",
+    kind: "claim",
+    target: "people/ada",
+    body: "",
+    frontmatter: {},
+    provenance: [],
+    subjects: ["person:ada"],
+    producer: "deterministic",
+    confidence: 0.9,
+    status: "live",
+    created_at: "2026-01-01T00:00:00.000Z",
+    body_hash: "bodyhash",
+    subject: "person:ada",
+    predicate: "employment.works_at",
+    object: "acme",
+    polarity: "positive",
+    claim_key: "person:ada|employment.works_at",
+    authority: "connector_evidence",
+    sensitivity: "personal",
+    taint: "quoted",
+    model_ref: null,
+    valid_from: "2026-01-01T00:00:00.000Z",
+    valid_to: null,
+    asserted_at: "2026-01-01T00:00:00.000Z",
+    retracted_at: null,
+    superseded_by: null,
+    receipt_id: null,
+    corroboration: 1,
+    last_confirmed_at: null,
+  });
+  const prefix = empty.indexOf('"body":"') + '"body":"'.length;
+  const pad = 65_535 - Buffer.byteLength(empty.slice(0, prefix));
+  if (pad < 1) throw new Error("chunk-boundary pad is not positive");
+  return `${"a".repeat(pad)}中`;
 }
 
 describe("exportVault", () => {
-  test("writes ledger and connection streams with matching manifest counts", () => {
+  test("writes a complete kizuki.backup/v1 manifest with matching hashes", () => {
     const { db, vaultPath } = populated();
     const outDir = join(temporary("kizuki-export-parent-"), "dump");
     const manifest = exportVault(db, vaultPath, outDir);
 
+    expect(manifest.schema).toBe(BACKUP_SCHEMA);
+    expect(manifest.complete).toBe(true);
+    expect(manifest.schema_versions.ledger).toBe(LEDGER_SCHEMA_VERSION);
     expect(manifest.files["ledger/events.jsonl"]?.count).toBe(1);
     expect(manifest.files["ledger/event_purges.jsonl"]?.count).toBe(1);
     expect(manifest.files["connections.jsonl"]?.count).toBe(1);
     expect(manifest.files["checkpoints.jsonl"]?.count).toBe(1);
+    expect(manifest.snapshot.event_count).toBe(1);
     expect(JSON.parse(readFileSync(join(outDir, "manifest.json"), "utf8"))).toEqual(
       manifest,
     );
-    db.close();
-  });
-
-  test("every manifest hash matches the bytes written", () => {
-    const { db, vaultPath } = populated();
-    const outDir = join(temporary("kizuki-export-parent-"), "dump");
-    const manifest = exportVault(db, vaultPath, outDir);
+    expect(verifyBackup(outDir).manifest_sha256).toBe(manifest.manifest_sha256);
     for (const [path, entry] of Object.entries(manifest.files)) {
       expect(
         new Bun.CryptoHasher("sha256")
           .update(readFileSync(join(outDir, path)))
           .digest("hex"),
       ).toBe(entry.sha256);
+      expect(lstatSync(join(outDir, path)).mode & 0o777).toBe(0o600);
     }
+    expect(lstatSync(outDir).mode & 0o777).toBe(0o700);
     db.close();
   });
 
@@ -104,11 +280,25 @@ describe("exportVault", () => {
       "plain vault file\n",
     );
     expect(existsSync(join(outDir, "vault", ".kizuki"))).toBe(false);
-    expect(
-      Object.keys(
-        JSON.parse(readFileSync(join(outDir, "connections.jsonl"), "utf8")) as object,
-      ),
-    ).not.toContain("resolved_secret");
+    const connections = readFileSync(join(outDir, "connections.jsonl"), "utf8");
+    expect(connections).not.toContain("resolved_secret");
+    expect(connections).toContain("fixture@1");
+    db.close();
+  });
+
+  test("orders vault files by Unicode code unit, not locale", () => {
+    const { db, vaultPath } = populated();
+    const outDir = join(temporary("kizuki-export-parent-"), "dump");
+    const manifest = exportVault(db, vaultPath, outDir);
+    const vaultKeys = Object.keys(manifest.files).filter((key) =>
+      key.startsWith("vault/"),
+    );
+    expect(vaultKeys).toEqual([...vaultKeys].sort((left, right) =>
+      left < right ? -1 : left > right ? 1 : 0,
+    ));
+    expect(vaultKeys.indexOf("vault/z-last.txt")).toBeLessThan(
+      vaultKeys.indexOf("vault/ä-umlaut.txt"),
+    );
     db.close();
   });
 
@@ -119,6 +309,554 @@ describe("exportVault", () => {
     writeFileSync(marker, "keep\n");
     expect(() => exportVault(db, vaultPath, outDir)).toThrow(/not empty/);
     expect(readFileSync(marker, "utf8")).toBe("keep\n");
+    db.close();
+  });
+
+  test("does not delete another run's incomplete staging", () => {
+    const { db, vaultPath } = populated();
+    const parent = temporary("kizuki-export-parent-");
+    const other = join(parent, `other${".kizuki-backup-"}01OTHERSTAGING0000000001.partial`);
+    mkdirSync(other);
+    writeFileSync(join(other, ".kizuki-backup-incomplete"), "incomplete\n");
+    exportVault(db, vaultPath, join(parent, "dump"));
+    expect(readFileSync(join(other, ".kizuki-backup-incomplete"), "utf8")).toBe(
+      "incomplete\n",
+    );
+    db.close();
+  });
+
+  test("does not recursively delete a destination that filled during export", () => {
+    const { db, vaultPath } = populated();
+    const outDir = join(temporary("kizuki-export-parent-"), "dump");
+    expect(() =>
+      exportVault(db, vaultPath, outDir, {
+        onProgress: (label) => {
+          if (label === "vault" && !existsSync(outDir)) {
+            mkdirSync(outDir);
+            writeFileSync(join(outDir, "keep.txt"), "keep\n");
+          }
+        },
+      }),
+    ).toThrow(/not empty/);
+    expect(readFileSync(join(outDir, "keep.txt"), "utf8")).toBe("keep\n");
+    db.close();
+  });
+
+  test("removes the staging directory when export is cancelled", () => {
+    const { db, vaultPath } = populated();
+    const parent = temporary("kizuki-export-parent-");
+    const outDir = join(parent, "dump");
+    expect(() =>
+      exportVault(db, vaultPath, outDir, {
+        onProgress: (label) => {
+          if (label === "vault") throw new Error("injected failure");
+        },
+      }),
+    ).toThrow(/injected failure/);
+    expect(existsSync(outDir)).toBe(false);
+    expect(
+      readdirSync(parent).some((name) => name.includes(".kizuki-backup-")),
+    ).toBe(false);
+    db.close();
+  });
+
+  test("removes the staging directory when export setup fails", () => {
+    const { db, vaultPath } = populated();
+    const parent = temporary("kizuki-export-parent-");
+    const outDir = join(parent, "dump");
+    expect(() =>
+      exportVault(db, vaultPath, outDir, {
+        onProgress: (label) => {
+          if (label === "staging") throw new Error("injected staging failure");
+        },
+      }),
+    ).toThrow(/injected staging failure/);
+    expect(existsSync(outDir)).toBe(false);
+    expect(
+      readdirSync(parent).some((name) => name.includes(".kizuki-backup-")),
+    ).toBe(false);
+    db.close();
+  });
+
+  test("refuses a destination inside the vault, including through a symlink", () => {
+    const { db, vaultPath } = populated();
+    expect(() => exportVault(db, vaultPath, join(vaultPath, "inside"))).toThrow(
+      /must not be inside the vault/,
+    );
+    const parent = temporary("kizuki-export-alias-");
+    const alias = join(parent, "alias");
+    symlinkSync(vaultPath, alias);
+    expect(() => exportVault(db, vaultPath, join(alias, "nested"))).toThrow(
+      /must not be inside the vault/,
+    );
+    db.close();
+  });
+
+  test("does not chmod an existing parent directory", () => {
+    const { db, vaultPath } = populated();
+    const parent = temporary("kizuki-export-parent-");
+    chmodSync(parent, 0o777);
+    exportVault(db, vaultPath, join(parent, "dump"));
+    expect(lstatSync(parent).mode & 0o777).toBe(0o777);
+    db.close();
+  });
+
+  test("writes owner-only files even under a permissive umask", () => {
+    const { db, vaultPath } = populated();
+    const previous = process.umask(0o000);
+    try {
+      const outDir = join(temporary("kizuki-export-parent-"), "dump");
+      exportVault(db, vaultPath, outDir);
+      expect(lstatSync(outDir).mode & 0o777).toBe(0o700);
+      expect(lstatSync(join(outDir, "manifest.json")).mode & 0o777).toBe(0o600);
+      expect(lstatSync(join(outDir, "ledger", "events.jsonl")).mode & 0o777).toBe(
+        0o600,
+      );
+    } finally {
+      process.umask(previous);
+    }
+    db.close();
+  });
+
+  test("refuses an existing destination that is world-accessible", () => {
+    const { db, vaultPath } = populated();
+    const outDir = temporary("kizuki-export-open-");
+    chmodSync(outDir, 0o777);
+    expect(() => exportVault(db, vaultPath, outDir)).toThrow(/owner-only/);
+    db.close();
+  });
+
+  test("streams a large vault file without retaining the whole payload", () => {
+    const { db, vaultPath } = populated();
+    const blob = Buffer.alloc(4 * 1024 * 1024, 7);
+    writeFileSync(join(vaultPath, "blob.bin"), blob);
+    const before = process.memoryUsage().rss;
+    const outDir = join(temporary("kizuki-export-parent-"), "dump");
+    const manifest = exportVault(db, vaultPath, outDir);
+    const after = process.memoryUsage().rss;
+    expect(manifest.files["vault/blob.bin"]?.size).toBe(blob.byteLength);
+    expect(after - before).toBeLessThan(48 * 1024 * 1024);
+    db.close();
+  });
+});
+
+describe("restoreVault", () => {
+  test("restores ledger rows and vault bytes into a clean target", () => {
+    const { db, vaultPath, remainingEventId } = populated();
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    exportVault(db, vaultPath, backup);
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    const report = restoreVault(backup, target);
+
+    expect(report.events).toBe(1);
+    expect(report.vault_files).toBeGreaterThan(0);
+    expect(readFileSync(join(target, "notes.txt"), "utf8")).toBe(
+      "plain vault file\n",
+    );
+    expect(existsSync(join(target, ".kizuki"))).toBe(true);
+    const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
+    expect(
+      restored
+        .query<{ event_id: string }, []>("SELECT event_id FROM events")
+        .all()
+        .map((row) => row.event_id),
+    ).toEqual([remainingEventId]);
+    expect(
+      restored
+        .query<{ count: number }, []>("SELECT COUNT(*) AS count FROM event_purges")
+        .get()?.count,
+    ).toBe(1);
+    expect(
+      restored
+        .query<{ count: number }, []>("SELECT COUNT(*) AS count FROM connections")
+        .get()?.count,
+    ).toBe(1);
+    expect(
+      restored
+        .query<{ implementation_version: string }, []>(
+          "SELECT implementation_version FROM connections",
+        )
+        .get()?.implementation_version,
+    ).toBe("fixture@1");
+    restored.close();
+    db.close();
+  });
+
+  test("verify-only refuses a torn or incomplete backup", () => {
+    const { db, vaultPath } = populated();
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    exportVault(db, vaultPath, backup);
+    writeFileSync(join(backup, ".kizuki-backup-incomplete"), "incomplete\n");
+    expect(() => verifyBackup(backup)).toThrow(/incomplete/);
+    rmSync(join(backup, ".kizuki-backup-incomplete"));
+    writeFileSync(join(backup, "ledger", "events.jsonl"), "{not-json\n", {
+      flag: "w",
+    });
+    expect(() => verifyBackup(backup)).toThrow(/hash mismatch/);
+    db.close();
+  });
+
+  test("does not recursively delete a restore target that filled later", () => {
+    const { db, vaultPath } = populated();
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    exportVault(db, vaultPath, backup);
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    expect(() =>
+      restoreVault(backup, target, {
+        onProgress: (label) => {
+          if (label === "vault" && !existsSync(target)) {
+            mkdirSync(target);
+            writeFileSync(join(target, "keep.txt"), "keep\n");
+          }
+        },
+      }),
+    ).toThrow(/not empty/);
+    expect(readFileSync(join(target, "keep.txt"), "utf8")).toBe("keep\n");
+    db.close();
+  });
+
+  test("refuses restore into an existing populated target", () => {
+    const { db, vaultPath } = populated();
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    exportVault(db, vaultPath, backup);
+    const target = temporary("kizuki-restore-occupied-");
+    writeFileSync(join(target, "keep.txt"), "keep\n");
+    expect(() => restoreVault(backup, target)).toThrow(/not empty/);
+    expect(readFileSync(join(target, "keep.txt"), "utf8")).toBe("keep\n");
+    db.close();
+  });
+
+  test("restores a vault file named INCOMPLETE", () => {
+    const { db, vaultPath } = populated();
+    writeFileSync(join(vaultPath, "INCOMPLETE"), "vault-marker\n");
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    exportVault(db, vaultPath, backup);
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    restoreVault(backup, target);
+    expect(readFileSync(join(target, "INCOMPLETE"), "utf8")).toBe("vault-marker\n");
+    db.close();
+  });
+
+  test("restores claims, bindings, supersessions, proposals, and page_index", () => {
+    const { db, vaultPath } = populated();
+    insertFixtureClaim(db, "Ada works at Acme.");
+    db.query(
+      `INSERT INTO claim_supersessions
+         (winner, loser, rule, prior_valid_to, receipt_id, at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "01EXPORTCLAIM00000000000001",
+      "01EXPORTLOSER00000000000001",
+      "later_wins",
+      null,
+      "01EXPORTRECEIPT00000000001",
+      "2026-01-01T00:00:00.000Z",
+    );
+    db.query(
+      `INSERT INTO claim_bindings (claim_key, page_id, bound_at) VALUES (?, ?, ?)`,
+    ).run(
+      "person:ada|employment.works_at",
+      "ada",
+      "2026-01-01T00:00:00.000Z",
+    );
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    const manifest = exportVault(db, vaultPath, backup);
+    expect(manifest.files["claims/claims.jsonl"]?.count).toBe(1);
+    expect(manifest.files["claims/supersessions.jsonl"]?.count).toBe(1);
+    expect(manifest.files["claims/bindings.jsonl"]?.count).toBe(1);
+
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    const report = restoreVault(backup, target);
+    expect(report.claims).toBe(1);
+    const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
+    expect(
+      restored
+        .query<{ claim_id: string }, []>("SELECT claim_id FROM claims")
+        .all()
+        .map((row) => row.claim_id),
+    ).toEqual(["01EXPORTCLAIM00000000000001"]);
+    expect(
+      restored
+        .query<{ proposal_id: string }, []>("SELECT proposal_id FROM proposals")
+        .all()
+        .map((row) => row.proposal_id),
+    ).toEqual(["01EXPORTCLAIM00000000000001"]);
+    expect(
+      restored
+        .query<{ loser: string }, []>("SELECT loser FROM claim_supersessions")
+        .all()
+        .map((row) => row.loser),
+    ).toEqual(["01EXPORTLOSER00000000000001"]);
+    expect(
+      restored
+        .query<{ page_id: string }, []>("SELECT page_id FROM claim_bindings")
+        .all()
+        .map((row) => row.page_id),
+    ).toEqual(["ada"]);
+    expect(
+      restored
+        .query<{ page_id: string; rel_path: string }, []>(
+          "SELECT page_id, rel_path FROM page_index ORDER BY page_id",
+        )
+        .all(),
+    ).toEqual([{ page_id: "ada", rel_path: "people/Ada.md" }]);
+    restored.close();
+    db.close();
+  });
+
+  test("restores identity links and connector sensitivity", () => {
+    const { db, vaultPath, sourceKey } = populated();
+    db.query(
+      `INSERT INTO identity_links
+         (subject_a, subject_b, score, evidence, status, decided_by, receipt_id, at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "person:ada",
+      "person:a.lovelace",
+      0.96,
+      JSON.stringify(["evt-1"]),
+      "merged",
+      "owner",
+      null,
+      "2026-01-01T00:00:00.000Z",
+    );
+    db.query(
+      `INSERT INTO connector_sensitivity
+         (connector_id, source_key, default_sensitivity, floor, set_by, at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "fixture",
+      sourceKey,
+      "personal",
+      "personal",
+      "manifest",
+      "2026-01-01T00:00:00.000Z",
+    );
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    const manifest = exportVault(db, vaultPath, backup);
+    expect(manifest.files["claims/identity_links.jsonl"]?.count).toBe(1);
+    expect(manifest.files["ledger/connector_sensitivity.jsonl"]?.count).toBe(1);
+
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    restoreVault(backup, target);
+    const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
+    expect(
+      restored
+        .query<
+          {
+            subject_a: string;
+            subject_b: string;
+            score: number;
+            evidence: string;
+            status: string;
+          },
+          []
+        >(
+          `SELECT subject_a, subject_b, score, evidence, status
+           FROM identity_links`,
+        )
+        .get(),
+    ).toEqual({
+      subject_a: "person:ada",
+      subject_b: "person:a.lovelace",
+      score: 0.96,
+      evidence: '["evt-1"]',
+      status: "merged",
+    });
+    expect(
+      restored
+        .query<
+          {
+            connector_id: string;
+            source_key: string;
+            default_sensitivity: string;
+            floor: string;
+          },
+          []
+        >(
+          `SELECT connector_id, source_key, default_sensitivity, floor
+           FROM connector_sensitivity`,
+        )
+        .get(),
+    ).toEqual({
+      connector_id: "fixture",
+      source_key: sourceKey,
+      default_sensitivity: "personal",
+      floor: "personal",
+    });
+    restored.close();
+    db.close();
+  });
+
+  test("restores backups that omit identity links and connector sensitivity", () => {
+    const { db, vaultPath } = populated();
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    const manifest = exportVault(db, vaultPath, backup);
+    rmSync(join(backup, "claims", "identity_links.jsonl"));
+    rmSync(join(backup, "ledger", "connector_sensitivity.jsonl"));
+    const files = { ...manifest.files };
+    delete files["claims/identity_links.jsonl"];
+    delete files["ledger/connector_sensitivity.jsonl"];
+    writeSignedManifest(backup, { ...manifest, files });
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    expect(restoreVault(backup, target).events).toBe(1);
+    db.close();
+  });
+
+  test("removes the staging directory when restore setup fails", () => {
+    const { db, vaultPath } = populated();
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    exportVault(db, vaultPath, backup);
+    const parent = temporary("kizuki-restore-parent-");
+    const target = join(parent, "vault");
+    expect(() =>
+      restoreVault(backup, target, {
+        onProgress: (label) => {
+          if (label === "staging") throw new Error("injected staging failure");
+        },
+      }),
+    ).toThrow(/injected staging failure/);
+    expect(existsSync(target)).toBe(false);
+    expect(
+      readdirSync(parent).some((name) => name.includes(".kizuki-backup-")),
+    ).toBe(false);
+    db.close();
+  });
+
+  test("restores a JSONL line whose UTF-8 character straddles a 64KiB chunk", () => {
+    const { db, vaultPath } = populated();
+    const body = utf8BodyOnChunkBoundary();
+    insertFixtureClaim(db, body, "01EXPORTUTF8CLAIM0000000001");
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    exportVault(db, vaultPath, backup);
+    const bytes = readFileSync(join(backup, "claims", "claims.jsonl"));
+    expect(bytes.subarray(65_535, 65_538)).toEqual(Buffer.from("中"));
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    restoreVault(backup, target);
+    const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
+    expect(
+      restored
+        .query<{ body: string }, []>("SELECT body FROM claims")
+        .get()?.body,
+    ).toBe(body);
+    restored.close();
+    db.close();
+  });
+
+  test("refuses a backup that plants the control directory", () => {
+    for (const plantedName of [".kizuki", ".Kizuki"] as const) {
+      const { db, vaultPath } = populated();
+      const backup = join(temporary("kizuki-export-parent-"), "dump");
+      const manifest = exportVault(db, vaultPath, backup);
+      const planted = join(backup, "vault", plantedName, "vault-id");
+      mkdirSync(join(backup, "vault", plantedName), { recursive: true, mode: 0o700 });
+      writeFileSync(planted, "01plantedvaultid000000000001\n");
+      chmodSync(planted, 0o600);
+      const bytes = readFileSync(planted);
+      writeSignedManifest(backup, {
+        ...manifest,
+        files: {
+          ...manifest.files,
+          [`vault/${plantedName}/vault-id`]: {
+            count: 1,
+            sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex"),
+            size: bytes.byteLength,
+            mode: 0o600,
+          },
+        },
+      });
+      const target = join(temporary("kizuki-restore-parent-"), "vault");
+      expect(() => verifyBackup(backup)).toThrow(/control directory/);
+      expect(() => restoreVault(backup, target)).toThrow(/control directory/);
+      expect(existsSync(join(target, ".kizuki"))).toBe(false);
+      db.close();
+    }
+  });
+
+  test("refuses a vault path that would escape the restore target", () => {
+    const { db, vaultPath } = populated();
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    const manifest = exportVault(db, vaultPath, backup);
+    const notes = manifest.files["vault/notes.txt"];
+    if (notes === undefined) throw new Error("expected vault/notes.txt");
+    const files = { ...manifest.files };
+    delete files["vault/notes.txt"];
+    files["vault//tmp/kizuki-export-escape"] = notes;
+    writeSignedManifest(backup, { ...manifest, files });
+    const outside = join(tmpdir(), "kizuki-export-escape");
+    rmSync(outside, { force: true });
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    expect(() => restoreVault(backup, target)).toThrow(/invalid/);
+    expect(existsSync(outside)).toBe(false);
+    db.close();
+  });
+
+  test("reads a manifest whose UTF-8 character straddles a 64KiB chunk", () => {
+    const { db, vaultPath } = populated();
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    const manifest = exportVault(db, vaultPath, backup);
+    const empty = writeSignedManifest(backup, { ...manifest, created_at: "" });
+    const prefix =
+      `${JSON.stringify(empty, null, 2)}\n`.indexOf('"created_at": "') +
+      '"created_at": "'.length;
+    const pad = 65_535 - Buffer.byteLength(
+      `${JSON.stringify(empty, null, 2)}\n`.slice(0, prefix),
+    );
+    const created_at = `${"a".repeat(pad)}中`;
+    const signed = writeSignedManifest(backup, { ...manifest, created_at });
+    const bytes = readFileSync(join(backup, "manifest.json"));
+    expect(bytes.subarray(65_535, 65_538)).toEqual(Buffer.from("中"));
+    expect(verifyBackup(backup).created_at).toBe(created_at);
+    expect(verifyBackup(backup).manifest_sha256).toBe(signed.manifest_sha256);
+    db.close();
+  });
+
+  test("restores the durable receipt claim kind", () => {
+    const { db, vaultPath } = populated();
+    insertFixtureReceipt(db, "purge_review");
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    exportVault(db, vaultPath, backup);
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    restoreVault(backup, target);
+    const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
+    expect(
+      restored
+        .query<{ kind: string; receipt_kind: string }, []>(
+          "SELECT kind, receipt_kind FROM canon_receipts",
+        )
+        .get(),
+    ).toEqual({ kind: "purge_review", receipt_kind: "write" });
+    restored.close();
+    db.close();
+  });
+
+  test("snapshot event_count matches the exported event stream", () => {
+    const { db, vaultPath } = populated();
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    const manifest = exportVault(db, vaultPath, backup, {
+      onProgress: (label) => {
+        if (label === "claims") {
+          const extra = accept(db, { ...validEvent(), source_record_id: "rec-race" });
+          if (extra.status !== "stored") throw new Error("expected stored extra event");
+        }
+      },
+    });
+    expect(manifest.files["ledger/events.jsonl"]?.count).toBe(1);
+    expect(manifest.snapshot.event_count).toBe(1);
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    expect(restoreVault(backup, target).events).toBe(1);
+    db.close();
+  });
+
+  test("preserves vault identity when the source had one", () => {
+    const { db, vaultPath } = populated();
+    writeFileSync(join(vaultPath, ".kizuki", "vault-id"), "01exportvaultid000000000001\n");
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    const manifest = exportVault(db, vaultPath, backup);
+    expect(manifest.vault_id).toBe("01exportvaultid000000000001");
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    restoreVault(backup, target);
+    expect(readVaultId(target)).toBe("01exportvaultid000000000001");
     db.close();
   });
 });

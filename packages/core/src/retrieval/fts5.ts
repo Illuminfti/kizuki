@@ -145,8 +145,29 @@ export class Fts5RetrievalPort implements RetrievalPort {
     this.assertOpen();
     const validated = docs.map(validateRetrievalDoc);
     this.db.transaction(() => {
-      const remove = this.db.query<never, [string]>(
+      const removeDocs = this.db.query<never, [string]>(
         "DELETE FROM search_docs WHERE doc_id = ?",
+      );
+      const replace = this.db.query<
+        never,
+        [
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+        ]
+      >(
+        `INSERT OR REPLACE INTO search_documents (
+           doc_id, kind, title, text, sensitivity, taint, authority,
+           subjects, provenance, occurred_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       const insert = this.db.query<
         never,
@@ -170,8 +191,20 @@ export class Fts5RetrievalPort implements RetrievalPort {
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const doc of validated) {
-        remove.run(doc.doc_id);
-        insert.run(
+        removeDocs.run(doc.doc_id);
+        const bindings: [
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+        ] = [
           doc.doc_id,
           doc.kind,
           doc.title,
@@ -183,7 +216,9 @@ export class Fts5RetrievalPort implements RetrievalPort {
           JSON.stringify(doc.provenance),
           doc.occurred_at ?? "",
           doc.updated_at,
-        );
+        ];
+        replace.run(...bindings);
+        insert.run(...bindings);
       }
     }).immediate();
     return { processed: validated.length };
@@ -322,10 +357,16 @@ export class Fts5RetrievalPort implements RetrievalPort {
   async remove(ids: readonly string[]): Promise<RetrievalMutationReport> {
     this.assertOpen();
     this.db.transaction(() => {
-      const remove = this.db.query<never, [string]>(
+      const removeFts = this.db.query<never, [string]>(
         "DELETE FROM search_docs WHERE doc_id = ?",
       );
-      for (const id of ids) remove.run(id);
+      const removeDocs = this.db.query<never, [string]>(
+        "DELETE FROM search_documents WHERE doc_id = ?",
+      );
+      for (const id of ids) {
+        removeFts.run(id);
+        removeDocs.run(id);
+      }
     }).immediate();
     return { processed: ids.length };
   }
@@ -338,7 +379,7 @@ export class Fts5RetrievalPort implements RetrievalPort {
       found.push(
         ...this.db
           .query<{ doc_id: string }, string[]>(
-            `SELECT doc_id FROM search_docs
+            `SELECT doc_id FROM search_documents
              WHERE doc_id IN (${placeholders(group.length)})`,
           )
           .all(...group)

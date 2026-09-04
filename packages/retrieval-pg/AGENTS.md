@@ -19,9 +19,15 @@ This optional package implements `kizuki.retrieval.embedded-pg` behind
 `kizuki.retrieval/v1`. It owns a rebuildable store under
 `ctx.data_dir` (`<vault>/.kizuki/retrieval/<port-id>/`), the entity graph,
 the writer lease, and the retrieval recipe (reciprocal rank fusion at
-`k = 60`, near-duplicate post-filter, tier-weighted finalization, declared
-degradation). It does not write canon, own correction, label sensitivity,
-install a daemon, or implement purge totality.
+`k = 60`, layered near-duplicate post-filter, authority-weighted
+finalization, declared degradation). The recipe and graph walk are a
+permitted fork under `vendor/` of the public-tip algorithm files named in
+that directory's NOTICE. Hybrid is the search path when an embedding port
+is bound; otherwise the port degrades to lexical and declares
+`vector-skipped`. `kizuki.retrieval.fts5` remains the zero-model default.
+It does not write canon, own correction, label sensitivity, install a
+daemon, or implement purge totality. Rerank and local GGUF stay out of
+this package.
 
 ## Rules
 

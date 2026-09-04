@@ -7,7 +7,7 @@ import type { GraphArgs, GraphData } from "../../src/serving/graph";
 import { ServeError } from "../../src/serving/types";
 import type { Envelope } from "../../src/serving/types";
 import { serializePage } from "../../src/vault/frontmatter";
-import { serveFixture } from "./helpers";
+import { serveFixture, storeEvent } from "./helpers";
 import type { Fixture } from "./helpers";
 
 let fixture: Fixture;
@@ -40,7 +40,7 @@ describe("serveGraph", () => {
       id: "fact:linked",
       kinds: ["wikilink"],
     });
-    expect(targets(owner)).toEqual(["Grace", "Nowhere"]);
+    expect(targets(owner)).toEqual(["Nowhere", "person:grace"]);
     expect(owner.denied).toEqual([]);
 
     const limited = serveGraph(fixture.agent("reader-public"), {
@@ -84,6 +84,55 @@ describe("serveGraph", () => {
     expect(envelope.denied).toEqual([]);
   });
 
+  test("a namespaced source dest is authorized or counted, not dropped", () => {
+    const eventId = storeEvent(
+      fixture.db,
+      "namespaced-source",
+      "2026-03-01T00:00:00Z",
+      "Namespaced kettle source",
+      "person:ada",
+      "private",
+    );
+    writeFileSync(
+      join(fixture.vaultPath, "facts/namespaced-source.md"),
+      serializePage({
+        data: {
+          id: "fact:namespaced-source",
+          title: "Namespaced source",
+          type: "fact",
+          status: "active",
+          sensitivity: "public",
+          taint: "clean",
+          sources: [`event:${eventId}`],
+        },
+        body: "Cites a namespaced ledger record.",
+      }),
+      "utf8",
+    );
+    rebuildGraph(fixture.db, fixture.vaultPath);
+
+    const owner = serveGraph(fixture.owner(), {
+      id: "fact:namespaced-source",
+      kinds: ["source"],
+    });
+    expect(owner.data?.edges).toEqual([
+      {
+        src: "fact:namespaced-source",
+        dst: `event:${eventId}`,
+        kind: "source",
+      },
+    ]);
+    expect(owner.denied).toEqual([]);
+
+    const limited = serveGraph(fixture.agent("reader-public"), {
+      id: "fact:namespaced-source",
+      kinds: ["source"],
+    });
+    expect(limited.data?.edges).toEqual([]);
+    expect(limited.denied).toEqual([{ reason: "above_ceiling", count: 1 }]);
+    expect(JSON.stringify(limited)).not.toContain(eventId);
+  });
+
   test("a withheld root answers with no edges and a single count", () => {
     const envelope = serveGraph(fixture.agent("reader-public"), {
       id: "fact:kettle",
@@ -109,7 +158,7 @@ describe("serveGraph", () => {
     });
     expect(envelope.data?.edges).toContainEqual({
       src: "fact:linked",
-      dst: "Grace",
+      dst: "person:grace",
       kind: "wikilink",
     });
   });
@@ -138,6 +187,265 @@ describe("serveGraph", () => {
     ).toBe("invalid_arguments");
   });
 
+  test("a public reader is not capped by private incoming edges", () => {
+    writeFileSync(
+      join(fixture.vaultPath, "facts/cap-hub.md"),
+      serializePage({
+        data: {
+          id: "fact:cap-hub",
+          title: "Cap hub",
+          type: "fact",
+          status: "active",
+          sensitivity: "public",
+          taint: "clean",
+        },
+        body: "A public hub.",
+      }),
+      "utf8",
+    );
+    for (let index = 0; index < 100; index += 1) {
+      writeFileSync(
+        join(fixture.vaultPath, `facts/cap-secret-${index}.md`),
+        serializePage({
+          data: {
+            id: `fact:aaa-secret-${index}`,
+            title: `Secret ${index}`,
+            type: "fact",
+            status: "active",
+            sensitivity: "private",
+            taint: "clean",
+          },
+          body: "See [[Cap hub]].",
+        }),
+        "utf8",
+      );
+    }
+    writeFileSync(
+      join(fixture.vaultPath, "facts/cap-open.md"),
+      serializePage({
+        data: {
+          id: "fact:zzz-open",
+          title: "Open neighbor",
+          type: "fact",
+          status: "active",
+          sensitivity: "public",
+          taint: "clean",
+        },
+        body: "See [[Cap hub]].",
+      }),
+      "utf8",
+    );
+    rebuildGraph(fixture.db, fixture.vaultPath);
+
+    const owner = serveGraph(fixture.owner(), {
+      id: "fact:cap-hub",
+      kinds: ["wikilink"],
+    });
+    const ownerSources = (owner.data?.edges ?? []).map((edge) => edge.src);
+    expect(owner.data?.edges).toHaveLength(100);
+    expect(owner.data?.truncated).toBe(true);
+    expect(ownerSources).not.toContain("fact:zzz-open");
+
+    const limited = serveGraph(fixture.agent("reader-public"), {
+      id: "fact:cap-hub",
+      kinds: ["wikilink"],
+    });
+    expect((limited.data?.edges ?? []).map((edge) => edge.src)).toEqual([
+      "fact:zzz-open",
+    ]);
+    expect(limited.data?.truncated).toBe(false);
+    expect(limited.denied).toEqual([{ reason: "above_ceiling", count: 100 }]);
+    expect(JSON.stringify(limited)).not.toContain("aaa-secret");
+  });
+
+  test("a leftover wikilink stays prose when an archived page shares the title", () => {
+    writeFileSync(
+      join(fixture.vaultPath, "facts/ghost-link.md"),
+      serializePage({
+        data: {
+          id: "fact:ghost-link",
+          title: "Ghost link",
+          type: "fact",
+          status: "active",
+          sensitivity: "public",
+          taint: "clean",
+        },
+        body: "See [[Ghost]].",
+      }),
+      "utf8",
+    );
+    writeFileSync(
+      join(fixture.vaultPath, "facts/ghost.md"),
+      serializePage({
+        data: {
+          id: "fact:ghost",
+          title: "Ghost",
+          type: "fact",
+          status: "archived",
+          sensitivity: "public",
+          taint: "clean",
+        },
+        body: "A retracted ghost.",
+      }),
+      "utf8",
+    );
+    rebuildGraph(fixture.db, fixture.vaultPath);
+
+    const envelope = serveGraph(fixture.owner(), {
+      id: "fact:ghost-link",
+      kinds: ["wikilink"],
+    });
+    expect(envelope.data?.edges).toEqual([
+      { src: "fact:ghost-link", dst: "Ghost", kind: "wikilink" },
+    ]);
+    expect(envelope.denied).toEqual([]);
+  });
+
+  test("a public reader is not capped by private outgoing dests", () => {
+    const destLinks = [
+      ...Array.from({ length: 100 }, (_value, index) => `[[Out secret ${index}]]`),
+      "[[Out open]]",
+    ].join(" ");
+    writeFileSync(
+      join(fixture.vaultPath, "facts/out-hub.md"),
+      serializePage({
+        data: {
+          id: "fact:out-hub",
+          title: "Out hub",
+          type: "fact",
+          status: "active",
+          sensitivity: "public",
+          taint: "clean",
+        },
+        body: destLinks,
+      }),
+      "utf8",
+    );
+    for (let index = 0; index < 100; index += 1) {
+      writeFileSync(
+        join(fixture.vaultPath, `facts/out-secret-${index}.md`),
+        serializePage({
+          data: {
+            id: `fact:aaa-out-secret-${index}`,
+            title: `Out secret ${index}`,
+            type: "fact",
+            status: "active",
+            sensitivity: "private",
+            taint: "clean",
+          },
+          body: "A private dest.",
+        }),
+        "utf8",
+      );
+    }
+    writeFileSync(
+      join(fixture.vaultPath, "facts/out-open.md"),
+      serializePage({
+        data: {
+          id: "fact:zzz-out-open",
+          title: "Out open",
+          type: "fact",
+          status: "active",
+          sensitivity: "public",
+          taint: "clean",
+        },
+        body: "A public dest.",
+      }),
+      "utf8",
+    );
+    rebuildGraph(fixture.db, fixture.vaultPath);
+
+    const owner = serveGraph(fixture.owner(), {
+      id: "fact:out-hub",
+      kinds: ["wikilink"],
+    });
+    const ownerDests = (owner.data?.edges ?? []).map((edge) => edge.dst);
+    expect(owner.data?.edges).toHaveLength(100);
+    expect(owner.data?.truncated).toBe(true);
+    expect(ownerDests).not.toContain("fact:zzz-out-open");
+
+    const limited = serveGraph(fixture.agent("reader-public"), {
+      id: "fact:out-hub",
+      kinds: ["wikilink"],
+    });
+    expect((limited.data?.edges ?? []).map((edge) => edge.dst)).toEqual([
+      "fact:zzz-out-open",
+    ]);
+    expect(limited.data?.truncated).toBe(false);
+    expect(limited.denied).toEqual([{ reason: "above_ceiling", count: 100 }]);
+    expect(JSON.stringify(limited)).not.toContain("aaa-out-secret");
+  });
+
+  test("a public reader is not capped by private source dests", () => {
+    const eventIds: string[] = [];
+    for (let index = 0; index < 100; index += 1) {
+      eventIds.push(
+        storeEvent(
+          fixture.db,
+          `source-cap-${index}`,
+          "2026-03-01T00:00:00Z",
+          `Private source ${index}`,
+          "person:ada",
+          "private",
+        ),
+      );
+    }
+    writeFileSync(
+      join(fixture.vaultPath, "facts/source-hub.md"),
+      serializePage({
+        data: {
+          id: "fact:source-hub",
+          title: "Source hub",
+          type: "fact",
+          status: "active",
+          sensitivity: "public",
+          taint: "clean",
+          sources: eventIds,
+        },
+        body: "See [[Source open]].",
+      }),
+      "utf8",
+    );
+    writeFileSync(
+      join(fixture.vaultPath, "facts/source-open.md"),
+      serializePage({
+        data: {
+          id: "fact:zzz-source-open",
+          title: "Source open",
+          type: "fact",
+          status: "active",
+          sensitivity: "public",
+          taint: "clean",
+        },
+        body: "A public dest.",
+      }),
+      "utf8",
+    );
+    rebuildGraph(fixture.db, fixture.vaultPath);
+
+    const owner = serveGraph(fixture.owner(), { id: "fact:source-hub" });
+    expect(owner.data?.edges).toHaveLength(100);
+    expect(owner.data?.truncated).toBe(true);
+    expect(owner.data?.edges.every((edge) => edge.kind === "source")).toBe(true);
+    expect((owner.data?.edges ?? []).map((edge) => edge.dst)).not.toContain(
+      "fact:zzz-source-open",
+    );
+
+    const limited = serveGraph(fixture.agent("reader-public"), {
+      id: "fact:source-hub",
+    });
+    expect(limited.data?.edges).toEqual([
+      {
+        src: "fact:source-hub",
+        dst: "fact:zzz-source-open",
+        kind: "wikilink",
+      },
+    ]);
+    expect(limited.data?.truncated).toBe(false);
+    expect(limited.denied).toEqual([{ reason: "above_ceiling", count: 100 }]);
+    expect(JSON.stringify(limited)).not.toContain(eventIds[0]);
+  });
+
   test("the edge list is capped and reports the truncation", () => {
     const links = Array.from(
       { length: 520 },
@@ -164,7 +472,7 @@ describe("serveGraph", () => {
       id: "fact:many",
       kinds: ["wikilink"],
     });
-    expect(envelope.data?.edges).toHaveLength(500);
+    expect(envelope.data?.edges).toHaveLength(100);
     expect(envelope.data?.truncated).toBe(true);
   });
 });

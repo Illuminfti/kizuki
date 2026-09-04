@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Sensitivity } from "../agents/types";
 import type { RetrievalDoc, RetrievalPort, RetrievalQuery } from "../contracts/retrieval";
+import { bareRetrievalId, retrievalDocId } from "../retrieval/ids";
 import type {
   AuthorityTier,
   CanonicalProducer,
@@ -467,7 +468,7 @@ async function nominateSemantic(
   for (const hit of result.hits) {
     if (hit.kind !== "claim") continue;
     if (hit.score < CLAIM_DEDUP_MIN) continue;
-    const candidate = getClaim(io.db, hit.doc_id);
+    const candidate = getClaim(io.db, bareRetrievalId(hit.doc_id));
     if (candidate === null) continue;
     const pair = scoreClaimPair(incoming.body, candidate.body, space);
     if (pair < CLAIM_DEDUP_MIN) continue;
@@ -478,7 +479,7 @@ async function nominateSemantic(
 
 function retrievalDoc(claim: Claim): RetrievalDoc {
   return {
-    doc_id: claim.claim_id,
+    doc_id: retrievalDocId("claim", claim.claim_id),
     kind: "claim",
     title: claim.predicate ?? claim.kind,
     text: claim.body,
@@ -595,6 +596,79 @@ export function countClaims(
       )
       .get(opts.status)?.n ?? 0
   );
+}
+
+/** Live claims the receipted writer has not yet materialized. */
+export function countUnwrittenLiveClaims(db: Database): number {
+  if (!tableExists(db, "claims")) return 0;
+  return (
+    db
+      .query<{ n: number }, []>(
+        `SELECT count(*) AS n FROM claims
+          WHERE status = 'live' AND receipt_id IS NULL`,
+      )
+      .get()?.n ?? 0
+  );
+}
+
+/** Live claims bound to a canon receipt. */
+export function countWrittenLiveClaims(db: Database): number {
+  if (!tableExists(db, "claims")) return 0;
+  return (
+    db
+      .query<{ n: number }, []>(
+        `SELECT count(*) AS n FROM claims
+          WHERE status = 'live' AND receipt_id IS NOT NULL`,
+      )
+      .get()?.n ?? 0
+  );
+}
+
+/**
+ * Oldest-first live claims with no receipt. One pass never walks the whole
+ * backlog: the next run resumes after what the budget absorbed.
+ */
+export function listUnwrittenLiveClaims(
+  db: Database,
+  limit = 32,
+): Claim[] {
+  if (!tableExists(db, "claims")) return [];
+  const bound = Number.isSafeInteger(limit) && limit > 0 ? limit : 32;
+  return db
+    .query<ClaimRow, [number]>(
+      `SELECT * FROM claims
+        WHERE status = 'live' AND receipt_id IS NULL
+        ORDER BY created_at, claim_id
+        LIMIT ?`,
+    )
+    .all(bound)
+    .map(rowToClaim);
+}
+
+/**
+ * Leftover Wave 1 ingest mapped pending proposals onto `skipped`. Those
+ * rows did not lose a conflict — they never got a chance. Lift them to
+ * live so the receipted writer can act. A skip that lost to a live peer
+ * on the same `claim_key` stays skipped.
+ */
+export function reviveUncontestedSkipped(db: Database): number {
+  initClaims(db);
+  const result = db
+    .query<{ changes: number }, []>(
+      `UPDATE claims SET status = 'live'
+        WHERE status = 'skipped'
+          AND retracted_at IS NULL
+          AND superseded_by IS NULL
+          AND (
+            claim_key IS NULL
+            OR claim_key NOT IN (
+              SELECT claim_key FROM claims
+               WHERE status = 'live' AND claim_key IS NOT NULL
+            )
+          )`,
+    )
+    .run();
+  return result.changes;
 }
 
 export function getClaim(db: Database, claimId: string): Claim | null {

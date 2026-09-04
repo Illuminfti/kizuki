@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { InMemoryLedger } from "../../connectors/src";
+import path from "node:path";
+import { InMemoryLedger } from "../../connectors/src/testkit";
 import {
   BATCH_LIMIT,
   ScreenpipeConnector,
@@ -35,16 +36,21 @@ describe("ScreenpipeConnector backfill", () => {
       "transcription:3",
     ]);
     if (batch.cursor === null) throw new Error("expected a screenpipe cursor");
-    expect(parseCursor(batch.cursor)).toEqual({
-      schema: "kizuki.screenpipe-cursor/v1",
-      last_frame_id: 8,
-      last_transcription_id: 3,
-      skipped: {
-        frames_without_text: 2,
-        frames_bad_timestamp: 1,
-        transcriptions_bad_timestamp: 0,
-      },
+    const cursor = parseCursor(batch.cursor);
+    expect(cursor.last_frame_id).toBe(8);
+    expect(cursor.last_transcription_id).toBe(3);
+    expect(cursor.skipped).toEqual({
+      frames_without_text: 2,
+      frames_bad_timestamp: 1,
+      frames_offset_unknown: 0,
+      transcriptions_bad_timestamp: 0,
+      transcriptions_bad_offset: 0,
+      transcriptions_offset_unknown: 0,
     });
+    expect(cursor.oldest_skipped_frame_id).toBe(4);
+    expect(cursor.phase).toBe("exhausted");
+    expect(cursor.db_path).toBe(path.resolve(fixture.path));
+    expect(cursor.db_fingerprint).toMatch(/^[0-9a-f]{64}$/);
     await connector.revoke();
   });
 

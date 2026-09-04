@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   HEALTH_STATES,
   HealthReport,
+  freezeManifest,
   isHealthState,
 } from "../src/contracts/connector";
 import type {
@@ -144,5 +145,13 @@ describe("Connector shape", () => {
     for (const ref of manifest.required_secrets) {
       expect(ref).toMatch(/^(env|file):/);
     }
+  });
+
+  test("freezeManifest refuses later mutation of policy arrays", () => {
+    const frozen = freezeManifest(manifest);
+    expect(() => {
+      (frozen.kinds as string[]).push("other");
+    }).toThrow();
+    expect(frozen.kinds).toEqual(["message"]);
   });
 });

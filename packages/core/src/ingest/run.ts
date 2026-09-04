@@ -1,10 +1,23 @@
 import type { Database } from "bun:sqlite";
 import type { Connector, Manifest, SyncBatch } from "../contracts/connector";
-import { getCheckpoint, saveCheckpoint } from "../ledger/connections";
+import {
+  CONNECTOR_OPERATION_DEADLINE_MS,
+  MAX_SYNC_BATCH_BYTES,
+  MAX_SYNC_BATCH_EVENTS,
+} from "../contracts/connector";
+import { KizukiError } from "../contracts/errors";
+import {
+  assertCursorSize,
+  getCheckpoint,
+  recordConnectorRun,
+  requireActiveConnection,
+  type ConnectionRunStatus,
+} from "../ledger/connections";
 import { accept } from "../ledger/ledger";
 import { cascadeTombstone, proposalsForEvent } from "../staging/producers";
 import type { ProducerGrants } from "../staging/producers";
 import { fileProposal } from "../staging/proposals";
+import { DeadlineError, withDeadline } from "../util/deadline";
 
 /**
  * What the manifest of the connector a batch came from grants that source.
@@ -25,8 +38,24 @@ export interface RunResult {
   cursor: string | null;
 }
 
+export class InfrastructureError extends Error {
+  override readonly name = "InfrastructureError";
+}
+
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function emptyResult(cursor: string | null): RunResult {
+  return {
+    stored: 0,
+    duplicates: 0,
+    errors: [],
+    proposals_created: 0,
+    withdrawn: 0,
+    retractions_filed: 0,
+    cursor,
+  };
 }
 
 type EventResult = Omit<RunResult, "cursor">;
@@ -48,6 +77,9 @@ function processEvent(
       };
       const accepted = accept(db, input);
       if (accepted.status === "error") {
+        if (accepted.kind === "infrastructure") {
+          throw new InfrastructureError(accepted.error);
+        }
         result.errors.push(accepted.error);
         return result;
       }
@@ -73,6 +105,24 @@ function processEvent(
     .immediate();
 }
 
+function batchBudgetRefusal(batch: SyncBatch): string | null {
+  if (batch.events.length > MAX_SYNC_BATCH_EVENTS) {
+    return `sync batch exceeds ${MAX_SYNC_BATCH_EVENTS} events`;
+  }
+  const encoded = new TextEncoder().encode(JSON.stringify(batch.events));
+  if (encoded.byteLength > MAX_SYNC_BATCH_BYTES) {
+    return `sync batch exceeds ${MAX_SYNC_BATCH_BYTES} bytes`;
+  }
+  if (batch.cursor !== null) {
+    try {
+      assertCursorSize(batch.cursor, "cursor");
+    } catch (error) {
+      return errorText(error);
+    }
+  }
+  return null;
+}
+
 /**
  * The grants are the caller's to name: this seam is handed a batch with no
  * connector behind it, so nothing here can decide what that batch is entitled
@@ -93,6 +143,12 @@ export function runBatch(
     cursor: batch.cursor,
   };
 
+  const budget = batchBudgetRefusal(batch);
+  if (budget !== null) {
+    result.errors.push(budget);
+    return result;
+  }
+
   for (const input of batch.events) {
     try {
       const event = processEvent(db, input, grants);
@@ -104,6 +160,7 @@ export function runBatch(
       result.retractions_filed += event.retractions_filed;
     } catch (error) {
       result.errors.push(errorText(error));
+      if (error instanceof InfrastructureError) return result;
     }
   }
 
@@ -138,7 +195,7 @@ function batchRefusal(
       return `${connector_id}: batch carries a kind the manifest does not declare`;
     }
   }
-  return null;
+  return batchBudgetRefusal(batch);
 }
 
 function refusedRun(reason: string, cursor: string | null): RunResult {
@@ -153,6 +210,59 @@ function refusedRun(reason: string, cursor: string | null): RunResult {
   };
 }
 
+function isUnavailable(error: unknown, batch: SyncBatch | null): boolean {
+  if (batch?.status === "unavailable") return true;
+  if (error instanceof DeadlineError) return true;
+  if (error instanceof KizukiError) {
+    switch (error.code) {
+      case "unauthenticated":
+      case "unreachable":
+      case "rate_limited":
+      case "missing_secret":
+      case "provider_error":
+      case "timeout":
+      case "unavailable":
+        return true;
+      case "misconfigured":
+      case "protocol":
+      case "unknown_connector":
+      case "parse_error":
+      case "not_supported":
+      case "malformed_record":
+      case "source_schema":
+      case "corrupted":
+        return false;
+      default: {
+        const _exhaustive: never = error.code;
+        return _exhaustive;
+      }
+    }
+  }
+  return false;
+}
+
+function persistRun(
+  db: Database,
+  connector_id: string,
+  source_key: string,
+  mode: "backfill" | "sync",
+  previous: string | null,
+  attempted: string | null,
+  result: RunResult,
+  status: ConnectionRunStatus,
+): RunResult {
+  return recordConnectorRun(
+    db,
+    connector_id,
+    source_key,
+    mode,
+    previous,
+    attempted,
+    result,
+    status,
+  ).checkpoint.last_result;
+}
+
 async function runConnector(
   db: Database,
   connector: Connector,
@@ -160,27 +270,86 @@ async function runConnector(
   source_key: string,
   mode: "backfill" | "sync",
 ): Promise<RunResult> {
-  const checkpoint = getCheckpoint(db, connector_id, source_key);
-  const cursor = checkpoint?.cursor ?? null;
+  const previous = getCheckpoint(db, connector_id, source_key)?.cursor ?? null;
+  try {
+    requireActiveConnection(db, connector_id, source_key);
+  } catch (error) {
+    return refusedRun(errorText(error), previous);
+  }
+
   const manifest = connector.manifest();
-  const batch =
-    mode === "backfill"
-      ? await connector.backfill(cursor)
-      : await connector.sync(cursor);
+  if (manifest.connector_id !== connector_id) {
+    const result = refusedRun(
+      `${connector_id}: manifest connector_id does not match the enrolled connection`,
+      previous,
+    );
+    return persistRun(db, connector_id, source_key, mode, previous, previous, result, "refused");
+  }
+  if (mode === "backfill" && manifest.capabilities.backfill !== true) {
+    const result = refusedRun(
+      `${connector_id}: manifest does not declare backfill`,
+      previous,
+    );
+    return persistRun(db, connector_id, source_key, mode, previous, previous, result, "refused");
+  }
+  if (mode === "sync" && manifest.capabilities.sync !== true) {
+    const result = refusedRun(
+      `${connector_id}: manifest does not declare sync`,
+      previous,
+    );
+    return persistRun(db, connector_id, source_key, mode, previous, previous, result, "refused");
+  }
+
+  let batch: SyncBatch;
+  try {
+    batch = await withDeadline(
+      mode === "backfill"
+        ? connector.backfill(previous)
+        : connector.sync(previous),
+      CONNECTOR_OPERATION_DEADLINE_MS,
+      `${mode} timed out`,
+    );
+  } catch (error) {
+    const result = refusedRun(errorText(error), previous);
+    const status: ConnectionRunStatus = isUnavailable(error, null)
+      ? "unavailable"
+      : "failed";
+    return persistRun(db, connector_id, source_key, mode, previous, previous, result, status);
+  }
+
+  if (batch.status === "unavailable") {
+    const result = refusedRun(
+      batch.detail ?? `${connector_id}: connector unavailable`,
+      previous,
+    );
+    return persistRun(db, connector_id, source_key, mode, previous, batch.cursor, result, "unavailable");
+  }
+
+  try {
+    assertCursorSize(batch.cursor, "cursor");
+  } catch (error) {
+    const result = refusedRun(errorText(error), previous);
+    return persistRun(db, connector_id, source_key, mode, previous, batch.cursor, result, "refused");
+  }
+
   const refusal = batchRefusal(manifest, connector_id, batch);
-  const result =
-    refusal === null
-      ? runBatch(db, batch, sourceGrants(manifest))
-      : refusedRun(refusal, cursor);
-  saveCheckpoint(
+  if (refusal !== null) {
+    const result = refusedRun(refusal, previous);
+    return persistRun(db, connector_id, source_key, mode, previous, batch.cursor, result, "refused");
+  }
+
+  const processed = runBatch(db, batch, sourceGrants(manifest));
+  const status: ConnectionRunStatus = processed.errors.length === 0 ? "ok" : "failed";
+  return persistRun(
     db,
     connector_id,
     source_key,
-    result.errors.length === 0 ? result.cursor : cursor,
     mode,
-    result,
+    previous,
+    batch.cursor,
+    processed,
+    status,
   );
-  return result;
 }
 
 export function runBackfill(
@@ -245,31 +414,10 @@ export async function runToCompletion(
   }
   const stored = (): string | null =>
     getCheckpoint(db, connector_id, source_key)?.cursor ?? null;
-  const total: RunResult = {
-    stored: 0,
-    duplicates: 0,
-    errors: [],
-    proposals_created: 0,
-    withdrawn: 0,
-    retractions_filed: 0,
-    cursor: stored(),
-  };
+  const total: RunResult = emptyResult(stored());
   for (let batch = 0; batch < maxBatches; batch += 1) {
     const before = stored();
-    let result: RunResult;
-    try {
-      result =
-        mode === "backfill"
-          ? await runBackfill(db, connector, connector_id, source_key)
-          : await runSync(db, connector, connector_id, source_key);
-    } catch (error) {
-      // The batches before this one are already committed. Letting the throw
-      // out would leave the caller unable to tell a run that did nothing from
-      // one a network fault cut short after a thousand records.
-      total.errors.push(errorText(error));
-      total.cursor = stored();
-      return total;
-    }
+    const result = await runConnector(db, connector, connector_id, source_key, mode);
     absorb(total, result);
     total.cursor = stored();
     if (result.errors.length > 0) return total;

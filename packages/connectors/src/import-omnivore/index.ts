@@ -1,4 +1,4 @@
-import { HealthReport } from "@kizuki/core";
+import { freezeManifest, HealthReport } from "@kizuki/core";
 import type {
   CaptureEventInput,
   Connector,
@@ -87,10 +87,14 @@ export const OMNIVORE_FIXTURE_FILES: Readonly<Record<string, string>> =
     "content/quartz-heron-notes.html": "<html><body><p>heron</p></body></html>",
   });
 
-const MANIFEST: Manifest = {
+const MANIFEST: Manifest = freezeManifest({
   schema: "kizuki.connector/v1",
   connector_id: OMNIVORE_IMPORT_CONNECTOR_ID,
   version: "0.1.0",
+  contract_minor: 1,
+  implementation: "@kizuki/connectors",
+  allowed_egress: [],
+  cursor_schema: null,
   kinds: ["bookmark"],
   capabilities: {
     backfill: true,
@@ -105,7 +109,7 @@ const MANIFEST: Manifest = {
   emits_sensitivity_hint: true,
   ...OMNIVORE_SENSITIVITY,
   auth_modes: ["none"],
-};
+});
 
 export class OmnivoreImportConnector implements Connector {
   readonly path: string;

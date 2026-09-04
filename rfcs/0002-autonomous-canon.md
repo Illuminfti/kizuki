@@ -2728,9 +2728,11 @@ be answered before 1.0.
    readings is honest; at scale it may be noise. The brief's contested
    count is the signal to watch.
 3. **Whether the heavy retrieval implementation is a clean reimplementation
-   or a permitted fork for the entity graph specifically.** §9.1 chooses
-   reimplementation and keeps the fork option open; the decision should be
-   made with a measured effort estimate, not in advance.
+   or a permitted fork for the entity graph specifically.** Answered
+   2026-09-04 by `docs/decision-log.md` D17: permitted fork of the public
+   tip's retrieval recipe **and** entity graph into `@kizuki/retrieval-pg`.
+   §9.1's 2026-09-02 selection is historical; D17 changes the boundary
+   without rewriting that paragraph.
 4. **Whether `origin: "self"` detection survives a harness that strips the
    packet header.** The marker is machine-identifiable only if the harness
    injects it verbatim; a connector-contract conformance case is needed.

@@ -161,6 +161,7 @@ describe("timeline", () => {
     });
 
     const [entry] = timeline(db);
+    expect(entry?.taint).toBe("quoted");
     expect(entry?.text_preview.startsWith("alpha beta xxx")).toBe(true);
     expect(entry?.text_preview).toHaveLength(160);
   });

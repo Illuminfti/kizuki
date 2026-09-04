@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
+import { PLAN_PAGE } from "./cursor";
 import { ScreenpipeConnectorError } from "./errors";
+import { resolveTimestamp } from "./time";
 
 export interface FrameRow {
   id: number;
@@ -79,18 +81,33 @@ export function readFrames(
   db: Database,
   afterId: number,
   limit: number,
+  throughId?: number,
 ): FrameRow[] {
+  if (throughId === undefined) {
+    return db
+      .query<RawFrameRow, [number, number]>(
+        `SELECT id, timestamp, app_name, window_name, browser_url, device_name,
+                focused, full_text, text_source, capture_trigger, snapshot_path,
+                document_path, video_chunk_id, offset_index
+           FROM frames
+          WHERE id > ?
+          ORDER BY id
+          LIMIT ?`,
+      )
+      .all(afterId, limit)
+      .map(mapFrameRow);
+  }
   return db
-    .query<RawFrameRow, [number, number]>(
+    .query<RawFrameRow, [number, number, number]>(
       `SELECT id, timestamp, app_name, window_name, browser_url, device_name,
               focused, full_text, text_source, capture_trigger, snapshot_path,
               document_path, video_chunk_id, offset_index
          FROM frames
-        WHERE id > ?
+        WHERE id > ? AND id <= ?
         ORDER BY id
         LIMIT ?`,
     )
-    .all(afterId, limit)
+    .all(afterId, throughId, limit)
     .map(mapFrameRow);
 }
 
@@ -98,34 +115,53 @@ export function readTranscriptions(
   db: Database,
   afterId: number,
   limit: number,
+  throughId?: number,
 ): TranscriptionRow[] {
+  if (throughId === undefined) {
+    return db
+      .query<RawTranscriptionRow, [number, number]>(
+        `SELECT t.id, t.audio_chunk_id, t.offset_index, t.timestamp,
+                t.transcription, t.device, t.is_input_device, t.speaker_id,
+                s.name AS speaker_name, t.transcription_engine,
+                t.start_time, t.end_time
+           FROM audio_transcriptions t
+           LEFT JOIN speakers s ON s.id = t.speaker_id
+          WHERE t.id > ?
+          ORDER BY t.id
+          LIMIT ?`,
+      )
+      .all(afterId, limit)
+      .map(mapTranscriptionRow);
+  }
   return db
-    .query<RawTranscriptionRow, [number, number]>(
+    .query<RawTranscriptionRow, [number, number, number]>(
       `SELECT t.id, t.audio_chunk_id, t.offset_index, t.timestamp,
               t.transcription, t.device, t.is_input_device, t.speaker_id,
               s.name AS speaker_name, t.transcription_engine,
               t.start_time, t.end_time
          FROM audio_transcriptions t
          LEFT JOIN speakers s ON s.id = t.speaker_id
-        WHERE t.id > ?
+        WHERE t.id > ? AND t.id <= ?
         ORDER BY t.id
         LIMIT ?`,
     )
-    .all(afterId, limit)
+    .all(afterId, throughId, limit)
     .map(mapTranscriptionRow);
 }
 
 export function seedAfterIds(
   db: Database,
   since: string,
+  timeZone: string | null,
 ): { frame: number; transcription: number } {
   const normalized = new Date(since).toISOString();
   return {
-    frame: maxIdBefore(db, "frames", normalized),
+    frame: maxIdBefore(db, "frames", normalized, timeZone),
     transcription: maxIdBefore(
       db,
       "audio_transcriptions",
       normalized,
+      timeZone,
     ),
   };
 }
@@ -201,13 +237,29 @@ function maxIdBefore(
   db: Database,
   table: "frames" | "audio_transcriptions",
   since: string,
+  timeZone: string | null,
 ): number {
-  const row = db
-    .query<{ id: unknown }, [string]>(
-      `SELECT COALESCE(MAX(id), 0) AS id FROM ${table} WHERE timestamp < ?`,
-    )
-    .get(since);
-  return requiredCursorId(row?.id);
+  let afterId = 0;
+  let maxId = 0;
+  while (true) {
+    const rows = db
+      .query<{ id: unknown; timestamp: unknown }, [number, number]>(
+        `SELECT id, timestamp FROM ${table}
+          WHERE id > ?
+          ORDER BY id
+          LIMIT ?`,
+      )
+      .all(afterId, PLAN_PAGE);
+    if (rows.length === 0) break;
+    for (const row of rows) {
+      const id = requiredCursorId(row.id);
+      afterId = id;
+      const resolved = resolveTimestamp(row.timestamp, timeZone);
+      if ("iso" in resolved && resolved.iso < since) maxId = id;
+    }
+    if (rows.length < PLAN_PAGE) break;
+  }
+  return maxId;
 }
 
 function requiredRowId(value: unknown): number {

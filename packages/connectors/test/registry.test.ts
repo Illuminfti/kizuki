@@ -1,11 +1,15 @@
 import { expect, test } from "bun:test";
+import { PORT_CONTRACTS, PortError } from "@kizuki/core";
+import type { PortDescriptor } from "@kizuki/core";
 import {
+  ConnectorRegistry,
   KizukiError,
   OMNIVORE_IMPORT_CONNECTOR_ID,
   POCKET_IMPORT_CONNECTOR_ID,
   SCREENPIPE_CONNECTOR_ID,
   WHATSAPP_IMPORT_CONNECTOR_ID,
   getConnector,
+  listConnectorDescriptors,
 } from "../src";
 
 test("getConnector builds kizuki.screenpipe", () => {
@@ -36,6 +40,53 @@ test("getConnector builds every snapshot importer", () => {
   for (const [id, config] of cases) {
     expect(getConnector(id, config).manifest().connector_id).toBe(id);
   }
+});
+
+test("the registry lists frozen port descriptors and rejects unknown ids", () => {
+  const listed = listConnectorDescriptors();
+  expect(listed.length).toBeGreaterThan(0);
+  expect(listed.every((item) => item.kind === "connector")).toBe(true);
+  expect(listed.every((item) => item.contract === PORT_CONTRACTS.connector)).toBe(
+    true,
+  );
+  expect(() => {
+    (listed as PortDescriptor[]).push(listed[0]!);
+  }).toThrow();
+  const sealed = getConnector(SCREENPIPE_CONNECTOR_ID, {
+    path: "/tmp/not-opened-screenpipe.sqlite",
+  }).manifest();
+  expect(() => {
+    (sealed.kinds as string[]).push("mutated");
+  }).toThrow();
+  expect(sealed.implementation).toBe("@kizuki/connector-screenpipe");
+  expect(sealed.default_sensitivity).toBe("private");
+});
+
+test("duplicate connector ids and contract mismatches are hard failures", () => {
+  const registry = new ConnectorRegistry();
+  const descriptor = listConnectorDescriptors()[0]!;
+  const factory = () =>
+    getConnector(SCREENPIPE_CONNECTOR_ID, {
+      path: "/tmp/not-opened-screenpipe.sqlite",
+    });
+  const overlay = {
+    contract_minor: 1,
+    implementation: "@kizuki/connectors",
+    allowed_egress: [],
+    cursor_schema: null as string | null,
+  };
+  registry.register(SCREENPIPE_CONNECTOR_ID, descriptor, factory, overlay);
+  expect(() =>
+    registry.register(SCREENPIPE_CONNECTOR_ID, descriptor, factory, overlay),
+  ).toThrow(PortError);
+  expect(() =>
+    registry.register(
+      "kizuki.other",
+      { ...descriptor, contract: "kizuki.connector/v2" },
+      factory,
+      overlay,
+    ),
+  ).toThrow(PortError);
 });
 
 test("a snapshot importer without a path is refused", () => {

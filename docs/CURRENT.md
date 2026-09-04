@@ -4,6 +4,9 @@ Binding intent is RFC 0002 — Autonomous canon (`rfcs/0002-autonomous-canon.md`
 It is BINDING. It amends `docs/architecture.md` invariants 3, 5, 9, RFC 0000,
 `AGENTS.md`, `docs/product-context.md`, and the README.
 
+Read [README.md](../README.md) for what this revision actually runs, then
+[cli.md](cli.md), then [architecture.md](architecture.md), then this file.
+
 ## What the product is
 
 Local-first memory substrate. Not a harness. Hosts no agents. Canon is
@@ -14,6 +17,17 @@ hashes. Every write is reversible from its receipt.
 There is no owner review queue, and there never will be one. The TUI
 survives as audit and undo only. Conversational correction (`kizuki tell` /
 MCP `correct`) is the update path a person actually uses.
+
+## What this revision ships
+
+The public CLI, file ingest, FTS query, doctor, tell/undo/audit, serve
+loopback, context packets, and MCP stdio adapter. Capture never writes
+canon. Sign-in connectors are not enrollable through this CLI. After
+`import`, claims are live and `tell --claim` can name them. Canon writing
+still requires a configured model; without one the sync rail leaves live
+claims unwritten and doctor says so. 1.0 is still stranger proof plus
+estate cutover (C1, RFC 0002 §1.3). Neither proof is in this tree. There
+is no `scripts/stranger-proof.sh`.
 
 ## What is stale
 

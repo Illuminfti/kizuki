@@ -94,6 +94,8 @@ export function insertTranscription(
     transcription?: string;
     device?: string;
     speakerId?: number | null;
+    startTime?: number | null;
+    endTime?: number | null;
   },
 ): void {
   writer
@@ -101,7 +103,7 @@ export function insertTranscription(
       `INSERT INTO audio_transcriptions
          (id, audio_chunk_id, offset_index, timestamp, transcription, device,
           is_input_device, speaker_id, transcription_engine, start_time, end_time)
-       VALUES (?, 1, 0, ?, ?, ?, 1, ?, 'fixture-engine', 0, 1)`,
+       VALUES (?, 1, 0, ?, ?, ?, 1, ?, 'fixture-engine', ?, ?)`,
     )
     .run(
       values.id ?? null,
@@ -109,5 +111,7 @@ export function insertTranscription(
       values.transcription ?? "fixture transcript",
       values.device ?? "Fixture Microphone",
       values.speakerId ?? null,
+      values.startTime === undefined ? 0 : values.startTime,
+      values.endTime === undefined ? 1 : values.endTime,
     );
 }

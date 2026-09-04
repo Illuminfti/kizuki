@@ -6,6 +6,7 @@ import {
   listClaims,
   pendingRetrievalOps,
 } from "../../src/claims/store";
+import { retrievalDocId } from "../../src/retrieval/ids";
 import { serveHealth } from "../../src/serving/health";
 import { servePropose } from "../../src/serving/propose";
 import type { ProposeArgs } from "../../src/serving/propose";
@@ -81,7 +82,13 @@ describe("servePropose files a claim for the receipted writer", () => {
     expect(claim?.frontmatter["x-relayed-by"]).toBe("agent:reader-private");
 
     const row = listAudit(live.db, "reader-private", { limit: 1 })[0];
-    expect(row?.query_shape["claim_ids"]).toEqual([claim?.claim_id as string]);
+    const claimId = claim?.claim_id as string;
+    expect(row?.query_shape["claim_ids"]).toEqual([
+      {
+        len: claimId.length,
+        sha256: new Bun.CryptoHasher("sha256").update(claimId).digest("hex"),
+      },
+    ]);
     const body = row?.query_shape["body"] as { sha256?: string };
     expect(body.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(JSON.stringify(row?.query_shape)).not.toContain("boiled at dawn");
@@ -103,7 +110,9 @@ describe("servePropose files a claim for the receipted writer", () => {
     const claimId = filed.data?.claim_id ?? "";
     // The port the host bound is the one the claim reaches: serving holds it
     // for the process, it does not open its own.
-    expect((await port.verifyAbsent([claimId])).found).toEqual([claimId]);
+    expect((await port.verifyAbsent([retrievalDocId("claim", claimId)])).found).toEqual([
+      retrievalDocId("claim", claimId),
+    ]);
   });
 
   test("a refresh that fails degrades the write, it does not fail it", async () => {
@@ -143,7 +152,9 @@ describe("servePropose files a claim for the receipted writer", () => {
       candidate(live, "The kettle is indexed."),
     );
     expect(refiled.data?.outcome).toBe("duplicate");
-    expect((await port.verifyAbsent([claimId])).found).toEqual([claimId]);
+    expect((await port.verifyAbsent([retrievalDocId("claim", claimId)])).found).toEqual([
+      retrievalDocId("claim", claimId),
+    ]);
     expect(pendingRetrievalOps(live.db)).toEqual([]);
   });
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { diffLines } from "../src/diff";
+import { DIFF_LINE_CAP, boundedDiff, diffLines } from "../src/diff";
 
 describe("diffLines", () => {
   test("aligns common lines and marks additions and removals", () => {
@@ -28,5 +28,15 @@ describe("diffLines", () => {
     expect(result).toHaveLength(5000);
     expect(result[0]?.op).toBe("del");
     expect(result[4999]?.op).toBe("add");
+  });
+
+  test("boundedDiff caps lines and marks truncation with the original sizes", () => {
+    const before = Array.from({ length: 400 }, (_, i) => `old ${i}`).join("\n");
+    const after = Array.from({ length: 400 }, (_, i) => `new ${i}`).join("\n");
+    const result = boundedDiff(before, after);
+    expect(result.truncated).toBe(true);
+    expect(result.lines.length).toBeLessThanOrEqual(DIFF_LINE_CAP);
+    expect(result.beforeChars).toBe(before.length);
+    expect(result.afterChars).toBe(after.length);
   });
 });

@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
-import { openLedger, runBackfill, runToCompletion } from "@kizuki/core";
-import { initStaging } from "@kizuki/core/staging";
+import { openLedger, registerConnection, runBackfill, runToCompletion } from "@kizuki/core";
 import { parseCursor } from "../src/cursor";
 import { fixtureAccount } from "../src/fixture";
 import type { TelegramMessage } from "../src/api";
@@ -12,7 +11,7 @@ const SOURCE = "01JJ0000000000000000000000";
 
 function ledger() {
   const db = openLedger(":memory:");
-  initStaging(db);
+  registerConnection(db, TELEGRAM_CONNECTOR_ID, SOURCE);
   return db;
 }
 

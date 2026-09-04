@@ -1,6 +1,6 @@
 # Kizuki agent skill catalog
 
-Skills are task-specific playbooks. Keep standing repository policy in `AGENTS.md`; use these files only when the task calls for their deeper workflow. Canonical skills live here. Harness-specific adapters delegate here instead of copying policy.
+Skills are task-specific playbooks. Keep standing repository policy in `AGENTS.md`; use these files only when the task calls for their deeper workflow. `elegance-review` is the exception: load it for every code change. Canonical skills live here. Harness adapters delegate here. House overlays (`elegance-review` in all three homes; `show-me` in Claude and Cursor) copy the full body.
 
 ## Binding context (read before any skill)
 
@@ -24,6 +24,7 @@ a SQLite-only rule for derived retrieval (D13); an owner-started daemon
 | `implement-change` | Building or repairing a bounded behavior |
 | `diagnose-failure` | A failure cause is uncertain or a previous fix did not hold |
 | `review-change` | Reviewing an exact branch or pull-request head |
+| `elegance-review` | House default: every implementation, refactor, or PR review |
 | `connector-work` | Researching, implementing, or reviewing a provider connector or importer |
 | `security-privacy-review` | Crossing data, auth, filesystem, network, serving, import, or export boundaries |
 | `write-rfc` | Changing architecture, authority, durable state, or a binding contract |
@@ -68,4 +69,4 @@ Use the smallest set that covers the task. `orient-repository` normally comes fi
 - CLI feature: `cli-terminal-ux` + `api-contract-design` + `test-strategy`;
 - release candidate: `review-change` + `security-privacy-review` + `documentation-accuracy` + `release-readiness`.
 
-Do not load every skill by default. Deep playbooks are useful because they are invoked for the right job, not because they occupy permanent prompt context.
+Load `elegance-review` for every code change, refactor, or PR review. Do not load every other skill by default. Deep playbooks are useful because they are invoked for the right job, not because they occupy permanent prompt context.

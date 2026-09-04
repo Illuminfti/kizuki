@@ -3,10 +3,17 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { applyAgentsV9 } from "../src/agents/schema";
 import { applyCanonV4, initCanon } from "../src/canon/schema";
 import { getCanonReceipt } from "../src/canon/receipts";
 import { applyClaimsV3, initClaims } from "../src/claims/schema";
+import { neighbors } from "../src/graph/graph";
+import { initGraph } from "../src/graph/schema";
+import { applyConnectionsV8 } from "../src/ledger/connections-schema";
 import { openLedger } from "../src/ledger/db";
+import { tableExists } from "../src/ledger/schema";
+import { initSearch } from "../src/search/schema";
+import { searchResult } from "../src/search/query";
 import { accept, count } from "../src/ledger/ledger";
 import { validEvent } from "./fixtures";
 
@@ -182,6 +189,7 @@ describe("openLedger migrations", () => {
       { name: "secret_refs", pk: 0 },
       { name: "connected_at", pk: 0 },
       { name: "disconnected_at", pk: 0 },
+      { name: "implementation_version", pk: 0 },
     ]);
     db.close();
   });
@@ -307,7 +315,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(7);
+      expect(schemaVersion(upgraded)).toBe(10);
       const tables = upgraded
         .query<{ name: string }, []>(
           "SELECT name FROM sqlite_master WHERE type = 'table'",
@@ -327,6 +335,10 @@ describe("openLedger migrations", () => {
         "run_receipts",
         "leases",
         "budget_ledger",
+        "connection_runs",
+        "agents",
+        "agent_grants",
+        "agent_audit",
       ]));
       expect(tables).not.toContain("rejections");
       expect(tables).not.toContain("promotions");
@@ -436,7 +448,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(7);
+      expect(schemaVersion(upgraded)).toBe(10);
       const receipts = upgraded
         .query<
           {
@@ -562,8 +574,8 @@ describe("openLedger migrations", () => {
       legacy.close();
       const upgraded = openLedger(path);
       expect(columns(upgraded, "canon_receipts")).toEqual(freshColumns);
-      expect(schemaVersion(fresh)).toBe(7);
-      expect(schemaVersion(upgraded)).toBe(7);
+      expect(schemaVersion(fresh)).toBe(10);
+      expect(schemaVersion(upgraded)).toBe(10);
       expect(columns(fresh, "connector_sensitivity")).toEqual([
         "at",
         "connector_id",
@@ -601,7 +613,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(7);
+      expect(schemaVersion(upgraded)).toBe(10);
       expect(
         upgraded
           .query<{ name: string }, []>(
@@ -626,6 +638,409 @@ describe("openLedger migrations", () => {
         "store",
       ]);
       upgraded.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("v7 leftover agent rows persist through v9 and fail closed", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-ledger-v7-agents-"));
+    const path = join(directory, "ledger.sqlite");
+    try {
+      const legacy = new Database(path);
+      legacy.exec(V2_SCHEMA);
+      applyClaimsV3(legacy);
+      applyCanonV4(legacy);
+      legacy.exec("UPDATE schema_version SET version = 7");
+      legacy.exec(`
+        CREATE TABLE agents (
+          agent_id TEXT PRIMARY KEY,
+          name TEXT NOT NULL UNIQUE,
+          token_hash TEXT NOT NULL UNIQUE,
+          created_at TEXT NOT NULL,
+          revoked_at TEXT
+        ) STRICT;
+        CREATE TABLE agent_grants (
+          agent_id TEXT PRIMARY KEY REFERENCES agents(agent_id),
+          ceiling TEXT NOT NULL,
+          types TEXT,
+          subjects TEXT,
+          since TEXT,
+          until TEXT,
+          tools TEXT NOT NULL,
+          rate_limit_per_minute INTEGER NOT NULL,
+          updated_at TEXT NOT NULL
+        ) STRICT;
+        INSERT INTO agents VALUES (
+          '01AGENT0000000000000000001',
+          'legacy-reader',
+          '${"ab".repeat(32)}',
+          '2026-01-01T00:00:00.000Z',
+          NULL
+        );
+        INSERT INTO agent_grants VALUES (
+          '01AGENT0000000000000000001',
+          'personal',
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          '["search"]',
+          60,
+          '2026-01-01T00:00:00.000Z'
+        );
+      `);
+      expect(
+        legacy
+          .query<{ name: string }, []>(
+            "SELECT name FROM pragma_table_info('agent_grants')",
+          )
+          .all()
+          .some(({ name }) => name === "grant_epoch"),
+      ).toBe(false);
+      legacy.close();
+
+      const upgraded = openLedger(path);
+      expect(schemaVersion(upgraded)).toBe(10);
+      const grant = upgraded
+        .query<
+          { relay_owner_corrections: number; grant_epoch: number },
+          []
+        >(
+          `SELECT relay_owner_corrections, grant_epoch FROM agent_grants
+            WHERE agent_id = '01AGENT0000000000000000001'`,
+        )
+        .get();
+      expect(grant).toEqual({ relay_owner_corrections: 0, grant_epoch: 1 });
+      upgraded.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("v8 connection databases gain agent tables at schema v9", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-ledger-v8-agents-"));
+    const path = join(directory, "ledger.sqlite");
+    try {
+      const leftover = new Database(path);
+      leftover.exec(V2_SCHEMA);
+      applyClaimsV3(leftover);
+      applyCanonV4(leftover);
+      applyConnectionsV8(leftover);
+      leftover.exec("UPDATE schema_version SET version = 8");
+      leftover.close();
+
+      const upgraded = openLedger(path);
+      expect(schemaVersion(upgraded)).toBe(10);
+      const tables = upgraded
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type = 'table'",
+        )
+        .all()
+        .map(({ name }) => name);
+      expect(tables).toEqual(
+        expect.arrayContaining([
+          "connection_runs",
+          "agents",
+          "agent_grants",
+          "agent_audit",
+        ]),
+      );
+      upgraded.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("v9 agent databases rebuild derived_meta at schema v10", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-ledger-v9-derived-"));
+    const path = join(directory, "ledger.sqlite");
+    try {
+      const leftover = new Database(path);
+      leftover.exec(V2_SCHEMA);
+      applyClaimsV3(leftover);
+      applyCanonV4(leftover);
+      applyConnectionsV8(leftover);
+      applyAgentsV9(leftover);
+      leftover.exec(`
+        CREATE TABLE derived_meta (
+          layer TEXT PRIMARY KEY,
+          rebuilt_at TEXT NOT NULL,
+          doc_count INTEGER NOT NULL
+        ) STRICT;
+        INSERT INTO derived_meta VALUES ('search', '2026-01-01T00:00:00Z', 1);
+        UPDATE schema_version SET version = 9;
+      `);
+      leftover.close();
+
+      const upgraded = openLedger(path);
+      expect(schemaVersion(upgraded)).toBe(10);
+      expect(
+        upgraded
+          .query<{ name: string }, [string]>("SELECT name FROM pragma_table_info(?)")
+          .all("derived_meta")
+          .map(({ name }) => name)
+          .sort(),
+      ).toEqual([
+        "canon_hash",
+        "contract",
+        "doc_count",
+        "generation",
+        "layer",
+        "ledger_watermark",
+        "port_id",
+        "rebuilt_at",
+        "skipped_count",
+        "source_count",
+        "space",
+        "status",
+      ]);
+      expect(
+        upgraded
+          .query<{ layer: string; status: string }, []>(
+            "SELECT layer, status FROM derived_meta ORDER BY layer",
+          )
+          .all(),
+      ).toEqual([
+        { layer: "graph", status: "degraded" },
+        { layer: "search", status: "degraded" },
+      ]);
+      expect(
+        upgraded
+          .query<{ name: string }, []>(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agents'",
+          )
+          .get()?.name,
+      ).toBe("agents");
+      upgraded.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("v7 databases rebuild derived_meta and graph identity at schema v10", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-ledger-v7-"));
+    const path = join(directory, "ledger.sqlite");
+    try {
+      const legacy = new Database(path);
+      legacy.exec(V2_SCHEMA);
+      applyClaimsV3(legacy);
+      applyCanonV4(legacy);
+      legacy.exec(`
+        CREATE TABLE derived_meta (
+          layer TEXT PRIMARY KEY,
+          rebuilt_at TEXT NOT NULL,
+          doc_count INTEGER NOT NULL
+        ) STRICT;
+        INSERT INTO derived_meta VALUES ('search', '2026-01-01T00:00:00Z', 1);
+        CREATE TABLE graph_edges (
+          src TEXT NOT NULL,
+          dst TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          PRIMARY KEY (src, dst, kind)
+        ) STRICT;
+        INSERT INTO graph_edges VALUES ('fact:one', 'fact:two', 'wikilink');
+        CREATE VIRTUAL TABLE search_docs USING fts5(page_id, body);
+        INSERT INTO search_docs (page_id, body) VALUES ('fact:one', 'stale');
+        UPDATE schema_version SET version = 7;
+      `);
+      legacy.close();
+
+      const upgraded = openLedger(path);
+      expect(schemaVersion(upgraded)).toBe(10);
+      expect(
+        upgraded
+          .query<{ name: string }, [string]>("SELECT name FROM pragma_table_info(?)")
+          .all("derived_meta")
+          .map(({ name }) => name)
+          .sort(),
+      ).toEqual([
+        "canon_hash",
+        "contract",
+        "doc_count",
+        "generation",
+        "layer",
+        "ledger_watermark",
+        "port_id",
+        "rebuilt_at",
+        "skipped_count",
+        "source_count",
+        "space",
+        "status",
+      ]);
+      expect(
+        upgraded
+          .query<{ layer: string; status: string }, []>(
+            "SELECT layer, status FROM derived_meta ORDER BY layer",
+          )
+          .all(),
+      ).toEqual([
+        { layer: "graph", status: "degraded" },
+        { layer: "search", status: "degraded" },
+      ]);
+      expect(searchResult(upgraded, "stale")).toEqual({
+        hits: [],
+        degraded: ["index-degraded"],
+      });
+      expect(neighbors(upgraded, "fact:one")).toEqual({
+        id: "fact:one",
+        edges: [],
+        truncated: false,
+      });
+      upgraded.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("v10 does not invent search or graph on a fresh ledger", () => {
+    const db = openLedger(":memory:");
+    expect(tableExists(db, "search_docs")).toBe(false);
+    expect(tableExists(db, "search_documents")).toBe(false);
+    expect(tableExists(db, "graph_edges")).toBe(false);
+    db.close();
+  });
+
+  test("v10 missing search_docs is projected from the companion", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-ledger-v10-fts-"));
+    const path = join(directory, "ledger.sqlite");
+    try {
+      const first = openLedger(path);
+      initSearch(first);
+      first.exec(`
+        INSERT INTO search_documents (
+          doc_id, scope, title, body, path, page_type, sensitivity,
+          taint, authority, occurred_at, connector_id, subjects, provenance
+        ) VALUES (
+          'page:fact:tea', 'canon', 'Tea', 'kettleword', 'facts/tea.md', 'fact',
+          'public', 'clean', 'owner_authored', '2026-01-01T00:00:00Z', '',
+          '[]', '[]'
+        );
+        INSERT INTO derived_meta (
+          layer, generation, rebuilt_at, doc_count, source_count, skipped_count,
+          status, ledger_watermark, canon_hash, port_id, contract, space
+        ) VALUES (
+          'search', 'gen-1', '2026-01-01T00:00:00Z', 1, 1, 0, 'ok',
+          NULL, NULL, 'kizuki.retrieval.fts5', 'kizuki.retrieval/v1', NULL
+        );
+        DROP TABLE search_docs;
+      `);
+      first.close();
+
+      const reopened = openLedger(path);
+      expect(schemaVersion(reopened)).toBe(10);
+      expect(searchResult(reopened, "kettleword")).toEqual({
+        hits: [
+          expect.objectContaining({
+            doc_id: "page:fact:tea",
+            title: "Tea",
+          }),
+        ],
+        degraded: [],
+      });
+      expect(
+        reopened
+          .query<{ status: string }, []>(
+            "SELECT status FROM derived_meta WHERE layer = 'search'",
+          )
+          .get()?.status,
+      ).toBe("ok");
+      reopened.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("v10 missing search_docs without a companion is stamped degraded", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-ledger-v10-fts-gap-"));
+    const path = join(directory, "ledger.sqlite");
+    try {
+      const first = openLedger(path);
+      initSearch(first);
+      first.exec(`
+        INSERT INTO derived_meta (
+          layer, generation, rebuilt_at, doc_count, source_count, skipped_count,
+          status, ledger_watermark, canon_hash, port_id, contract, space
+        ) VALUES (
+          'search', 'gen-1', '2026-01-01T00:00:00Z', 1, 1, 0, 'ok',
+          NULL, NULL, 'kizuki.retrieval.fts5', 'kizuki.retrieval/v1', NULL
+        );
+        DROP TABLE search_docs;
+        DROP TABLE search_documents;
+      `);
+      first.close();
+
+      const reopened = openLedger(path);
+      expect(searchResult(reopened, "kettleword")).toEqual({
+        hits: [],
+        degraded: ["index-degraded"],
+      });
+      expect(
+        reopened
+          .query<{ status: string }, []>(
+            "SELECT status FROM derived_meta WHERE layer = 'search'",
+          )
+          .get()?.status,
+      ).toBe("degraded");
+      reopened.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("v10 graph missing dest_sensitivity is wiped on reopen", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-ledger-v10-dest-"));
+    const path = join(directory, "ledger.sqlite");
+    try {
+      const first = openLedger(path);
+      initGraph(first);
+      first.exec(`
+        DROP TABLE graph_edges;
+        CREATE TABLE graph_edges (
+          src TEXT NOT NULL,
+          dst TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          sensitivity TEXT NOT NULL,
+          taint TEXT NOT NULL CHECK (taint IN ('clean', 'quoted')),
+          authority TEXT NOT NULL,
+          provenance TEXT NOT NULL,
+          PRIMARY KEY (src, dst, kind)
+        ) STRICT;
+        INSERT INTO graph_edges
+          VALUES ('hub', 'secret', 'wikilink', 'public', 'clean', 'owner_authored', '[]');
+      `);
+      first.close();
+
+      const reopened = openLedger(path);
+      expect(schemaVersion(reopened)).toBe(10);
+      expect(
+        reopened
+          .query<{ name: string }, [string]>(
+            "SELECT name FROM pragma_table_info(?)",
+          )
+          .all("graph_edges")
+          .map(({ name }) => name),
+      ).toContain("dest_sensitivity");
+      expect(neighbors(reopened, "hub")).toEqual({
+        id: "hub",
+        edges: [],
+        truncated: false,
+      });
+      expect(
+        reopened
+          .query<{ status: string }, []>(
+            "SELECT status FROM derived_meta WHERE layer = 'graph'",
+          )
+          .get()?.status,
+      ).toBe("degraded");
+      expect(
+        reopened
+          .query<{ status: string }, []>(
+            "SELECT status FROM derived_meta WHERE layer = 'search'",
+          )
+          .get()?.status,
+      ).toBeUndefined();
+      reopened.close();
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

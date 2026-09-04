@@ -1,14 +1,28 @@
 import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
+  MAX_AUDIT_PAGE,
   OWNER,
   addAgent,
   authenticate,
   checkRate,
+  initAgents,
   listAudit,
+  listAuditPage,
   recordAudit,
+  reserveAudit,
+  setGrant,
   shapeArguments,
 } from "../../src/agents";
+
+function accessRows(db: ReturnType<typeof agentsDb>, name: string) {
+  return listAudit(db, name, { kind: "access" });
+}
 import type { Principal } from "../../src/agents";
+import { sha256 } from "../../src/agents/hash";
 import { agentsDb } from "./helpers";
 
 function principalWithRate(rate: number): { db: ReturnType<typeof agentsDb>; principal: Principal } {
@@ -33,22 +47,39 @@ describe("shapeArguments", () => {
     });
   });
 
-  test("keeps scalars and bounded arrays of short ids", () => {
+  test("hashes every non-empty string, including short identifiers", () => {
+    const subject = "person:ada";
     expect(
       shapeArguments({
         limit: 12,
         include_archived: false,
         empty: "",
-        subjects: ["person:ada", "org:acme"],
+        subjects: [subject],
         page_ids: ["page-1"],
       }),
     ).toEqual({
       limit: 12,
       include_archived: false,
       empty: "",
-      subjects: ["person:ada", "org:acme"],
-      page_ids: ["page-1"],
+      subjects: [{ len: subject.length, sha256: sha256(subject) }],
+      page_ids: [{ len: 6, sha256: sha256("page-1") }],
     });
+    expect(JSON.stringify(shapeArguments({ subjects: [subject] }))).not.toContain(
+      subject,
+    );
+  });
+
+  test("keeps prototype keys from poisoning or disappearing", () => {
+    const shaped = shapeArguments(
+      JSON.parse('{"__proto__":{"admin":true},"query":"x"}') as Record<
+        string,
+        unknown
+      >,
+    );
+    expect(Object.getPrototypeOf(shaped)).toBe(null);
+    expect(Object.prototype.hasOwnProperty.call(shaped, "__proto__")).toBe(false);
+    expect((shaped as { admin?: unknown }).admin).toBeUndefined();
+    expect(JSON.stringify(shaped)).toContain(sha256("__proto__"));
   });
 
   test("hashes strings in arrays that are not declared id collections", () => {
@@ -71,7 +102,7 @@ describe("audit trail", () => {
     const { db, principal } = principalWithRate(60);
     const query = "Ada's confidential calendar";
     const queryHash = new Bun.CryptoHasher("sha256").update(query).digest("hex");
-    const served = [{ id: "page-public", sensitivity: "public" }];
+    const served = [{ id: "page-public", sensitivity: "public", taint: "clean", authority: null }];
     const denied = [{ id: "page-private", reason: "above_ceiling" as const }];
 
     const auditId = recordAudit(db, principal, "search", { query }, served, denied);
@@ -87,8 +118,16 @@ describe("audit trail", () => {
       audit_id: auditId,
       agent_id: principal.kind === "agent" ? principal.agent.agent_id : "",
       tool: "search",
-      served,
-      denied,
+      grant_epoch: 1,
+      served: [
+        {
+          id: sha256("page-public"),
+          sensitivity: "public",
+          taint: "clean",
+          authority: null,
+        },
+      ],
+      denied: [{ id: sha256("page-private"), reason: "above_ceiling" }],
     });
     db.close();
   });
@@ -99,15 +138,16 @@ describe("audit trail", () => {
     const second = recordAudit(db, principal, "timeline", { query: "second" }, [], []);
     const third = recordAudit(db, principal, "get_page", { id: "third" }, [], []);
 
-    expect(listAudit(db, "reader-1").map(({ audit_id }) => audit_id)).toEqual([
+    expect(accessRows(db, "reader-1").map(({ audit_id }) => audit_id)).toEqual([
       third,
       second,
       first,
     ]);
-    expect(listAudit(db, "reader-1", { limit: 2 }).map(({ audit_id }) => audit_id)).toEqual([
-      third,
-      second,
-    ]);
+    expect(
+      accessRows(db, "reader-1")
+        .slice(0, 2)
+        .map(({ audit_id }) => audit_id),
+    ).toEqual([third, second]);
     db.close();
   });
 
@@ -164,9 +204,10 @@ describe("checkRate", () => {
     // caller-supplied instant has to be stored in one shape or the limit
     // silently stops counting.
     recordAudit(db, principal, "search", {}, [], [], "2026-02-28T12:00:00+02:00");
-    const stored = listAudit(db, principal.kind === "agent" ? principal.agent.name : "owner", {
-      limit: 1,
-    })[0];
+    const stored = accessRows(
+      db,
+      principal.kind === "agent" ? principal.agent.name : "owner",
+    )[0];
     expect(stored?.at).toBe("2026-02-28T10:00:00.000Z");
     expect(
       checkRate(db, principal, "search", "2026-02-28T10:00:30Z"),
@@ -184,6 +225,157 @@ describe("checkRate", () => {
       recordAudit(db, OWNER, "search", { index }, [], []);
     }
     expect(checkRate(db, OWNER, "search")).toEqual({ allow: true });
+    db.close();
+  });
+
+  test("retry_after waits for the row that actually frees a slot", () => {
+    const { db, principal } = principalWithRate(10);
+    const base = Date.parse("2026-03-01T12:00:00.000Z");
+    for (let index = 0; index < 5; index += 1) {
+      recordAudit(
+        db,
+        principal,
+        "search",
+        { index },
+        [],
+        [],
+        new Date(base + index * 1_000).toISOString(),
+      );
+    }
+    setGrant(db, "reader-1", { rate_limit_per_minute: 3 });
+    const current =
+      principal.kind === "agent"
+        ? { ...principal, grant: { ...principal.grant, rate_limit_per_minute: 3 } }
+        : principal;
+
+    const denied = checkRate(db, current, "search", "2026-03-01T12:00:04.000Z");
+    expect(denied).toMatchObject({ allow: false, reason: "rate_limited" });
+    if (denied.allow) throw new Error("expected rate limit");
+    // Five rows, limit 3: the third-oldest (12:00:02) must expire.
+    expect(denied.retry_after_seconds).toBe(58);
+    db.close();
+  });
+
+  test("rejects forged served counts and oversized lists", () => {
+    const { db, principal } = principalWithRate(60);
+    expect(() =>
+      recordAudit(db, principal, "search", {}, [{ id: "p", sensitivity: "public" }, "x" as never], []),
+    ).toThrow(/served/);
+    expect(() =>
+      recordAudit(
+        db,
+        principal,
+        "search",
+        {},
+        Array.from({ length: 257 }, (_, index) => ({
+          id: `p-${index}`,
+          sensitivity: "public",
+        })),
+        [],
+      ),
+    ).toThrow(/at most/);
+    db.close();
+  });
+});
+
+describe("reserveAudit", () => {
+  test("retry_after accounts for the reserved denial row", () => {
+    const { db, principal } = principalWithRate(3);
+    const base = Date.parse("2026-03-01T12:00:00.000Z");
+    for (let index = 0; index < 3; index += 1) {
+      recordAudit(
+        db,
+        principal,
+        "search",
+        { index },
+        [],
+        [],
+        new Date(base + index * 1_000).toISOString(),
+      );
+    }
+    const denied = reserveAudit(
+      db,
+      principal,
+      "search",
+      {},
+      "2026-03-01T12:00:04.000Z",
+    );
+    expect(denied).toMatchObject({ allow: false, reason: "rate_limited" });
+    if (denied.allow) throw new Error("expected rate limit");
+    // Four access rows, limit 3: the second-oldest (12:00:01) must expire.
+    expect(denied.retry_after_seconds).toBe(57);
+    expect(
+      checkRate(db, principal, "search", "2026-03-01T12:01:00.000Z").allow,
+    ).toBe(false);
+    const retryAt = new Date(
+      Date.parse("2026-03-01T12:00:04.000Z") +
+        denied.retry_after_seconds * 1_000,
+    ).toISOString();
+    expect(reserveAudit(db, principal, "search", {}, retryAt).allow).toBe(true);
+    db.close();
+  });
+
+  test("serialized callers cannot share the last slot", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-rate-"));
+    const path = join(directory, "agents.sqlite");
+    try {
+      const writer = new Database(path, { create: true });
+      initAgents(writer);
+      const { token } = addAgent(writer, "reader-1", {
+        rate_limit_per_minute: 1,
+      });
+      writer.close();
+
+      const first = new Database(path);
+      const second = new Database(path);
+      const principalOf = (db: Database) => {
+        const principal = authenticate(db, token);
+        if (principal === null) throw new Error("expected authentication");
+        return principal;
+      };
+      const at = "2026-03-01T12:00:00.000Z";
+      const one = reserveAudit(first, principalOf(first), "search", {}, at);
+      const two = reserveAudit(second, principalOf(second), "search", {}, at);
+      expect([one.allow, two.allow].sort()).toEqual([false, true]);
+      first.close();
+      second.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("listAuditPage", () => {
+  test("caps the page and walks a stable cursor", () => {
+    const { db, principal } = principalWithRate(60);
+    const ids: string[] = [];
+    for (let index = 0; index < 4; index += 1) {
+      ids.push(
+        recordAudit(
+          db,
+          principal,
+          "search",
+          { index },
+          [],
+          [],
+          new Date(Date.parse("2026-03-01T12:00:00.000Z") + index * 1_000).toISOString(),
+        ),
+      );
+    }
+    const newestFirst = [...ids].reverse();
+    const first = listAuditPage(db, "reader-1", { limit: 2, kind: "access" });
+    expect(first.rows.map((row) => row.audit_id)).toEqual(newestFirst.slice(0, 2));
+    expect(first.next_cursor).not.toBeNull();
+    const second = listAuditPage(db, "reader-1", {
+      limit: 2,
+      kind: "access",
+      cursor: first.next_cursor ?? "",
+    });
+    expect(second.rows.map((row) => row.audit_id)).toEqual(newestFirst.slice(2));
+    expect(second.next_cursor).toBeNull();
+    expect(
+      listAudit(db, "reader-1", { limit: MAX_AUDIT_PAGE + 50, kind: "access" }),
+    ).toHaveLength(4);
     db.close();
   });
 });

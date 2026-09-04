@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseKeys } from "../src/keys";
+import { createKeyStream, parseKeys } from "../src/keys";
 
 describe("parseKeys", () => {
   test("maps single bytes to named keys", () => {
@@ -37,5 +37,19 @@ describe("parseKeys", () => {
       { name: "unknown" },
       { name: "char", ch: "x" },
     ]);
+  });
+
+  test("createKeyStream buffers UTF-8 across every split of a multibyte character", () => {
+    const encoded = new TextEncoder().encode("気é");
+    for (let i = 1; i < encoded.length; i += 1) {
+      const stream = createKeyStream();
+      const first = stream.push(encoded.slice(0, i));
+      const second = stream.push(encoded.slice(i));
+      const flushed = stream.end();
+      expect([...first, ...second, ...flushed]).toEqual([
+        { name: "char", ch: "気" },
+        { name: "char", ch: "é" },
+      ]);
+    }
   });
 });

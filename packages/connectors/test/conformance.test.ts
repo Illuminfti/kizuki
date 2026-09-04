@@ -4,36 +4,45 @@ import { appendFile, mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promi
 import os from "node:os";
 import path from "node:path";
 import {
-  CHATGPT_FIXTURE_EXPORT,
   CHATGPT_IMPORT_CONNECTOR_ID,
-  CLAUDE_FIXTURE_EXPORT,
   CLAUDE_IMPORT_CONNECTOR_ID,
   ICS_CONNECTOR_ID,
   IMAP_CONNECTOR_ID,
   LEGACY_EVENTS_CONNECTOR_ID,
-  LEGACY_EVENTS_FIXTURE,
   LEGACY_WIKI_CONNECTOR_ID,
-  LEGACY_WIKI_FIXTURE,
   MARKDOWN_FOLDER_CONNECTOR_ID,
-  OMNIVORE_FIXTURE_FILES,
   OMNIVORE_IMPORT_CONNECTOR_ID,
-  POCKET_FIXTURE_EXPORT,
   POCKET_IMPORT_CONNECTOR_ID,
   REGISTRY,
   SCREENPIPE_CONNECTOR_ID,
   TELEGRAM_CONNECTOR_ID,
   TelegramConnector,
-  WHATSAPP_FIXTURE_FILES,
-  WHATSAPP_FIXTURE_TIMEZONE,
   WHATSAPP_IMPORT_CONNECTOR_ID,
   createIcsConnector,
   createImapConnector,
   getConnector,
-  runConformance,
   scriptedDeps,
-  seedFixtureDatabase,
 } from "../src";
-import type { ConformanceResult } from "../src";
+import {
+  CHATGPT_FIXTURE_EXPORT,
+  CLAUDE_FIXTURE_EXPORT,
+  LEGACY_EVENTS_FIXTURE,
+  LEGACY_WIKI_FIXTURE,
+  OMNIVORE_FIXTURE_FILES,
+  POCKET_FIXTURE_EXPORT,
+  WHATSAPP_FIXTURE_FILES,
+  WHATSAPP_FIXTURE_TIMEZONE,
+  dishonestPurgeConnector,
+  emptyOnUnavailableConnector,
+  hangingConnector,
+  mutableManifestConnector,
+  runConformance,
+  scriptedSignInConnector,
+  seedFixtureDatabase,
+  unlabeledEventsConnector,
+  untypedSignInCancelConnector,
+} from "../src/testkit";
+import type { ConformanceResult } from "../src/testkit";
 import { fixtureJsonl as jsonlFixture } from "../src/import-legacy-events/fixture";
 import { encodeState } from "@kizuki/connector-telegram";
 import type { Connector } from "@kizuki/core";
@@ -101,6 +110,16 @@ const ICS_WITHOUT_ATTACHMENT = FIXTURE_ICS.replace(
   "",
 );
 
+function missingPath(id: string): { connector: Connector } {
+  return {
+    get connector() {
+      return getConnector(id, {
+        path: "/nonexistent/kizuki-conformance-missing",
+      });
+    },
+  };
+}
+
 function combine(results: ConformanceResult[]): ConformanceResult {
   return {
     pass: results.every((result) => result.pass),
@@ -119,40 +138,82 @@ function batteryFor(
   const markdown = getConnector(MARKDOWN_FOLDER_CONNECTOR_ID, {
     path: layout.markdown,
   });
-  const plain = (connector: Connector) => () => runConformance(connector);
   return {
     [MARKDOWN_FOLDER_CONNECTOR_ID]: () =>
       runConformance(markdown, {
+        unavailable: missingPath(MARKDOWN_FOLDER_CONNECTOR_ID),
         tombstone: {
           prepare: async () => (await markdown.backfill(null)).cursor,
           mutate: async () => unlink(layout.deletedMarkdown),
         },
       }),
-    [CHATGPT_IMPORT_CONNECTOR_ID]: plain(
-      getConnector(CHATGPT_IMPORT_CONNECTOR_ID, { path: layout.chatGpt }),
-    ),
-    [CLAUDE_IMPORT_CONNECTOR_ID]: plain(
-      getConnector(CLAUDE_IMPORT_CONNECTOR_ID, { path: layout.claude }),
-    ),
-    [SCREENPIPE_CONNECTOR_ID]: plain(
-      getConnector(SCREENPIPE_CONNECTOR_ID, {
-        path: layout.screenpipe,
-        settle_seconds: 0,
-      }),
-    ),
-    [WHATSAPP_IMPORT_CONNECTOR_ID]: plain(
-      getConnector(WHATSAPP_IMPORT_CONNECTOR_ID, {
-        path: layout.whatsapp,
-        // Pinned so the double backfill is identical on any host.
-        timezone: WHATSAPP_FIXTURE_TIMEZONE,
-      }),
-    ),
-    [POCKET_IMPORT_CONNECTOR_ID]: plain(
-      getConnector(POCKET_IMPORT_CONNECTOR_ID, { path: layout.pocket }),
-    ),
-    [OMNIVORE_IMPORT_CONNECTOR_ID]: plain(
-      getConnector(OMNIVORE_IMPORT_CONNECTOR_ID, { path: layout.omnivore }),
-    ),
+    [CHATGPT_IMPORT_CONNECTOR_ID]: () => {
+      const chatgpt = getConnector(CHATGPT_IMPORT_CONNECTOR_ID, {
+        path: layout.chatGpt,
+      });
+      return runConformance(chatgpt, {
+        unavailable: missingPath(CHATGPT_IMPORT_CONNECTOR_ID),
+        tombstone: {
+          prepare: async () => (await chatgpt.backfill(null)).cursor,
+          mutate: async () =>
+            writeFile(
+              layout.chatGpt,
+              JSON.stringify(CHATGPT_FIXTURE_EXPORT.slice(0, 1)),
+            ),
+        },
+      });
+    },
+    [CLAUDE_IMPORT_CONNECTOR_ID]: () => {
+      const claude = getConnector(CLAUDE_IMPORT_CONNECTOR_ID, {
+        path: layout.claude,
+      });
+      return runConformance(claude, {
+        unavailable: missingPath(CLAUDE_IMPORT_CONNECTOR_ID),
+        tombstone: {
+          prepare: async () => (await claude.backfill(null)).cursor,
+          mutate: async () =>
+            writeFile(
+              layout.claude,
+              JSON.stringify([
+                {
+                  ...CLAUDE_FIXTURE_EXPORT[0],
+                  chat_messages: CLAUDE_FIXTURE_EXPORT[0]?.chat_messages.slice(
+                    0,
+                    1,
+                  ),
+                },
+              ]),
+            ),
+        },
+      });
+    },
+    [SCREENPIPE_CONNECTOR_ID]: () =>
+      runConformance(
+        getConnector(SCREENPIPE_CONNECTOR_ID, {
+          path: layout.screenpipe,
+          settle_seconds: 0,
+        }),
+        { unavailable: missingPath(SCREENPIPE_CONNECTOR_ID) },
+      ),
+    [WHATSAPP_IMPORT_CONNECTOR_ID]: () =>
+      runConformance(
+        getConnector(WHATSAPP_IMPORT_CONNECTOR_ID, {
+          path: layout.whatsapp,
+          // Pinned so the double backfill is identical on any host.
+          timezone: WHATSAPP_FIXTURE_TIMEZONE,
+        }),
+        { unavailable: missingPath(WHATSAPP_IMPORT_CONNECTOR_ID) },
+      ),
+    [POCKET_IMPORT_CONNECTOR_ID]: () =>
+      runConformance(
+        getConnector(POCKET_IMPORT_CONNECTOR_ID, { path: layout.pocket }),
+        { unavailable: missingPath(POCKET_IMPORT_CONNECTOR_ID) },
+      ),
+    [OMNIVORE_IMPORT_CONNECTOR_ID]: () =>
+      runConformance(
+        getConnector(OMNIVORE_IMPORT_CONNECTOR_ID, { path: layout.omnivore }),
+        { unavailable: missingPath(OMNIVORE_IMPORT_CONNECTOR_ID) },
+      ),
     [TELEGRAM_CONNECTOR_ID]: async () => {
       const telegram = new TelegramConnector(
         { state_ref: TELEGRAM_STATE_REF },
@@ -168,7 +229,11 @@ function batteryFor(
           }),
         );
       });
-      return runConformance(telegram);
+      return runConformance(telegram, {
+        unavailable: {
+          connector: new TelegramConnector({}, scriptedDeps()),
+        },
+      });
     },
     [IMAP_CONNECTOR_ID]: async () => {
       const imapServer = new FakeImapServer(fixtureMailbox(), {
@@ -181,6 +246,7 @@ function batteryFor(
       );
       await imap.connect(async () => JSON.stringify(fixtureState()));
       return runConformance(imap, {
+        unavailable: { connector: createImapConnector({}) },
         tombstone: {
           prepare: async () => (await imap.backfill(null)).cursor,
           mutate: async () => {
@@ -201,6 +267,7 @@ function batteryFor(
         JSON.stringify({ schema: "kizuki.ics-state/v1", url: icsUrl }),
       );
       const fileResult = await runConformance(icsFile, {
+        unavailable: missingPath(ICS_CONNECTOR_ID),
         tombstone: {
           prepare: async () => (await icsFile.backfill(null)).cursor,
           mutate: async () => {
@@ -349,9 +416,9 @@ test("a tombstones:true connector without hooks supplied fails, not skips", asyn
       getConnector(MARKDOWN_FOLDER_CONNECTOR_ID, { path: root }),
     );
     expect(result.pass).toBe(false);
-    expect(result.failures).toEqual([
+    expect(result.failures).toContain(
       "tombstones capability declared but no tombstone hooks were supplied to the suite",
-    ]);
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -382,4 +449,66 @@ test("the registry builds the interactive telegram connector", () => {
   expect(manifest.auth_modes).toEqual(["sign_in"]);
   expect(typeof connector.signIn).toBe("function");
   expect(manifest.required_secrets).toEqual([]);
+});
+
+test("a mutable manifest fails conformance", async () => {
+  const result = await runConformance(mutableManifestConnector());
+  expect(result.pass).toBe(false);
+  expect(result.failures.some((item) => item.includes("mutable"))).toBe(true);
+});
+
+test("a dishonest purge capability fails conformance", async () => {
+  const result = await runConformance(dishonestPurgeConnector());
+  expect(result.pass).toBe(false);
+  expect(result.failures.some((item) => item.includes("purge"))).toBe(true);
+});
+
+test("empty-on-unavailable fails conformance", async () => {
+  const result = await runConformance(emptyOnUnavailableConnector(), {
+    unavailable: { connector: emptyOnUnavailableConnector() },
+  });
+  expect(result.pass).toBe(false);
+  expect(
+    result.failures.some((item) => item.includes("unavailable")),
+  ).toBe(true);
+});
+
+test("a hanging connector times out", async () => {
+  const result = await runConformance(hangingConnector(), { deadlineMs: 50 });
+  expect(result.pass).toBe(false);
+  expect(result.failures.some((item) => /timeout|exceeded/i.test(item))).toBe(
+    true,
+  );
+});
+
+test("declared sign-in is cancellable", async () => {
+  const result = await runConformance(scriptedSignInConnector());
+  expect(result.pass).toBe(true);
+});
+
+test("sign-in cancel must throw a typed connector error", async () => {
+  const result = await runConformance(untypedSignInCancelConnector());
+  expect(result.pass).toBe(false);
+  expect(
+    result.failures.some((item) => item.includes("typed error")),
+  ).toBe(true);
+});
+
+test("unavailable health is still bound by the deadline", async () => {
+  const result = await runConformance(scriptedSignInConnector(), {
+    deadlineMs: 50,
+    unavailable: { connector: hangingConnector() },
+  });
+  expect(result.pass).toBe(false);
+  expect(result.failures.some((item) => /timeout|exceeded/i.test(item))).toBe(
+    true,
+  );
+});
+
+test("unlabeled events fail conformance", async () => {
+  const result = await runConformance(unlabeledEventsConnector());
+  expect(result.pass).toBe(false);
+  expect(
+    result.failures.some((item) => item.includes("default_sensitivity")),
+  ).toBe(true);
 });

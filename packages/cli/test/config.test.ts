@@ -110,6 +110,110 @@ describe("config", () => {
     expect(readFileSync(env.KIZUKI_CONFIG ?? "", "utf8")).toContain(third);
   });
 
+  test("unset HOME and XDG refuse a relative config path", () => {
+    const result = runCli(
+      {
+        HOME: "",
+        XDG_CONFIG_HOME: "",
+        KIZUKI_CONFIG: undefined,
+      },
+      "query",
+      "x",
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("no user config directory");
+  });
+
+  test("relative HOME is refused", () => {
+    const result = runCli({ HOME: "relative-home", XDG_CONFIG_HOME: "" }, "query", "x");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("HOME must be an absolute path");
+  });
+
+  test("prototype and dotted alias keys are rejected", () => {
+    const env = isolatedEnv();
+    const path = env.KIZUKI_CONFIG ?? "";
+    writeFileSync(
+      path,
+      `schema = "kizuki.cli.config/v1"\n\n[vaults]\n__proto__ = "/tmp/nope"\n`,
+    );
+    const proto = runCli(env, "query", "x");
+    expect(proto.exitCode).toBe(1);
+    expect(proto.stderr).toContain("invalid vault alias");
+
+    writeFileSync(
+      path,
+      `schema = "kizuki.cli.config/v1"\n\n[vaults]\n"lab.prod" = "/tmp/nope"\n`,
+    );
+    const dotted = runCli(env, "query", "x");
+    expect(dotted.exitCode).toBe(1);
+    expect(dotted.stderr).toContain("invalid vault alias");
+  });
+
+  test("a stale config lock from a dead pid is stolen", () => {
+    const env = isolatedEnv();
+    const path = env.KIZUKI_CONFIG ?? "";
+    mkdirSync(join(path, ".."), { recursive: true });
+    writeFileSync(`${path}.lock`, "2147483647\n");
+    const vault = join(tempDir(), "lock-vault");
+    const result = runCli(env, "init", vault);
+    expect(result.exitCode).toBe(0);
+    expect(readFileSync(path, "utf8")).toContain(vault);
+  });
+
+  test(
+    "an empty lock is not stolen until the wait expires",
+    () => {
+      const env = isolatedEnv();
+      const path = env.KIZUKI_CONFIG ?? "";
+      mkdirSync(join(path, ".."), { recursive: true });
+      writeFileSync(`${path}.lock`, "");
+      const vault = join(tempDir(), "empty-lock-vault");
+      const result = runCli(env, "init", vault);
+      expect(result.exitCode).toBe(0);
+      expect(readFileSync(path, "utf8")).toContain(vault);
+    },
+    15_000,
+  );
+
+  test(
+    "a live lock holder is not stolen",
+    () => {
+      const env = isolatedEnv();
+      const path = env.KIZUKI_CONFIG ?? "";
+      mkdirSync(join(path, ".."), { recursive: true });
+      writeFileSync(`${path}.lock`, `${process.pid}\n`);
+      const result = runCli(env, "init", join(tempDir(), "live-lock-vault"));
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("could not lock");
+    },
+    15_000,
+  );
+
+  test(
+    "a directory at the lock path fails closed",
+    () => {
+      const env = isolatedEnv();
+      const path = env.KIZUKI_CONFIG ?? "";
+      mkdirSync(join(path, ".."), { recursive: true });
+      mkdirSync(`${path}.lock`);
+      const result = runCli(env, "init", join(tempDir(), "dir-lock-vault"));
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("could not lock");
+    },
+    15_000,
+  );
+
+  test("config writes are atomic and round-trip aliases", () => {
+    const env = isolatedEnv();
+    const first = join(tempDir(), "first");
+    expect(runCli(env, "init", first).exitCode).toBe(0);
+    const text = readFileSync(env.KIZUKI_CONFIG ?? "", "utf8");
+    expect(text).toContain('schema = "kizuki.cli.config/v1"');
+    expect(text).toContain("[vaults]");
+    expect(text).not.toMatch(/constructor\s*=/);
+  });
+
   test("--default and --no-default together is a usage error", () => {
     const result = runCli(
       isolatedEnv(),

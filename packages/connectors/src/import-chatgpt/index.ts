@@ -1,5 +1,6 @@
-import { isPlainObject } from "@kizuki/core";
+import { freezeManifest, isPlainObject, policyForConnector } from "@kizuki/core";
 import type {
+  AttachmentRef,
   CaptureEventInput,
   Connector,
   Cursor,
@@ -8,20 +9,33 @@ import type {
   SecretResolver,
   SyncBatch,
 } from "@kizuki/core";
+import type { ImportParseResult, ImportRecordError } from "../import-report";
+import { notSupported } from "../errors";
 import {
-  compareStrings,
-  normalizedDate,
+  IMPORT_SNAPSHOT_CURSOR_SCHEMA,
+  runSnapshot,
+  snapshotHealth,
+} from "../import-snapshot";
+import type { SnapshotParse } from "../import-snapshot";
+import {
+  nonEmptyString,
   parseJsonArray,
-  pathHealth,
-  readUtf8,
+  requireKnownKeys,
   requirePathConfig,
+  unixSecondsToIso,
 } from "../util";
+import {
+  encodeSourceRecordId,
+  fallbackSourcePart,
+} from "../source-id";
 
 export const CHATGPT_IMPORT_CONNECTOR_ID = "kizuki.import-chatgpt" as const;
 
 export interface ChatGptImportConfig {
   path: string;
 }
+
+const CONFIG_KEYS = ["path"];
 
 export const CHATGPT_FIXTURE_EXPORT = [
   {
@@ -59,6 +73,7 @@ export const CHATGPT_FIXTURE_EXPORT = [
         message: {
           author: { role: "user" },
           content: { parts: ["Keep it deterministic."] },
+          create_time: 1_767_312_001,
         },
         parent: null,
         children: [],
@@ -67,28 +82,42 @@ export const CHATGPT_FIXTURE_EXPORT = [
   },
 ] as const;
 
-const MANIFEST: Manifest = {
+const MANIFEST: Manifest = freezeManifest({
   schema: "kizuki.connector/v1",
   connector_id: CHATGPT_IMPORT_CONNECTOR_ID,
-  version: "0.1.0",
+  version: "0.2.0",
+  contract_minor: 1,
+  implementation: "@kizuki/connectors",
+  allowed_egress: [],
+  cursor_schema: IMPORT_SNAPSHOT_CURSOR_SCHEMA,
   kinds: ["message"],
   capabilities: {
     backfill: true,
     sync: true,
-    tombstones: false,
+    tombstones: true,
     purge: false,
     fixture: true,
   },
   required_secrets: [],
   emits_sensitivity_hint: false,
+  ...policyForConnector(CHATGPT_IMPORT_CONNECTOR_ID),
   auth_modes: ["none"],
+});
+
+const SNAPSHOT: SnapshotParse = {
+  connectorId: CHATGPT_IMPORT_CONNECTOR_ID,
+  kind: "message",
+  parse: parseChatGptExport,
 };
+
+const SUPPORTED_ROLES = new Set(["user", "assistant", "system", "tool"]);
 
 export class ChatGptImportConnector implements Connector {
   readonly path: string;
 
   constructor(config: ChatGptImportConfig) {
     this.path = requirePathConfig(config, CHATGPT_IMPORT_CONNECTOR_ID);
+    requireKnownKeys(config, CHATGPT_IMPORT_CONNECTOR_ID, CONFIG_KEYS);
   }
 
   manifest(): Manifest {
@@ -96,14 +125,13 @@ export class ChatGptImportConnector implements Connector {
   }
 
   health() {
-    return pathHealth(this.path, "file");
+    return snapshotHealth(this.path, SNAPSHOT);
   }
 
   async connect(_resolve: SecretResolver): Promise<void> {}
 
-  async backfill(_cursor: Cursor | null): Promise<SyncBatch> {
-    const source = await readUtf8(this.path, CHATGPT_IMPORT_CONNECTOR_ID);
-    return { events: parseChatGptExport(source), cursor: null };
+  async backfill(cursor: Cursor | null): Promise<SyncBatch> {
+    return runSnapshot(this.path, cursor, SNAPSHOT);
   }
 
   sync(cursor: Cursor | null): Promise<SyncBatch> {
@@ -112,16 +140,13 @@ export class ChatGptImportConnector implements Connector {
 
   async revoke(): Promise<void> {}
 
-  async purgeSource(subject_id: string): Promise<PurgePlan> {
-    return {
-      subject_id,
-      source_record_ids: [],
-      unreachable_source_record_ids: [],
-    };
+  async purgeSource(_subject_id: string): Promise<PurgePlan> {
+    return notSupported(CHATGPT_IMPORT_CONNECTOR_ID, "purge");
   }
 
   async fixture(): Promise<CaptureEventInput[]> {
-    return parseChatGptExport(JSON.stringify(CHATGPT_FIXTURE_EXPORT));
+    return parseChatGptExport(JSON.stringify(CHATGPT_FIXTURE_EXPORT), "2026-01-01T00:00:00.000Z")
+      .events;
   }
 }
 
@@ -133,90 +158,317 @@ export function createChatGptImportConnector(
 
 export function parseChatGptExport(
   source: string,
-  observedAt = new Date().toISOString(),
-): CaptureEventInput[] {
+  observedAt: string,
+): ImportParseResult {
   const conversations = parseJsonArray(source, CHATGPT_IMPORT_CONNECTOR_ID);
-  const observed = normalizedDate(
-    observedAt,
-    new Date().toISOString(),
-    "date",
-  );
+  const errors: ImportRecordError[] = [];
   const events: CaptureEventInput[] = [];
+  const seen = new Map<string, string>();
 
   conversations.forEach((rawConversation, conversationIndex) => {
-    if (!isPlainObject(rawConversation)) return;
-    const rawId =
-      nonEmptyString(rawConversation["id"]) ??
-      nonEmptyString(rawConversation["conversation_id"]);
-    const conversationId = rawId ?? String(conversationIndex);
-    const title =
+    if (!isPlainObject(rawConversation)) {
+      errors.push({
+        location: `conversations[${conversationIndex}]`,
+        code: "not_object",
+        reason: "conversation is not an object",
+      });
+      return;
+    }
+    const titled =
       typeof rawConversation["title"] === "string"
         ? rawConversation["title"]
         : "";
-    const conversationTime = normalizedDate(
-      rawConversation["create_time"],
-      observed,
-      "seconds",
-    );
+    const rawId =
+      nonEmptyString(rawConversation["id"]) ??
+      nonEmptyString(rawConversation["conversation_id"]);
+    const conversationId =
+      rawId ??
+      fallbackSourcePart("conversation", [
+        titled,
+        String(rawConversation["create_time"] ?? ""),
+        mappingFingerprint(rawConversation["mapping"]),
+      ]);
+    if (rawId === undefined) {
+      errors.push({
+        location: `conversations[${conversationIndex}]`,
+        code: "missing_id",
+        reason: "conversation id is missing; used a content fallback",
+      });
+    }
     const mapping = rawConversation["mapping"];
-    if (!isPlainObject(mapping)) return;
+    if (!isPlainObject(mapping)) {
+      errors.push({
+        location: conversationId,
+        code: "missing_mapping",
+        reason: "conversation has no mapping object",
+      });
+      return;
+    }
 
-    const nodes = Object.entries(mapping).sort(([a], [b]) =>
-      compareStrings(a, b),
+    const nodes = Object.entries(mapping).sort(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0,
     );
-    for (const [nodeId, rawNode] of nodes) {
-      if (!isPlainObject(rawNode) || !isPlainObject(rawNode["message"])) {
+    for (const [rawNodeId, rawNode] of nodes) {
+      if (!isPlainObject(rawNode)) {
+        errors.push({
+          location: `${conversationId}/${rawNodeId || "node"}`,
+          code: "not_object",
+          reason: "node is not an object",
+        });
         continue;
       }
       const message = rawNode["message"];
-      if (
-        !isPlainObject(message["author"]) ||
-        !isPlainObject(message["content"])
-      ) {
+      if (message === null || message === undefined) continue;
+      if (!isPlainObject(message)) {
+        errors.push({
+          location: `${conversationId}/${rawNodeId || "node"}`,
+          code: "malformed_message",
+          reason: "node message is not an object",
+        });
+        continue;
+      }
+      if (!isPlainObject(message["author"])) {
+        errors.push({
+          location: `${conversationId}/${rawNodeId || "node"}`,
+          code: "malformed_author",
+          reason: "message author is missing",
+        });
         continue;
       }
       const role = message["author"]["role"];
-      if (role !== "user" && role !== "assistant") continue;
-      const parts = message["content"]["parts"];
-      if (!Array.isArray(parts)) continue;
-      const text = parts
-        .filter((part): part is string => typeof part === "string")
-        .join("\n");
-      if (text.trim().length === 0) continue;
+      if (typeof role !== "string" || !SUPPORTED_ROLES.has(role)) {
+        errors.push({
+          location: `${conversationId}/${rawNodeId || "node"}`,
+          code: "unsupported_role",
+          reason: "message role is not user, assistant, system, or tool",
+        });
+        continue;
+      }
+      const extracted = extractContent(
+        message["content"],
+        `${conversationId}/${rawNodeId || "node"}`,
+      );
+      if (extracted.error !== undefined) {
+        errors.push(extracted.error);
+        continue;
+      }
+      if (extracted.unsupported.length > 0) {
+        errors.push({
+          location: `${conversationId}/${rawNodeId || "node"}`,
+          code: "unsupported_part",
+          reason: `unsupported content parts: ${extracted.unsupported.join(",")}`,
+        });
+      }
+      if (
+        extracted.text.trim().length === 0 &&
+        extracted.attachments.length === 0
+      ) {
+        errors.push({
+          location: `${conversationId}/${rawNodeId || "node"}`,
+          code: "empty_content",
+          reason: "message has no text or attachments",
+        });
+        continue;
+      }
 
-      const handle = role === "user" ? "self" : "assistant";
+      let occurredAt: string;
+      try {
+        occurredAt = unixSecondsToIso(
+          message["create_time"],
+          `${conversationId} node`,
+        );
+      } catch {
+        errors.push({
+          location: `${conversationId}/${rawNodeId || "node"}`,
+          code: "invalid_timestamp",
+          reason: "message create_time is missing or invalid",
+        });
+        continue;
+      }
+
+      const nodeId =
+        rawNodeId.length > 0
+          ? rawNodeId
+          : fallbackSourcePart("node", [
+              conversationId,
+              role,
+              extracted.text,
+              occurredAt,
+              typeof rawNode["parent"] === "string" ? rawNode["parent"] : "",
+            ]);
+      if (rawNodeId.length === 0) {
+        errors.push({
+          location: `${conversationId}/node`,
+          code: "missing_id",
+          reason: "node id is missing; used a content fallback",
+        });
+      }
+      const sourceRecordId = encodeSourceRecordId([conversationId, nodeId]);
+      const fingerprint = `${occurredAt}\n${extracted.text}\n${extracted.attachments
+        .map((attachment) => attachment.attachment_id)
+        .join(",")}`;
+      const prior = seen.get(sourceRecordId);
+      if (prior !== undefined) {
+        errors.push({
+          location: sourceRecordId,
+          code: prior === fingerprint ? "duplicate_id" : "conflicting_id",
+          reason:
+            prior === fingerprint
+              ? "export repeats the same source_record_id"
+              : "export reuses a source_record_id for different content",
+        });
+        continue;
+      }
+      seen.set(sourceRecordId, fingerprint);
+
+      const handle =
+        role === "user" ? "self" : role === "assistant" ? "assistant" : role;
       events.push({
         schema: "kizuki.event/v1",
         connector_id: CHATGPT_IMPORT_CONNECTOR_ID,
-        source_record_id: `${conversationId}/${nodeId}`,
+        source_record_id: sourceRecordId,
         kind: "message",
-        occurred_at: normalizedDate(
-          message["create_time"],
-          conversationTime,
-          "seconds",
-        ),
-        observed_at: observed,
-        text,
-        subjects: [
-          {
-            subject_id: `chatgpt:${handle}`,
-            role: "from",
-          },
-        ],
+        occurred_at: occurredAt,
+        observed_at: observedAt,
+        text: extracted.text,
+        subjects: [{ subject_id: `chatgpt:${handle}`, role: "from" }],
         deleted: false,
-        attachments: [],
+        attachments: extracted.attachments,
         metadata: {
           handle,
           namespace: "chatgpt",
-          conversation_title: title,
+          conversation_title: titled,
+          unsupported_parts: extracted.unsupported,
+          export: "chatgpt-conversations.json",
         },
       });
     }
   });
 
-  return events;
+  return { events, errors };
 }
 
-function nonEmptyString(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
+interface ExtractedContent {
+  text: string;
+  attachments: AttachmentRef[];
+  unsupported: string[];
+  error?: ImportRecordError;
+}
+
+function extractContent(content: unknown, location: string): ExtractedContent {
+  if (content === undefined || content === null) {
+    return {
+      text: "",
+      attachments: [],
+      unsupported: [],
+      error: {
+        location,
+        code: "missing_content",
+        reason: "message content is missing",
+      },
+    };
+  }
+  if (typeof content === "string") {
+    return { text: content, attachments: [], unsupported: [] };
+  }
+  if (!isPlainObject(content)) {
+    return {
+      text: "",
+      attachments: [],
+      unsupported: [],
+      error: {
+        location,
+        code: "malformed_content",
+        reason: "message content is not an object or string",
+      },
+    };
+  }
+  const parts = Array.isArray(content["parts"])
+    ? content["parts"]
+    : content["text"] !== undefined
+      ? [content["text"]]
+      : undefined;
+  if (parts === undefined) {
+    const contentType =
+      typeof content["content_type"] === "string"
+        ? content["content_type"]
+        : "unknown";
+    if (contentType !== "text") {
+      return {
+        text: "",
+        attachments: [],
+        unsupported: [contentType],
+      };
+    }
+    return {
+      text: "",
+      attachments: [],
+      unsupported: [],
+      error: {
+        location,
+        code: "malformed_content",
+        reason: "text content has no parts",
+      },
+    };
+  }
+  const lines: string[] = [];
+  const attachments: AttachmentRef[] = [];
+  const unsupported: string[] = [];
+  parts.forEach((part, index) => {
+    if (typeof part === "string") {
+      lines.push(part);
+      return;
+    }
+    if (!isPlainObject(part)) {
+      unsupported.push("non_object_part");
+      return;
+    }
+    const type =
+      typeof part["content_type"] === "string"
+        ? part["content_type"]
+        : typeof part["type"] === "string"
+          ? part["type"]
+          : "unknown";
+    if (
+      type === "image_asset_pointer" ||
+      type === "image" ||
+      type === "file" ||
+      type === "audio"
+    ) {
+      const pointer =
+        nonEmptyString(part["asset_pointer"]) ??
+        nonEmptyString(part["filename"]) ??
+        `${type}:${index}`;
+      attachments.push({
+        attachment_id: pointer,
+        media_type:
+          type === "image" || type === "image_asset_pointer"
+            ? "image/*"
+            : type === "audio"
+              ? "audio/*"
+              : "application/octet-stream",
+        ...(typeof part["filename"] === "string"
+          ? { filename: part["filename"] }
+          : {}),
+        ...(typeof part["size_bytes"] === "number"
+          ? { byte_size: part["size_bytes"] }
+          : {}),
+      });
+      if (typeof part["text"] === "string" && part["text"].length > 0) {
+        lines.push(part["text"]);
+      }
+      return;
+    }
+    if (type === "text" || typeof part["text"] === "string") {
+      if (typeof part["text"] === "string") lines.push(part["text"]);
+      return;
+    }
+    unsupported.push(type);
+  });
+  return { text: lines.join("\n"), attachments, unsupported };
+}
+
+function mappingFingerprint(mapping: unknown): string {
+  if (!isPlainObject(mapping)) return "";
+  return Object.keys(mapping).sort().join(",");
 }

@@ -63,6 +63,9 @@ test("unixSecondsToIso accepts seconds as a number or a digit string", () => {
   expect(unixSecondsToIso("1767225600", "row 1")).toBe(
     "2026-01-01T00:00:00.000Z",
   );
+  expect(unixSecondsToIso(1_767_225_600.25, "row 1")).toBe(
+    "2026-01-01T00:00:00.250Z",
+  );
 });
 
 test("unixSecondsToIso refuses anything outside the seconds range", () => {

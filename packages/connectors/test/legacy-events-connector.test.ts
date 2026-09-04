@@ -10,9 +10,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { initVault, openLedger, runBackfill, runSync } from "@kizuki/core";
+import { initVault, listClaims, openLedger, registerConnection, runBackfill, runSync } from "@kizuki/core";
 import { getCheckpoint } from "@kizuki/core";
-import { initStaging, listProposals } from "@kizuki/core/staging";
 import { KizukiError } from "../src/errors";
 import { InMemoryLedger } from "../src/ledger";
 import {
@@ -77,6 +76,10 @@ describe("the manifest", () => {
       schema: "kizuki.connector/v1",
       connector_id: LEGACY_EVENTS_CONNECTOR_ID,
       version: "0.1.0",
+      contract_minor: 1,
+      implementation: "@kizuki/connectors",
+      allowed_egress: [],
+      cursor_schema: "kizuki.legacy-events-cursor/v1",
       kinds: ["message", "note"],
       capabilities: {
         backfill: true,
@@ -87,6 +90,8 @@ describe("the manifest", () => {
       },
       required_secrets: [],
       emits_sensitivity_hint: true,
+      default_sensitivity: "private",
+      sensitivity_floor: "personal",
       auth_modes: ["none"],
     });
   });
@@ -253,21 +258,22 @@ describe("the run through a real ledger", () => {
     const vault = join(root, "vault");
     initVault(vault);
     const db = openLedger(join(vault, ".kizuki", "kizuki.db"));
-    initStaging(db);
     try {
       const connector = createLegacyEventsConnector({ path: jsonlPath });
+      const source = "01JJ0000000000000000000004";
+      registerConnection(db, LEGACY_EVENTS_CONNECTOR_ID, source);
       const first = await runSync(
         db,
         connector,
         LEGACY_EVENTS_CONNECTOR_ID,
-        jsonlPath,
+        source,
       );
       expect(first.stored).toBe(9);
       expect(first.proposals_created).toBeGreaterThan(0);
-      const beforeIds = listProposals(db, { status: "pending" }).map(
-        (proposal) => proposal.proposal_id,
+      const cited = listClaims(db, { status: "live" }).filter((claim) =>
+        claim.body.includes("It is on."),
       );
-      expect(beforeIds.length).toBeGreaterThan(0);
+      expect(cited.length).toBeGreaterThan(0);
 
       appendFileSync(
         jsonlPath,
@@ -286,10 +292,15 @@ describe("the run through a real ledger", () => {
         db,
         createLegacyEventsConnector({ path: jsonlPath }),
         LEGACY_EVENTS_CONNECTOR_ID,
-        jsonlPath,
+        source,
       );
       expect(second.stored).toBe(1);
       expect(second.withdrawn).toBeGreaterThan(0);
+      expect(
+        listClaims(db, { status: "live" }).filter((claim) =>
+          claim.body.includes("It is on."),
+        ),
+      ).toEqual([]);
     } finally {
       db.close();
     }
@@ -323,14 +334,15 @@ describe("a row the ledger would refuse", () => {
     const vault = join(root, "vault");
     initVault(vault);
     const db = openLedger(join(vault, ".kizuki", "kizuki.db"));
-    initStaging(db);
     try {
       const connector = createLegacyEventsConnector({ path: jsonlPath });
+      const source = "01JJ0000000000000000000004";
+      registerConnection(db, LEGACY_EVENTS_CONNECTOR_ID, source);
       const run = await runBackfill(
         db,
         connector,
         LEGACY_EVENTS_CONNECTOR_ID,
-        jsonlPath,
+        source,
       );
       expect(run.errors).toEqual([]);
       expect(run.stored).toBe(2);
@@ -338,7 +350,7 @@ describe("a row the ledger would refuse", () => {
         { position: "120", reason: "occurred_at_invalid" },
       ]);
       expect(
-        getCheckpoint(db, LEGACY_EVENTS_CONNECTOR_ID, jsonlPath)?.cursor,
+        getCheckpoint(db, LEGACY_EVENTS_CONNECTOR_ID, source)?.cursor,
       ).not.toBeNull();
     } finally {
       db.close();

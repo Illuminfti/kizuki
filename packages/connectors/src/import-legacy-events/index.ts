@@ -1,4 +1,4 @@
-import { HealthReport } from "@kizuki/core";
+import { freezeManifest, HealthReport, policyForConnector } from "@kizuki/core";
 import type {
   CaptureEventInput,
   Connector,
@@ -8,7 +8,7 @@ import type {
   SecretResolver,
   SyncBatch,
 } from "@kizuki/core";
-import { KizukiError } from "../errors";
+import { KizukiError, notSupported } from "../errors";
 import { defaultMappingPath, loadMapping } from "../legacy/mapping-file";
 import { resolveReportPath, writeReport } from "../legacy/report-file";
 import { pathHealth, requirePathConfig } from "../util";
@@ -94,10 +94,14 @@ export class LegacyEventsConnector implements Connector {
       ...kindsOf(this.mapping),
       ...kindsOf(LEGACY_EVENTS_FIXTURE.mapping),
     ]);
-    return {
+    return freezeManifest({
       schema: "kizuki.connector/v1",
       connector_id: LEGACY_EVENTS_CONNECTOR_ID,
       version: "0.1.0",
+      contract_minor: 1,
+      implementation: "@kizuki/connectors",
+      allowed_egress: [],
+      cursor_schema: LEGACY_EVENTS_CURSOR_SCHEMA,
       kinds: [...kinds].sort(),
       capabilities: {
         backfill: true,
@@ -109,8 +113,9 @@ export class LegacyEventsConnector implements Connector {
       required_secrets: [],
       // Every row leaves with a label, mapped or defaulted at the floor.
       emits_sensitivity_hint: true,
+      ...policyForConnector(LEGACY_EVENTS_CONNECTOR_ID),
       auth_modes: ["none"],
-    };
+    });
   }
 
   async health(): Promise<HealthReport> {
@@ -142,12 +147,8 @@ export class LegacyEventsConnector implements Connector {
 
   async revoke(): Promise<void> {}
 
-  async purgeSource(subject_id: string): Promise<PurgePlan> {
-    return {
-      subject_id,
-      source_record_ids: [],
-      unreachable_source_record_ids: [],
-    };
+  async purgeSource(_subject_id: string): Promise<PurgePlan> {
+    return notSupported(LEGACY_EVENTS_CONNECTOR_ID, "purge");
   }
 
   async fixture(): Promise<CaptureEventInput[]> {
@@ -316,4 +317,5 @@ export type { LegacyEventsReport } from "./report";
 export { rowToEvent } from "./rows";
 export type { RowSkip, RowSkipReason } from "./rows";
 export { BATCH_ROWS, openJsonlSource, openSqliteSource } from "./source";
+export { LEGACY_EVENTS_CURSOR_SCHEMA } from "./cursor";
 export type { LegacyRow, LegacyRowSource } from "./source";

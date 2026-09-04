@@ -162,17 +162,19 @@ function validStrings(
 export function validateRetrievalDoc(value: unknown): RetrievalDoc {
   if (!isPlainObject(value)) invalid("document");
   if (
-    typeof value["doc_id"] !== "string" ||
-    value["doc_id"].length === 0 ||
-    value["doc_id"].length > 1_024
-  ) {
-    invalid("document.doc_id");
-  }
-  if (
     typeof value["kind"] !== "string" ||
     !(RETRIEVAL_DOC_KINDS as readonly string[]).includes(value["kind"])
   ) {
     invalid("document.kind");
+  }
+  if (
+    typeof value["doc_id"] !== "string" ||
+    value["doc_id"].length === 0 ||
+    value["doc_id"].length > 1_024 ||
+    !value["doc_id"].startsWith(`${value["kind"]}:`) ||
+    value["doc_id"].length <= value["kind"].length + 1
+  ) {
+    invalid("document.doc_id");
   }
   for (const field of ["title", "text"] as const) {
     if (typeof value[field] !== "string") {

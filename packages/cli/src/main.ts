@@ -2,20 +2,12 @@
 import { UsageError, extractVault } from "./args";
 import { COMMANDS } from "./commands/index";
 import type { CliIo } from "./commands/index";
+import { printCommandHelp, printRootHelp, usageLines } from "./help";
 import { errorText } from "./output";
 import {
   isRetiredOwnerGateVerb,
   retiredOwnerGateMessage,
 } from "./retired";
-
-function printHelp(write: (line: string) => void): void {
-  write("usage: kizuki <verb> [options]");
-  write("");
-  const width = Math.max(...COMMANDS.map((command) => command.name.length));
-  for (const command of COMMANDS) {
-    write(`${command.name.padEnd(width)}  ${command.summary}`);
-  }
-}
 
 function processEnv(): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = {};
@@ -45,13 +37,13 @@ async function dispatch(argv: string[]): Promise<number> {
   const args = extracted.rest.slice(1);
 
   if (verb === undefined) {
-    printHelp(io.err);
+    printRootHelp(io.err, COMMANDS);
     return 2;
   }
   if (verb === "help" || verb === "--help") {
     const name = args[0];
     if (name === undefined) {
-      printHelp(io.out);
+      printRootHelp(io.out, COMMANDS);
       return 0;
     }
     if (isRetiredOwnerGateVerb(name)) {
@@ -61,10 +53,10 @@ async function dispatch(argv: string[]): Promise<number> {
     const command = COMMANDS.find((entry) => entry.name === name);
     if (command === undefined) {
       io.err(`unknown verb: ${name}`);
-      printHelp(io.err);
+      printRootHelp(io.err, COMMANDS);
       return 2;
     }
-    io.out(`usage: kizuki ${command.usage}`);
+    printCommandHelp(io.out, command);
     return 0;
   }
 
@@ -76,7 +68,7 @@ async function dispatch(argv: string[]): Promise<number> {
   const command = COMMANDS.find((entry) => entry.name === verb);
   if (command === undefined) {
     io.err(`unknown verb: ${verb}`);
-    printHelp(io.err);
+    printRootHelp(io.err, COMMANDS);
     return 2;
   }
 
@@ -84,7 +76,7 @@ async function dispatch(argv: string[]): Promise<number> {
     return await command.run(io, args);
   } catch (error) {
     if (error instanceof UsageError) {
-      io.err(`usage: kizuki ${command.usage}`);
+      for (const line of usageLines(command, error)) io.err(line);
       return 2;
     }
     io.err(`error: ${errorText(error)}`);
@@ -93,13 +85,13 @@ async function dispatch(argv: string[]): Promise<number> {
 }
 
 try {
-  process.exitCode = await dispatch(Bun.argv.slice(2));
+  process.exit(await dispatch(Bun.argv.slice(2)));
 } catch (error) {
   if (error instanceof UsageError) {
     process.stderr.write("usage: kizuki <verb> [options]\n");
-    process.exitCode = 2;
+    process.exit(2);
   } else {
     process.stderr.write(`error: ${errorText(error)}\n`);
-    process.exitCode = 1;
+    process.exit(1);
   }
 }

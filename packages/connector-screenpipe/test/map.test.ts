@@ -95,6 +95,36 @@ describe("screenpipe mapping", () => {
     expect(subjects).toEqual([]);
   });
 
+  test("generic metadata keeps origin and path, not query secrets", () => {
+    const event = mapFrame(
+      frame({
+        browser_url:
+          "https://user:token@mail.acme.example/inbox/42?access_token=secret&tab=1#frag",
+      }),
+      OBSERVED_AT,
+    );
+    expect(event.metadata["browser_url"]).toBe(
+      "https://mail.acme.example/inbox/42",
+    );
+    expect(JSON.stringify(event.metadata)).not.toContain("token");
+    expect(JSON.stringify(event.metadata)).not.toContain("secret");
+    expect(event.sensitivity_hint).toBe("private");
+  });
+
+  test("full URL retention is opt-in and stays private", () => {
+    const event = mapFrame(
+      frame({
+        browser_url: "https://mail.acme.example/inbox/42?tab=1",
+      }),
+      OBSERVED_AT,
+      { retainFullUrls: true },
+    );
+    expect(event.metadata["browser_url"]).toBe(
+      "https://mail.acme.example/inbox/42?tab=1",
+    );
+    expect(event.sensitivity_hint).toBe("private");
+  });
+
   test("snapshot becomes a jpeg attachment reference with basename only", () => {
     expect(
       mapFrame(
@@ -178,10 +208,10 @@ describe("screenpipe mapping", () => {
     );
     expect(hashes).toEqual([
       "c8f286697358286082edd3e326b416454f3288a5cd614813d15c3029a3087528",
-      "9449e9142f2baa11dd32d230597d253267361bdcbefa74d3c05bbee5dba9ce36",
+      "4a0fd8e2119a74fe698735e9a71fbddefacea1e59f7cb4e1b637bf9a3571d8db",
       "cd816d47aedcf00772d6b08c4fbd0389b2470a4ff0f7948dccc0f26a81d9fc28",
       "1195dc565593e2f9e43425d98c6c80b5c31731eb1c52f5551125278b6cd69bed",
-      "d58f6e00929d05c9127e78ac8e73a29fe565abe989a37ad01bbabfdeb9c914a5",
+      "fcef17c6245580e5698749d2f2ae817985bfa843fd318f86572803f056edf04d",
       "a597c78d15d314c7bbaf6fedb2ba4e9b3af6fc44fb9c1d7f6b7a02c2b2d6f490",
       "5f66a0146a68b062dcacd0b42ff6988a00905bfada1b58298b66059aef91d003",
       "da6ff79839fd55a8b27773a37a4205b007e28344bb45b863d2d53defd05292f5",

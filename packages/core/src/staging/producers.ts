@@ -3,7 +3,7 @@ import type { CaptureEvent, SubjectRef } from "../contracts/event";
 import { tableExists } from "../ledger/schema";
 import { validatePageCandidate } from "../contracts/page-candidate";
 import { pageCandidateProposal } from "./page-candidate";
-import { fileProposal } from "./proposals";
+import { fileProposal, setProposalStatus } from "./proposals";
 import type { ProposalInput } from "./proposals";
 
 /**
@@ -131,8 +131,8 @@ export function proposalsForEvent(
 
 /**
  * A source tombstone cascades to staging: every open proposal citing the event
- * is withdrawn. Promoted proposals are untouched here — canon retraction goes
- * through the owner's review queue via `cascadeTombstone`.
+ * is withdrawn. Claims already written into canon are untouched here —
+ * retraction goes through `cascadeTombstone` and the receipted writer.
  */
 export function withdrawForTombstone(db: Database, eventId: string): string[] {
   const withdraw = db.transaction((): string[] => {
@@ -147,10 +147,7 @@ export function withdrawForTombstone(db: Database, eventId: string): string[] {
       .all(eventId) as { proposal_id: string }[];
 
     const ids = rows.map((r) => r.proposal_id);
-    const update = db.query(
-      "UPDATE proposals SET status = 'withdrawn' WHERE proposal_id = ?",
-    );
-    for (const id of ids) update.run(id);
+    for (const id of ids) setProposalStatus(db, id, "withdrawn");
     return ids;
   });
 
@@ -168,10 +165,9 @@ export interface TombstoneCascade {
  * The full tombstone rail. Proposals cite the ORIGINAL capture event ids, not
  * the tombstone's fresh id, so the cascade is keyed by the tombstone's
  * (connector_id, source_record_id): every ledger row for that record is looked
- * up, pending proposals citing any of them are withdrawn, and each promoted
- * page citing any of them gets a `deletion` proposal filed into the review
- * queue — canon changes only through an owner decision, never automatically.
- * Requires a database that holds both the ledger and staging schemas.
+ * up, pending proposals citing any of them are withdrawn, and each receipted
+ * page citing any of them gets a live `deletion` claim for the receipted
+ * writer. Requires a database that holds both the ledger and staging schemas.
  */
 export function cascadeTombstone(
   db: Database,
@@ -217,8 +213,7 @@ export function cascadeTombstone(
       target: page.page_path.replace(/\.md$/, ""),
       body:
         `Source record \`${tombstone.source_record_id}\` was deleted at ` +
-        `\`${tombstone.connector_id}\`; canon page \`${page.page_path}\` cites it. ` +
-        "Promote to archive the page; reject to keep it.",
+        `\`${tombstone.connector_id}\`; canon page \`${page.page_path}\` cites it.`,
       frontmatter: {
         "x-connector": tombstone.connector_id,
         "x-source-record-id": tombstone.source_record_id,

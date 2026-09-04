@@ -1,7 +1,9 @@
 import {
   HealthReport,
   PAGE_CANDIDATE_KEY,
+  freezeManifest,
   isPlainObject,
+  policyForConnector,
   targetProblem,
 } from "@kizuki/core";
 import type {
@@ -13,7 +15,7 @@ import type {
   SecretResolver,
   SyncBatch,
 } from "@kizuki/core";
-import { KizukiError } from "../errors";
+import { KizukiError, notSupported } from "../errors";
 import { defaultMappingPath, loadMapping } from "../legacy/mapping-file";
 import { resolveReportPath, writeReport } from "../legacy/report-file";
 import { compareStrings, pathHealth, requirePathConfig } from "../util";
@@ -40,10 +42,14 @@ import type { ScanResult } from "./scan";
 export const LEGACY_WIKI_CURSOR_SCHEMA =
   "kizuki.legacy-wiki-cursor/v1" as const;
 
-const MANIFEST: Manifest = {
+const MANIFEST: Manifest = freezeManifest({
   schema: "kizuki.connector/v1",
   connector_id: LEGACY_WIKI_CONNECTOR_ID,
   version: "0.1.0",
+  contract_minor: 1,
+  implementation: "@kizuki/connectors",
+  allowed_egress: [],
+  cursor_schema: LEGACY_WIKI_CURSOR_SCHEMA,
   kinds: ["page"],
   capabilities: {
     backfill: true,
@@ -60,8 +66,9 @@ const MANIFEST: Manifest = {
   // Every page leaves this connector labeled at or above the floor its own
   // source class carries; see `../legacy/sensitivity.ts`.
   emits_sensitivity_hint: true,
+  ...policyForConnector(LEGACY_WIKI_CONNECTOR_ID),
   auth_modes: ["none"],
-};
+});
 
 interface SnapshotEntry {
   /** So an edited page is re-emitted and a copied wiki with fresh mtimes is not. */
@@ -356,12 +363,8 @@ export class LegacyWikiConnector implements Connector {
   async revoke(): Promise<void> {}
 
   /** The wiki files are the owner's own; purge is a ledger-side operation. */
-  async purgeSource(subject_id: string): Promise<PurgePlan> {
-    return {
-      subject_id,
-      source_record_ids: [],
-      unreachable_source_record_ids: [],
-    };
+  async purgeSource(_subject_id: string): Promise<PurgePlan> {
+    return notSupported(LEGACY_WIKI_CONNECTOR_ID, "purge");
   }
 
   async fixture(): Promise<CaptureEventInput[]> {

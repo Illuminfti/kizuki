@@ -1,5 +1,6 @@
-import { computeContentHash, ulid, validateEventInput } from "@kizuki/core";
+import { accept, computeContentHash, openLedger, validateEventInput } from "@kizuki/core";
 import type { CaptureEvent, CaptureEventInput } from "@kizuki/core";
+import type { Database } from "bun:sqlite";
 import { errorMessage } from "./util";
 
 export interface StoredAcceptResult {
@@ -23,16 +24,24 @@ export type AcceptResult =
   | DuplicateAcceptResult
   | ErrorAcceptResult;
 
+/**
+ * Conformance double that talks to a real core ledger. Callers receive frozen
+ * copies; mutating a returned event cannot change what the next accept sees.
+ */
 export class InMemoryLedger {
-  readonly #events: CaptureEvent[] = [];
-  readonly #dedupe = new Map<string, CaptureEvent>();
+  readonly #db: Database;
+  readonly #byKey = new Map<string, CaptureEvent>();
+
+  constructor() {
+    this.#db = openLedger(":memory:");
+  }
 
   get size(): number {
-    return this.#events.length;
+    return this.#byKey.size;
   }
 
   events(): readonly CaptureEvent[] {
-    return this.#events;
+    return [...this.#byKey.values()].map((event) => freezeEvent(event));
   }
 
   accept(input: unknown): AcceptResult {
@@ -42,23 +51,27 @@ export class InMemoryLedger {
     try {
       const contentHash = computeContentHash(validated.value);
       const key = dedupeKey(validated.value, contentHash);
-      const existing = this.#dedupe.get(key);
-      if (existing !== undefined) {
+      const result = accept(this.#db, validated.value);
+      if (result.status === "error") {
+        return { status: "error", errors: [result.error] };
+      }
+      if (result.status === "duplicate") {
+        const existing = this.#byKey.get(key);
+        if (existing === undefined) {
+          return {
+            status: "error",
+            errors: ["event: core reported a duplicate the double does not hold"],
+          };
+        }
         return {
           status: "duplicate",
           event_id: existing.event_id,
           content_hash: existing.content_hash,
         };
       }
-
-      const event: CaptureEvent = {
-        ...validated.value,
-        event_id: ulid(),
-        content_hash: contentHash,
-      };
-      this.#events.push(event);
-      this.#dedupe.set(key, event);
-      return { status: "stored", event };
+      const event = freezeEvent(result.event);
+      this.#byKey.set(key, event);
+      return { status: "stored", event: freezeEvent(event) };
     } catch (error) {
       return {
         status: "error",
@@ -70,6 +83,10 @@ export class InMemoryLedger {
   acceptMany(inputs: readonly unknown[]): AcceptResult[] {
     return inputs.map((input) => this.accept(input));
   }
+}
+
+function freezeEvent(event: CaptureEvent): CaptureEvent {
+  return Object.freeze(structuredClone(event));
 }
 
 function dedupeKey(event: CaptureEventInput, contentHash: string): string {

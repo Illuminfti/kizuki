@@ -1,9 +1,11 @@
 import { auditCommand } from "./audit";
 import { backfillCommand } from "./backfill";
 import { connectCommand } from "./connect";
+import { contextCommand } from "./context";
 import { doctorCommand } from "./doctor";
 import { exportCommand } from "./export";
 import { importCommand } from "./import";
+import { restoreCommand } from "./restore";
 import { initCommand } from "./init";
 import { modelsCommand } from "./models";
 import { purgeCommand } from "./purge";
@@ -41,9 +43,11 @@ export const COMMANDS: readonly Command[] = [
   tellCommand,
   undoCommand,
   queryCommand,
+  contextCommand,
   doctorCommand,
   serveCommand,
   purgeCommand,
   exportCommand,
+  restoreCommand,
   versionCommand,
 ];

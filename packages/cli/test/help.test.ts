@@ -16,10 +16,12 @@ const IMPLEMENTED_NON_GATE_VERBS = [
   "tell",
   "undo",
   "query",
+  "context",
   "doctor",
   "serve",
   "purge",
   "export",
+  "restore",
   "version",
 ] as const;
 
@@ -92,6 +94,45 @@ describe("help", () => {
     expect(result.stdout).toContain(
       "usage: kizuki connect <connector> --source PATH [--sensitivity public|personal|private]",
     );
+  });
+
+  test("root help is a product front door without RFC jargon or live retired verbs", () => {
+    const result = runCli(isolatedEnv(), "--help");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Kizuki — local-first LifeOS");
+    expect(result.stdout).toContain("bun packages/cli/src/main.ts");
+    expect(result.stdout).toContain("Global options");
+    expect(result.stdout).toContain("--vault");
+    expect(result.stdout).toContain("Examples");
+    expect(result.stdout).toContain("docs/cli.md");
+    expect(result.stdout).not.toContain("RFC 0002");
+    expect(result.stdout).not.toContain("RFC 0000");
+    expect(result.stdout).not.toMatch(/^\s+review\s{2}/m);
+    expect(result.stdout).not.toMatch(/^\s+promote\s{2}/m);
+    expect(result.stdout).not.toMatch(/^\s+reject\s{2}/m);
+    expect(result.stdout).toContain("review, promote, reject are retired");
+  });
+
+  test("retired owner-gate verbs exit 2 and point at audit, undo, and tell", () => {
+    const env = isolatedEnv();
+    for (const verb of ["review", "promote", "reject"] as const) {
+      const result = runCli(env, verb);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`${verb} is retired`);
+      expect(result.stderr).toContain("kizuki audit");
+      expect(result.stderr).toContain("kizuki undo");
+      expect(result.stderr).toContain("kizuki tell");
+      expect(runCli(env, "help", verb).exitCode).toBe(2);
+    }
+  });
+
+  test("usage errors print the reason and point at per-verb help", () => {
+    const result = runCli(isolatedEnv(), "query", "acme", "--nope");
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("error: unknown option --nope");
+    expect(result.stderr).toContain("usage: kizuki query");
+    expect(result.stderr).toContain("bun packages/cli/src/main.ts help query");
   });
 
   test("version prints the package version field", () => {

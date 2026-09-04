@@ -32,14 +32,14 @@ export const exportCommand: Command = {
     return withVault(io, async (ctx) => {
       const manifest = exportVault(ctx.db, ctx.vaultPath, outDir);
       io.out(`manifest=${outDir}/manifest.json`);
+      io.out(`schema=${manifest.schema} complete=${manifest.complete}`);
       io.out(
         [
           `vault_files=${countPrefix(manifest.files, "vault/")}`,
           `events=${countFile(manifest.files, "ledger/events.jsonl")}`,
           `purges=${countFile(manifest.files, "ledger/event_purges.jsonl")}`,
-          `proposals=${countFile(manifest.files, "staging/proposals.jsonl")}`,
+          `claims=${countFile(manifest.files, "claims/claims.jsonl")}`,
           `receipts=${countFile(manifest.files, "canon/receipts.jsonl")}`,
-          `rejections=${countFile(manifest.files, "staging/rejections.jsonl")}`,
           `connections=${countFile(manifest.files, "connections.jsonl")}`,
           `checkpoints=${countFile(manifest.files, "checkpoints.jsonl")}`,
         ].join(" "),
