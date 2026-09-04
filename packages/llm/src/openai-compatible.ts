@@ -193,16 +193,18 @@ export function createOpenAiCompatibleLlmPort(
       assertOpen();
       const validated = validateRequest(request);
       const apiKey = await resolveApiKey(ctx, config.secret_ref);
-      const timeoutMs = Math.min(config.timeout_ms, validated.deadline_ms);
+      const deadline = Date.now() + Math.min(config.timeout_ms, validated.deadline_ms);
       const body = buildWireBody(config, validated);
 
       let attempt = 0;
       let last: TransportResult | undefined;
       while (attempt <= config.max_retries) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) throw new PortError("timeout", "model request timed out", true);
         last = await transport({
           url,
           api_key: apiKey,
-          timeout_ms: timeoutMs,
+          timeout_ms: remaining,
           max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
           body,
         });
@@ -220,7 +222,9 @@ export function createOpenAiCompatibleLlmPort(
           last.kind === "transport"
             ? DEFAULT_RETRY_MS
             : Math.min(last.retry_after_ms ?? DEFAULT_RETRY_MS, RETRY_CAP_MS);
-        await sleep(wait);
+        const remainingBeforeWait = deadline - Date.now();
+        if (remainingBeforeWait <= 0) throw new PortError("timeout", "model request timed out", true);
+        await sleep(Math.min(wait, remainingBeforeWait));
         attempt += 1;
       }
       if (last === undefined || last.ok) {

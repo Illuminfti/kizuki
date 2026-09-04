@@ -182,6 +182,27 @@ describe("openai-compatible port", () => {
     }
   });
 
+  test("uses one deadline across retries and retry waits", async () => {
+    fake = startFakeEndpoint(
+      () => new Response("busy", { status: 429, headers: { "retry-after": "1" } }),
+    );
+    const temporary = temporaryLlmContext(OPENAI_COMPATIBLE_LLM_DESCRIPTOR, {
+      base_url: fake.base_url,
+      model: "synthetic",
+      max_retries: 2,
+      timeout_ms: 1_000,
+    });
+    try {
+      const port = createOpenAiCompatibleLlmPort(temporary.ctx);
+      const started = Date.now();
+      await expect(port.complete({ ...SAMPLE_REQUEST, deadline_ms: 80 })).rejects.toMatchObject({ code: "timeout" });
+      expect(Date.now() - started).toBeLessThan(300);
+      expect(fake.requests).toHaveLength(1);
+    } finally {
+      temporary.cleanup();
+    }
+  });
+
   test("a 401 is unavailable and does not retry", async () => {
     let calls = 0;
     const transport: ChatTransport = async () => {

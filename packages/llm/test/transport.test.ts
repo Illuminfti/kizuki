@@ -177,6 +177,53 @@ describe("fetchTransport", () => {
     });
   });
 
+  test("bounds a chunked multibyte loopback response without exposing its content", async () => {
+    const responseCanary = "response-private-canary";
+    const keyCanary = "credential-private-canary";
+    fake = startFakeEndpoint(() => new Response(new ReadableStream({
+      async start(controller) {
+        controller.enqueue(new TextEncoder().encode(`{\"x\":\"${responseCanary}😀`));
+        await Bun.sleep(25);
+        controller.enqueue(new TextEncoder().encode("😀😀\"}"));
+      },
+    })));
+    const result = await fetchTransport({
+      url: `${fake.base_url}/chat/completions`,
+      api_key: keyCanary,
+      timeout_ms: 1_000,
+      max_response_bytes: 32,
+      body: BODY,
+    });
+    expect(result).toMatchObject({ ok: false, kind: "transport", failure: "too_large" });
+    expect(JSON.stringify(result)).not.toContain(responseCanary);
+    expect(JSON.stringify(result)).not.toContain(keyCanary);
+  });
+
+  test("cancels the response reader immediately after crossing the byte bound", async () => {
+    let cancelled = false;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("1234"));
+        controller.enqueue(new TextEncoder().encode("5678"));
+      },
+      cancel() { cancelled = true; },
+    }))) as unknown as typeof fetch;
+    try {
+      const result = await fetchTransport({
+        url: "http://127.0.0.1:9/v1/chat/completions",
+        api_key: null,
+        timeout_ms: 1_000,
+        max_response_bytes: 7,
+        body: BODY,
+      });
+      expect(result).toMatchObject({ ok: false, kind: "transport", failure: "too_large" });
+      expect(cancelled).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("rejects a non-json 200", async () => {
     fake = startFakeEndpoint(() => new Response("not-json", { status: 200 }));
     const result = await fetchTransport({

@@ -79,6 +79,38 @@ function contentLength(headers: Headers): number | null {
   return size;
 }
 
+async function readBoundedBody(response: Response, limit: number): Promise<string | null> {
+  if (response.body === null) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      bytes += next.value.byteLength;
+      if (bytes > limit) {
+        try {
+          await reader.cancel();
+        } catch {
+          // A peer may have already closed the connection. The byte bound still applies.
+        }
+        return null;
+      }
+      chunks.push(next.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const combined = new Uint8Array(bytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(combined);
+}
+
 /**
  * The single fetch of `@kizuki/llm`. Callers must pass a user-configured
  * URL; this function does not choose a host.
@@ -118,9 +150,9 @@ export const fetchTransport: ChatTransport = async (request) => {
     return { ok: false, kind: "transport", status: 0, failure: "too_large" };
   }
 
-  let text: string;
+  let text: string | null;
   try {
-    text = await response.text();
+    text = await readBoundedBody(response, request.max_response_bytes);
   } catch (error) {
     return {
       ok: false,
@@ -129,7 +161,7 @@ export const fetchTransport: ChatTransport = async (request) => {
       failure: classifyFetchError(error),
     };
   }
-  if (text.length > request.max_response_bytes) {
+  if (text === null) {
     return { ok: false, kind: "transport", status: 0, failure: "too_large" };
   }
 
