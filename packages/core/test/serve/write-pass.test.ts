@@ -29,6 +29,20 @@ function stubProducer(result: ProduceResult): ProducerPort {
   };
 }
 
+function boundWriteOptions(db: ReturnType<typeof openLedger>, budget: ReturnType<typeof createBudgetTracker>) {
+  return {
+    budget,
+    model_ref: "kizuki.llm.openai-compatible:synthetic@local",
+    claims: { db },
+    producer: stubProducer({
+      status: "ok",
+      claims: [],
+      usage: { calls: 0, input_tokens: 0, output_tokens: 0 },
+      dropped: [],
+    }),
+  };
+}
+
 const dirs: string[] = [];
 
 afterEach(() => {
@@ -83,7 +97,16 @@ describe("write pass", () => {
     if (filed.outcome !== "stored") throw new Error("expected stored");
 
     const receipt = await runRail(db, path, "sync", {
-      hooks: { model_ref: "kizuki.llm.openai-compatible:synthetic@local" },
+      hooks: {
+        model_ref: "kizuki.llm.openai-compatible:synthetic@local",
+        producer: stubProducer({
+          status: "ok",
+          claims: [],
+          usage: { calls: 0, input_tokens: 0, output_tokens: 0 },
+          dropped: [],
+        }),
+        claims: { db },
+      },
     });
     expect(receipt.canon_writes).toBe(1);
     expect(receipt.claims_written).toBe(1);
@@ -96,7 +119,7 @@ describe("write pass", () => {
     db.close();
   });
 
-  test("serve.toml model_ref is enough for the sync rail to write", async () => {
+  test("a raw serve.toml model string never enables standalone canon writes", async () => {
     const { path, db } = vault();
     const eventId = putEvent(db);
     fileProposal(db, {
@@ -115,11 +138,9 @@ describe("write pass", () => {
       '[ports.llm]\nid = "kizuki.llm.openai-compatible"\nmodel = "synthetic@local"\n',
     );
     const receipt = await runRail(db, path, "sync");
-    expect(receipt.canon_writes).toBe(1);
-    expect(receipt.model.model_ref).toBe(
-      "kizuki.llm.openai-compatible:synthetic@local",
-    );
-    expect(existsSync(join(path, "auto", "people", "grace.md"))).toBe(true);
+    expect(receipt.canon_writes).toBe(0);
+    expect(receipt.model.model_ref).toBeNull();
+    expect(existsSync(join(path, "auto", "people", "grace.md"))).toBe(false);
     db.close();
   });
 
@@ -148,10 +169,10 @@ describe("write pass", () => {
       confidence: 0.8,
     });
 
-    const result = await runWritePass(db, path, {
-      budget: createBudgetTracker({ canon_writes_per_run: 1 }),
-      model_ref: "kizuki.llm.openai-compatible:synthetic@local",
-    });
+    const result = await runWritePass(db, path, boundWriteOptions(
+      db,
+      createBudgetTracker({ canon_writes_per_run: 1 }),
+    ));
     expect(result.canon_writes).toBe(1);
     expect(result.stopped).toBe("budget:canon_writes_per_run");
     db.close();
@@ -210,10 +231,10 @@ describe("write pass", () => {
       producer: "deterministic",
       confidence: 0.8,
     });
-    const result = await runWritePass(db, path, {
-      budget: createBudgetTracker({ canon_writes_per_run: 8 }),
-      model_ref: "kizuki.llm.openai-compatible:synthetic@local",
-    });
+    const result = await runWritePass(db, path, boundWriteOptions(
+      db,
+      createBudgetTracker({ canon_writes_per_run: 8 }),
+    ));
     // A page with no receipt is owner prose: the loop skips it and
     // does not open a parallel auto/ copy.
     expect(result.canon_writes).toBe(0);
@@ -237,10 +258,10 @@ describe("write pass", () => {
       producer: "deterministic",
       confidence: 0.8,
     });
-    const result = await runWritePass(db, path, {
-      budget: createBudgetTracker({ canon_writes_per_run: 8 }),
-      model_ref: "kizuki.llm.openai-compatible:synthetic@local",
-    });
+    const result = await runWritePass(db, path, boundWriteOptions(
+      db,
+      createBudgetTracker({ canon_writes_per_run: 8 }),
+    ));
     expect(result.stopped).toBe("lock:busy");
     expect(result.canon_writes).toBe(0);
     expect(existsSync(join(path, "auto", "people", "grace.md"))).toBe(false);
@@ -289,10 +310,10 @@ describe("write pass", () => {
       producer: "deterministic",
       confidence: 0.8,
     });
-    const result = await runWritePass(db, path, {
-      budget: createBudgetTracker({ canon_writes_per_run: 8 }),
-      model_ref: "kizuki.llm.openai-compatible:synthetic@local",
-    });
+    const result = await runWritePass(db, path, boundWriteOptions(
+      db,
+      createBudgetTracker({ canon_writes_per_run: 8 }),
+    ));
     expect(result.canon_writes).toBe(1);
     expect(existsSync(join(path, "auto", "people", "ada.md"))).toBe(true);
     db.close();
@@ -311,10 +332,10 @@ describe("write pass", () => {
       producer: "deterministic",
       confidence: 0.8,
     });
-    const seeded = await runWritePass(db, path, {
-      budget: createBudgetTracker({ canon_writes_per_run: 8 }),
-      model_ref: "kizuki.llm.openai-compatible:synthetic@local",
-    });
+    const seeded = await runWritePass(db, path, boundWriteOptions(
+      db,
+      createBudgetTracker({ canon_writes_per_run: 8 }),
+    ));
     expect(seeded.canon_writes).toBe(1);
 
     const eventId = putEvent(db, { source_record_id: "extract" });
@@ -345,6 +366,47 @@ describe("write pass", () => {
     expect(result.claims_extracted).toBe(1);
     expect(result.claims_written).toBe(1);
     expect(result.canon_writes).toBe(1);
+    expect(result.model).toEqual({
+      calls: 1,
+      input_tokens: 10,
+      output_tokens: 4,
+      unavailable: 0,
+      wall_ms: expect.any(Number),
+    });
+    expect(result.claims_rejected).toEqual({});
+    db.close();
+  });
+
+  test("write-pass receipts preserve rejected and dropped model outcomes", async () => {
+    const { path, db } = vault();
+    putEvent(db, { source_record_id: "metrics" });
+    const rejected = await runWritePass(db, path, {
+      budget: createBudgetTracker({ canon_writes_per_run: 8 }),
+      model_ref: "kizuki.llm.openai-compatible:synthetic@local",
+      claims: { db },
+      producer: stubProducer({
+        status: "rejected",
+        reason: "schema_invalid",
+        usage: { calls: 1, input_tokens: 7, output_tokens: 0 },
+      }),
+    });
+    expect(rejected.model).toEqual({
+      calls: 1, input_tokens: 7, output_tokens: 0, unavailable: 0, wall_ms: expect.any(Number),
+    });
+    expect(rejected.claims_rejected).toEqual({ schema_invalid: 1 });
+
+    const dropped = await runWritePass(db, path, {
+      budget: createBudgetTracker({ canon_writes_per_run: 8 }),
+      model_ref: "kizuki.llm.openai-compatible:synthetic@local",
+      claims: { db },
+      producer: stubProducer({
+        status: "ok",
+        claims: [],
+        usage: { calls: 1, input_tokens: 3, output_tokens: 0 },
+        dropped: [{ reason: "unknown_predicate", predicate: "employment.secret", event_ids: [putEvent(db, { source_record_id: "drop" })] }],
+      }),
+    });
+    expect(dropped.claims_rejected).toEqual({ unknown_predicate: 1 });
     db.close();
   });
 });

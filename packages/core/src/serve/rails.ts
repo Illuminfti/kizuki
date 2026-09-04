@@ -8,7 +8,7 @@ import { tableExists } from "../ledger/schema";
 import { ulid } from "../util/ulid";
 import { serializePage } from "../vault/frontmatter";
 import { addDailyBudget, budgetDay, readDailyBudget } from "./budget-ledger";
-import { loadConfiguredModelRef, loadServeConfig } from "./config";
+import { loadServeConfig } from "./config";
 import { createFileNotifier, briefPath } from "./notifier-file";
 import { persistRunReceipt, pruneRunReceipts, redactReceiptError } from "./receipts";
 import { listSchedules } from "./schema";
@@ -31,6 +31,8 @@ export interface RailSyncResult {
 
 export interface RailHooks {
   readonly sync?: () => Promise<RailSyncResult>;
+  /** Host-owned derived stores refresh after a successful or partial write pass. */
+  readonly refresh?: () => Promise<readonly string[]>;
   readonly claims?: ClaimsIo;
   readonly model_ref?: string | null;
   readonly producer?: ProducerPort;
@@ -48,26 +50,12 @@ function dayOf(at: string): string {
 }
 
 /**
- * Hooks may pin a model_ref (including explicit null). Otherwise the
- * vault's serve.toml decides, so `kizuki serve` writes without host wiring.
+ * A host must bind a model port and hand its capability to the rail. Raw
+ * serve.toml values are configuration intent, never permission to write.
  */
-function resolveModelRef(
-  vaultPath: string,
-  hooks: RailHooks | undefined,
-): string | null {
-  if (hooks !== undefined && Object.hasOwn(hooks, "model_ref")) {
-    return hooks.model_ref ?? null;
-  }
-  return loadConfiguredModelRef(vaultPath);
-}
-
-function withResolvedModel(
-  vaultPath: string,
-  hooks: RailHooks | undefined,
-): RailHooks | undefined {
-  const model_ref = resolveModelRef(vaultPath, hooks);
-  if (hooks === undefined && model_ref === null) return undefined;
-  return { ...hooks, model_ref };
+function withResolvedModel(hooks: RailHooks | undefined): RailHooks | undefined {
+  if (hooks === undefined) return undefined;
+  return { ...hooks, model_ref: hooks.model_ref ?? null };
 }
 
 function nextHourUtc(now: string, hour: number): string {
@@ -114,7 +102,8 @@ async function runSyncRail(
     ...(hooks?.producer === undefined ? {} : { producer: hooks.producer }),
     ...(hooks?.claims === undefined ? {} : { claims: hooks.claims }),
   });
-  const errors = [...synced.errors, ...written.errors];
+  const refreshed = hooks?.refresh === undefined ? [] : await hooks.refresh();
+  const errors = [...synced.errors, ...written.errors, ...refreshed];
   let status: RunReceipt["status"] = "ok";
   if (written.stopped !== null) status = "stopped";
   else if (errors.length > 0) status = "degraded";
@@ -128,7 +117,9 @@ async function runSyncRail(
     claims_written: written.claims_written,
     claims_deduped: written.claims_deduped,
     claims_superseded: written.claims_superseded,
+    claims_rejected: written.claims_rejected,
     canon_writes: written.canon_writes,
+    model: { ...written.model, model_ref: hooks?.model_ref ?? null },
     stopped: written.stopped,
     errors,
   };
@@ -285,7 +276,7 @@ export async function runRail(
 ): Promise<RunReceipt> {
   const now = options.now ?? (() => new Date().toISOString());
   const started = now();
-  const hooks = withResolvedModel(vaultPath, options.hooks);
+  const hooks = withResolvedModel(options.hooks);
   const config = loadServeConfig(vaultPath);
   const day = budgetDay(started);
   const usedToday = readDailyBudget(db, day, "canon_writes_per_day");

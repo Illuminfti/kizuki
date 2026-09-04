@@ -8,7 +8,8 @@ import {
 } from "../canon";
 import { machineOriginPath } from "../canon/origin";
 import type { Claim } from "../contracts/proposal";
-import type { ClaimDraft, ProducerPort } from "../contracts/producer";
+import type { ClaimDraft, ProduceResult, ProducerPort } from "../contracts/producer";
+import type { RunModelReport } from "./types";
 import {
   insertClaim,
   listUnwrittenLiveClaims,
@@ -31,8 +32,76 @@ export interface WritePassResult {
   readonly claims_deduped: number;
   readonly claims_superseded: number;
   readonly canon_writes: number;
+  readonly claims_rejected: Readonly<Record<string, number>>;
+  readonly model: Omit<RunModelReport, "model_ref">;
   readonly stopped: string | null;
   readonly errors: readonly string[];
+}
+
+interface ProduceMetrics {
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  unavailable: number;
+  wall_ms: number;
+  rejected: Record<string, number>;
+}
+
+function emptyMetrics(): ProduceMetrics {
+  return { calls: 0, input_tokens: 0, output_tokens: 0, unavailable: 0, wall_ms: 0, rejected: {} };
+}
+
+function count(metrics: ProduceMetrics, reason: string): void {
+  metrics.rejected[reason] = (metrics.rejected[reason] ?? 0) + 1;
+}
+
+function observe(metrics: ProduceMetrics, result: ProduceResult, wallMs: number): void {
+  metrics.wall_ms += wallMs;
+  switch (result.status) {
+    case "ok":
+      metrics.calls += result.usage.calls;
+      metrics.input_tokens += result.usage.input_tokens;
+      metrics.output_tokens += result.usage.output_tokens;
+      for (const dropped of result.dropped ?? []) count(metrics, dropped.reason);
+      return;
+    case "rejected":
+      metrics.calls += result.usage.calls;
+      metrics.input_tokens += result.usage.input_tokens;
+      metrics.output_tokens += result.usage.output_tokens;
+      count(metrics, result.reason);
+      return;
+    case "unavailable":
+      // An unavailable result has no usage payload, so do not invent calls.
+      metrics.unavailable += 1;
+      return;
+  }
+}
+
+function observedProducer(producer: ProducerPort, metrics: ProduceMetrics): ProducerPort {
+  return {
+    descriptor: producer.descriptor,
+    health: () => producer.health(),
+    close: () => producer.close(),
+    async produce(input) {
+      const started = performance.now();
+      const result = await producer.produce(input);
+      observe(metrics, result, Math.max(0, Math.round(performance.now() - started)));
+      return result;
+    },
+  };
+}
+
+function metricResult(metrics: ProduceMetrics): Pick<WritePassResult, "claims_rejected" | "model"> {
+  return {
+    claims_rejected: metrics.rejected,
+    model: {
+      calls: metrics.calls,
+      input_tokens: metrics.input_tokens,
+      output_tokens: metrics.output_tokens,
+      unavailable: metrics.unavailable,
+      wall_ms: metrics.wall_ms,
+    },
+  };
 }
 
 export interface WritePassOptions {
@@ -42,8 +111,13 @@ export interface WritePassOptions {
   readonly claims?: ClaimsIo;
 }
 
-function modelConfigured(modelRef: string | null | undefined): boolean {
-  return typeof modelRef === "string" && modelRef.length > 0;
+function modelConfigured(options: WritePassOptions): boolean {
+  return (
+    typeof options.model_ref === "string" &&
+    options.model_ref.length > 0 &&
+    options.producer !== undefined &&
+    options.claims !== undefined
+  );
 }
 
 /** Loop creates go under auto/; edits of a human page stay on that page. */
@@ -82,6 +156,7 @@ export async function runWritePass(
       claims_deduped: 0,
       claims_superseded: 0,
       canon_writes: 0,
+      ...metricResult(emptyMetrics()),
       stopped: "lock:busy",
       errors: [],
     };
@@ -106,9 +181,10 @@ async function runWritePassLocked(
   let canonWrites = 0;
   let stopped: string | null = null;
   const errors: string[] = [];
+  const metrics = emptyMetrics();
 
   if (options.producer !== undefined && options.claims !== undefined) {
-    const mined = await mineLiveDrafts(db, options.producer);
+    const mined = await mineLiveDrafts(db, observedProducer(options.producer, metrics));
     switch (mined.mined.status) {
       case "unavailable":
         stopped = `model:${mined.mined.reason}`;
@@ -137,7 +213,7 @@ async function runWritePassLocked(
     }
   }
 
-  if (!modelConfigured(options.model_ref)) {
+  if (!modelConfigured(options)) {
     return {
       revived,
       claims_extracted: extracted,
@@ -145,6 +221,7 @@ async function runWritePassLocked(
       claims_deduped: deduped,
       claims_superseded: superseded,
       canon_writes: 0,
+      ...metricResult(metrics),
       stopped,
       errors,
     };
@@ -179,6 +256,7 @@ async function runWritePassLocked(
     claims_deduped: deduped,
     claims_superseded: superseded,
     canon_writes: canonWrites,
+    ...metricResult(metrics),
     stopped,
     errors,
   };

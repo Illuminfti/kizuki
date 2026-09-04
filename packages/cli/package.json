@@ -12,6 +12,7 @@
     "@kizuki/core": "workspace:*",
     "@kizuki/embed-gguf": "workspace:*",
     "@kizuki/tui": "workspace:*",
-    "@kizuki/retrieval-pg": "workspace:*"
+    "@kizuki/retrieval-pg": "workspace:*",
+    "@kizuki/llm": "workspace:*"
   }
 }

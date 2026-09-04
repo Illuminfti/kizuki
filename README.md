@@ -36,7 +36,7 @@ standards behind your work remain available when the session ends or the tools
 change. A fallible working understanding that you can inspect and improve.
 
 > **Pre-alpha · v0.1.0.** The local capture-to-context loop is runnable from a
-> checkout. Autonomous canon writing requires a configured model; capture,
+> checkout. Autonomous canon writing requires a usable model bound by the running host; capture,
 > search, context, audit, and undo remain useful without one. This is not a
 > 1.0 release or a published installer. [Current capabilities and limits →](#status)
 

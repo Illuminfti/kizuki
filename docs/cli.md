@@ -175,7 +175,10 @@ usage: kizuki serve [--once] [--no-http] [--port N] [--json] [--install] [--unin
 
 Always-on loop. HTTP is loopback unless `--no-http`. `init` installs the
 user service when a supervisor exists. The CLI still runs when the daemon is
-down.
+down. Before a rail writes canon, `serve` binds the selected LLM port from
+`[ports.llm]`; a model name by itself never enables writes. `kizuki doctor`
+reports a complete binding as `on` and an incomplete configuration as
+`unverified`.
 
 ## models
 
