@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { listConnections, openLedger } from "@kizuki/core";
 import { createHelpers } from "./helpers";
@@ -102,5 +102,14 @@ describe("kizuki CLI stranger loop", () => {
     expect(manifest.files["ledger/events.jsonl"]?.count).toBeGreaterThan(0);
     expect(manifest.files["connections.jsonl"]?.count).toBe(1);
     expect(readdirSync(join(outDir, "vault")).length).toBeGreaterThan(0);
+
+    const verified = runCli(setup.env, "restore", "--from", outDir, "--verify");
+    expect(verified.exitCode).toBe(0);
+    expect(verified.stdout).toContain(`verified=${outDir}/manifest.json`);
+    const restored = join(setup.root, "restored");
+    const restore = runCli(setup.env, "restore", "--from", outDir, "--into", restored);
+    expect(restore.exitCode).toBe(0);
+    expect(restore.stdout).toContain(`vault=${restored}`);
+    expect(existsSync(join(restored, ".kizuki"))).toBe(true);
   });
 });

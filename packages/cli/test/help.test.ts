@@ -21,6 +21,7 @@ const IMPLEMENTED_NON_GATE_VERBS = [
   "serve",
   "purge",
   "export",
+  "restore",
   "version",
 ] as const;
 

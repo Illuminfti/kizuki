@@ -607,8 +607,15 @@ export {
   runToCompletion,
 } from "./ingest/run";
 export { proposalsForEvent } from "./staging/producers";
-export { exportVault } from "./export";
-export type { ExportManifest, ExportManifestEntry } from "./export";
+export { BACKUP_SCHEMA, exportVault, restoreVault, verifyBackup } from "./export";
+export type {
+  BackupSchemaVersions,
+  BackupSnapshot,
+  ExportManifest,
+  ExportManifestEntry,
+  ExportOptions,
+  RestoreReport,
+} from "./export";
 
 export {
   indexEvent,

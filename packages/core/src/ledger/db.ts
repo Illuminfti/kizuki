@@ -16,6 +16,8 @@ interface SchemaVersionRow {
   version: number;
 }
 
+export const LEDGER_SCHEMA_VERSION = 7;
+
 const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,

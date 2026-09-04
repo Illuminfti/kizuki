@@ -93,7 +93,7 @@ bun packages/cli/src/main.ts help <verb>
 | Incremental sync | `sync` |
 | Local loop | `serve` (loopback HTTP unless `--no-http`) |
 | Delete with a receipt | `purge --event\|--subject\|--connector … --reason TEXT` |
-| Leave | `export --out DIR` |
+| Leave | `export --out DIR` / `restore --from DIR --into DIR` |
 
 File sources this CLI will enroll:
 
