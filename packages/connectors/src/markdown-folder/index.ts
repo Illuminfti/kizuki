@@ -19,7 +19,7 @@ import {
   misconfiguredHealth,
 } from "../import-report";
 import type { ImportRecordError } from "../import-report";
-import { readBoundedBytes } from "../read";
+import { readBoundedBytes, readReason } from "../read";
 import {
   compareStrings,
   errorMessage,
@@ -144,11 +144,11 @@ export class MarkdownFolderConnector implements Connector {
   async connect(_resolve: SecretResolver): Promise<void> {}
 
   async backfill(cursor: Cursor | null): Promise<SyncBatch> {
-    return this.sweep(cursor, "backfill");
+    return this.sweep(cursor);
   }
 
   async sync(cursor: Cursor | null): Promise<SyncBatch> {
-    return this.sweep(cursor, "sync");
+    return this.sweep(cursor);
   }
 
   async revoke(): Promise<void> {}
@@ -169,10 +169,7 @@ export class MarkdownFolderConnector implements Connector {
     ];
   }
 
-  private async sweep(
-    cursor: Cursor | null,
-    mode: "backfill" | "sync",
-  ): Promise<SyncBatch> {
+  private async sweep(cursor: Cursor | null): Promise<SyncBatch> {
     const root = await rootIdentity(this.path);
     const previous = cursor === null ? undefined : parseCursor(cursor, root, this);
     const scan = await scanMarkdownFiles(root, this.exclude);
@@ -183,20 +180,16 @@ export class MarkdownFolderConnector implements Connector {
     const previousFiles = new Map(previous?.files ?? []);
 
     const fileEvents: CaptureEventInput[] = [];
-    if (mode === "backfill" && previous === undefined) {
-      for (const file of scan.files) fileEvents.push(fileEvent(file, observedAt));
-    } else {
-      for (const file of scan.files) {
-        const prior = previousFiles.get(file.relpath);
-        if (
-          prior !== undefined &&
-          prior.sha256 === file.sha256 &&
-          prior.size === file.size
-        ) {
-          continue;
-        }
-        fileEvents.push(fileEvent(file, observedAt));
+    for (const file of scan.files) {
+      const prior = previousFiles.get(file.relpath);
+      if (
+        prior !== undefined &&
+        prior.sha256 === file.sha256 &&
+        prior.size === file.size
+      ) {
+        continue;
       }
+      fileEvents.push(fileEvent(file, observedAt));
     }
     fileEvents.sort((left, right) =>
       compareStrings(left.source_record_id, right.source_record_id),
@@ -212,12 +205,14 @@ export class MarkdownFolderConnector implements Connector {
     }
 
     const inTombstones = previous?.phase === "tombstones";
-    const fileAfter = inTombstones ? null : (previous?.exhausted ? null : previous?.after ?? null);
+    const fileAfter =
+      inTombstones || previous?.exhausted ? null : (previous?.after ?? null);
     const fileFrom = indexAfter(fileEvents, fileAfter);
     const filePage = inTombstones
       ? []
       : fileEvents.slice(fileFrom, fileFrom + this.pageSize);
-    const filesDone = inTombstones || fileFrom + filePage.length >= fileEvents.length;
+    const filesDone =
+      inTombstones || fileFrom + filePage.length >= fileEvents.length;
 
     const processed = new Map(previousFiles);
     for (const event of filePage) {
@@ -230,40 +225,43 @@ export class MarkdownFolderConnector implements Connector {
       }
     }
 
+    const nextCursor = (
+      exhausted: boolean,
+      phase: "files" | "tombstones",
+      after: string | null,
+    ): Cursor =>
+      encodeCursor({
+        schema: MARKDOWN_CURSOR_SCHEMA,
+        connector_id: MARKDOWN_FOLDER_CONNECTOR_ID,
+        root,
+        options: { page_size: this.pageSize, exclude: [...this.exclude] },
+        exhausted,
+        phase,
+        after,
+        files: sortedPairs(processed),
+      });
+
     if (!filesDone) {
       const last = filePage[filePage.length - 1];
       return {
         events: filePage,
-        cursor: encodeCursor({
-          schema: MARKDOWN_CURSOR_SCHEMA,
-          connector_id: MARKDOWN_FOLDER_CONNECTOR_ID,
-          root,
-          options: { page_size: this.pageSize, exclude: [...this.exclude] },
-          exhausted: false,
-          phase: "files",
-          after: last?.source_record_id ?? fileAfter,
-          files: sortedPairs(processed),
-        }),
+        cursor: nextCursor(false, "files", last?.source_record_id ?? fileAfter),
       };
     }
 
     if (filePage.length > 0) {
+      const noTombstones = tombstones.length === 0;
       return {
         events: filePage,
-        cursor: encodeCursor({
-          schema: MARKDOWN_CURSOR_SCHEMA,
-          connector_id: MARKDOWN_FOLDER_CONNECTOR_ID,
-          root,
-          options: { page_size: this.pageSize, exclude: [...this.exclude] },
-          exhausted: tombstones.length === 0 && !scan.truncated,
-          phase: tombstones.length === 0 ? "files" : "tombstones",
-          after: null,
-          files: sortedPairs(processed),
-        }),
+        cursor: nextCursor(
+          noTombstones && !scan.truncated,
+          noTombstones ? "files" : "tombstones",
+          null,
+        ),
       };
     }
 
-    const tombstoneAfter = inTombstones ? previous?.after ?? null : null;
+    const tombstoneAfter = inTombstones ? (previous?.after ?? null) : null;
     const tombstoneFrom = indexAfter(tombstones, tombstoneAfter);
     const tombstonePage = tombstones.slice(
       tombstoneFrom,
@@ -283,16 +281,11 @@ export class MarkdownFolderConnector implements Connector {
     const lastTombstone = tombstonePage[tombstonePage.length - 1];
     return {
       events: tombstonePage,
-      cursor: encodeCursor({
-        schema: MARKDOWN_CURSOR_SCHEMA,
-        connector_id: MARKDOWN_FOLDER_CONNECTOR_ID,
-        root,
-        options: { page_size: this.pageSize, exclude: [...this.exclude] },
+      cursor: nextCursor(
         exhausted,
-        phase: exhausted ? "files" : "tombstones",
-        after: exhausted ? null : (lastTombstone?.source_record_id ?? tombstoneAfter),
-        files: sortedPairs(processed),
-      }),
+        exhausted ? "files" : "tombstones",
+        exhausted ? null : (lastTombstone?.source_record_id ?? tombstoneAfter),
+      ),
     };
   }
 }
@@ -421,7 +414,6 @@ async function scanMarkdownFiles(
         continue;
       }
       if (info.isDirectory()) {
-        if (SKIP_DIRECTORIES.has(entry.name)) continue;
         await walk(absolute, depth + 1);
         continue;
       }
@@ -487,19 +479,14 @@ async function readStableMarkdown(
         "file",
         before.size,
       );
-      // readBoundedBytes does not close; we still own the descriptor.
       const after = await handle.stat();
       if (
         after.size !== before.size ||
         after.mtimeMs !== before.mtimeMs ||
         after.ino !== before.ino
       ) {
-        await handle.close();
-        handle = undefined;
         continue;
       }
-      await handle.close();
-      handle = undefined;
       let text: string;
       try {
         text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -523,7 +510,6 @@ async function readStableMarkdown(
         },
       };
     } catch (error) {
-      if (handle !== undefined) await handle.close().catch(() => undefined);
       return {
         error: {
           location: relpath,
@@ -531,6 +517,8 @@ async function readStableMarkdown(
           reason: readReason(error),
         },
       };
+    } finally {
+      if (handle !== undefined) await handle.close().catch(() => undefined);
     }
   }
   return {
@@ -549,19 +537,12 @@ function shouldSkipName(name: string, exclude: readonly string[]): boolean {
 }
 
 function isMarkdownName(name: string): boolean {
-  return name.endsWith(".md") || name.toLowerCase().endsWith(".markdown");
+  const lower = name.toLowerCase();
+  return lower.endsWith(".md") || lower.endsWith(".markdown");
 }
 
 function relpathOf(root: string, absolute: string): string {
   return path.relative(root, absolute).split(path.sep).join("/");
-}
-
-function readReason(error: unknown): string {
-  const code =
-    typeof error === "object" && error !== null
-      ? (error as { code?: unknown }).code
-      : undefined;
-  return typeof code === "string" ? code : errorMessage(error);
 }
 
 function fileEvent(file: MarkdownFile, observedAt: string): CaptureEventInput {

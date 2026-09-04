@@ -10,14 +10,11 @@ import type {
   SyncBatch,
 } from "@kizuki/core";
 import type { ImportParseResult, ImportRecordError } from "../import-report";
-import { parseBoundedJsonArray } from "../import-json";
-import {
-  readSnapshotExport,
-  snapshotBatch,
-  snapshotHealth,
-} from "../import-snapshot";
+import { runSnapshot, snapshotHealth } from "../import-snapshot";
 import type { SnapshotParse } from "../import-snapshot";
 import {
+  nonEmptyString,
+  parseJsonArray,
   requireKnownKeys,
   requirePathConfig,
   unixSecondsToIso,
@@ -124,9 +121,7 @@ export class ChatGptImportConnector implements Connector {
   async connect(_resolve: SecretResolver): Promise<void> {}
 
   async backfill(cursor: Cursor | null): Promise<SyncBatch> {
-    const observedAt = new Date().toISOString();
-    const read = await readSnapshotExport(this.path, observedAt, SNAPSHOT);
-    return snapshotBatch(read, cursor, observedAt, SNAPSHOT);
+    return runSnapshot(this.path, cursor, SNAPSHOT);
   }
 
   sync(cursor: Cursor | null): Promise<SyncBatch> {
@@ -159,10 +154,7 @@ export function parseChatGptExport(
   source: string,
   observedAt: string,
 ): ImportParseResult {
-  const conversations = parseBoundedJsonArray(
-    source,
-    CHATGPT_IMPORT_CONNECTOR_ID,
-  );
+  const conversations = parseJsonArray(source, CHATGPT_IMPORT_CONNECTOR_ID);
   const errors: ImportRecordError[] = [];
   const events: CaptureEventInput[] = [];
   const seen = new Map<string, string>();
@@ -456,8 +448,4 @@ function extractContent(content: unknown, location: string): ExtractedContent {
 function mappingFingerprint(mapping: unknown): string {
   if (!isPlainObject(mapping)) return "";
   return Object.keys(mapping).sort().join(",");
-}
-
-function nonEmptyString(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
