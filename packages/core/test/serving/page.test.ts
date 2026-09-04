@@ -1,13 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { applyCanonWrite, createBudgetTracker, resolveTarget } from "../../src/canon";
-import { getClaim } from "../../src/claims/store";
+import { insertClaim } from "../../src/claims/store";
 import { serveGetPage } from "../../src/serving/page";
-import { fileProposal } from "../../src/staging/proposals";
 import type { GetPageArgs } from "../../src/serving/page";
 import { ServeError } from "../../src/serving/types";
 import { serializePage } from "../../src/vault/frontmatter";
+import { write } from "../canon/helpers";
 import { serveFixture } from "./helpers";
 import type { Fixture } from "./helpers";
 
@@ -126,34 +125,31 @@ describe("serveGetPage", () => {
     expect(chunk?.excerpt.endsWith("\u{1F600}")).toBe(true);
   });
 
-  test("a chunk names the tier of the receipt that wrote its page", () => {
-    const filed = fileProposal(fixture.db, {
-      kind: "entity",
-      target: "facts:receipted",
-      body: "A kettle page the receipted writer produced.",
-      frontmatter: { type: "fact", title: "Receipted kettle note" },
-      provenance: [fixture.events["public"] as string],
-      subjects: ["person:linus"],
-      producer: "deterministic",
-      confidence: 1,
-    });
+  test("a chunk names the tier of the receipt that wrote its page", async () => {
+    const filed = await insertClaim(
+      { db: fixture.db },
+      {
+        kind: "entity",
+        target: "facts:receipted",
+        body: "A kettle page the receipted writer produced.",
+        frontmatter: { type: "fact", title: "Receipted kettle note" },
+        provenance: [fixture.events["public"] as string],
+        subjects: ["person:linus"],
+        producer: "deterministic",
+        confidence: 1,
+        sensitivity: "public",
+      },
+    );
     if (filed.outcome !== "stored") throw new Error(filed.outcome);
-    fixture.db
-      .query("UPDATE claims SET status = 'live', sensitivity = ? WHERE claim_id = ?")
-      .run("public", filed.proposal.proposal_id);
-    const stored = getClaim(fixture.db, filed.proposal.proposal_id);
-    if (stored === null) throw new Error("filed claim is missing");
-    const io = { db: fixture.db, vault_path: fixture.vaultPath };
-    const decision = resolveTarget(io, stored);
-    if (decision.action === "skip") throw new Error(decision.reason);
-    const receipt = applyCanonWrite(io, stored, decision, {
-      writer: "import",
-      budget: createBudgetTracker({ canon_writes_per_run: 1 }),
-    });
+    const receipt = write(
+      { db: fixture.db, vault_path: fixture.vaultPath },
+      filed.claim,
+      { writer: "import" },
+    );
 
     const written = serveGetPage(fixture.owner(), { path: receipt.page_path });
     expect(receipt.page_path).toBe("facts/receipted.md");
-    expect(written.canon[0]?.authority).toBe("connector_evidence");
+    expect(written.canon[0]?.authority).toBe(receipt.authority);
     // A hand-authored page no receipt covers borrows no tier.
     expect(
       serveGetPage(fixture.owner(), { id: "person:ada" }).canon[0]?.authority,

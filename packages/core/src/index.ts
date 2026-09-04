@@ -561,7 +561,6 @@ export {
   runToCompletion,
 } from "./ingest/run";
 export { proposalsForEvent } from "./staging/producers";
-export type { ProducerGrants } from "./staging/producers";
 export { exportVault } from "./export";
 export type { ExportManifest, ExportManifestEntry } from "./export";
 
