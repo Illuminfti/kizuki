@@ -101,11 +101,25 @@ function enforceTypeDiversity(
   if (new Set(results.map((row) => row.kind)).size <= 1) return [...results];
   const maxPerType = Math.max(1, Math.ceil(results.length * maxRatio));
   const typeCounts = new Map<string, number>();
+  const acceptedPages = new Set<string>();
+  const rejectedPages = new Set<string>();
   const kept: RecipeCandidate[] = [];
   for (const row of results) {
+    const key = pageKey(row);
+    if (acceptedPages.has(key)) {
+      // Type diversity is document-level. Extra chunks from an accepted
+      // document do not consume slots that belong to distinct documents.
+      kept.push(row);
+      continue;
+    }
+    if (rejectedPages.has(key)) continue;
     const count = typeCounts.get(row.kind) ?? 0;
-    if (count >= maxPerType) continue;
+    if (count >= maxPerType) {
+      rejectedPages.add(key);
+      continue;
+    }
     kept.push(row);
+    acceptedPages.add(key);
     typeCounts.set(row.kind, count + 1);
   }
   return kept;

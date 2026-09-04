@@ -30,7 +30,10 @@ export function applyAdjacencyBoost<T extends AdjacencyTarget>(
   const topK = opts?.topK ?? DEFAULT_TOP_K;
   const floor = opts?.floorThreshold;
   const window = results.slice(0, topK);
-  const ids = window.map((row) => row.id);
+  // Several chunks from one document may survive fusion. Graph support is a
+  // document signal, so a duplicate chunk must not impersonate an additional
+  // independent neighbor.
+  const ids = [...new Set(window.map((row) => row.id))];
   const adjacency = new Map<string, Set<string>>();
   const link = (from: string, to: string): void => {
     if (from === to || !visible(from) || !visible(to)) return;
@@ -74,9 +77,9 @@ export function applyAdjacencyBoost<T extends AdjacencyTarget>(
 
 /**
  * Hop-limited neighbor walk. Depth is capped at 2. Invisible nodes are
- * skipped (fail closed). Truncates when the collected edge count reaches
- * the caller limit, or when the per-hop frontier cap drops a node that
- * a later hop would have expanded.
+ * skipped (fail closed). Truncates only when another eligible edge exists
+ * beyond the caller limit, or when the per-hop frontier cap drops a node a
+ * later hop would have expanded.
  */
 export function walkNeighbors(
   start: string,
@@ -93,6 +96,10 @@ export function walkNeighbors(
   }
 
   const collected: RecipeEdge[] = [];
+  // The walk treats edges as undirected, so the same stored row is reachable
+  // from both endpoints. Index identity emits each row once while preserving
+  // intentionally parallel rows.
+  const seenEdges = new Set<number>();
   const seen = new Set<string>([start]);
   let frontier = [start];
   let truncated = false;
@@ -101,14 +108,20 @@ export function walkNeighbors(
     const next: string[] = [];
     let hopCount = 0;
     for (const node of frontier) {
-      for (const edge of edges) {
+      for (let edgeIndex = 0; edgeIndex < edges.length; edgeIndex += 1) {
+        if (seenEdges.has(edgeIndex)) continue;
+        const edge = edges[edgeIndex];
+        if (edge === undefined) continue;
         if (edge.from !== node && edge.to !== node) continue;
         const other = edge.from === node ? edge.to : edge.from;
         if (!opts.visible(other)) continue;
-        collected.push(edge);
+        // `truncated` means an additional eligible row existed past the cap.
+        // Hitting the cap exactly with no further row is a complete walk.
         if (collected.length >= opts.limit) {
-          return { edges: collected.slice(0, opts.limit), truncated: true };
+          return { edges: collected, truncated: true };
         }
+        seenEdges.add(edgeIndex);
+        collected.push(edge);
         if (seen.has(other)) continue;
         if (hopCount < NEIGHBOR_CAP_PER_HOP) {
           seen.add(other);
