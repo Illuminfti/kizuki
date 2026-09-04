@@ -95,6 +95,56 @@ describe("derived rebuild equivalence", () => {
     expect(incrementalGraph).toContain("fact:tea|fact:kettle|wikilink");
   });
 
+  test("refreshing an archived page drops incoming edges", () => {
+    const db = searchDb();
+    const vault = tempVault();
+    disposers.push(vault.dispose);
+    const target = writeCanonPage(
+      vault.path,
+      "facts/target.md",
+      {
+        id: "fact:target",
+        title: "Target",
+        type: "fact",
+        status: "active",
+        sensitivity: "personal",
+        taint: "clean",
+      },
+      "Destination.",
+    );
+    writeCanonPage(
+      vault.path,
+      "facts/origin.md",
+      {
+        id: "fact:origin",
+        title: "Origin",
+        type: "fact",
+        status: "active",
+        sensitivity: "personal",
+        taint: "clean",
+      },
+      "See [[Target]].",
+    );
+    rebuildDerived(db, vault.path);
+    expect(
+      neighbors(db, "fact:target").edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`),
+    ).toEqual(["fact:origin|fact:target|wikilink"]);
+
+    writeCanonPage(
+      vault.path,
+      "facts/target.md",
+      { ...target.data, status: "archived" },
+      target.body,
+    );
+    refreshDerivedPage(
+      db,
+      { ...target, data: { ...target.data, status: "archived" } },
+      vault.path,
+    );
+    expect(neighbors(db, "fact:target").edges).toEqual([]);
+    expect(search(db, "Destination").map(({ doc_id }) => doc_id)).toEqual([]);
+  });
+
   test("purged and archived pages are absent after rebuild", () => {
     const db = searchDb();
     const vault = tempVault();

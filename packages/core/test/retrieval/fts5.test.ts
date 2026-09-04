@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { runRetrievalConformance } from "../../src/contracts/conformance/retrieval";
 import type { RetrievalConformanceHarness } from "../../src/contracts/conformance/retrieval";
@@ -244,6 +244,61 @@ describe("kizuki.retrieval.fts5", () => {
       "claim:grace-email",
       "page:grace",
     ]);
+  });
+
+  test("opening a pre-companion store keeps existing documents", async () => {
+    const temporary = temporaryPortContext(FTS5_RETRIEVAL_DESCRIPTOR);
+    disposers.push(temporary.cleanup);
+    mkdirSync(join(temporary.ctx.data_dir, "store"), { recursive: true, mode: 0o700 });
+    const legacy = new Database(join(temporary.ctx.data_dir, FTS5_RETRIEVAL_STORE_REL));
+    legacy.exec(`
+      CREATE VIRTUAL TABLE search_docs USING fts5(
+        doc_id UNINDEXED,
+        kind UNINDEXED,
+        title,
+        text,
+        sensitivity UNINDEXED,
+        taint UNINDEXED,
+        authority UNINDEXED,
+        subjects UNINDEXED,
+        provenance UNINDEXED,
+        occurred_at UNINDEXED,
+        updated_at UNINDEXED
+      );
+    `);
+    const grace = SYNTHETIC_DOCS[0]!;
+    legacy
+      .query(
+        `INSERT INTO search_docs (
+           doc_id, kind, title, text, sensitivity, taint, authority,
+           subjects, provenance, occurred_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        grace.doc_id,
+        grace.kind,
+        grace.title,
+        grace.text,
+        grace.sensitivity ?? "unlabeled",
+        grace.taint,
+        grace.authority,
+        JSON.stringify(grace.subjects),
+        JSON.stringify(grace.provenance),
+        grace.occurred_at ?? "",
+        grace.updated_at,
+      );
+    legacy.close();
+
+    const port = createFts5RetrievalPort(temporary.ctx);
+    disposers.push(() => {
+      void port.close();
+    });
+    const result = await port.search({
+      ...SYNTHETIC_QUERY,
+      text: "partnerships",
+      scope: {},
+    });
+    expect(result.hits.map(({ doc_id }) => doc_id)).toEqual(["page:grace"]);
   });
 
   test("rejects a bare document id", () => {

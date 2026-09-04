@@ -218,8 +218,11 @@ export function replacePageEdges(
   page: CanonPage,
   index: LinkIndex,
 ): void {
+  if (!isLiveCanonPage(page)) {
+    removePageEdges(db, page.id);
+    return;
+  }
   db.query<never, [string]>("DELETE FROM graph_edges WHERE src = ?").run(page.id);
-  if (!isLiveCanonPage(page)) return;
   for (const edge of pageEdges(page, index)) insertEdge(db, edge);
 }
 
@@ -389,7 +392,7 @@ export function neighbors(
       frontier,
       opts.kinds,
       opts.ceiling,
-      limit - result.length + 1,
+      limit + 1,
     );
     const next: string[] = [];
     for (const edge of available) {

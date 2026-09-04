@@ -372,6 +372,25 @@ describe("neighbors", () => {
     expect(() => neighbors(linkedDb(), "a", { limit: 101 })).toThrow(RangeError);
   });
 
+  test("a depth-two walk fills the cap and reports leftover edges", () => {
+    const db = new Database(":memory:");
+    initGraph(db);
+    db.exec(`
+      INSERT INTO graph_edges (src, dst, kind, sensitivity, taint, authority, provenance)
+      VALUES ('a', 'b', 'wikilink', 'public', 'clean', 'owner_authored', '[]');
+      INSERT INTO graph_edges (src, dst, kind, sensitivity, taint, authority, provenance)
+      VALUES ('b', 'c', 'wikilink', 'public', 'clean', 'owner_authored', '[]');
+      INSERT INTO graph_edges (src, dst, kind, sensitivity, taint, authority, provenance)
+      VALUES ('b', 'd', 'wikilink', 'public', 'clean', 'owner_authored', '[]');
+      INSERT INTO graph_edges (src, dst, kind, sensitivity, taint, authority, provenance)
+      VALUES ('b', 'e', 'wikilink', 'public', 'clean', 'owner_authored', '[]');
+    `);
+    const limited = neighbors(db, "a", { depth: 2, limit: 2 });
+    expect(limited.edges).toHaveLength(2);
+    expect(limited.truncated).toBe(true);
+    expect(neighbors(db, "a", { depth: 2, limit: 4 }).truncated).toBe(false);
+  });
+
   test("orders edges by code point, not locale", () => {
     const db = new Database(":memory:");
     initGraph(db);
