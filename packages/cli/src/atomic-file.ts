@@ -5,6 +5,7 @@ import {
   fsyncSync,
   mkdirSync,
   openSync,
+  readFileSync,
   renameSync,
   unlinkSync,
   writeSync,
@@ -57,6 +58,18 @@ export function writeAtomicFile(
   }
 }
 
+function lockHolderAlive(lockPath: string): boolean {
+  if (!existsSync(lockPath)) return false;
+  const pid = Number.parseInt(readFileSync(lockPath, "utf8").trim(), 10);
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function withExclusiveLock(lockPath: string, fn: () => void): void {
   const parent = dirname(lockPath);
   mkdirSync(parent, { recursive: true, mode: 0o700 });
@@ -65,6 +78,12 @@ export function withExclusiveLock(lockPath: string, fn: () => void): void {
     try {
       const fd = openSync(lockPath, "wx", 0o600);
       try {
+        writeSync(fd, `${process.pid}\n`);
+        try {
+          fsyncSync(fd);
+        } catch {
+          // Lock metadata is best-effort; the exclusive create is the mutex.
+        }
         fn();
       } finally {
         closeSync(fd);
@@ -72,7 +91,18 @@ export function withExclusiveLock(lockPath: string, fn: () => void): void {
       }
       return;
     } catch (error) {
-      if (!isBusy(error) || Date.now() >= deadline) {
+      if (!isBusy(error)) {
+        throw new Error(`could not lock ${lockPath}`);
+      }
+      if (!lockHolderAlive(lockPath)) {
+        try {
+          unlinkSync(lockPath);
+        } catch {
+          // Another waiter may have already stolen the stale file.
+        }
+        continue;
+      }
+      if (Date.now() >= deadline) {
         throw new Error(`could not lock ${lockPath}`);
       }
       Bun.sleepSync(LOCK_POLL_MS);

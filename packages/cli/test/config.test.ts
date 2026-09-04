@@ -150,6 +150,17 @@ describe("config", () => {
     expect(dotted.stderr).toContain("invalid vault alias");
   });
 
+  test("a stale config lock from a dead pid is stolen", () => {
+    const env = isolatedEnv();
+    const path = env.KIZUKI_CONFIG ?? "";
+    mkdirSync(join(path, ".."), { recursive: true });
+    writeFileSync(`${path}.lock`, "2147483647\n");
+    const vault = join(tempDir(), "lock-vault");
+    const result = runCli(env, "init", vault);
+    expect(result.exitCode).toBe(0);
+    expect(readFileSync(path, "utf8")).toContain(vault);
+  });
+
   test("config writes are atomic and round-trip aliases", () => {
     const env = isolatedEnv();
     const first = join(tempDir(), "first");

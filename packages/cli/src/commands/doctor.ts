@@ -14,7 +14,6 @@ import {
   inspectPurgeHealth,
   inspectServeDoctor,
   latestReceiptForPage,
-  listCanonReceipts,
   listClaims,
   listCanonPages,
   readHolds,
@@ -26,7 +25,7 @@ import { UsageError, parseArguments } from "../args";
 import { listHostConnections, loadConnector } from "../connections";
 import { withVault } from "../context";
 import type { VaultContext } from "../context";
-import { indexFreshness } from "../derived";
+import { countCanonReceiptRows, indexFreshness, walkCanonReceipts } from "../derived";
 import { clean, errorText, jsonEnvelope } from "../output";
 import { effectiveVaultConfig, loadVaultConfig } from "../vault-config";
 import type { CliIo, Command } from "./index";
@@ -107,9 +106,14 @@ function scrubDetail(text: string | null): string | null {
 
 async function withDeadline<T>(ms: number, work: () => Promise<T>): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const pending = work();
+  pending.catch(() => {
+    // The process exits when doctor returns; do not leave a late
+    // rejection unhandled after the deadline wins the race.
+  });
   try {
     return await Promise.race([
-      work(),
+      pending,
       new Promise<T>((_, reject) => {
         timer = setTimeout(() => reject(new Error("health timed out")), ms);
       }),
@@ -154,7 +158,7 @@ function reconcileReceipts(vaultPath: string, ctx: VaultContext): string[] {
     }
   }
 
-  for (const row of listCanonReceipts(ctx.db, { limit: 10_000 })) {
+  for (const row of walkCanonReceipts(ctx.db)) {
     if (!seen.has(row.receipt_id)) {
       orphans.push(`orphan row ${row.receipt_id} (no JSONL line)`);
     }
@@ -332,7 +336,7 @@ async function collect(
     live_claims: liveClaims,
     filed_claims: filedClaims,
     connections,
-    receipts: listCanonReceipts(ctx.db, { limit: 10_000 }).length,
+    receipts: countCanonReceiptRows(ctx.db),
     orphans,
     holds,
     problems,

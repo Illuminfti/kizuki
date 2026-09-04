@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Database } from "bun:sqlite";
 import type { LedgerCursor } from "@kizuki/core";
+import type { CanonReceipt } from "@kizuki/core";
 import {
   count,
   indexEvent,
@@ -130,16 +131,41 @@ function receiptAfter(left: string | null, right: string): boolean {
   return left === null || right > left;
 }
 
+/** Page size stays at the core list cap so a walk cannot miss later rows. */
+export const RECEIPT_PAGE = 10_000;
+
+export function* walkCanonReceipts(
+  db: Database,
+  pageSize = RECEIPT_PAGE,
+): Generator<CanonReceipt> {
+  const size = Math.min(Math.max(pageSize, 1), RECEIPT_PAGE);
+  let offset = 0;
+  for (;;) {
+    const page = listCanonReceipts(db, { limit: size, offset });
+    if (page.length === 0) return;
+    for (const receipt of page) yield receipt;
+    if (page.length < size) return;
+    offset += page.length;
+  }
+}
+
+export function countCanonReceiptRows(db: Database): number {
+  let n = 0;
+  for (const _ of walkCanonReceipts(db)) n += 1;
+  return n;
+}
+
 export function indexReceiptsFromCursor(
   db: Database,
   vaultPath: string,
   cursor: IndexCursor,
 ): { indexed: number; cursor: IndexCursor } {
   const pages = new Map(listCanonPages(vaultPath).map((page) => [page.relPath, page]));
-  const receipts = listCanonReceipts(db, { limit: 10_000 });
   let indexed = 0;
   let lastId = cursor.receipt_id;
-  for (const receipt of receipts) {
+  let seen = 0;
+  for (const receipt of walkCanonReceipts(db)) {
+    seen += 1;
     if (!receiptAfter(cursor.receipt_id, receipt.receipt_id)) continue;
     const page = pages.get(receipt.page_path);
     if (page !== undefined) {
@@ -148,18 +174,16 @@ export function indexReceiptsFromCursor(
     }
     if (lastId === null || receipt.receipt_id > lastId) lastId = receipt.receipt_id;
   }
-  return { indexed, cursor: { ...cursor, receipt_id: lastId } };
+  return { indexed, cursor: { ...cursor, receipt_id: lastId, receipts_seen: seen } };
 }
 
 export function refreshDerived(db: Database, vaultPath: string): IndexReport {
   const start = readIndexCursor(vaultPath);
   const events = indexEventsFromCursor(db, start);
   const pages = indexReceiptsFromCursor(db, vaultPath, events.cursor);
-  const receipts = listCanonReceipts(db, { limit: 10_000 });
   const cursor: IndexCursor = {
     ...pages.cursor,
     events_seen: count(db),
-    receipts_seen: receipts.length,
   };
   writeIndexCursor(vaultPath, cursor);
   return {
@@ -193,6 +217,9 @@ export function indexFreshness(
   const degraded: string[] = [];
   if (count(db) !== cursor.events_seen) {
     degraded.push("index-behind-ledger");
+  }
+  if (countCanonReceiptRows(db) !== cursor.receipts_seen) {
+    degraded.push("index-behind-receipts");
   }
   if (pendingRetrievalOps(db, 1).length > 0) {
     degraded.push("retrieval-ops-pending");
