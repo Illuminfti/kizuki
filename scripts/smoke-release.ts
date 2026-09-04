@@ -1,6 +1,7 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { verifyChecksumManifest } from "./release-artifacts";
 
 const root = resolve(import.meta.dir, "..");
 const version = (await Bun.file(resolve(root, "packages/cli/package.json")).json() as {
@@ -63,10 +64,7 @@ try {
   if ((await session.exited) !== 0) throw new Error(`MCP smoke failed: ${stderr}`);
   if (!output.includes('"tools"')) throw new Error("MCP tools/list did not respond");
 
-  const sums = readFileSync(join(release, "SHA256SUMS"), "utf8").trim().split("\n");
-  if (sums.length !== 2 || !sums.every((line) => /^[a-f0-9]{64}  kizuki(?:-mcp)?$/.test(line))) {
-    throw new Error("checksum manifest is malformed");
-  }
+  verifyChecksumManifest(release, ["kizuki", "kizuki-mcp", "README.txt"]);
   process.stdout.write(`release smoke passed: ${release}\n`);
 } finally {
   rmSync(rootTemp, { force: true, recursive: true });

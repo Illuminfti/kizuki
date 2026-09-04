@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, resolve } from "node:path";
+import { mkdtempSync, renameSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { checksumManifest, ensureReleaseDirectory, requireAbsent } from "./release-artifacts";
 
 const root = resolve(import.meta.dir, "..");
 const version = (await Bun.file(resolve(root, "packages/cli/package.json")).json() as {
@@ -12,8 +12,13 @@ if (target !== "bun-linux-x64-baseline") {
   throw new Error(`unsupported release target: ${target}`);
 }
 
-const output = resolve(root, "dist", `kizuki-${version}`, target);
-mkdirSync(output, { recursive: true });
+const dist = resolve(root, "dist");
+const release = join(dist, `kizuki-${version}`);
+const output = join(release, target);
+ensureReleaseDirectory(dist);
+ensureReleaseDirectory(release);
+requireAbsent(output);
+const staging = mkdtempSync(join(dist, ".kizuki-release-"));
 
 const binaries = [
   { entrypoint: "packages/cli/src/main.ts", name: "kizuki" },
@@ -25,7 +30,7 @@ for (const binary of binaries) {
     entrypoints: [resolve(root, binary.entrypoint)],
     compile: {
       target,
-      outfile: resolve(output, binary.name),
+      outfile: resolve(staging, binary.name),
       autoloadDotenv: false,
       autoloadBunfig: false,
     },
@@ -36,17 +41,13 @@ for (const binary of binaries) {
   }
 }
 
-const checksumLines = binaries.map(({ name }) => {
-  const digest = createHash("sha256").update(readFileSync(resolve(output, name))).digest("hex");
-  return `${digest}  ${name}`;
-});
-writeFileSync(resolve(output, "SHA256SUMS"), `${checksumLines.join("\n")}\n`, "utf8");
 writeFileSync(
-  resolve(output, "README.txt"),
+  resolve(staging, "README.txt"),
   [
     `Kizuki ${version} — ${target}`,
     "",
-    "This local package contains self-contained Bun executables for Linux x86_64",
+    "This local package contains Bun executables with the Kizuki code, dependencies,",
+    "and Bun runtime bundled for Linux x86_64",
     "baseline CPUs. It has not been published, signed, or tested on other operating systems.",
     "",
     "Verify the binaries before running them:",
@@ -69,5 +70,10 @@ writeFileSync(
   ].join("\n") + "\n",
   "utf8",
 );
+const packaged = [...binaries.map(({ name }) => name), "README.txt"];
+writeFileSync(resolve(staging, "SHA256SUMS"), checksumManifest(staging, packaged), "utf8");
+// The target was checked absent before staging. This rename publishes a complete package.
+requireAbsent(output);
+renameSync(staging, output);
 
-process.stdout.write(`${dirname(output)}/${basename(output)}\n`);
+process.stdout.write(`${output}\n`);
