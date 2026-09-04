@@ -107,11 +107,6 @@ export interface CaptureEvent {
 /** What a connector hands to `accept`. The spine supplies event_id and content_hash. */
 export type CaptureEventInput = Omit<CaptureEvent, "event_id" | "content_hash">;
 
-function quoteToken(value: string): string {
-  const clipped = value.length > 64 ? `${value.slice(0, 64)}...` : value;
-  return JSON.stringify(clipped);
-}
-
 function rejectUnknownKeys(
   raw: Record<string, unknown>,
   path: string,
@@ -119,10 +114,8 @@ function rejectUnknownKeys(
   errors: string[],
 ): void {
   const allow = new Set<string>(allowed);
-  for (const key of Object.keys(raw)) {
-    if (!allow.has(key)) {
-      errors.push(`${path}: unknown key ${quoteToken(key)}`);
-    }
+  if (Object.keys(raw).some((key) => !allow.has(key))) {
+    errors.push(`${path}: contains unknown keys`);
   }
 }
 
@@ -189,7 +182,7 @@ function validateSubject(
   path: string,
   errors: string[],
 ): SubjectRef | undefined {
-  const data = snapshotDataRecord(raw, path, errors);
+  const data = snapshotDataRecord(raw, path, errors, SUBJECT_KEYS.length);
   if (data === undefined) return undefined;
   const unknownBefore = errors.length;
   rejectUnknownKeys(data, path, SUBJECT_KEYS, errors);
@@ -233,7 +226,7 @@ function validateAttachment(
   path: string,
   errors: string[],
 ): AttachmentRef | undefined {
-  const data = snapshotDataRecord(raw, path, errors);
+  const data = snapshotDataRecord(raw, path, errors, ATTACHMENT_KEYS.length);
   if (data === undefined) return undefined;
   const unknownBefore = errors.length;
   rejectUnknownKeys(data, path, ATTACHMENT_KEYS, errors);
@@ -296,7 +289,7 @@ function rejectDuplicateSubjects(subjects: SubjectRef[], errors: string[]): void
     const key = `${subject.subject_id}\0${subject.role}`;
     if (seen.has(key)) {
       errors.push(
-        `subjects: duplicate subject_id ${quoteToken(subject.subject_id)} with role ${subject.role}`,
+        "subjects: duplicate subject and role",
       );
       continue;
     }
@@ -312,7 +305,7 @@ function rejectDuplicateAttachments(
   for (const attachment of attachments) {
     if (seen.has(attachment.attachment_id)) {
       errors.push(
-        `attachments: duplicate attachment_id ${quoteToken(attachment.attachment_id)}`,
+        "attachments: duplicate attachment identifier",
       );
       continue;
     }
@@ -338,7 +331,7 @@ export function validateEventInput(
 
 function validateSnapshot(raw: unknown): ValidationResult<CaptureEventInput> {
   const errors: string[] = [];
-  const input = snapshotDataRecord(raw, "event", errors);
+  const input = snapshotDataRecord(raw, "event", errors, EVENT_INPUT_KEYS.length);
   if (input === undefined) return { ok: false, errors };
   rejectUnknownKeys(input, "event", EVENT_INPUT_KEYS, errors);
 

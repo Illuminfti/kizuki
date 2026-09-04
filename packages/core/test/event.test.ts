@@ -319,37 +319,37 @@ describe("validateEventInput rejects", () => {
     [
       "nested metadata Date",
       { ...rawEvent(), metadata: { when: new Date("2026-01-01T00:00:00Z") } },
-      "metadata.when",
+      "metadata.field[0]",
     ],
     [
       "nested metadata Map",
       { ...rawEvent(), metadata: { bag: new Map() } },
-      "metadata.bag",
+      "metadata.field[0]",
     ],
     [
       "nested metadata BigInt",
       { ...rawEvent(), metadata: { n: 1n } },
-      "metadata.n",
+      "metadata.field[0]",
     ],
     [
       "nested metadata undefined",
       { ...rawEvent(), metadata: { gap: undefined } },
-      "metadata.gap",
+      "metadata.field[0]",
     ],
     [
       "nested metadata function",
       { ...rawEvent(), metadata: { fn: () => 1 } },
-      "metadata.fn",
+      "metadata.field[0]",
     ],
     [
       "non-finite metadata number",
       { ...rawEvent(), metadata: { n: Number.POSITIVE_INFINITY } },
-      "metadata.n",
+      "metadata.field[0]",
     ],
     [
       "NaN metadata number",
       { ...rawEvent(), metadata: { n: Number.NaN } },
-      "metadata.n",
+      "metadata.field[0]",
     ],
     [
       "a __proto__ metadata key",
@@ -401,13 +401,7 @@ describe("validateEventInput normalization", () => {
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("unreachable");
-    expect(result.errors.some((error) => error.includes('"content_hash"'))).toBe(
-      true,
-    );
-    expect(result.errors.some((error) => error.includes('"event_id"'))).toBe(
-      true,
-    );
-    expect(result.errors.some((error) => error.includes('"rogue"'))).toBe(true);
+    expect(result.errors).toEqual([`event: exceeds max key count 12`]);
   });
 
   test("snapshots metadata so later mutation cannot change the accepted value", () => {
@@ -606,7 +600,7 @@ describe("validateEventInput resource limits", () => {
         ...rawEvent(),
         metadata: { blob: "x".repeat(EVENT_LIMITS.metadataStringBytes + 1) },
       }),
-      "metadata.blob",
+      "metadata.field[0]",
     ],
     [
       "metadata string at the byte limit",
@@ -622,7 +616,7 @@ describe("validateEventInput resource limits", () => {
         ...rawEvent(),
         metadata: { list: Array.from({ length: EVENT_LIMITS.metadataArrayLength + 1 }, () => 1) },
       }),
-      "metadata.list",
+      "metadata.field[0]",
     ],
     [
       "metadata object one past the key-count limit",
@@ -794,4 +788,40 @@ describe("event input remains passive data", () => {
     }
     expect(Object.isFrozen(EVENT_LIMITS)).toBe(true);
   });
+});
+
+
+test("event validation errors never echo caller keys or identifiers", () => {
+  const canary = "private-canary-\u001b[31m";
+  const cases = [
+    { ...rawEvent(), [canary]: "value" },
+    { ...rawEvent(), metadata: { [canary]: undefined } },
+    { ...rawEvent(), subjects: [{ subject_id: canary, role: "from" }, { subject_id: canary, role: "from" }] },
+    { ...rawEvent(), attachments: [{ attachment_id: canary, media_type: "text/plain" }, { attachment_id: canary, media_type: "text/plain" }] },
+  ];
+  for (const value of cases) {
+    const result = validateEventInput(value);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.errors.join("\n")).not.toContain(canary);
+    expect(result.errors.join("\n")).not.toContain("\u001b");
+    expect(JSON.stringify(result)).not.toContain("private-canary");
+  }
+});
+
+test("oversized record shapes and invalid metadata return bounded errors", () => {
+  const extra = Object.fromEntries(Array.from({ length: 10_000 }, (_, i) => [`key-${i}`, null]));
+  const cases = [
+    { ...rawEvent(), ...extra },
+    { ...rawEvent(), subjects: [{ subject_id: "ada", role: "from", ...extra }] },
+    { ...rawEvent(), attachments: [{ attachment_id: "a", media_type: "text/plain", ...extra }] },
+    { ...rawEvent(), metadata: { nested: Array.from({ length: 1024 }, () => undefined) } },
+  ];
+  for (const value of cases) {
+    const result = validateEventInput(value);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors.join(" ").length).toBeLessThan(128);
+  }
 });

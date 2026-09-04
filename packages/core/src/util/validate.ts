@@ -37,7 +37,7 @@ export function snapshotDataRecord(
   value: unknown,
   path: string,
   errors: string[],
-  maxKeys = Number.MAX_SAFE_INTEGER,
+  maxKeys: number,
 ): Record<string, unknown> | undefined {
   if (!isPlainObject(value)) {
     errors.push(`${path}: must be a plain object`);
@@ -212,7 +212,6 @@ function cloneArray(
   stack.add(value);
   charge(budget, 2, path, limits, errors);
   const items: ExactJson[] = [];
-  let failed = false;
   for (let index = 0; index < snapshot.length; index += 1) {
     if (index > 0) charge(budget, 1, path, limits, errors);
     const item = walkExactJson(
@@ -224,11 +223,14 @@ function cloneArray(
       budget,
       stack,
     );
-    if (item === undefined) failed = true;
-    else items.push(item);
+    if (item === undefined) {
+      stack.delete(value);
+      return undefined;
+    }
+    items.push(item);
   }
   stack.delete(value);
-  return failed ? undefined : Object.freeze(items) as ExactJson[];
+  return Object.freeze(items) as ExactJson[];
 }
 
 function cloneObject(
@@ -247,24 +249,23 @@ function cloneObject(
   stack.add(value);
   charge(budget, 2, path, limits, errors);
   const out = Object.create(null) as { [key: string]: ExactJson };
-  let failed = false;
   for (let index = 0; index < keys.length; index += 1) {
     const key = keys[index]!;
     if (FORBIDDEN_KEYS.has(key)) {
-      errors.push(`${path}: key ${quoteToken(key)} is not allowed`);
-      failed = true;
-      continue;
+      errors.push(`${path}: reserved key is not allowed`);
+      stack.delete(value);
+      return undefined;
     }
     if (utf8ByteLength(key) > limits.maxKeyBytes) {
       errors.push(`${path}: key exceeds ${limits.maxKeyBytes} UTF-8 bytes`);
-      failed = true;
-      continue;
+      stack.delete(value);
+      return undefined;
     }
     if (index > 0) charge(budget, 1, path, limits, errors);
     charge(budget, utf8ByteLength(JSON.stringify(key)) + 1, path, limits, errors);
     const cloned = walkExactJson(
       snapshot[key],
-      `${path}.${clipPathKey(key)}`,
+      `${path}.field[${index}]`,
       depth + 1,
       limits,
       errors,
@@ -272,8 +273,8 @@ function cloneObject(
       stack,
     );
     if (cloned === undefined) {
-      failed = true;
-      continue;
+      stack.delete(value);
+      return undefined;
     }
     Object.defineProperty(out, key, {
       value: cloned,
@@ -283,7 +284,7 @@ function cloneObject(
     });
   }
   stack.delete(value);
-  return failed ? undefined : Object.freeze(out);
+  return Object.freeze(out);
 }
 
 function charge(
@@ -298,13 +299,4 @@ function charge(
     budget.overflowed = true;
     errors.push(`${path}: exceeds ${limits.maxTotalBytes} UTF-8 bytes`);
   }
-}
-
-function clipPathKey(key: string): string {
-  return key.length > 32 ? `${key.slice(0, 32)}...` : key;
-}
-
-function quoteToken(value: string): string {
-  const clipped = value.length > 64 ? `${value.slice(0, 64)}...` : value;
-  return JSON.stringify(clipped);
 }
