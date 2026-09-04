@@ -279,6 +279,42 @@ describe("checkRate", () => {
 });
 
 describe("reserveAudit", () => {
+  test("retry_after accounts for the reserved denial row", () => {
+    const { db, principal } = principalWithRate(3);
+    const base = Date.parse("2026-03-01T12:00:00.000Z");
+    for (let index = 0; index < 3; index += 1) {
+      recordAudit(
+        db,
+        principal,
+        "search",
+        { index },
+        [],
+        [],
+        new Date(base + index * 1_000).toISOString(),
+      );
+    }
+    const denied = reserveAudit(
+      db,
+      principal,
+      "search",
+      {},
+      "2026-03-01T12:00:04.000Z",
+    );
+    expect(denied).toMatchObject({ allow: false, reason: "rate_limited" });
+    if (denied.allow) throw new Error("expected rate limit");
+    // Four access rows, limit 3: the second-oldest (12:00:01) must expire.
+    expect(denied.retry_after_seconds).toBe(57);
+    expect(
+      checkRate(db, principal, "search", "2026-03-01T12:01:00.000Z").allow,
+    ).toBe(false);
+    const retryAt = new Date(
+      Date.parse("2026-03-01T12:00:04.000Z") +
+        denied.retry_after_seconds * 1_000,
+    ).toISOString();
+    expect(reserveAudit(db, principal, "search", {}, retryAt).allow).toBe(true);
+    db.close();
+  });
+
   test("serialized callers cannot share the last slot", () => {
     const directory = mkdtempSync(join(tmpdir(), "kizuki-rate-"));
     const path = join(directory, "agents.sqlite");

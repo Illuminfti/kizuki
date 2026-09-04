@@ -452,6 +452,45 @@ describe("corrupt identity isolation", () => {
     expect(repaired.ceiling).toBe("personal");
     db.close();
   });
+
+  test("a concurrent reader does not re-quarantine a repaired grant", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-repair-race-"));
+    const path = join(directory, "agents.sqlite");
+    try {
+      const writer = new Database(path, { create: true });
+      initAgents(writer);
+      const created = addAgent(writer, "reader-1");
+      writer
+        .query("UPDATE agent_grants SET tools = ? WHERE agent_id = ?")
+        .run('["not-a-tool"]', created.agent.agent_id);
+
+      const reader = new Database(path);
+      const stale = reader
+        .query<{ agent_id: string; grant_epoch: number }, []>(
+          "SELECT agent_id, grant_epoch FROM agent_grants",
+        )
+        .get();
+      if (stale === undefined) throw new Error("expected grant row");
+
+      setGrant(writer, "reader-1", { tools: ["search"] });
+      expect(authenticate(writer, created.token)?.kind).toBe("agent");
+
+      // Stale snapshot: invalid grant, epoch 1. The quarantine write must
+      // re-read and no-op once setGrant has moved the epoch.
+      resolvePrincipal(reader, {
+        kind: "agent",
+        agent: created.agent,
+        grant: DEFAULT_GRANT,
+        grant_epoch: stale.grant_epoch,
+      });
+      expect(listQuarantinedAgents(writer)).toEqual([]);
+      expect(authenticate(reader, created.token)?.grant.tools).toEqual(["search"]);
+      reader.close();
+      writer.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("lifecycle audit", () => {

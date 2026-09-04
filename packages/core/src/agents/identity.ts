@@ -285,15 +285,6 @@ function grantEpoch(row: AgentGrantRow): number {
     : 1;
 }
 
-function quarantine(db: Database, agentId: string, at: string): void {
-  db.query<never, [string, string, string]>(
-    `UPDATE agents
-        SET quarantined_at = coalesce(quarantined_at, ?),
-            quarantine_reason = coalesce(quarantine_reason, ?)
-      WHERE agent_id = ?`,
-  ).run(at, "invalid_grant", agentId);
-}
-
 function principalFromRow(row: AgentGrantRow): Principal | null {
   if (row.revoked_at !== null || row.quarantined_at !== null) return null;
   const grant = tryDecodeGrant(row);
@@ -316,6 +307,22 @@ function grantRowById(db: Database, agentId: string): AgentGrantRow | null {
   return db
     .query<AgentGrantRow, [string]>(`${AGENT_GRANT_SELECT} WHERE a.agent_id = ?`)
     .get(agentId);
+}
+
+function quarantineIfInvalid(db: Database, agentId: string, at: string): void {
+  db.transaction(() => {
+    const row = grantRowById(db, agentId);
+    if (row === null || row.revoked_at !== null || row.quarantined_at !== null) {
+      return;
+    }
+    if (tryDecodeGrant(row) !== null) return;
+    db.query<never, [string, string, string]>(
+      `UPDATE agents
+          SET quarantined_at = coalesce(quarantined_at, ?),
+              quarantine_reason = coalesce(quarantine_reason, ?)
+        WHERE agent_id = ? AND quarantined_at IS NULL`,
+    ).run(at, "invalid_grant", agentId);
+  }).immediate();
 }
 
 function writeGrant(
@@ -406,7 +413,7 @@ export function authenticate(db: Database, token: string): Principal | null {
   const principal = principalFromRow(match);
   if (principal !== null) return principal;
   if (match.revoked_at === null && match.quarantined_at === null) {
-    quarantine(db, match.agent_id, new Date().toISOString());
+    quarantineIfInvalid(db, match.agent_id, new Date().toISOString());
   }
   return null;
 }
@@ -425,7 +432,7 @@ export function resolvePrincipal(
   const resolved = principalFromRow(row);
   if (resolved !== null) return resolved;
   if (row.revoked_at === null && row.quarantined_at === null) {
-    quarantine(db, row.agent_id, new Date().toISOString());
+    quarantineIfInvalid(db, row.agent_id, new Date().toISOString());
   }
   return null;
 }
@@ -447,7 +454,7 @@ export function listAgents(db: Database): (Agent & { grant: Grant })[] {
     const grant = tryDecodeGrant(row);
     if (grant === null) {
       if (row.quarantined_at === null) {
-        quarantine(db, row.agent_id, new Date().toISOString());
+        quarantineIfInvalid(db, row.agent_id, new Date().toISOString());
       }
       continue;
     }

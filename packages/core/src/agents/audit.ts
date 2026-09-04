@@ -314,20 +314,25 @@ export function reserveAudit(
       } => {
     const rate = checkRate(db, principal, tool, stamped);
     if (!rate.allow) {
+      const audit_id = insertAudit(
+        db,
+        agentId,
+        tool,
+        args,
+        [],
+        [{ id: `tool:${tool}`, reason: "rate_limited" }],
+        stamped,
+        grantEpochOf(principal),
+      );
+      const retry = checkRate(db, principal, tool, stamped);
+      if (retry.allow) {
+        throw new Error("rate_limited reserve must still be limited after its row");
+      }
       return {
         allow: false,
         reason: "rate_limited",
-        retry_after_seconds: rate.retry_after_seconds,
-        audit_id: insertAudit(
-          db,
-          agentId,
-          tool,
-          args,
-          [],
-          [{ id: `tool:${tool}`, reason: "rate_limited" }],
-          stamped,
-          grantEpochOf(principal),
-        ),
+        retry_after_seconds: retry.retry_after_seconds,
+        audit_id,
       };
     }
     return {
