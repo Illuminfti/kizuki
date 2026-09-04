@@ -1,7 +1,7 @@
 import {
-  checkRate,
-  listAgents,
   recordAudit,
+  reserveAudit,
+  resolvePrincipal,
   toolAllowed,
   updateAudit,
 } from "../agents";
@@ -179,12 +179,9 @@ function auditRefusal(
  * connection without waiting for a restart.
  */
 function liveContext(ctx: ServeContext): ServeContext | null {
-  if (ctx.principal.kind === "owner") return ctx;
-  const agentId = ctx.principal.agent.agent_id;
-  const current = listAgents(ctx.db).find((row) => row.agent_id === agentId);
-  if (current === undefined || current.revoked_at !== null) return null;
-  const { grant, ...agent } = current;
-  return { ...ctx, principal: { kind: "agent", agent, grant } };
+  const current = resolvePrincipal(ctx.db, ctx.principal);
+  if (current === null) return null;
+  return { ...ctx, principal: current };
 }
 
 function servedItems(canon: CanonChunk[], quoted: QuotedChunk[]): AuditItem[] {
@@ -192,10 +189,16 @@ function servedItems(canon: CanonChunk[], quoted: QuotedChunk[]): AuditItem[] {
     ...canon.map((chunk) => ({
       id: chunk.page_id,
       sensitivity: chunk.sensitivity,
+      taint: chunk.taint,
+      authority: chunk.authority,
+      provenance_count: chunk.sources.length,
     })),
     ...quoted.map((chunk) => ({
       id: chunk.event_id,
       sensitivity: chunk.sensitivity,
+      taint: "quoted",
+      authority: null,
+      provenance_count: 1,
     })),
   ];
 }
@@ -218,28 +221,14 @@ function reserve(
   bag: () => Record<string, unknown>,
   at: string,
 ): Reservation {
-  return live.db.transaction((): Reservation => {
-    const rate = checkRate(live.db, live.principal, tool, at);
-    if (!rate.allow) {
-      recordAudit(
-        live.db,
-        live.principal,
-        tool,
-        bag(),
-        [],
-        [{ id: `tool:${tool}`, reason: "rate_limited" }],
-        at,
-      );
-      return {
-        kind: "rate_limited",
-        retry_after_seconds: rate.retry_after_seconds,
-      };
-    }
+  const reserved = reserveAudit(live.db, live.principal, tool, bag(), at);
+  if (!reserved.allow) {
     return {
-      kind: "reserved",
-      audit_id: recordAudit(live.db, live.principal, tool, bag(), [], [], at),
+      kind: "rate_limited",
+      retry_after_seconds: reserved.retry_after_seconds,
     };
-  })();
+  }
+  return { kind: "reserved", audit_id: reserved.audit_id };
 }
 
 interface Entered {

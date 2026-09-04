@@ -174,8 +174,20 @@ describe("the serving gate", () => {
     expect(shape.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(row?.query_shape["limit"]).toBe(20);
     expect(row?.served).toEqual([
-      { id: "person:ada", sensitivity: "public" },
-      { id: QUOTED.event_id, sensitivity: "personal" },
+      {
+        id: new Bun.CryptoHasher("sha256").update("person:ada").digest("hex"),
+        sensitivity: "public",
+        taint: "clean",
+        authority: null,
+        provenance_count: 0,
+      },
+      {
+        id: new Bun.CryptoHasher("sha256").update(QUOTED.event_id).digest("hex"),
+        sensitivity: "personal",
+        taint: "quoted",
+        authority: null,
+        provenance_count: 1,
+      },
     ]);
   });
 
@@ -194,8 +206,12 @@ describe("the serving gate", () => {
       }),
     );
     const row = listAudit(fixture.db, "reader-private", { limit: 1 })[0];
+    const proposalId = "01J00000000000000000000PRO";
     expect(row?.query_shape["proposal_ids"]).toEqual([
-      "01J00000000000000000000PRO",
+      {
+        len: proposalId.length,
+        sha256: new Bun.CryptoHasher("sha256").update(proposalId).digest("hex"),
+      },
     ]);
   });
 

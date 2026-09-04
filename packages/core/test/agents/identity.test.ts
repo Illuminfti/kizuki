@@ -5,15 +5,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   DEFAULT_GRANT,
+  OWNER,
+  OWNER_AGENT_GRANT,
   TOOLS,
   addAgent,
   authenticate,
   getAgent,
   initAgents,
   listAgents,
+  listAudit,
+  listQuarantinedAgents,
+  resolvePrincipal,
   revokeAgent,
   rotateToken,
   setGrant,
+  toolAllowed,
 } from "../../src/agents";
 import type { Grant } from "../../src/agents";
 import { agentsDb } from "./helpers";
@@ -73,6 +79,7 @@ describe("agent identity", () => {
       kind: "agent",
       agent: created.agent,
       grant: DEFAULT_GRANT,
+      grant_epoch: 1,
     });
     db.close();
   });
@@ -255,6 +262,10 @@ describe("grants", () => {
     ["tool", { tools: ["write_page" as (typeof TOOLS)[number]] }],
     ["zero rate", { rate_limit_per_minute: 0 }],
     ["fractional rate", { rate_limit_per_minute: 1.5 }],
+    ["huge rate", { rate_limit_per_minute: 1_001 }],
+    ["unsafe rate", { rate_limit_per_minute: Number.MAX_SAFE_INTEGER + 1 }],
+    ["duplicate-looking type token", { types: ["Person"] }],
+    ["oversized subject", { subjects: [`person:${"a".repeat(200)}`] }],
     ["since timestamp", { since: "yesterday" }],
     ["until timestamp", { until: "2026-02-30T00:00:00Z" }],
     [
@@ -287,6 +298,127 @@ describe("grants", () => {
     expect(() => setGrant(db, "missing-reader", {})).toThrow(/does not exist/);
     expect(() => revokeAgent(db, "missing-reader")).toThrow(/does not exist/);
     expect(() => rotateToken(db, "missing-reader")).toThrow(/does not exist/);
+    db.close();
+  });
+
+  test("deduplicates scope tokens and bumps the grant epoch", () => {
+    const db = agentsDb();
+    addAgent(db, "reader-1", {
+      types: ["person", "person", "fact"],
+      subjects: ["person:ada", "person:ada"],
+    });
+    const grant = setGrant(db, "reader-1", { ceiling: "public" });
+    expect(grant.types).toEqual(["person", "fact"]);
+    expect(grant.subjects).toEqual(["person:ada"]);
+    const created = authenticate(db, addAgent(db, "reader-2").token);
+    expect(created?.kind === "agent" ? created.grant_epoch : 0).toBe(1);
+    db.close();
+  });
+});
+
+describe("immutable grant constants", () => {
+  test("exported defaults cannot be mutated in place", () => {
+    expect(() => {
+      (DEFAULT_GRANT.tools as string[]).push("correct");
+    }).toThrow();
+    expect(() => {
+      (OWNER.grant.tools as string[]).push("search");
+    }).toThrow();
+    expect(() => {
+      (OWNER_AGENT_GRANT.tools as string[]).pop();
+    }).toThrow();
+    expect(DEFAULT_GRANT.tools.includes("correct")).toBe(false);
+    expect(OWNER.grant.tools).toEqual([...TOOLS]);
+  });
+});
+
+describe("stale principals", () => {
+  test("reloads revocation and a reduced grant on the next resolve", () => {
+    const db = agentsDb();
+    const { token } = addAgent(db, "reader-1", { tools: ["search", "correct"] });
+    const snapshot = authenticate(db, token);
+    if (snapshot === null || snapshot.kind !== "agent") {
+      throw new Error("expected agent");
+    }
+    expect(toolAllowed(snapshot.grant, "correct")).toBe(true);
+
+    setGrant(db, "reader-1", { tools: ["propose"] });
+    const reduced = resolvePrincipal(db, snapshot);
+    expect(reduced?.kind === "agent" ? reduced.grant.tools : []).toEqual(["propose"]);
+    expect(reduced?.kind === "agent" ? reduced.grant_epoch : 0).toBe(2);
+    expect(toolAllowed(snapshot.grant, "correct")).toBe(true);
+    expect(toolAllowed(reduced?.grant ?? snapshot.grant, "correct")).toBe(false);
+
+    revokeAgent(db, "reader-1");
+    expect(resolvePrincipal(db, snapshot)).toBeNull();
+    expect(authenticate(db, token)).toBeNull();
+    db.close();
+  });
+});
+
+describe("propose versus correct authority", () => {
+  test("the default grant may propose and must not correct", () => {
+    expect(toolAllowed(DEFAULT_GRANT, "propose")).toBe(true);
+    expect(toolAllowed(DEFAULT_GRANT, "correct")).toBe(false);
+    expect(toolAllowed(OWNER.grant, "correct")).toBe(true);
+    const db = agentsDb();
+    const { token } = addAgent(db, "reader-1");
+    const principal = authenticate(db, token);
+    expect(toolAllowed(principal?.grant ?? DEFAULT_GRANT, "correct")).toBe(false);
+    setGrant(db, "reader-1", {
+      tools: [...DEFAULT_GRANT.tools, "correct"],
+      relay_owner_corrections: false,
+    });
+    expect(authenticate(db, token)?.grant.relay_owner_corrections).toBe(false);
+    expect(toolAllowed(authenticate(db, token)?.grant ?? DEFAULT_GRANT, "correct")).toBe(
+      true,
+    );
+    db.close();
+  });
+});
+
+describe("corrupt identity isolation", () => {
+  test("a bad grant row quarantines that agent and leaves others usable", () => {
+    const db = agentsDb();
+    const good = addAgent(db, "reader-good");
+    const bad = addAgent(db, "reader-bad");
+    db.query("UPDATE agent_grants SET tools = ? WHERE agent_id = ?").run(
+      '["not-a-tool"]',
+      bad.agent.agent_id,
+    );
+
+    expect(authenticate(db, bad.token)).toBeNull();
+    expect(authenticate(db, good.token)?.kind).toBe("agent");
+    expect(listAgents(db).map((row) => row.name)).toEqual(["reader-good"]);
+    expect(listQuarantinedAgents(db)).toEqual([
+      expect.objectContaining({
+        name: "reader-bad",
+        reason: "invalid_grant",
+      }),
+    ]);
+    db.close();
+  });
+});
+
+describe("lifecycle audit", () => {
+  test("records create, grant, rotate, and revoke without policy bodies", () => {
+    const db = agentsDb();
+    addAgent(db, "reader-1");
+    setGrant(db, "reader-1", { ceiling: "public" });
+    rotateToken(db, "reader-1");
+    revokeAgent(db, "reader-1");
+    const actions = listAudit(db, "reader-1").map((row) => row.tool);
+    expect(actions).toEqual([
+      "agent.revoke",
+      "agent.rotate",
+      "agent.grant",
+      "agent.create",
+    ]);
+    const grantRow = listAudit(db, "reader-1").find((row) => row.tool === "agent.grant");
+    const shape = JSON.stringify(grantRow?.query_shape ?? {});
+    expect(shape).toContain("before_sha256");
+    expect(shape).toContain("after_sha256");
+    expect(shape).not.toContain("public");
     db.close();
   });
 });
