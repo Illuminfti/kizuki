@@ -33,6 +33,12 @@ Modifications marked relative to the public tip:
 - No telemetry, query cache, or network client.
 - No reranker and no local GGUF runtime (those remain Kizuki-own work).
 - Graph signals fail closed on unlabeled or over-ceiling nodes.
+- RRF keeps the vector-bearing representation when lexical and vector arms
+  contribute the same chunk, so cosine re-scoring cannot silently discard it.
+- Adjacency and type-diversity accounting are document-level; duplicate chunks
+  cannot impersonate independent documents or crowd distinct documents out.
+- Hop walks emit each stored edge once and report truncation only when another
+  eligible edge exists beyond the requested limit.
 
 The remainder of the upstream tree (CLI, admin UI, model SDKs, hosted
 cache, markdown mutation) is not vendored.

@@ -38,8 +38,15 @@ export function rrfFusion(
       if (existing !== undefined) {
         existing.score += rrfScore;
         if (candidate.keyword_hit) existing.keywordHit = true;
+        // Lexical recall can contribute a document-shaped row before vector
+        // recall contributes the same chunk key. Keep the vector-bearing
+        // chunk text and vector while preserving authoritative document data.
         if (existing.result.vector === null && candidate.vector !== null) {
-          existing.result = { ...existing.result, vector: candidate.vector };
+          existing.result = {
+            ...existing.result,
+            text: candidate.text,
+            vector: candidate.vector,
+          };
         }
         return;
       }
