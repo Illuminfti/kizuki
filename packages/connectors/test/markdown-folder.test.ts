@@ -268,9 +268,11 @@ describe("MarkdownFolderConnector", () => {
       const stuck = JSON.parse(first.cursor ?? "{}") as {
         phase: string;
         exhausted: boolean;
+        after: string | null;
       };
       stuck.phase = "tombstones";
       stuck.exhausted = false;
+      stuck.after = "zzz.md";
 
       await writeFile(path.join(root, "later.md"), "later\n");
       const second = await connector.sync(JSON.stringify(stuck));

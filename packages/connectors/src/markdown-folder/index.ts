@@ -204,12 +204,15 @@ export class MarkdownFolderConnector implements Connector {
       }
     }
 
-    // Phase is a pager hint. New or changed files always emit first; a
-    // leftover tombstones cursor must not swallow them.
+    // Phase is a pager hint. `after` is only a file watermark in phase
+    // files — a leftover tombstones cursor must not skip notes that sort
+    // before its deletion identity.
     const pagingTombstones =
       previous?.phase === "tombstones" && fileEvents.length === 0;
     const fileAfter =
-      pagingTombstones || previous?.exhausted ? null : (previous?.after ?? null);
+      previous?.phase === "files" && previous.exhausted !== true
+        ? (previous.after ?? null)
+        : null;
     const fileFrom = indexAfter(fileEvents, fileAfter);
     const filePage = pagingTombstones
       ? []
