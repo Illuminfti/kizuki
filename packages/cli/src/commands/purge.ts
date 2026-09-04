@@ -54,7 +54,7 @@ export const purgeCommand: Command = {
         const report = await verifyPurge(ctx.db, ctx.vaultPath, verifyId);
         if (asJson) {
           io.out(
-            jsonEnvelope(report.ok ? "purge" : "purge", report.ok ? "ok" : "error", {
+            jsonEnvelope("purge", report.ok ? "ok" : "error", {
               ...report,
               ops: report.proofs.map((proof) => ({
                 store: proof.store,
