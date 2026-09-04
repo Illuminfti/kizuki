@@ -423,10 +423,6 @@ function extractContent(content: unknown, location: string): ExtractedContent {
         : typeof part["type"] === "string"
           ? part["type"]
           : "unknown";
-    if (type === "text" || typeof part["text"] === "string") {
-      if (typeof part["text"] === "string") lines.push(part["text"]);
-      return;
-    }
     if (
       type === "image_asset_pointer" ||
       type === "image" ||
@@ -452,6 +448,13 @@ function extractContent(content: unknown, location: string): ExtractedContent {
           ? { byte_size: part["size_bytes"] }
           : {}),
       });
+      if (typeof part["text"] === "string" && part["text"].length > 0) {
+        lines.push(part["text"]);
+      }
+      return;
+    }
+    if (type === "text" || typeof part["text"] === "string") {
+      if (typeof part["text"] === "string") lines.push(part["text"]);
       return;
     }
     unsupported.push(type);

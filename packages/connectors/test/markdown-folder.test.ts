@@ -15,6 +15,7 @@ import {
   MARKDOWN_FOLDER_CONNECTOR_ID,
   createMarkdownFolderConnector,
 } from "../src";
+import { MAX_DEPTH } from "../src/markdown-folder";
 
 async function makeTempDir(): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), "kizuki-markdown-"));
@@ -379,6 +380,29 @@ describe("MarkdownFolderConnector", () => {
       ]);
     } finally {
       await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  test("a too-deep directory does not skip sibling files", async () => {
+    const root = await makeTempDir();
+    try {
+      const segments = Array.from({ length: MAX_DEPTH + 1 }, (_, i) => `d${i}`);
+      const buriedDir = path.join(root, ...segments);
+      const limitDir = path.join(root, ...segments.slice(0, MAX_DEPTH));
+      await mkdir(buriedDir, { recursive: true });
+      await writeFile(path.join(buriedDir, "buried.md"), "too deep\n");
+      await writeFile(path.join(limitDir, "at-limit.md"), "in bound\n");
+      await writeFile(path.join(root, "zzz.md"), "sibling\n");
+      const connector = createMarkdownFolderConnector({ path: root });
+      const batch = await connector.backfill(null);
+      expect(batch.events.map((event) => event.source_record_id).sort()).toEqual(
+        [`${segments.slice(0, MAX_DEPTH).join("/")}/at-limit.md`, "zzz.md"],
+      );
+      const health = await connector.health();
+      expect(health.state).toBe("degraded");
+      expect(health.detail ?? "").toContain("depth");
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   });
 

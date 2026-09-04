@@ -377,7 +377,6 @@ async function scanMarkdownFiles(
         code: "depth",
         reason: "directory exceeds the scan depth limit",
       });
-      truncated = true;
       return;
     }
     let entries;

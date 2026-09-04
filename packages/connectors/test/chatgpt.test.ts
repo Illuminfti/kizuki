@@ -165,6 +165,81 @@ describe("parseChatGptExport", () => {
     ]);
   });
 
+  test("a captioned image part keeps the attachment", () => {
+    const result = parseChatGptExport(
+      JSON.stringify([
+        {
+          id: "c1",
+          mapping: {
+            n1: {
+              message: {
+                author: { role: "user" },
+                content: {
+                  parts: [
+                    {
+                      content_type: "image_asset_pointer",
+                      text: "a photo",
+                      asset_pointer: "file-service://img-2",
+                      size_bytes: 8,
+                    },
+                  ],
+                },
+                create_time: 1_700_000_000,
+              },
+            },
+          },
+        },
+      ]),
+      OBSERVED_AT,
+    );
+    expect(result.errors).toEqual([]);
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]?.text).toBe("a photo");
+    expect(result.events[0]?.attachments).toEqual([
+      {
+        attachment_id: "file-service://img-2",
+        media_type: "image/*",
+        byte_size: 8,
+      },
+    ]);
+  });
+
+  test("an image-only part with empty text is still an attachment", () => {
+    const result = parseChatGptExport(
+      JSON.stringify([
+        {
+          id: "c1",
+          mapping: {
+            n1: {
+              message: {
+                author: { role: "user" },
+                content: {
+                  parts: [
+                    {
+                      content_type: "image_asset_pointer",
+                      text: "",
+                      asset_pointer: "file-service://img-3",
+                    },
+                  ],
+                },
+                create_time: 1_700_000_000,
+              },
+            },
+          },
+        },
+      ]),
+      OBSERVED_AT,
+    );
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]?.text).toBe("");
+    expect(result.events[0]?.attachments).toEqual([
+      {
+        attachment_id: "file-service://img-3",
+        media_type: "image/*",
+      },
+    ]);
+  });
+
   test("slash-containing conversation and node ids do not collide", () => {
     const result = parseChatGptExport(
       JSON.stringify([
