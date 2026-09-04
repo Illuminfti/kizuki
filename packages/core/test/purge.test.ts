@@ -1,13 +1,23 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CaptureEventInput } from "../src/contracts/event";
 import { initGraph } from "../src/graph/schema";
 import { openLedger } from "../src/ledger/db";
 import { accept, count, readSince } from "../src/ledger/ledger";
-import { purgeEvents } from "../src/ledger/purge";
+import {
+  PURGE_REASON_MAX_BYTES,
+  PurgeError,
+  listHistoricalConnectorIds,
+  normalizePurgeReason,
+  previewPurge,
+  purgeEvents,
+  resolvePurgeConnectorId,
+  runPurge,
+} from "../src/ledger/purge";
+import { tableExists } from "../src/ledger/schema";
 import { indexEvent } from "../src/search/indexer";
 import { initSearch } from "../src/search/schema";
 import {
@@ -15,6 +25,7 @@ import {
   getProposal,
   initStaging,
 } from "../src/staging/proposals";
+import { serializePage } from "../src/vault/frontmatter";
 import { initVault } from "../src/vault/init";
 import { validEvent } from "./fixtures";
 
@@ -114,21 +125,40 @@ describe("purgeEvents", () => {
     db.close();
   });
 
-  test("rejects an empty filter and returns an empty outcome for no matches", () => {
+  test("rejects an empty filter and treats no matches as a non-success", () => {
     const db = openLedger(":memory:");
     storedEvent(db, validEvent());
     const vaultPath = temporaryVault();
+    expect(() => purgeEvents(db, vaultPath, {}, "unsafe")).toThrow(PurgeError);
     expect(() => purgeEvents(db, vaultPath, {}, "unsafe")).toThrow("filter");
+    try {
+      purgeEvents(db, vaultPath, { connector_id: "missing" }, "no match");
+      throw new Error("expected no_match");
+    } catch (error) {
+      expect(error).toBeInstanceOf(PurgeError);
+      expect((error as PurgeError).code).toBe("no_match");
+      expect((error as PurgeError).message).toContain("connector_id=missing");
+    }
     expect(
-      purgeEvents(db, vaultPath, { connector_id: "missing" }, "no match"),
+      purgeEvents(
+        db,
+        vaultPath,
+        { connector_id: "missing" },
+        "no match",
+        { allow_empty: true },
+      ),
     ).toEqual({
       receipts: [],
       withdrawn_proposals: [],
       canon_holds: [],
       purge_ops: [],
       rewritten: [],
+      uncertain_pages: [],
     });
     expect(count(db)).toBe(1);
+    expect(
+      db.query<{ n: number }, []>("SELECT count(*) AS n FROM event_purges").get(),
+    ).toEqual({ n: 0 });
     db.close();
   });
 
@@ -172,18 +202,32 @@ describe("purgeEvents", () => {
     db.close();
   });
 
-  test("refuses to purge while a canon page cannot be read", () => {
+  test("holds an unreadable page and still deletes matching events", async () => {
     const db = openLedger(":memory:");
     const target = storedEvent(db, event("target"));
     const vaultPath = temporaryVault();
     writeFileSync(join(vaultPath, "facts", "orphan.md"), "no frontmatter\n");
-    expect(() =>
-      purgeEvents(db, vaultPath, { event_id: target.event_id }, "record request"),
-    ).toThrow(/purge refused/);
-    expect(count(db)).toBe(1);
+    const outcome = await runPurge(
+      db,
+      vaultPath,
+      { event_id: target.event_id },
+      "record request",
+    );
+    expect(outcome.receipts.map(({ event_id }) => event_id)).toEqual([
+      target.event_id,
+    ]);
+    expect(outcome.uncertain_pages).toEqual(["facts/orphan.md"]);
+    expect(outcome.canon_holds.map(({ page_path }) => page_path)).toEqual([
+      "facts/orphan.md",
+    ]);
+    expect(outcome.rewritten).toEqual([]);
+    expect(count(db)).toBe(0);
     expect(
       db.query<{ n: number }, []>("SELECT count(*) AS n FROM event_purges").get(),
-    ).toEqual({ n: 0 });
+    ).toEqual({ n: 1 });
+    expect(
+      db.query<{ n: number }, []>("SELECT count(*) AS n FROM canon_holds").get(),
+    ).toEqual({ n: 1 });
     db.close();
   });
 
@@ -215,6 +259,153 @@ describe("purgeEvents", () => {
     expect(
       db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM graph_edges").get(),
     ).toEqual({ count: 0 });
+    db.close();
+  });
+
+  test("does not create search or graph tables on a ledger-only vault", () => {
+    const db = openLedger(":memory:");
+    const target = storedEvent(db, event("target"));
+    const vaultPath = temporaryVault();
+    expect(tableExists(db, "search_docs")).toBe(false);
+    expect(tableExists(db, "graph_edges")).toBe(false);
+    const outcome = purgeEvents(
+      db,
+      vaultPath,
+      { event_id: target.event_id },
+      "record request",
+    );
+    expect(outcome.receipts).toHaveLength(1);
+    expect(outcome.purge_ops).toEqual([]);
+    expect(tableExists(db, "search_docs")).toBe(false);
+    expect(tableExists(db, "graph_edges")).toBe(false);
+    expect(
+      existsSync(
+        join(
+          vaultPath,
+          ".kizuki",
+          "retrieval",
+          "kizuki.retrieval.fts5",
+          "store",
+          "retrieval.db",
+        ),
+      ),
+    ).toBe(false);
+    db.close();
+  });
+
+  test("requires a bounded non-empty reason", () => {
+    expect(() => normalizePurgeReason("")).toThrow(PurgeError);
+    expect(() => normalizePurgeReason("   ")).toThrow("non-empty");
+    expect(() => normalizePurgeReason("line\nbreak")).toThrow("control");
+    expect(() => normalizePurgeReason("a".repeat(PURGE_REASON_MAX_BYTES + 1))).toThrow(
+      "UTF-8",
+    );
+    expect(normalizePurgeReason("  owner request  ")).toBe("owner request");
+    const db = openLedger(":memory:");
+    storedEvent(db, event("target"));
+    const vaultPath = temporaryVault();
+    expect(() => purgeEvents(db, vaultPath, { connector_id: "mail" }, "")).toThrow(
+      PurgeError,
+    );
+    expect(count(db)).toBe(1);
+    db.close();
+  });
+
+  test("resolves retired connector ids from the ledger, not a registry", () => {
+    const db = openLedger(":memory:");
+    storedEvent(db, event("retired", { connector_id: "retired.mail" }));
+    storedEvent(db, event("folder", { connector_id: "kizuki.markdown-folder" }));
+    expect(listHistoricalConnectorIds(db)).toEqual([
+      "kizuki.markdown-folder",
+      "retired.mail",
+    ]);
+    expect(resolvePurgeConnectorId(db, "retired.mail")).toBe("retired.mail");
+    expect(resolvePurgeConnectorId(db, "markdown-folder")).toBe(
+      "kizuki.markdown-folder",
+    );
+    const receipts = purgeEvents(
+      db,
+      temporaryVault(),
+      { connector_id: resolvePurgeConnectorId(db, "retired.mail") },
+      "connector removed",
+    ).receipts;
+    expect(receipts.map(({ connector_id }) => connector_id)).toEqual(["retired.mail"]);
+    expect(count(db)).toBe(1);
+    db.close();
+  });
+
+  test("preview reports a bounded plan without writing", () => {
+    const db = openLedger(":memory:");
+    const first = storedEvent(db, event("a", { connector_id: "mail" }));
+    storedEvent(db, event("b", { connector_id: "mail" }));
+    storedEvent(db, event("keep", { connector_id: "calendar" }));
+    const vaultPath = temporaryVault();
+    const preview = previewPurge(
+      db,
+      vaultPath,
+      { connector_id: "mail" },
+      "  account erased  ",
+    );
+    expect(preview.reason).toBe("account erased");
+    expect(preview.event_count).toBe(2);
+    expect(preview.event_ids).toContain(first.event_id);
+    expect(preview.connector_ids).toEqual(["mail"]);
+    expect(preview.search).toBe("not_configured");
+    expect(preview.graph).toBe("not_configured");
+    expect(preview.retrieval).toBe("not_configured");
+    expect(count(db)).toBe(3);
+    expect(
+      db.query<{ n: number }, []>("SELECT count(*) AS n FROM event_purges").get(),
+    ).toEqual({ n: 0 });
+    db.close();
+  });
+
+  test("matches page sources with a set, not a nested scan", () => {
+    const db = openLedger(":memory:");
+    const vaultPath = temporaryVault();
+    const purged: string[] = [];
+    for (let index = 0; index < 80; index += 1) {
+      purged.push(
+        storedEvent(db, event(`mail-${index}`, { connector_id: "mail" })).event_id,
+      );
+    }
+    storedEvent(db, event("keep", { connector_id: "calendar" }));
+    const wanted = new Set(purged);
+    writeFileSync(
+      join(vaultPath, "facts", "hub.md"),
+      serializePage({
+        data: {
+          id: "page-hub",
+          title: "hub",
+          type: "fact",
+          status: "active",
+          sensitivity: "personal",
+          taint: "clean",
+          sources: ["unrelated", purged[purged.length - 1]],
+        },
+        body: "hub page\n",
+      }),
+      "utf8",
+    );
+    const started = performance.now();
+    const outcome = purgeEvents(
+      db,
+      vaultPath,
+      { connector_id: "mail" },
+      "account erased",
+    );
+    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(outcome.receipts).toHaveLength(80);
+    expect(outcome.canon_holds.map(({ page_path }) => page_path)).toEqual([
+      "facts/hub.md",
+    ]);
+    expect(count(db)).toBe(1);
+    expect(
+      db
+        .query<{ event_id: string }, []>("SELECT event_id FROM events")
+        .all()
+        .every((row) => !wanted.has(row.event_id)),
+    ).toBe(true);
     db.close();
   });
 });

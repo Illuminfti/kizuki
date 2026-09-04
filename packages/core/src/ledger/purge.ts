@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { applyPurgeRewrite } from "../canon/apply";
 import type { CanonIo } from "../canon";
@@ -6,17 +7,50 @@ import { getClaim, listClaims, markClaimsAfterPurge } from "../claims/store";
 import { PortError } from "../contracts/ports";
 import type { Claim } from "../contracts/proposal";
 import type { AbsenceProof, RetrievalPort } from "../contracts/retrieval";
-import { initGraph } from "../graph/schema";
-import { FTS5_RETRIEVAL_ID, createFts5RetrievalPort } from "../retrieval";
+import {
+  FTS5_RETRIEVAL_ID,
+  FTS5_RETRIEVAL_STORE_REL,
+  createFts5RetrievalPort,
+} from "../retrieval";
 import { removeDoc } from "../search/indexer";
-import { initSearch } from "../search/schema";
 import { withdrawForTombstone } from "../staging/producers";
+import { sha256Hex } from "../util/hash";
 import { ulid } from "../util/ulid";
 import { listCanonPagesReport } from "../vault/pages";
+import type { CanonPage } from "../vault/pages";
 import { initPurgeOps, PURGE_SLA_SECONDS } from "./purge-schema";
 import { tableExists } from "./schema";
 
 export { PURGE_SLA_SECONDS, PURGE_SCHEMA_VERSION, applyPurgeV5 } from "./purge-schema";
+
+export const PURGE_REASON_MAX_BYTES = 240;
+export const PURGE_PREVIEW_ID_LIMIT = 32;
+export const PURGE_CONNECTOR_ID_MAX = 128;
+
+export const PURGE_ERROR_CODES = [
+  "empty_filter",
+  "invalid_reason",
+  "invalid_filter",
+  "no_match",
+  "delete_mismatch",
+  "absence_failed",
+  "canon_changed",
+] as const;
+export type PurgeErrorCode = (typeof PURGE_ERROR_CODES)[number];
+
+const CONTROL_CHARS = /[\u0000-\u0008\u000A-\u001F\u007F]/;
+
+export class PurgeError extends Error {
+  readonly code: PurgeErrorCode;
+  readonly filter: PurgeFilter | undefined;
+
+  constructor(code: PurgeErrorCode, message: string, filter?: PurgeFilter) {
+    super(message);
+    this.name = "PurgeError";
+    this.code = code;
+    this.filter = filter;
+  }
+}
 
 export interface PurgeReceipt {
   receipt_id: string;
@@ -49,12 +83,15 @@ export interface PurgeRewriteRef {
   receipt_id: string;
 }
 
+export type PurgeStorePresence = "configured" | "not_configured" | "unavailable";
+
 export interface PurgeOutcome {
   receipts: PurgeReceipt[];
   withdrawn_proposals: string[];
   canon_holds: { page_path: string; proposal_id: string }[];
   purge_ops: PurgeOp[];
   rewritten: PurgeRewriteRef[];
+  uncertain_pages: string[];
 }
 
 export interface PurgeFilter {
@@ -64,10 +101,26 @@ export interface PurgeFilter {
   source_record_id?: string;
 }
 
+export interface PurgePreview {
+  filter: PurgeFilter;
+  reason: string;
+  event_count: number;
+  event_ids: string[];
+  connector_ids: string[];
+  affected_pages: string[];
+  uncertain_pages: string[];
+  search: "configured" | "not_configured";
+  graph: "configured" | "not_configured";
+  retrieval: PurgeStorePresence;
+}
+
 export interface PurgePhaseOptions {
   include_aliases?: boolean;
   now?: () => string;
   ids?: () => string;
+  allow_empty?: boolean;
+  /** When set, phase 1 records a purge_op for this store. `null` skips it. */
+  retrieval_store?: string | null;
 }
 
 export interface PurgeRunOptions extends PurgePhaseOptions {
@@ -98,12 +151,113 @@ interface PurgeCandidate {
   connector_id: string;
 }
 
+interface PageFingerprint {
+  relPath: string;
+  hash: string;
+  page: CanonPage | null;
+  sources: string[] | null;
+}
+
+interface RetrievalBinding {
+  status: PurgeStorePresence;
+  port: RetrievalPort | null;
+}
+
 function nowIso(now?: () => string): string {
   return now?.() ?? new Date().toISOString();
 }
 
 function mint(ids?: () => string): string {
   return ids?.() ?? ulid();
+}
+
+function utf8Bytes(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
+function describeFilter(filter: PurgeFilter): string {
+  const parts: string[] = [];
+  if (filter.event_id !== undefined) parts.push(`event_id=${filter.event_id}`);
+  if (filter.connector_id !== undefined) {
+    parts.push(`connector_id=${filter.connector_id}`);
+  }
+  if (filter.subject_handle !== undefined) {
+    parts.push(`subject_handle=${filter.subject_handle}`);
+  }
+  if (filter.source_record_id !== undefined) {
+    parts.push(`source_record_id=${filter.source_record_id}`);
+  }
+  return parts.join(" ");
+}
+
+export function normalizePurgeReason(reason: string): string {
+  if (typeof reason !== "string") {
+    throw new PurgeError("invalid_reason", "purge reason must be a string");
+  }
+  const trimmed = reason.trim();
+  if (trimmed.length === 0) {
+    throw new PurgeError("invalid_reason", "purge reason must be non-empty");
+  }
+  if (CONTROL_CHARS.test(trimmed)) {
+    throw new PurgeError(
+      "invalid_reason",
+      "purge reason must not contain control characters",
+    );
+  }
+  if (utf8Bytes(trimmed) > PURGE_REASON_MAX_BYTES) {
+    throw new PurgeError(
+      "invalid_reason",
+      `purge reason must be at most ${PURGE_REASON_MAX_BYTES} UTF-8 bytes`,
+    );
+  }
+  return trimmed;
+}
+
+export function listHistoricalConnectorIds(db: Database): string[] {
+  const ids = new Set<string>();
+  if (tableExists(db, "events")) {
+    for (const row of db
+      .query<{ connector_id: string }, []>(
+        "SELECT DISTINCT connector_id FROM events ORDER BY connector_id",
+      )
+      .all()) {
+      ids.add(row.connector_id);
+    }
+  }
+  if (tableExists(db, "event_purges")) {
+    for (const row of db
+      .query<{ connector_id: string }, []>(
+        "SELECT DISTINCT connector_id FROM event_purges ORDER BY connector_id",
+      )
+      .all()) {
+      ids.add(row.connector_id);
+    }
+  }
+  return [...ids].sort();
+}
+
+export function resolvePurgeConnectorId(db: Database, input: string): string {
+  if (typeof input !== "string") {
+    throw new PurgeError("invalid_filter", "purge connector id must be a string");
+  }
+  const trimmed = input.trim();
+  if (trimmed.length === 0 || utf8Bytes(trimmed) > PURGE_CONNECTOR_ID_MAX) {
+    throw new PurgeError(
+      "invalid_filter",
+      "purge connector id is empty or too long",
+    );
+  }
+  if (CONTROL_CHARS.test(trimmed)) {
+    throw new PurgeError(
+      "invalid_filter",
+      "purge connector id must not contain control characters",
+    );
+  }
+  const known = new Set(listHistoricalConnectorIds(db));
+  if (known.has(trimmed)) return trimmed;
+  const prefixed = trimmed.includes(".") ? trimmed : `kizuki.${trimmed}`;
+  if (known.has(prefixed)) return prefixed;
+  return prefixed;
 }
 
 function parseJsonStrings(raw: string): string[] {
@@ -127,13 +281,14 @@ function parseProof(raw: string | null): AbsenceProof | null {
   }
 }
 
-function emptyOutcome(): PurgeOutcome {
+function emptyOutcome(uncertain: readonly string[] = []): PurgeOutcome {
   return {
     receipts: [],
     withdrawn_proposals: [],
     canon_holds: [],
     purge_ops: [],
     rewritten: [],
+    uncertain_pages: [...uncertain],
   };
 }
 
@@ -191,17 +346,149 @@ function selector(
     bindings.push(...refs);
   }
   if (conditions.length === 0) {
-    throw new Error("purgeEvents requires a non-empty filter");
+    throw new PurgeError(
+      "empty_filter",
+      "purgeEvents requires a non-empty filter",
+      filter,
+    );
   }
   return { where: conditions.join(" AND "), bindings };
 }
 
-function pageSources(raw: unknown): string[] {
+function pageSources(raw: unknown): string[] | null {
   if (raw === undefined) return [];
   if (!Array.isArray(raw) || !raw.every((source) => typeof source === "string")) {
-    throw new Error("canon page sources must be a string array");
+    return null;
   }
   return raw;
+}
+
+function fileHash(path: string): string {
+  return sha256Hex(readFileSync(path));
+}
+
+function retrievalDataDir(vaultPath: string): string | null {
+  if (vaultPath === ":memory:" || vaultPath.length === 0) return null;
+  return join(resolve(vaultPath), ".kizuki", "retrieval", FTS5_RETRIEVAL_ID);
+}
+
+function retrievalPresence(vaultPath: string): Exclude<PurgeStorePresence, "unavailable"> {
+  const dir = retrievalDataDir(vaultPath);
+  if (dir === null) return "not_configured";
+  return existsSync(join(dir, FTS5_RETRIEVAL_STORE_REL))
+    ? "configured"
+    : "not_configured";
+}
+
+function collectCanonSnapshot(vaultPath: string): PageFingerprint[] {
+  if (vaultPath === ":memory:" || vaultPath.length === 0) return [];
+  const report = listCanonPagesReport(vaultPath);
+  const rows: PageFingerprint[] = [];
+  for (const page of report.pages) {
+    rows.push({
+      relPath: page.relPath,
+      hash: fileHash(page.path),
+      page,
+      sources: pageSources(page.data["sources"]),
+    });
+  }
+  for (const skipped of report.skipped) {
+    rows.push({
+      relPath: skipped.relPath,
+      hash: fileHash(join(vaultPath, skipped.relPath)),
+      page: null,
+      sources: null,
+    });
+  }
+  return rows;
+}
+
+function matchPages(
+  snapshot: readonly PageFingerprint[],
+  purgedIds: ReadonlySet<string>,
+): { affected: CanonPage[]; uncertain: string[] } {
+  const affected: CanonPage[] = [];
+  const uncertain: string[] = [];
+  for (const row of snapshot) {
+    if (row.page === null || row.sources === null) {
+      uncertain.push(row.relPath);
+      continue;
+    }
+    if (row.sources.some((source) => purgedIds.has(source))) {
+      affected.push(row.page);
+    }
+  }
+  return { affected, uncertain };
+}
+
+function assertSnapshotStillHolds(
+  vaultPath: string,
+  snapshot: readonly PageFingerprint[],
+  holdPaths: ReadonlySet<string>,
+): void {
+  if (vaultPath === ":memory:" || vaultPath.length === 0) return;
+  for (const row of snapshot) {
+    if (!holdPaths.has(row.relPath)) continue;
+    const path = row.page?.path ?? join(vaultPath, row.relPath);
+    if (fileHash(path) !== row.hash) {
+      throw new PurgeError(
+        "canon_changed",
+        `purge refused: canon page changed during purge (${row.relPath})`,
+      );
+    }
+  }
+}
+
+function loadCandidates(
+  db: Database,
+  filter: PurgeFilter,
+  includeAliases: boolean,
+): PurgeCandidate[] {
+  const { where, bindings } = selector(db, filter, includeAliases);
+  return db
+    .query<PurgeCandidate, string[]>(
+      `SELECT events.event_id, events.connector_id
+         FROM events
+        WHERE ${where}
+        ORDER BY events.accepted_at, events.event_id`,
+    )
+    .all(...bindings);
+}
+
+function boundIds(ids: readonly string[]): string[] {
+  return ids.slice(0, PURGE_PREVIEW_ID_LIMIT);
+}
+
+function storePresence(db: Database, table: string): "configured" | "not_configured" {
+  return tableExists(db, table) ? "configured" : "not_configured";
+}
+
+export function previewPurge(
+  db: Database,
+  vaultPath: string,
+  filter: PurgeFilter,
+  reason: string,
+  options: PurgePhaseOptions = {},
+): PurgePreview {
+  const normalized = normalizePurgeReason(reason);
+  const includeAliases = options.include_aliases === true;
+  const candidates = loadCandidates(db, filter, includeAliases);
+  const purgedIds = new Set(candidates.map((row) => row.event_id));
+  const snapshot = collectCanonSnapshot(vaultPath);
+  const matched = matchPages(snapshot, purgedIds);
+  const connectors = [...new Set(candidates.map((row) => row.connector_id))].sort();
+  return {
+    filter,
+    reason: normalized,
+    event_count: candidates.length,
+    event_ids: boundIds(candidates.map((row) => row.event_id)),
+    connector_ids: connectors,
+    affected_pages: matched.affected.map((page) => page.relPath),
+    uncertain_pages: matched.uncertain,
+    search: storePresence(db, "search_docs"),
+    graph: storePresence(db, "graph_edges"),
+    retrieval: retrievalPresence(vaultPath),
+  };
 }
 
 function retrievalIds(
@@ -373,20 +660,56 @@ function bindRetrieval(
   vaultPath: string,
   provided: RetrievalPort | undefined,
   clock: () => string,
-): RetrievalPort | null {
-  if (provided !== undefined) return provided;
-  if (vaultPath === ":memory:" || vaultPath.length === 0) return null;
+): RetrievalBinding {
+  if (provided !== undefined) return { status: "configured", port: provided };
+  if (retrievalPresence(vaultPath) === "not_configured") {
+    return { status: "not_configured", port: null };
+  }
   try {
-    return createVaultFts5Port(vaultPath, clock);
+    return { status: "configured", port: createVaultFts5Port(vaultPath, clock) };
   } catch {
-    return null;
+    return { status: "unavailable", port: null };
+  }
+}
+
+function resolveRetrievalStore(
+  vaultPath: string,
+  options: PurgePhaseOptions,
+): string | null {
+  if (options.retrieval_store !== undefined) return options.retrieval_store;
+  return retrievalPresence(vaultPath) === "configured" ? FTS5_RETRIEVAL_ID : null;
+}
+
+function assertDeleted(changes: number, eventId: string): void {
+  if (changes !== 1) {
+    throw new PurgeError(
+      "delete_mismatch",
+      `purge deleted ${changes} rows for ${eventId}; expected 1`,
+    );
+  }
+}
+
+function assertAbsent(db: Database, eventIds: readonly string[]): void {
+  if (eventIds.length === 0) return;
+  const leftover = db
+    .query<{ event_id: string }, string[]>(
+      `SELECT event_id FROM events
+        WHERE event_id IN (${eventIds.map(() => "?").join(", ")})
+        ORDER BY event_id`,
+    )
+    .all(...eventIds);
+  if (leftover.length > 0) {
+    throw new PurgeError(
+      "absence_failed",
+      `purge receipt claimed deletion but ${leftover.length} event(s) remain`,
+    );
   }
 }
 
 /**
- * Phase 1 — one SQLite transaction (RFC 0002 §13.1). Holds land before
- * derived stores are touched. Retrieval stores are recorded as pending
- * `purge_ops` and reconciled outside this transaction.
+ * Phase 1 — short SQLite transaction (RFC 0002 §13.1). Canon is scanned
+ * before the write lock. Holds land before derived stores are touched.
+ * Retrieval ops are recorded only for a store that already exists.
  */
 export function purgeEvents(
   db: Database,
@@ -396,27 +719,38 @@ export function purgeEvents(
   options: PurgePhaseOptions = {},
 ): PurgeOutcome {
   initPurgeOps(db);
+  const recordedReason = normalizePurgeReason(reason);
   const includeAliases = options.include_aliases === true;
-  const { where, bindings } = selector(db, filter, includeAliases);
+  const existing = loadCandidates(db, filter, includeAliases);
+  if (existing.length === 0) {
+    if (options.allow_empty === true) return emptyOutcome();
+    throw new PurgeError(
+      "no_match",
+      `purge matched no events for ${describeFilter(filter)}`,
+      filter,
+    );
+  }
+  const snapshot = collectCanonSnapshot(vaultPath);
+  const retrievalStore = resolveRetrievalStore(vaultPath, options);
 
-  return db.transaction((): PurgeOutcome => {
-    const report = listCanonPagesReport(vaultPath);
-    if (report.skipped.length > 0) {
-      const relPaths = report.skipped.map(({ relPath }) => relPath).join(", ");
-      throw new Error(`purge refused: cannot read canon page(s) ${relPaths}`);
-    }
-
-    const candidates = db
-      .query<PurgeCandidate, string[]>(
-        `SELECT events.event_id, events.connector_id
-           FROM events
-          WHERE ${where}
-          ORDER BY events.accepted_at, events.event_id`,
-      )
-      .all(...bindings);
+  const outcome = db.transaction((): PurgeOutcome => {
+    const candidates = loadCandidates(db, filter, includeAliases);
     if (candidates.length === 0) {
-      return emptyOutcome();
+      if (options.allow_empty === true) return emptyOutcome();
+      throw new PurgeError(
+        "no_match",
+        `purge matched no events for ${describeFilter(filter)}`,
+        filter,
+      );
     }
+
+    const purgedIds = new Set(candidates.map((row) => row.event_id));
+    const matched = matchPages(snapshot, purgedIds);
+    const holdPaths = new Set([
+      ...matched.affected.map((page) => page.relPath),
+      ...matched.uncertain,
+    ]);
+    assertSnapshotStillHolds(vaultPath, snapshot, holdPaths);
 
     const purgedAt = nowIso(options.now);
     const receipts: PurgeReceipt[] = [];
@@ -432,35 +766,31 @@ export function purgeEvents(
       "DELETE FROM events WHERE event_id = ?",
     );
 
-    const affectedPages = report.pages.filter((page) => {
-      const provenance = pageSources(page.data["sources"]);
-      return provenance.some((source) =>
-        candidates.some((candidate) => candidate.event_id === source),
-      );
-    });
-
     const batchReceipt = mint(options.ids);
     const holds: { page_path: string; proposal_id: string }[] = [];
-    for (const page of affectedPages) {
+    const holdReason =
+      includeAliases && filter.subject_handle !== undefined
+        ? `${recordedReason} (aliases: ${aliasSet(db, filter.subject_handle).join(", ")})`
+        : recordedReason;
+
+    for (const relPath of holdPaths) {
       db.query(
         `INSERT OR IGNORE INTO canon_holds
            (page_path, proposal_id, reason, held_at)
          VALUES (?, ?, ?, ?)`,
-      ).run(page.relPath, batchReceipt, reason, purgedAt);
-      holds.push({ page_path: page.relPath, proposal_id: batchReceipt });
+      ).run(relPath, batchReceipt, holdReason, purgedAt);
+      holds.push({ page_path: relPath, proposal_id: batchReceipt });
     }
-
-    const recordedReason =
-      includeAliases && filter.subject_handle !== undefined
-        ? `${reason} (aliases: ${aliasSet(db, filter.subject_handle).join(", ")})`
-        : reason;
+    holds.sort((left, right) =>
+      left.page_path < right.page_path ? -1 : left.page_path > right.page_path ? 1 : 0,
+    );
 
     for (const candidate of candidates) {
       const receipt: PurgeReceipt = {
         receipt_id: receipts.length === 0 ? batchReceipt : mint(options.ids),
         event_id: candidate.event_id,
         connector_id: candidate.connector_id,
-        reason: recordedReason,
+        reason: holdReason,
         purged_at: purgedAt,
       };
       insertReceipt.run(
@@ -470,76 +800,91 @@ export function purgeEvents(
         receipt.reason,
         receipt.purged_at,
       );
-      deleteEvent.run(candidate.event_id);
+      const deleted = deleteEvent.run(candidate.event_id);
+      assertDeleted(deleted.changes, candidate.event_id);
       receipts.push(receipt);
     }
 
-    const purgedIds = candidates.map(({ event_id }) => event_id);
-    initSearch(db);
-    initGraph(db);
-    const removeGraphEdges = db.query<never, [string, string]>(
-      "DELETE FROM graph_edges WHERE src = ? OR dst = ?",
-    );
-    for (const eventId of purgedIds) {
-      removeDoc(db, "ledger", eventId);
-      removeGraphEdges.run(eventId, eventId);
+    const eventIds = candidates.map(({ event_id }) => event_id);
+    if (tableExists(db, "search_docs")) {
+      for (const eventId of eventIds) {
+        removeDoc(db, "ledger", eventId);
+      }
+    }
+    if (tableExists(db, "graph_edges")) {
+      const removeGraphEdges = db.query<never, [string, string]>(
+        "DELETE FROM graph_edges WHERE src = ? OR dst = ?",
+      );
+      for (const eventId of eventIds) {
+        removeGraphEdges.run(eventId, eventId);
+      }
     }
 
     markClaimsAfterPurge(db, purgedAt);
 
     const withdrawn = new Set<string>();
     if (tableExists(db, "proposals")) {
-      for (const eventId of purgedIds) {
+      for (const eventId of eventIds) {
         for (const proposalId of withdrawForTombstone(db, eventId)) {
           withdrawn.add(proposalId);
         }
       }
     }
 
-    const citing = claimsCiting(db, purgedIds);
-    const pageIds = affectedPages
+    const citing = claimsCiting(db, eventIds);
+    const pageIds = matched.affected
       .map((page) => page.id)
       .filter((id) => id.length > 0);
     const claimIds = citing.map((claim) => claim.claim_id);
-    const ids = retrievalIds(purgedIds, pageIds, claimIds);
-    const op: PurgeOp = {
-      op_id: mint(options.ids),
-      receipt_id: batchReceipt,
-      store: FTS5_RETRIEVAL_ID,
-      ids,
-      state: "pending",
-      proof: null,
-      created_at: purgedAt,
-      done_at: null,
-    };
-    db.query(
-      `INSERT INTO purge_ops
-         (op_id, receipt_id, store, ids, state, proof, created_at, done_at)
-       VALUES (?, ?, ?, ?, ?, NULL, ?, NULL)`,
-    ).run(op.op_id, op.receipt_id, op.store, JSON.stringify(op.ids), op.state, op.created_at);
+    const ops: PurgeOp[] = [];
+    if (retrievalStore !== null) {
+      const op: PurgeOp = {
+        op_id: mint(options.ids),
+        receipt_id: batchReceipt,
+        store: retrievalStore,
+        ids: retrievalIds(eventIds, pageIds, claimIds),
+        state: "pending",
+        proof: null,
+        created_at: purgedAt,
+        done_at: null,
+      };
+      db.query(
+        `INSERT INTO purge_ops
+           (op_id, receipt_id, store, ids, state, proof, created_at, done_at)
+         VALUES (?, ?, ?, ?, ?, NULL, ?, NULL)`,
+      ).run(op.op_id, op.receipt_id, op.store, JSON.stringify(op.ids), op.state, op.created_at);
+      ops.push(op);
+    }
 
     return {
       receipts,
       withdrawn_proposals: [...withdrawn].sort(),
       canon_holds: holds,
-      purge_ops: [op],
+      purge_ops: ops,
       rewritten: [],
+      uncertain_pages: matched.uncertain,
     };
   }).immediate();
+
+  assertAbsent(
+    db,
+    outcome.receipts.map((receipt) => receipt.event_id),
+  );
+  return outcome;
 }
 
 async function reconcileOps(
   db: Database,
   receiptId: string,
-  port: RetrievalPort | null,
+  binding: RetrievalBinding,
   clock: () => string,
 ): Promise<PurgeOp[]> {
   const ops = listOps(db, receiptId).filter((op) => op.state === "pending");
-  if (port === null) return ops;
+  if (binding.port === null) return ops;
   for (const op of ops) {
     try {
-      await port.remove(op.ids);
-      const proof = await port.verifyAbsent(op.ids);
+      await binding.port.remove(op.ids);
+      const proof = await binding.port.verifyAbsent(op.ids);
       if (proof.found.length === 0) {
         const doneAt = clock();
         db.query(
@@ -567,6 +912,7 @@ function rewriteHolds(
   const rewritten: PurgeRewriteRef[] = [];
   const holds = readHolds(db);
   if (holds.length === 0) return rewritten;
+  const purged = new Set(purgedIds);
   const citing = claimsCiting(db, purgedIds);
   const io: CanonIo = {
     db,
@@ -581,18 +927,24 @@ function rewriteHolds(
       if (claim.target !== null && hold.page_path.startsWith(claim.target)) {
         return true;
       }
-      return claim.provenance.some((id) => purgedIds.includes(id));
+      return claim.provenance.some((id) => purged.has(id));
     });
     const purgedClaims = pageClaims.filter((claim) => {
       const stored = getClaim(db, claim.claim_id);
       return stored?.status === "purged";
     });
-    const receipt = applyPurgeRewrite(io, {
-      rel_path: hold.page_path,
-      purged_event_ids: purgedIds,
-      purged_claim_ids: purgedClaims.map((claim) => claim.claim_id),
-      purged_claim_bodies: purgedClaims.map((claim) => claim.body),
-    });
+    let receipt;
+    try {
+      receipt = applyPurgeRewrite(io, {
+        rel_path: hold.page_path,
+        purged_event_ids: purgedIds,
+        purged_claim_ids: purgedClaims.map((claim) => claim.claim_id),
+        purged_claim_bodies: purgedClaims.map((claim) => claim.body),
+      });
+    } catch (error) {
+      if (error instanceof SyntaxError) continue;
+      throw error;
+    }
     rewritten.push({ page_path: hold.page_path, receipt_id: receipt.receipt_id });
   }
   return rewritten;
@@ -606,13 +958,18 @@ export async function runPurge(
   reason: string,
   options: PurgeRunOptions = {},
 ): Promise<PurgeOutcome> {
-  const phase1 = purgeEvents(db, vaultPath, filter, reason, options);
-  if (phase1.receipts.length === 0) return phase1;
   const clock = options.now ?? (() => new Date().toISOString());
-  const port = bindRetrieval(vaultPath, options.retrieval, clock);
+  const binding = bindRetrieval(vaultPath, options.retrieval, clock);
+  const retrievalStore =
+    binding.status === "not_configured" ? null : FTS5_RETRIEVAL_ID;
+  const phase1 = purgeEvents(db, vaultPath, filter, reason, {
+    ...options,
+    retrieval_store: retrievalStore,
+  });
+  if (phase1.receipts.length === 0) return phase1;
   const receiptId = phase1.receipts[0]?.receipt_id;
   if (receiptId !== undefined) {
-    phase1.purge_ops = await reconcileOps(db, receiptId, port, clock);
+    phase1.purge_ops = await reconcileOps(db, receiptId, binding, clock);
   }
   phase1.rewritten = rewriteHolds(
     db,
@@ -631,16 +988,16 @@ export async function verifyPurge(
 ): Promise<PurgeVerifyReport> {
   initPurgeOps(db);
   const clock = options.now ?? (() => new Date().toISOString());
-  const port = bindRetrieval(vaultPath, options.retrieval, clock);
+  const binding = bindRetrieval(vaultPath, options.retrieval, clock);
   const ops = listOps(db, receiptId);
   const proofs: AbsenceProof[] = [];
   let ok = true;
   for (const op of ops) {
-    if (port === null) {
+    if (binding.port === null) {
       ok = false;
       continue;
     }
-    const proof = await port.verifyAbsent(op.ids);
+    const proof = await binding.port.verifyAbsent(op.ids);
     proofs.push(proof);
     if (proof.found.length > 0) ok = false;
     if (proof.found.length === 0 && op.state !== "done") {
