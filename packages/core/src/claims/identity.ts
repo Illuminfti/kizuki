@@ -189,6 +189,7 @@ export function listSubjectAliases(
     .all(subject, subject, canRead === undefined ? bound : 400)
     .filter((row) => {
       if (canRead === undefined) return true;
+      if (row.evidence.length > 16_384) return false;
       let evidence: unknown;
       try { evidence = JSON.parse(row.evidence); } catch { return false; }
       if (!Array.isArray(evidence) || evidence.length === 0 ||

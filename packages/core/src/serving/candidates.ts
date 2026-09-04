@@ -58,6 +58,11 @@ function quotedBlock(chunk: QuotedChunk): string {
   );
 }
 
+/** Keep every claim-controlled scalar on its stamped line. */
+function inline(value: string): string {
+  return JSON.stringify(value).slice(1, -1).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
+}
+
 function confidenceLabel(value: number): string {
   return value.toFixed(2);
 }
@@ -272,9 +277,9 @@ export function collectPieces(
     for (const claim of live) {
       const object = claim.object ?? "";
       const line =
-        `- [claim:${claim.claim_id}] c=${confidenceLabel(claim.confidence)}` +
+        `- [claim:${inline(claim.claim_id)}] c=${confidenceLabel(claim.confidence)}` +
         ` s=${claim.sensitivity} taint=${claim.taint} auth=${claim.authority} status=${claim.status}` +
-        ` :: ${claim.subject ?? "-"} ${claim.predicate ?? "-"} ${JSON.stringify(object)}\n`;
+        ` :: ${inline(claim.subject ?? "-")} ${inline(claim.predicate ?? "-")} ${JSON.stringify(object)}\n`;
       pieces.push({
         section: "claims",
         heading: "## working knowledge",
@@ -288,8 +293,8 @@ export function collectPieces(
         heading: "## counterevidence",
         audit: conflict.claims.flatMap((claim) => reader.auditClaim(claim.claim_id)),
         block:
-          `- conflict key=${conflict.claim_key.slice(0, 12)} live=${conflict.claims.length}` +
-          ` :: ${conflict.claims.map((item) => item.claim_id).join(",")}\n`,
+          `- conflict key=${inline(conflict.claim_key.slice(0, 12))} live=${conflict.claims.length}` +
+          ` :: ${conflict.claims.map((item) => inline(item.claim_id)).join(",")}\n`,
       });
     }
     for (const gap of loadSubjectGaps(ctx.db, wanted, reader.canRead)) {
@@ -297,7 +302,7 @@ export function collectPieces(
         section: "claims",
         heading: "## counterevidence",
         audit: reader.auditGroup(gap.claim_key),
-        block: `- gap key=${gap.claim_key.slice(0, 12)} after=${gap.after} before=${gap.before}\n`,
+        block: `- gap key=${inline(gap.claim_key.slice(0, 12))} after=${inline(gap.after)} before=${inline(gap.before)}\n`,
       });
     }
     const aliasRoots = wanted ?? live.map((claim) => claim.subject).filter(
@@ -306,7 +311,7 @@ export function collectPieces(
     const seenAlias = new Set<string>();
     for (const root of aliasRoots.slice(0, 8)) {
       for (const alias of listSubjectAliases(ctx.db, root, 8, reader.canReadAlias)) {
-        const key = `${root}~${alias.subject}`;
+        const key = JSON.stringify([root, alias.subject].sort());
         if (seenAlias.has(key)) continue;
         seenAlias.add(key);
         const audit = reader.auditAlias(root, alias.subject);
@@ -314,7 +319,7 @@ export function collectPieces(
           section: "claims",
           heading: "## working knowledge",
           block:
-            `- alias ${root} ~ ${alias.subject} s=${audit[0]?.sensitivity} taint=clean score=${confidenceLabel(alias.score)}` +
+            `- alias ${inline(root)} ~ ${inline(alias.subject)} s=${audit[0]?.sensitivity} taint=clean score=${confidenceLabel(alias.score)}` +
             ` status=${alias.status}\n`,
           audit,
         });
