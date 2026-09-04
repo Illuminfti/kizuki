@@ -461,12 +461,12 @@ async function checkHealth(
   label: string,
   timed: <T>(name: string, operation: () => Promise<T>) => Promise<T>,
   failures: string[],
-): Promise<void> {
+): Promise<HealthReport | undefined> {
   try {
     const report = await timed(label, () => connector.health());
     if (!(report instanceof HealthReport) && !isHealthShape(report)) {
       failures.push(`${label}: did not return a HealthReport`);
-      return;
+      return undefined;
     }
     if (!isHealthState(report.state)) {
       failures.push(`${label}: state is not a HealthState`);
@@ -489,8 +489,10 @@ async function checkHealth(
         failures.push(`${label}: detail contains control characters`);
       }
     }
+    return report;
   } catch (error) {
     failures.push(`${label} rejected: ${errorMessage(error)}`);
+    return undefined;
   }
 }
 
@@ -603,14 +605,14 @@ async function checkUnavailable(
       failures.push("unavailable: rejection was not a typed connector error");
     }
   }
-  await checkHealth(hooks.connector, "unavailable health", timed, failures);
-  try {
-    const report = await hooks.connector.health();
-    if (report.state === "ok") {
-      failures.push("unavailable: health reported ok for an unusable source");
-    }
-  } catch {
-    // A typed health failure is also honest.
+  const report = await checkHealth(
+    hooks.connector,
+    "unavailable health",
+    timed,
+    failures,
+  );
+  if (report?.state === "ok") {
+    failures.push("unavailable: health reported ok for an unusable source");
   }
 }
 
@@ -669,7 +671,7 @@ async function checkInteractiveSignIn(
     );
     failures.push(`signIn(${mode}): cancel returned success`);
   } catch (error) {
-    if (errorCode(error) === undefined && !(error instanceof Error)) {
+    if (errorCode(error) === undefined) {
       failures.push(`signIn(${mode}): cancellation was not a typed error`);
     }
   }
@@ -799,9 +801,12 @@ function errorCode(error: unknown): string | undefined {
   if (error instanceof KizukiError) return error.code;
   if (
     error instanceof Error &&
+    error.constructor !== Error &&
     "code" in error &&
-    typeof error.code === "string"
+    typeof error.code === "string" &&
+    error.code.length > 0
   ) {
+    // A generic Error with code ENOENT is a syscall, not a connector refusal.
     return error.code;
   }
   return undefined;

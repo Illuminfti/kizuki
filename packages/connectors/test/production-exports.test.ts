@@ -27,4 +27,5 @@ test("production entrypoint does not export conformance fixtures", () => {
   expect("hangingConnector" in production).toBe(false);
   expect("dishonestPurgeConnector" in production).toBe(false);
   expect("mutableManifestConnector" in production).toBe(false);
+  expect("untypedSignInCancelConnector" in production).toBe(false);
 });

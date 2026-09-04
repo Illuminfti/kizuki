@@ -151,6 +151,21 @@ export function scriptedSignInConnector(): Connector {
   });
 }
 
+/** Declares sign-in but refuses cancel with a generic Error. */
+export function untypedSignInCancelConnector(): Connector {
+  return base({
+    manifest: () =>
+      freezeManifest({
+        ...BASE_MANIFEST,
+        cursor_schema: null,
+        auth_modes: ["sign_in"],
+      }),
+    async signIn(): Promise<SignInDisplay> {
+      throw Object.assign(new Error("cancelled"), { code: "ENOENT" });
+    },
+  });
+}
+
 /** Events carry no label and the manifest declares no policy. */
 export function unlabeledEventsConnector(): Connector {
   const unlabeled = { ...EVENT };

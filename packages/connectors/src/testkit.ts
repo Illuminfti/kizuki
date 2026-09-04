@@ -19,6 +19,7 @@ export {
   mutableManifestConnector,
   scriptedSignInConnector,
   unlabeledEventsConnector,
+  untypedSignInCancelConnector,
 } from "./conformance-fixtures";
 export { CHATGPT_FIXTURE_EXPORT } from "./import-chatgpt";
 export { CLAUDE_FIXTURE_EXPORT } from "./import-claude";

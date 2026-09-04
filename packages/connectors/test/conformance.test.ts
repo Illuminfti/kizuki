@@ -40,6 +40,7 @@ import {
   scriptedSignInConnector,
   seedFixtureDatabase,
   unlabeledEventsConnector,
+  untypedSignInCancelConnector,
 } from "../src/testkit";
 import type { ConformanceResult } from "../src/testkit";
 import { fixtureJsonl as jsonlFixture } from "../src/import-legacy-events/fixture";
@@ -483,6 +484,25 @@ test("a hanging connector times out", async () => {
 test("declared sign-in is cancellable", async () => {
   const result = await runConformance(scriptedSignInConnector());
   expect(result.pass).toBe(true);
+});
+
+test("sign-in cancel must throw a typed connector error", async () => {
+  const result = await runConformance(untypedSignInCancelConnector());
+  expect(result.pass).toBe(false);
+  expect(
+    result.failures.some((item) => item.includes("typed error")),
+  ).toBe(true);
+});
+
+test("unavailable health is still bound by the deadline", async () => {
+  const result = await runConformance(scriptedSignInConnector(), {
+    deadlineMs: 50,
+    unavailable: { connector: hangingConnector() },
+  });
+  expect(result.pass).toBe(false);
+  expect(result.failures.some((item) => /timeout|exceeded/i.test(item))).toBe(
+    true,
+  );
 });
 
 test("unlabeled events fail conformance", async () => {
