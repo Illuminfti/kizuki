@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { stampDerived } from "../../src/derived-meta";
 import { serveGetPage } from "../../src/serving/page";
 import { serveSearch } from "../../src/serving/search";
 import { ServeError } from "../../src/serving/types";
@@ -49,6 +50,7 @@ describe("serveSearch enforces the grant below the prompt layer", () => {
       query: "kettle",
     });
     expect(pageIds(priv)).toContain("fact:kettle");
+    expect(priv.data).toBeUndefined();
   });
 
   test("an unlabeled page is withheld from every principal, owner included", () => {
@@ -174,6 +176,31 @@ describe("serveSearch enforces the grant below the prompt layer", () => {
     expect(envelope.canon).toEqual([]);
     expect(envelope.quoted).toEqual([]);
     expect(envelope.denied).toEqual([]);
+    expect(envelope.data).toEqual({ degraded: ["query-empty"] });
+  });
+
+  test("a degraded search index is named on the envelope", () => {
+    const isolated = serveFixture();
+    try {
+      isolated.db.exec("DROP TABLE search_docs");
+      stampDerived(isolated.db, {
+        layer: "search",
+        generation: "schema-v10",
+        rebuilt_at: "2026-03-01T00:00:00.000Z",
+        doc_count: 0,
+        source_count: 0,
+        skipped_count: 0,
+        status: "degraded",
+      });
+      const envelope = serveSearch(isolated.owner(), { query: "kettle" });
+      expect(envelope.canon).toEqual([]);
+      expect(envelope.quoted).toEqual([]);
+      expect(envelope.data).toEqual({
+        degraded: ["index-degraded"],
+      });
+    } finally {
+      isolated.dispose();
+    }
   });
 
   test("a page carrying capture is served as canon, stamped as capture", () => {

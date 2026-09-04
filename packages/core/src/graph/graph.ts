@@ -3,10 +3,11 @@ import { SENSITIVITY_ORDER } from "../agents/types";
 import type { Sensitivity } from "../agents/types";
 import { MAX_RETRIEVAL_LIMIT } from "../contracts/retrieval";
 import type { RetrievalAuthority } from "../contracts/retrieval";
-import { stampDerived } from "../derived-meta";
+import { readDerivedMeta, stampDerived } from "../derived-meta";
 import type { DerivedStamp } from "../derived-meta";
 import { latestLedgerCursor } from "../ledger/ledger";
 import { tableExists } from "../ledger/schema";
+import { bareRetrievalId } from "../retrieval/ids";
 import { ulid } from "../util/ulid";
 import { compareText } from "../util/order";
 import { placeholders } from "../util/sql";
@@ -158,10 +159,74 @@ function pageTaint(page: CanonPage): "clean" | "quoted" {
   return page.data["taint"] === "quoted" ? "quoted" : "clean";
 }
 
+function destSensitivity(
+  kind: GraphEdgeKind,
+  dst: string,
+  byId: ReadonlyMap<string, CanonPage>,
+  eventHints: ReadonlyMap<string, string>,
+): string | null {
+  switch (kind) {
+    case "wikilink": {
+      const dest = byId.get(dst);
+      return dest === undefined ? null : pageSensitivity(dest);
+    }
+    case "subject":
+      return null;
+    case "source":
+      return eventHints.get(bareRetrievalId(dst)) ?? "unlabeled";
+    default: {
+      const _exhaustive: never = kind;
+      throw new Error(`unexpected graph edge kind: ${_exhaustive}`);
+    }
+  }
+}
+
+function sourceEventIds(pages: readonly CanonPage[]): string[] {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const page of pages) {
+    if (!isLiveCanonPage(page)) continue;
+    for (const source of stringArray(page.data["sources"])) {
+      const eventId = bareRetrievalId(source);
+      if (seen.has(eventId)) continue;
+      seen.add(eventId);
+      ids.push(eventId);
+    }
+  }
+  return ids;
+}
+
+function eventSensitivityHints(
+  db: Database,
+  eventIds: readonly string[],
+): Map<string, string> {
+  const hints = new Map<string, string>();
+  if (eventIds.length === 0 || !tableExists(db, "events")) return hints;
+  for (const group of chunks(eventIds, FRONTIER_CHUNK)) {
+    const rows = db
+      .query<{ event_id: string; sensitivity_hint: string | null }, string[]>(
+        `SELECT event_id, sensitivity_hint FROM events
+          WHERE event_id IN (${placeholders(group.length)})`,
+      )
+      .all(...group);
+    for (const row of rows) {
+      const hint = row.sensitivity_hint;
+      hints.set(
+        row.event_id,
+        hint === "public" || hint === "personal" || hint === "private"
+          ? hint
+          : "unlabeled",
+      );
+    }
+  }
+  return hints;
+}
+
 function pageEdges(
   page: CanonPage,
   index: LinkIndex,
   byId: ReadonlyMap<string, CanonPage>,
+  eventHints: ReadonlyMap<string, string>,
 ): StoredEdge[] {
   const provenance = JSON.stringify(stringArray(page.data["sources"]));
   const sensitivity = pageSensitivity(page);
@@ -172,13 +237,12 @@ function pageEdges(
     const key = `${dst}\u0000${kind}`;
     if (seen.has(key)) return;
     seen.add(key);
-    const dest = kind === "wikilink" ? byId.get(dst) : undefined;
     edges.push({
       src: page.id,
       dst,
       kind,
       sensitivity,
-      dest_sensitivity: dest === undefined ? null : pageSensitivity(dest),
+      dest_sensitivity: destSensitivity(kind, dst, byId, eventHints),
       taint,
       authority: "owner_authored",
       provenance,
@@ -221,15 +285,90 @@ export function replacePageEdges(
   db: Database,
   pages: readonly CanonPage[],
 ): void {
+  const live = pages.filter(isLiveCanonPage);
+  const index = linkIndexFromPages(pages);
+  const byId = new Map(live.map((page) => [page.id, page]));
+  const eventHints = eventSensitivityHints(db, sourceEventIds(live));
+  db.exec("DELETE FROM graph_edges");
+  for (const page of live) {
+    for (const edge of pageEdges(page, index, byId, eventHints)) {
+      insertEdge(db, edge);
+    }
+  }
+}
+
+function stampGraphIncomplete(db: Database, skippedCount: number): void {
+  const existing = readDerivedMeta(db, "graph");
+  stampDerived(db, {
+    layer: "graph",
+    generation: existing?.generation ?? ulid(),
+    rebuilt_at: new Date().toISOString(),
+    doc_count: existing?.doc_count ?? 0,
+    source_count: existing?.source_count ?? 0,
+    skipped_count: skippedCount,
+    status: "degraded",
+    ledger_watermark: existing?.ledger_watermark ?? null,
+    canon_hash: existing?.canon_hash ?? null,
+    port_id: existing?.port_id ?? null,
+    contract: existing?.contract ?? null,
+    space: existing?.space ?? null,
+  });
+}
+
+function restoreGraphStamp(db: Database): void {
+  const existing = readDerivedMeta(db, "graph");
+  if (existing === null || existing.status === "ok") return;
+  stampDerived(db, {
+    ...existing,
+    status: "ok",
+    skipped_count: 0,
+    rebuilt_at: new Date().toISOString(),
+  });
+}
+
+/**
+ * Incremental graph write. A complete walk projects the live set; a skipped
+ * page keeps its edges until the next complete walk.
+ */
+export function refreshPageEdges(
+  db: Database,
+  page: CanonPage,
+  pages: readonly CanonPage[],
+  skipped: number,
+): void {
+  if (skipped === 0) {
+    replacePageEdges(db, pages);
+    restoreGraphStamp(db);
+    return;
+  }
   const index = linkIndexFromPages(pages);
   const byId = new Map(
-    pages.filter(isLiveCanonPage).map((page) => [page.id, page]),
+    pages.filter(isLiveCanonPage).map((candidate) => [candidate.id, candidate]),
   );
-  db.exec("DELETE FROM graph_edges");
-  for (const page of pages) {
-    if (!isLiveCanonPage(page)) continue;
-    for (const edge of pageEdges(page, index, byId)) insertEdge(db, edge);
+  db.query("DELETE FROM graph_edges WHERE src = ?").run(page.id);
+  if (isLiveCanonPage(page)) {
+    const eventHints = eventSensitivityHints(db, sourceEventIds([page]));
+    for (const edge of pageEdges(page, index, byId, eventHints)) {
+      insertEdge(db, edge);
+    }
   }
+  stampGraphIncomplete(db, skipped);
+}
+
+/** Incremental delete. Incomplete walks only drop this page's outgoing edges. */
+export function removePageEdges(
+  db: Database,
+  pageId: string,
+  pages: readonly CanonPage[],
+  skipped: number,
+): void {
+  if (skipped === 0) {
+    replacePageEdges(db, pages);
+    restoreGraphStamp(db);
+    return;
+  }
+  db.query("DELETE FROM graph_edges WHERE src = ?").run(pageId);
+  stampGraphIncomplete(db, skipped);
 }
 
 function stampGraph(
@@ -306,7 +445,7 @@ export function rebuildGraph(
   return db.transaction(() => rebuildGraphLayer(db, input)).immediate();
 }
 
-function chunks<T>(items: T[], size: number): T[][] {
+function chunks<T>(items: readonly T[], size: number): T[][] {
   const result: T[][] = [];
   for (let index = 0; index < items.length; index += size) {
     result.push(items.slice(index, index + size));

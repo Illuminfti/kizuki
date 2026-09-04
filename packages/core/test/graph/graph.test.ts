@@ -7,7 +7,7 @@ import { neighbors, rebuildGraph } from "../../src/graph/graph";
 import type { GraphEdge } from "../../src/graph/graph";
 import { initGraph } from "../../src/graph/schema";
 import { serializePage } from "../../src/vault/frontmatter";
-import { tempVault } from "../search/helpers";
+import { searchDb, storedEvent, tempVault } from "../search/helpers";
 
 const disposers: (() => void)[] = [];
 
@@ -202,6 +202,27 @@ describe("graph rebuild", () => {
     ).toBe("personal");
   });
 
+  test("stores a source dest_sensitivity from the event hint", () => {
+    const db = searchDb();
+    const path = vault();
+    const hinted = storedEvent(db, "hinted", { sensitivity_hint: "private" });
+    writeCanon(path, "origin", "fact:origin", "No links.", {
+      sources: [`event:${hinted.event_id}`, "event:missing"],
+    });
+    rebuildGraph(db, path);
+    expect(
+      db
+        .query<{ dst: string; dest_sensitivity: string | null }, []>(
+          `SELECT dst, dest_sensitivity FROM graph_edges
+            WHERE kind = 'source' ORDER BY dst`,
+        )
+        .all(),
+    ).toEqual([
+      { dst: `event:${hinted.event_id}`, dest_sensitivity: "private" },
+      { dst: "event:missing", dest_sensitivity: "unlabeled" },
+    ]);
+  });
+
   test("rebuild omits archived pages", () => {
     const db = new Database(":memory:");
     const path = vault();
@@ -263,6 +284,51 @@ describe("graph rebuild", () => {
       { src: "fact:origin", dst: "person:ada", kind: "subject" },
       { src: "fact:origin", dst: "person:grace", kind: "subject" },
     ]);
+    expect(
+      db
+        .query<{ dest_sensitivity: string | null; kind: string }, []>(
+          "SELECT dest_sensitivity, kind FROM graph_edges ORDER BY kind, dst",
+        )
+        .all(),
+    ).toEqual([
+      { dest_sensitivity: "unlabeled", kind: "source" },
+      { dest_sensitivity: null, kind: "subject" },
+      { dest_sensitivity: null, kind: "subject" },
+    ]);
+  });
+
+  test("hidden source dests do not consume the neighbor cap", () => {
+    const db = new Database(":memory:");
+    const path = vault();
+    writeCanon(path, "open", "fact:zzz-open", "A public dest.", {
+      title: "Open",
+      sensitivity: "public",
+    });
+    writeCanon(
+      path,
+      "hub",
+      "fact:hub",
+      "See [[Open]].",
+      {
+        sensitivity: "public",
+        sources: Array.from(
+          { length: 100 },
+          (_value, index) => `event:aaa-secret-${index}`,
+        ),
+      },
+    );
+    rebuildGraph(db, path);
+
+    const limited = neighbors(db, "fact:hub", { ceiling: "public" });
+    expect(limited.edges).toEqual([
+      { src: "fact:hub", dst: "fact:zzz-open", kind: "wikilink" },
+    ]);
+    expect(limited.truncated).toBe(false);
+
+    const uncapped = neighbors(db, "fact:hub");
+    expect(uncapped.edges).toHaveLength(100);
+    expect(uncapped.truncated).toBe(true);
+    expect(uncapped.edges.every((edge) => edge.kind === "source")).toBe(true);
   });
 
   test("is idempotent and stamps the edge count", () => {

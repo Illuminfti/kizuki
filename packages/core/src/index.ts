@@ -810,6 +810,7 @@ export type {
   QuotedChunk,
   RewrittenPage,
   SearchArgs,
+  SearchData,
   ServeContext,
   Served,
   TimelineArgs,

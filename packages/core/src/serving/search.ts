@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { AuditDenial, Grant } from "../agents";
 import { bareRetrievalId } from "../retrieval/ids";
-import { search } from "../search/query";
+import { searchResult } from "../search/query";
 import type { SearchHit, SearchOptions } from "../search/query";
 import {
   enumOf,
@@ -102,8 +102,15 @@ function classify(
   return result;
 }
 
-export function serveSearch(ctx: ServeContext, args: SearchArgs): Envelope {
-  return gate(ctx, "search", auditArguments(args), ({ ctx }): Served<undefined> => {
+export interface SearchData {
+  degraded: string[];
+}
+
+export function serveSearch(
+  ctx: ServeContext,
+  args: SearchArgs,
+): Envelope<SearchData> {
+  return gate(ctx, "search", auditArguments(args), ({ ctx }): Served<SearchData> => {
     const grant = ctx.principal.grant;
     const query = text("query", args.query, MAX_QUERY_CHARS);
     const scope =
@@ -140,11 +147,16 @@ export function serveSearch(ctx: ServeContext, args: SearchArgs): Envelope {
     };
 
     const seen = new Set<string>();
+    const servedHits = searchResult(ctx.db, query, {
+      ...base,
+      ceiling: grant.ceiling,
+    });
+    const hiddenHits = searchResult(ctx.db, query, base);
     const served = classify(
       ctx.db,
       index,
       grant,
-      search(ctx.db, query, { ...base, ceiling: grant.ceiling }),
+      servedHits.hits,
       seen,
       true,
     );
@@ -152,15 +164,17 @@ export function serveSearch(ctx: ServeContext, args: SearchArgs): Envelope {
       ctx.db,
       index,
       grant,
-      search(ctx.db, query, base),
+      hiddenHits.hits,
       seen,
       false,
     );
+    const degraded = [...new Set([...servedHits.degraded, ...hiddenHits.degraded])];
 
     return {
       canon: served.canon,
       quoted: served.quoted,
       withheld: [...served.withheld, ...hidden.withheld],
+      ...(degraded.length === 0 ? {} : { data: { degraded } }),
     };
   });
 }

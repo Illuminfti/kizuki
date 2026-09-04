@@ -7,7 +7,7 @@ import type { GraphArgs, GraphData } from "../../src/serving/graph";
 import { ServeError } from "../../src/serving/types";
 import type { Envelope } from "../../src/serving/types";
 import { serializePage } from "../../src/vault/frontmatter";
-import { serveFixture } from "./helpers";
+import { serveFixture, storeEvent } from "./helpers";
 import type { Fixture } from "./helpers";
 
 let fixture: Fixture;
@@ -325,6 +325,76 @@ describe("serveGraph", () => {
     expect(limited.data?.truncated).toBe(false);
     expect(limited.denied).toEqual([{ reason: "above_ceiling", count: 100 }]);
     expect(JSON.stringify(limited)).not.toContain("aaa-out-secret");
+  });
+
+  test("a public reader is not capped by private source dests", () => {
+    const eventIds: string[] = [];
+    for (let index = 0; index < 100; index += 1) {
+      eventIds.push(
+        storeEvent(
+          fixture.db,
+          `source-cap-${index}`,
+          "2026-03-01T00:00:00Z",
+          `Private source ${index}`,
+          "person:ada",
+          "private",
+        ),
+      );
+    }
+    writeFileSync(
+      join(fixture.vaultPath, "facts/source-hub.md"),
+      serializePage({
+        data: {
+          id: "fact:source-hub",
+          title: "Source hub",
+          type: "fact",
+          status: "active",
+          sensitivity: "public",
+          taint: "clean",
+          sources: eventIds,
+        },
+        body: "See [[Source open]].",
+      }),
+      "utf8",
+    );
+    writeFileSync(
+      join(fixture.vaultPath, "facts/source-open.md"),
+      serializePage({
+        data: {
+          id: "fact:zzz-source-open",
+          title: "Source open",
+          type: "fact",
+          status: "active",
+          sensitivity: "public",
+          taint: "clean",
+        },
+        body: "A public dest.",
+      }),
+      "utf8",
+    );
+    rebuildGraph(fixture.db, fixture.vaultPath);
+
+    const owner = serveGraph(fixture.owner(), { id: "fact:source-hub" });
+    expect(owner.data?.edges).toHaveLength(100);
+    expect(owner.data?.truncated).toBe(true);
+    expect(owner.data?.edges.every((edge) => edge.kind === "source")).toBe(true);
+    expect((owner.data?.edges ?? []).map((edge) => edge.dst)).not.toContain(
+      "fact:zzz-source-open",
+    );
+
+    const limited = serveGraph(fixture.agent("reader-public"), {
+      id: "fact:source-hub",
+    });
+    expect(limited.data?.edges).toEqual([
+      {
+        src: "fact:source-hub",
+        dst: "fact:zzz-source-open",
+        kind: "wikilink",
+      },
+    ]);
+    expect(limited.data?.truncated).toBe(false);
+    expect(limited.denied).toEqual([{ reason: "above_ceiling", count: 100 }]);
+    expect(JSON.stringify(limited)).not.toContain(eventIds[0]);
   });
 
   test("the edge list is capped and reports the truncation", () => {

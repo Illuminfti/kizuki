@@ -3,6 +3,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { applyPurgeRewrite } from "../../src/canon/apply";
 import { rebuildDerived, refreshDerivedPage } from "../../src/derived";
+import { readDerivedMeta } from "../../src/derived-meta";
 import { neighbors } from "../../src/graph/graph";
 import { indexEvent } from "../../src/search/indexer";
 import { search } from "../../src/search/query";
@@ -340,5 +341,100 @@ describe("derived rebuild equivalence", () => {
     expect(
       neighbors(db, "fact:kettle").edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`),
     ).toEqual(["fact:kettle|Tea|wikilink"]);
+  });
+
+  test("an unreadable page keeps its edges across an incremental refresh", () => {
+    const db = searchDb();
+    const vault = tempVault();
+    disposers.push(vault.dispose);
+    const origin = writeCanonPage(
+      vault.path,
+      "facts/origin.md",
+      {
+        id: "fact:origin",
+        title: "Origin",
+        type: "fact",
+        status: "active",
+        sensitivity: "personal",
+        taint: "clean",
+      },
+      "See [[Target]].",
+    );
+    writeCanonPage(
+      vault.path,
+      "facts/target.md",
+      {
+        id: "fact:target",
+        title: "Target",
+        type: "fact",
+        status: "active",
+        sensitivity: "personal",
+        taint: "clean",
+        sources: ["event:kept"],
+      },
+      "See [[Origin]].",
+    );
+    rebuildDerived(db, vault.path);
+    const targetOutgoing = [
+      "fact:target|event:kept|source",
+      "fact:target|fact:origin|wikilink",
+    ];
+    const resolved = [
+      "fact:origin|fact:target|wikilink",
+      ...targetOutgoing,
+    ];
+    expect(
+      neighbors(db, "fact:target")
+        .edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`)
+        .sort(),
+    ).toEqual(resolved);
+
+    writeFileSync(
+      join(vault.path, "facts/target.md"),
+      `---
+id: fact:target
+title: [unterminated
+---
+See [[Origin]].
+`,
+      "utf8",
+    );
+    refreshDerivedPage(db, origin, vault.path);
+
+    expect(
+      neighbors(db, "fact:target")
+        .edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`)
+        .sort(),
+    ).toEqual(targetOutgoing);
+    expect(search(db, "Origin").map(({ doc_id }) => doc_id).sort()).toEqual([
+      "page:fact:origin",
+      "page:fact:target",
+    ]);
+    expect(readDerivedMeta(db, "graph")).toMatchObject({
+      status: "degraded",
+      skipped_count: 1,
+    });
+
+    writeCanonPage(
+      vault.path,
+      "facts/target.md",
+      {
+        id: "fact:target",
+        title: "Target",
+        type: "fact",
+        status: "active",
+        sensitivity: "personal",
+        taint: "clean",
+        sources: ["event:kept"],
+      },
+      "See [[Origin]].",
+    );
+    refreshDerivedPage(db, origin, vault.path);
+    expect(
+      neighbors(db, "fact:target")
+        .edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`)
+        .sort(),
+    ).toEqual(resolved);
+    expect(readDerivedMeta(db, "graph")?.status).toBe("ok");
   });
 });

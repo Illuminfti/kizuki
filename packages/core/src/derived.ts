@@ -6,7 +6,8 @@ import {
 } from "./derived-meta";
 import {
   rebuildGraphLayer,
-  replacePageEdges,
+  refreshPageEdges,
+  removePageEdges,
 } from "./graph/graph";
 import type { GraphRebuildResult } from "./graph/graph";
 import { graphSchemaNeedsRebuild, initGraph } from "./graph/schema";
@@ -94,10 +95,10 @@ export function refreshDerivedPage(
 ): void {
   initSearch(db);
   initGraph(db);
-  const pages = listCanonPagesReport(vaultPath).pages;
+  const report = listCanonPagesReport(vaultPath);
   db.transaction(() => {
     replacePage(db, page);
-    replacePageEdges(db, pages);
+    refreshPageEdges(db, page, report.pages, report.skipped.length);
   }).immediate();
 }
 
@@ -108,8 +109,9 @@ export function removeDerivedPage(
 ): void {
   initSearch(db);
   initGraph(db);
+  const report = listCanonPagesReport(vaultPath);
   db.transaction(() => {
     removeDoc(db, "canon", pageId);
-    replacePageEdges(db, listCanonPagesReport(vaultPath).pages);
+    removePageEdges(db, pageId, report.pages, report.skipped.length);
   }).immediate();
 }
