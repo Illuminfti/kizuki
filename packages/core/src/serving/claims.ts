@@ -91,28 +91,39 @@ export function claimReader(db: Database, grant: Grant) {
   }
 
   function canReadAlias(link: IdentityLink): boolean {
-    if (link.evidence.length === 0 || link.evidence.length > MAX_EVIDENCE_IDS) return false;
+    const id = aliasId(link.subject_a, link.subject_b);
+    const deny = (reason: AuditDenial["reason"]): false => {
+      denied.set(id, { id, reason });
+      return false;
+    };
+    if (link.evidence.length === 0 || link.evidence.length > MAX_EVIDENCE_IDS) return deny("held");
     let label: Sensitivity = "public";
     for (const id of link.evidence) {
-      if (id.length > MAX_EVIDENCE_ID_CHARS) return false;
+      if (id.length > MAX_EVIDENCE_ID_CHARS) return deny("held");
       const source = id.startsWith("claim:") ? null : event(id);
       const claim = id.startsWith("event:") ? null : getClaim(db, id.replace(/^claim:/, ""));
       // Legacy bare ids must resolve unambiguously. Typed references select
       // one namespace; unknown/deleted evidence never contributes a label.
-      if ((source === null) === (claim === null)) return false;
+      if ((source === null) === (claim === null)) return deny("held");
       const evidenceLabel = sensitivity(source?.sensitivity ?? claim?.sensitivity);
-      if (evidenceLabel === null) return false;
-      if (source !== null && !eventDecision(grant, source).allow) return false;
-      if (claim !== null && (claim.status !== "live" || !canRead(claim))) return false;
+      if (evidenceLabel === null) return deny("missing_sensitivity");
+      if (source !== null) {
+        const decision = eventDecision(grant, source);
+        if (!decision.allow) return deny(decision.reason);
+      }
+      if (claim !== null) {
+        if (claim.status !== "live") return deny("held");
+        if (!canRead(claim)) return deny(denied.get(claim.claim_id)?.reason ?? "held");
+      }
       if (SENSITIVITY_ORDER[evidenceLabel] > SENSITIVITY_ORDER[label]) label = evidenceLabel;
     }
-    const id = aliasId(link.subject_a, link.subject_b);
     // An alias reveals BOTH identities, not just the matching endpoint.
     for (const subject of [link.subject_a, link.subject_b]) {
-      if (!authorize(grant, {
+      const decision = authorize(grant, {
         id, sensitivity: label, subjects: [subject], occurred_at: link.at,
         // An identity link has no page type. Type-scoped grants fail closed.
-      }).allow) return false;
+      });
+      if (!decision.allow) return deny(decision.reason);
     }
     aliases.set(id, { id, sensitivity: label, taint: "clean", authority: null,
       provenance_count: link.evidence.length });

@@ -259,3 +259,24 @@ test("oversized persisted provenance and alias evidence fail closed", async () =
   expect(text).not.toContain("oversized-provenance");
   expect(text).not.toContain("person:oversized-alias");
 });
+
+
+test("withheld aliases record stable redacted reasons in response and access audit", async () => {
+  const f = fixture();
+  await claim(f, "visible");
+  alias(f, "person:secret-association", [f.events["private"] as string]);
+  alias(f, "person:missing-association", ["absent-event"]);
+  alias(f, "person:other-identity", [f.events["public"] as string]);
+  const associationId = (subject: string) => sha256(`identity:${sha256(JSON.stringify(["person:ada", subject].sort()))}`);
+  const response = packet(f, "reader-public");
+  expect(JSON.stringify(response)).not.toContain("secret-association");
+  expect(JSON.stringify(response)).toContain("above_ceiling");
+  const audit = listAudit(f.db, "reader-public", { kind: "access" })[0];
+  expect(audit?.denied).toContainEqual({ id: associationId("person:secret-association"), reason: "above_ceiling" });
+  expect(audit?.denied).toContainEqual({ id: associationId("person:missing-association"), reason: "held" });
+  expect(JSON.stringify(audit)).not.toContain("secret-association");
+  expect(JSON.stringify(audit)).not.toContain("absent-event");
+  packet(f, "subjected");
+  const scoped = listAudit(f.db, "subjected", { kind: "access" })[0];
+  expect(scoped?.denied).toContainEqual({ id: associationId("person:other-identity"), reason: "subject_out_of_scope" });
+});
