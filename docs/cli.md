@@ -34,14 +34,19 @@ This page documents the verbs that exist on this revision.
 ## init
 
 ```text
-usage: kizuki init <path> [--default | --no-default] [--no-service]
+usage: kizuki init <path> [--default | --no-default] [--no-service] [--adopt] [--dry-run]
 ```
 
 Creates a vault, writes a vault identity marker, writes `default_vault`
 unless `--no-default`, and installs `kizuki serve` as a user service when
 a supervisor is present. `--no-service` records an opt-out. With no
-supervisor, prints the exact `serve` command. Later verbs refuse a
-directory that is not a Kizuki vault.
+supervisor, prints the exact `serve` command. A non-empty directory that
+is not already a vault is refused unless `--adopt` is set; `--dry-run`
+prints the adoption inventory and writes nothing. Later verbs refuse a
+directory that is not a Kizuki vault. Control paths are created owner-only
+(`0700` / `0600`). Generated `CANON.md` and `SCHEMA.md` carry
+`kizuki.doctrine/v2`; untouched historical templates are upgraded, and
+owner edits are left in place.
 
 ## import
 
