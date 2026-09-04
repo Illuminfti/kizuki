@@ -21,6 +21,8 @@ import { redactReceiptError } from "./receipts";
 
 /** One sync pass never materializes more than this many unwritten claims. */
 const WRITE_PASS_LIMIT = 32;
+/** Owner-edited skips stay live; scan past them so they cannot fill the write cap. */
+const WRITE_PASS_SCAN = 256;
 
 export interface WritePassResult {
   readonly revived: number;
@@ -124,7 +126,6 @@ async function runWritePassLocked(
           options.model_ref ?? null,
         );
         extracted = mined.mined.count;
-        written += filed.written;
         deduped += filed.deduped;
         superseded += filed.superseded;
         break;
@@ -150,8 +151,9 @@ async function runWritePassLocked(
   }
 
   const io = { db, vault_path: vaultPath };
-  const pending = listUnwrittenLiveClaims(db, WRITE_PASS_LIMIT);
+  const pending = listUnwrittenLiveClaims(db, WRITE_PASS_SCAN);
   for (const claim of pending) {
+    if (canonWrites >= WRITE_PASS_LIMIT) break;
     try {
       const decision = segregateLoopDecision(resolveTarget(io, claim));
       if (decision.action === "skip") continue;
@@ -187,8 +189,7 @@ async function fileProducedDrafts(
   drafts: readonly ClaimDraft[],
   producer: Claim["producer"],
   modelRef: string | null,
-): Promise<{ written: number; deduped: number; superseded: number }> {
-  let written = 0;
+): Promise<{ deduped: number; superseded: number }> {
   let deduped = 0;
   let superseded = 0;
   for (const draft of drafts) {
@@ -211,7 +212,6 @@ async function fileProducedDrafts(
     });
     switch (result.outcome) {
       case "stored":
-        written += 1;
         superseded += result.superseded.length;
         break;
       case "duplicate":
@@ -226,5 +226,5 @@ async function fileProducedDrafts(
       }
     }
   }
-  return { written, deduped, superseded };
+  return { deduped, superseded };
 }

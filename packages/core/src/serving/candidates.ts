@@ -1,3 +1,4 @@
+import type { Database } from "bun:sqlite";
 import { isMachineOriginPath } from "../canon/origin";
 import { listValidityGaps } from "../claims/gaps";
 import { listLiveConflicts, listSubjectAliases } from "../claims/identity";
@@ -74,6 +75,60 @@ export interface PieceRequest {
   types?: string[];
   since: string;
   until: string;
+}
+
+/** Narrow in SQL. A default page filtered in memory misses later subjects. */
+function loadWorkingClaims(db: Database, wanted: string[] | undefined) {
+  if (wanted === undefined || wanted.length === 0) {
+    return listClaims(db, { status: "live", keyed: true, limit: CANDIDATE_LIMIT });
+  }
+  const seen = new Set<string>();
+  const out: ReturnType<typeof listClaims> = [];
+  for (const subject of wanted) {
+    for (const claim of listClaims(db, {
+      status: "live",
+      keyed: true,
+      subject,
+      limit: CANDIDATE_LIMIT,
+    })) {
+      if (seen.has(claim.claim_id)) continue;
+      seen.add(claim.claim_id);
+      out.push(claim);
+    }
+  }
+  return out;
+}
+
+function loadSubjectConflicts(db: Database, wanted: string[] | undefined) {
+  if (wanted === undefined || wanted.length === 0) {
+    return listLiveConflicts(db, { limit: 8 });
+  }
+  const seen = new Set<string>();
+  const out: ReturnType<typeof listLiveConflicts> = [];
+  for (const subject of wanted) {
+    for (const conflict of listLiveConflicts(db, { subject, limit: 8 })) {
+      if (seen.has(conflict.claim_key)) continue;
+      seen.add(conflict.claim_key);
+      out.push(conflict);
+    }
+  }
+  return out;
+}
+
+function loadSubjectGaps(db: Database, wanted: string[] | undefined) {
+  if (wanted === undefined || wanted.length === 0) {
+    return listValidityGaps(db, { limit: 8 });
+  }
+  const seen = new Set<string>();
+  const out: ReturnType<typeof listValidityGaps> = [];
+  for (const subject of wanted) {
+    for (const gap of listValidityGaps(db, { subject, limit: 8 })) {
+      if (seen.has(gap.claim_key)) continue;
+      seen.add(gap.claim_key);
+      out.push(gap);
+    }
+  }
+  return out;
 }
 
 /**
@@ -206,17 +261,7 @@ export function collectPieces(
 
   if (request.include.includes("claims")) {
     const wanted = request.subjects;
-    const live = listClaims(ctx.db, {
-      status: "live",
-      keyed: true,
-      limit: CANDIDATE_LIMIT,
-    }).filter((claim) => {
-      if (wanted === undefined) return true;
-      return (
-        (claim.subject !== null && wanted.includes(claim.subject)) ||
-        claim.subjects.some((subject) => wanted.includes(subject))
-      );
-    });
+    const live = loadWorkingClaims(ctx.db, wanted);
     for (const claim of live) {
       const object = claim.object ?? "";
       const line =
@@ -229,11 +274,7 @@ export function collectPieces(
         block: line,
       });
     }
-    const conflicts = listLiveConflicts(ctx.db, {
-      ...(wanted?.[0] === undefined ? {} : { subject: wanted[0] }),
-      limit: 8,
-    });
-    for (const conflict of conflicts) {
+    for (const conflict of loadSubjectConflicts(ctx.db, wanted)) {
       pieces.push({
         section: "claims",
         heading: "## counterevidence",
@@ -242,11 +283,7 @@ export function collectPieces(
           ` :: ${conflict.claims.map((item) => item.claim_id).join(",")}\n`,
       });
     }
-    const gaps = listValidityGaps(ctx.db, {
-      ...(wanted?.[0] === undefined ? {} : { subject: wanted[0] }),
-      limit: 8,
-    });
-    for (const gap of gaps) {
+    for (const gap of loadSubjectGaps(ctx.db, wanted)) {
       pieces.push({
         section: "claims",
         heading: "## counterevidence",

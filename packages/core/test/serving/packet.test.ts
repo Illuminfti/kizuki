@@ -403,6 +403,56 @@ describe("LifeOS-calibre packet compilation", () => {
     expect((envelope.data?.sections.claims ?? 0) > 0).toBe(true);
   });
 
+  test("a named subject's claims are not crowded out by older keyed rows", async () => {
+    const live = newFixture();
+    const provenance = live.events["public"] as string;
+    for (let index = 0; index < 21; index += 1) {
+      const subject = `person:other-${String(index).padStart(2, "0")}`;
+      await insertClaim(
+        { db: live.db },
+        {
+          kind: "claim",
+          subject,
+          predicate: "employment.works_at",
+          object: `Org${index}`,
+          polarity: "positive",
+          body: `${subject} works at Org${index}.`,
+          provenance: [provenance],
+          subjects: [subject],
+          producer: "deterministic",
+          confidence: 0.7,
+          events: [eventFacts(provenance)],
+        },
+      );
+    }
+    await insertClaim(
+      { db: live.db },
+      {
+        kind: "claim",
+        subject: "person:ada",
+        predicate: "employment.works_at",
+        object: "Acme",
+        polarity: "positive",
+        body: "Ada works at Acme.",
+        provenance: [provenance],
+        subjects: ["person:ada"],
+        producer: "deterministic",
+        confidence: 0.7,
+        events: [eventFacts(provenance)],
+      },
+    );
+    const packet =
+      serveContextPacket(live.owner(), {
+        purpose: "correction",
+        subjects: ["person:ada"],
+        include: ["claims"],
+        budget_tokens: 2_000,
+      }).data?.packet_md ?? "";
+    expect(packet).toContain("person:ada");
+    expect(packet).toContain("Acme");
+    expect(packet).toContain("## working knowledge");
+  });
+
   test("a delta-capable client retains the prefix when the body is unchanged", () => {
     const ctx = newFixture().owner();
     const first = serveContextPacket(ctx, {

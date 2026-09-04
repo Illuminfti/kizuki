@@ -68,6 +68,9 @@ describe("kizuki CLI stranger loop", () => {
     expect(doctor.stdout).not.toContain("retraction-pending");
     expect(doctor.stdout).toContain("claims live=");
     expect(doctor.stdout).toContain("filed=");
+    expect(doctor.stdout).toMatch(
+      /claims live=3 filed=0 written=0 unwritten=3 superseded=0 skipped=0/,
+    );
     expect(doctor.stdout).toContain("unwritten=");
     expect(doctor.stdout).toContain("derived search=");
     expect(doctor.stdout).toContain("next: kizuki tell");

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHelpers } from "../helpers";
 
@@ -95,6 +95,19 @@ describe("doctor liveness", () => {
 
   test("doctor reports canon writing on from a configured model ref", () => {
     const setup = tempVault();
+    writeFileSync(
+      join(setup.vault, ".kizuki", "serve.toml"),
+      '[ports.llm]\nid = "kizuki.llm.openai-compatible"\nmodel = "synthetic@local"\n',
+    );
+    const result = runCli(setup.env, "doctor");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "canon writing: on (kizuki.llm.openai-compatible:synthetic@local)",
+    );
+  });
+
+  test("doctor does not treat KIZUKI_MODEL_REF as a configured write path", () => {
+    const setup = tempVault();
     const result = runCli(
       {
         ...setup.env,
@@ -103,9 +116,8 @@ describe("doctor liveness", () => {
       "doctor",
     );
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain(
-      "canon writing: on (kizuki.llm.openai-compatible:synthetic@local)",
-    );
+    expect(result.stdout).toContain("canon writing: off");
+    expect(result.stdout).not.toContain("canon writing: on");
   });
 
   test("doctor stamps stay redacted and do not echo captured text", () => {

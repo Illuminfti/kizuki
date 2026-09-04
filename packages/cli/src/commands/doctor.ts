@@ -12,7 +12,6 @@ import {
   inspectPurgeHealth,
   inspectServeDoctor,
   listClaims,
-  loadConfiguredModelRef,
   readHolds,
   readReceiptsLog,
   realSupervisorHost,
@@ -176,10 +175,8 @@ async function collect(
     env.HOME ?? env.XDG_CONFIG_HOME ?? "",
     `kizuki serve --vault ${vaultPath}`,
   );
-  const modelRef = env.KIZUKI_MODEL_REF ?? loadConfiguredModelRef(vaultPath);
   const serve = inspectServeDoctor(ctx.db, vaultPath, {
     supervisor: host,
-    ...(modelRef === null ? {} : { model_ref: modelRef }),
   });
   const ok =
     vault.counts.invalid === 0 &&
@@ -210,7 +207,7 @@ async function collect(
     events: count(ctx.db),
     claims: {
       ...claims,
-      filed: countClaims(ctx.db),
+      filed: countClaims(ctx.db, { status: "skipped" }),
       written: countWrittenLiveClaims(ctx.db),
       unwritten: countUnwrittenLiveClaims(ctx.db),
     },
