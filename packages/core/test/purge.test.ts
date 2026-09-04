@@ -17,6 +17,7 @@ import {
   purgeEvents,
   resolvePurgeConnectorId,
   runPurge,
+  setAfterCanonSnapshot,
 } from "../src/ledger/purge";
 import { tableExists } from "../src/ledger/schema";
 import { indexEvent } from "../src/search/indexer";
@@ -41,6 +42,7 @@ function temporaryVault(): string {
 }
 
 afterEach(() => {
+  setAfterCanonSnapshot();
   for (const path of directories.splice(0)) {
     rmSync(path, { recursive: true, force: true });
   }
@@ -449,31 +451,29 @@ describe("purgeEvents", () => {
     const db = openLedger(":memory:");
     const target = storedEvent(db, event("target"));
     const vaultPath = temporaryVault();
+    setAfterCanonSnapshot(() => {
+      writeFileSync(
+        join(vaultPath, "facts", "late.md"),
+        serializePage({
+          data: {
+            id: "page-late",
+            title: "late",
+            type: "fact",
+            status: "active",
+            sensitivity: "personal",
+            taint: "clean",
+            sources: [target.event_id],
+          },
+          body: "appeared during purge\n",
+        }),
+        "utf8",
+      );
+    });
     const outcome = await runPurge(
       db,
       vaultPath,
       { event_id: target.event_id },
       "record request",
-      {
-        after_canon_snapshot: () => {
-          writeFileSync(
-            join(vaultPath, "facts", "late.md"),
-            serializePage({
-              data: {
-                id: "page-late",
-                title: "late",
-                type: "fact",
-                status: "active",
-                sensitivity: "personal",
-                taint: "clean",
-                sources: [target.event_id],
-              },
-              body: "appeared during purge\n",
-            }),
-            "utf8",
-          );
-        },
-      },
     );
     expect(outcome.canon_holds.map(({ page_path }) => page_path)).toEqual([
       "facts/late.md",

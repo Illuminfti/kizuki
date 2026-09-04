@@ -42,6 +42,13 @@ export type PurgeErrorCode = (typeof PURGE_ERROR_CODES)[number];
 
 const CONTROL_CHARS = /[\u0000-\u0008\u000A-\u001F\u007F]/;
 
+/** Test-only seam for the snapshot/lock window. Not a product option. */
+let afterCanonSnapshot: (() => void) | undefined;
+
+export function setAfterCanonSnapshot(hook?: () => void): void {
+  afterCanonSnapshot = hook;
+}
+
 export class PurgeError extends Error {
   readonly code: PurgeErrorCode;
   readonly filter: PurgeFilter | undefined;
@@ -123,8 +130,6 @@ export interface PurgePhaseOptions {
   allow_empty?: boolean;
   /** When set, phase 1 records a purge_op for this store. `null` skips it. */
   retrieval_store?: string | null;
-  /** Test seam: runs after the pre-lock snapshot, before the write transaction. */
-  after_canon_snapshot?: () => void;
 }
 
 export interface PurgeRunOptions extends PurgePhaseOptions {
@@ -285,14 +290,14 @@ function parseProof(raw: string | null): AbsenceProof | null {
   }
 }
 
-function emptyOutcome(uncertain: readonly string[] = []): PurgeOutcome {
+function emptyOutcome(): PurgeOutcome {
   return {
     receipts: [],
     withdrawn_proposals: [],
     canon_holds: [],
     purge_ops: [],
     rewritten: [],
-    uncertain_pages: [...uncertain],
+    uncertain_pages: [],
   };
 }
 
@@ -739,7 +744,7 @@ export function purgeEvents(
     );
   }
   const snapshot = collectCanonSnapshot(vaultPath);
-  options.after_canon_snapshot?.();
+  afterCanonSnapshot?.();
   const retrievalStore = resolveRetrievalStore(vaultPath, options);
 
   const outcome = db.transaction((): PurgeOutcome => {
@@ -782,7 +787,9 @@ export function purgeEvents(
       insertHold(db, relPath, batchReceipt, holdReason, purgedAt);
       holds.push({ page_path: relPath, proposal_id: batchReceipt });
     }
-    holds.sort(compareHoldPath);
+    holds.sort((left, right) =>
+      left.page_path < right.page_path ? -1 : left.page_path > right.page_path ? 1 : 0,
+    );
 
     for (const candidate of candidates) {
       const receipt: PurgeReceipt = {
@@ -915,12 +922,11 @@ function readHoldSources(vaultPath: string, relPath: string): string[] | null {
 }
 
 function matchablePagePaths(vaultPath: string): Set<string> {
-  if (vaultPath === ":memory:" || vaultPath.length === 0) return new Set();
-  const paths = new Set<string>();
-  for (const page of listCanonPagesReport(vaultPath).pages) {
-    if (pageSources(page.data["sources"]) !== null) paths.add(page.relPath);
-  }
-  return paths;
+  return new Set(
+    collectCanonSnapshot(vaultPath)
+      .filter((row) => row.page !== null && row.sources !== null)
+      .map((row) => row.relPath),
+  );
 }
 
 function purgedCitations(db: Database, sources: readonly string[]): string[] {
@@ -968,13 +974,6 @@ function holdPathsFor(
   };
 }
 
-function compareHoldPath(
-  left: { page_path: string },
-  right: { page_path: string },
-): number {
-  return left.page_path < right.page_path ? -1 : left.page_path > right.page_path ? 1 : 0;
-}
-
 /** After the write lock drops, hold pages the pre-lock snapshot missed. */
 function catchUpHolds(
   db: Database,
@@ -996,7 +995,9 @@ function catchUpHolds(
       already.add(relPath);
     }
   }
-  outcome.canon_holds.sort(compareHoldPath);
+  outcome.canon_holds.sort((left, right) =>
+    left.page_path < right.page_path ? -1 : left.page_path > right.page_path ? 1 : 0,
+  );
   outcome.uncertain_pages = [...new Set([...outcome.uncertain_pages, ...matched.uncertain])].sort();
 }
 
