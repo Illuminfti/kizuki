@@ -1,0 +1,20 @@
+# M1 container floor only (docs/deploy-box-tailscale.md). The tailscale
+# sidecar, network_mode: service:tailscale, and TS_STATE_DIR volume are M2;
+# they are not added here.
+services:
+  kizuki:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp
+    volumes:
+      - kizuki-vault:/vault
+    environment:
+      KIZUKI_HTTP_PORT: "8787"
+
+volumes:
+  kizuki-vault: {}
