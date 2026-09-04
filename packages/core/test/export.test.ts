@@ -360,6 +360,24 @@ describe("exportVault", () => {
     db.close();
   });
 
+  test("removes the staging directory when export setup fails", () => {
+    const { db, vaultPath } = populated();
+    const parent = temporary("kizuki-export-parent-");
+    const outDir = join(parent, "dump");
+    expect(() =>
+      exportVault(db, vaultPath, outDir, {
+        onProgress: (label) => {
+          if (label === "staging") throw new Error("injected staging failure");
+        },
+      }),
+    ).toThrow(/injected staging failure/);
+    expect(existsSync(outDir)).toBe(false);
+    expect(
+      readdirSync(parent).some((name) => name.includes(".kizuki-backup-")),
+    ).toBe(false);
+    db.close();
+  });
+
   test("refuses a destination inside the vault, including through a symlink", () => {
     const { db, vaultPath } = populated();
     expect(() => exportVault(db, vaultPath, join(vaultPath, "inside"))).toThrow(
@@ -583,6 +601,125 @@ describe("restoreVault", () => {
         .all(),
     ).toEqual([{ page_id: "ada", rel_path: "people/Ada.md" }]);
     restored.close();
+    db.close();
+  });
+
+  test("restores identity links and connector sensitivity", () => {
+    const { db, vaultPath } = populated();
+    db.query(
+      `INSERT INTO identity_links
+         (subject_a, subject_b, score, evidence, status, decided_by, receipt_id, at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "person:ada",
+      "person:a.lovelace",
+      0.96,
+      JSON.stringify(["evt-1"]),
+      "merged",
+      "owner",
+      null,
+      "2026-01-01T00:00:00.000Z",
+    );
+    db.query(
+      `INSERT INTO connector_sensitivity
+         (connector_id, source_key, default_sensitivity, floor, set_by, at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "fixture",
+      "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "personal",
+      "personal",
+      "manifest",
+      "2026-01-01T00:00:00.000Z",
+    );
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    const manifest = exportVault(db, vaultPath, backup);
+    expect(manifest.files["claims/identity_links.jsonl"]?.count).toBe(1);
+    expect(manifest.files["ledger/connector_sensitivity.jsonl"]?.count).toBe(1);
+
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    restoreVault(backup, target);
+    const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
+    expect(
+      restored
+        .query<
+          {
+            subject_a: string;
+            subject_b: string;
+            score: number;
+            evidence: string;
+            status: string;
+          },
+          []
+        >(
+          `SELECT subject_a, subject_b, score, evidence, status
+           FROM identity_links`,
+        )
+        .get(),
+    ).toEqual({
+      subject_a: "person:ada",
+      subject_b: "person:a.lovelace",
+      score: 0.96,
+      evidence: '["evt-1"]',
+      status: "merged",
+    });
+    expect(
+      restored
+        .query<
+          {
+            connector_id: string;
+            source_key: string;
+            default_sensitivity: string;
+            floor: string;
+          },
+          []
+        >(
+          `SELECT connector_id, source_key, default_sensitivity, floor
+           FROM connector_sensitivity`,
+        )
+        .get(),
+    ).toEqual({
+      connector_id: "fixture",
+      source_key: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      default_sensitivity: "personal",
+      floor: "personal",
+    });
+    restored.close();
+    db.close();
+  });
+
+  test("restores backups that omit identity links and connector sensitivity", () => {
+    const { db, vaultPath } = populated();
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    const manifest = exportVault(db, vaultPath, backup);
+    rmSync(join(backup, "claims", "identity_links.jsonl"));
+    rmSync(join(backup, "ledger", "connector_sensitivity.jsonl"));
+    const files = { ...manifest.files };
+    delete files["claims/identity_links.jsonl"];
+    delete files["ledger/connector_sensitivity.jsonl"];
+    writeSignedManifest(backup, { ...manifest, files });
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    expect(restoreVault(backup, target).events).toBe(1);
+    db.close();
+  });
+
+  test("removes the staging directory when restore setup fails", () => {
+    const { db, vaultPath } = populated();
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    exportVault(db, vaultPath, backup);
+    const parent = temporary("kizuki-restore-parent-");
+    const target = join(parent, "vault");
+    expect(() =>
+      restoreVault(backup, target, {
+        onProgress: (label) => {
+          if (label === "staging") throw new Error("injected staging failure");
+        },
+      }),
+    ).toThrow(/injected staging failure/);
+    expect(existsSync(target)).toBe(false);
+    expect(
+      readdirSync(parent).some((name) => name.includes(".kizuki-backup-")),
+    ).toBe(false);
     db.close();
   });
 

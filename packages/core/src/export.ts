@@ -194,6 +194,26 @@ interface BindingRow {
   bound_at: string;
 }
 
+interface IdentityLinkRow {
+  subject_a: string;
+  subject_b: string;
+  score: number;
+  evidence: string;
+  status: string;
+  decided_by: string;
+  receipt_id: string | null;
+  at: string;
+}
+
+interface SensitivityRow {
+  connector_id: string;
+  source_key: string;
+  default_sensitivity: string;
+  floor: string;
+  set_by: string;
+  at: string;
+}
+
 const EVENT_COLUMNS = `
   event_id, connector_id, source_record_id, kind, occurred_at, observed_at,
   text, subjects, sensitivity_hint, deleted, attachments, metadata,
@@ -643,6 +663,79 @@ function* pageBindings(db: Database): Generator<BindingRow> {
   }
 }
 
+function* pageIdentityLinks(db: Database): Generator<Record<string, unknown>> {
+  if (!tableExists(db, "identity_links")) return;
+  let after: { subject_a: string; subject_b: string } | null = null;
+  while (true) {
+    let rows: IdentityLinkRow[];
+    if (after === null) {
+      rows = db
+        .query<IdentityLinkRow, [number]>(
+          `SELECT subject_a, subject_b, score, evidence, status, decided_by, receipt_id, at
+           FROM identity_links ORDER BY subject_a, subject_b LIMIT ?`,
+        )
+        .all(PAGE);
+    } else {
+      rows = db
+        .query<IdentityLinkRow, [string, string, string, number]>(
+          `SELECT subject_a, subject_b, score, evidence, status, decided_by, receipt_id, at
+           FROM identity_links
+           WHERE subject_a > ?
+              OR (subject_a = ? AND subject_b > ?)
+           ORDER BY subject_a, subject_b LIMIT ?`,
+        )
+        .all(after.subject_a, after.subject_a, after.subject_b, PAGE);
+    }
+    if (rows.length === 0) break;
+    for (const row of rows) {
+      yield {
+        subject_a: row.subject_a,
+        subject_b: row.subject_b,
+        score: row.score,
+        evidence: JSON.parse(row.evidence) as unknown,
+        status: row.status,
+        decided_by: row.decided_by,
+        receipt_id: row.receipt_id,
+        at: row.at,
+      };
+    }
+    const last: IdentityLinkRow | undefined = rows.at(-1);
+    if (last === undefined || rows.length < PAGE) break;
+    after = { subject_a: last.subject_a, subject_b: last.subject_b };
+  }
+}
+
+function* pageConnectorSensitivity(db: Database): Generator<SensitivityRow> {
+  if (!tableExists(db, "connector_sensitivity")) return;
+  let after: { connector_id: string; source_key: string } | null = null;
+  while (true) {
+    let rows: SensitivityRow[];
+    if (after === null) {
+      rows = db
+        .query<SensitivityRow, [number]>(
+          `SELECT connector_id, source_key, default_sensitivity, floor, set_by, at
+           FROM connector_sensitivity ORDER BY connector_id, source_key LIMIT ?`,
+        )
+        .all(PAGE);
+    } else {
+      rows = db
+        .query<SensitivityRow, [string, string, string, number]>(
+          `SELECT connector_id, source_key, default_sensitivity, floor, set_by, at
+           FROM connector_sensitivity
+           WHERE connector_id > ?
+              OR (connector_id = ? AND source_key > ?)
+           ORDER BY connector_id, source_key LIMIT ?`,
+        )
+        .all(after.connector_id, after.connector_id, after.source_key, PAGE);
+    }
+    if (rows.length === 0) break;
+    yield* rows;
+    const last: SensitivityRow | undefined = rows.at(-1);
+    if (last === undefined || rows.length < PAGE) break;
+    after = { connector_id: last.connector_id, source_key: last.source_key };
+  }
+}
+
 function receiptRecord(row: CanonReceiptRow): Record<string, unknown> {
   return { ...rowToReceipt(row), claim_kind: row.kind };
 }
@@ -921,11 +1014,11 @@ export function exportVault(
   mkdirPrivate(parent);
 
   const staging = join(parent, `${basenameSafe(destination)}${STAGING_MARK}${ulid()}.partial`);
-  mkdirPrivate(staging);
-  writePrivateFile(join(staging, INCOMPLETE), Buffer.from("incomplete\n"));
-  options.onProgress?.("staging");
 
   try {
+    mkdirPrivate(staging);
+    writePrivateFile(join(staging, INCOMPLETE), Buffer.from("incomplete\n"));
+    options.onProgress?.("staging");
     const files: Record<string, ExportManifestEntry> = {};
     for (const sourceFile of vaultFiles(source)) {
       throwIfAborted(options.signal);
@@ -955,6 +1048,20 @@ export function exportVault(
       options.signal,
     );
     writeStream(staging, "claims/bindings.jsonl", pageBindings(db), files, options.signal);
+    writeStream(
+      staging,
+      "claims/identity_links.jsonl",
+      pageIdentityLinks(db),
+      files,
+      options.signal,
+    );
+    writeStream(
+      staging,
+      "ledger/connector_sensitivity.jsonl",
+      pageConnectorSensitivity(db),
+      files,
+      options.signal,
+    );
     options.onProgress?.("receipts");
     writeStream(staging, "canon/receipts.jsonl", pageReceipts(db), files, options.signal);
     writeStream(
@@ -1233,6 +1340,38 @@ function insertBinding(db: Database, raw: Record<string, unknown>): void {
   );
 }
 
+function insertIdentityLink(db: Database, raw: Record<string, unknown>): void {
+  db.query(
+    `INSERT INTO identity_links
+       (subject_a, subject_b, score, evidence, status, decided_by, receipt_id, at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    asString(raw.subject_a, "subject_a"),
+    asString(raw.subject_b, "subject_b"),
+    asNumber(raw.score, "score"),
+    JSON.stringify(raw.evidence ?? []),
+    asString(raw.status, "status"),
+    asString(raw.decided_by, "decided_by"),
+    asStringOrNull(raw.receipt_id, "receipt_id"),
+    asString(raw.at, "at"),
+  );
+}
+
+function insertConnectorSensitivity(db: Database, raw: Record<string, unknown>): void {
+  db.query(
+    `INSERT INTO connector_sensitivity
+       (connector_id, source_key, default_sensitivity, floor, set_by, at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    asString(raw.connector_id, "connector_id"),
+    asString(raw.source_key, "source_key"),
+    asString(raw.default_sensitivity, "default_sensitivity"),
+    asString(raw.floor, "floor"),
+    asString(raw.set_by, "set_by"),
+    asString(raw.at, "at"),
+  );
+}
+
 function insertConnectionRow(db: Database, raw: Record<string, unknown>): void {
   const refs = raw.secret_refs;
   if (!Array.isArray(refs) || !refs.every((item) => typeof item === "string")) {
@@ -1359,11 +1498,11 @@ export function restoreVault(
     parent,
     `${basenameSafe(destination)}${STAGING_MARK}${ulid()}.partial`,
   );
-  mkdirPrivate(staging);
-  writePrivateFile(join(staging, INCOMPLETE), Buffer.from("incomplete\n"));
-  options.onProgress?.("staging");
 
   try {
+    mkdirPrivate(staging);
+    writePrivateFile(join(staging, INCOMPLETE), Buffer.from("incomplete\n"));
+    options.onProgress?.("staging");
     for (const key of Object.keys(manifest.files).sort(compareCodeUnits)) {
       if (!key.startsWith("vault/")) continue;
       throwIfAborted(options.signal);
@@ -1401,6 +1540,9 @@ export function restoreVault(
         for (const row of streamRows(source, "claims/bindings.jsonl", false)) {
           insertBinding(db, row);
         }
+        for (const row of streamRows(source, "claims/identity_links.jsonl", false)) {
+          insertIdentityLink(db, row);
+        }
         for (const row of streamRows(source, "canon/receipts.jsonl", true)) {
           insertReceipt(db, row);
         }
@@ -1409,6 +1551,9 @@ export function restoreVault(
         }
         for (const row of streamRows(source, "checkpoints.jsonl", true)) {
           insertCheckpointRow(db, row);
+        }
+        for (const row of streamRows(source, "ledger/connector_sensitivity.jsonl", false)) {
+          insertConnectorSensitivity(db, row);
         }
       })();
 
