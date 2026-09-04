@@ -18,6 +18,8 @@ import {
   exportVault,
   restoreVault,
   verifyBackup,
+  type ExportManifest,
+  type ExportManifestEntry,
 } from "../src/export";
 import { saveCheckpoint } from "../src/ledger/connections";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "../src/ledger/db";
@@ -124,6 +126,75 @@ function insertFixtureClaim(
     null,
     null,
     1,
+    null,
+  );
+}
+
+function writeSignedManifest(
+  backup: string,
+  manifest: Omit<ExportManifest, "manifest_sha256">,
+): ExportManifest {
+  const files: Record<string, ExportManifestEntry> = {};
+  for (const key of Object.keys(manifest.files).sort((left, right) =>
+    left < right ? -1 : left > right ? 1 : 0,
+  )) {
+    const entry = manifest.files[key];
+    if (entry !== undefined) files[key] = entry;
+  }
+  const unsigned = {
+    schema: manifest.schema,
+    vault_id: manifest.vault_id,
+    created_at: manifest.created_at,
+    schema_versions: manifest.schema_versions,
+    snapshot: manifest.snapshot,
+    complete: manifest.complete,
+    files,
+  };
+  const signed: ExportManifest = {
+    ...unsigned,
+    manifest_sha256: new Bun.CryptoHasher("sha256")
+      .update(`${JSON.stringify(unsigned, null, 2)}\n`)
+      .digest("hex"),
+  };
+  writeFileSync(join(backup, "manifest.json"), `${JSON.stringify(signed, null, 2)}\n`);
+  chmodSync(join(backup, "manifest.json"), 0o600);
+  return signed;
+}
+
+function insertFixtureReceipt(
+  db: ReturnType<typeof openLedger>,
+  kind = "purge_review",
+): void {
+  db.query(
+    `INSERT INTO canon_receipts
+       (receipt_id, claim_ids, provenance, sensitivity, page_path, kind,
+        before_hash, after_hash, at, receipt_kind, page_action, archive_path,
+        writer, producer, model_ref, authority, confidence, taint,
+        candidates, superseded, retrieval_ops, reverts, reverted_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    "01EXPORTRECEIPTKIND000000001",
+    "[]",
+    "[]",
+    "personal",
+    "people/Ada.md",
+    kind,
+    null,
+    "afterhash",
+    "2026-01-01T00:00:00.000Z",
+    "write",
+    "edit",
+    null,
+    "loop",
+    "deterministic",
+    null,
+    "connector_evidence",
+    1,
+    "quoted",
+    "[]",
+    "[]",
+    "[]",
+    null,
     null,
   );
 }
@@ -472,6 +543,81 @@ describe("restoreVault", () => {
         .get()?.body,
     ).toBe(body);
     restored.close();
+    db.close();
+  });
+
+  test("refuses a vault path that would escape the restore target", () => {
+    const { db, vaultPath } = populated();
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    const manifest = exportVault(db, vaultPath, backup);
+    const notes = manifest.files["vault/notes.txt"];
+    if (notes === undefined) throw new Error("expected vault/notes.txt");
+    const files = { ...manifest.files };
+    delete files["vault/notes.txt"];
+    files["vault//tmp/kizuki-export-escape"] = notes;
+    writeSignedManifest(backup, { ...manifest, files });
+    const outside = join(tmpdir(), "kizuki-export-escape");
+    rmSync(outside, { force: true });
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    expect(() => restoreVault(backup, target)).toThrow(/invalid/);
+    expect(existsSync(outside)).toBe(false);
+    db.close();
+  });
+
+  test("reads a manifest whose UTF-8 character straddles a 64KiB chunk", () => {
+    const { db, vaultPath } = populated();
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    const manifest = exportVault(db, vaultPath, backup);
+    const empty = writeSignedManifest(backup, { ...manifest, created_at: "" });
+    const prefix =
+      `${JSON.stringify(empty, null, 2)}\n`.indexOf('"created_at": "') +
+      '"created_at": "'.length;
+    const pad = 65_535 - Buffer.byteLength(
+      `${JSON.stringify(empty, null, 2)}\n`.slice(0, prefix),
+    );
+    const created_at = `${"a".repeat(pad)}中`;
+    const signed = writeSignedManifest(backup, { ...manifest, created_at });
+    const bytes = readFileSync(join(backup, "manifest.json"));
+    expect(bytes.subarray(65_535, 65_538)).toEqual(Buffer.from("中"));
+    expect(verifyBackup(backup).created_at).toBe(created_at);
+    expect(verifyBackup(backup).manifest_sha256).toBe(signed.manifest_sha256);
+    db.close();
+  });
+
+  test("restores the durable receipt claim kind", () => {
+    const { db, vaultPath } = populated();
+    insertFixtureReceipt(db, "purge_review");
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    exportVault(db, vaultPath, backup);
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    restoreVault(backup, target);
+    const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
+    expect(
+      restored
+        .query<{ kind: string; receipt_kind: string }, []>(
+          "SELECT kind, receipt_kind FROM canon_receipts",
+        )
+        .get(),
+    ).toEqual({ kind: "purge_review", receipt_kind: "write" });
+    restored.close();
+    db.close();
+  });
+
+  test("snapshot event_count matches the exported event stream", () => {
+    const { db, vaultPath } = populated();
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    const manifest = exportVault(db, vaultPath, backup, {
+      onProgress: (label) => {
+        if (label === "claims") {
+          const extra = accept(db, { ...validEvent(), source_record_id: "rec-race" });
+          if (extra.status !== "stored") throw new Error("expected stored extra event");
+        }
+      },
+    });
+    expect(manifest.files["ledger/events.jsonl"]?.count).toBe(1);
+    expect(manifest.snapshot.event_count).toBe(1);
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    expect(restoreVault(backup, target).events).toBe(1);
     db.close();
   });
 

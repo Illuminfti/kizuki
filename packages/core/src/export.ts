@@ -20,7 +20,6 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { rebuildPageIndex } from "./canon";
 import { CANON_SCHEMA_VERSION } from "./canon/schema";
 import {
-  type CanonReceipt,
   type CanonReceiptRow,
   rowToReceipt,
 } from "./canon/receipts";
@@ -319,6 +318,28 @@ function isInside(inner: string, outer: string): boolean {
   return inner.startsWith(prefix);
 }
 
+function splitBackupPath(key: string): string[] {
+  if (key.includes("\0")) {
+    throw new Error(`backup file path is invalid: ${key}`);
+  }
+  const parts = key.split("/");
+  if (
+    parts.length === 0 ||
+    parts.some((part) => part.length === 0 || part === "." || part === "..")
+  ) {
+    throw new Error(`backup file path is invalid: ${key}`);
+  }
+  return parts;
+}
+
+function pathUnder(root: string, parts: string[]): string {
+  const dest = resolve(root, ...parts);
+  if (!isInside(dest, resolve(root))) {
+    throw new Error(`backup file path is invalid: ${parts.join("/")}`);
+  }
+  return dest;
+}
+
 function assertSeparated(source: string, destination: string): void {
   const from = resolveExisting(source);
   const to = resolveExisting(destination);
@@ -447,26 +468,46 @@ function claimRecord(row: ClaimRow): Record<string, unknown> {
   };
 }
 
-function* pageEvents(db: Database): Generator<Record<string, unknown>> {
+function* pageEvents(
+  db: Database,
+  snapshot: BackupSnapshot,
+): Generator<Record<string, unknown>> {
+  if (snapshot.last_event_id === null || snapshot.last_accepted_at === null) {
+    return;
+  }
+  const capAt = snapshot.last_accepted_at;
+  const capId = snapshot.last_event_id;
   let cursor: { accepted_at: string; event_id: string } | null = null;
   while (true) {
     let rows: EventRow[];
     if (cursor === null) {
       rows = db
-        .query<EventRow, [number]>(
-          `SELECT ${EVENT_COLUMNS} FROM events
-           ORDER BY accepted_at, event_id LIMIT ?`,
-        )
-        .all(PAGE);
-    } else {
-      rows = db
         .query<EventRow, [string, string, string, number]>(
           `SELECT ${EVENT_COLUMNS} FROM events
-           WHERE accepted_at > ?
-              OR (accepted_at = ? AND event_id > ?)
+           WHERE accepted_at < ?
+              OR (accepted_at = ? AND event_id <= ?)
            ORDER BY accepted_at, event_id LIMIT ?`,
         )
-        .all(cursor.accepted_at, cursor.accepted_at, cursor.event_id, PAGE);
+        .all(capAt, capAt, capId, PAGE);
+    } else {
+      rows = db
+        .query<EventRow, [string, string, string, string, string, string, number]>(
+          `SELECT ${EVENT_COLUMNS} FROM events
+           WHERE (accepted_at > ?
+              OR (accepted_at = ? AND event_id > ?))
+             AND (accepted_at < ?
+              OR (accepted_at = ? AND event_id <= ?))
+           ORDER BY accepted_at, event_id LIMIT ?`,
+        )
+        .all(
+          cursor.accepted_at,
+          cursor.accepted_at,
+          cursor.event_id,
+          capAt,
+          capAt,
+          capId,
+          PAGE,
+        );
     }
     if (rows.length === 0) break;
     for (const row of rows) yield eventRecord(row);
@@ -597,7 +638,11 @@ function* pageBindings(db: Database): Generator<BindingRow> {
   }
 }
 
-function* pageReceipts(db: Database): Generator<CanonReceipt> {
+function receiptRecord(row: CanonReceiptRow): Record<string, unknown> {
+  return { ...rowToReceipt(row), claim_kind: row.kind };
+}
+
+function* pageReceipts(db: Database): Generator<Record<string, unknown>> {
   if (!tableExists(db, "canon_receipts")) return;
   let cursor: { at: string; receipt_id: string } | null = null;
   while (true) {
@@ -619,7 +664,7 @@ function* pageReceipts(db: Database): Generator<CanonReceipt> {
         .all(cursor.at, cursor.at, cursor.receipt_id, PAGE);
     }
     if (rows.length === 0) break;
-    for (const row of rows) yield rowToReceipt(row);
+    for (const row of rows) yield receiptRecord(row);
     const last: CanonReceiptRow | undefined = rows.at(-1);
     if (last === undefined || rows.length < PAGE) break;
     cursor = { at: last.at, receipt_id: last.receipt_id };
@@ -882,7 +927,14 @@ export function exportVault(
     }
 
     options.onProgress?.("ledger");
-    writeStream(staging, "ledger/events.jsonl", pageEvents(db), files, options.signal);
+    const snapshot = snapshotOf(db);
+    writeStream(
+      staging,
+      "ledger/events.jsonl",
+      pageEvents(db, snapshot),
+      files,
+      options.signal,
+    );
     writeStream(staging, "ledger/event_purges.jsonl", pagePurges(db), files, options.signal);
     options.onProgress?.("claims");
     writeStream(staging, "claims/claims.jsonl", pageClaims(db), files, options.signal);
@@ -911,12 +963,15 @@ export function exportVault(
       options.signal,
     );
 
+    if ((files["ledger/events.jsonl"]?.count ?? 0) !== snapshot.event_count) {
+      throw new Error("export event stream drifted from the snapshot");
+    }
     const manifest = signManifest({
       schema: BACKUP_SCHEMA,
       vault_id: readVaultId(source),
       created_at: new Date().toISOString(),
       schema_versions: supportedSchemaVersions(ledgerSchemaVersion(db)),
-      snapshot: snapshotOf(db),
+      snapshot,
       complete: true,
       files: sortedFiles(files),
     });
@@ -958,10 +1013,7 @@ function verifyFiles(root: string, manifest: ExportManifest): void {
   for (const key of Object.keys(manifest.files).sort(compareCodeUnits)) {
     const entry = manifest.files[key];
     if (entry === undefined) continue;
-    if (key.includes("\0") || key.split("/").includes("..")) {
-      throw new Error(`backup file path is invalid: ${key}`);
-    }
-    const path = join(root, ...key.split("/"));
+    const path = pathUnder(root, splitBackupPath(key));
     if (!existsSync(path) || lstatSync(path).isSymbolicLink()) {
       throw new Error(`backup file is missing: ${key}`);
     }
@@ -986,18 +1038,18 @@ function assertComplete(root: string, manifest: ExportManifest): void {
 
 function readTextFile(path: string): string {
   const fd = openSync(path, "r");
-  let text = "";
+  const chunks: Buffer[] = [];
   try {
     const buf = Buffer.alloc(CHUNK);
     let read = readSync(fd, buf);
     while (read > 0) {
-      text += buf.toString("utf8", 0, read);
+      chunks.push(Buffer.from(buf.subarray(0, read)));
       read = readSync(fd, buf);
     }
   } finally {
     closeSync(fd);
   }
-  return text;
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 function readManifest(backupDir: string): ExportManifest {
@@ -1205,7 +1257,7 @@ function insertReceipt(db: Database, raw: Record<string, unknown>): void {
     JSON.stringify(raw.provenance ?? []),
     asString(raw.sensitivity, "sensitivity"),
     asString(raw.page_path, "page_path"),
-    "claim",
+    asString(raw.claim_kind ?? "claim", "claim_kind"),
     asStringOrNull(raw.before_hash, "before_hash"),
     asString(raw.after_hash, "after_hash"),
     asString(raw.at, "at"),
@@ -1303,8 +1355,9 @@ export function restoreVault(
       if (!key.startsWith("vault/")) continue;
       throwIfAborted(options.signal);
       options.onProgress?.("vault");
-      const rel = key.slice("vault/".length);
-      copyHashed(join(source, ...key.split("/")), join(staging, rel));
+      const parts = splitBackupPath(key);
+      if (parts[0] !== "vault") continue;
+      copyHashed(pathUnder(source, parts), pathUnder(staging, parts.slice(1)));
     }
     initVault(staging);
     if (manifest.vault_id !== null) {
