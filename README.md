@@ -23,20 +23,20 @@ and a stranger-proof installer are not done.
 
 | Surface | State |
 | --- | --- |
-| CLI | `bun packages/cli/src/main.ts` — verbs listed below. No compiled binary. No registry package. Version `0.1.0`. |
-| File ingest | `import` / `connect` enroll `none`-mode sources only. |
+| CLI | Source entry point and a locally built Linux x64 baseline native package. No registry package. Version `0.1.0`. |
+| Sources | Local files and exports, plus an opt-in read-only Beeper Desktop connection. |
 | Query | FTS over labeled canon and ledger text. Unlabeled hits are withheld. |
 | Doctor | Vault, connections, claims, receipts, holds, serve rails, `canon writing: on\|off`. |
 | Correction | `tell` / MCP `correct` supersede a claim and rewrite canon in the same pass. |
 | Undo / audit | Receipt list, TUI audit, `undo <receipt>`. |
 | Serve | Local loop, loopback HTTP, optional user-service install at `init`. |
-| MCP | `bun packages/mcp/src/bin.ts` — stdio adapter. No policy of its own. |
+| MCP | Source entry point and native `kizuki-mcp` — stdio adapter. No policy of its own. |
 | Sign-in sources | Telegram and IMAP packages exist. This CLI will not enroll them. |
 | Canon writer | Requires a configured model. Without one, doctor says so and the rest still runs. |
 | 1.0 proofs | Not claimed. No `scripts/stranger-proof.sh`. |
 
 Public CLI verbs: `init`, `connect`, `backfill`, `sync`, `import`, `models`,
-`audit`, `tell`, `undo`, `query`, `doctor`, `serve`, `purge`, `export`,
+`audit`, `tell`, `undo`, `query`, `context`, `doctor`, `serve`, `purge`, `export`,
 `version`. `review`, `promote`, and `reject` are retired: they exit 2 and
 point at `audit`, `undo`, and `tell`.
 
@@ -47,9 +47,10 @@ strict. Nothing is installed globally. From a clone:
 
 ```bash
 bun install --frozen-lockfile
-bun packages/cli/src/main.ts init ./vault
+bun packages/cli/src/main.ts init ./vault --no-service
 bun packages/cli/src/main.ts import markdown-folder --source ./notes
-bun packages/cli/src/main.ts query acme
+bun packages/cli/src/main.ts query "Ada"
+bun packages/cli/src/main.ts context --purpose session --query "Ada"
 bun packages/cli/src/main.ts doctor
 ```
 
@@ -57,12 +58,10 @@ Config is `$KIZUKI_CONFIG`, else `$XDG_CONFIG_HOME/kizuki/config.toml`, else
 `$HOME/.config/kizuki/config.toml`. Only `default_vault` and named `[vaults]`
 are read. Every verb accepts `--vault <path|name>`.
 
-`import` stores events and files **live** claims. It does not write canon.
-`query` of unlabeled ledger text prints nothing on stdout and reports
-`withheld=N` on stderr — that is fail-closed, not a broken search. `doctor`
-lists live claims (for `tell --claim`) separately from leftover skipped
-rows. After a folder import those rows are live; the receipted writer
-materializes them only when a model is configured.
+`import` stores events and files live claims. It does not write canon. `query`
+and `context` are useful with no model configured. `doctor` lists live claims
+(for `tell --claim`) separately from leftover skipped rows. The receipted
+writer materializes claims only when a model is configured.
 
 ```bash
 bun packages/cli/src/main.ts tell "the name is Ada" --claim LIVE_CLAIM_ID
@@ -72,6 +71,47 @@ bun packages/cli/src/main.ts undo RECEIPT_ID
 Without a model, ingest, query, doctor, and undo still run. `tell` still
 runs without a model once a live claim exists. The loop will not write
 canon on its own.
+
+## Native local package
+
+The repository can build a native package for **Linux x86_64 baseline CPUs**.
+It bundles Kizuki, its dependencies, and the Bun runtime into `kizuki` and
+`kizuki-mcp`; it is not published, signed, statically linked, or validated on
+other operating systems.
+
+```bash
+bun run build:release
+cd dist/kizuki-0.1.0/bun-linux-x64-baseline
+sha256sum -c SHA256SUMS
+./kizuki init ./vault --no-service
+./kizuki import markdown-folder --source ./notes
+./kizuki query "Ada"
+./kizuki context --purpose session --query "Ada"
+./kizuki-mcp --vault ./vault --owner
+```
+
+Use the source invocation from a checkout and `./kizuki` from this package.
+Do not move the binary after installing its user service; reinstall from its
+final location. [Native build details](docs/native-build.md) cover the
+artifact, checksums, and smoke test.
+
+## Connect sources
+
+`kizuki connect` opens a local source catalog; `kizuki connect status` shows
+enrolled sources and their last run. Beeper is a local, read-only connection:
+
+```bash
+export BEEPER_TOKEN='your-approved-token'
+kizuki connect beeper --token-ref env:BEEPER_TOKEN --sensitivity private
+kizuki backfill beeper
+```
+
+Create the approved connection token in **Beeper Desktop → Settings →
+Integrations**. Kizuki reads the message history Beeper exposes locally; it
+does not send messages, mark messages read, launch OAuth, or relay data through
+Kizuki servers. A `file:/absolute/path` token reference is also supported for
+an owner-only local file. Beeper account coverage depends on the accounts and
+history available to the local desktop app. See [Connect](docs/connect.md).
 
 ## How to use
 
@@ -89,7 +129,7 @@ bun packages/cli/src/main.ts help <verb>
 | Health | `doctor` |
 | Correct a claim | `tell "<statement>" --claim CLAIM_ID` |
 | Reverse a write | `undo <receipt_id>` |
-| Inspect receipts | `audit` (`--list` or `--json` without a TTY) |
+| Inspect receipts | `audit` (`--list` or `--json` without a TTY; `d` toggles diff detail in the interactive view) |
 | Incremental sync | `sync` |
 | Local loop | `serve` (loopback HTTP unless `--no-http`) |
 | Delete with a receipt | `purge --event\|--subject\|--connector … --reason TEXT` |
@@ -223,7 +263,7 @@ Invariants, storage, and the frozen ingress live in
 - **Not a second wiki.** Canon is Markdown the loop writes from evidence. You
   can edit the files; the loop treats those edits as your word.
 - **Not an agent harness.** No hosted loop. A client brings its own loop.
-- **Not a packaged binary.** `npm i -g kizuki` is not a supported install.
+- **Not a registry package.** `npm i -g kizuki` is not a supported install.
 
 ## Contracts that bind
 
