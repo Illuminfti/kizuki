@@ -11,6 +11,7 @@ export interface AuditListOptions {
   ambiguous?: boolean;
   reverted?: boolean;
   limit?: number;
+  offset?: number;
 }
 
 export interface AuditReceipt extends CanonReceipt {
@@ -60,6 +61,7 @@ export function listAuditReceipts(db: Database, opts: AuditListOptions = {}): Au
   if (opts.page !== undefined) query.page_path = opts.page;
   if (opts.writer !== undefined) query.writer = opts.writer;
   if (opts.since !== undefined) query.since = opts.since;
+  if (opts.offset !== undefined) query.offset = opts.offset;
   if (opts.reverted === false) query.include_reverted = false;
 
   let rows = listCanonReceipts(db, query).map((receipt) => ({
