@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { applyPurgeRewrite } from "../../src/canon/apply";
 import { rebuildDerived, refreshDerivedPage } from "../../src/derived";
 import { neighbors } from "../../src/graph/graph";
 import { indexEvent } from "../../src/search/indexer";
@@ -129,5 +130,84 @@ describe("derived rebuild equivalence", () => {
     expect(search(db, "keepword").map(({ doc_id }) => doc_id)).toEqual([
       "page:fact:live",
     ]);
+  });
+
+  test("purge rewrite refreshes search and drops archived incoming edges", () => {
+    const db = searchDb();
+    const vault = tempVault();
+    disposers.push(vault.dispose);
+    writeCanonPage(
+      vault.path,
+      "facts/tea.md",
+      {
+        id: "fact:tea",
+        title: "Tea",
+        type: "fact",
+        status: "active",
+        sensitivity: "personal",
+        taint: "clean",
+        sources: ["event:keep", "event:purge"],
+      },
+      "keepword secretword",
+    );
+    writeCanonPage(
+      vault.path,
+      "facts/kettle.md",
+      {
+        id: "fact:kettle",
+        title: "Kettle",
+        type: "fact",
+        status: "active",
+        sensitivity: "personal",
+        taint: "clean",
+      },
+      "See [[Tea]].",
+    );
+    rebuildDerived(db, vault.path);
+    expect(search(db, "secretword").map(({ doc_id }) => doc_id)).toEqual([
+      "page:fact:tea",
+    ]);
+    expect(
+      neighbors(db, "fact:tea").edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`).sort(),
+    ).toEqual([
+      "fact:kettle|fact:tea|wikilink",
+      "fact:tea|event:keep|source",
+      "fact:tea|event:purge|source",
+    ]);
+
+    applyPurgeRewrite(
+      { db, vault_path: vault.path },
+      {
+        rel_path: "facts/tea.md",
+        purged_event_ids: ["event:purge"],
+        purged_claim_ids: ["claim:purged"],
+        purged_claim_bodies: ["secretword"],
+      },
+    );
+    expect(search(db, "secretword")).toEqual([]);
+    expect(search(db, "keepword").map(({ doc_id }) => doc_id)).toEqual([
+      "page:fact:tea",
+    ]);
+    expect(
+      neighbors(db, "fact:tea").edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`).sort(),
+    ).toEqual([
+      "fact:kettle|fact:tea|wikilink",
+      "fact:tea|event:keep|source",
+    ]);
+
+    applyPurgeRewrite(
+      { db, vault_path: vault.path },
+      {
+        rel_path: "facts/tea.md",
+        purged_event_ids: ["event:keep"],
+        purged_claim_ids: ["claim:rest"],
+        purged_claim_bodies: ["keepword"],
+      },
+    );
+    expect(search(db, "keepword")).toEqual([]);
+    expect(neighbors(db, "fact:tea").edges).toEqual([]);
+    expect(
+      neighbors(db, "fact:kettle").edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`),
+    ).toEqual([]);
   });
 });

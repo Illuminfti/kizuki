@@ -208,7 +208,9 @@ function insertEdge(db: Database, edge: StoredEdge): void {
 }
 
 export function removePageEdges(db: Database, pageId: string): void {
-  db.query<never, [string]>("DELETE FROM graph_edges WHERE src = ?").run(pageId);
+  db.query<never, [string, string]>(
+    "DELETE FROM graph_edges WHERE src = ? OR dst = ?",
+  ).run(pageId, pageId);
 }
 
 export function replacePageEdges(
@@ -216,7 +218,7 @@ export function replacePageEdges(
   page: CanonPage,
   index: LinkIndex,
 ): void {
-  removePageEdges(db, page.id);
+  db.query<never, [string]>("DELETE FROM graph_edges WHERE src = ?").run(page.id);
   if (!isLiveCanonPage(page)) return;
   for (const edge of pageEdges(page, index)) insertEdge(db, edge);
 }
@@ -241,7 +243,7 @@ function stampGraph(
         ? null
         : `${watermark.accepted_at}\t${watermark.event_id}`,
     canon_hash: input.canon_hash,
-    port_id: "kizuki.retrieval.fts5",
+    port_id: null,
     contract: "kizuki.retrieval/v1",
     space: null,
   };

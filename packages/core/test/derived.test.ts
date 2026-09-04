@@ -65,6 +65,8 @@ describe("rebuildDerived", () => {
       readDerivedMeta(db, "graph")?.generation,
     );
     expect(readDerivedMeta(db, "search")?.status).toBe("ok");
+    expect(readDerivedMeta(db, "search")?.port_id).toBe("kizuki.retrieval.fts5");
+    expect(readDerivedMeta(db, "graph")?.port_id).toBeNull();
   });
 
   test("rebuilds search and graph in one call", () => {

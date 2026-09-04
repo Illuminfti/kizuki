@@ -218,6 +218,18 @@ describe("kizuki.retrieval.embedded-pg conformance", () => {
       { hops: 1, limit: 10, ceiling: "public" },
     );
     expect(publicOnly.edges).toEqual([]);
+
+    const twoHops = await port.neighbors(
+      { entity_id: "person:grace" },
+      { hops: 2, limit: 10, ceiling: "private" },
+    );
+    expect(twoHops.entity).toBe("person:grace");
+    await expect(
+      port.neighbors(
+        { entity_id: "person:grace" },
+        { hops: 3, limit: 10, ceiling: "private" },
+      ),
+    ).rejects.toMatchObject({ code: "config_invalid", retryable: false });
   });
 
   test("verifyAbsent is a real lookup", async () => {

@@ -15,6 +15,7 @@ import type { RecipeCandidate, RecipeEdge } from "../vendor/recipe";
 
 export {
   AUTHORITY_WEIGHT,
+  MAX_WALK_DEPTH,
   NEAR_DUPLICATE_JACCARD,
   RRF_K,
   cosineSimilarity,

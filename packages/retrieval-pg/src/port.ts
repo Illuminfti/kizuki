@@ -34,6 +34,7 @@ import {
   finalizeRecipe,
   hitsFromCandidates,
   lexicalScore,
+  MAX_WALK_DEPTH,
   pushDegraded,
   walkNeighbors,
   type RecipeCandidate,
@@ -283,7 +284,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
     requireRetrievalCapability(this.descriptor, "graph");
     if (
       options.hops < 1 ||
-      options.hops > 8 ||
+      options.hops > MAX_WALK_DEPTH ||
       options.limit < 1 ||
       options.limit > MAX_RETRIEVAL_LIMIT
     ) {

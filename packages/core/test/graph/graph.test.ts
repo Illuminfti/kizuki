@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { removeDerivedPage } from "../../src/derived";
 import { neighbors, rebuildGraph } from "../../src/graph/graph";
 import type { GraphEdge } from "../../src/graph/graph";
 import { initGraph } from "../../src/graph/schema";
@@ -123,6 +124,50 @@ describe("graph rebuild", () => {
     ]);
   });
 
+  test("leaves an ambiguous title unresolved", () => {
+    const db = new Database(":memory:");
+    const path = vault();
+    writeCanon(path, "garden", "fact:garden", "Garden.", { title: "Tea" });
+    writeCanon(path, "cupboard", "fact:cupboard", "Cupboard.", { title: "Tea" });
+    writeCanon(path, "origin", "fact:origin", "See [[Tea]].");
+
+    rebuildGraph(db, path);
+
+    expect(edgeRows(db)).toEqual([
+      { src: "fact:origin", dst: "Tea", kind: "wikilink" },
+    ]);
+  });
+
+  test("leaves an ambiguous basename unresolved", () => {
+    const db = new Database(":memory:");
+    const path = vault();
+    writeCanon(path, "tea", "fact:garden-tea", "Garden tea.", {
+      title: "Garden tea",
+    });
+    writeFileSync(
+      join(path, "entities", "tea.md"),
+      serializePage({
+        data: {
+          id: "fact:cupboard-tea",
+          title: "Cupboard tea",
+          type: "fact",
+          status: "active",
+          sensitivity: "personal",
+        },
+        body: "Cupboard tea.",
+      }),
+      "utf8",
+    );
+    writeCanon(path, "origin", "fact:origin", "See [[tea]] and [[facts/tea]].");
+
+    rebuildGraph(db, path);
+
+    expect(edgeRows(db)).toEqual([
+      { src: "fact:origin", dst: "fact:garden-tea", kind: "wikilink" },
+      { src: "fact:origin", dst: "tea", kind: "wikilink" },
+    ]);
+  });
+
   test("stores sensitivity and provenance on every edge", () => {
     const db = new Database(":memory:");
     const path = vault();
@@ -200,11 +245,26 @@ describe("graph rebuild", () => {
     expect(edgeRows(db)).toHaveLength(1);
     expect(
       db
-        .query<{ layer: string; doc_count: number }, []>(
-          "SELECT layer, doc_count FROM derived_meta WHERE layer = 'graph'",
+        .query<{ layer: string; doc_count: number; port_id: string | null }, []>(
+          "SELECT layer, doc_count, port_id FROM derived_meta WHERE layer = 'graph'",
         )
         .get(),
-    ).toEqual({ layer: "graph", doc_count: 1 });
+    ).toEqual({ layer: "graph", doc_count: 1, port_id: null });
+  });
+
+  test("archiving a page drops incoming edges to its id", () => {
+    const db = new Database(":memory:");
+    const path = vault();
+    writeCanon(path, "target", "fact:target", "Destination.", { title: "Target" });
+    writeCanon(path, "origin", "fact:origin", "See [[Target]].");
+    rebuildGraph(db, path);
+    expect(edgeRows(db)).toEqual([
+      { src: "fact:origin", dst: "fact:target", kind: "wikilink" },
+    ]);
+
+    removeDerivedPage(db, "fact:target");
+
+    expect(edgeRows(db)).toEqual([]);
   });
 });
 

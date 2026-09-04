@@ -670,5 +670,19 @@ export function applyPurgeRewrite(
       });
     }
   })();
+  if (pageId !== null) {
+    if (nothingRemains) {
+      removeDerivedPage(io.db, pageId);
+    } else {
+      refreshDerivedPage(
+        io.db,
+        canonPageFromWrite(io.vault_path, input.rel_path, pageId, {
+          data,
+          body: body.length === 0 ? "\n" : body,
+        }),
+        io.vault_path,
+      );
+    }
+  }
   return receipt;
 }
