@@ -8,6 +8,12 @@ const ENCODING = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"; // Crockford base32: no I, 
 const TIME_LEN = 10;
 const RANDOM_LEN = 16;
 const MAX_TIME = 281474976710655; // 2^48 - 1
+// 48-bit time fits 10 Crockford chars only when the first digit is 0-7.
+const CANONICAL = /^[0-7][0-9A-HJKMNPQRSTVWXYZ]{25}$/;
+
+export function isUlid(value: unknown): value is string {
+  return typeof value === "string" && CANONICAL.test(value);
+}
 
 let lastTime = -1;
 const lastRandom: number[] = new Array<number>(RANDOM_LEN).fill(0);

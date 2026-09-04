@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ulid } from "../src/util/ulid";
+import { isUlid, ulid } from "../src/util/ulid";
 
 const CROCKFORD = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 
@@ -70,6 +70,23 @@ describe("ulid", () => {
     await Bun.sleep(2);
     const b = ulid().slice(10);
     expect(a).not.toBe(b);
+  });
+});
+
+describe("isUlid", () => {
+  test("accepts a generated id and a known fixture", () => {
+    expect(isUlid(ulid())).toBe(true);
+    expect(isUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV")).toBe(true);
+  });
+
+  test("rejects lowercase, short, overflowing, and ambiguous ids", () => {
+    expect(isUlid("01arz3ndektsv4rrffq69g5fav")).toBe(false);
+    expect(isUlid("01ARZ3NDEKTSV4RRFFQ69G5FA")).toBe(false);
+    expect(isUlid("81ARZ3NDEKTSV4RRFFQ69G5FAV")).toBe(false);
+    expect(isUlid("01ARZ3NDEKTSV4RRFFQ69G5FAI")).toBe(false);
+    expect(isUlid("01ARZ3NDEKTSV4RRFFQ69G5FAO")).toBe(false);
+    expect(isUlid(null)).toBe(false);
+    expect(isUlid(1)).toBe(false);
   });
 });
 

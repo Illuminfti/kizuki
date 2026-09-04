@@ -20,10 +20,17 @@ function sortDeep(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortDeep);
   if (typeof value === "object" && value !== null) {
     const source = value as Record<string, unknown>;
-    const sorted: Record<string, unknown> = {};
+    const sorted = Object.create(null) as Record<string, unknown>;
     // UTF-16 code-unit order, the one ordering every JS engine agrees on.
+    // defineProperty on a null-prototype object keeps attacker keys such as
+    // __proto__ as data instead of mutating the accumulator.
     for (const key of Object.keys(source).sort()) {
-      sorted[key] = sortDeep(source[key]);
+      Object.defineProperty(sorted, key, {
+        value: sortDeep(source[key]),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
     }
     return sorted;
   }
