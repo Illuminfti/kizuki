@@ -81,6 +81,92 @@ function populated() {
   return { db, vaultPath, remainingEventId: second.event.event_id };
 }
 
+function insertFixtureClaim(
+  db: ReturnType<typeof openLedger>,
+  body: string,
+  claimId = "01EXPORTCLAIM00000000000001",
+): void {
+  const at = "2026-01-01T00:00:00.000Z";
+  db.query(
+    `INSERT INTO claims
+       (claim_id, kind, target, body, frontmatter, provenance, subjects,
+        producer, confidence, status, created_at, body_hash,
+        subject, predicate, object, polarity, claim_key, authority,
+        sensitivity, taint, model_ref, valid_from, valid_to, asserted_at,
+        retracted_at, superseded_by, receipt_id, corroboration, last_confirmed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    claimId,
+    "claim",
+    "people/ada",
+    body,
+    "{}",
+    "[]",
+    '["person:ada"]',
+    "deterministic",
+    0.9,
+    "live",
+    at,
+    "bodyhash",
+    "person:ada",
+    "employment.works_at",
+    "acme",
+    "positive",
+    "person:ada|employment.works_at",
+    "connector_evidence",
+    "personal",
+    "quoted",
+    null,
+    at,
+    null,
+    at,
+    null,
+    null,
+    null,
+    1,
+    null,
+  );
+}
+
+function utf8BodyOnChunkBoundary(): string {
+  const empty = JSON.stringify({
+    schema: "kizuki.claim/v1",
+    claim_id: "01EXPORTUTF8CLAIM0000000001",
+    kind: "claim",
+    target: "people/ada",
+    body: "",
+    frontmatter: {},
+    provenance: [],
+    subjects: ["person:ada"],
+    producer: "deterministic",
+    confidence: 0.9,
+    status: "live",
+    created_at: "2026-01-01T00:00:00.000Z",
+    body_hash: "bodyhash",
+    subject: "person:ada",
+    predicate: "employment.works_at",
+    object: "acme",
+    polarity: "positive",
+    claim_key: "person:ada|employment.works_at",
+    authority: "connector_evidence",
+    sensitivity: "personal",
+    taint: "quoted",
+    model_ref: null,
+    valid_from: "2026-01-01T00:00:00.000Z",
+    valid_to: null,
+    asserted_at: "2026-01-01T00:00:00.000Z",
+    retracted_at: null,
+    superseded_by: null,
+    receipt_id: null,
+    corroboration: 1,
+    last_confirmed_at: null,
+  });
+  const prefix = empty.indexOf('"body":"') + '"body":"'.length;
+  const pad = 65_535 - Buffer.byteLength(empty.slice(0, prefix));
+  if (pad < 1) throw new Error("chunk-boundary pad is not positive");
+  return `${"a".repeat(pad)}中`;
+}
+
 describe("exportVault", () => {
   test("writes a complete kizuki.backup/v1 manifest with matching hashes", () => {
     const { db, vaultPath } = populated();
@@ -183,6 +269,15 @@ describe("exportVault", () => {
     db.close();
   });
 
+  test("does not chmod an existing parent directory", () => {
+    const { db, vaultPath } = populated();
+    const parent = temporary("kizuki-export-parent-");
+    chmodSync(parent, 0o777);
+    exportVault(db, vaultPath, join(parent, "dump"));
+    expect(lstatSync(parent).mode & 0o777).toBe(0o777);
+    db.close();
+  });
+
   test("writes owner-only files even under a permissive umask", () => {
     const { db, vaultPath } = populated();
     const previous = process.umask(0o000);
@@ -261,9 +356,9 @@ describe("restoreVault", () => {
     const { db, vaultPath } = populated();
     const backup = join(temporary("kizuki-export-parent-"), "dump");
     exportVault(db, vaultPath, backup);
-    writeFileSync(join(backup, "INCOMPLETE"), "incomplete\n");
+    writeFileSync(join(backup, ".kizuki-backup-incomplete"), "incomplete\n");
     expect(() => verifyBackup(backup)).toThrow(/incomplete/);
-    rmSync(join(backup, "INCOMPLETE"));
+    rmSync(join(backup, ".kizuki-backup-incomplete"));
     writeFileSync(join(backup, "ledger", "events.jsonl"), "{not-json\n", {
       flag: "w",
     });
@@ -279,6 +374,104 @@ describe("restoreVault", () => {
     writeFileSync(join(target, "keep.txt"), "keep\n");
     expect(() => restoreVault(backup, target)).toThrow(/not empty/);
     expect(readFileSync(join(target, "keep.txt"), "utf8")).toBe("keep\n");
+    db.close();
+  });
+
+  test("restores a vault file named INCOMPLETE", () => {
+    const { db, vaultPath } = populated();
+    writeFileSync(join(vaultPath, "INCOMPLETE"), "vault-marker\n");
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    exportVault(db, vaultPath, backup);
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    restoreVault(backup, target);
+    expect(readFileSync(join(target, "INCOMPLETE"), "utf8")).toBe("vault-marker\n");
+    db.close();
+  });
+
+  test("restores claims, bindings, supersessions, proposals, and page_index", () => {
+    const { db, vaultPath } = populated();
+    insertFixtureClaim(db, "Ada works at Acme.");
+    db.query(
+      `INSERT INTO claim_supersessions
+         (winner, loser, rule, prior_valid_to, receipt_id, at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "01EXPORTCLAIM00000000000001",
+      "01EXPORTLOSER00000000000001",
+      "later_wins",
+      null,
+      "01EXPORTRECEIPT00000000001",
+      "2026-01-01T00:00:00.000Z",
+    );
+    db.query(
+      `INSERT INTO claim_bindings (claim_key, page_id, bound_at) VALUES (?, ?, ?)`,
+    ).run(
+      "person:ada|employment.works_at",
+      "ada",
+      "2026-01-01T00:00:00.000Z",
+    );
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    const manifest = exportVault(db, vaultPath, backup);
+    expect(manifest.files["claims/claims.jsonl"]?.count).toBe(1);
+    expect(manifest.files["claims/supersessions.jsonl"]?.count).toBe(1);
+    expect(manifest.files["claims/bindings.jsonl"]?.count).toBe(1);
+
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    const report = restoreVault(backup, target);
+    expect(report.claims).toBe(1);
+    const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
+    expect(
+      restored
+        .query<{ claim_id: string }, []>("SELECT claim_id FROM claims")
+        .all()
+        .map((row) => row.claim_id),
+    ).toEqual(["01EXPORTCLAIM00000000000001"]);
+    expect(
+      restored
+        .query<{ proposal_id: string }, []>("SELECT proposal_id FROM proposals")
+        .all()
+        .map((row) => row.proposal_id),
+    ).toEqual(["01EXPORTCLAIM00000000000001"]);
+    expect(
+      restored
+        .query<{ loser: string }, []>("SELECT loser FROM claim_supersessions")
+        .all()
+        .map((row) => row.loser),
+    ).toEqual(["01EXPORTLOSER00000000000001"]);
+    expect(
+      restored
+        .query<{ page_id: string }, []>("SELECT page_id FROM claim_bindings")
+        .all()
+        .map((row) => row.page_id),
+    ).toEqual(["ada"]);
+    expect(
+      restored
+        .query<{ page_id: string; rel_path: string }, []>(
+          "SELECT page_id, rel_path FROM page_index ORDER BY page_id",
+        )
+        .all(),
+    ).toEqual([{ page_id: "ada", rel_path: "people/Ada.md" }]);
+    restored.close();
+    db.close();
+  });
+
+  test("restores a JSONL line whose UTF-8 character straddles a 64KiB chunk", () => {
+    const { db, vaultPath } = populated();
+    const body = utf8BodyOnChunkBoundary();
+    insertFixtureClaim(db, body, "01EXPORTUTF8CLAIM0000000001");
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    exportVault(db, vaultPath, backup);
+    const bytes = readFileSync(join(backup, "claims", "claims.jsonl"));
+    expect(bytes.subarray(65_535, 65_538)).toEqual(Buffer.from("中"));
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    restoreVault(backup, target);
+    const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
+    expect(
+      restored
+        .query<{ body: string }, []>("SELECT body FROM claims")
+        .get()?.body,
+    ).toBe(body);
+    restored.close();
     db.close();
   });
 

@@ -232,7 +232,8 @@ function convertRejections(db: Database): void {
   db.exec("DROP TABLE rejections");
 }
 
-function copyClaimsToCompatProposals(db: Database): void {
+/** Staging still reads `proposals`; keep it a projection of `claims`. */
+export function syncCompatProposals(db: Database): void {
   if (!tableExists(db, "proposals")) {
     db.exec(COMPAT_PROPOSALS);
   }
@@ -301,7 +302,7 @@ export function applyClaimsV3(db: Database): void {
   db.exec(CLAIMS_INDEXES);
   db.exec(SUPPORTING_TABLES);
   convertRejections(db);
-  copyClaimsToCompatProposals(db);
+  syncCompatProposals(db);
 }
 
 function claimsSurfaceReady(db: Database): boolean {

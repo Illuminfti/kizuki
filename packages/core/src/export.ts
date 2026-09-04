@@ -17,13 +17,14 @@ import {
   writeSync,
 } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import { rebuildPageIndex } from "./canon";
 import { CANON_SCHEMA_VERSION } from "./canon/schema";
 import {
   type CanonReceipt,
   type CanonReceiptRow,
   rowToReceipt,
 } from "./canon/receipts";
-import { CLAIMS_SCHEMA_VERSION } from "./claims/schema";
+import { CLAIMS_SCHEMA_VERSION, syncCompatProposals } from "./claims/schema";
 import { rebuildDerived } from "./derived";
 import { validateEventInput } from "./contracts/event";
 import { computeContentHash } from "./util/hash";
@@ -43,7 +44,7 @@ const DIR_MODE = 0o700;
 const PAGE = 256;
 const CHUNK = 65_536;
 const STAGING_MARK = ".kizuki-backup-";
-const INCOMPLETE = "INCOMPLETE";
+const INCOMPLETE = ".kizuki-backup-incomplete";
 const FORBIDDEN_KEYS = new Set([
   "resolved_secret",
   "client_secret",
@@ -176,6 +177,21 @@ interface CheckpointRow {
   last_result: string;
 }
 
+interface SupersessionRow {
+  winner: string;
+  loser: string;
+  rule: string;
+  prior_valid_to: string | null;
+  receipt_id: string;
+  at: string;
+}
+
+interface BindingRow {
+  claim_key: string;
+  page_id: string;
+  bound_at: string;
+}
+
 const EVENT_COLUMNS = `
   event_id, connector_id, source_record_id, kind, occurred_at, observed_at,
   text, subjects, sensitivity_hint, deleted, attachments, metadata,
@@ -219,11 +235,10 @@ function mkdirPrivate(path: string): void {
     if (!statSync(path).isDirectory()) {
       throw new Error(`backup path is not a directory: ${path}`);
     }
-    chmodSync(path, DIR_MODE);
     return;
   }
   const parent = dirname(path);
-  if (parent !== path) mkdirPrivate(parent);
+  if (parent !== path && !existsSync(parent)) mkdirPrivate(parent);
   mkdirSync(path, { mode: DIR_MODE });
   chmodSync(path, DIR_MODE);
 }
@@ -520,6 +535,68 @@ function* pageClaims(db: Database): Generator<Record<string, unknown>> {
   }
 }
 
+function* pageSupersessions(db: Database): Generator<SupersessionRow> {
+  if (!tableExists(db, "claim_supersessions")) return;
+  let cursor: { winner: string; loser: string } | null = null;
+  while (true) {
+    let rows: SupersessionRow[];
+    if (cursor === null) {
+      rows = db
+        .query<SupersessionRow, [number]>(
+          `SELECT winner, loser, rule, prior_valid_to, receipt_id, at
+           FROM claim_supersessions ORDER BY winner, loser LIMIT ?`,
+        )
+        .all(PAGE);
+    } else {
+      rows = db
+        .query<SupersessionRow, [string, string, string, number]>(
+          `SELECT winner, loser, rule, prior_valid_to, receipt_id, at
+           FROM claim_supersessions
+           WHERE winner > ?
+              OR (winner = ? AND loser > ?)
+           ORDER BY winner, loser LIMIT ?`,
+        )
+        .all(cursor.winner, cursor.winner, cursor.loser, PAGE);
+    }
+    if (rows.length === 0) break;
+    yield* rows;
+    const last: SupersessionRow | undefined = rows.at(-1);
+    if (last === undefined || rows.length < PAGE) break;
+    cursor = { winner: last.winner, loser: last.loser };
+  }
+}
+
+function* pageBindings(db: Database): Generator<BindingRow> {
+  if (!tableExists(db, "claim_bindings")) return;
+  let cursor: { claim_key: string; page_id: string } | null = null;
+  while (true) {
+    let rows: BindingRow[];
+    if (cursor === null) {
+      rows = db
+        .query<BindingRow, [number]>(
+          `SELECT claim_key, page_id, bound_at
+           FROM claim_bindings ORDER BY claim_key, page_id LIMIT ?`,
+        )
+        .all(PAGE);
+    } else {
+      rows = db
+        .query<BindingRow, [string, string, string, number]>(
+          `SELECT claim_key, page_id, bound_at
+           FROM claim_bindings
+           WHERE claim_key > ?
+              OR (claim_key = ? AND page_id > ?)
+           ORDER BY claim_key, page_id LIMIT ?`,
+        )
+        .all(cursor.claim_key, cursor.claim_key, cursor.page_id, PAGE);
+    }
+    if (rows.length === 0) break;
+    yield* rows;
+    const last: BindingRow | undefined = rows.at(-1);
+    if (last === undefined || rows.length < PAGE) break;
+    cursor = { claim_key: last.claim_key, page_id: last.page_id };
+  }
+}
+
 function* pageReceipts(db: Database): Generator<CanonReceipt> {
   if (!tableExists(db, "canon_receipts")) return;
   let cursor: { at: string; receipt_id: string } | null = null;
@@ -665,22 +742,22 @@ function refuseSecrets(value: unknown, path: string): void {
 
 function* readJsonl(path: string): Generator<unknown> {
   const fd = openSync(path, "r");
-  let leftover = "";
+  let leftover = Buffer.alloc(0);
   try {
     const buf = Buffer.alloc(CHUNK);
     let read = readSync(fd, buf);
     while (read > 0) {
-      leftover += buf.toString("utf8", 0, read);
-      let newline = leftover.indexOf("\n");
+      leftover = Buffer.concat([leftover, buf.subarray(0, read)]);
+      let newline = leftover.indexOf(0x0a);
       while (newline !== -1) {
-        const line = leftover.slice(0, newline);
-        leftover = leftover.slice(newline + 1);
-        if (line.length > 0) yield JSON.parse(line);
-        newline = leftover.indexOf("\n");
+        const line = leftover.subarray(0, newline);
+        leftover = leftover.subarray(newline + 1);
+        if (line.byteLength > 0) yield JSON.parse(line.toString("utf8"));
+        newline = leftover.indexOf(0x0a);
       }
       read = readSync(fd, buf);
     }
-    if (leftover.length > 0) yield JSON.parse(leftover);
+    if (leftover.byteLength > 0) yield JSON.parse(leftover.toString("utf8"));
   } finally {
     closeSync(fd);
   }
@@ -809,6 +886,14 @@ export function exportVault(
     writeStream(staging, "ledger/event_purges.jsonl", pagePurges(db), files, options.signal);
     options.onProgress?.("claims");
     writeStream(staging, "claims/claims.jsonl", pageClaims(db), files, options.signal);
+    writeStream(
+      staging,
+      "claims/supersessions.jsonl",
+      pageSupersessions(db),
+      files,
+      options.signal,
+    );
+    writeStream(staging, "claims/bindings.jsonl", pageBindings(db), files, options.signal);
     options.onProgress?.("receipts");
     writeStream(staging, "canon/receipts.jsonl", pageReceipts(db), files, options.signal);
     writeStream(
@@ -1059,6 +1144,31 @@ function insertClaimRow(db: Database, raw: Record<string, unknown>): void {
   );
 }
 
+function insertSupersession(db: Database, raw: Record<string, unknown>): void {
+  db.query(
+    `INSERT INTO claim_supersessions
+       (winner, loser, rule, prior_valid_to, receipt_id, at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    asString(raw.winner, "winner"),
+    asString(raw.loser, "loser"),
+    asString(raw.rule, "rule"),
+    asStringOrNull(raw.prior_valid_to, "prior_valid_to"),
+    asString(raw.receipt_id, "receipt_id"),
+    asString(raw.at, "at"),
+  );
+}
+
+function insertBinding(db: Database, raw: Record<string, unknown>): void {
+  db.query(
+    `INSERT INTO claim_bindings (claim_key, page_id, bound_at) VALUES (?, ?, ?)`,
+  ).run(
+    asString(raw.claim_key, "claim_key"),
+    asString(raw.page_id, "page_id"),
+    asString(raw.bound_at, "bound_at"),
+  );
+}
+
 function insertConnectionRow(db: Database, raw: Record<string, unknown>): void {
   const refs = raw.secret_refs;
   if (!Array.isArray(refs) || !refs.every((item) => typeof item === "string")) {
@@ -1218,6 +1328,13 @@ export function restoreVault(
         for (const row of streamRows(source, "claims/claims.jsonl", false)) {
           insertClaimRow(db, row);
         }
+        syncCompatProposals(db);
+        for (const row of streamRows(source, "claims/supersessions.jsonl", false)) {
+          insertSupersession(db, row);
+        }
+        for (const row of streamRows(source, "claims/bindings.jsonl", false)) {
+          insertBinding(db, row);
+        }
         for (const row of streamRows(source, "canon/receipts.jsonl", true)) {
           insertReceipt(db, row);
         }
@@ -1236,6 +1353,7 @@ export function restoreVault(
         throw new Error("restored event count does not match the snapshot");
       }
       rebuildDerived(db, staging);
+      rebuildPageIndex({ db, vault_path: staging });
       const doctor = doctorVault(staging);
       const report: RestoreReport = {
         vault_id: readVaultId(staging),
