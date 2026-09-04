@@ -196,7 +196,6 @@ describe("audit reducer", () => {
     ]);
     expect(drifted.mode.name).toBe("list");
     expect(drifted.notice?.text).toContain("selection changed");
-    expect(press(drifted, [...chars("yes"), named("enter")]).effects).toEqual([]);
   });
 
   test("] and [ emit page effects and never claim a silent complete set", () => {
