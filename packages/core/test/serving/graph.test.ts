@@ -138,6 +138,77 @@ describe("serveGraph", () => {
     ).toBe("invalid_arguments");
   });
 
+  test("a public reader is not capped by private incoming edges", () => {
+    writeFileSync(
+      join(fixture.vaultPath, "facts/cap-hub.md"),
+      serializePage({
+        data: {
+          id: "fact:cap-hub",
+          title: "Cap hub",
+          type: "fact",
+          status: "active",
+          sensitivity: "public",
+          taint: "clean",
+        },
+        body: "A public hub.",
+      }),
+      "utf8",
+    );
+    for (let index = 0; index < 100; index += 1) {
+      writeFileSync(
+        join(fixture.vaultPath, `facts/cap-secret-${index}.md`),
+        serializePage({
+          data: {
+            id: `fact:aaa-secret-${index}`,
+            title: `Secret ${index}`,
+            type: "fact",
+            status: "active",
+            sensitivity: "private",
+            taint: "clean",
+          },
+          body: "See [[Cap hub]].",
+        }),
+        "utf8",
+      );
+    }
+    writeFileSync(
+      join(fixture.vaultPath, "facts/cap-open.md"),
+      serializePage({
+        data: {
+          id: "fact:zzz-open",
+          title: "Open neighbor",
+          type: "fact",
+          status: "active",
+          sensitivity: "public",
+          taint: "clean",
+        },
+        body: "See [[Cap hub]].",
+      }),
+      "utf8",
+    );
+    rebuildGraph(fixture.db, fixture.vaultPath);
+
+    const owner = serveGraph(fixture.owner(), {
+      id: "fact:cap-hub",
+      kinds: ["wikilink"],
+    });
+    const ownerSources = (owner.data?.edges ?? []).map((edge) => edge.src);
+    expect(owner.data?.edges).toHaveLength(100);
+    expect(owner.data?.truncated).toBe(true);
+    expect(ownerSources).not.toContain("fact:zzz-open");
+
+    const limited = serveGraph(fixture.agent("reader-public"), {
+      id: "fact:cap-hub",
+      kinds: ["wikilink"],
+    });
+    expect((limited.data?.edges ?? []).map((edge) => edge.src)).toEqual([
+      "fact:zzz-open",
+    ]);
+    expect(limited.data?.truncated).toBe(false);
+    expect(limited.denied).toEqual([{ reason: "above_ceiling", count: 100 }]);
+    expect(JSON.stringify(limited)).not.toContain("aaa-secret");
+  });
+
   test("the edge list is capped and reports the truncation", () => {
     const links = Array.from(
       { length: 520 },

@@ -208,6 +208,7 @@ export function collectPieces(
       for (const edge of neighbors(ctx.db, rootId, {
         depth: 1,
         kinds: ["wikilink"],
+        ceiling: grant.ceiling,
       }).edges) {
         if (added === GRAPH_CHUNKS) break;
         const target = resolveLink(index, edge.dst);

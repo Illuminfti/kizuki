@@ -95,7 +95,7 @@ describe("derived rebuild equivalence", () => {
     expect(incrementalGraph).toContain("fact:tea|fact:kettle|wikilink");
   });
 
-  test("refreshing an archived page drops incoming edges", () => {
+  test("refreshing an archived page drops incoming edges and a restore brings them back", () => {
     const db = searchDb();
     const vault = tempVault();
     disposers.push(vault.dispose);
@@ -143,6 +143,21 @@ describe("derived rebuild equivalence", () => {
     );
     expect(neighbors(db, "fact:target").edges).toEqual([]);
     expect(search(db, "Destination").map(({ doc_id }) => doc_id)).toEqual([]);
+
+    writeCanonPage(
+      vault.path,
+      "facts/target.md",
+      target.data,
+      target.body,
+    );
+    refreshDerivedPage(db, target, vault.path);
+    expect(
+      neighbors(db, "fact:target").edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`),
+    ).toEqual(["fact:origin|fact:target|wikilink"]);
+    rebuildDerived(db, vault.path);
+    expect(
+      neighbors(db, "fact:target").edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`),
+    ).toEqual(["fact:origin|fact:target|wikilink"]);
   });
 
   test("purged and archived pages are absent after rebuild", () => {

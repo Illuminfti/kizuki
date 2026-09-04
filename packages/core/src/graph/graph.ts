@@ -217,13 +217,17 @@ export function replacePageEdges(
   db: Database,
   page: CanonPage,
   index: LinkIndex,
+  pages: readonly CanonPage[],
 ): void {
-  if (!isLiveCanonPage(page)) {
-    removePageEdges(db, page.id);
-    return;
-  }
-  db.query<never, [string]>("DELETE FROM graph_edges WHERE src = ?").run(page.id);
+  removePageEdges(db, page.id);
+  if (!isLiveCanonPage(page)) return;
   for (const edge of pageEdges(page, index)) insertEdge(db, edge);
+  for (const other of pages) {
+    if (other.id === page.id || !isLiveCanonPage(other)) continue;
+    for (const edge of pageEdges(other, index)) {
+      if (edge.dst === page.id) insertEdge(db, edge);
+    }
+  }
 }
 
 function stampGraph(

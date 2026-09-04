@@ -60,10 +60,11 @@ export function refreshDerivedPage(
 ): void {
   initSearch(db);
   initGraph(db);
-  const index = linkIndexFromPages(listCanonPagesReport(vaultPath).pages);
+  const pages = listCanonPagesReport(vaultPath).pages;
+  const index = linkIndexFromPages(pages);
   db.transaction(() => {
     replacePage(db, page);
-    replacePageEdges(db, page, index);
+    replacePageEdges(db, page, index, pages);
   }).immediate();
 }
 
