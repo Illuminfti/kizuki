@@ -3,6 +3,7 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { applyAgentsV9 } from "../src/agents/schema";
 import { applyCanonV4, initCanon } from "../src/canon/schema";
 import { getCanonReceipt } from "../src/canon/receipts";
 import { applyClaimsV3, initClaims } from "../src/claims/schema";
@@ -740,6 +741,67 @@ describe("openLedger migrations", () => {
           "agent_audit",
         ]),
       );
+      upgraded.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("v9 agent databases rebuild derived_meta at schema v10", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-ledger-v9-derived-"));
+    const path = join(directory, "ledger.sqlite");
+    try {
+      const leftover = new Database(path);
+      leftover.exec(V2_SCHEMA);
+      applyClaimsV3(leftover);
+      applyCanonV4(leftover);
+      applyConnectionsV8(leftover);
+      applyAgentsV9(leftover);
+      leftover.exec(`
+        CREATE TABLE derived_meta (
+          layer TEXT PRIMARY KEY,
+          rebuilt_at TEXT NOT NULL,
+          doc_count INTEGER NOT NULL
+        ) STRICT;
+        INSERT INTO derived_meta VALUES ('search', '2026-01-01T00:00:00Z', 1);
+        UPDATE schema_version SET version = 9;
+      `);
+      leftover.close();
+
+      const upgraded = openLedger(path);
+      expect(schemaVersion(upgraded)).toBe(10);
+      expect(
+        upgraded
+          .query<{ name: string }, [string]>("SELECT name FROM pragma_table_info(?)")
+          .all("derived_meta")
+          .map(({ name }) => name)
+          .sort(),
+      ).toEqual([
+        "canon_hash",
+        "contract",
+        "doc_count",
+        "generation",
+        "layer",
+        "ledger_watermark",
+        "port_id",
+        "rebuilt_at",
+        "skipped_count",
+        "source_count",
+        "space",
+        "status",
+      ]);
+      expect(
+        upgraded
+          .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM derived_meta")
+          .get()?.n,
+      ).toBe(0);
+      expect(
+        upgraded
+          .query<{ name: string }, []>(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agents'",
+          )
+          .get()?.name,
+      ).toBe("agents");
       upgraded.close();
     } finally {
       rmSync(directory, { recursive: true, force: true });

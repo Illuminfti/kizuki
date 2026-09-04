@@ -88,7 +88,7 @@ export function initDerivedMeta(db: Database): void {
   db.exec(DERIVED_META_SCHEMA);
 }
 
-export function applyDerivedV9(db: Database): void {
+export function applyDerivedV10(db: Database): void {
   initDerivedMeta(db);
   if (tableExists(db, "search_docs") && !tableExists(db, "search_documents")) {
     db.exec("DROP TABLE search_docs");
