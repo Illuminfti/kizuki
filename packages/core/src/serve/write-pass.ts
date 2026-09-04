@@ -8,13 +8,13 @@ import {
 } from "../canon";
 import { machineOriginPath } from "../canon/origin";
 import type { Claim } from "../contracts/proposal";
-import type { ProducerPort } from "../contracts/producer";
-import { insertClaim } from "../claims/store";
-import type { ClaimsIo } from "../claims/store";
+import type { ClaimDraft, ProducerPort } from "../contracts/producer";
 import {
+  insertClaim,
   listUnwrittenLiveClaims,
   reviveUncontestedSkipped,
 } from "../claims/store";
+import type { ClaimsIo } from "../claims/store";
 import { mineLiveDrafts } from "./extract";
 import { tryWriteFlock } from "./flock";
 import { redactReceiptError } from "./receipts";
@@ -38,7 +38,6 @@ export interface WritePassOptions {
   readonly model_ref?: string | null;
   readonly producer?: ProducerPort;
   readonly claims?: ClaimsIo;
-  readonly now?: () => string;
 }
 
 function modelConfigured(modelRef: string | null | undefined): boolean {
@@ -185,17 +184,7 @@ async function runWritePassLocked(
 
 export async function fileProducedDrafts(
   io: ClaimsIo,
-  drafts: readonly {
-    kind: Claim["kind"];
-    subject: string;
-    predicate: string;
-    object: string;
-    polarity: Claim["polarity"];
-    body: string;
-    event_ids: readonly string[];
-    confidence: number;
-    sensitivity?: Claim["sensitivity"];
-  }[],
+  drafts: readonly ClaimDraft[],
   producer: Claim["producer"],
   modelRef: string | null,
 ): Promise<{ written: number; deduped: number; superseded: number }> {
@@ -216,7 +205,9 @@ export async function fileProducedDrafts(
       model_ref: modelRef,
       confidence: draft.confidence,
       taint: "quoted",
-      ...(draft.sensitivity === undefined ? {} : { sensitivity: draft.sensitivity }),
+      sensitivity: draft.sensitivity,
+      ...(draft.valid_from === null ? {} : { valid_from: draft.valid_from }),
+      ...(draft.valid_to === null ? {} : { valid_to: draft.valid_to }),
     });
     switch (result.outcome) {
       case "stored":

@@ -24,10 +24,7 @@ import type { CanonChunk, Envelope, QuotedChunk, ServeContext } from "./types";
 
 export { PACKET_PURPOSES, PACKET_SECTIONS };
 
-/** Pinned estimator: Unicode code points / 4. Budget math must not drift.
- * The id lives on the envelope (not the header) so the 50-token floor still
- * buys an identifiable header and nothing else.
- */
+/** Pinned estimator: Unicode code points / 4. Lives on the envelope. */
 export const PACKET_TOKENIZER_ID = "kizuki.packet.chars-div-4/v1";
 
 const MAX_QUERY_CHARS = 512;

@@ -7,8 +7,8 @@ import { openLedger } from "../../src/ledger/db";
 import {
   mineLiveDrafts,
   readExtractCursor,
+  shouldAdvanceExtractCursor,
 } from "../../src/serve/extract";
-import { shouldAdvanceExtractCursor } from "../../src/serve/tri-state";
 import { initVault } from "../../src/vault/init";
 import { putEvent } from "../claims/helpers";
 

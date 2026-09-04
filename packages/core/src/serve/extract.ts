@@ -3,14 +3,34 @@ import type { CaptureEvent } from "../contracts/event";
 import type { ClaimDraft, ProducerPort, QuotedEvent } from "../contracts/producer";
 import { predicateIds } from "../claims/predicates";
 import { listClaims } from "../claims/store";
-import { getCheckpoint, saveCheckpoint } from "../ledger/connections";
+import { readCheckpoint, writeCheckpoint } from "../ledger/checkpoints";
 import { readSince } from "../ledger/ledger";
 import type { LedgerCursor } from "../ledger/ledger";
-import { shouldAdvanceExtractCursor, type ExtractMine } from "./tri-state";
+import { EXTRACT_BATCH, MODEL_PRODUCER_ID } from "../producer";
 
-export const EXTRACT_CONNECTOR_ID = "kizuki.producer.model";
-export const EXTRACT_SOURCE_KEY = "extract";
-const EXTRACT_BATCH = 8;
+const EXTRACT_SOURCE_KEY = "extract";
+
+/** Unavailable is not empty. Only empty or a successful mine advances the cursor. */
+export type ExtractMine =
+  | { status: "ok"; count: number }
+  | { status: "empty" }
+  | { status: "unavailable"; reason: string }
+  | { status: "rejected"; reason: string };
+
+export function shouldAdvanceExtractCursor(result: ExtractMine): boolean {
+  switch (result.status) {
+    case "ok":
+    case "empty":
+      return true;
+    case "unavailable":
+    case "rejected":
+      return false;
+    default: {
+      const _exhaustive: never = result;
+      return _exhaustive;
+    }
+  }
+}
 
 export interface MineResult {
   readonly mined: ExtractMine;
@@ -27,11 +47,6 @@ function parseCursor(raw: string | null): LedgerCursor | null {
   };
 }
 
-function formatCursor(cursor: LedgerCursor | null): string | null {
-  if (cursor === null) return null;
-  return `${cursor.accepted_at}\t${cursor.event_id}`;
-}
-
 function quoted(event: CaptureEvent): QuotedEvent {
   return {
     event_id: event.event_id,
@@ -44,27 +59,17 @@ function quoted(event: CaptureEvent): QuotedEvent {
   };
 }
 
-function persistCursor(db: Database, cursor: LedgerCursor | null, stored: number): void {
-  saveCheckpoint(
+function persistCursor(db: Database, cursor: LedgerCursor): void {
+  writeCheckpoint(
     db,
-    EXTRACT_CONNECTOR_ID,
+    MODEL_PRODUCER_ID,
     EXTRACT_SOURCE_KEY,
-    formatCursor(cursor),
-    "sync",
-    {
-      stored,
-      duplicates: 0,
-      errors: [],
-      proposals_created: stored,
-      withdrawn: 0,
-      retractions_filed: 0,
-      cursor: formatCursor(cursor),
-    },
+    `${cursor.accepted_at}\t${cursor.event_id}`,
   );
 }
 
 export function readExtractCursor(db: Database): string | null {
-  return getCheckpoint(db, EXTRACT_CONNECTOR_ID, EXTRACT_SOURCE_KEY)?.cursor ?? null;
+  return readCheckpoint(db, MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY);
 }
 
 /**
@@ -75,19 +80,18 @@ export async function mineLiveDrafts(
   db: Database,
   producer: ProducerPort,
 ): Promise<MineResult> {
-  const held = getCheckpoint(db, EXTRACT_CONNECTOR_ID, EXTRACT_SOURCE_KEY);
-  const cursor = parseCursor(held?.cursor ?? null);
+  const cursor = parseCursor(readExtractCursor(db));
   const batch = readSince(db, cursor, EXTRACT_BATCH);
-  if (batch.events.length === 0) {
+  if (batch.events.length === 0 || batch.cursor === null) {
     return { mined: { status: "empty" }, drafts: [] };
   }
 
-  // E8: a packet that later lands in the ledger is history, not extract input.
+  // Packet text that later lands in the ledger is history, not extract input.
   const usable = batch.events.filter(
     (event) => !event.deleted && !event.text.includes("KIZUKI CONTEXT v1"),
   );
   if (usable.length === 0) {
-    persistCursor(db, batch.cursor, 0);
+    persistCursor(db, batch.cursor);
     return { mined: { status: "empty" }, drafts: [] };
   }
 
@@ -135,8 +139,6 @@ export async function mineLiveDrafts(
     }
   }
 
-  if (shouldAdvanceExtractCursor(mined)) {
-    persistCursor(db, batch.cursor, mined.status === "ok" ? mined.count : 0);
-  }
+  if (shouldAdvanceExtractCursor(mined)) persistCursor(db, batch.cursor);
   return { mined, drafts };
 }
