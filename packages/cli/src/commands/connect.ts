@@ -110,6 +110,7 @@ export const connectCommand: Command = {
           throw new ConnectionError("Several IMAP connections exist. Re-sign in with: kizuki connect imap --source KEY");
         }
         checkRequestedSensitivity(ctx.db, connector.manifest(), requested, selected?.connection);
+        io.err("IMAP sign-in will read the selected mailbox through its configured server and store its encrypted connection state in this vault. Press Ctrl-C to cancel before any connection is changed.");
         let connection: Connection;
         try {
           connection = await enrollSignedInConnection(

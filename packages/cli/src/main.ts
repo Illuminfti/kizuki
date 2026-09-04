@@ -47,7 +47,9 @@ export function readSecretPrompt(
   input.setRawMode(true);
   input.resume();
   return new Promise((resolve, reject) => {
-    const bytes: number[] = [];
+    const characters: string[] = [];
+    const decoder = new TextDecoder("utf-8", { fatal: true });
+    let escape: "none" | "introducer" | "csi" | "ss3" = "none";
     let settled = false;
     const finish = (error?: Error): void => {
       if (settled) return;
@@ -56,7 +58,7 @@ export function readSecretPrompt(
       input.setRawMode!(false);
       output.write("\n");
       if (error !== undefined) reject(error);
-      else resolve(Buffer.from(bytes).toString("utf8"));
+      else resolve(characters.join(""));
     };
     const onData = (chunk: Uint8Array): void => {
       for (const byte of chunk) {
@@ -68,13 +70,40 @@ export function readSecretPrompt(
           finish();
           return;
         }
+        if (escape === "introducer") {
+          escape = byte === 91 ? "csi" : byte === 79 ? "ss3" : "none";
+          continue;
+        }
+        if (escape === "csi") {
+          if (byte >= 64 && byte <= 126) escape = "none";
+          continue;
+        }
+        if (escape === "ss3") {
+          escape = "none";
+          continue;
+        }
+        if (byte === 27) {
+          escape = "introducer";
+          continue;
+        }
         if (byte === 8 || byte === 127) {
-          if (bytes.pop() !== undefined) output.write("\b \b");
+          if (characters.pop() !== undefined) output.write("\b \b");
           continue;
         }
         if (byte >= 32) {
-          bytes.push(byte);
-          output.write("*");
+          let text = "";
+          try {
+            text = decoder.decode(Uint8Array.of(byte), { stream: true });
+          } catch {
+            finish(new UsageError("interactive sign-in received invalid terminal input"));
+            return;
+          }
+          for (const character of text) {
+            if (character >= " ") {
+              characters.push(character);
+              output.write("*");
+            }
+          }
         }
       }
     };

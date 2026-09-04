@@ -55,6 +55,27 @@ describe("secret terminal prompt", () => {
     expect(terminal.listeners.size).toBe(0);
   });
 
+  test("backspace removes a complete Unicode character and arrows are ignored", async () => {
+    const terminal = new CapturedTerminal();
+    const output: string[] = [];
+    const pending = readSecretPrompt(terminal, { write: (text) => output.push(text) }, "App password: ");
+    terminal.send("a😀");
+    terminal.send("\x7f\x1b[D");
+    terminal.send("b\n");
+    expect(await pending).toBe("ab");
+    expect(output.join("")).not.toContain("[D");
+  });
+
+  test("accepts a Unicode character split across terminal chunks", async () => {
+    const terminal = new CapturedTerminal();
+    const output: string[] = [];
+    const pending = readSecretPrompt(terminal, { write: (text) => output.push(text) }, "App password: ");
+    const bytes = new TextEncoder().encode("😀");
+    for (const byte of bytes) for (const listener of terminal.listeners) listener(Uint8Array.of(byte));
+    terminal.send("\n");
+    expect(await pending).toBe("😀");
+  });
+
   test("a parent Ctrl-C byte cancels a visible prompt in a real pseudo-terminal", async () => {
     const directory = mkdtempSync(join(tmpdir(), "kizuki-prompt-"));
     const program = join(directory, "prompt.ts");
