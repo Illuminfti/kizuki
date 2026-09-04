@@ -98,15 +98,15 @@ Finish line, `deploy/proof/container.sh` (CI-runnable, Linux only):
 
 | # | Assertion | How it is decided |
 | --- | --- | --- |
-| 1.1 | Image builds reproducibly. | `docker build` exits 0 twice; the two image ids match. |
+| 1.1 | Repeating the build is stable. | `docker build` exits 0 twice against the same context and the two image ids match. Warm cache: `apt-get update` and `bun install` fetch from the network, so a cold build is not byte-reproducible, which is a property of those tools rather than of the Dockerfile. |
 | 1.2 | The floor needs no network. | Every check below runs with `--network none`. |
-| 1.3 | Loop is PID 1 and alive. | `docker exec` `kizuki serve status --json` → `running: true`, `lease: "held"`. |
+| 1.3 | Loop is PID 1 and alive. | `docker exec` `kizuki serve status --json` reports `pid` 1, `/proc/1` exists, and `doctor.ok` is true. The CLI's status JSON carries `pid`, `supervisor` and `doctor`; the `running`/`lease` fields belong to core's `serveStatus()`, which no CLI verb calls. |
 | 1.4 | Health endpoint answers on loopback. | `curl -fsS 127.0.0.1:$PORT/health` inside the container → body `"ok":true`. |
-| 1.5 | Nothing listens off loopback. | `ss -ltn` inside the container shows no `0.0.0.0` or `[::]` listener. |
+| 1.5 | Nothing listens off loopback. | `ss` is absent from the image, so the check reads `/proc/net/tcp` and `/proc/net/tcp6`: every row in state `0A` must have a loopback local address. |
 | 1.6 | Ingest works and fails closed. | `kizuki import markdown-folder --source /fixtures` exits 0 with stdout containing `events_stored=3` and `errors=0`; `kizuki query acme --scope ledger` exits 0, prints nothing on stdout, and its stderr contains `withheld=`; a second identical import exits 0 with stdout containing `events_stored=0` and `duplicates=3`. |
-| 1.7 | Doctor is honest. | `kizuki doctor` output contains `supervisor: none` and `canon writing: off`; no rail line contains `status=failed`. |
-| 1.8 | State survives restart. | `docker restart`; 1.3 passes again; a third identical import exits 0 with stdout containing `events_stored=0` and `duplicates=3`; `kizuki doctor` output contains `events=3`. |
-| 1.9 | No plaintext secret in the image. | `docker history --no-trunc` and a filesystem grep for the value of `KIZUKI_MODEL_KEY` find nothing; `/vault/.kizuki/serve-token` mode is `0600`. |
+| 1.7 | Doctor is honest. | `kizuki doctor` output contains `supervisor: none` and `canon writing: off`, and no rail line contains `status=failed` or `status=down`. `RailDoctor.status` is `ok`, `down` or `idle`, so the literal `failed` this plan first named can never appear; `down` is the real unhealthy value and is checked too. |
+| 1.8 | State survives restart. | `docker restart` changes `State.StartedAt`; 1.3 passes again; a third identical import exits 0 with stdout containing `events_stored=0` and `duplicates=3`; `kizuki doctor` output contains `events=3`. A container renumbers its init process to 1 on every start, so a changed `StartedAt` is the restart evidence rather than a new pid. |
+| 1.9 | No plaintext secret in the image. | `docker history --no-trunc` and a filesystem grep for the value of `KIZUKI_MODEL_KEY` find nothing; `/vault/.kizuki/serve.token` mode is `600`. |
 | 1.10 | Root filesystem is read-only. | `docker inspect` shows `ReadonlyRootfs: true`; `touch /usr/bin/x` inside fails. |
 | 1.11 | Export is a readable exit. | `kizuki export --out /vault/export` exits 0, `/vault/export/ledger/events.jsonl` exists, and it contains the string `acme`. |
 
