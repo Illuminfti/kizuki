@@ -84,7 +84,7 @@ function populated() {
   mkdirSync(join(vaultPath, "people"), { recursive: true });
   writeFileSync(join(vaultPath, "people", "Ada.md"), "---\nid: ada\n---\n");
   writeFileSync(join(vaultPath, ".kizuki", "private-state"), "excluded\n");
-  return { db, vaultPath, remainingEventId: second.event.event_id };
+  return { db, vaultPath, remainingEventId: second.event.event_id, sourceKey };
 }
 
 function insertFixtureClaim(
@@ -605,7 +605,7 @@ describe("restoreVault", () => {
   });
 
   test("restores identity links and connector sensitivity", () => {
-    const { db, vaultPath } = populated();
+    const { db, vaultPath, sourceKey } = populated();
     db.query(
       `INSERT INTO identity_links
          (subject_a, subject_b, score, evidence, status, decided_by, receipt_id, at)
@@ -626,7 +626,7 @@ describe("restoreVault", () => {
        VALUES (?, ?, ?, ?, ?, ?)`,
     ).run(
       "fixture",
-      "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      sourceKey,
       "personal",
       "personal",
       "manifest",
@@ -680,7 +680,7 @@ describe("restoreVault", () => {
         .get(),
     ).toEqual({
       connector_id: "fixture",
-      source_key: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      source_key: sourceKey,
       default_sensitivity: "personal",
       floor: "personal",
     });
