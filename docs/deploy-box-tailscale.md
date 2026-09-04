@@ -51,12 +51,12 @@ Every one of those six sentences is asserted by a script below. There is no
 ```
 tailnet peer (laptop, harness)
    │  https://kizuki-<node>.<tailnet>.ts.net  (tailscale serve → 127.0.0.1:PORT)
-   │  tailscale ssh kizuki -- kizuki-mcp --vault /vault --token-env KIZUKI_AGENT_TOKEN
+   │  no shell: a hosted box exposes no Tailscale SSH (M2 finding, 2026-09-04)
    ▼
 Box VM (Ubuntu, Docker)
  └─ docker compose
      ├─ tailscale   image pinned by digest, TS_USERSPACE=true, TS_STATE_DIR volume,
-     │              TS_AUTHKEY from a Docker secret, --ssh, serve config for /health and /v1/mcp/*
+     │              TS_AUTHKEY from a Docker secret, serve config for /health and /v1/mcp/*
      └─ kizuki      network_mode: service:tailscale, KIZUKI_SUPERVISOR=none,
                     PID 1 = `kizuki serve`, /vault volume, no capabilities, read-only rootfs
 ```
@@ -154,8 +154,9 @@ CI-runnable):
 | 2.8 | MCP read over the tailnet with a token. | `POST /v1/mcp/system_health` to the same address with `Host: 127.0.0.1` and `Authorization: Bearer <daemon token>` → 200, `"ok":true`. |
 | 2.9 | Fail closed without a token. | Same call, same `Host: 127.0.0.1`, no `Authorization` header → 401 `unauthorized`. |
 | 2.10 | Public IP is dark. | Neither container publishes a port (`docker inspect` `NetworkSettings.Ports` is empty for both); the real public-IP probe is M3's, run from the Box. |
-| 2.11 | Tailscale SSH reaches the node. | `tailscale ssh kizuki-m2-proof -- true` succeeds. |
+| 2.11 | 2.11 no-shell-exposed: SSH is refused. | With the node confirmed up (2.6 having passed, and `/health` re-checked immediately before the attempt so a failure cannot be mistaken for "nothing is reachable"), `tailscale ssh kizuki-m2-proof -- true` must fail to establish a session. PASS only on that refusal; FAIL if a session succeeds. |
 | 2.12 | Node identity survives restart. | `docker compose restart`; the node id in `tailscale status --json` is unchanged. |
+| 2.14 | 2.14 only-served-ports-reachable. | From the peer side, a TCP connect to a node port not named in `serve.json` (one nothing listens on, and one a neighbor in the shared namespace might plausibly run) must be refused or time out, under a short explicit timeout. |
 
 Finding (2026-09-03, updated 2026-09-03): the Host-header problem below was
 first hit, diagnosed and reported as an unresolved FAIL on 2.7-2.9. It was
@@ -164,6 +165,27 @@ of an HTTPS reverse proxy); the resolution is described second and is what
 `deploy/compose.yml` and `deploy/tailscale/serve.json` now implement. Both
 are kept here because the diagnosis is still the reason the fix looks the
 way it does.
+
+Finding (2026-09-04): a hosted customer must not get a shell on a box we run
+on our own infrastructure account — that is the main resource-abuse and
+compute-theft surface a hosted (as opposed to customer-owned) deployment
+creates — so `TS_EXTRA_ARGS: --ssh` has been removed from the tailscale
+service in `deploy/compose.yml`; shell access is now a property of the
+customer-owned deployment tier only, never of a box we run. Row 2.11 is
+inverted to match: it now asserts SSH is refused rather than that it
+succeeds. Separately, the containment property this design relies on — that
+a tailnet peer reaches only the ports named in `serve.json`, because
+userspace networking (`TS_USERSPACE=true`) creates no TUN device and
+therefore no kernel route to any other listening port — is not stated
+plainly anywhere in Tailscale's own documentation (three of their pages were
+checked while writing this finding); it is an inference from how tailscaled
+is built, not a written guarantee. New check 2.14 proves it directly, from
+the peer side, instead of leaving it asserted only in a comment. Finally,
+`deploy/compose.yml`'s `ts_authkey` secret already reads its key from a
+configurable path (`${KIZUKI_TS_AUTHKEY_FILE:-...}`), so the same image
+joins the operator's own tailnet for this proof or a customer's own tailnet
+in the hosted arrangement without any image change — only the key file
+path differs.
 
 *Host header, as first found.* `tailscale serve`'s HTTP proxy handler is
 Go's `NewSingleHostReverseProxy` (confirmed by reading exported symbols out

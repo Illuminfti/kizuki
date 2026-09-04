@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # M2 tailnet access finish line (docs/deploy-box-tailscale.md "M2 Tailnet
-# access"), checks 2.6-2.12. Needs a real tailnet and the owner's auth key
+# access"), checks 2.6-2.12 and 2.14. Needs a real tailnet and the owner's
+# auth key
 # at /home/lars/.config/kizuki/ts-authkey inside WSL; not CI-runnable.
 # Prints one `PASS <n> <label>` or `FAIL <n> <label> <reason>` line per
 # check. Unlike deploy/proof/container.sh and compose-lint.sh, this script
@@ -139,7 +140,7 @@ detect_spent_key() {
 }
 
 if detect_spent_key; then
-  for n in 2.6 2.7 2.8 2.9 2.10 2.11 2.12; do
+  for n in 2.6 2.7 2.8 2.9 2.10 2.11 2.12 2.14; do
     printf 'NOT RUN %s no usable auth key\n' "$n"
   done
   die 3
@@ -250,21 +251,72 @@ check_2_10() {
 }
 
 check_2_11() {
-  # Row 2.11 replaces the plan's original "stdio MCP over Tailscale SSH"
-  # wording (see docs/deploy-box-tailscale.md M2 Finding): Tailscale SSH
-  # lands in the tailscale sidecar, which has no Kizuki tree, and reaching
-  # the kizuki container from there would need the Docker socket mounted
-  # into the sidecar, a privilege escalation this milestone refuses. This
-  # proves SSH connectivity to the node itself; the harness transport is
-  # the HTTP path (2.8).
-  local out
-  out="$(docker compose -p "$PROJECT" -f "$COMPOSE" exec -T tailscale \
-    tailscale --socket=/tmp/tailscaled.sock ssh kizuki-m2-proof -- true 2>&1)"
-  if [ $? -eq 0 ]; then
-    pass 2.11 tailscale-ssh-reaches-node
+  # Row 2.11 is now the inverse of the plan's original "Tailscale SSH
+  # reaches the node" wording (see the compose.yml comment above
+  # TS_EXTRA_ARGS and the AGENTS.md resource-abuse concern this milestone
+  # closes): a hosted box must not hand a customer a shell, so this asserts
+  # that `tailscale ssh` is REFUSED, not that it succeeds. A refusal is only
+  # meaningful evidence of "no shell exposed" if the node is actually up;
+  # otherwise a refusal could just mean nothing is reachable at all. 2.6
+  # having passed by the time this runs is one precondition; re-asserting
+  # reachability with the same health call 2.7 uses, right before the SSH
+  # attempt, rules out "the node went offline in between" as the reason for
+  # the refusal.
+  if [ "$STATUS_JSON" = "" ]; then
+    blocked 2.11 no-shell-exposed "node status unknown (2.6 did not produce STATUS_JSON); cannot tell a meaningful SSH refusal from an unreachable node"
     return
   fi
-  fail 2.11 tailscale-ssh-reaches-node "tailscale ssh kizuki-m2-proof -- true failed: $out"
+  if [ -z "$TS_IP" ]; then
+    blocked 2.11 no-shell-exposed "no TailscaleIPs on the node; cannot re-assert reachability before the SSH attempt"
+    return
+  fi
+  local health_code health_body
+  health_body="$(docker compose -p "$PROJECT" -f "$COMPOSE" exec -T tailscale \
+    wget -q -S -O - --header='Host: 127.0.0.1' "http://${TS_IP}:8787/health" 2>&1)"
+  health_code="$(printf '%s' "$health_body" | grep -oE 'HTTP/[0-9.]+ [0-9]+' | tail -1 | awk '{print $2}')"
+  if [ "$health_code" != "200" ] || ! printf '%s' "$health_body" | grep -q '"ok":true'; then
+    blocked 2.11 no-shell-exposed "node did not answer /health just now (got HTTP ${health_code:-none}); an SSH failure here would not distinguish 'refused' from 'offline'"
+    return
+  fi
+  local out rc
+  out="$(docker compose -p "$PROJECT" -f "$COMPOSE" exec -T tailscale \
+    tailscale --socket=/tmp/tailscaled.sock ssh kizuki-m2-proof -- true 2>&1)"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    pass 2.11 no-shell-exposed
+    return
+  fi
+  fail 2.11 no-shell-exposed "tailscale ssh kizuki-m2-proof -- true succeeded (exit 0) with the node confirmed reachable; this hosted box must refuse SSH: $out"
+}
+
+# 2.14 exists because Tailscale does not document, in its own pages (three
+# were checked while writing this plan's M2 Finding), that userspace
+# networking's containment is total: no TUN device means no kernel route
+# into this box for anything but the ports named in serve.json, but that is
+# an inference from how tailscaled is built, not a written guarantee. So it
+# is proven here rather than asserted in a comment: from the peer side, try
+# a TCP connect to a tailnet-address port that is NOT in serve.json (one
+# nothing listens on, plus one a neighbor in the shared namespace might
+# plausibly run) and require refusal or timeout, with a short explicit
+# timeout so a hang reads as a failure instead of a stall.
+check_2_14() {
+  if [ -z "$TS_IP" ]; then
+    blocked 2.14 only-served-ports-reachable "no TailscaleIPs on the node; cannot form a target address"
+    return
+  fi
+  local port desc rc out
+  for entry in "9999:a port nothing listens on" "22:a port a neighbor's SSH might listen on"; do
+    port="${entry%%:*}"
+    desc="${entry#*:}"
+    out="$(docker compose -p "$PROJECT" -f "$COMPOSE" exec -T tailscale \
+      sh -c "nc -z -w 3 '${TS_IP}' '${port}'" 2>&1)"
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+      fail 2.14 only-served-ports-reachable "TCP connect to ${TS_IP}:${port} (${desc}) succeeded; only ports in serve.json should be reachable"
+      return
+    fi
+  done
+  pass 2.14 only-served-ports-reachable
 }
 
 check_2_12() {
@@ -293,6 +345,7 @@ main() {
   check_2_10
   check_2_11
   check_2_12
+  check_2_14
   echo "--- node registered as kizuki-m2-proof (tailscale IP ${TS_IP:-unknown}); the owner must remove it from the admin console device list (logout was attempted on cleanup, which does not delete the device entry) ---" >&2
   die "$ANY_FAIL"
 }
