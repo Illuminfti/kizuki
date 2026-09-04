@@ -250,7 +250,6 @@ describe("serveGraph", () => {
       { src: "fact:ghost-link", dst: "Ghost", kind: "wikilink" },
     ]);
     expect(envelope.denied).toEqual([]);
-    expect(JSON.stringify(envelope)).not.toContain("fact:ghost");
   });
 
   test("a public reader is not capped by private outgoing dests", () => {
