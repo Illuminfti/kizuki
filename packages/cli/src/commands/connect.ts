@@ -70,6 +70,10 @@ export function isSafeImapSignInError(error: unknown): boolean {
     error instanceof KizukiError;
 }
 
+export function imapSignInNotice(vaultPath: string): string {
+  return `IMAP will receive read-only access to the mailbox you enter. Protected local connection state is stored under ${clean(vaultPath)}. Press Ctrl-C to cancel before any connection is changed.`;
+}
+
 export const connectCommand: Command = {
   name: "connect",
   usage: "connect [--list|status] [--json]\n       kizuki connect <connector> --source PATH [--sensitivity public|personal|private]\n       kizuki connect beeper --token-ref env:VAR|file:/absolute/path [--endpoint http://127.0.0.1:23373] [--sensitivity public|personal|private] [--json]\n       kizuki connect imap [--source KEY] [--sensitivity public|personal|private]",
@@ -111,7 +115,7 @@ export const connectCommand: Command = {
           throw new ConnectionError("Several IMAP connections exist. Re-sign in with: kizuki connect imap --source KEY");
         }
         checkRequestedSensitivity(ctx.db, connector.manifest(), requested, selected?.connection);
-        io.err("IMAP sign-in will read the selected mailbox through its configured server and store its encrypted connection state in this vault. Press Ctrl-C to cancel before any connection is changed.");
+        io.err(imapSignInNotice(ctx.vaultPath));
         let connection: Connection;
         try {
           connection = await enrollSignedInConnection(
