@@ -15,6 +15,8 @@ test("reads the local search API, paginates backward, and uses stable source ide
   const seen: URL[] = [];
   const value = await connected(async (input, init) => {
     const url = new URL(input.toString()); seen.push(url);
+    expect(url.searchParams.get("excludeLowPriority")).toBe("false");
+    expect(url.searchParams.get("includeMuted")).toBe("true");
     expect(init?.headers).toEqual({ Authorization: `Bearer ${TOKEN}` });
     return url.searchParams.get("cursor") === null
       ? reply({ items: [first], hasMore: true, oldestCursor: "older" })

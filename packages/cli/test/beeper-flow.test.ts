@@ -35,6 +35,8 @@ test("Beeper enrollment, paginated recall, dedupe and unavailable sync preserve 
     if (url.pathname === "/v1/info") return Response.json({ app: { name: "Beeper", version: "fixture" }, server: { status: "running" } });
     if (url.pathname !== "/v1/messages/search") return new Response("not found", { status: 404 });
     if (Number(url.searchParams.get("limit")) > 20) return new Response("limit exceeds maximum", { status: 400 });
+    expect(url.searchParams.get("excludeLowPriority")).toBe("false");
+    expect(url.searchParams.get("includeMuted")).toBe("true");
     const older = url.searchParams.has("cursor");
     return Response.json({ items: [{ id: older ? "second" : "first", accountID: "test-account",
       chatID: "test-chat", senderID: "test-sender", sortKey: older ? "1" : "2",

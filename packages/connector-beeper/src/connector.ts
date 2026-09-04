@@ -96,6 +96,8 @@ export class BeeperConnector implements Connector {
     const url = new URL("/v1/messages/search", this.#config.baseUrl);
     url.searchParams.set("limit", String(PAGE_LIMIT));
     url.searchParams.set("direction", "before");
+    url.searchParams.set("excludeLowPriority", "false");
+    url.searchParams.set("includeMuted", "true");
     if (cursor !== null) url.searchParams.set("cursor", cursor);
     let response: Response;
     try { response = await this.#request(url); }
