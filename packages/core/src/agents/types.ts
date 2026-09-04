@@ -11,6 +11,14 @@ export const TOOLS = [
 ] as const;
 export type Tool = (typeof TOOLS)[number];
 
+export const LIFECYCLE_ACTIONS = [
+  "agent.create",
+  "agent.grant",
+  "agent.rotate",
+  "agent.revoke",
+] as const;
+export type LifecycleAction = (typeof LIFECYCLE_ACTIONS)[number];
+
 export const SENSITIVITY_ORDER = {
   public: 0,
   personal: 1,
@@ -24,6 +32,19 @@ export function isSensitivity(value: unknown): value is Sensitivity {
     Object.prototype.hasOwnProperty.call(SENSITIVITY_ORDER, value)
   );
 }
+
+/** Ledger schema version that owns agents, grants, and audit. */
+export const AGENT_SCHEMA_VERSION = 9;
+
+export const MAX_GRANT_SCOPE_ITEMS = 64;
+export const MAX_GRANT_SCOPE_LENGTH = 128;
+export const MAX_RATE_LIMIT_PER_MINUTE = 1_000;
+export const MAX_AUDIT_PAGE = 100;
+export const MAX_AUDIT_ITEMS = 256;
+
+/** Type or subject tokens: `person`, `fact`, `person:ada`. */
+export const GRANT_SCOPE_TOKEN =
+  /^[a-z][a-z0-9_-]*(?::[A-Za-z0-9._:-]{1,120})?$/;
 
 export interface Grant {
   ceiling: Sensitivity;
@@ -41,12 +62,26 @@ export interface Grant {
   relay_owner_corrections: boolean;
 }
 
+function freezeGrant(grant: Grant): Grant {
+  return Object.freeze({
+    ceiling: grant.ceiling,
+    types: grant.types === null ? null : Object.freeze([...grant.types]),
+    subjects:
+      grant.subjects === null ? null : Object.freeze([...grant.subjects]),
+    since: grant.since,
+    until: grant.until,
+    tools: Object.freeze([...grant.tools]),
+    rate_limit_per_minute: grant.rate_limit_per_minute,
+    relay_owner_corrections: grant.relay_owner_corrections,
+  }) as Grant;
+}
+
 /**
  * Everything but `correct`. Relaying the owner's own words files at the top
  * authority tier and retires live claims, so it is granted deliberately or
  * not at all (RFC 0002 §6.4; invariant 8).
  */
-export const DEFAULT_GRANT: Grant = {
+export const DEFAULT_GRANT: Grant = freezeGrant({
   ceiling: "personal",
   types: null,
   subjects: null,
@@ -64,14 +99,14 @@ export const DEFAULT_GRANT: Grant = {
   ],
   rate_limit_per_minute: 60,
   relay_owner_corrections: true,
-};
+});
 
 /** Harnesses the owner runs themselves (RFC 0002 §8.4). */
-export const OWNER_AGENT_GRANT: Grant = {
+export const OWNER_AGENT_GRANT: Grant = freezeGrant({
   ...DEFAULT_GRANT,
   ceiling: "private",
   tools: [...DEFAULT_GRANT.tools],
-};
+});
 
 export interface Agent {
   agent_id: string;
@@ -82,22 +117,22 @@ export interface Agent {
 
 export type Principal =
   | { kind: "owner"; name: "owner"; grant: Grant }
-  | { kind: "agent"; agent: Agent; grant: Grant };
+  | { kind: "agent"; agent: Agent; grant: Grant; grant_epoch: number };
 
-export const OWNER: Principal = {
+export const OWNER: Principal = Object.freeze({
   kind: "owner",
   name: "owner",
-  grant: {
+  grant: freezeGrant({
     ceiling: "private",
     types: null,
     subjects: null,
     since: null,
     until: null,
     tools: [...TOOLS],
-    rate_limit_per_minute: Number.MAX_SAFE_INTEGER,
+    rate_limit_per_minute: 60,
     relay_owner_corrections: true,
-  },
-};
+  }),
+});
 
 export type DenyReason =
   | "missing_sensitivity"
@@ -128,6 +163,9 @@ export interface Servable {
 export interface AuditItem {
   id: string;
   sensitivity: string;
+  taint?: string | null;
+  authority?: string | null;
+  provenance_count?: number;
 }
 
 export interface AuditDenial {
@@ -138,9 +176,22 @@ export interface AuditDenial {
 export interface AuditRow {
   audit_id: string;
   agent_id: string;
-  tool: Tool;
+  tool: Tool | LifecycleAction;
   query_shape: Record<string, unknown>;
   served: AuditItem[];
   denied: AuditDenial[];
   at: string;
+  grant_epoch: number | null;
+}
+
+export interface AuditPage {
+  rows: AuditRow[];
+  next_cursor: string | null;
+}
+
+export interface AgentFinding {
+  agent_id: string;
+  name: string;
+  reason: "invalid_grant";
+  quarantined_at: string;
 }

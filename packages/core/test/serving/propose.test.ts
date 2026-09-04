@@ -81,7 +81,13 @@ describe("servePropose files a claim for the receipted writer", () => {
     expect(claim?.frontmatter["x-relayed-by"]).toBe("agent:reader-private");
 
     const row = listAudit(live.db, "reader-private", { limit: 1 })[0];
-    expect(row?.query_shape["claim_ids"]).toEqual([claim?.claim_id as string]);
+    const claimId = claim?.claim_id as string;
+    expect(row?.query_shape["claim_ids"]).toEqual([
+      {
+        len: claimId.length,
+        sha256: new Bun.CryptoHasher("sha256").update(claimId).digest("hex"),
+      },
+    ]);
     const body = row?.query_shape["body"] as { sha256?: string };
     expect(body.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(JSON.stringify(row?.query_shape)).not.toContain("boiled at dawn");

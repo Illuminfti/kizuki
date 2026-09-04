@@ -174,8 +174,20 @@ describe("the serving gate", () => {
     expect(shape.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(row?.query_shape["limit"]).toBe(20);
     expect(row?.served).toEqual([
-      { id: "person:ada", sensitivity: "public" },
-      { id: QUOTED.event_id, sensitivity: "personal" },
+      {
+        id: new Bun.CryptoHasher("sha256").update("person:ada").digest("hex"),
+        sensitivity: "public",
+        taint: "clean",
+        authority: null,
+        provenance_count: 0,
+      },
+      {
+        id: new Bun.CryptoHasher("sha256").update(QUOTED.event_id).digest("hex"),
+        sensitivity: "personal",
+        taint: "quoted",
+        authority: null,
+        provenance_count: 1,
+      },
     ]);
   });
 
@@ -194,8 +206,12 @@ describe("the serving gate", () => {
       }),
     );
     const row = listAudit(fixture.db, "reader-private", { limit: 1 })[0];
+    const proposalId = "01J00000000000000000000PRO";
     expect(row?.query_shape["proposal_ids"]).toEqual([
-      "01J00000000000000000000PRO",
+      {
+        len: proposalId.length,
+        sha256: new Bun.CryptoHasher("sha256").update(proposalId).digest("hex"),
+      },
     ]);
   });
 
@@ -306,6 +322,23 @@ describe("authority is re-read on every served call", () => {
         claim.body.startsWith("A concurrent kettle candidate"),
       ),
     ).toHaveLength(2);
+  });
+
+  test("a tool-not-granted flood is still metered", () => {
+    const ctx = live.agent("slow");
+    setGrant(live.db, "slow", { tools: ["search"] });
+
+    expect(refusal(() => gate(ctx, "timeline", {}, emptyRun)).code).toBe(
+      "tool_not_granted",
+    );
+    expect(refusal(() => gate(ctx, "timeline", {}, emptyRun)).code).toBe(
+      "tool_not_granted",
+    );
+    const third = refusal(() => gate(ctx, "timeline", {}, emptyRun));
+    expect(third.code).toBe("rate_limited");
+    expect(
+      listAudit(live.db, "slow", { limit: 1 })[0]?.denied,
+    ).toEqual([{ id: "tool:timeline", reason: "rate_limited" }]);
   });
 
   test("a grant narrowed mid-session applies to the next call", () => {

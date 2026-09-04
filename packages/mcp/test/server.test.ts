@@ -202,9 +202,11 @@ describe("the stdio MCP server over a real client", () => {
     });
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toContain("Input validation error");
-    expect(listAudit(running.db, "reader-private", { limit: 5 })).toHaveLength(
-      0,
-    );
+    expect(
+      listAudit(running.db, "reader-private", { limit: 5 }).filter(
+        (row) => row.tool === "search",
+      ),
+    ).toHaveLength(0);
   });
 
   test("an out-of-range argument is stopped by the advertised bound", async () => {
@@ -213,9 +215,11 @@ describe("the stdio MCP server over a real client", () => {
     const result = await call(client, "search", { query: "kettle", limit: 51 });
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toContain("Input validation error");
-    expect(listAudit(running.db, "reader-private", { limit: 5 })).toHaveLength(
-      0,
-    );
+    expect(
+      listAudit(running.db, "reader-private", { limit: 5 }).filter(
+        (row) => row.tool === "search",
+      ),
+    ).toHaveLength(0);
   });
 
   test("an argument the schema cannot judge is refused by the engine and audited", async () => {
@@ -323,7 +327,11 @@ describe("the stdio MCP server over a real client", () => {
     };
     expect(payload.error).toBe("rate_limited");
     expect(payload.retry_after_seconds ?? 0).toBeGreaterThanOrEqual(1);
-    expect(listAudit(running.db, "slow", { limit: 10 })).toHaveLength(3);
+    expect(
+      listAudit(running.db, "slow", { limit: 10 }).filter(
+        (row) => row.tool === "search",
+      ),
+    ).toHaveLength(3);
   });
 
   test("a connected session loses its authority the moment it is revoked", async () => {
