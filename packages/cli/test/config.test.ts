@@ -161,6 +161,35 @@ describe("config", () => {
     expect(readFileSync(path, "utf8")).toContain(vault);
   });
 
+  test(
+    "an empty lock is not stolen until the wait expires",
+    () => {
+      const env = isolatedEnv();
+      const path = env.KIZUKI_CONFIG ?? "";
+      mkdirSync(join(path, ".."), { recursive: true });
+      writeFileSync(`${path}.lock`, "");
+      const vault = join(tempDir(), "empty-lock-vault");
+      const result = runCli(env, "init", vault);
+      expect(result.exitCode).toBe(0);
+      expect(readFileSync(path, "utf8")).toContain(vault);
+    },
+    15_000,
+  );
+
+  test(
+    "a live lock holder is not stolen",
+    () => {
+      const env = isolatedEnv();
+      const path = env.KIZUKI_CONFIG ?? "";
+      mkdirSync(join(path, ".."), { recursive: true });
+      writeFileSync(`${path}.lock`, `${process.pid}\n`);
+      const result = runCli(env, "init", join(tempDir(), "live-lock-vault"));
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("could not lock");
+    },
+    15_000,
+  );
+
   test("config writes are atomic and round-trip aliases", () => {
     const env = isolatedEnv();
     const first = join(tempDir(), "first");

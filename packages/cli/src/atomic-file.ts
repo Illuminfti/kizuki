@@ -3,14 +3,16 @@ import {
   closeSync,
   existsSync,
   fsyncSync,
+  linkSync,
   mkdirSync,
   openSync,
   readFileSync,
   renameSync,
   unlinkSync,
+  writeFileSync,
   writeSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 const LOCK_WAIT_MS = 5_000;
 const LOCK_POLL_MS = 20;
@@ -58,54 +60,64 @@ export function writeAtomicFile(
   }
 }
 
-function lockHolderAlive(lockPath: string): boolean {
-  if (!existsSync(lockPath)) return false;
-  const pid = Number.parseInt(readFileSync(lockPath, "utf8").trim(), 10);
-  if (!Number.isInteger(pid) || pid <= 0) return false;
+type LockHolder = "live" | "dead" | "pending";
+
+function inspectLockHolder(lockPath: string): LockHolder {
+  if (!existsSync(lockPath)) return "dead";
+  let raw = "";
+  try {
+    raw = readFileSync(lockPath, "utf8").trim();
+  } catch {
+    return "pending";
+  }
+  if (raw.length === 0) return "pending";
+  const pid = Number.parseInt(raw, 10);
+  if (!Number.isInteger(pid) || pid <= 0) return "pending";
   try {
     process.kill(pid, 0);
-    return true;
+    return "live";
   } catch {
-    return false;
+    return "dead";
   }
 }
 
 export function withExclusiveLock(lockPath: string, fn: () => void): void {
   const parent = dirname(lockPath);
   mkdirSync(parent, { recursive: true, mode: 0o700 });
+  const mine = join(parent, `.${basename(lockPath)}.${process.pid}`);
+  writeFileSync(mine, `${process.pid}\n`, { mode: 0o600 });
   const deadline = Date.now() + LOCK_WAIT_MS;
-  for (;;) {
-    try {
-      const fd = openSync(lockPath, "wx", 0o600);
+  try {
+    for (;;) {
       try {
-        writeSync(fd, `${process.pid}\n`);
-        try {
-          fsyncSync(fd);
-        } catch {
-          // Lock metadata is best-effort; the exclusive create is the mutex.
+        linkSync(mine, lockPath);
+        break;
+      } catch (error) {
+        if (!isBusy(error)) {
+          throw new Error(`could not lock ${lockPath}`);
         }
-        fn();
-      } finally {
-        closeSync(fd);
-        if (existsSync(lockPath)) unlinkSync(lockPath);
-      }
-      return;
-    } catch (error) {
-      if (!isBusy(error)) {
-        throw new Error(`could not lock ${lockPath}`);
-      }
-      if (!lockHolderAlive(lockPath)) {
-        try {
-          unlinkSync(lockPath);
-        } catch {
-          // Another waiter may have already stolen the stale file.
+        const holder = inspectLockHolder(lockPath);
+        const expired = Date.now() >= deadline;
+        if (holder === "dead" || (holder === "pending" && expired)) {
+          try {
+            unlinkSync(lockPath);
+          } catch {
+            // Another waiter may have already stolen the stale file.
+          }
+          continue;
         }
-        continue;
+        if (expired) {
+          throw new Error(`could not lock ${lockPath}`);
+        }
+        Bun.sleepSync(LOCK_POLL_MS);
       }
-      if (Date.now() >= deadline) {
-        throw new Error(`could not lock ${lockPath}`);
-      }
-      Bun.sleepSync(LOCK_POLL_MS);
     }
+    try {
+      fn();
+    } finally {
+      if (existsSync(lockPath)) unlinkSync(lockPath);
+    }
+  } finally {
+    if (existsSync(mine)) unlinkSync(mine);
   }
 }
