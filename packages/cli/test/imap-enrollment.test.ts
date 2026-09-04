@@ -87,7 +87,7 @@ describe("IMAP interactive enrollment", () => {
         { ...state, host: "other.example.test" },
         { ...state, port: 1993 },
       ]) {
-        await expect(enrollSignedInConnection(db, store, connectorFor(candidate), prompts([]), first.source_key, assertSameImapIdentity)).rejects.toThrow("same mailbox identity");
+        await expect(enrollSignedInConnection(db, store, connectorFor(candidate), prompts([]), first.source_key, assertSameImapIdentity)).rejects.toThrow("does not match");
         expect(store.read(first)).toEqual(before);
         expect(getCheckpoint(db, first.connector_id, first.source_key)?.cursor).toBe("checkpoint");
         expect(listConnections(db)).toHaveLength(1);
