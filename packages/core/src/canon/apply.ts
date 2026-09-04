@@ -10,7 +10,9 @@ import type {
 } from "../contracts/proposal";
 import { AUTHORITY_TIERS } from "../contracts/proposal";
 import { tableExists } from "../ledger/schema";
+import { refreshDerivedPage, removeDerivedPage } from "../derived";
 import type { VaultPage } from "../vault/frontmatter";
+import type { CanonPage } from "../vault/pages";
 import { PAGE_TYPES } from "../vault/schema";
 import { grantCanonWrite, isWriter, writePage } from "../vault/write";
 import type { Writer } from "../vault/write";
@@ -483,7 +485,27 @@ export function applyCanonWrite(
     pageId,
     primary.subject ?? (typeof priorSubject === "string" ? priorSubject : null),
   );
+  refreshDerivedPage(
+    io.db,
+    canonPageFromWrite(io.vault_path, target.rel_path, pageId, prepared.page),
+    io.vault_path,
+  );
   return receipt;
+}
+
+function canonPageFromWrite(
+  vaultPath: string,
+  relPath: string,
+  pageId: string,
+  page: VaultPage,
+): CanonPage {
+  return {
+    id: pageId,
+    path: join(vaultPath, relPath),
+    relPath,
+    data: page.data,
+    body: page.body,
+  };
 }
 
 interface RevertWriteInput {
@@ -513,18 +535,32 @@ export function applyRevertWrite(
     if (input.expected_hash === null) {
       throw new CanonWriteError("page_missing", `page ${input.rel_path} is already gone`);
     }
-    return writePage(cap, path, { data: {}, body: "" }, {
+    const existing = readPage(io, input.rel_path);
+    const outcome = writePage(cap, path, { data: {}, body: "" }, {
       delete: true,
       expected_hash: input.expected_hash,
     });
+    if (existing !== null && typeof existing.page.data["id"] === "string") {
+      removeDerivedPage(io.db, existing.page.data["id"], io.vault_path);
+    }
+    return outcome;
   }
-  if (input.expected_hash === null) {
-    return writePage(cap, path, input.page);
+  const outcome =
+    input.expected_hash === null
+      ? writePage(cap, path, input.page)
+      : writePage(cap, path, input.page, {
+          revision: true,
+          expected_hash: input.expected_hash,
+        });
+  const pageId = input.page.data["id"];
+  if (typeof pageId === "string") {
+    refreshDerivedPage(
+      io.db,
+      canonPageFromWrite(io.vault_path, input.rel_path, pageId, input.page),
+      io.vault_path,
+    );
   }
-  return writePage(cap, path, input.page, {
-    revision: true,
-    expected_hash: input.expected_hash,
-  });
+  return outcome;
 }
 
 export interface PurgeRewriteInput {
@@ -634,5 +670,19 @@ export function applyPurgeRewrite(
       });
     }
   })();
+  if (pageId !== null) {
+    if (nothingRemains) {
+      removeDerivedPage(io.db, pageId, io.vault_path);
+    } else {
+      refreshDerivedPage(
+        io.db,
+        canonPageFromWrite(io.vault_path, input.rel_path, pageId, {
+          data,
+          body: body.length === 0 ? "\n" : body,
+        }),
+        io.vault_path,
+      );
+    }
+  }
   return receipt;
 }

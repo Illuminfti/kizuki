@@ -2,12 +2,13 @@ import type { Database } from "bun:sqlite";
 import { pendingRetrievalOps, retryRetrievalOps } from "../claims/store";
 import type { ClaimsIo } from "../claims/store";
 import { createBudgetTracker } from "../canon/budget";
+import type { ProducerPort } from "../contracts/producer";
 import { inspectPurgeHealth, verifyPurge } from "../ledger/purge";
 import { tableExists } from "../ledger/schema";
 import { ulid } from "../util/ulid";
 import { serializePage } from "../vault/frontmatter";
 import { addDailyBudget, budgetDay, readDailyBudget } from "./budget-ledger";
-import { loadServeConfig } from "./config";
+import { loadConfiguredModelRef, loadServeConfig } from "./config";
 import { createFileNotifier, briefPath } from "./notifier-file";
 import { persistRunReceipt, pruneRunReceipts, redactReceiptError } from "./receipts";
 import { listSchedules } from "./schema";
@@ -18,6 +19,7 @@ import {
   type RailId,
   type RunReceipt,
 } from "./types";
+import { runWritePass } from "./write-pass";
 
 export interface RailSyncResult {
   readonly events_synced: number;
@@ -31,6 +33,7 @@ export interface RailHooks {
   readonly sync?: () => Promise<RailSyncResult>;
   readonly claims?: ClaimsIo;
   readonly model_ref?: string | null;
+  readonly producer?: ProducerPort;
   readonly embedding_backlog?: number;
 }
 
@@ -42,6 +45,29 @@ export interface RunRailOptions {
 
 function dayOf(at: string): string {
   return at.slice(0, 10);
+}
+
+/**
+ * Hooks may pin a model_ref (including explicit null). Otherwise the
+ * vault's serve.toml decides, so `kizuki serve` writes without host wiring.
+ */
+function resolveModelRef(
+  vaultPath: string,
+  hooks: RailHooks | undefined,
+): string | null {
+  if (hooks !== undefined && Object.hasOwn(hooks, "model_ref")) {
+    return hooks.model_ref ?? null;
+  }
+  return loadConfiguredModelRef(vaultPath);
+}
+
+function withResolvedModel(
+  vaultPath: string,
+  hooks: RailHooks | undefined,
+): RailHooks | undefined {
+  const model_ref = resolveModelRef(vaultPath, hooks);
+  if (hooks === undefined && model_ref === null) return undefined;
+  return { ...hooks, model_ref };
 }
 
 function nextHourUtc(now: string, hour: number): string {
@@ -66,21 +92,45 @@ export function dueRails(db: Database, now: string): RailId[] {
   return due;
 }
 
-async function runSyncRail(hooks: RailHooks | undefined): Promise<Partial<RunReceipt>> {
-  if (hooks?.sync === undefined) {
-    return {
-      status: "ok",
-      errors: [],
-    };
-  }
-  const result = await hooks.sync();
+async function runSyncRail(
+  db: Database,
+  vaultPath: string,
+  budget: ReturnType<typeof createBudgetTracker>,
+  hooks: RailHooks | undefined,
+): Promise<Partial<RunReceipt>> {
+  const synced =
+    hooks?.sync === undefined
+      ? {
+          events_synced: 0,
+          events_stored: 0,
+          events_duplicate: 0,
+          events_self_skipped: 0,
+          errors: [] as string[],
+        }
+      : await hooks.sync();
+  const written = await runWritePass(db, vaultPath, {
+    budget,
+    ...(hooks?.model_ref === undefined ? {} : { model_ref: hooks.model_ref }),
+    ...(hooks?.producer === undefined ? {} : { producer: hooks.producer }),
+    ...(hooks?.claims === undefined ? {} : { claims: hooks.claims }),
+  });
+  const errors = [...synced.errors, ...written.errors];
+  let status: RunReceipt["status"] = "ok";
+  if (written.stopped !== null) status = "stopped";
+  else if (errors.length > 0) status = "degraded";
   return {
-    status: result.errors.length === 0 ? "ok" : "degraded",
-    events_synced: result.events_synced,
-    events_stored: result.events_stored,
-    events_duplicate: result.events_duplicate,
-    events_self_skipped: result.events_self_skipped,
-    errors: [...result.errors],
+    status,
+    events_synced: synced.events_synced,
+    events_stored: synced.events_stored,
+    events_duplicate: synced.events_duplicate,
+    events_self_skipped: synced.events_self_skipped,
+    claims_extracted: written.claims_extracted,
+    claims_written: written.claims_written,
+    claims_deduped: written.claims_deduped,
+    claims_superseded: written.claims_superseded,
+    canon_writes: written.canon_writes,
+    stopped: written.stopped,
+    errors,
   };
 }
 
@@ -235,6 +285,7 @@ export async function runRail(
 ): Promise<RunReceipt> {
   const now = options.now ?? (() => new Date().toISOString());
   const started = now();
+  const hooks = withResolvedModel(vaultPath, options.hooks);
   const config = loadServeConfig(vaultPath);
   const day = budgetDay(started);
   const usedToday = readDailyBudget(db, day, "canon_writes_per_day");
@@ -251,20 +302,20 @@ export async function runRail(
   try {
     switch (rail) {
       case "sync":
-        partial = await runSyncRail(options.hooks);
+        partial = await runSyncRail(db, vaultPath, budget, hooks);
         break;
       case "retrieval-sweep":
-        partial = await runRetrievalSweep(db, options.hooks);
+        partial = await runRetrievalSweep(db, hooks);
         break;
       case "purge-sweep":
-        partial = await runPurgeSweep(db, vaultPath, options.hooks, started);
+        partial = await runPurgeSweep(db, vaultPath, hooks, started);
         break;
       case "embed-backfill":
-        partial = await runEmbedBackfill(options.hooks);
+        partial = await runEmbedBackfill(hooks);
         break;
       case "brief":
         partial = await runBrief(vaultPath, started, [
-          `canon writing: ${options.hooks?.model_ref ? `on (${options.hooks.model_ref})` : "off (no model configured — connectors, ledger, search, timeline and undo still work)"}`,
+          `canon writing: ${hooks?.model_ref ? `on (${hooks.model_ref})` : "off (no model configured — connectors, ledger, search, timeline and undo still work)"}`,
         ]);
         break;
       case "doctor-sweep":
@@ -292,7 +343,7 @@ export async function runRail(
     model: {
       ...totals.model,
       ...partial.model,
-      model_ref: options.hooks?.model_ref ?? partial.model?.model_ref ?? null,
+      model_ref: hooks?.model_ref ?? partial.model?.model_ref ?? null,
     },
     retrieval: {
       ...totals.retrieval,

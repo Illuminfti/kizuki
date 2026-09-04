@@ -14,7 +14,7 @@ export { gate } from "./gate";
 export type { Served } from "./gate";
 
 export { serveSearch } from "./search";
-export type { SearchArgs } from "./search";
+export type { SearchArgs, SearchData } from "./search";
 export { serveGetPage } from "./page";
 export type { GetPageArgs } from "./page";
 export { ENTITY_TYPES, serveEntities } from "./entities";
@@ -25,8 +25,14 @@ export { serveGraph } from "./graph";
 export type { GraphArgs, GraphData } from "./graph";
 export { serveHealth } from "./health";
 export type { HealthData } from "./health";
-export { serveContextPacket } from "./packet";
+export {
+  PACKET_PURPOSES,
+  PACKET_SECTIONS,
+  PACKET_TOKENIZER_ID,
+  serveContextPacket,
+} from "./packet";
 export type { ContextPacketArgs, ContextPacketData } from "./packet";
+export type { PacketPurpose, PacketSection } from "./sections";
 export { servePropose } from "./propose";
 export type { ProposeArgs, ProposeData } from "./propose";
 export { serveCorrect } from "./correct";

@@ -9,6 +9,7 @@ import { CanonWriteError } from "../canon/errors";
 import type { CanonIo } from "../canon";
 import { getCanonReceipt } from "../canon/receipts";
 import { getClaim, insertClaim, listClaims, supersedeLiveGroup } from "../claims/store";
+import { retrievalDocId } from "../retrieval/ids";
 import type { Claim, FrontmatterValue, Producer } from "../contracts/proposal";
 import { accept } from "../ledger/ledger";
 import type { CaptureEventInput, SubjectRef } from "../contracts/event";
@@ -28,7 +29,7 @@ import type { CorrectInput, CorrectIo, CorrectResult, CorrectTarget } from "./ty
 
 const STATEMENT_MAX = 2000;
 const TARGET_REQUIRED_HINT =
-  'kizuki tell "…" --claim <id>  (see kizuki audit).';
+  'kizuki tell "…" --claim <id>  (see kizuki doctor).';
 
 function nowOf(io: CorrectIo): string {
   return io.now?.() ?? new Date().toISOString();
@@ -486,7 +487,7 @@ async function refreshRetrieval(io: CorrectIo, winner: Claim, at: string): Promi
   if (io.retrieval === undefined) return;
   await io.retrieval.upsert([
     {
-      doc_id: winner.claim_id,
+      doc_id: retrievalDocId("claim", winner.claim_id),
       kind: "claim",
       title: winner.predicate ?? winner.kind,
       text: winner.body,

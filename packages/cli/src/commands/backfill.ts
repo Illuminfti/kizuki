@@ -1,15 +1,15 @@
-import { runBackfill } from "@kizuki/core";
+import { runToCompletion } from "@kizuki/core";
 import { UsageError, parseArguments, requirePositional } from "../args";
 import { loadConnector, resolveConnectorId, selectConnection } from "../connections";
 import { withVault } from "../context";
-import { indexEventsSince } from "../derived";
+import { tryRefreshDerived } from "../derived";
 import { formatRunCounts } from "../output";
 import type { CliIo, Command } from "./index";
 
 export const backfillCommand: Command = {
   name: "backfill",
   usage: "backfill <connector> [--source PATH|KEY]",
-  summary: "run a historical sweep for one selected connection",
+  summary: "drain a historical sweep until the selected connection is exhausted",
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, { options: ["--source"] });
     const [rawId] = requirePositional(parsed.positionals, 1);
@@ -24,18 +24,17 @@ export const backfillCommand: Command = {
         parsed.options.get("--source"),
       );
       const connector = await loadConnector(selected);
-      // Same-process clock: a wall-clock step backwards is recovered by the
-      // later rebuild verb. Index only rows accepted at or after this instant.
-      const since = { accepted_at: new Date().toISOString(), event_id: "" };
-      const result = await runBackfill(
+      const result = await runToCompletion(
         ctx.db,
         connector,
         selected.connection.connector_id,
         selected.connection.source_key,
+        "backfill",
       );
-      indexEventsSince(ctx.db, since);
+      const derived = tryRefreshDerived(ctx.db, ctx.vaultPath);
       io.out(formatRunCounts(result));
       for (const text of result.errors) io.err(`error: ${text}`);
+      for (const warning of derived.degraded) io.err(`degraded: ${warning}`);
       return result.errors.length > 0 ? 1 : 0;
     });
   },

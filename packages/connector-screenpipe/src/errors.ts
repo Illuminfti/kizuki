@@ -3,6 +3,8 @@ export type ScreenpipeErrorCode =
   | "schema_mismatch"
   | "locked"
   | "parse_error"
+  | "reset_detected"
+  | "not_supported"
   | "closed";
 
 export class ScreenpipeConnectorError extends Error {

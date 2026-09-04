@@ -2,13 +2,14 @@ import type { Database } from "bun:sqlite";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { initSearch, openLedger, serializePage } from "@kizuki/core";
-import { initStaging } from "@kizuki/core/staging";
 
 /** Same shape `context.ts#openVaultDb` builds; a second connection to the
- * same vault after the CLI process that minted the agent has closed its own. */
+ * same vault after the CLI process that minted the agent has closed its own.
+ * `openLedger`'s migration already applies the claims schema `initStaging`
+ * used to add by hand; `@kizuki/core/staging` is no longer a published
+ * subpath (see #410). */
 export function openVaultDb(vaultPath: string): Database {
   const db = openLedger(join(vaultPath, ".kizuki", "kizuki.db"));
-  initStaging(db);
   initSearch(db);
   return db;
 }

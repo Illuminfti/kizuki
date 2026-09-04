@@ -27,6 +27,8 @@ describe("screenpipe schema inspection", () => {
       max_migration: SCREENPIPE_SCHEMA_VERIFIED,
       newer_than_verified: false,
       missing: [],
+      incompatible: [],
+      missing_indexes: [],
       detail: `screenpipe schema verified (max migration ${SCREENPIPE_SCHEMA_VERIFIED})`,
     });
   });
@@ -144,6 +146,36 @@ describe("screenpipe schema inspection", () => {
     );
     expect(() => assertSchema(fixture.writer)).toThrow(
       "screenpipe schema mismatch: invalid migration version",
+    );
+  });
+
+  test("incompatible column affinity fails closed", () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    fixture.writer.exec("DROP INDEX idx_frames_timestamp");
+    fixture.writer.exec("DROP INDEX idx_frames_app_name_timestamp");
+    fixture.writer.exec("ALTER TABLE frames DROP COLUMN timestamp");
+    fixture.writer.exec("ALTER TABLE frames ADD COLUMN timestamp TEXT NOT NULL DEFAULT ''");
+    fixture.writer.exec("CREATE INDEX idx_frames_timestamp ON frames(timestamp)");
+
+    const report = inspectSchema(fixture.writer);
+
+    expect(report.ok).toBe(false);
+    expect(report.incompatible).toContain(
+      "frames.timestamp expected NUMERIC affinity",
+    );
+    expect(report.detail).toContain("frames.timestamp expected NUMERIC affinity");
+  });
+
+  test("a missing cursor index fails closed", () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    fixture.writer.exec("DROP INDEX idx_frames_timestamp");
+
+    const report = inspectSchema(fixture.writer);
+
+    expect(report.ok).toBe(false);
+    expect(report.missing_indexes).toEqual(["frames(timestamp)"]);
+    expect(report.detail).toBe(
+      "screenpipe schema mismatch: missing index frames(timestamp)",
     );
   });
 

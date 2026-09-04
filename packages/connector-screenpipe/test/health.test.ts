@@ -3,7 +3,6 @@ import { Database } from "bun:sqlite";
 import path from "node:path";
 import { HealthReport } from "@kizuki/core";
 import {
-  FIXTURE_NOW,
   SCREENPIPE_SCHEMA_FLOOR,
   SCREENPIPE_SCHEMA_VERIFIED,
   ScreenpipeConnector,
@@ -11,6 +10,7 @@ import {
   createScreenpipeConnector,
   parseConfig,
 } from "../src";
+import { FIXTURE_NOW } from "../src/testkit";
 import {
   cleanupFixtureDatabases,
   createFixtureDatabase,
@@ -32,11 +32,13 @@ describe("ScreenpipeConnector health and lifecycle", () => {
         backfill: true,
         sync: true,
         tombstones: false,
-        purge: true,
+        purge: false,
         fixture: true,
       },
       required_secrets: [],
       emits_sensitivity_hint: true,
+      default_sensitivity: "private",
+      sensitivity_floor: "private",
       auth_modes: ["none"],
     });
   });
@@ -46,6 +48,8 @@ describe("ScreenpipeConnector health and lifecycle", () => {
       path: path.resolve("screenpipe/db.sqlite"),
       since: null,
       settle_seconds: 300,
+      timezone: null,
+      retain_full_urls: false,
     });
   });
 
@@ -59,6 +63,8 @@ describe("ScreenpipeConnector health and lifecycle", () => {
       { path: "/tmp/db.sqlite", settle_seconds: -1 },
       { path: "/tmp/db.sqlite", settle_seconds: 86_401 },
       { path: "/tmp/db.sqlite", settle_seconds: 1.5 },
+      { path: "/tmp/db.sqlite", timezone: "Not/AZone" },
+      { path: "/tmp/db.sqlite", retain_full_urls: "yes" },
     ];
     for (const config of invalid) {
       try {
@@ -154,10 +160,10 @@ describe("ScreenpipeConnector health and lifecycle", () => {
 
     const health = await connector.health();
 
-    expect(health.state).toBe("ok");
+    expect(health.state).toBe("degraded");
     expect(health.last_success_at).toBe(FIXTURE_NOW);
     expect(health.detail).toBe(
-      `screenpipe schema verified (max migration ${SCREENPIPE_SCHEMA_VERIFIED}); skipped 2 without text, 1 unparsable timestamps`,
+      `screenpipe schema verified (max migration ${SCREENPIPE_SCHEMA_VERIFIED}); skipped frames_without_text=2 frames_bad_timestamp=1 frames_offset_unknown=0 transcriptions_bad_timestamp=0 transcriptions_bad_offset=0 transcriptions_offset_unknown=0; oldest_skipped_frame=4`,
     );
     await connector.revoke();
   });

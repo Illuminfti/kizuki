@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { AuditDenial, Grant } from "../agents";
-import { search } from "../search/query";
+import { bareRetrievalId } from "../retrieval/ids";
+import { searchResult } from "../search/query";
 import type { SearchHit, SearchOptions } from "../search/query";
 import {
   enumOf,
@@ -64,7 +65,7 @@ function classify(
   const result: Classification = { canon: [], quoted: [], withheld: [] };
   const live = liveEventIds(
     db,
-    hits.filter((hit) => hit.scope === "ledger").map((hit) => hit.doc_id),
+    hits.filter((hit) => hit.scope === "ledger").map((hit) => bareRetrievalId(hit.doc_id)),
   );
 
   for (const hit of hits) {
@@ -72,7 +73,7 @@ function classify(
     seen.add(hit.doc_id);
 
     if (hit.scope === "canon") {
-      const page = index.byId.get(hit.doc_id);
+      const page = index.byId.get(bareRetrievalId(hit.doc_id));
       // A stale index row is not a denial: the page is simply gone.
       if (page === undefined || !eligible(page)) continue;
       const decision = pageDecision(index, grant, page);
@@ -88,7 +89,7 @@ function classify(
       continue;
     }
 
-    if (!live.has(hit.doc_id)) continue;
+    if (!live.has(bareRetrievalId(hit.doc_id))) continue;
     const source = ledgerHitSource(hit);
     const decision = eventDecision(grant, source);
     if (!decision.allow) {
@@ -101,8 +102,15 @@ function classify(
   return result;
 }
 
-export function serveSearch(ctx: ServeContext, args: SearchArgs): Envelope {
-  return gate(ctx, "search", auditArguments(args), ({ ctx }): Served<undefined> => {
+export interface SearchData {
+  degraded: string[];
+}
+
+export function serveSearch(
+  ctx: ServeContext,
+  args: SearchArgs,
+): Envelope<SearchData> {
+  return gate(ctx, "search", auditArguments(args), ({ ctx }): Served<SearchData> => {
     const grant = ctx.principal.grant;
     const query = text("query", args.query, MAX_QUERY_CHARS);
     const scope =
@@ -139,11 +147,16 @@ export function serveSearch(ctx: ServeContext, args: SearchArgs): Envelope {
     };
 
     const seen = new Set<string>();
+    const servedHits = searchResult(ctx.db, query, {
+      ...base,
+      ceiling: grant.ceiling,
+    });
+    const hiddenHits = searchResult(ctx.db, query, base);
     const served = classify(
       ctx.db,
       index,
       grant,
-      search(ctx.db, query, { ...base, ceiling: grant.ceiling }),
+      servedHits.hits,
       seen,
       true,
     );
@@ -151,15 +164,17 @@ export function serveSearch(ctx: ServeContext, args: SearchArgs): Envelope {
       ctx.db,
       index,
       grant,
-      search(ctx.db, query, base),
+      hiddenHits.hits,
       seen,
       false,
     );
+    const degraded = [...new Set([...servedHits.degraded, ...hiddenHits.degraded])];
 
     return {
       canon: served.canon,
       quoted: served.quoted,
       withheld: [...served.withheld, ...hidden.withheld],
+      ...(degraded.length === 0 ? {} : { data: { degraded } }),
     };
   });
 }

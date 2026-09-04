@@ -135,8 +135,12 @@ describe("kizuki tell", () => {
       "--json",
     );
     expect(json.exitCode).toBe(0);
-    const parsed = JSON.parse(json.stdout) as { rewritten: { diff: string }[] };
-    expect(parsed.rewritten[0]?.diff).toContain("people/grace.md");
+    const parsed = JSON.parse(json.stdout) as {
+      schema: string;
+      data: { rewritten: { diff: string }[] };
+    };
+    expect(parsed.schema).toBe("kizuki.cli.tell/v1");
+    expect(parsed.data.rewritten[0]?.diff).toContain("people/grace.md");
 
     const setup2 = tempVault();
     const claimId2 = await writeGraceClaim(setup2.vault);

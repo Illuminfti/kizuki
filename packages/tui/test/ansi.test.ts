@@ -42,6 +42,13 @@ describe("padEnd", () => {
     const styled = "\x1b[1mhi\x1b[0m";
     expect(padEnd(styled, 4)).toBe(`${styled}  `);
   });
+
+  test("hard-caps an overlong styled line after stripping ANSI", () => {
+    const styled = `\x1b[31m${"title-".repeat(20)}\x1b[0m`;
+    const capped = padEnd(styled, 8);
+    expect(stringWidth(capped)).toBe(8);
+    expect(capped).not.toContain("\x1b");
+  });
 });
 
 describe("wrap", () => {
@@ -66,7 +73,26 @@ describe("sanitize", () => {
       "plainred\nbell",
     );
     expect(sanitize("a\tb")).toBe("a  b");
-    expect(sanitize("\x9bCSI")).toBe("CSI");
+    expect(sanitize("\x9b31mred")).toBe("red");
+  });
+
+  test("strips DCS, APC, PM, SOS, OSC, and leftover ESC so no ESC reaches output", () => {
+    const payloads = [
+      "keep\x1bP0;1|secret\x1b\\end",
+      "keep\x1b_apc\x1b\\end",
+      "keep\x1b^pm\x1b\\end",
+      "keep\x1bXsos\x1b\\end",
+      "keep\x1b]0;title\x07end",
+      "keep\x1b7end",
+      "keep\x9d0;title\x07end",
+    ];
+    for (const payload of payloads) {
+      const cleaned = sanitize(payload);
+      expect(cleaned).not.toContain("\x1b");
+      expect(cleaned).not.toContain("\x07");
+      expect(cleaned.startsWith("keep")).toBe(true);
+      expect(cleaned.endsWith("end")).toBe(true);
+    }
   });
 });
 

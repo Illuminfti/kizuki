@@ -34,11 +34,10 @@ describe("kizuki agent add / list / revoke / rotate", () => {
 
     const listed = runCli(setup.env, "agent", "list", "--json");
     expect(listed.exitCode).toBe(0);
-    const rows = listed.stdout
-      .split("\n")
-      .filter((line) => line.length > 0)
-      .map((line) => JSON.parse(line) as Record<string, unknown>);
-    const ada = rows.find((row) => row.name === "ada");
+    const envelope = JSON.parse(listed.stdout) as {
+      data: { agents: Record<string, unknown>[] };
+    };
+    const ada = envelope.data.agents.find((row) => row.name === "ada");
     expect(ada).toMatchObject({ ceiling: "personal", revoked_at: null });
     expect(typeof ada?.agent_id).toBe("string");
     expect(typeof ada?.tools).toBe("number");
@@ -50,14 +49,11 @@ describe("kizuki agent add / list / revoke / rotate", () => {
     expect(added.exitCode).toBe(0);
     const line = onlyTokenLine(added.stdout);
     const parsed = JSON.parse(line) as {
-      name: string;
-      agent_id: string;
-      token: string;
-      ceiling: string;
+      data: { name: string; agent_id: string; token: string; ceiling: string };
     };
-    expect(parsed.name).toBe("grace");
-    expect(parsed.ceiling).toBe("private");
-    expect(parsed.token).toMatch(TOKEN_SHAPE);
+    expect(parsed.data.name).toBe("grace");
+    expect(parsed.data.ceiling).toBe("private");
+    expect(parsed.data.token).toMatch(TOKEN_SHAPE);
 
     const listed = runCli(setup.env, "agent", "list", "--json");
     expect(listed.stdout).toContain('"ceiling":"private"');
@@ -75,11 +71,10 @@ describe("kizuki agent add / list / revoke / rotate", () => {
     expect(second.stdout).toBe("");
 
     const listed = runCli(setup.env, "agent", "list", "--json");
-    const rows = listed.stdout
-      .split("\n")
-      .filter((line) => line.length > 0)
-      .map((line) => JSON.parse(line) as Record<string, unknown>);
-    expect(rows.filter((row) => row.name === "ada")).toHaveLength(1);
+    const envelope = JSON.parse(listed.stdout) as {
+      data: { agents: Record<string, unknown>[] };
+    };
+    expect(envelope.data.agents.filter((row) => row.name === "ada")).toHaveLength(1);
 
     const db = openVaultDb(setup.vault);
     try {

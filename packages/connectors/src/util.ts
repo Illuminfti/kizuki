@@ -33,13 +33,13 @@ export async function pathHealth(
     return new HealthReport({
       state: matches ? "ok" : "misconfigured",
       checked_at: new Date().toISOString(),
-      ...(!matches ? { detail: `path is not a ${expected}: ${path}` } : {}),
+      ...(!matches ? { detail: `path is not a ${expected}` } : {}),
     });
-  } catch (error) {
+  } catch {
     return new HealthReport({
       state: "misconfigured",
       checked_at: new Date().toISOString(),
-      detail: `cannot access ${path}: ${errorMessage(error)}`,
+      detail: "cannot access configured path",
     });
   }
 }
@@ -59,7 +59,71 @@ export async function readUtf8(
   }
 }
 
-export function parseJsonArray(source: string, label: string): unknown[] {
+/**
+ * Snapshot importers read whole export files the owner unzipped by hand. The
+ * bounds below are the only thing between a hostile export and unbounded
+ * allocation, so every parser in this package applies them.
+ */
+export const MAX_EXPORT_BYTES = 256 * 1024 * 1024;
+export const MAX_RECORDS = 1_000_000;
+export const MAX_RECORD_BYTES = 1024 * 1024;
+/** Nesting a hostile export can use to blow the stack during JSON.parse. */
+export const MAX_JSON_DEPTH = 64;
+
+export function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+/**
+ * Walks the bytes for structural nesting without building a graph. Strings
+ * are skipped so a payload full of braces cannot fake depth.
+ */
+export function jsonNestingDepth(source: string): number {
+  let depth = 0;
+  let max = 0;
+  let inString = false;
+  let escape = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (inString) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (char === "\\") {
+        escape = true;
+        continue;
+      }
+      if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === "{" || char === "[") {
+      depth += 1;
+      if (depth > max) max = depth;
+      continue;
+    }
+    if (char === "}" || char === "]") {
+      if (depth > 0) depth -= 1;
+    }
+  }
+  return max;
+}
+
+export function parseJsonArray(
+  source: string,
+  label: string,
+  maxRecords = MAX_RECORDS,
+): unknown[] {
+  if (jsonNestingDepth(source) > MAX_JSON_DEPTH) {
+    throw new KizukiError(
+      "parse_error",
+      `${label}: JSON nesting exceeds ${MAX_JSON_DEPTH}`,
+    );
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(source) as unknown;
@@ -71,21 +135,13 @@ export function parseJsonArray(source: string, label: string): unknown[] {
   if (!Array.isArray(parsed)) {
     throw new KizukiError("parse_error", `${label}: expected a JSON array`);
   }
-  return parsed;
-}
-
-export function normalizedDate(
-  value: unknown,
-  fallback: string,
-  unit: "seconds" | "date",
-): string {
-  const raw =
-    unit === "seconds" && typeof value === "number" ? value * 1000 : value;
-  if (typeof raw === "number" || typeof raw === "string") {
-    const date = new Date(raw);
-    if (!Number.isNaN(date.getTime())) return date.toISOString();
+  if (parsed.length > maxRecords) {
+    throw new KizukiError(
+      "parse_error",
+      `${label}: export holds more than ${maxRecords} records`,
+    );
   }
-  return fallback;
+  return parsed;
 }
 
 export function errorMessage(error: unknown): string {
@@ -95,14 +151,6 @@ export function errorMessage(error: unknown): string {
 export function compareStrings(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
-/**
- * Snapshot importers read whole export files the owner unzipped by hand. The
- * bounds below are the only thing between a hostile export and unbounded
- * allocation, so every parser in this package applies them.
- */
-export const MAX_EXPORT_BYTES = 256 * 1024 * 1024;
-export const MAX_RECORDS = 1_000_000;
-export const MAX_RECORD_BYTES = 1024 * 1024;
 
 /** Fixed so a fixture hashes identically on every run and every machine. */
 export const FIXTURE_OBSERVED_AT = "2026-01-01T00:00:00.000Z";
@@ -115,7 +163,7 @@ export function unixSecondsToIso(value: unknown, where: string): string {
   const seconds =
     typeof value === "string" && /^\d+$/.test(value)
       ? Number(value)
-      : typeof value === "number" && Number.isSafeInteger(value)
+      : typeof value === "number" && Number.isFinite(value)
         ? value
         : undefined;
   if (seconds === undefined || seconds <= 0 || seconds >= MAX_UNIX_SECONDS) {

@@ -4,7 +4,6 @@
   "module": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./contracts": "./src/contracts/index.ts",
-    "./staging": "./src/staging/index.ts"
+    "./contracts": "./src/contracts/index.ts"
   }
 }

@@ -21,6 +21,8 @@ export interface TimelineEntry {
   kind: string;
   subjects: string[];
   sensitivity: string;
+  /** Ledger text is captured data, never instruction. */
+  taint: "quoted";
   /** Collapsed whitespace, at most 160 Unicode code points. */
   text_preview: string;
 }
@@ -139,6 +141,7 @@ export function timeline(
       ({ subject_id }) => subject_id,
     ),
     sensitivity: row.sensitivity,
+    taint: "quoted",
     text_preview: preview(row.text),
   }));
 }

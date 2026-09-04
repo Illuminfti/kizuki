@@ -10,7 +10,7 @@ import {
 import type { Sensitivity } from "@kizuki/core";
 import { UsageError, parseArguments, requirePositional } from "../args";
 import { withVault } from "../context";
-import { jsonLine, table } from "../output";
+import { jsonEnvelope, table } from "../output";
 import type { CliIo, Command } from "./index";
 
 const USAGE =
@@ -30,7 +30,7 @@ function printMinted(
 ): void {
   io.err(`token for ${name} is shown once; store it now, it cannot be recovered`);
   if (json) {
-    io.out(jsonLine({ name, agent_id: agentId, token, ceiling }));
+    io.out(jsonEnvelope("agent", "ok", { name, agent_id: agentId, token, ceiling }));
   } else {
     io.out(token);
   }
@@ -76,17 +76,17 @@ export const agentCommand: Command = {
         initAgents(ctx.db);
         const rows = listAgents(ctx.db);
         if (parsed.flags.has("--json")) {
-          for (const row of rows) {
-            io.out(
-              jsonLine({
+          io.out(
+            jsonEnvelope("agent", "ok", {
+              agents: rows.map((row) => ({
                 name: row.name,
                 agent_id: row.agent_id,
                 ceiling: row.grant.ceiling,
                 tools: row.grant.tools.length,
                 revoked_at: row.revoked_at,
-              }),
-            );
-          }
+              })),
+            }),
+          );
           return 0;
         }
         const lines = table([

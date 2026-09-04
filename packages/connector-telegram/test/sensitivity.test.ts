@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
-import { DEFAULT_GRANT, openLedger, runToCompletion, timeline } from "@kizuki/core";
-import { initStaging } from "@kizuki/core/staging";
+import { DEFAULT_GRANT, openLedger, registerConnection, runToCompletion, timeline } from "@kizuki/core";
 import { TELEGRAM_CONNECTOR_ID } from "../src/map";
 import { connected } from "./helpers";
 
@@ -9,7 +8,7 @@ const SOURCE = "01JJ0000000000000000000000";
 
 function ledger() {
   const db = openLedger(":memory:");
-  initStaging(db);
+  registerConnection(db, TELEGRAM_CONNECTOR_ID, SOURCE);
   return db;
 }
 

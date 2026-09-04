@@ -17,6 +17,32 @@ function text(value: unknown, fallback: string): string {
   return typeof value === "string" && value.length > 0 ? value : fallback;
 }
 
+/**
+ * A configured model is a non-empty `[ports.llm] model` that is not `none`.
+ * Absence stays off: doctor must not infer a model from a leftover receipt.
+ */
+export function loadConfiguredModelRef(vaultPath: string): string | null {
+  const path = serveConfigPath(vaultPath);
+  if (!existsSync(path)) return null;
+  let parsed: unknown;
+  try {
+    parsed = Bun.TOML.parse(readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
+  if (!isPlainObject(parsed)) return null;
+  const ports = isPlainObject(parsed["ports"]) ? parsed["ports"] : {};
+  const llm = isPlainObject(ports["llm"]) ? ports["llm"] : {};
+  const model = llm["model"];
+  if (typeof model !== "string" || model.length === 0 || model === "none") {
+    return null;
+  }
+  const port = typeof llm["id"] === "string" && llm["id"].length > 0
+    ? llm["id"]
+    : "kizuki.llm.openai-compatible";
+  return `${port}:${model}`;
+}
+
 export function loadServeConfig(vaultPath: string): ServeConfig {
   const path = serveConfigPath(vaultPath);
   if (!existsSync(path)) return { ...DEFAULT_SERVE_CONFIG };

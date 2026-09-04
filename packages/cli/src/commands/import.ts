@@ -1,9 +1,10 @@
 import { resolve } from "node:path";
-import { applyConnectionSensitivity, runBackfill } from "@kizuki/core";
+import { applyConnectionSensitivity, runToCompletion } from "@kizuki/core";
 import { getConnector } from "@kizuki/connectors";
 import { UsageError, parseArguments, requirePositional } from "../args";
 import {
   ConnectionError,
+  blocksEnrollment,
   enrollHostConnection,
   listHostConnections,
   loadConnector,
@@ -11,14 +12,14 @@ import {
   resolveConnectorId,
 } from "../connections";
 import { withVault } from "../context";
-import { indexEventsSince } from "../derived";
+import { tryRefreshDerived } from "../derived";
 import { formatRunCounts } from "../output";
 import type { CliIo, Command } from "./index";
 
 export const importCommand: Command = {
   name: "import",
   usage: "import <connector> --source PATH",
-  summary: "connect a none-mode source and backfill it in one step",
+  summary: "enroll a file source and backfill it in one step",
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, { options: ["--source"] });
     const [rawId] = requirePositional(parsed.positionals, 1);
@@ -42,7 +43,7 @@ export const importCommand: Command = {
         }
         await connector.connect(refuseSecrets);
         const health = await connector.health();
-        if (health.state !== "ok") {
+        if (blocksEnrollment(health.state)) {
           io.err(
             `error: ${connectorId} health=${health.state}: ${health.detail ?? ""}`,
           );
@@ -71,16 +72,17 @@ export const importCommand: Command = {
       }
 
       const connector = await loadConnector(selected);
-      const since = { accepted_at: new Date().toISOString(), event_id: "" };
-      const result = await runBackfill(
+      const result = await runToCompletion(
         ctx.db,
         connector,
         selected.connection.connector_id,
         selected.connection.source_key,
+        "backfill",
       );
-      indexEventsSince(ctx.db, since);
+      const derived = tryRefreshDerived(ctx.db, ctx.vaultPath);
       io.out(formatRunCounts(result));
       for (const text of result.errors) io.err(`error: ${text}`);
+      for (const warning of derived.degraded) io.err(`degraded: ${warning}`);
       return result.errors.length > 0 ? 1 : 0;
     });
   },

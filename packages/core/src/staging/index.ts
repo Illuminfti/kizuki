@@ -27,21 +27,3 @@ export {
   withdrawForTombstone,
 } from "./producers";
 export type { ProducerGrants, TombstoneCascade } from "./producers";
-
-export {
-  PAGE_TYPES,
-  PromoteError,
-  RECEIPTS_PATH,
-  SENSITIVITY_LEVELS,
-  ownerPromote,
-  pageRelPath,
-  readPromotion,
-  readReceiptsLog,
-} from "./promote";
-export type {
-  OwnerPromoteOptions,
-  PageType,
-  PromoteOptions,
-  PromotionReceipt,
-  Sensitivity,
-} from "./promote";

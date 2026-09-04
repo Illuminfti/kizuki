@@ -1,5 +1,8 @@
 import type { Database } from "bun:sqlite";
+import { MAX_CURSOR_BYTES } from "../contracts/connector";
 import type { RunResult } from "../ingest/run";
+import { isPlainObject } from "../util/validate";
+import { ulid } from "../util/ulid";
 
 export interface Connection {
   connector_id: string;
@@ -8,6 +11,7 @@ export interface Connection {
   secret_refs: string[];
   connected_at: string;
   disconnected_at: string | null;
+  implementation_version: string;
 }
 
 export interface ConnectionConfig {
@@ -25,6 +29,28 @@ export interface Checkpoint {
   last_result: RunResult;
 }
 
+export type ConnectionRunStatus = "ok" | "failed" | "unavailable" | "refused";
+
+export interface ConnectionRun {
+  run_id: string;
+  connector_id: string;
+  source_key: string;
+  mode: "backfill" | "sync";
+  started_at: string;
+  finished_at: string;
+  previous_cursor: string | null;
+  attempted_cursor: string | null;
+  committed_cursor: string | null;
+  stored: number;
+  duplicates: number;
+  errors: string[];
+  status: ConnectionRunStatus;
+}
+
+export type Inspected<T> =
+  | { ok: true; value: T }
+  | { ok: false; connector_id: string; source_key: string; error: string };
+
 export class LedgerError extends Error {
   override name = "LedgerError";
 }
@@ -36,6 +62,7 @@ interface ConnectionRow {
   secret_refs: string;
   connected_at: string;
   disconnected_at: string | null;
+  implementation_version: string;
 }
 
 interface CheckpointRow {
@@ -46,6 +73,22 @@ interface CheckpointRow {
   updated_at: string;
   last_run_at: string;
   last_result: string;
+}
+
+interface ConnectionRunRow {
+  run_id: string;
+  connector_id: string;
+  source_key: string;
+  mode: string;
+  started_at: string;
+  finished_at: string;
+  previous_cursor: string | null;
+  attempted_cursor: string | null;
+  committed_cursor: string | null;
+  stored: number;
+  duplicates: number;
+  errors: string;
+  status: string;
 }
 
 const NULL_CONFIG = '{"schema":"kizuki.connection-config/v1","state_ref_index":null}';
@@ -75,6 +118,9 @@ function connectionFromRow(row: ConnectionRow): Connection {
   if (!CORE_ULID.test(row.source_key)) {
     throw new LedgerError("connection source_key is not core-generated");
   }
+  if (typeof row.implementation_version !== "string") {
+    throw new LedgerError("connection implementation_version is invalid");
+  }
   const refs = stringArray(row.secret_refs, "secret_refs");
   return {
     connector_id: row.connector_id,
@@ -83,6 +129,68 @@ function connectionFromRow(row: ConnectionRow): Connection {
     secret_refs: refs,
     connected_at: row.connected_at,
     disconnected_at: row.disconnected_at,
+    implementation_version: row.implementation_version,
+  };
+}
+
+function finiteCount(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isSafeInteger(value) || value < 0) {
+    throw new LedgerError(`checkpoint last_result.${field} is not a finite count`);
+  }
+  return value;
+}
+
+function decodeCursor(value: unknown, field: string): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string") {
+    throw new LedgerError(`${field} is not a cursor`);
+  }
+  if (new TextEncoder().encode(value).byteLength > MAX_CURSOR_BYTES) {
+    throw new LedgerError(`${field} exceeds maximum cursor size`);
+  }
+  return value;
+}
+
+export function assertCursorSize(cursor: string | null, field = "cursor"): string | null {
+  return decodeCursor(cursor, field);
+}
+
+function decodeAttemptedCursor(cursor: string): string | null {
+  try {
+    return decodeCursor(cursor, "attempted_cursor");
+  } catch {
+    return null;
+  }
+}
+
+function runResultFromUnknown(value: unknown): RunResult {
+  if (!isPlainObject(value)) {
+    throw new LedgerError("checkpoint last_result is not an object");
+  }
+  const keys = Object.keys(value).sort();
+  const expected = [
+    "cursor",
+    "duplicates",
+    "errors",
+    "proposals_created",
+    "retractions_filed",
+    "stored",
+    "withdrawn",
+  ];
+  if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) {
+    throw new LedgerError("checkpoint last_result has unexpected keys");
+  }
+  if (!Array.isArray(value.errors) || !value.errors.every((item) => typeof item === "string")) {
+    throw new LedgerError("checkpoint last_result.errors is not a string array");
+  }
+  return {
+    stored: finiteCount(value.stored, "stored"),
+    duplicates: finiteCount(value.duplicates, "duplicates"),
+    errors: value.errors,
+    proposals_created: finiteCount(value.proposals_created, "proposals_created"),
+    withdrawn: finiteCount(value.withdrawn, "withdrawn"),
+    retractions_filed: finiteCount(value.retractions_filed, "retractions_filed"),
+    cursor: decodeCursor(value.cursor, "last_result.cursor"),
   };
 }
 
@@ -90,15 +198,37 @@ function checkpointFromRow(row: CheckpointRow): Checkpoint {
   if (row.mode !== "backfill" && row.mode !== "sync") {
     throw new LedgerError(`checkpoint mode is invalid: ${row.mode}`);
   }
+  const last_result = runResultFromUnknown(JSON.parse(row.last_result));
+  const cursor = decodeCursor(row.cursor, "cursor");
+  if (cursor !== last_result.cursor) {
+    throw new LedgerError("checkpoint cursor does not match last_result.cursor");
+  }
   return {
     connector_id: row.connector_id,
     source_key: row.source_key,
-    cursor: row.cursor,
+    cursor,
     mode: row.mode,
     updated_at: row.updated_at,
     last_run_at: row.last_run_at,
-    last_result: JSON.parse(row.last_result) as RunResult,
+    last_result,
   };
+}
+
+function inspectRow<T>(
+  connector_id: string,
+  source_key: string,
+  decode: () => T,
+): Inspected<T> {
+  try {
+    return { ok: true, value: decode() };
+  } catch (error) {
+    return {
+      ok: false,
+      connector_id,
+      source_key,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 export function getConnection(
@@ -114,10 +244,10 @@ export function getConnection(
   return row === null ? null : connectionFromRow(row);
 }
 
-export function listConnections(
+export function inspectConnections(
   db: Database,
   opts: { includeDisconnected?: boolean } = {},
-): Connection[] {
+): Inspected<Connection>[] {
   const rows = opts.includeDisconnected === true
     ? db.query<ConnectionRow, []>("SELECT * FROM connections ORDER BY connector_id, source_key").all()
     : db
@@ -125,7 +255,16 @@ export function listConnections(
           "SELECT * FROM connections WHERE disconnected_at IS NULL ORDER BY connector_id, source_key",
         )
         .all();
-  return rows.map(connectionFromRow);
+  return rows.map((row) =>
+    inspectRow(row.connector_id, row.source_key, () => connectionFromRow(row)),
+  );
+}
+
+export function listConnections(
+  db: Database,
+  opts: { includeDisconnected?: boolean } = {},
+): Connection[] {
+  return inspectConnections(db, opts).flatMap((item) => (item.ok ? [item.value] : []));
 }
 
 export function disconnect(
@@ -138,7 +277,50 @@ export function disconnect(
   ).run(new Date().toISOString(), connector_id, source_key);
 }
 
-export function saveCheckpoint(
+export function requireActiveConnection(
+  db: Database,
+  connector_id: string,
+  source_key: string,
+): Connection {
+  const connection = getConnection(db, connector_id, source_key);
+  if (connection === null) {
+    throw new LedgerError("checkpoint requires an active connection");
+  }
+  if (connection.disconnected_at !== null) {
+    throw new LedgerError("checkpoint requires an active connection");
+  }
+  return connection;
+}
+
+/**
+ * Persist a null-state connection the host already decided to enroll.
+ * Interactive sign-in goes through ConnectionStateStore; this is the row
+ * a fixture or none-auth host writes so ingest has something to bind to.
+ */
+export function registerConnection(
+  db: Database,
+  connector_id: string,
+  source_key: string,
+  options?: { implementation_version?: string },
+): Connection {
+  if (typeof connector_id !== "string" || connector_id.length === 0) {
+    throw new LedgerError("connector_id is required");
+  }
+  if (!CORE_ULID.test(source_key)) {
+    throw new LedgerError("connection source_key is not core-generated");
+  }
+  const version = options?.implementation_version ?? "";
+  db.query(
+    `INSERT INTO connections
+       (connector_id, source_key, config, secret_refs, connected_at, disconnected_at, implementation_version)
+     VALUES (?, ?, ?, '[]', ?, NULL, ?)`,
+  ).run(connector_id, source_key, NULL_CONFIG, new Date().toISOString(), version);
+  const connection = getConnection(db, connector_id, source_key);
+  if (connection === null) throw new LedgerError("registered connection was not found");
+  return connection;
+}
+
+function persistCheckpointRow(
   db: Database,
   connector_id: string,
   source_key: string,
@@ -163,6 +345,138 @@ export function saveCheckpoint(
   return checkpoint;
 }
 
+export interface RecordedRun {
+  checkpoint: Checkpoint;
+  run: ConnectionRun;
+}
+
+/**
+ * The one ingest write path: bind to the live connection, store resume
+ * state, and append an immutable run receipt. last_result.cursor is the
+ * cursor that was actually committed.
+ */
+export function recordConnectorRun(
+  db: Database,
+  connector_id: string,
+  source_key: string,
+  mode: "backfill" | "sync",
+  previous_cursor: string | null,
+  attempted_cursor: string | null,
+  result: RunResult,
+  status: ConnectionRunStatus,
+): RecordedRun {
+  const committed_cursor =
+    status === "ok" ? assertCursorSize(attempted_cursor, "attempted_cursor") : previous_cursor;
+  const storedResult: RunResult = {
+    stored: result.stored,
+    duplicates: result.duplicates,
+    errors: result.errors,
+    proposals_created: result.proposals_created,
+    withdrawn: result.withdrawn,
+    retractions_filed: result.retractions_filed,
+    cursor: committed_cursor,
+  };
+  const started = new Date().toISOString();
+  return db
+    .transaction((): RecordedRun => {
+      requireActiveConnection(db, connector_id, source_key);
+      const checkpoint = persistCheckpointRow(
+        db,
+        connector_id,
+        source_key,
+        committed_cursor,
+        mode,
+        storedResult,
+      );
+      const run: ConnectionRun = {
+        run_id: ulid(),
+        connector_id,
+        source_key,
+        mode,
+        started_at: started,
+        finished_at: checkpoint.last_run_at,
+        previous_cursor,
+        attempted_cursor:
+          attempted_cursor === null
+            ? null
+            : attempted_cursor === committed_cursor
+              ? committed_cursor
+              : decodeAttemptedCursor(attempted_cursor),
+        committed_cursor,
+        stored: storedResult.stored,
+        duplicates: storedResult.duplicates,
+        errors: storedResult.errors,
+        status,
+      };
+      db.query(
+        `INSERT INTO connection_runs
+           (run_id, connector_id, source_key, mode, started_at, finished_at,
+            previous_cursor, attempted_cursor, committed_cursor,
+            stored, duplicates, errors, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        run.run_id,
+        run.connector_id,
+        run.source_key,
+        run.mode,
+        run.started_at,
+        run.finished_at,
+        run.previous_cursor,
+        run.attempted_cursor,
+        run.committed_cursor,
+        run.stored,
+        run.duplicates,
+        JSON.stringify(run.errors),
+        run.status,
+      );
+      return { checkpoint, run };
+    })
+    .immediate();
+}
+
+export function saveCheckpoint(
+  db: Database,
+  connector_id: string,
+  source_key: string,
+  cursor: string | null,
+  mode: "backfill" | "sync",
+  result: RunResult,
+): Checkpoint {
+  const previous = getCheckpoint(db, connector_id, source_key)?.cursor ?? null;
+  const status: ConnectionRunStatus = result.errors.length === 0 ? "ok" : "failed";
+  return recordConnectorRun(
+    db,
+    connector_id,
+    source_key,
+    mode,
+    previous,
+    cursor,
+    result,
+    status,
+  ).checkpoint;
+}
+
+/** Extract-rail cursor write. Not a connector run; no connection row required. */
+export function writeResumeCursor(
+  db: Database,
+  connector_id: string,
+  source_key: string,
+  cursor: string,
+): void {
+  const encoded = assertCursorSize(cursor, "cursor");
+  if (encoded === null) throw new LedgerError("resume cursor must be a string");
+  const result: RunResult = {
+    stored: 0,
+    duplicates: 0,
+    errors: [],
+    proposals_created: 0,
+    withdrawn: 0,
+    retractions_filed: 0,
+    cursor: encoded,
+  };
+  persistCheckpointRow(db, connector_id, source_key, encoded, "sync", result);
+}
+
 export function getCheckpoint(
   db: Database,
   connector_id: string,
@@ -176,11 +490,57 @@ export function getCheckpoint(
   return row === null ? null : checkpointFromRow(row);
 }
 
-export function listCheckpoints(db: Database): Checkpoint[] {
+export function inspectCheckpoints(db: Database): Inspected<Checkpoint>[] {
   return db
     .query<CheckpointRow, []>(
       "SELECT * FROM checkpoints ORDER BY connector_id, source_key",
     )
     .all()
-    .map(checkpointFromRow);
+    .map((row) => inspectRow(row.connector_id, row.source_key, () => checkpointFromRow(row)));
+}
+
+export function listCheckpoints(db: Database): Checkpoint[] {
+  return inspectCheckpoints(db).flatMap((item) => (item.ok ? [item.value] : []));
+}
+
+export function listConnectionRuns(
+  db: Database,
+  connector_id: string,
+  source_key: string,
+): ConnectionRun[] {
+  return db
+    .query<ConnectionRunRow, [string, string]>(
+      `SELECT * FROM connection_runs
+        WHERE connector_id = ? AND source_key = ?
+        ORDER BY finished_at, run_id`,
+    )
+    .all(connector_id, source_key)
+    .map((row) => {
+      if (row.mode !== "backfill" && row.mode !== "sync") {
+        throw new LedgerError(`connection run mode is invalid: ${row.mode}`);
+      }
+      if (
+        row.status !== "ok" &&
+        row.status !== "failed" &&
+        row.status !== "unavailable" &&
+        row.status !== "refused"
+      ) {
+        throw new LedgerError(`connection run status is invalid: ${row.status}`);
+      }
+      return {
+        run_id: row.run_id,
+        connector_id: row.connector_id,
+        source_key: row.source_key,
+        mode: row.mode,
+        started_at: row.started_at,
+        finished_at: row.finished_at,
+        previous_cursor: row.previous_cursor,
+        attempted_cursor: row.attempted_cursor,
+        committed_cursor: row.committed_cursor,
+        stored: row.stored,
+        duplicates: row.duplicates,
+        errors: stringArray(row.errors, "connection_runs.errors"),
+        status: row.status,
+      };
+    });
 }

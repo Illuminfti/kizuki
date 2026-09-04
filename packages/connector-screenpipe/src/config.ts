@@ -3,6 +3,7 @@ import path from "node:path";
 import { isPlainObject, isRfc3339 } from "@kizuki/core";
 import { DEFAULT_SETTLE_SECONDS } from "./cursor";
 import { ScreenpipeConnectorError } from "./errors";
+import { parseTimeZone } from "./time";
 
 export const SCREENPIPE_CONNECTOR_ID = "kizuki.screenpipe" as const;
 
@@ -10,6 +11,8 @@ export interface ScreenpipeConfig {
   path: string;
   since?: string;
   settle_seconds?: number;
+  timezone?: string;
+  retain_full_urls?: boolean;
 }
 
 export interface ScreenpipeDeps {
@@ -21,9 +24,17 @@ export interface ParsedScreenpipeConfig {
   path: string;
   since: string | null;
   settle_seconds: number;
+  timezone: string | null;
+  retain_full_urls: boolean;
 }
 
-const CONFIG_KEYS = new Set(["path", "since", "settle_seconds"]);
+const CONFIG_KEYS = new Set([
+  "path",
+  "since",
+  "settle_seconds",
+  "timezone",
+  "retain_full_urls",
+]);
 
 export function parseConfig(config: unknown): ParsedScreenpipeConfig {
   if (!isPlainObject(config)) {
@@ -53,11 +64,18 @@ export function parseConfig(config: unknown): ParsedScreenpipeConfig {
   ) {
     misconfigured("config.settle_seconds must be an integer from 0 to 86400");
   }
+  const timezone = config["timezone"];
+  const retainFullUrls = config["retain_full_urls"];
+  if (retainFullUrls !== undefined && typeof retainFullUrls !== "boolean") {
+    misconfigured("config.retain_full_urls must be a boolean");
+  }
 
   return {
     path: path.resolve(configuredPath),
     since: since ?? null,
     settle_seconds: settleSeconds ?? DEFAULT_SETTLE_SECONDS,
+    timezone: timezone === undefined ? null : parseTimeZone(timezone),
+    retain_full_urls: retainFullUrls === true,
   };
 }
 

@@ -3,6 +3,17 @@ import { isRfc3339 } from "../util/time";
 
 export const CONNECTOR_SCHEMA = "kizuki.connector/v1" as const;
 
+/** Opaque resume tokens larger than this are refused before any persist. */
+export const MAX_CURSOR_BYTES = 8 * 1024;
+/** One SyncBatch may not materialize more events than this. */
+export const MAX_SYNC_BATCH_EVENTS = 1_000;
+/** Serialized event payload ceiling for one SyncBatch. */
+export const MAX_SYNC_BATCH_BYTES = 4 * 1024 * 1024;
+/** Host-side bound for backfill/sync/health/revoke. */
+export const CONNECTOR_OPERATION_DEADLINE_MS = 60_000;
+/** Host-side bound for interactive sign-in, including a browser hop. */
+export const CONNECTOR_SIGN_IN_DEADLINE_MS = 300_000;
+
 export const HEALTH_STATES = [
   "ok",
   "degraded",
@@ -75,6 +86,51 @@ export interface Manifest {
   sensitivity_floor?: SensitivityHint;
   /** Non-empty; `sign_in`/`oauth` require a `signIn` implementation. */
   auth_modes: AuthMode[];
+  /** Additive `kizuki.connector/v1` minor; host binds on major match. */
+  contract_minor?: number;
+  /** Workspace or npm package that ships this implementation. */
+  implementation?: string;
+  /**
+   * Hosts this connector may contact. Empty means no network. A host that is
+   * chosen at enrollment (IMAP, ICS URL) is not listed here.
+   */
+  allowed_egress?: readonly string[];
+  /** Cursor JSON schema id, or `null` when the source is a single-shot export. */
+  cursor_schema?: string | null;
+}
+
+/**
+ * Deep-freeze a manifest so capabilities, kinds, secrets and auth modes
+ * cannot change after the connector handed them to a host.
+ */
+export function freezeManifest(manifest: Manifest): Manifest {
+  const kinds = [...manifest.kinds];
+  const required_secrets = [...manifest.required_secrets];
+  const auth_modes = [...manifest.auth_modes];
+  const capabilities = { ...manifest.capabilities };
+  const allowed_egress =
+    manifest.allowed_egress === undefined
+      ? undefined
+      : [...manifest.allowed_egress];
+  const frozen: Manifest = {
+    ...manifest,
+    kinds,
+    capabilities,
+    required_secrets,
+    auth_modes,
+  };
+  if (allowed_egress !== undefined) {
+    frozen.allowed_egress = allowed_egress;
+  }
+  Object.freeze(kinds);
+  Object.freeze(required_secrets);
+  Object.freeze(auth_modes);
+  Object.freeze(capabilities);
+  if (allowed_egress !== undefined) {
+    Object.freeze(allowed_egress);
+  }
+  Object.freeze(frozen);
+  return frozen;
 }
 
 /** Terminal-facing prompts the CLI lends a connector during `signIn`. */
@@ -144,10 +200,18 @@ export class HealthReport {
 /** Resolves a `secret_ref` URI to plaintext at call time; core never stores the value. */
 export type SecretResolver = (secret_ref: string) => Promise<string>;
 
+export type SyncBatchStatus = "ok" | "unavailable";
+
 export interface SyncBatch {
   events: CaptureEventInput[];
   /** Checkpoint to resume from; `null` once the source is exhausted. */
   cursor: Cursor | null;
+  /**
+   * Absent means ok. `unavailable` is not an empty page: the host must not
+   * advance the checkpoint (RFC 0002 E11 / tri-state).
+   */
+  status?: SyncBatchStatus;
+  detail?: string;
 }
 
 export interface PurgePlan {

@@ -1,5 +1,5 @@
 import { isRfc3339 } from "@kizuki/core";
-import type { FrontmatterValue } from "@kizuki/core/staging";
+import type { FrontmatterValue } from "@kizuki/core";
 
 /**
  * Pure conversions shared by both migration importers. Every value that

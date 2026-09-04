@@ -10,6 +10,7 @@ import {
   cascadeTombstone,
   proposalsForEvent,
 } from "../../src/staging/producers";
+import { getClaim } from "../../src/claims/store";
 import {
   fileProposal,
   initStaging,
@@ -59,6 +60,10 @@ describe("cascadeTombstone", () => {
     expect(cascade.retractions_filed).toHaveLength(0);
     expect(listProposals(db, { status: "pending" })).toHaveLength(0);
     expect(listProposals(db, { status: "withdrawn" })).toHaveLength(2);
+    for (const id of cascade.withdrawn) {
+      expect(getClaim(db, id)?.status).toBe("skipped");
+      expect(getClaim(db, id)?.retracted_at).not.toBeNull();
+    }
     db.close();
   });
 });

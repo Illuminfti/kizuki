@@ -18,24 +18,27 @@ import {
 } from "./config";
 import {
   BATCH_LIMIT,
+  SKIP_DEGRADE_THRESHOLD,
+  assertCompatibleIdentity,
   encodeCursor,
+  emptySkipped,
   initialCursor,
   parseCursor,
+  parseSkipTotal,
   type ScreenpipeCursor,
   type SkippedCounters,
 } from "./cursor";
 import { ScreenpipeConnectorError } from "./errors";
 import { FIXTURE_NOW, seedFixtureDatabase } from "./fixture";
-import { mapFrame, mapTranscription } from "./map";
+import { inspectIdentity } from "./identity";
 import { classifyDatabaseError, openReadOnly } from "./open";
-import { planSourceRecords } from "./purge";
-import {
-  readFrames,
-  readTranscriptions,
-  seedAfterIds,
-} from "./read";
+import { seedAfterIds } from "./read";
 import { assertSchema, inspectSchema } from "./schema";
-import { normalizeTimestamp } from "./time";
+import {
+  comparePrepared,
+  createFrameWalker,
+  createTranscriptionWalker,
+} from "./walk";
 
 const MANIFEST: Manifest = {
   schema: "kizuki.connector/v1",
@@ -46,11 +49,13 @@ const MANIFEST: Manifest = {
     backfill: true,
     sync: true,
     tombstones: false,
-    purge: true,
+    purge: false,
     fixture: true,
   },
   required_secrets: [],
   emits_sensitivity_hint: true,
+  default_sensitivity: "private",
+  sensitivity_floor: "private",
   auth_modes: ["none"],
 };
 
@@ -60,11 +65,9 @@ export class ScreenpipeConnector implements Connector {
   #db: Database | null = null;
   #revoked = false;
   #lastSuccessAt: string | undefined;
-  #lastSkipped: SkippedCounters = {
-    frames_without_text: 0,
-    frames_bad_timestamp: 0,
-    transcriptions_bad_timestamp: 0,
-  };
+  #totalSkipped: SkippedCounters = emptySkipped();
+  #oldestSkippedFrameId = 0;
+  #oldestSkippedTranscriptionId = 0;
 
   constructor(
     config: ScreenpipeConfig,
@@ -99,17 +102,21 @@ export class ScreenpipeConnector implements Connector {
           detail: report.detail,
         });
       }
-      const badTimestamps =
-        this.#lastSkipped.frames_bad_timestamp +
-        this.#lastSkipped.transcriptions_bad_timestamp;
-      const skipped =
-        this.#lastSkipped.frames_without_text > 0 || badTimestamps > 0
-          ? `; skipped ${this.#lastSkipped.frames_without_text} without text, ${badTimestamps} unparsable timestamps`
+      const parseErrors = parseSkipTotal(this.#totalSkipped);
+      const skipped = formatSkipped(this.#totalSkipped);
+      const oldest = formatOldestSkipped(
+        this.#oldestSkippedFrameId,
+        this.#oldestSkippedTranscriptionId,
+      );
+      const suffix =
+        parseErrors > 0 || this.#totalSkipped.frames_without_text > 0
+          ? `; ${skipped}${oldest}`
           : "";
       return new HealthReport({
-        state: "ok",
+        state:
+          parseErrors >= SKIP_DEGRADE_THRESHOLD ? "degraded" : "ok",
         checked_at: checkedAt,
-        detail: `${report.detail}${skipped}`,
+        detail: `${report.detail}${suffix}`,
         ...(this.#lastSuccessAt === undefined
           ? {}
           : { last_success_at: this.#lastSuccessAt }),
@@ -134,11 +141,11 @@ export class ScreenpipeConnector implements Connector {
   }
 
   backfill(cursor: Cursor | null): Promise<SyncBatch> {
-    return this.#advance(cursor);
+    return this.#advance(cursor, "backfill");
   }
 
   sync(cursor: Cursor | null): Promise<SyncBatch> {
-    return this.#advance(cursor);
+    return this.#advance(cursor, "sync");
   }
 
   async revoke(): Promise<void> {
@@ -148,18 +155,12 @@ export class ScreenpipeConnector implements Connector {
     this.#db = null;
   }
 
-  async purgeSource(subject_id: string): Promise<PurgePlan> {
-    return this.#withDatabase((db) => {
-      assertSchema(db);
-      return {
-        subject_id,
-        source_record_ids: [],
-        unreachable_source_record_ids: planSourceRecords(
-          db,
-          subject_id,
-        ),
-      };
-    });
+  async purgeSource(_subject_id: string): Promise<PurgePlan> {
+    this.#assertActive();
+    throw new ScreenpipeConnectorError(
+      "not_supported",
+      "kizuki.screenpipe: source-side deletion is not supported; the database is opened read-only. Use ledger purge for imported evidence. planUnreachableSourceRecords() lists matching source ids without deleting them.",
+    );
   }
 
   async fixture(): Promise<CaptureEventInput[]> {
@@ -179,8 +180,10 @@ export class ScreenpipeConnector implements Connector {
       while (true) {
         const batch = await connector.backfill(cursor);
         events.push(...batch.events);
+        if (batch.cursor === null) break;
+        const parsed = parseCursor(batch.cursor);
+        if (parsed.phase !== "continue") break;
         cursor = batch.cursor;
-        if (batch.events.length === 0) break;
       }
       return events;
     } finally {
@@ -188,69 +191,92 @@ export class ScreenpipeConnector implements Connector {
     }
   }
 
-  async #advance(cursor: Cursor | null): Promise<SyncBatch> {
+  async #advance(
+    cursor: Cursor | null,
+    mode: "backfill" | "sync",
+  ): Promise<SyncBatch> {
     return this.#withDatabase((db) => {
       assertSchema(db);
+      const identity = inspectIdentity(db, this.#config.path);
       const current =
         cursor === null
           ? initialCursor(
+              identity,
               this.#config.since === null
                 ? undefined
-                : seedAfterIds(db, this.#config.since),
+                : seedAfterIds(db, this.#config.since, this.#config.timezone),
             )
           : parseCursor(cursor);
-      const before = { ...current.skipped };
+      if (cursor !== null) {
+        assertCompatibleIdentity(current, identity);
+      }
+      if (mode === "sync") {
+        current.snapshot_frame_max = Math.max(
+          current.snapshot_frame_max,
+          identity.max_frame_id,
+        );
+        current.snapshot_transcription_max = Math.max(
+          current.snapshot_transcription_max,
+          identity.max_transcription_id,
+        );
+        if (current.phase === "exhausted") current.phase = "continue";
+      }
+      current.high_water_frame = Math.max(
+        current.high_water_frame,
+        identity.max_frame_id,
+      );
+      current.high_water_transcription = Math.max(
+        current.high_water_transcription,
+        identity.max_transcription_id,
+      );
+
       const now = this.#deps.now();
       const observedAt = new Date(now).toISOString();
       const boundary = new Date(
         now - this.#config.settle_seconds * 1_000,
       ).toISOString();
       const events: CaptureEventInput[] = [];
-
-      const frames = readFrames(db, current.last_frame_id, BATCH_LIMIT);
-      let frameStopped = false;
-      for (const row of frames) {
-        const timestamp = normalizeTimestamp(row.timestamp);
-        if (timestamp === null) {
-          current.skipped.frames_bad_timestamp += 1;
-          current.last_frame_id = row.id;
-          continue;
-        }
-        if (timestamp > boundary) {
-          frameStopped = true;
+      const frames = createFrameWalker(
+        db,
+        current,
+        boundary,
+        observedAt,
+        this.#config,
+      );
+      const transcriptions = createTranscriptionWalker(
+        db,
+        current,
+        boundary,
+        observedAt,
+        this.#config,
+      );
+      while (events.length < BATCH_LIMIT) {
+        const frame = frames.peek();
+        const audio = transcriptions.peek();
+        if (
+          frame !== null &&
+          (audio === null || comparePrepared(frame, audio) <= 0)
+        ) {
+          events.push(frame.event);
+          frames.take();
+        } else if (audio !== null) {
+          events.push(audio.event);
+          transcriptions.take();
+        } else {
           break;
         }
-        if (row.full_text === null || row.full_text.trim().length === 0) {
-          current.skipped.frames_without_text += 1;
-          current.last_frame_id = row.id;
-          continue;
-        }
-        events.push(mapFrame(row, observedAt));
-        current.last_frame_id = row.id;
       }
 
-      if (!(frames.length === BATCH_LIMIT && !frameStopped)) {
-        const remaining = BATCH_LIMIT - events.length;
-        const transcriptions = readTranscriptions(
-          db,
-          current.last_transcription_id,
-          remaining,
-        );
-        for (const row of transcriptions) {
-          const timestamp = normalizeTimestamp(row.timestamp);
-          if (timestamp === null) {
-            current.skipped.transcriptions_bad_timestamp += 1;
-            current.last_transcription_id = row.id;
-            continue;
-          }
-          if (timestamp > boundary) break;
-          events.push(mapTranscription(row, observedAt));
-          current.last_transcription_id = row.id;
-        }
-      }
-
+      current.phase = batchPhase(
+        events.length,
+        frames.paused || transcriptions.paused,
+        frames.done && transcriptions.done,
+      );
       this.#lastSuccessAt = observedAt;
-      this.#lastSkipped = skipDelta(before, current);
+      this.#totalSkipped = { ...current.skipped };
+      this.#oldestSkippedFrameId = current.oldest_skipped_frame_id;
+      this.#oldestSkippedTranscriptionId =
+        current.oldest_skipped_transcription_id;
       return { events, cursor: encodeCursor(current) };
     });
   }
@@ -289,17 +315,33 @@ export function createScreenpipeConnector(
   return new ScreenpipeConnector(config);
 }
 
-function skipDelta(
-  before: SkippedCounters,
-  current: ScreenpipeCursor,
-): SkippedCounters {
-  return {
-    frames_without_text:
-      current.skipped.frames_without_text - before.frames_without_text,
-    frames_bad_timestamp:
-      current.skipped.frames_bad_timestamp - before.frames_bad_timestamp,
-    transcriptions_bad_timestamp:
-      current.skipped.transcriptions_bad_timestamp -
-      before.transcriptions_bad_timestamp,
-  };
+function batchPhase(
+  eventCount: number,
+  paused: boolean,
+  bothDone: boolean,
+): ScreenpipeCursor["phase"] {
+  if (eventCount === BATCH_LIMIT) return "continue";
+  if (bothDone) return "exhausted";
+  if (paused) return "caught_up";
+  return "continue";
+}
+
+function formatSkipped(skipped: SkippedCounters): string {
+  return (
+    `skipped frames_without_text=${skipped.frames_without_text} ` +
+    `frames_bad_timestamp=${skipped.frames_bad_timestamp} ` +
+    `frames_offset_unknown=${skipped.frames_offset_unknown} ` +
+    `transcriptions_bad_timestamp=${skipped.transcriptions_bad_timestamp} ` +
+    `transcriptions_bad_offset=${skipped.transcriptions_bad_offset} ` +
+    `transcriptions_offset_unknown=${skipped.transcriptions_offset_unknown}`
+  );
+}
+
+function formatOldestSkipped(frameId: number, transcriptionId: number): string {
+  const parts: string[] = [];
+  if (frameId > 0) parts.push(`oldest_skipped_frame=${frameId}`);
+  if (transcriptionId > 0) {
+    parts.push(`oldest_skipped_transcription=${transcriptionId}`);
+  }
+  return parts.length === 0 ? "" : `; ${parts.join(" ")}`;
 }

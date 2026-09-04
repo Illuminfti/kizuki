@@ -27,7 +27,9 @@ describe("screenpipe read-only behavior", () => {
     await connector.health();
     const first = await connector.backfill(null);
     await connector.sync(first.cursor);
-    await connector.purgeSource("screenpipe:site:mail.acme.example");
+    await expect(
+      connector.purgeSource("screenpipe:site:mail.acme.example"),
+    ).rejects.toMatchObject({ code: "not_supported" });
     await connector.revoke();
 
     expect(await sha256(fixture.path)).toBe(before);

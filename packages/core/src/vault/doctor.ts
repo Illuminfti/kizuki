@@ -1,3 +1,9 @@
+import {
+  type ControlPathReport,
+  type DoctrineFileReport,
+  inspectDoctrineFiles,
+  inspectVaultControl,
+} from "./init";
 import { listCanonPagesReport } from "./pages";
 import { validatePage } from "./schema";
 
@@ -13,6 +19,8 @@ export interface DoctorVaultResult {
     valid: number;
     invalid: number;
   };
+  doctrine: DoctrineFileReport[];
+  control: ControlPathReport[];
 }
 
 function comparePath(left: string, right: string): number {
@@ -40,5 +48,7 @@ export function doctorVault(path: string): DoctorVaultResult {
       valid,
       invalid: pages.length - valid,
     },
+    doctrine: inspectDoctrineFiles(path),
+    control: inspectVaultControl(path),
   };
 }

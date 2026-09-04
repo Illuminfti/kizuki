@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { listConnections, openLedger } from "@kizuki/core";
 import { createHelpers } from "./helpers";
@@ -8,7 +8,7 @@ const { cleanup, runCli, tempVault } = createHelpers();
 afterEach(cleanup);
 
 describe("kizuki CLI stranger loop", () => {
-  test("init, import, fail-closed query, sync, doctor, export", () => {
+  test("init, import, fail-closed query, doctor, sync, export", () => {
     const setup = tempVault();
     expect(setup.env.KIZUKI_CONFIG).toBeDefined();
     expect(readFileSync(setup.env.KIZUKI_CONFIG ?? "", "utf8")).toContain(
@@ -59,11 +59,25 @@ describe("kizuki CLI stranger loop", () => {
 
     const doctor = runCli(setup.env, "doctor");
     expect(doctor.exitCode).toBe(0);
+    expect(doctor.stdout).toContain("Kizuki doctor");
     expect(doctor.stdout).toContain("health=ok");
     expect(doctor.stdout).toContain("connection kizuki.markdown-folder");
     expect(doctor.stdout).toContain("claims live=");
+    expect(doctor.stdout).toContain("status=ok");
     expect(doctor.stdout).not.toContain("proposals pending=");
     expect(doctor.stdout).not.toContain("retraction-pending");
+    expect(doctor.stdout).toContain("claims live=");
+    expect(doctor.stdout).toContain("filed=");
+    expect(doctor.stdout).toMatch(
+      /claims live=3 filed=0 written=0 unwritten=3 superseded=0 skipped=0/,
+    );
+    expect(doctor.stdout).toContain("unwritten=");
+    expect(doctor.stdout).toContain("derived search=");
+    expect(doctor.stdout).toContain("next: kizuki tell");
+    expect(doctor.stdout).not.toContain("tell --claim needs a live claim");
+    expect(doctor.stdout.split("\n").some((line) => line.startsWith("claim "))).toBe(
+      true,
+    );
 
     rmSync(join(setup.notes, "linus.md"));
     const synced = runCli(setup.env, "sync", "markdown-folder");
@@ -88,5 +102,14 @@ describe("kizuki CLI stranger loop", () => {
     expect(manifest.files["ledger/events.jsonl"]?.count).toBeGreaterThan(0);
     expect(manifest.files["connections.jsonl"]?.count).toBe(1);
     expect(readdirSync(join(outDir, "vault")).length).toBeGreaterThan(0);
+
+    const verified = runCli(setup.env, "restore", "--from", outDir, "--verify");
+    expect(verified.exitCode).toBe(0);
+    expect(verified.stdout).toContain(`verified=${outDir}/manifest.json`);
+    const restored = join(setup.root, "restored");
+    const restore = runCli(setup.env, "restore", "--from", outDir, "--into", restored);
+    expect(restore.exitCode).toBe(0);
+    expect(restore.stdout).toContain(`vault=${restored}`);
+    expect(existsSync(join(restored, ".kizuki"))).toBe(true);
   });
 });

@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { reduce } from "../src/model";
+import { applyItems, initialState, reduce, withNotice } from "../src/model";
 import type { Effect } from "../src/model";
 import { render } from "../src/view";
-import { paint, sanitize } from "../src/ansi";
+import { paint, sanitize, stringWidth } from "../src/ansi";
 import { chars, item, named, press, resetCounter, state, VIEWPORT } from "./helpers";
 
 const SOURCE_ROOT = resolve(import.meta.dir, "../src");
@@ -22,12 +22,12 @@ beforeEach(() => {
 });
 
 describe("audit reducer", () => {
-  test("the reducer emits only undo, open, filter, and quit", () => {
+  test("the reducer emits only undo, open, filter, page, and quit", () => {
     const start = state([
       item({ page_path: "people/grace.md" }),
       item({ page_path: "people/linus.md", writer: "correction" }),
     ]);
-    const allowed = new Set(["undo", "open", "filter", "quit"]);
+    const allowed = new Set(["undo", "open", "filter", "page", "quit"]);
     const collected: string[] = [];
 
     const sequences: ReturnType<typeof chars>[] = [
@@ -47,15 +47,23 @@ describe("audit reducer", () => {
     }
     expect(collected.length).toBeGreaterThan(0);
     expect(collected.every((type) => allowed.has(type))).toBe(true);
+    expect(collected.every((type) => type !== "page")).toBe(true);
     expect(new Set(collected)).toEqual(new Set(["undo", "open", "filter", "quit"]));
   });
 
-  test("u with a typed yes confirmation emits undo for the selected receipt", () => {
+  test("u with a typed yes confirmation emits undo bound to receipt id, path, and after-hash", () => {
     const start = state([item(), item()]);
     const selected = start.items[0];
     if (selected === undefined) throw new Error("expected a selected receipt");
     const result = press(start, [...chars("u"), ...chars("yes"), named("enter")]);
-    expect(result.effects).toEqual([{ type: "undo", receiptId: selected.receipt.receipt_id }]);
+    expect(result.effects).toEqual([
+      {
+        type: "undo",
+        receiptId: selected.receipt.receipt_id,
+        afterHash: selected.receipt.after_hash,
+        pagePath: selected.receipt.page_path,
+      },
+    ]);
     expect(result.state.mode.name).toBe("list");
   });
 
@@ -109,6 +117,11 @@ describe("audit reducer", () => {
     expect(model).toMatch(/type: "open"/);
     expect(model).toMatch(/type: "filter"/);
     expect(model).toMatch(/type: "quit"/);
+    expect(model).toMatch(/type: "page"/);
+    expect(model).toMatch(/afterHash/);
+    expect(model).not.toMatch(/type: "(promote|reject|merge|batch)"/);
+    expect(app).not.toMatch(/type: "(promote|reject|merge|batch)"/);
+    expect(app).not.toMatch(/\b(batchPromote|ownerPromote)\b/);
   });
 
   test("control sequences in captured text are stripped before rendering", () => {
@@ -117,7 +130,6 @@ describe("audit reducer", () => {
       {
         title: "Grace \u001b[31mred\u001b[0m",
         currentBody: "quoted \u001b]0;title\u0007 capture\n",
-        evidence: ["> \u001b[1minjection\u001b[0m"],
       },
     );
     const start = state([hostile]);
@@ -133,6 +145,12 @@ describe("audit reducer", () => {
     expect(joined).toContain("kizuki audit");
     expect(joined).not.toContain("kizuki review");
     expect(joined.toLowerCase()).not.toContain("promote");
+    expect(joined.toLowerCase()).not.toContain("nothing here is undoable");
+    const eventId = hostile.receipt.provenance[0];
+    if (eventId === undefined) throw new Error("expected provenance");
+    expect(joined).toContain(eventId);
+    expect(joined).toContain("authority");
+    expect(joined).toContain("connector_evidence");
   });
 
   test("help and empty-list paths stay on the four effects", () => {
@@ -145,5 +163,140 @@ describe("audit reducer", () => {
     expect(helped.state.mode.name).toBe("help");
     const closed = reduce(helped.state, { name: "char", ch: "x" }, VIEWPORT);
     expect(closed.state.mode.name).toBe("list");
+    const helpFrame = render(helped.state, { cols: 100, rows: 24, paint: paint(false) }).join("\n");
+    expect(helpFrame.toLowerCase()).not.toContain("nothing here is undoable");
+    expect(helpFrame).toContain("undo the selected write");
+    expect(helpFrame).toContain("receipted and undoable");
+  });
+
+  test("filter matches metadata only and never scans page bodies", () => {
+    const start = state([
+      item(
+        { page_path: "people/grace.md" },
+        { title: "Grace", currentBody: "secret-body-token lives only in the page" },
+      ),
+    ]);
+    const missed = press(start, [...chars("/secret-body-token"), named("enter")]);
+    expect(missed.state.items).toHaveLength(0);
+    const hit = press(start, [...chars("/grace.md"), named("enter")]);
+    expect(hit.state.items).toHaveLength(1);
+  });
+
+  test("applyItems cancels confirm when the bound receipt drifts", () => {
+    const start = state([item({ after_hash: "a".repeat(64) })]);
+    const confirming = press(start, chars("u"));
+    expect(confirming.state.mode.name).toBe("confirm");
+    const selected = confirming.state.items[0];
+    if (selected === undefined) throw new Error("expected a selected receipt");
+    const drifted = applyItems(confirming.state, [
+      {
+        ...selected,
+        receipt: { ...selected.receipt, after_hash: "b".repeat(64) },
+      },
+    ]);
+    expect(drifted.mode.name).toBe("list");
+    expect(drifted.notice?.text).toContain("selection changed");
+  });
+
+  test("a session notice is visible even when vault health is set", () => {
+    const start = initialState({
+      vaultName: "vault",
+      today: "2026-09-02",
+      items: [item()],
+      health: { text: "2 unreadable or duplicate canon page(s); run kizuki doctor", tone: "error" },
+    });
+    const healthOnly = render(start, { cols: 120, rows: 24, paint: paint(false) }).join("\n");
+    expect(healthOnly).toContain("unreadable or duplicate");
+    const afterUndo = render(withNotice(start, { text: "undone rec → revert", tone: "ok" }), {
+      cols: 120,
+      rows: 24,
+      paint: paint(false),
+    }).join("\n");
+    expect(afterUndo).toContain("undone rec → revert");
+    expect(afterUndo).not.toContain("unreadable or duplicate");
+  });
+
+  test("a filtered page keeps the omitted marker and does not invent a global range", () => {
+    const paged = initialState({
+      vaultName: "vault",
+      today: "2026-09-02",
+      items: [
+        item({ page_path: "people/grace.md" }),
+        item({ page_path: "people/linus.md" }),
+      ],
+      pageOffset: 200,
+      pageSize: 200,
+      pageTruncated: true,
+    });
+    const missed = press(paged, [...chars("/nope"), named("enter")]);
+    const empty = render(missed.state, { cols: 120, rows: 24, paint: paint(false) }).join("\n");
+    expect(empty).toContain("0+ writes");
+    expect(empty).toContain("filter: nope");
+    expect(empty).toMatch(/\+/);
+    expect(empty).not.toMatch(/201–/);
+
+    const hit = press(paged, [...chars("/grace"), named("enter")]);
+    const matched = render(hit.state, { cols: 120, rows: 24, paint: paint(false) }).join("\n");
+    expect(matched).toContain("1+ write");
+    expect(matched).toContain("filter: grace");
+    expect(matched).toMatch(/\+/);
+    expect(matched).not.toMatch(/201–/);
+  });
+
+  test("a narrow header keeps the omitted marker when the vault name is long", () => {
+    const paged = initialState({
+      vaultName: "x".repeat(80),
+      today: "2026-09-02",
+      items: [item()],
+      pageOffset: 0,
+      pageSize: 200,
+      pageTruncated: true,
+    });
+    const frame = render(paged, { cols: 40, rows: 16, paint: paint(false) });
+    expect(stringWidth(frame[0] ?? "")).toBe(40);
+    expect(frame[0]).toContain("+");
+    const filtered = press(paged, [...chars(`/${"y".repeat(80)}`), named("enter")]);
+    const tight = render(filtered.state, { cols: 40, rows: 16, paint: paint(false) });
+    expect(stringWidth(tight[0] ?? "")).toBe(40);
+    expect(tight[0]).toContain("+");
+  });
+
+  test("] and [ emit page effects and never claim a silent complete set", () => {
+    const paged = initialState({
+      vaultName: "vault",
+      today: "2026-09-02",
+      items: [item()],
+      pageOffset: 0,
+      pageSize: 200,
+      pageTruncated: true,
+    });
+    expect(press(paged, chars("]")).effects).toEqual([{ type: "page", offset: 200 }]);
+    const later = { ...paged, pageOffset: 200, pageTruncated: false };
+    expect(press(later, chars("[")).effects).toEqual([{ type: "page", offset: 0 }]);
+    const frame = render(paged, { cols: 120, rows: 24, paint: paint(false) }).join("\n");
+    expect(frame).toMatch(/\+/);
+    expect(frame).not.toContain("5000");
+  });
+
+  test("every rendered line is hard-capped to the terminal width", () => {
+    const start = state([
+      item(
+        { page_path: "people/very-long-path-that-should-not-overflow-the-row.md" },
+        { title: "x".repeat(400), currentBody: "y".repeat(400) },
+      ),
+    ]);
+    const frame = render(start, { cols: 50, rows: 16, paint: paint(false) });
+    expect(frame).toHaveLength(16);
+    for (const line of frame) {
+      expect(stringWidth(line)).toBe(50);
+      expect(line).not.toContain("\x1b");
+    }
+  });
+
+  test("a loadError blocks undo from the list", () => {
+    const start = state([item({}, { loadError: "unreadable page: duplicate id" })]);
+    const result = press(start, chars("u"));
+    expect(result.effects).toEqual([]);
+    expect(result.state.notice?.text).toContain("cannot undo");
   });
 });

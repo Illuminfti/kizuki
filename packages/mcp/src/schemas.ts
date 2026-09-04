@@ -107,9 +107,13 @@ export const PACKET_INPUT = z.strictObject({
   until: RFC3339.optional(),
   budget_tokens: z.int().min(50).max(2000).optional(),
   include: z
-    .array(z.enum(["canon", "graph", "timeline"]))
-    .max(3)
+    .array(z.enum(["canon", "graph", "timeline", "claims"]))
+    .max(4)
     .optional(),
+  purpose: z.enum(["session", "recall", "correction", "audit"]).optional(),
+  capabilities: z.array(z.enum(["delta"])).max(1).optional(),
+  retain_prefix: z.boolean().optional(),
+  prior_hash: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   epoch: z.int().min(0).optional(),
 });
 

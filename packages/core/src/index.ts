@@ -47,6 +47,8 @@ export type {
   ClaimPolarity,
   ClaimStatus,
   ClaimTaint,
+  FrontmatterScalar,
+  FrontmatterValue,
   Producer,
   Proposal,
   ProposalKind,
@@ -66,15 +68,22 @@ export {
   claimKey,
   claimsConflict,
   countClaims,
+  countUnwrittenLiveClaims,
+  countWrittenLiveClaims,
   getClaim,
   getPredicate,
   hashBody as hashClaimBody,
+  IDENTITY_LINK_STATUSES,
+  IDENTITY_MERGE_MIN,
   initClaims,
   insertClaim,
   isRegisteredPredicate,
   isSingleValuedPredicate,
   listClaims,
+  listLiveConflicts,
+  listSubjectAliases,
   listSupersessions,
+  listUnwrittenLiveClaims,
   markClaimReverted,
   markClaimsAfterPurge,
   markClaimsPurged,
@@ -82,6 +91,8 @@ export {
   reinstateClaim,
   resupersedeClaim,
   retryRetrievalOps,
+  reviveUncontestedSkipped,
+  upsertIdentityLink,
   supersedeLiveGroup,
   supersessionsForReceipt,
   normalizeObject,
@@ -98,11 +109,17 @@ export type {
   ConflictRule,
   DedupMode,
   EventFacts,
+  IdentityLink,
+  IdentityLinkStatus,
   InsertClaimInput,
   InsertClaimResult,
+  LiveConflict,
+  LiveConflictMember,
   PredicateCardinality,
   PredicateSpec,
   Resolution,
+  SubjectAlias,
+  UpsertIdentityLinkInput,
 } from "./claims";
 
 export {
@@ -110,6 +127,7 @@ export {
   CONNECTOR_SCHEMA,
   HEALTH_STATES,
   HealthReport,
+  freezeManifest,
   isAuthMode,
   isHealthState,
 } from "./contracts/connector";
@@ -127,6 +145,14 @@ export type {
   SignInDisplay,
   ConnectionStateWriter,
   SyncBatch,
+  SyncBatchStatus,
+} from "./contracts/connector";
+export {
+  CONNECTOR_OPERATION_DEADLINE_MS,
+  CONNECTOR_SIGN_IN_DEADLINE_MS,
+  MAX_CURSOR_BYTES,
+  MAX_SYNC_BATCH_BYTES,
+  MAX_SYNC_BATCH_EVENTS,
 } from "./contracts/connector";
 
 export {
@@ -198,8 +224,10 @@ export {
   FTS5_RETRIEVAL_DESCRIPTOR,
   FTS5_RETRIEVAL_ID,
   Fts5RetrievalPort,
+  bareRetrievalId,
   createFts5RetrievalPort,
   registerFts5RetrievalPort,
+  retrievalDocId,
 } from "./retrieval";
 export {
   EMBEDDING_CAPABILITIES,
@@ -359,8 +387,12 @@ export type {
   StorageConformanceHarness,
   SurfaceConformanceHarness,
 } from "./contracts/conformance";
-export { KizukiError } from "./contracts/errors";
-export type { KizukiErrorCode } from "./contracts/errors";
+export {
+  KIZUKI_ERROR_CODES,
+  KizukiError,
+  isKizukiErrorCode,
+} from "./contracts/errors";
+export type { KizukiErrorCode, KizukiErrorOptions } from "./contracts/errors";
 
 export {
   OAUTH_STATE_SCHEMA,
@@ -415,8 +447,31 @@ export { doctorVault } from "./vault/doctor";
 export type { DoctorPageResult, DoctorVaultResult } from "./vault/doctor";
 export { parseFrontmatter, serializePage } from "./vault/frontmatter";
 export type { VaultPage } from "./vault/frontmatter";
-export { initVault } from "./vault/init";
-export type { InitVaultResult } from "./vault/init";
+export {
+  DOCTRINE_VERSION,
+  INIT_JOURNAL_SCHEMA,
+  VAULT_DIR_MODE,
+  VAULT_FILE_MODE,
+  VAULT_INIT_ERROR_CODES,
+  VaultInitError,
+  assertVaultControl,
+  hardenLedgerFile,
+  initVault,
+  inspectDoctrineFiles,
+  inspectVaultControl,
+  readInitJournal,
+} from "./vault/init";
+export type {
+  ControlPathReport,
+  DoctrineFileReport,
+  DoctrineFileState,
+  InitInventory,
+  InitJournal,
+  InitJournalAdopt,
+  InitVaultOptions,
+  InitVaultResult,
+  VaultInitErrorCode,
+} from "./vault/init";
 export {
   PAGE_SENSITIVITIES,
   PAGE_STATUSES,
@@ -484,10 +539,20 @@ export type {
   UndoReceiptOptions,
 } from "./canon";
 export type { WritePageOptions } from "./vault/write";
-export { findPageById, listCanonPages, listCanonPagesReport } from "./vault/pages";
+export {
+  findPageById,
+  isLiveCanonPage,
+  listCanonPages,
+  listCanonPagesReport,
+} from "./vault/pages";
 export type { CanonPage, CanonPageReport, SkippedPage } from "./vault/pages";
-export { readDerivedMeta } from "./derived-meta";
-export type { DerivedLayer, DerivedMeta } from "./derived-meta";
+export { readDerivedMeta, stampDerived } from "./derived-meta";
+export type {
+  DerivedLayer,
+  DerivedMeta,
+  DerivedStamp,
+  DerivedStatus,
+} from "./derived-meta";
 
 export { canonicalSerialize, computeContentHash } from "./util/hash";
 export { isRfc3339 } from "./util/time";
@@ -497,36 +562,56 @@ export type { ValidationResult } from "./util/validate";
 
 export { openLedger } from "./ledger/db";
 export { readCheckpoint, writeCheckpoint } from "./ledger/checkpoints";
-export { accept, count, readSince, replay } from "./ledger/ledger";
+export {
+  accept,
+  count,
+  latestLedgerCursor,
+  readSince,
+  replay,
+  replayLive,
+} from "./ledger/ledger";
 export type {
   AcceptDependencies,
+  AcceptErrorKind,
   AcceptResult,
   LedgerCursor,
   ReplayFilter,
 } from "./ledger/ledger";
 export {
+  PURGE_CONNECTOR_ID_MAX,
+  PURGE_ERROR_CODES,
+  PURGE_PREVIEW_ID_LIMIT,
+  PURGE_REASON_MAX_BYTES,
   PURGE_SLA_SECONDS,
   PURGE_SCHEMA_VERSION,
+  PurgeError,
   applyPurgeV5,
   createVaultFts5Port,
   inspectPurgeHealth,
   isHeld,
+  listHistoricalConnectorIds,
+  normalizePurgeReason,
+  previewPurge,
   purgeEvents,
   readHolds,
+  resolvePurgeConnectorId,
   runPurge,
   verifyPurge,
 } from "./ledger/purge";
 export type {
   CanonHold,
+  PurgeErrorCode,
   PurgeFilter,
   PurgeHealth,
   PurgeHealthFailure,
   PurgeOp,
   PurgeOutcome,
   PurgePhaseOptions,
+  PurgePreview,
   PurgeReceipt,
   PurgeRewriteRef,
   PurgeRunOptions,
+  PurgeStorePresence,
   PurgeVerifyReport,
 } from "./ledger/purge";
 export {
@@ -534,11 +619,28 @@ export {
   disconnect,
   getCheckpoint,
   getConnection,
+  inspectCheckpoints,
+  inspectConnections,
   listCheckpoints,
+  listConnectionRuns,
   listConnections,
+  recordConnectorRun,
+  registerConnection,
+  requireActiveConnection,
   saveCheckpoint,
 } from "./ledger/connections";
-export type { Checkpoint, Connection, ConnectionConfig } from "./ledger/connections";
+export type {
+  Checkpoint,
+  Connection,
+  ConnectionConfig,
+  ConnectionRun,
+  ConnectionRunStatus,
+  Inspected,
+} from "./ledger/connections";
+export { scopedSecretResolver } from "./ledger/secret-scope";
+export { assertConnectorBrowserUrl, guardedSignInIo } from "./ledger/sign-in-guard";
+export { DeadlineError, withDeadline } from "./util/deadline";
+export { sha256Hex } from "./util/hash";
 export {
   ConnectionStateStore,
   CONNECTION_CONFIG_SCHEMA,
@@ -558,8 +660,16 @@ export {
   runSync,
   runToCompletion,
 } from "./ingest/run";
-export { exportVault } from "./export";
-export type { ExportManifest, ExportManifestEntry } from "./export";
+export { proposalsForEvent } from "./staging/producers";
+export { BACKUP_SCHEMA, exportVault, restoreVault, verifyBackup } from "./export";
+export type {
+  BackupSchemaVersions,
+  BackupSnapshot,
+  ExportManifest,
+  ExportManifestEntry,
+  ExportOptions,
+  RestoreReport,
+} from "./export";
 
 export {
   indexEvent,
@@ -568,6 +678,7 @@ export {
   rebuildSearch,
   removeDoc,
   search,
+  searchResult,
   toFtsQuery,
 } from "./search";
 export type {
@@ -575,6 +686,7 @@ export type {
   SearchHit,
   SearchOptions,
   SearchRebuildResult,
+  SearchResult,
 } from "./search";
 
 export { initGraph, neighbors, rebuildGraph } from "./graph";
@@ -589,19 +701,28 @@ export type {
 export { timeline } from "./query";
 export type { TimelineEntry, TimelineOptions } from "./query";
 
-export { rebuildDerived } from "./derived";
+export {
+  rebuildDerived,
+  refreshDerivedPage,
+  removeDerivedPage,
+} from "./derived";
 export type { DerivedRebuildResult } from "./derived";
 
 export { diffLines } from "./util/diff";
 export type { DiffLine } from "./util/diff";
 
 export {
+  AGENT_SCHEMA_VERSION,
   DEFAULT_GRANT,
+  LIFECYCLE_ACTIONS,
+  MAX_AUDIT_PAGE,
+  MAX_RATE_LIMIT_PER_MINUTE,
   OWNER,
   OWNER_AGENT_GRANT,
   SENSITIVITY_ORDER,
   TOOLS,
   addAgent,
+  applyAgentsV9,
   authenticate,
   authorize,
   checkRate,
@@ -610,8 +731,12 @@ export {
   initAgents,
   isSensitivity,
   listAudit,
+  listAuditPage,
   listAgents,
+  listQuarantinedAgents,
   recordAudit,
+  reserveAudit,
+  resolvePrincipal,
   revokeAgent,
   rotateToken,
   setGrant,
@@ -620,11 +745,14 @@ export {
 } from "./agents";
 export type {
   Agent,
+  AgentFinding,
   AuditDenial,
   AuditItem,
+  AuditPage,
   AuditRow,
   DenyReason,
   Grant,
+  LifecycleAction,
   Principal,
   Sensitivity,
   Servable,
@@ -672,6 +800,8 @@ export {
   ServeError,
   dispatchServeTool,
   gate,
+  PACKET_PURPOSES,
+  PACKET_SECTIONS,
   serveContextPacket,
   serveCorrect,
   serveEntities,
@@ -696,11 +826,14 @@ export type {
   GraphArgs,
   GraphData,
   HealthData,
+  PacketPurpose,
+  PacketSection,
   ProposeArgs,
   ProposeData,
   QuotedChunk,
   RewrittenPage,
   SearchArgs,
+  SearchData,
   ServeContext,
   Served,
   TimelineArgs,
@@ -755,6 +888,7 @@ export {
   listDailyBudget,
   listRunReceipts,
   listSchedules,
+  loadConfiguredModelRef,
   loadServeConfig,
   orphanJournalReceipts,
   persistRunReceipt,
@@ -778,6 +912,7 @@ export {
   runRail,
   runServeDaemon,
   runServeOnce,
+  runWritePass,
   seedSchedules,
   serveExecHint,
   servePidPath,
@@ -820,4 +955,6 @@ export type {
   SupervisorState,
   SupervisorStatus,
   UnitSpec,
+  WritePassOptions,
+  WritePassResult,
 } from "./serve";

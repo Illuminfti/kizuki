@@ -198,6 +198,7 @@ export interface ListCanonReceiptsOptions {
   newest_first?: boolean;
   include_reverted?: boolean;
   limit?: number;
+  offset?: number;
 }
 
 export function listCanonReceipts(
@@ -206,6 +207,7 @@ export function listCanonReceipts(
 ): CanonReceipt[] {
   if (!tableExists(db, "canon_receipts")) return [];
   const limit = Math.min(Math.max(opts.limit ?? 200, 1), 10_000);
+  const offset = Math.max(opts.offset ?? 0, 0);
   const clauses: string[] = [];
   const params: (string | number)[] = [];
   if (opts.page_path !== undefined) {
@@ -227,9 +229,9 @@ export function listCanonReceipts(
   const order = opts.newest_first === true ? "at DESC, receipt_id DESC" : "at, receipt_id";
   return db
     .query<CanonReceiptRow, (string | number)[]>(
-      `SELECT * FROM canon_receipts${where} ORDER BY ${order} LIMIT ?`,
+      `SELECT * FROM canon_receipts${where} ORDER BY ${order} LIMIT ? OFFSET ?`,
     )
-    .all(...params, limit)
+    .all(...params, limit, offset)
     .map(rowToReceipt);
 }
 

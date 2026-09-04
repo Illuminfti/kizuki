@@ -6,7 +6,7 @@ import {
   validatePageCandidate,
 } from "@kizuki/core";
 import type { CaptureEventInput, PageSensitivity, PageType } from "@kizuki/core";
-import type { FrontmatterValue } from "@kizuki/core/staging";
+import type { FrontmatterValue } from "@kizuki/core";
 import {
   mappedValue,
   parseLegacyTimestamp,

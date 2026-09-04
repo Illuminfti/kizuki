@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { OWNER, initAgents } from "../../src/agents";
+import { OWNER, getAgent, initAgents } from "../../src/agents";
 import { openLedger } from "../../src/ledger/db";
 import { serveHealth } from "../../src/serving/health";
 import { servePropose } from "../../src/serving/propose";
@@ -41,7 +41,7 @@ describe("serveHealth", () => {
     expect(data?.pending_retrieval_ops).toBe(0);
     expect(data?.derived.search).not.toBeNull();
     expect(data?.derived.graph).not.toBeNull();
-    expect(data?.agents).toEqual({ total: 11, revoked: 1 });
+    expect(data?.agents).toEqual({ total: 11, revoked: 1, quarantined: 0 });
   });
 
   test("a filed claim shows up as one the writer can act on", async () => {
@@ -85,6 +85,22 @@ describe("serveHealth", () => {
     expect(json).not.toContain("file:");
     expect(json).not.toContain("env:");
     expect(json).not.toContain("/");
+  });
+
+  test("a corrupt grant still counts and is named once found", () => {
+    const live = serveFixture();
+    const agentId = getAgent(live.db, "search-only")?.agent_id;
+    if (agentId === undefined) throw new Error("search-only fixture is missing");
+    live.db
+      .query("UPDATE agent_grants SET tools = ? WHERE agent_id = ?")
+      .run('["not-a-tool"]', agentId);
+
+    expect(serveHealth(live.owner()).data?.agents).toEqual({
+      total: 11,
+      revoked: 1,
+      quarantined: 1,
+    });
+    live.dispose();
   });
 
   test("a database without a claim store reports no claims", () => {

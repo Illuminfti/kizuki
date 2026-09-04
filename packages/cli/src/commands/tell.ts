@@ -1,14 +1,15 @@
 import { CorrectError, correct } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
 import { withVault } from "../context";
-import { jsonLine } from "../output";
+import { tryRefreshDerived } from "../derived";
+import { jsonEnvelope } from "../output";
 import type { CliIo, Command } from "./index";
 
 export const tellCommand: Command = {
   name: "tell",
   usage:
     'tell "<statement>" [--claim CLAIM_ID] [--since TIME] [--until TIME] [--dry-run] [--json] [--verbose]',
-  summary: "correct a claim and rewrite affected canon in the same pass",
+  summary: "correct a claim; rewrite affected canon in the same pass",
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, {
       options: ["--about", "--claim", "--page", "--since", "--until"],
@@ -46,8 +47,16 @@ export const tellCommand: Command = {
             ...(parsed.flags.has("--dry-run") ? { dry_run: true } : {}),
           },
         );
+        const derived = tryRefreshDerived(ctx.db, ctx.vaultPath);
         if (parsed.flags.has("--json")) {
-          io.out(jsonLine(result));
+          io.out(
+            jsonEnvelope(
+              "tell",
+              derived.degraded.length > 0 ? "degraded" : "ok",
+              result,
+              { degraded: derived.degraded },
+            ),
+          );
           return 0;
         }
         io.out(result.answer);
@@ -56,6 +65,7 @@ export const tellCommand: Command = {
             io.out(pageWrite.diff.trimEnd());
           }
         }
+        for (const warning of derived.degraded) io.err(`degraded: ${warning}`);
         return 0;
       } catch (error) {
         if (error instanceof CorrectError) {

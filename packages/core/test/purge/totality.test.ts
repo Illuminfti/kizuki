@@ -14,6 +14,7 @@ import {
   purgeEvents,
   readHolds,
   runPurge,
+  setAfterCanonSnapshot,
   verifyPurge,
 } from "../../src/ledger/purge";
 import { tableExists } from "../../src/ledger/schema";
@@ -27,6 +28,7 @@ const LATER = "2026-09-02T13:01:00.000Z";
 const fixtures: { dispose: () => void }[] = [];
 
 afterEach(() => {
+  setAfterCanonSnapshot();
   for (const item of fixtures.splice(0)) item.dispose();
 });
 
@@ -221,6 +223,49 @@ describe("RFC 0002 purge totality", () => {
     expect(report.proofs).toHaveLength(1);
     expect(report.proofs[0]?.found).toEqual([]);
     expect(report.proofs[0]?.checked).toBe(3);
+    expect(report.ok).toBe(true);
+  });
+
+  test("catch-up adds late page ids to the retrieval purge op", async () => {
+    const { db, vaultPath } = vault();
+    const event = storeEvent(db, { source_record_id: "acme.md" });
+    const port = fts5(vaultPath);
+    await port.upsert([
+      doc(`event:${event.event_id}`, "event", "note", [event.event_id]),
+      doc("page:page-late", "page", "late citing page", [event.event_id]),
+    ]);
+    setAfterCanonSnapshot(() => {
+      writeCanonPage(
+        vaultPath,
+        "facts/late.md",
+        {
+          id: "page-late",
+          title: "late",
+          type: "fact",
+          status: "active",
+          sensitivity: "personal",
+          taint: "clean",
+          sources: [event.event_id],
+        },
+        "late citing page\n",
+      );
+    });
+
+    const outcome = await runPurge(
+      db,
+      vaultPath,
+      { event_id: event.event_id },
+      "source deleted",
+      { retrieval: port, now: () => AT },
+    );
+
+    expect(outcome.purge_ops[0]?.ids).toContain("page:page-late");
+    const proof = await port.verifyAbsent(["page:page-late"]);
+    expect(proof.found).toEqual([]);
+    const report = await verifyPurge(db, vaultPath, outcome.receipts[0]!.receipt_id, {
+      retrieval: port,
+      now: () => AT,
+    });
     expect(report.ok).toBe(true);
   });
 

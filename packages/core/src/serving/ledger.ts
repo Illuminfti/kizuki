@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { authorize } from "../agents";
 import type { DenyReason, Grant, Sensitivity, Servable } from "../agents";
 import type { TimelineEntry } from "../query/timeline";
+import { bareRetrievalId, retrievalDocId } from "../retrieval/ids";
 import type { SearchHit } from "../search/query";
 import { placeholders } from "../util/sql";
 import { asSensitivity } from "./canon";
@@ -73,7 +74,9 @@ export function readServableEvents(
   db: Database,
   ids: string[],
 ): Map<string, ServableEvent> {
-  const live = liveEventIds(db, ids);
+  const live = liveEventIds(db, [
+    ...new Set(ids.map((id) => bareRetrievalId(id))),
+  ]);
   const facts = new Map<string, ServableEvent>();
   for (const group of chunks([...live])) {
     const rows = db
@@ -85,13 +88,15 @@ export function readServableEvents(
       )
       .all(...group);
     for (const row of rows) {
-      facts.set(row.event_id, {
+      const event: ServableEvent = {
         event_id: row.event_id,
         kind: row.kind,
         occurred_at: row.occurred_at,
         sensitivity: row.sensitivity,
         subjects: subjectIds(row.subjects),
-      });
+      };
+      facts.set(row.event_id, event);
+      facts.set(retrievalDocId("event", row.event_id), event);
     }
   }
   return facts;
@@ -155,7 +160,7 @@ export function timelineSource(entry: TimelineEntry): QuotedSource {
 
 export function ledgerHitSource(hit: SearchHit): QuotedSource {
   return {
-    event_id: hit.doc_id,
+    event_id: bareRetrievalId(hit.doc_id),
     connector_id: hit.connector_id,
     kind: hit.page_type,
     occurred_at: hit.occurred_at,

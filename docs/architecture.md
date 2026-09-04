@@ -3,6 +3,12 @@
 Your life, queryable as a CLI and MCP. Not a harness; hosts no agents — every
 agent harness brings its own loop and connects here as a first-class client.
 
+This page is the invariant and contract map. [README.md](../README.md) is the
+product front door. [cli.md](cli.md) is the verb list that exists on this
+revision. Binding intent is [CURRENT.md](CURRENT.md) and
+[RFC 0002](../rfcs/0002-autonomous-canon.md). Where a paragraph below describes
+accepted design that is not a public command yet, it says so.
+
 ## Invariants (CI-enforced where possible)
 
 1. Canon is Markdown files on the owner's disk, forever. Deleting Kizuki
@@ -137,32 +143,41 @@ required `taint`, provenance `sources`, free `x-*` extension namespace.
 
 ## Serving — agents as first-class citizens
 
-- `kizuki agent add <name>`: identity + token + grants (sensitivity ceiling,
-  scope filters, tool allowlist, rate limits). Enforcement happens in the
-  query engine, below the prompt layer. Every call is audited.
-- MCP (stdio per-harness, standing loopback under `kizuki serve`): read tools
-  `search, get_page, query_entities, timeline, context_packet,
-graph_neighbors, system_health`; two write tools, `propose` and `correct`.
-- CLI: `query, timeline, entity, context --budget <n>` — bounded context
-  packets for harness hooks without MCP overhead.
+Implemented on this revision:
+
+- **CLI query.** `kizuki query` is the public read verb. Timeline, entity
+  listing, and context packets are core serving functions exposed over MCP,
+  not CLI verbs.
+- **MCP stdio.** `bun packages/mcp/src/bin.ts --vault PATH (--owner | --token-env VAR)`.
+  Read tools: `search`, `get_page`, `query_entities`, `timeline`,
+  `context_packet`, `graph_neighbors`, `system_health`. Write tools:
+  `propose` and `correct`. There is no `put_page`.
+- **Loopback HTTP.** `kizuki serve` binds loopback unless `--no-http`.
+- **Agent identity in core.** Grants, sensitivity ceilings, tool allowlists,
+  rate limits, and audit live in `@kizuki/core`. There is no
+  `kizuki agent add` CLI verb on this revision.
+
+Enforcement happens in the query engine, below the prompt layer.
 
 ## Proactive (`kizuki serve`)
 
-`kizuki init` installs `kizuki serve` as an always-on user service. The
-daemon owns the loop, the retrieval writer lease and the standing MCP
-endpoint. The CLI still runs with no daemon: it reads the ledger, canon and
-the lexical index directly, declares `degraded: ["engine-unavailable"]`
-when the retrieval port is daemon-owned, and refuses to write canon while
-another process holds the writer lease. `serve` adds the scheduler
-(connector syncs, daily brief, rollups, doctor sweeps), notifier plugins
-(Telegram bot, email, webhook) that push digests and point back at audit
-and correction, and the standing MCP endpoint. Every scheduled run writes a
-receipt; stale receipts are reported as failures.
+`kizuki init` installs `kizuki serve` as an always-on user service when a
+supervisor is present. The daemon owns the loop, the retrieval writer lease,
+and loopback HTTP. The CLI still runs with no daemon: it reads the ledger,
+canon, and the lexical index directly, declares
+`degraded: ["engine-unavailable"]` when the retrieval port is daemon-owned,
+and refuses to write canon while another process holds the writer lease.
+
+Rails on this revision: connector sync, retrieval sweep, purge sweep, embed
+backfill, daily brief (file notifier into `dashboards/`), doctor sweep,
+journal prune. Every scheduled run writes a receipt; stale receipts are
+reported as failures. Telegram / email / webhook notifiers are accepted
+design behind `kizuki.notifier/v1`; the shipped notifier is the file writer.
 
 ## Security
 
-Threat model shipped in SECURITY.md: host-trust interim stance (plaintext
-canon, versioned encryption seam reserved in the ledger), prompt injection
-(invariant 7), agent overreach (grants + audit), connector supply chain
-(in-tree curation). Purge is subject-keyed from day one. `kizuki export`
+Threat model in [SECURITY.md](../SECURITY.md): host-trust interim stance
+(plaintext canon, versioned encryption seam reserved in the ledger), prompt
+injection (invariant 7), agent overreach (grants + audit), connector supply
+chain (in-tree curation). Purge is subject-keyed from day one. `kizuki export`
 dumps vault + ledger — exit-proofness is a feature.

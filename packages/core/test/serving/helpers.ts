@@ -11,6 +11,7 @@ import {
 } from "../../src/agents";
 import { TOOLS } from "../../src/agents";
 import type { Grant, Principal, Tool } from "../../src/agents";
+import { getClaim } from "../../src/claims/store";
 import { rebuildDerived } from "../../src/derived";
 import { initGraph } from "../../src/graph/schema";
 import { saveCheckpoint } from "../../src/ledger/connections";
@@ -18,12 +19,12 @@ import { openLedger } from "../../src/ledger/db";
 import { accept } from "../../src/ledger/ledger";
 import { purgeEvents } from "../../src/ledger/purge";
 import { initSearch } from "../../src/search/schema";
-import { ownerPromote } from "../../src/staging/promote";
-import { fileProposal, initStaging } from "../../src/staging/proposals";
 import type { ServeContext } from "../../src/serving/types";
+import { fileProposal } from "../../src/staging/proposals";
 import { ulid } from "../../src/util/ulid";
 import { serializePage } from "../../src/vault/frontmatter";
 import { initVault } from "../../src/vault/init";
+import { write } from "../canon/helpers";
 
 export interface Fixture {
   vaultPath: string;
@@ -254,9 +255,15 @@ function makeHeldPage(
   if (filed.outcome !== "stored") {
     throw new Error(`fixture hold proposal: ${filed.outcome}`);
   }
-  const receipt = ownerPromote(db, vaultPath, filed.proposal.proposal_id, {
-    sensitivity: "public",
-  });
+  db.query("UPDATE claims SET status = 'live', sensitivity = ? WHERE claim_id = ?").run(
+    "public",
+    filed.proposal.proposal_id,
+  );
+  const claim = getClaim(db, filed.proposal.proposal_id);
+  if (claim === null) {
+    throw new Error(`fixture claim ${filed.proposal.proposal_id} is missing`);
+  }
+  const receipt = write({ db, vault_path: vaultPath }, claim, { writer: "import" });
   purgeEvents(db, vaultPath, { event_id: eventId }, "fixture purge");
   return receipt.page_path;
 }
@@ -290,7 +297,6 @@ export function serveFixture(): Fixture {
   const vaultPath = mkdtempSync(join(tmpdir(), "kizuki-serving-"));
   initVault(vaultPath);
   const db = openLedger(join(vaultPath, ".kizuki", "kizuki.db"));
-  initStaging(db);
   initSearch(db);
   initGraph(db);
   initAgents(db);
