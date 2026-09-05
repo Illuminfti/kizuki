@@ -30,9 +30,12 @@ function nameBytes(value: string | Buffer): Buffer {
 }
 function childFd(parent: number, name: string | Buffer, directory = false): number | null {
   const bytes = nameBytes(name);
+  // Creating a JS memory view can change thread errno. Prepare it before
+  // the native operation and read that same view without allocating afterward.
+  const error = errno();
   const fd = api().symbols.openat(parent, ptr(bytes), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK | 0x80000 /* Linux O_CLOEXEC */ | (directory ? constants.O_DIRECTORY : 0), 0);
   if (fd >= 0) return fd;
-  if (errno().getInt32(0, true) === 2) return null; // ENOENT, never ELOOP/ENOTDIR.
+  if (error.getInt32(0, true) === 2) return null; // ENOENT, never ELOOP/ENOTDIR.
   fail();
 }
 function openPath(path: string): number {
@@ -55,9 +58,10 @@ function entries(fd: number, remaining: number, stopAtFirst = false): Buffer[] {
   const result: Buffer[] = [];
   try {
     for (;;) {
-      errno().setInt32(0, 0, true);
+      const error = errno();
+      error.setInt32(0, 0, true);
       const entry = api().symbols.readdir(directory);
-      if (!entry) { if (errno().getInt32(0, true) !== 0) fail(); break; }
+      if (!entry) { if (error.getInt32(0, true) !== 0) fail(); break; }
       const header = new DataView(toArrayBuffer(entry, 0, 19));
       const length = header.getUint16(16, true);
       if (length < 20 || length > 280) fail("abi_invalid");
