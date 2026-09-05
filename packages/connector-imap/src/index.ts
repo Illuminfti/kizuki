@@ -29,6 +29,7 @@ export {
   IMAP_STATE_SCHEMA,
   parseImapState,
   assertSameImapIdentity,
+  ImapIdentityMismatchError,
   serializeImapState,
 } from "./state";
 export type { ImapState } from "./state";

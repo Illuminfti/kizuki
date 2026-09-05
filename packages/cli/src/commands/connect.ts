@@ -14,6 +14,7 @@ import type { Database } from "bun:sqlite";
 import { getConnector } from "@kizuki/connectors";
 import {
   assertSameImapIdentity,
+  ImapIdentityMismatchError,
   ImapSignInInputError,
 } from "@kizuki/connector-imap";
 import { UsageError, parseArguments, requirePositional } from "../args";
@@ -85,7 +86,8 @@ export function isSafeImapSignInError(error: unknown): boolean {
     error instanceof ConnectionError ||
     error instanceof DeadlineError ||
     error instanceof LedgerError ||
-    error instanceof ImapSignInInputError;
+    error instanceof ImapSignInInputError ||
+    error instanceof ImapIdentityMismatchError;
 }
 
 export function safeImapSignInFailure(error: unknown): Error {

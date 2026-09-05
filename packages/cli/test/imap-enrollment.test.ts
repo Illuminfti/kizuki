@@ -11,7 +11,7 @@ import {
 import type { ConnectionStateWriter, Connector, SignInIo } from "@kizuki/core";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { assertSameImapIdentity, serializeImapState } from "../../connector-imap/src/state";
+import { assertSameImapIdentity, ImapIdentityMismatchError, serializeImapState } from "../../connector-imap/src/state";
 import { createImapConnector } from "../../connector-imap/src/connector";
 import { FakeImapServer } from "../../connector-imap/src/testing/fake-imap";
 import { memoryDialer } from "../../connector-imap/src/testing/memory-dialer";
@@ -186,7 +186,11 @@ describe("IMAP interactive enrollment", () => {
         { ...state, host: "other.example.test" },
         { ...state, port: 1993 },
       ]) {
-        await expect(enrollSignedInConnection(db, store, connectorFor(candidate), prompts([]), first.source_key, assertSameImapIdentity)).rejects.toThrow("does not match");
+        const failure = await enrollSignedInConnection(db, store, connectorFor(candidate), prompts([]), first.source_key, assertSameImapIdentity)
+          .catch((error: unknown) => safeImapSignInFailure(error));
+        expect(failure).toBeInstanceOf(ImapIdentityMismatchError);
+        expect((failure as Error).message).toBe("IMAP mailbox identity does not match the existing connection. Re-enter its server and username.");
+        expect((failure as Error).cause).toBeUndefined();
         expect(store.read(first)).toEqual(before);
         expect(getCheckpoint(db, first.connector_id, first.source_key)?.cursor).toBe("checkpoint");
         expect(listConnections(db)).toHaveLength(1);
