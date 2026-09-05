@@ -84,6 +84,26 @@ interface Budget {
   dropped: number;
 }
 
+function boundedProperty(
+  target: object,
+  key: string,
+  property: PropertyDescriptor,
+  depth: number,
+  budget: Budget,
+): void {
+  if ("value" in property) {
+    Object.defineProperty(target, key, { value: boundedValue(property.value, depth, budget), enumerable: true, configurable: true });
+  } else if (budget.leaves <= 0 || depth > AUDIT_DEPTH_CAP) {
+    budget.dropped += 1;
+    Object.defineProperty(target, key, { value: null, enumerable: true, configurable: true });
+  } else {
+    budget.leaves -= 1;
+    // The shared audit shaper reads descriptors and emits an accessor marker.
+    // Keeping the descriptor here must never execute captured getter code.
+    Object.defineProperty(target, key, { ...property, enumerable: true, configurable: true });
+  }
+}
+
 function boundedValue(value: unknown, depth: number, budget: Budget): unknown {
   if (budget.leaves <= 0 || depth > AUDIT_DEPTH_CAP) {
     budget.dropped += 1;
@@ -91,16 +111,25 @@ function boundedValue(value: unknown, depth: number, budget: Budget): unknown {
   }
   if (Array.isArray(value)) {
     budget.dropped += Math.max(0, value.length - AUDIT_ITEM_CAP);
-    return value
-      .slice(0, AUDIT_ITEM_CAP)
-      .map((entry) => boundedValue(entry, depth + 1, budget));
+    const shaped: unknown[] = new Array(Math.min(value.length, AUDIT_ITEM_CAP));
+    for (let index = 0; index < shaped.length; index += 1) {
+      const key = String(index);
+      const property = Object.getOwnPropertyDescriptor(value, key);
+      if (property !== undefined) boundedProperty(shaped, key, property, depth + 1, budget);
+    }
+    return shaped;
   }
   if (isPlainObject(value)) {
-    const entries = Object.entries(value);
-    budget.dropped += Math.max(0, entries.length - AUDIT_KEY_CAP);
-    const shaped: Record<string, unknown> = {};
-    for (const [key, nested] of entries.slice(0, AUDIT_KEY_CAP)) {
-      shaped[key] = boundedValue(nested, depth + 1, budget);
+    const keys = Object.keys(value);
+    budget.dropped += Math.max(0, keys.length - AUDIT_KEY_CAP);
+    const shaped = Object.create(null) as Record<string, unknown>;
+    for (const key of keys.slice(0, AUDIT_KEY_CAP)) {
+      if (depth === 0 && key === TRUNCATION_KEY) {
+        budget.dropped += 1;
+        continue;
+      }
+      const property = Object.getOwnPropertyDescriptor(value, key);
+      if (property !== undefined) boundedProperty(shaped, key, property, depth + 1, budget);
     }
     return shaped;
   }
@@ -118,14 +147,12 @@ function boundedArguments(
 ): Record<string, unknown> {
   const budget: Budget = { leaves: AUDIT_LEAF_CAP, dropped: 0 };
   const shaped = boundedValue(args, 0, budget) as Record<string, unknown>;
-  if (Object.hasOwn(shaped, TRUNCATION_KEY)) {
-    delete shaped[TRUNCATION_KEY];
-    budget.dropped += 1;
-  }
   if (budget.dropped === 0) return shaped;
   // Put trusted omission evidence before caller entries so the shared audit
   // layer's own width cap cannot discard it. Caller keys cannot replace it.
-  return { [TRUNCATION_KEY]: budget.dropped, ...shaped };
+  const result = Object.create(null) as Record<string, unknown>;
+  result[TRUNCATION_KEY] = budget.dropped;
+  return Object.defineProperties(result, Object.getOwnPropertyDescriptors(shaped));
 }
 
 /**

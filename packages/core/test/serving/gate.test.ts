@@ -424,4 +424,44 @@ describe("authority is re-read on every served call", () => {
     const row = listAudit(live.db, "search-only", { limit: 1 })[0];
     expect(row?.query_shape["+truncated"]).toBe(1);
   });
+
+  test("the reserved field is counted once after the leaf budget is exhausted", () => {
+    const ctx = live.agent("search-only");
+    const args = {
+      a: Array.from({ length: 64 }, (_, index) => index),
+      b: Array.from({ length: 64 }, (_, index) => index),
+      c: Array.from({ length: 64 }, (_, index) => index),
+      "+truncated": 999_999,
+    };
+    expect(refusal(() => gate(ctx, "propose", args, emptyRun)).code).toBe("tool_not_granted");
+    expect(listAudit(live.db, "search-only", { limit: 1 })[0]?.query_shape["+truncated"]).toBe(1);
+  });
+
+  test("a prototype key remains visible as rejected evidence through the public gate", () => {
+    const ctx = live.agent("search-only");
+    const args = JSON.parse('{"__proto__":{"hidden":"private-canary"}}');
+    expect(refusal(() => gate(ctx, "propose", args, emptyRun)).code).toBe("tool_not_granted");
+    const encoded = JSON.stringify(listAudit(live.db, "search-only", { limit: 1 })[0]?.query_shape);
+    expect(encoded).toContain('"key":"rejected"');
+    expect(encoded).toContain(new Bun.CryptoHasher("sha256").update("__proto__").digest("hex"));
+    expect(encoded).not.toContain("private-canary");
+  });
+
+  test("object and array getters cannot prevent recording a refused call", () => {
+    const ctx = live.agent("search-only");
+    let calls = 0;
+    const trap = { enumerable: true, get() { calls += 1; throw new Error("private-canary"); } };
+    const values: unknown[] = [];
+    Object.defineProperty(values, "0", trap);
+    const args = { values };
+    Object.defineProperty(args, "object_trap", trap);
+    // Force a serving truncation marker as well, so copying the bounded bag
+    // must preserve descriptors instead of invoking them via object spread.
+    for (let index = 0; index < 40; index += 1) Object.defineProperty(args, `extra_${index}`, { value: index, enumerable: true });
+    expect(refusal(() => gate(ctx, "propose", args, emptyRun)).code).toBe("tool_not_granted");
+    const encoded = JSON.stringify(listAudit(live.db, "search-only", { limit: 1 })[0]?.query_shape);
+    expect(calls).toBe(0);
+    expect(encoded).toContain('"type":"accessor"');
+    expect(encoded).not.toContain("private-canary");
+  });
 });
