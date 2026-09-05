@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative, sep } from "node:path";
+import { hashBytes } from "./write";
 import { parseFrontmatter } from "./frontmatter";
 
 export interface CanonPage {
@@ -8,6 +9,8 @@ export interface CanonPage {
   relPath: string;
   data: Record<string, unknown>;
   body: string;
+  /** Hash of the exact bytes read for this snapshot; never frontmatter. */
+  contentHash: string;
 }
 
 export interface SkippedPage {
@@ -64,9 +67,12 @@ export function listCanonPagesReport(vaultPath: string): CanonPageReport {
 
   for (const path of markdownFiles(vaultPath)) {
     const relPath = relative(vaultPath, path).split(sep).join("/");
+    let contentHash: string;
     let parsed: ReturnType<typeof parseFrontmatter>;
     try {
-      parsed = parseFrontmatter(readFileSync(path, "utf8"));
+      const bytes=readFileSync(path);
+      contentHash=hashBytes(bytes);
+      parsed = parseFrontmatter(bytes.toString("utf8"));
     } catch (error) {
       if (error instanceof SyntaxError) {
         skipped.push({ relPath, reason: error.message });
@@ -88,7 +94,7 @@ export function listCanonPagesReport(vaultPath: string): CanonPageReport {
       continue;
     }
     seen.set(id, relPath);
-    pages.push({ id, path, relPath, data: parsed.data, body: parsed.body });
+    pages.push({ id, path, relPath, data: parsed.data, body: parsed.body, contentHash });
   }
 
   return { pages, skipped };

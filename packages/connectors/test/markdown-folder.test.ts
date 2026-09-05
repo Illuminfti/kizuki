@@ -49,7 +49,7 @@ describe("MarkdownFolderConnector", () => {
           source_record_id: "alpha.md",
           kind: "file",
           text: "# Alpha\n",
-          subjects: [],
+          subjects: [expect.objectContaining({subject_id:expect.stringMatching(/^markdown-folder:[a-f0-9]{64}$/),role:"about"})],
           deleted: false,
           attachments: [],
           metadata: expect.objectContaining({
@@ -63,7 +63,7 @@ describe("MarkdownFolderConnector", () => {
           source_record_id: "nested/beta.md",
           kind: "file",
           text: "βeta\n",
-          subjects: [],
+          subjects: [expect.objectContaining({subject_id:expect.stringMatching(/^markdown-folder:[a-f0-9]{64}$/),role:"about"})],
           deleted: false,
           attachments: [],
           metadata: expect.objectContaining({
@@ -148,7 +148,7 @@ describe("MarkdownFolderConnector", () => {
         occurred_at: tombstone.observed_at,
         observed_at: tombstone.observed_at,
         text: "",
-        subjects: [],
+        subjects: initial.events[0]!.subjects,
         deleted: true,
         attachments: [],
         metadata: { relpath: "removed.md", snapshot: "absent" },
@@ -421,4 +421,26 @@ describe("MarkdownFolderConnector", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+});
+
+test("document subjects survive edits and tombstones without collapsing distinct paths", async () => {
+  const root = await makeTempDir();
+  try {
+    await writeFile(path.join(root, "same-name.md"), "first");
+    await writeFile(path.join(root, "same_name.md"), "second");
+    const connector = createMarkdownFolderConnector({ path: root });
+    const initial = await connector.backfill(null);
+    const first = initial.events.find(event => event.source_record_id === "same-name.md")!;
+    const second = initial.events.find(event => event.source_record_id === "same_name.md")!;
+    expect(first.subjects).toHaveLength(1);
+    expect(first.subjects[0]?.subject_id).not.toBe(second.subjects[0]?.subject_id);
+    await writeFile(path.join(root, "same-name.md"), "changed contents");
+    const edited = await connector.sync(initial.cursor);
+    expect(edited.events.find(event => event.source_record_id === "same-name.md")?.subjects).toEqual(first.subjects);
+    await unlink(path.join(root, "same-name.md"));
+    const removed = await connector.sync(edited.cursor);
+    expect(removed.events.find(event => event.source_record_id === "same-name.md" && event.deleted)?.subjects).toEqual(first.subjects);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

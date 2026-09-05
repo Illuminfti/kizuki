@@ -1,3 +1,6 @@
+import { CanonAuthorityResolver } from "./authority";
+import { refreshDerivedPage } from "../derived";
+import { listCanonPagesReport } from "../vault/pages";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 import type { Sensitivity } from "../agents/types";
@@ -9,7 +12,7 @@ import {
   supersessionsForReceipt,
 } from "../claims/store";
 import type { RetrievalDoc } from "../contracts/retrieval";
-import type { ClaimTaint } from "../contracts/proposal";
+import type { AuthorityTier, ClaimTaint } from "../contracts/proposal";
 import { parseFrontmatter } from "../vault/frontmatter";
 import type { VaultPage } from "../vault/frontmatter";
 import { PAGE_SENSITIVITIES } from "../vault/schema";
@@ -19,7 +22,6 @@ import { UndoError } from "./errors";
 import {
   getCanonReceipt,
   laterReceiptsForPage,
-  listCanonReceipts,
 } from "./receipts";
 import type { CanonReceipt, PageAction, RetrievalOpRef } from "./receipts";
 import {
@@ -86,22 +88,11 @@ function provenanceOf(page: VaultPage, fallback: readonly string[]): string[] {
   return [...fallback];
 }
 
-function metaReceiptForRestore(io: CanonIo, original: CanonReceipt): CanonReceipt {
-  if (original.before_hash === null) return original;
-  const prior = listCanonReceipts(io.db, {
-    page_path: original.page_path,
-    newest_first: true,
-    limit: 10_000,
-  }).find(
-    (row) => row.receipt_id !== original.receipt_id && row.after_hash === original.before_hash,
-  );
-  return prior ?? original;
-}
-
 function pageDoc(
   pageId: string,
   page: VaultPage,
   meta: CanonReceipt,
+  authority: AuthorityTier,
   at: string,
 ): RetrievalDoc {
   const title = page.data["title"];
@@ -113,7 +104,7 @@ function pageDoc(
     text: page.body,
     sensitivity: isSensitivity(page.data["sensitivity"]) ? page.data["sensitivity"] : meta.sensitivity,
     taint: taintOf(page, meta.taint),
-    authority: meta.authority,
+    authority,
     subjects: subject === null ? [] : [subject],
     provenance: provenanceOf(page, meta.provenance),
     occurred_at: null,
@@ -140,6 +131,7 @@ async function reverseRetrieval(
   io: CanonIo,
   original: CanonReceipt,
   restored: VaultPage | null,
+  authority: AuthorityTier,
   at: string,
 ): Promise<RetrievalOpRef[]> {
   const port = io.retrieval;
@@ -160,7 +152,7 @@ async function reverseRetrieval(
 
   const pageId = pageIdOf(restored, pageIndexByPath(io.db, original.page_path)?.page_id ?? null);
   if (pageId === null) return [];
-  await port.upsert([pageDoc(pageId, restored, metaReceiptForRestore(io, original), at)]);
+  await port.upsert([pageDoc(pageId, restored, original, authority, at)]);
   return docs.map((doc) => ({ store: port.descriptor.id, op: "upsert" as const, doc }));
 }
 
@@ -342,9 +334,10 @@ async function applyUndo(
 ): Promise<CanonReceipt> {
   const revertId = mintId(io);
   const at = nowOf(io);
+  const authority = new CanonAuthorityResolver(io.db, [original.page_path]).before(original.receipt_id);
   const restored = restoreBytes(io, original, revertId, current);
   restoreClaims(io, original, at);
-  const retrievalOps = await reverseRetrieval(io, original, restored.page, at);
+  const retrievalOps = await reverseRetrieval(io, original, restored.page, authority, at);
 
   const revert: CanonReceipt = {
     receipt_id: revertId,
@@ -358,7 +351,7 @@ async function applyUndo(
     writer: "revert",
     producer: original.producer,
     model_ref: original.model_ref,
-    authority: original.authority,
+    authority,
     confidence: original.confidence,
     sensitivity: original.sensitivity,
     taint: original.taint,
@@ -378,6 +371,10 @@ async function applyUndo(
     updateIndex(io, original, revert, restored.page);
   })();
 
+  if (restored.page !== null) {
+    const page = listCanonPagesReport(io.vault_path).pages.find(item => item.relPath === original.page_path);
+    if (page !== undefined) refreshDerivedPage(io.db, page, io.vault_path);
+  }
   return revert;
 }
 

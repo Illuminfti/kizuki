@@ -1,3 +1,4 @@
+import { subjectPageType } from "../vault/subject-type";
 import type { Database } from "bun:sqlite";
 import type { CaptureEvent, SubjectRef } from "../contracts/event";
 import { tableExists } from "../ledger/schema";
@@ -12,7 +13,7 @@ import type { ProposalInput } from "./proposals";
  * queue — the receipted writer acts on the claims later.
  */
 
-/** Identity is a candidate, never a fact: the owner confirms a subject is a person. */
+/** A source identifier establishes identity, not a personal entity type. */
 const ENTITY_CONFIDENCE = 0.5;
 /** A verbatim quote of captured text is as certain as the ledger row it cites. */
 const CAPTURE_CONFIDENCE = 1;
@@ -45,10 +46,10 @@ function entityProposal(
     kind: "entity",
     target: subject.subject_id,
     // Stable per subject, so a second sighting dedupes onto this candidate
-    // instead of forking a second stub page for the same person.
+    // instead of forking a second stub page for the same subject.
     body: `Stub entity page for \`${subject.subject_id}\`.`,
     frontmatter: {
-      type: "person",
+      type: subjectPageType(subject.subject_id),
       title: subject.display_name ?? handle,
       "x-handle": handle,
       "x-subject-id": subject.subject_id,

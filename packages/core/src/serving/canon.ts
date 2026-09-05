@@ -1,9 +1,8 @@
 import { authorize, sensitivity } from "../agents";
 import type { DenyReason, Grant, Sensitivity, Servable } from "../agents";
 import type { AuthorityTier } from "../contracts/proposal";
-import { isAuthorityTier } from "../contracts/proposal";
+import { canonAuthorities } from "../canon/authority";
 import { readHolds } from "../ledger/purge";
-import { tableExists } from "../ledger/schema";
 import { isLiveCanonPage, listCanonPagesReport, stringArray } from "../vault/pages";
 import type { CanonPage, SkippedPage } from "../vault/pages";
 import { PAGE_TAINTS } from "../vault/schema";
@@ -16,7 +15,7 @@ export interface CanonIndex {
   /** Vault-relative path with forward slashes, as the walk produced it. */
   byPath: Map<string, CanonPage>;
   holds: Set<string>;
-  /** Authority of the newest receipt per page path; absent when unwritten. */
+  /** Hash-bound effective authority of the current page bytes. */
   authority: Map<string, AuthorityTier>;
 }
 
@@ -34,27 +33,6 @@ export function asTaint(value: unknown): PageTaint | null {
     (PAGE_TAINTS as readonly string[]).includes(value)
     ? (value as PageTaint)
     : null;
-}
-
-/**
- * One query for the whole call: the authority a chunk carries is the tier of
- * the newest receipt that wrote its page. A page no receipt covers — an
- * imported vault, a page the owner wrote by hand — reports none rather than
- * borrowing a tier it never earned.
- */
-function readAuthority(ctx: ServeContext): Map<string, AuthorityTier> {
-  const byPath = new Map<string, AuthorityTier>();
-  if (!tableExists(ctx.db, "canon_receipts")) return byPath;
-  const rows = ctx.db
-    .query<{ page_path: string; authority: string }, []>(
-      `SELECT page_path, authority FROM canon_receipts
-        ORDER BY at ASC, receipt_id ASC`,
-    )
-    .all();
-  for (const row of rows) {
-    if (isAuthorityTier(row.authority)) byPath.set(row.page_path, row.authority);
-  }
-  return byPath;
 }
 
 /**
@@ -93,7 +71,7 @@ export function loadCanon(ctx: ServeContext): CanonIndex {
     byId,
     byPath,
     holds: new Set(readHolds(ctx.db).map((hold) => hold.page_path)),
-    authority: readAuthority(ctx),
+    authority: canonAuthorities(ctx.db, report.pages),
   };
 }
 

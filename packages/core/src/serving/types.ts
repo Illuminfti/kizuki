@@ -34,7 +34,7 @@ export interface CanonChunk {
   sensitivity: Sensitivity;
   /** `quoted` means the body carries verbatim capture inside blockquotes. */
   taint: PageTaint;
-  /** The tier of the receipt that last wrote the page; null when unwritten. */
+  /** Effective authority of the page snapshot, resolved against its byte hash. */
   authority: AuthorityTier | null;
   subjects: string[];
   sources: string[];
