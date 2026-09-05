@@ -1,0 +1,324 @@
+{
+  "schema": "kizuki.extraction-quality-responses/v1",
+  "mode": "scripted_contract",
+  "corpus_sha256": "a605d40fc431a43552cedc04a85a9b185620a41537ee2294351a042c268ceda3",
+  "model_reference": "fixture:quality-scripted",
+  "responses": [
+    {
+      "case_id": "q01",
+      "status": "ok",
+      "response": {
+        "claims": [
+          {
+            "kind": "claim",
+            "subject": "quality:ada",
+            "predicate": "employment.role",
+            "object": "Orchard library coordinator",
+            "polarity": "positive",
+            "body": "Ada is the coordinator for Orchard library.",
+            "valid_from": null,
+            "valid_to": null,
+            "confidence": 0.7,
+            "sensitivity": "private",
+            "event_ids": [
+              "q01-a"
+            ]
+          }
+        ]
+      },
+      "usage": {
+        "calls": 1,
+        "input_tokens": null,
+        "output_tokens": null
+      }
+    },
+    {
+      "case_id": "q02",
+      "status": "ok",
+      "response": {
+        "claims": [
+          {
+            "kind": "claim",
+            "subject": "quality:noor",
+            "predicate": "employment.works_at",
+            "object": "Meadow Studio",
+            "polarity": "positive",
+            "body": "Noor worked for Meadow Studio during the stated January to May interval.",
+            "valid_from": "2026-01-01T00:00:00.000Z",
+            "valid_to": "2026-05-01T00:00:00.000Z",
+            "confidence": 0.7,
+            "sensitivity": "private",
+            "event_ids": [
+              "q02-a"
+            ]
+          },
+          {
+            "kind": "claim",
+            "subject": "quality:noor",
+            "predicate": "employment.works_at",
+            "object": "Meadow Studio",
+            "polarity": "negative",
+            "body": "Noor is no longer employed by Meadow Studio from May onward.",
+            "valid_from": "2026-05-01T00:00:00.000Z",
+            "valid_to": null,
+            "confidence": 0.7,
+            "sensitivity": "private",
+            "event_ids": [
+              "q02-b"
+            ]
+          }
+        ]
+      },
+      "usage": {
+        "calls": 1,
+        "input_tokens": null,
+        "output_tokens": null
+      }
+    },
+    {
+      "case_id": "q03",
+      "status": "ok",
+      "response": {
+        "claims": [
+          {
+            "kind": "claim",
+            "subject": "quality:niko",
+            "predicate": "location.based_in",
+            "object": "Lumen",
+            "polarity": "positive",
+            "body": "Niko has been based in Lumen since March 10.",
+            "valid_from": "2026-03-10T00:00:00.000Z",
+            "valid_to": null,
+            "confidence": 0.7,
+            "sensitivity": "private",
+            "event_ids": [
+              "q03-a"
+            ]
+          },
+          {
+            "kind": "claim",
+            "subject": "quality:oren",
+            "predicate": "location.based_in",
+            "object": "Vale",
+            "polarity": "positive",
+            "body": "Oren is based in Vale; the start date is unknown.",
+            "valid_from": null,
+            "valid_to": null,
+            "confidence": 0.7,
+            "sensitivity": "private",
+            "event_ids": [
+              "q03-b"
+            ]
+          }
+        ]
+      },
+      "usage": {
+        "calls": 1,
+        "input_tokens": null,
+        "output_tokens": null
+      }
+    },
+    {
+      "case_id": "q04",
+      "status": "ok",
+      "response": {
+        "claims": [
+          {
+            "kind": "claim",
+            "subject": "quality:iris",
+            "predicate": "employment.role",
+            "object": "Atlas research lead",
+            "polarity": "positive",
+            "body": "Iris leads the Atlas research group.",
+            "valid_from": null,
+            "valid_to": null,
+            "confidence": 0.7,
+            "sensitivity": "private",
+            "event_ids": [
+              "q04-a"
+            ]
+          },
+          {
+            "kind": "claim",
+            "subject": "quality:iris",
+            "predicate": "employment.role",
+            "object": "Orion research lead",
+            "polarity": "positive",
+            "body": "Iris leads the Orion research group.",
+            "valid_from": null,
+            "valid_to": null,
+            "confidence": 0.7,
+            "sensitivity": "private",
+            "event_ids": [
+              "q04-b"
+            ]
+          }
+        ]
+      },
+      "usage": {
+        "calls": 1,
+        "input_tokens": null,
+        "output_tokens": null
+      }
+    },
+    {
+      "case_id": "q05",
+      "status": "ok",
+      "response": {
+        "claims": []
+      },
+      "usage": {
+        "calls": 1,
+        "input_tokens": null,
+        "output_tokens": null
+      }
+    },
+    {
+      "case_id": "q06",
+      "status": "ok",
+      "response": {
+        "claims": []
+      },
+      "usage": {
+        "calls": 1,
+        "input_tokens": null,
+        "output_tokens": null
+      }
+    },
+    {
+      "case_id": "q07",
+      "status": "ok",
+      "response": {
+        "claims": []
+      },
+      "usage": {
+        "calls": 1,
+        "input_tokens": null,
+        "output_tokens": null
+      }
+    },
+    {
+      "case_id": "q08",
+      "status": "ok",
+      "response": {
+        "claims": []
+      },
+      "usage": {
+        "calls": 1,
+        "input_tokens": null,
+        "output_tokens": null
+      }
+    },
+    {
+      "case_id": "q09",
+      "status": "ok",
+      "response": {
+        "claims": []
+      },
+      "usage": {
+        "calls": 1,
+        "input_tokens": null,
+        "output_tokens": null
+      }
+    },
+    {
+      "case_id": "q10",
+      "status": "ok",
+      "response": {
+        "claims": [
+          {
+            "kind": "claim",
+            "subject": "quality:ada",
+            "predicate": "location.based_in",
+            "object": "Rotterdam",
+            "polarity": "positive",
+            "body": "Ada is based in Rotterdam.",
+            "valid_from": null,
+            "valid_to": null,
+            "confidence": 0.7,
+            "sensitivity": "private",
+            "event_ids": [
+              "q10-a"
+            ]
+          },
+          {
+            "kind": "claim",
+            "subject": "quality:grace",
+            "predicate": "location.based_in",
+            "object": "Lisbon",
+            "polarity": "positive",
+            "body": "Grace is based in Lisbon.",
+            "valid_from": null,
+            "valid_to": null,
+            "confidence": 0.7,
+            "sensitivity": "private",
+            "event_ids": [
+              "q10-b"
+            ]
+          }
+        ]
+      },
+      "usage": {
+        "calls": 1,
+        "input_tokens": null,
+        "output_tokens": null
+      }
+    },
+    {
+      "case_id": "q11",
+      "status": "ok",
+      "response": {
+        "claims": [
+          {
+            "kind": "claim",
+            "subject": "quality:mira",
+            "predicate": "tool.uses",
+            "object": "Elm",
+            "polarity": "positive",
+            "body": "Mira uses the Elm tool for testing work.",
+            "valid_from": null,
+            "valid_to": null,
+            "confidence": 0.7,
+            "sensitivity": "private",
+            "event_ids": [
+              "q11-a"
+            ]
+          }
+        ]
+      },
+      "usage": {
+        "calls": 1,
+        "input_tokens": null,
+        "output_tokens": null
+      }
+    },
+    {
+      "case_id": "q12",
+      "status": "ok",
+      "response": {
+        "claims": [
+          {
+            "kind": "claim",
+            "subject": "quality:tess",
+            "predicate": "project.works_on",
+            "object": "Cedar library",
+            "polarity": "positive",
+            "body": "Tess contributes to Cedar library.",
+            "valid_from": null,
+            "valid_to": null,
+            "confidence": 0.7,
+            "sensitivity": "private",
+            "event_ids": [
+              "q12-a"
+            ]
+          }
+        ]
+      },
+      "usage": {
+        "calls": 1,
+        "input_tokens": null,
+        "output_tokens": null
+      }
+    }
+  ]
+}
