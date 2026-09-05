@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync } from "node:fs";
+import { closeSync, constants, existsSync, fchmodSync, fsyncSync, fstatSync, lstatSync, openSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { sha256Hex } from "../util/hash";
 import { requireSourceEvents } from "../ledger/source-grants";
@@ -113,6 +113,11 @@ export function appendSourceErasureReceipt(io: CanonIo, receipt: CanonReceipt): 
             const held = fstatSync(fd);
             if (held.ino !== stat.ino || held.dev !== stat.dev || held.nlink !== 1 || held.uid !== process.geteuid?.() || held.size > 32 * 1024 * 1024)
                 throw Error("source erasure receipt log unavailable");
+            if ((held.mode & 0o200) === 0) throw Error("source erasure receipt log is read-only");
+            // Tighten custody of the known native stream; its bytes confer no authority.
+            fchmodSync(fd,0o600);
+            fsyncSync(fd);
+            if ((fstatSync(fd).mode & 0o777) !== 0o600) throw Error("source erasure receipt log custody unavailable");
             content = readFileSync(fd, "utf8");
         }
         finally {

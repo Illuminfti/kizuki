@@ -1528,10 +1528,11 @@ for (const interruption of ["before-append", "before-row", "before-write", "owne
         if (interruption !== "delete-before-append")
             write(io, await storeClaim(db, bb.event.event_id, { kind: "merge", predicate: null, object: null, body: "B_SURVIVES_7194", frontmatter: { type: "person", title: "Shared" } }));
         revokeSourceGrant(db, { source_key: a, expected_revision: 1, operation_id: "interrupted-erasure" });
-        const { chmodSync, readFileSync, writeFileSync, existsSync } = await import("node:fs");
+        const { chmodSync, readFileSync, writeFileSync, existsSync, lstatSync } = await import("node:fs");
         const { dirname } = await import("node:path");
         const log = join(dir, ".kizuki", "receipts", "promotions.jsonl");
         const preimage = readFileSync(join(dir, original.page_path), "utf8");
+        if (interruption === "before-row") chmodSync(log, 0o664);
         if (interruption === "before-row")
             db.exec("CREATE TRIGGER fail_erasure_receipt BEFORE INSERT ON canon_receipts WHEN NEW.receipt_kind='purge_rewrite' BEGIN SELECT RAISE(FAIL,'synthetic pre-row interruption'); END");
         else if (interruption === "before-write")
@@ -1541,6 +1542,7 @@ for (const interruption of ["before-append", "before-row", "before-write", "owne
         const options = { ownedRetrieval: { stores: async () => ({ stores: [], absent_store_ids: [] }) } };
         const pending = await resumeSourceRevocation(db, dir, "interrupted-erasure", options);
         expect(pending.status).toBe("denied");
+        if (interruption === "before-row") expect(lstatSync(log).mode & 0o777).toBe(0o600);
         const path = join(dir, original.page_path);
         const partial = existsSync(path) ? readFileSync(path, "utf8") : "";
         if (interruption === "before-write")
@@ -1569,6 +1571,7 @@ for (const interruption of ["before-append", "before-row", "before-write", "owne
         if (interruption === "owner-edit")
             writeFileSync(path, partial + "\nOwner paragraph preserved.\n");
         const expected = existsSync(path) ? readFileSync(path, "utf8") : "";
+        if (interruption === "before-row") chmodSync(log, 0o664);
         if (interruption === "before-row")
             db.exec("DROP TRIGGER fail_erasure_receipt");
         chmodSync(log, 0o600);
@@ -1663,4 +1666,24 @@ test("an existing current ledger gains the metadata-only erasure journal without
     expect(reopened.query("SELECT * FROM canon_source_erasure_intents").all()).toEqual([]);
     expect(reopened.query("SELECT * FROM source_grants").all()).toEqual(before);
     reopened.close();
+});
+
+test("native receipt creation is private under a permissive child-process umask", () => {
+  const dir=mkdtempSync(join(tmpdir(),"receipt-create-mode-")); dirs.push(dir);
+  const core=join(import.meta.dir,"../src/index.ts");
+  const helpers=join(import.meta.dir,"canon/helpers.ts");
+  const fixtures=join(import.meta.dir,"fixtures.ts");
+  const code=`import {initVault,openLedger,accept} from ${JSON.stringify(core)};
+    import {write,storeClaim} from ${JSON.stringify(helpers)};
+    import {validEvent} from ${JSON.stringify(fixtures)};
+    import {lstatSync} from 'node:fs'; import {join} from 'node:path';
+    process.umask(0o002); const dir=${JSON.stringify(dir)}; initVault(dir);
+    const db=openLedger(join(dir,'.kizuki','kizuki.db'));
+    try { const event=accept(db,validEvent()); if(event.status!=='stored') throw Error('fixture');
+      write({db,vault_path:dir},await storeClaim(db,event.event.event_id));
+      console.log(lstatSync(join(dir,'.kizuki','receipts','promotions.jsonl')).mode&0o777);
+    } finally {db.close();}`;
+  const child=Bun.spawnSync([process.execPath,"-e",code],{stdout:"pipe",stderr:"pipe"});
+  expect(child.exitCode).toBe(0);
+  expect(Number(child.stdout.toString().trim())).toBe(0o600);
 });
