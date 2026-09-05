@@ -1,4 +1,4 @@
-import { DeadlineError, HealthReport, OAuthSession, freezeManifest, loopbackTransport, parseOAuthState, withDeadline, type CaptureEventInput, type Connector, type OAuthProvider, type OAuthTransport, type SecretResolver, type StatePersister, type SyncBatch } from '@kizuki/core';
+import { DeadlineError, HealthReport, KizukiError, OAuthSession, freezeManifest, loopbackTransport, parseOAuthState, withDeadline, type CaptureEventInput, type Connector, type OAuthProvider, type OAuthTransport, type SecretResolver, type StatePersister, type SyncBatch } from '@kizuki/core';
 import { Budget, HttpFailure, ORIGIN, request, type WhoopFetch } from './api';
 import { recordEvent } from './events';
 import { WHOOP_ID, CURSOR_SCHEMA, compareInstants, decodeCursor, digest, encodeCursor, encodeState, failure, integerId, parseState, planId, scopes, selection, type Selection, type Plan, type WhoopState } from './state';
@@ -33,6 +33,7 @@ export class WhoopConnector implements Connector {
     private pendingTokens = 0;
     private origin: { state: WhoopState; persist: StatePersister } | null = null;
     private operationBudget: Budget | null = null;
+    private tokenAdmission: { budget: Budget; refusal: KizukiError | null } | null = null;
     private busy = false;
     private disabled = false;
     private reload = false;
@@ -142,9 +143,18 @@ export class WhoopConnector implements Connector {
                     listen: path => transport.listen(path),
                     postForm: async (url, form) => {
                         this.live(g);
-                        if (this.operationBudget === null)
+                        const admission = this.tokenAdmission;
+                        if (admission === null || admission.budget !== this.operationBudget)
                             throw failure('unavailable');
-                        this.operationBudget.requestMs();
+                        try {
+                            admission.budget.requestMs();
+                        } catch (error) {
+                            // Core normalizes transport errors. Retain only locally
+                            // proven refusal before the transport boundary is entered.
+                            if (error instanceof KizukiError && (error.code === 'timeout' || admission.budget.exceeded))
+                                admission.refusal = error;
+                            throw error;
+                        }
                         // accessToken() owns the one remaining-aware timeout. A second
                         // competing timer here would obscure an interrupted exchange.
                         return transport.postForm(url, form);
@@ -184,6 +194,8 @@ export class WhoopConnector implements Connector {
         const timeoutMs = Math.min(5000, budget.remaining());
         if (budget.exhausted) throw failure('request_limit');
         const session = this.session!;
+        const admission = { budget, refusal: null as KizukiError | null };
+        this.tokenAdmission = admission;
         try {
             this.pendingTokens++;
             const exchange = Promise.resolve().then(() => {
@@ -196,8 +208,14 @@ export class WhoopConnector implements Connector {
             return token;
         }
         catch (error) {
+            // OAuthSession has not changed its tokens when local admission refuses.
+            // Once transport starts, keep fencing uncertain exchange/persistence.
+            if (admission.refusal !== null) throw admission.refusal;
             this.invalidate(g);
             throw failure(budget.exceeded ? 'request_limit' : error instanceof DeadlineError ? 'timeout' : 'unauthenticated');
+        }
+        finally {
+            if (this.tokenAdmission === admission) this.tokenAdmission = null;
         }
     }
     private async call(path: string, budget: Budget, query?: URLSearchParams, method: 'GET' | 'DELETE' = 'GET') {
