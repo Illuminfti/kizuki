@@ -20,6 +20,18 @@ export class SourceTombstoneError extends Error {
 
 const BINDING_KEYS = ["x-page-id", "x-page-hash", "x-page-receipt", "x-source-event", "x-page-proposal"];
 
+// The same control crosses proposal, claim and final canon boundaries. It may
+// never carry a structural assertion or a positive-belief binding key.
+type SourceTombstoneInput = ProposalInput & {
+  readonly subject?: string | null;
+  readonly predicate?: string | null;
+  readonly object?: string | null;
+  readonly claim_key?: string | null;
+  readonly authority?: string;
+  readonly polarity?: "positive" | "negative";
+  readonly intent?: "propose" | "correct";
+};
+
 /** A deleted source or retained control metadata cannot fall back to ordinary origin admission. */
 export function requiresSourceTombstoneBinding(db: Database, input: ProposalInput): boolean {
   return BINDING_KEYS.some(key => key in input.frontmatter) ||
@@ -83,12 +95,16 @@ export function sourceTombstoneProposal(
 /** Recompute the Core tuple; callers cannot select an origin exemption with a label. */
 export function isSourceTombstoneProposal(
   db: Database,
-  input: ProposalInput,
+  input: SourceTombstoneInput,
   context?: SourceTombstoneContext,
 ): boolean {
   if (context === undefined || input.kind !== "deletion" || input.producer !== "deterministic" ||
       input.provenance.length !== 1 || typeof input.target !== "string" ||
-      input.confidence !== 1 || (input.subjects?.length ?? 0) !== 0) return false;
+      input.confidence !== 1 || (input.subjects?.length ?? 0) !== 0 ||
+      (input.authority !== undefined && input.authority !== "connector_evidence") ||
+      input.subject != null || input.predicate != null || input.object != null || input.claim_key != null ||
+      (input.polarity !== undefined && input.polarity !== "positive") ||
+      (input.intent !== undefined && input.intent !== "propose")) return false;
   const tombstone = readEvent(db, input.provenance[0]!);
   if (tombstone === null || !tombstone.deleted) return false;
   const expected = sourceTombstoneProposal(db, tombstone, `${input.target}.md`, context);
@@ -99,7 +115,7 @@ export function isSourceTombstoneProposal(
 
 export function requireSourceTombstoneProposal(
   db: Database,
-  input: ProposalInput,
+  input: SourceTombstoneInput,
   context?: SourceTombstoneContext,
 ): void {
   if (context === undefined) throw new SourceTombstoneError("source_tombstone_vault_required");

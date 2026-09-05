@@ -23,6 +23,7 @@ import {
   type RunExecution,
 } from "./types";
 import { runWritePass } from "./write-pass";
+import { LegacyExtractReconciliationError, requireAtomicExtractReplay } from "./extract";
 
 export interface RailSyncResult {
   readonly events_synced: number;
@@ -296,32 +297,36 @@ export async function runRail(
   rail: RailId,
   options: RunRailOptions = {},
 ): Promise<RunReceipt> {
-  initServe(db);
-  recoverRunJournal(db, vaultPath);
-  const recoveryLock = tryWriteFlock(vaultPath);
-  if (recoveryLock !== null) {
-    try {
-      for (const orphan of db.query<{ run_id: string; holder_pid: number; model_ref: string | null; metrics: string; created_at: string }, []>("SELECT * FROM extract_usage").all()) {
-        if (activeRuns.has(orphan.run_id) || (orphan.holder_pid !== process.pid && pidAlive(orphan.holder_pid))) continue;
-        const usage = JSON.parse(orphan.metrics) as Pick<RunReceipt, "model" | "claims_rejected" | "claims_extracted">;
-        persistRunReceipt(db, vaultPath, { ...emptyRunTotals(), ...usage, run_id: orphan.run_id, rail: "sync",
-          started_at: orphan.created_at, finished_at: orphan.created_at, status: "failed", stopped: null,
-          model: { ...usage.model, model_ref: orphan.model_ref }, errors: [usage.model.usage_unknown === true ? "model attempt interrupted; token usage unknown" : "extraction interrupted after model decision"] });
-      }
-    } finally { recoveryLock.release(); }
-  }
   const runId = ulid();
   activeRuns.add(runId);
   try {
     const now = options.now ?? (() => new Date().toISOString());
     const started = now();
-    const hooks = withResolvedModel(options.hooks);
-    const config = loadServeConfig(vaultPath);
-    const budget = createDurableWriteBudget(db, vaultPath, () => budgetDay(now()), config);
-
     const totals = emptyRunTotals();
     let partial: Partial<RunReceipt> = {};
+    let hooks: RailHooks | undefined;
+    let budget: BudgetTracker | undefined;
     try {
+      // A failed preflight may append this run's audit receipt only. In particular,
+      // do not import older receipt/usage journals before validating a sync decision.
+      if (rail === "sync") requireAtomicExtractReplay(db);
+      initServe(db);
+      recoverRunJournal(db, vaultPath);
+      const recoveryLock = tryWriteFlock(vaultPath);
+      if (recoveryLock !== null) {
+        try {
+          for (const orphan of db.query<{ run_id: string; holder_pid: number; model_ref: string | null; metrics: string; created_at: string }, []>("SELECT * FROM extract_usage").all()) {
+            if (activeRuns.has(orphan.run_id) || (orphan.holder_pid !== process.pid && pidAlive(orphan.holder_pid))) continue;
+            const usage = JSON.parse(orphan.metrics) as Pick<RunReceipt, "model" | "claims_rejected" | "claims_extracted">;
+            persistRunReceipt(db, vaultPath, { ...emptyRunTotals(), ...usage, run_id: orphan.run_id, rail: "sync",
+              started_at: orphan.created_at, finished_at: orphan.created_at, status: "failed", stopped: null,
+              model: { ...usage.model, model_ref: orphan.model_ref }, errors: [usage.model.usage_unknown === true ? "model attempt interrupted; token usage unknown" : "extraction interrupted after model decision"] });
+          }
+        } finally { recoveryLock.release(); }
+      }
+      hooks = withResolvedModel(options.hooks);
+      const config = loadServeConfig(vaultPath);
+      budget = createDurableWriteBudget(db, vaultPath, () => budgetDay(now()), config);
       switch (rail) {
         case "sync":
           partial = await runSyncRail(db, vaultPath, budget, hooks, runId);
@@ -349,7 +354,8 @@ export async function runRail(
       }
     } catch (error) {
       if (error instanceof InjectedCrash) throw error;
-      partial = { status: "failed", errors: [redactReceiptError(error)] };
+      partial = { status: "failed", errors: [redactReceiptError(error)],
+        ...(error instanceof LegacyExtractReconciliationError ? { stopped: error.code } : {}) };
     }
 
     const usage = db.query<{ model_ref: string | null; metrics: string }, [string]>("SELECT model_ref,metrics FROM extract_usage WHERE run_id=?").get(runId);
@@ -380,7 +386,7 @@ export async function runRail(
         ...totals.retrieval,
         ...partial.retrieval,
       },
-      budget: partial.budget ?? budget.usage(),
+      budget: partial.budget ?? budget?.usage() ?? totals.budget,
       errors: [...(partial.errors ?? [])].map((item) =>
         typeof item === "string" ? item : redactReceiptError(item),
       ),

@@ -1,3 +1,4 @@
+import { requireSourceTombstoneProposal, requiresSourceTombstoneBinding } from "../canon/source-tombstone";
 import { inheritSourcePortBindings } from "../ledger/source-grants";
 import { SelfOriginError, requireExternalEvents } from "../ledger/event-origin";
 import { readReceiptsLog } from "../canon/receipts";
@@ -13,24 +14,27 @@ import {
 } from "../canon";
 import { machineOriginPath } from "../canon/origin";
 import type { Claim } from "../contracts/proposal";
-import type { ClaimDraft, ProduceResult, ProducerDiagnostic, ProducerPort } from "../contracts/producer";
+import type { ProduceResult, ProducerDiagnostic, ProducerPort } from "../contracts/producer";
 import { formatProducerDiagnostic, readProducerDiagnostic } from "../producer/diagnostics";
 import { invokeProducer } from "../producer/result";
 import type { RunModelReport } from "./types";
 import {
-  insertClaim,
+  prepareClaimInsert,
+  retryRetrievalOps,
   listUnwrittenLiveClaims,
   reviveUncontestedSkipped,
 } from "../claims/store";
 import type { ClaimsIo } from "../claims/store";
 import {
   commitExtractCursor,
-  completeDurableExtractBatch,
+  fileAndCompleteDurableExtractBatch,
   DurableExtractAuthorizationError,
   journalExtractBatch,
   mineLiveDrafts,
   producedClaimInput,
   readDurableExtractBatch,
+  requireAtomicExtractReplay,
+  type DurableExtractBatch,
 } from "./extract";
 import { tryWriteFlock } from "./flock";
 import { redactReceiptError } from "./receipts";
@@ -183,6 +187,8 @@ export async function runWritePass(
   vaultPath: string,
   options: WritePassOptions,
 ): Promise<WritePassResult> {
+  if (options.claims !== undefined && options.claims.db !== db) throw new Error("claims ledger does not match write pass");
+  requireAtomicExtractReplay(db);
   const lock = tryWriteFlock(vaultPath);
   if (lock === null) {
     return {
@@ -231,15 +237,11 @@ async function runWritePassLocked(
       pendingBatch = null;
     }
     if (stopped === null && pendingBatch !== null) {
-      const filed = await fileProducedDrafts(options.claims, pendingBatch.filing_drafts, "model", pendingBatch.model_ref, pendingBatch.historical_source_write);
-      // Replay files an existing decision; it is not another extraction.
-      extracted = 0;
-      deduped += filed.deduped;
-      superseded += filed.superseded;
       try {
-        if (!completeDurableExtractBatch(db, pendingBatch, options.producer)) {
-          errors.push("extract cursor changed before durable batch commit");
-        }
+        const filed = await fileProducedDrafts(options.claims, pendingBatch, options.producer);
+        // Replay files an existing decision; it is not another extraction.
+        if (filed === null) errors.push("extract cursor changed before durable batch commit");
+        else { deduped += filed.deduped; superseded += filed.superseded; }
       } catch (error) {
         if (!(error instanceof DurableExtractAuthorizationError)) throw error;
         stopped = `source:${error.code}`;
@@ -284,19 +286,13 @@ async function runWritePassLocked(
           break;
         }
         if (durable === null) throw new Error("durable extraction decision is missing");
-        const filed = await fileProducedDrafts(
-          options.claims,
-          durable.filing_drafts,
-          "model",
-          durable.model_ref,
-          durable.historical_source_write,
-        );
-        extracted = mined.mined.count;
-        deduped += filed.deduped;
-        superseded += filed.superseded;
         try {
-          if (!completeDurableExtractBatch(db, durable, options.producer)) {
-            errors.push("extract cursor changed before commit");
+          const filed = await fileProducedDrafts(options.claims, durable, options.producer);
+          if (filed === null) errors.push("extract cursor changed before commit");
+          else {
+            extracted = mined.mined.count;
+            deduped += filed.deduped;
+            superseded += filed.superseded;
           }
         } catch (error) {
           if (!(error instanceof DurableExtractAuthorizationError)) throw error;
@@ -332,7 +328,8 @@ async function runWritePassLocked(
     if (canonWrites >= WRITE_PASS_LIMIT) break;
     const receiptsBefore = loopReceiptCount(db, vaultPath);
     try {
-      if (claim.producer === "model") requireExternalEvents(db, claim.provenance);
+      if (requiresSourceTombstoneBinding(db, claim)) requireSourceTombstoneProposal(db, claim, io);
+      else requireExternalEvents(db, claim.provenance);
       const decision = segregateLoopDecision(resolveTarget(io, claim));
       if (decision.action === "skip") continue;
       applyCanonWrite(io, claim, decision, {
@@ -383,33 +380,21 @@ function loopReceiptCount(db: Database, vaultPath: string): number {
 
 async function fileProducedDrafts(
   io: ClaimsIo,
-  drafts: readonly ClaimDraft[],
-  producer: Claim["producer"],
-  modelRef: string | null,
-  historicalSourceWrite?: object,
-): Promise<{ deduped: number; superseded: number }> {
+  batch: DurableExtractBatch,
+  producer: ProducerPort,
+): Promise<{ deduped: number; superseded: number } | null> {
+  const prepared = [];
+  for (const draft of batch.filing_drafts) {
+    prepared.push(await prepareClaimInsert(io, producedClaimInput(io.db, draft, "model", batch.model_ref)));
+  }
+  const results = fileAndCompleteDurableExtractBatch(io.db, batch, producer, prepared);
+  if (results === null) return null;
   let deduped = 0;
   let superseded = 0;
-  for (const draft of drafts) {
-    const result = await insertClaim(
-      historicalSourceWrite === undefined ? io : { ...io, historical_source_write: historicalSourceWrite },
-      producedClaimInput(io.db, draft, producer, modelRef),
-    );
-    switch (result.outcome) {
-      case "stored":
-        superseded += result.superseded.length;
-        break;
-      case "duplicate":
-        deduped += 1;
-        break;
-      case "skipped":
-      case "contested":
-        break;
-      default: {
-        const _exhaustive: never = result;
-        return _exhaustive;
-      }
-    }
+  for (const result of results) {
+    if (result.outcome === "stored") superseded += result.superseded.length;
+    else if (result.outcome === "duplicate") deduped += 1;
   }
+  await retryRetrievalOps(io);
   return { deduped, superseded };
 }
