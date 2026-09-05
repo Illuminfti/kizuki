@@ -2,6 +2,10 @@
 
 `openEmbeddedRetrievalPort(ctx, options)` asynchronously acquires the writer
 lease and opens one PGlite connection under `ctx.data_dir/store/pgdata`.
+A lifetime native advisory lock on a stable lease inode excludes other writers;
+process death releases the kernel lock. Holder tokens bind release and heartbeat
+to the acquiring instance. Legacy live PID holders remain busy, while dead stale
+or interrupted ownerless acquisitions recover with a receipt.
 Callers await `close()` before opening that directory again. The deprecated
 `createEmbeddedRetrievalPort` export is also asynchronous.
 
@@ -20,12 +24,19 @@ chunk configuration disables vector retrieval while lexical retrieval remains
 available. `embedPending()` resumes the durable backlog after interruption.
 
 `rebuildFromDocuments()` accepts an iterable or async iterable of authoritative
-`RetrievalDoc` values. It stages documents in SQL and replaces the active
-derived rows in one transaction. Source failure leaves the active index
-unchanged. Mutations and active embedding work must finish before a rebuild;
+`RetrievalDoc` values. It stages documents and all required embeddings in SQL
+before replacing active documents, vectors, HNSW and metadata in one transaction.
+Source, model and promotion-transaction failures leave the active index unchanged.
+Vector-layer rebuild uses the same staging path. Without its embedding provider,
+an existing embedded index cannot be replaced by a lexical-only rebuild. Mutations and active embedding work must finish before a rebuild;
 conflicts return a retryable error. Legacy JSON is never searched or imported
 as trusted data. A legacy store remains unavailable until a successful
 explicit authoritative rebuild removes its legacy files.
+
+`engine.json` preserves creation time and projects committed SQL space/rebuild
+metadata. Atomic file writes fsync contents and the containing directory; reopen
+repairs a projection interrupted after SQL commit. Surface opens wait for an
+in-progress close; failed close remains unavailable instead of opening beside it.
 
 PGlite 0.5.8 and pglite-pgvector 0.0.9 are exact dependencies. Five engine assets
 are statically imported for Bun compilation and checked against fixed SHA-256
@@ -34,6 +45,9 @@ the port directory and removed after the connection closes. No runtime asset
 download is used.
 
 ## Qualification limits
+
+- Native writer locking is qualified on Linux with libc. macOS remains an
+  independent qualification gate; Windows is not implemented.
 
 - The inherited chunker splits whitespace. It records its configured chunk
   sizes, but does not implement each embedding provider's tokenizer. This is

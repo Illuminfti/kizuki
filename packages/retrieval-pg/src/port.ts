@@ -8,7 +8,7 @@ import type { LeaseReceipt } from "./lease";
 import { candidateFromDoc, finalizeRecipe, hitsFromCandidates, walkNeighbors, MAX_WALK_DEPTH } from "./rank";
 import { SqlStore } from "./sql-store";
 import type { CandidateRow } from "./sql-store";
-import { engineMismatch } from "./store";
+import { chunkDocument, engineMismatch } from "./store";
 import type { EngineJson, EmbedCheckpoint } from "./store";
 import { assertNoStoreTransaction, runStoreTransaction } from "./txn";
 import { sha256Text, writeAtomic } from "./atomic";
@@ -60,6 +60,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
   }
   async initialize(): Promise<void> {
     this.checkpoint = await this.store.meta("checkpoint") as EmbedCheckpoint | null;
+    await this.syncEngineMetadata();
   }
   async upsert(docs: readonly RetrievalDoc[]): Promise<RetrievalMutationReport> {
     this.assertMutable();
@@ -215,7 +216,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
   queueDepth(): number { return this.lease.inspect().queue_depth; }
   acquireWaiting(holderId: string, timeoutMs: number): Promise<LeaseReceipt> { return this.lease.acquire(holderId, timeoutMs); }
   embedPending(): Promise<void> {
-    this.assertOpen();
+    this.assertMutable();
     assertNoStoreTransaction("embedPending");
     if (this.embeddingWork !== undefined) {
       return this.embeddingWork;
@@ -229,7 +230,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
       throw new PortError("unavailable", "embedding port is not configured", false);
     }
     const space = this.effectiveSpace();
-    await this.store.run(() => this.store.ensureSpace(space));
+    await this.store.run(async () => { await this.store.ensureSpace(space); await this.syncEngineMetadata(); });
     while (!this.closed) {
       const pending = await this.store.run(() => this.store.pending());
       if (pending === undefined || this.closed) {
@@ -267,11 +268,17 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
       throw new PortError("config_invalid", "all-layer rebuild requires authoritative documents via rebuildFromDocuments", false);
     }
     if (layer === "vector") {
-      await this.store.run(() => this.store.transaction(async (tx) => {
-        await tx.exec("DROP INDEX IF EXISTS retrieval_chunks_hnsw_cosine; UPDATE retrieval_chunks SET embedding=NULL,space=NULL,embedded_at=NULL; DELETE FROM retrieval_meta WHERE key IN ('space','checkpoint')");
-        this.checkpoint = null;
-      }));
-      await this.embedPending();
+      if (this.embedding === undefined) throw new PortError("unavailable", "vector rebuild requires an embedding port", false);
+      const store = this.store;
+      await this.rebuildFromDocuments((async function* () {
+        let last = "";
+        for (;;) {
+          const rows = await store.run(async () => (await store.db.query<{doc: RetrievalDoc}>(
+            "SELECT doc FROM retrieval_docs WHERE doc_id>$1 ORDER BY doc_id LIMIT 100", [last])).rows);
+          if (rows.length === 0) break;
+          for (const row of rows) { last = row.doc.doc_id; yield row.doc; }
+        }
+      })());
     }
     else {
       await this.store.run(() => this.store.transaction(async tx => {
@@ -285,57 +292,94 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
               FROM retrieval_docs d CROSS JOIN LATERAL unnest(d.subjects) AS subject;
             REINDEX TABLE entity_edges`);
         }
+        await this.store.setMeta("rebuilt", this.ctx.clock(), tx);
       }));
+      await this.store.run(() => this.syncEngineMetadata());
     }
   }
-  /** Stage in SQL, then replace in one transaction. A source failure never changes live rows. */
+  /** Stage documents and required vectors before atomically replacing the active index. */
   async rebuildFromDocuments(docs: AsyncIterable<RetrievalDoc> | Iterable<RetrievalDoc>): Promise<void> {
     this.assertMutable();
-    if(this.embeddingWork!==undefined)throw new PortError("unavailable","embedding work is active; retry rebuild",true);
+    if (this.embeddingWork !== undefined) throw new PortError("unavailable", "embedding work is active; retry rebuild", true);
+    const space = this.embedding === undefined ? null : this.effectiveSpace();
     this.rebuilding = true;
-    // A named temporary table belongs to this single connection and is never served.
     try {
-      await this.store.run(() => this.store.db.exec("CREATE TEMP TABLE rebuild_docs (doc_id text PRIMARY KEY,doc jsonb NOT NULL)"));
+      if (space === null && await this.store.run(() => this.store.meta("space")) !== null) {
+        throw new PortError("unavailable", "rebuilding an embedded index requires its embedding port", false);
+      }
+      if (space !== null && (!Number.isInteger(space.dims) || space.dims < 1 || space.dims > 2000)) {
+        throw new PortError("config_invalid", "embedding dimensions must be 1..2000 for HNSW", false);
+      }
+      await this.store.run(() => this.store.db.exec(`
+        CREATE TEMP TABLE rebuild_docs (doc_id text PRIMARY KEY,doc jsonb NOT NULL);
+        CREATE TEMP TABLE rebuild_vectors (chunk_id text PRIMARY KEY,embedding vector NOT NULL);`));
       for await (const raw of docs) {
+        this.assertOpen();
         const doc = validateRetrievalDoc(raw);
         await this.store.run(() => this.store.db.query("INSERT INTO rebuild_docs VALUES($1,$2::jsonb) ON CONFLICT(doc_id) DO UPDATE SET doc=excluded.doc", [doc.doc_id, JSON.stringify(doc)]));
       }
-      await this.store.run(() => this.store.transaction(async (tx) => {
-        await tx.exec("DELETE FROM retrieval_docs; DROP INDEX IF EXISTS retrieval_chunks_hnsw_cosine; DELETE FROM retrieval_meta WHERE key IN ('space','checkpoint')");
-        // Bounded paging keeps the rebuild independent of corpus-sized JS maps.
+      if (space !== null) {
         let last = "";
         for (;;) {
-          const rows = (await tx.query<{
-            doc: RetrievalDoc;
-          }>("SELECT doc FROM rebuild_docs WHERE doc_id>$1 ORDER BY doc_id LIMIT 100", [last])).rows;
-          if (rows.length === 0) {
-            break;
-          }
-          for (const row of rows) {
-            await this.store.writeDoc(tx, row.doc, this.tokens, this.overlap);
-            last = row.doc.doc_id;
+          const rows = await this.store.run(async () => (await this.store.db.query<{doc: RetrievalDoc}>(
+            "SELECT doc FROM rebuild_docs WHERE doc_id>$1 ORDER BY doc_id LIMIT 100", [last])).rows);
+          if (rows.length === 0) break;
+          for (const {doc} of rows) {
+            for (const chunk of chunkDocument(doc, this.tokens, this.overlap)) {
+              assertNoStoreTransaction("embedDocs");
+              const [vector] = await this.embedding!.embedDocs([{chunk_id: chunk.chunk_id, doc_id: doc.doc_id, text: chunk.text, index: chunk.index}]);
+              this.validateVector(vector ?? null, space);
+              this.assertOpen();
+              await this.store.run(() => this.store.db.query("INSERT INTO rebuild_vectors VALUES($1,$2::vector)", [chunk.chunk_id, JSON.stringify([...vector!])]));
+            }
+            last = doc.doc_id;
           }
         }
-        await this.store.setMeta("rebuilt", this.ctx.clock(), tx);
+      }
+      await this.store.run(async () => {
+        this.assertOpen();
+        await this.store.transaction(async tx => {
+          await tx.exec("DELETE FROM retrieval_docs; DROP INDEX IF EXISTS retrieval_chunks_hnsw_cosine; DELETE FROM retrieval_meta WHERE key IN ('space','checkpoint')");
+          let last = "";
+          for (;;) {
+            const rows = (await tx.query<{doc: RetrievalDoc}>("SELECT doc FROM rebuild_docs WHERE doc_id>$1 ORDER BY doc_id LIMIT 100", [last])).rows;
+            if (rows.length === 0) break;
+            for (const {doc} of rows) { await this.store.writeDoc(tx, doc, this.tokens, this.overlap); last = doc.doc_id; }
+          }
+          if (space !== null) {
+            await tx.query("UPDATE retrieval_chunks c SET embedding=v.embedding,space=$1,embedded_at=$2 FROM rebuild_vectors v WHERE c.chunk_id=v.chunk_id", [space.id, this.ctx.clock()]);
+            await tx.exec(`CREATE INDEX retrieval_chunks_hnsw_cosine ON retrieval_chunks USING hnsw((embedding::vector(${space.dims})) vector_cosine_ops)`);
+            await this.store.setMeta("space", space, tx);
+          }
+          await this.store.setMeta("rebuilt", this.ctx.clock(), tx);
+          await this.store.setMeta("migration_required", false, tx);
+        });
         this.checkpoint = null;
-      }));
-    }
-    finally {
-      try {
-        await this.store.run(() => this.store.db.exec("DROP TABLE IF EXISTS rebuild_docs"));
+        await this.syncEngineMetadata();
+      });
+      for (const name of ["docs.json", "graph.json", "embed-checkpoint.json", "self-writes.json"]) {
+        rmSync(join(this.ctx.data_dir, "store", name), { force: true });
       }
-      finally {
-        this.rebuilding = false;
-      }
-    }
-    for (const name of ["docs.json", "graph.json", "embed-checkpoint.json", "self-writes.json"]) {
-      rmSync(join(this.ctx.data_dir, "store", name), { force: true });
-    }
-    await this.store.run(() => this.store.setMeta("migration_required", false));
-    if (this.embedding !== undefined) {
-      await this.embedPending();
+    } finally {
+      try { if (!this.closed) await this.store.run(() => this.store.db.exec("DROP TABLE IF EXISTS rebuild_vectors; DROP TABLE IF EXISTS rebuild_docs")); }
+      finally { this.rebuilding = false; }
     }
   }
+
+  /** engine.json is a recoverable projection of committed SQL identity metadata. */
+  private async syncEngineMetadata(): Promise<void> {
+    const space = await this.store.meta("space") as EmbeddingSpace | null;
+    const metadata: EngineJson = {
+      port: this.descriptor.id, contract: this.descriptor.contract, contract_minor: this.descriptor.contract_minor,
+      space: space?.id ?? null, created_at: await this.store.meta("created_at") as string,
+      rebuilt_at: await this.store.meta("rebuilt") as string | null,
+    };
+    engineMismatch(metadata, metadata);
+    const path = join(this.ctx.data_dir, "engine.json");
+    const content = JSON.stringify({...metadata, engine: "pglite", schema: 1}) + "\n";
+    if (!existsSync(path) || readFileSync(path, "utf8") !== content) writeAtomic(path, content);
+  }
+
   watch(options: Omit<RefreshWatcherOptions, "isSelfWrite" | "refresh"> & {
     refresh?: () => Promise<void>;
   }): RefreshWatcher {
@@ -361,11 +405,10 @@ export async function openEmbeddedRetrievalPort(ctx: PortContext, options: Embed
   try {
     const enginePath = join(ctx.data_dir, "engine.json");
     const expected: EngineJson = { port: EMBEDDED_RETRIEVAL_DESCRIPTOR.id, contract: EMBEDDED_RETRIEVAL_DESCRIPTOR.contract, contract_minor: EMBEDDED_RETRIEVAL_DESCRIPTOR.contract_minor, space: null, created_at: ctx.clock(), rebuilt_at: null };
-    if (existsSync(enginePath)) {
-      engineMismatch(JSON.parse(readFileSync(enginePath, "utf8")) as EngineJson, expected);
-    }
+    const existing = existsSync(enginePath) ? JSON.parse(readFileSync(enginePath, "utf8")) as EngineJson : null;
+    engineMismatch(existing, expected);
     store = await SqlStore.open(ctx.data_dir);
-    writeAtomic(enginePath, JSON.stringify({ ...expected, engine: "pglite", schema: 1 }) + "\n");
+    if (await store.meta("created_at") === null) await store.setMeta("created_at", existing?.created_at ?? expected.created_at);
     const port = new EmbeddedRetrievalPort(ctx, store, lease, receipt, options);
     await port.initialize();
     return port;

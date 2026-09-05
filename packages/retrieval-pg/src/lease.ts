@@ -1,11 +1,15 @@
 import {
-  appendFileSync,
+  closeSync,
+  fsyncSync,
+  openSync,
+  writeSync,
   existsSync,
   mkdirSync,
   readFileSync,
+  statSync,
   rmSync,
 } from "node:fs";
-import { PortError, isPlainObject, isRfc3339 } from "@kizuki/core";
+import { PortError, isPlainObject, isRfc3339, tryAdvisoryFileLock } from "@kizuki/core";
 import { ensureDir, writeAtomic } from "./atomic";
 import {
   LEASE_HELD_REL,
@@ -23,6 +27,7 @@ export interface LeaseHolder {
   readonly holder_id: string;
   readonly heartbeat_at: string;
   readonly acquired_at: string;
+  readonly ownership_token?: string;
 }
 
 export interface LeaseReceipt {
@@ -61,6 +66,7 @@ function parseHolder(value: unknown): LeaseHolder | null {
     holder_id: value["holder_id"],
     heartbeat_at: value["heartbeat_at"],
     acquired_at: value["acquired_at"],
+    ...(typeof value["ownership_token"] === "string" ? { ownership_token: value["ownership_token"] } : {}),
   };
 }
 
@@ -68,8 +74,8 @@ export function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
   }
 }
 
@@ -85,6 +91,7 @@ export function heartbeatAgeMs(
 export class WriterLease {
   private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
   private holder: LeaseHolder | null = null;
+  private unlock: (() => void) | undefined;
   private readonly heartbeatMs: number;
   private readonly now: () => string;
 
@@ -114,51 +121,40 @@ export class WriterLease {
 
   tryAcquire(holderId: string): LeaseReceipt {
     ensureDir(dataPath(this.dataDir, "lease"));
-    const existing = this.readHolder();
-    const now = this.now();
-    const nowMs = Date.parse(now);
-    if (existing !== null) {
-      if (isProcessAlive(existing.pid)) {
-        throw new PortError(
-          "lease_required",
-          `writer lease is held by live pid ${existing.pid}`,
-          true,
-        );
+    if (this.unlock !== undefined) throw new PortError("lease_required", "writer lease is already held", true);
+    let lock;
+    try { lock = tryAdvisoryFileLock(dataPath(this.dataDir, "lease/writer.lock")); }
+    catch { throw new PortError("unavailable", "retrieval native writer lock is unavailable", false); }
+    if (lock === null) throw new PortError("lease_required", "writer lease is held", true);
+    const unlock = () => lock.release();
+    try {
+      const existing = this.readHolder();
+      const now = this.now();
+      if (existing !== null) {
+        // Compatibility: a live pre-flock writer must still never be stolen.
+        if (isProcessAlive(existing.pid)) throw new PortError("lease_required", `writer lease is held by live pid ${existing.pid}`, true);
+        if (heartbeatAgeMs(existing.heartbeat_at, Date.parse(now)) <= STALE_HEARTBEAT_MULTIPLIER * this.heartbeatMs) {
+          throw new PortError("lease_required", "writer lease heartbeat is still fresh", true);
+        }
       }
-      const stale =
-        heartbeatAgeMs(existing.heartbeat_at, nowMs) >
-        STALE_HEARTBEAT_MULTIPLIER * this.heartbeatMs;
-      if (!stale) {
-        throw new PortError(
-          "lease_required",
-          "writer lease heartbeat is still fresh",
-          true,
-        );
+      const held = dataPath(this.dataDir, LEASE_HELD_REL);
+      const reclaimed = existsSync(held);
+      if (reclaimed && existing === null && Date.parse(now) - statSync(held).mtimeMs <= STALE_HEARTBEAT_MULTIPLIER * this.heartbeatMs) {
+        throw new PortError("lease_required", "ownerless writer acquisition is still fresh", true);
       }
-      this.forceRemoveHeld();
+      if (reclaimed) this.forceRemoveHeld();
+      this.createHeldDir();
       const holder = this.writeHolder(holderId, now);
-      const receipt: LeaseReceipt = {
-        action: "reclaimed",
-        previous: existing,
-        holder,
-        at: now,
-      };
+      const receipt: LeaseReceipt = { action: reclaimed ? "reclaimed" : "acquired", previous: existing, holder, at: now };
       this.appendReceipt(receipt);
+      this.unlock = unlock;
       this.startHeartbeat();
       return receipt;
+    } catch (error) {
+      try { if (this.holder !== null && this.readHolder()?.ownership_token === this.holder.ownership_token) this.forceRemoveHeld(); }
+      finally { this.holder = null; unlock(); }
+      throw error;
     }
-
-    this.createHeldDir();
-    const holder = this.writeHolder(holderId, now);
-    const receipt: LeaseReceipt = {
-      action: "acquired",
-      previous: null,
-      holder,
-      at: now,
-    };
-    this.appendReceipt(receipt);
-    this.startHeartbeat();
-    return receipt;
   }
 
   async acquire(
@@ -196,7 +192,10 @@ export class WriterLease {
   }
 
   heartbeat(): void {
-    if (this.holder === null) return;
+    if (this.holder === null || this.unlock === undefined) return;
+    if (this.readHolder()?.ownership_token !== this.holder.ownership_token) {
+      throw new PortError("lease_required", "writer lease ownership changed", false);
+    }
     const next: LeaseHolder = {
       ...this.holder,
       heartbeat_at: this.now(),
@@ -213,18 +212,18 @@ export class WriterLease {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = undefined;
     }
-    const previous = this.holder ?? this.readHolder();
+    const previous = this.holder;
+    const unlock = this.unlock;
     this.holder = null;
-    this.forceRemoveHeld();
-    if (previous === null) return null;
-    const receipt: LeaseReceipt = {
-      action: "released",
-      previous,
-      holder: null,
-      at: this.now(),
-    };
-    this.appendReceipt(receipt);
-    return receipt;
+    this.unlock = undefined;
+    if (unlock === undefined || previous === null) return null;
+    try {
+      if (this.readHolder()?.ownership_token !== previous.ownership_token) return null;
+      this.forceRemoveHeld();
+      const receipt: LeaseReceipt = { action: "released", previous, holder: null, at: this.now() };
+      this.appendReceipt(receipt);
+      return receipt;
+    } finally { unlock(); }
   }
 
   readReceipts(): LeaseReceipt[] {
@@ -271,6 +270,7 @@ export class WriterLease {
       holder_id: holderId,
       heartbeat_at: at,
       acquired_at: at,
+      ownership_token: crypto.randomUUID(),
     };
     writeAtomic(
       dataPath(this.dataDir, LEASE_HOLDER_REL),
@@ -337,7 +337,9 @@ export class WriterLease {
   private appendReceipt(receipt: LeaseReceipt): void {
     const path = dataPath(this.dataDir, LEASE_RECEIPTS_REL);
     ensureDir(dataPath(this.dataDir, "lease"));
-    appendFileSync(path, `${JSON.stringify(receipt)}\n`, { mode: 0o600 });
+    const fd = openSync(path, "a", 0o600);
+    try { writeSync(fd, `${JSON.stringify(receipt)}\n`); fsyncSync(fd); }
+    finally { closeSync(fd); }
   }
 }
 

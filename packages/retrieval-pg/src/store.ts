@@ -1,4 +1,4 @@
-import { PortError } from "@kizuki/core";
+import { PortError, isRfc3339 } from "@kizuki/core";
 import type { RetrievalDoc, Sensitivity } from "@kizuki/core";
 export interface StoredChunk {
   readonly chunk_id: string;
@@ -118,7 +118,10 @@ export function engineMismatch(
   if (
     existing.port !== expected.port ||
     existing.contract !== expected.contract ||
-    existing.contract_minor !== expected.contract_minor
+    existing.contract_minor !== expected.contract_minor ||
+    !isRfc3339(existing.created_at) ||
+    (existing.rebuilt_at !== null && !isRfc3339(existing.rebuilt_at)) ||
+    (existing.space !== null && (typeof existing.space !== "string" || existing.space.length === 0))
   ) {
     throw new PortError(
       "config_invalid",
