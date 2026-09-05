@@ -115,24 +115,18 @@ describe("rebuildDerived", () => {
     expect(second.graph.edges).toBe(first.graph.edges);
   });
 
-  test("one malformed note does not abort rebuildSearch or rebuildGraph", () => {
+  test("malformed canon preserves the last complete search and graph generation", () => {
     const { db, vaultPath } = fixture();
+    const prior = rebuildDerived(db, vaultPath);
+    const documents = db.query("SELECT * FROM search_documents ORDER BY doc_id").all();
+    const edges = db.query("SELECT * FROM graph_edges").all();
     writeFileSync(join(vaultPath, "facts", "orphan.md"), "no frontmatter\n");
 
-    const result = rebuildDerived(db, vaultPath);
-    expect(result.search.pages).toBe(1);
-    expect(result.graph.pages).toBe(1);
-    expect(result.graph.edges).toBe(3);
-    expect(result.search.skipped.map(({ relPath }) => relPath)).toEqual([
-      "facts/orphan.md",
-    ]);
-    expect(result.graph.skipped.map(({ relPath }) => relPath)).toEqual([
-      "facts/orphan.md",
-    ]);
-    expect(result.search.status).toBe("degraded");
-    expect(result.graph.status).toBe("degraded");
-    expect(result.generation).toBe(result.search.generation);
-    expect(result.generation).toBe(result.graph.generation);
+    expect(() => rebuildDerived(db, vaultPath)).toThrow("canon is unreadable");
+    expect(db.query("SELECT * FROM search_documents ORDER BY doc_id").all()).toEqual(documents);
+    expect(db.query("SELECT * FROM graph_edges").all()).toEqual(edges);
+    expect(readDerivedMeta(db, "search")?.generation).toBe(prior.generation);
+    expect(readDerivedMeta(db, "graph")?.generation).toBe(prior.generation);
   });
 
   test("rejects a forged derived stamp", () => {
