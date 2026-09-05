@@ -521,6 +521,7 @@ scans. There is no benchmark claim hidden in a test count.
 | [Current direction](docs/CURRENT.md) | Product invariants and release-proof boundaries. |
 | [Migration](docs/legacy-import.md) | Bringing an existing wiki or event history into Kizuki. |
 | [Native build](docs/native-build.md) | Local binaries, checksums, and smoke tests. |
+| [Release acceptance](docs/release-acceptance.md) | Exact-artifact evidence inventory, missing gates, and the unfamiliar-user protocol. |
 
 ## Retrieval credit
 

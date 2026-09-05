@@ -96,6 +96,11 @@ export function parseBuildInfo(path: string): BuildInfo {
   } catch {
     throw new Error("release BUILD.json is unreadable");
   }
+  return parseBuildInfoValue(value);
+}
+
+/** Allows bounded readers to validate the exact bytes they already hashed. */
+export function parseBuildInfoValue(value: unknown): BuildInfo {
   if (!isObject(value) || Object.keys(value).sort().join(",") !== "bun_version,schema,source_sha,target" ||
       value["schema"] !== "kizuki.release-build/v1" || typeof value["source_sha"] !== "string" ||
       !/^[0-9a-f]{40}$/.test(value["source_sha"]) || typeof value["target"] !== "string" ||
