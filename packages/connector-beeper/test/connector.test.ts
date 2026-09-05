@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { validateEventInput } from "@kizuki/core";
 import { BEEPER_CONNECTOR_ID, BeeperConnector } from "../src";
 import type { BeeperFetch } from "../src";
 import { runConformance } from "../../connectors/src/testkit";
@@ -66,6 +67,20 @@ test("preserves safe attachment references without downloading or storing provid
   ]);
   expect(JSON.stringify(event)).not.toContain("signed.invalid");
   expect(JSON.stringify(event)).not.toContain("/private/preview");
+});
+
+test("preserves a native attachment identifier at the event contract boundary", async () => {
+  const attachmentId = "🎉".repeat(512);
+  const value = await connected(async () => reply({
+    items: [{
+      ...first,
+      attachments: [{ type: "img", id: attachmentId, mimeType: "image/png" }],
+    }],
+    hasMore: false,
+  }));
+  const event = (await value.backfill(null)).events[0]!;
+  expect(event.attachments[0]?.attachment_id).toBe(attachmentId);
+  expect(validateEventInput(event).ok).toBe(true);
 });
 
 test("refuses malformed attachment pages and clears attachment references on tombstones", async () => {

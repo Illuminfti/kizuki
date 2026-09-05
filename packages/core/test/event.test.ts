@@ -498,12 +498,36 @@ describe("validateEventInput resource limits", () => {
       "connector_id",
     ],
     [
+      "source_record_id at the byte limit",
+      () => ({
+        ...rawEvent(),
+        source_record_id: "s".repeat(EVENT_LIMITS.sourceRecordIdBytes),
+      }),
+      "",
+    ],
+    [
       "source_record_id one byte over the limit",
       () => ({
         ...rawEvent(),
-        source_record_id: "s".repeat(EVENT_LIMITS.identifierBytes + 1),
+        source_record_id: "s".repeat(EVENT_LIMITS.sourceRecordIdBytes + 1),
       }),
       "source_record_id",
+    ],
+    [
+      "subject_id one byte over the limit",
+      () => ({
+        ...rawEvent(),
+        subjects: [{ subject_id: "s".repeat(EVENT_LIMITS.subjectIdBytes + 1), role: "about" }],
+      }),
+      "subjects[0].subject_id",
+    ],
+    [
+      "attachment_id one byte over the limit",
+      () => ({
+        ...rawEvent(),
+        attachments: [{ attachment_id: "a".repeat(EVENT_LIMITS.attachmentIdBytes + 1), media_type: "text/plain" }],
+      }),
+      "attachments[0].attachment_id",
     ],
     [
       "kind one byte over the limit",
@@ -667,13 +691,23 @@ describe("validateEventInput resource limits", () => {
   test("rejects a giant invisible identifier by byte limit before segmentation", () => {
     const result = validateEventInput({
       ...rawEvent(),
-      source_record_id: "\u034f".repeat(EVENT_LIMITS.identifierBytes + 100_000),
+      source_record_id: "\u034f".repeat(EVENT_LIMITS.sourceRecordIdBytes + 100_000),
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("unreachable");
     expect(result.errors).toEqual([
-      `source_record_id: exceeds ${EVENT_LIMITS.identifierBytes} UTF-8 bytes`,
+      `source_record_id: exceeds ${EVENT_LIMITS.sourceRecordIdBytes} UTF-8 bytes`,
     ]);
+  });
+
+  test("uses UTF-8 bytes for field-specific native identifiers", () => {
+    const result = validateEventInput({
+      ...rawEvent(),
+      source_record_id: "é".repeat(EVENT_LIMITS.sourceRecordIdBytes / 2),
+      subjects: [{ subject_id: "🎉".repeat(EVENT_LIMITS.subjectIdBytes / 4), role: "about" }],
+      attachments: [{ attachment_id: "🎉".repeat(EVENT_LIMITS.attachmentIdBytes / 4), media_type: "text/plain" }],
+    });
+    expect(result.ok).toBe(true);
   });
 
   test("rejects a metadata cycle", () => {

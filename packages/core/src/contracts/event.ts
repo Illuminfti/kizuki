@@ -12,6 +12,11 @@ export const EVENT_SCHEMA = "kizuki.event/v1" as const;
 
 export const EVENT_LIMITS = Object.freeze({
   identifierBytes: 256,
+  // Omnivore permits a 1 MiB native id. Snapshot importers retain duplicate
+  // identities by appending up to "#1000000" within their record bound.
+  sourceRecordIdBytes: 1_048_584,
+  subjectIdBytes: 1_024,
+  attachmentIdBytes: 2_048,
   displayNameBytes: 512,
   filenameBytes: 1024,
   mediaTypeBytes: 256,
@@ -228,7 +233,7 @@ function validateSubject(
   rejectUnknownKeys(data, path, SUBJECT_KEYS, errors);
   let failed = errors.length > unknownBefore;
   if (
-    !checkString(data["subject_id"], `${path}.subject_id`, errors, EVENT_LIMITS.identifierBytes, {
+    !checkString(data["subject_id"], `${path}.subject_id`, errors, EVENT_LIMITS.subjectIdBytes, {
       required: true,
       allowEmpty: false,
     })
@@ -276,7 +281,7 @@ function validateAttachment(
       data["attachment_id"],
       `${path}.attachment_id`,
       errors,
-      EVENT_LIMITS.identifierBytes,
+      EVENT_LIMITS.attachmentIdBytes,
       { required: true, allowEmpty: false },
     )
   ) {
@@ -387,7 +392,7 @@ function validateSnapshot(raw: unknown): ValidationResult<CaptureEventInput> {
     input["source_record_id"],
     "source_record_id",
     errors,
-    EVENT_LIMITS.identifierBytes,
+    EVENT_LIMITS.sourceRecordIdBytes,
     { required: true, allowEmpty: false },
   );
   checkString(input["kind"], "kind", errors, EVENT_LIMITS.identifierBytes, {

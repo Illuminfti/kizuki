@@ -97,6 +97,13 @@ different content is an error, not a duplicate. Read path: `readSince`,
 `replay`. Tombstones cascade to open claims automatically and to canon
 through the receipted writer.
 
+Ingress preserves opaque native identifiers without hashing or truncation.
+`connector_id`, `kind`, and attachment media types are capped at 256 UTF-8
+bytes; `source_record_id` at 1,048,584 bytes (a 1 MiB native id plus the
+largest importer duplicate suffix, `#1000000`); `subject_id` at 1,024 bytes;
+and `attachment_id` at 2,048 bytes. The full accepted event remains capped at
+2 MiB.
+
 ### kizuki.claim/v1 — the working model and the write journal
 
 Entity / claim / edit / merge / deletion records with mandatory provenance
