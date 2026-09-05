@@ -48,6 +48,44 @@ function fixture(platform = target) {
 }
 const gate = (result: ReturnType<typeof evaluateRelease>, id: string) => result.gates.find(row => row.id === id)!;
 
+test.each(["serialize", "write", "sync", "race"])("report publication keeps the final path intact across %s failure", (mode) => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-report-publication-")); roots.push(root);
+  const out = join(root, "report.json");
+  // Fault injection stays inside a child, so other tests retain the real fs module.
+  const script = `
+    import { mock } from "bun:test";
+    import * as fs from "node:fs";
+    const write = fs.writeFileSync, sync = fs.fsyncSync;
+    const mode = ${JSON.stringify(mode)}, out = ${JSON.stringify(out)};
+    let injected = false;
+    mock.module("node:fs", () => ({ ...fs,
+      writeFileSync(target, bytes, ...args) {
+        if (mode === "write" && !injected) {
+          injected = true; write(target, String(bytes).slice(0, 7), ...args); throw new Error("synthetic disk full");
+        }
+        return write(target, bytes, ...args);
+      },
+      fsyncSync(fd) {
+        if (mode === "sync" && !injected) { injected = true; throw new Error("synthetic sync failure"); }
+        if (mode === "race" && !injected) { injected = true; write(out, "competing report", { flag: "wx", mode: 0o600 }); }
+        return sync(fd);
+      },
+    }));
+    const { writeAcceptanceReport } = await import(${JSON.stringify(join(import.meta.dir, "go-no-go.ts"))});
+    const report = mode === "serialize" ? { toJSON() { throw new Error("synthetic serialization failure"); } } : { synthetic: true };
+    let failed = false;
+    try { writeAcceptanceReport(out, report); } catch { failed = true; }
+    process.stdout.write(JSON.stringify({ failed, files: fs.readdirSync(${JSON.stringify(root)}),
+      final: fs.existsSync(out) ? fs.readFileSync(out, "utf8") : null }));
+  `;
+  const child = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 10_000 });
+  expect(child.exitCode, child.stderr.toString()).toBe(0);
+  const result = JSON.parse(child.stdout.toString());
+  expect(result.failed).toBe(true);
+  expect(result.files).toEqual(mode === "race" ? ["report.json"] : []);
+  expect(result.final).toBe(mode === "race" ? "competing report" : null);
+});
+
 test("all fixed journeys, C3 connectors and separate 1.0 gates remain visible without evidence", () => {
   const f = fixture(); f.index.artifacts = []; f.save();
   for (const profile of ["rc", "1.0"] as const) {

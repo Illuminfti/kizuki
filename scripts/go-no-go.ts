@@ -1,6 +1,6 @@
 /** Offline evidence inventory. No current producer set can establish release GO. */
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdtempSync, openSync, readFileSync, readSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { parseBuildInfoValue } from "./stranger-proof";
 import { releaseTarget } from "./release-targets";
@@ -255,8 +255,17 @@ export function parseAcceptanceArgs(args: readonly string[]): { profile: Profile
 }
 export function writeAcceptanceReport(path: string, report: ReturnType<typeof evaluateRelease>): void {
   absolute(path); const checkParents = parents(path);
-  const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-  try { writeFileSync(fd, JSON.stringify(report, null, 2) + "\n"); fsyncSync(fd); checkParents(); } finally { closeSync(fd); }
+  const bytes = JSON.stringify(report, null, 2) + "\n";
+  const temporary = mkdtempSync(join(dirname(path), ".kizuki-acceptance-publish-"));
+  const pending = join(temporary, "report.json");
+  try {
+    const fd = openSync(pending, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    try { writeFileSync(fd, bytes); fsyncSync(fd); } finally { closeSync(fd); }
+    checkParents();
+    // Hard-link publication is atomic and refuses an existing destination.
+    // The final name cannot expose bytes before their write and fsync complete.
+    linkSync(pending, path);
+  } finally { rmSync(pending, { force: true }); rmdirSync(temporary); }
   const directory = openSync(dirname(path), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   try { fsyncSync(directory); } finally { closeSync(directory); }
 }
