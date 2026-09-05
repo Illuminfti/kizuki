@@ -42,10 +42,10 @@ async function refusal(run: () => unknown): Promise<ServeError> {
 }
 
 describe("serveContextPacket", () => {
-  test("every budget is respected and the header is always present", async () => {
+  test("every deliverable budget is respected and the header is always present", async () => {
     const live = newFixture();
     for (const ctx of [live.owner(), live.agent("reader-private")]) {
-      for (const budget of [50, 450, 2_000]) {
+      for (const budget of [80, 450, 2_000]) {
         const data = (await serveContextPacket(ctx, {
           query: "kettle",
           subjects: ["person:ada"],
