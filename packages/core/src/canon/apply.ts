@@ -412,6 +412,7 @@ export function applyCanonWrite(
   const target = targetOf(decision);
 
   const existing = readPage(io, target.rel_path);
+  const pageId = target.page_id ?? mintId(io);
   const receiptId = mintId(io);
   opts.budget.chargeWrite({ receipt_id: receiptId, page_path: target.rel_path, before_hash: existing?.hash ?? null });
   initCanon(io.db);
@@ -431,7 +432,6 @@ export function applyCanonWrite(
     }
   }
 
-  const pageId = target.page_id ?? mintId(io);
   const prepared =
     existing === null
       ? prepareCreate(claims, pageId, provenance, decision.action === "conflict")
