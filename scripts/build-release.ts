@@ -2,6 +2,8 @@ import { mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { checksumManifest, ensureReleaseDirectory, requireAbsent } from "./release-artifacts";
 
+import { selectedReleaseTarget } from "./release-targets";
+
 const root = resolve(import.meta.dir, "..");
 const pinnedBun = (await Bun.file(resolve(root, ".bun-version")).text()).trim();
 if (Bun.version !== pinnedBun) {
@@ -10,11 +12,8 @@ if (Bun.version !== pinnedBun) {
 const version = (await Bun.file(resolve(root, "packages/cli/package.json")).json() as {
   version: string;
 }).version;
-const target = process.env.KIZUKI_TARGET ?? "bun-linux-x64-baseline";
-
-if (target !== "bun-linux-x64-baseline") {
-  throw new Error(`unsupported release target: ${target}`);
-}
+const selected = selectedReleaseTarget();
+const target = selected.target;
 
 const dist = resolve(root, "dist");
 const release = join(dist, `kizuki-${version}`);
@@ -72,11 +71,11 @@ try {
       `Kizuki ${version} — ${target}`,
       "",
       "This local package contains Bun executables with the Kizuki code, dependencies,",
-      "and Bun runtime bundled for Linux x86_64",
-      "baseline CPUs. It has not been published, signed, or tested on other operating systems.",
+      `and Bun runtime bundled for ${selected.description}.`,
+      "This package is unsigned and unpublished; consult its exact-head native proof receipt.",
       "",
       "Verify the binaries before running them:",
-      "  sha256sum -c SHA256SUMS",
+      `  ${selected.checksum_command}`,
       "",
       "Run the CLI:",
       "  ./kizuki --help",

@@ -1,7 +1,8 @@
 # Artifact isolation proof
 
 `bun run proof:artifact -- --report DIR` is an automated release prerequisite.
-It copies the checksummed Linux x64 native package out of the checkout, starts
+It copies the checksummed package for the matching supported native host out of
+the checkout, starts
 with a clean home and Kizuki configuration, and records a machine-readable
 receipt at `DIR/receipt.json`.
 
@@ -29,3 +30,10 @@ qualification, or a substitute for the seven-day rail observation and
 fourteen-day estate-parity cutover required for 1.0. It is automated evidence
 that the built artifact can perform the deterministic local recovery path
 outside its source checkout.
+
+Native proof now resolves a closed host/target registry and refuses foreign
+artifacts. Its receipt additionally binds Bun version and the checksums of all
+packaged files plus the checksum manifest. A macOS arm64 package must be proved
+on an actual macOS arm64 runner; cross-compilation and Linux fixture results do
+not count. The manual macOS workflow is cost-gated and does not activate launchd
+or provide calendar/human stranger evidence; see [native-build.md](native-build.md).

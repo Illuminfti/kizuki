@@ -3,8 +3,9 @@ import { closeSync, constants, fstatSync, lstatSync, openSync } from "node:fs";
 
 let native: ReturnType<typeof load> | undefined;
 function load() {
-  if (process.platform !== "linux") throw new Error("advisory file locking is qualified only on Linux");
-  return dlopen("libc.so.6", { flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 } });
+  const library = process.platform === "linux" ? "libc.so.6" : process.platform === "darwin" ? "/usr/lib/libSystem.B.dylib" : null;
+  if (library === null) throw new Error("native advisory locking is unsupported on this platform");
+  return dlopen(library, { flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 } });
 }
 
 export interface AdvisoryFileLock {
