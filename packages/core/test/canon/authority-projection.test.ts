@@ -10,6 +10,7 @@ import { openLedger } from "../../src/ledger/db";
 import { listCanonPages } from "../../src/vault/pages";
 import { validatePage } from "../../src/vault/schema";
 import { readPage, CanonPageUnreadable } from "../../src/canon/store";
+import { isAuthorityTier } from "../../src/contracts/proposal";
 import type { AuthorityTier } from "../../src/contracts/proposal";
 import { corroboratedFacts } from "../claims/helpers";
 import { afterEach, expect, test } from "bun:test";
@@ -181,4 +182,39 @@ test("writer uses fresh lifecycle values without trusting forged metadata", asyn
   const receipt = write(f.io, claim);
   expect(receipt.authority).toBe("model_inference");
   expectAuthority(f, receipt.page_path, "model_inference");
+});
+
+test("prototype property names are never authority tiers in any projection", async () => {
+  const f = fixture();
+  const receipt = write(f.io, await storeClaim(f.db, putEvent(f.db), {
+    producer: "model", model_ref: "fixture:model",
+  }));
+  for (const authority of ["toString", "constructor", "__proto__", "hasOwnProperty"]) {
+    expect(isAuthorityTier(authority)).toBe(false);
+    f.db.query("UPDATE canon_receipts SET authority=? WHERE receipt_id=?")
+      .run(authority, receipt.receipt_id);
+    rebuildDerived(f.db, f.vault);
+    expectAuthority(f, receipt.page_path, "model_inference");
+  }
+});
+
+test("a revert must begin at the after-hash of the write it names", async () => {
+  const f = fixture();
+  const event = putEvent(f.db);
+  const first = write(f.io, await storeClaim(f.db, event, { producer: "owner", intent: "correct" }));
+  expect(first.authority).toBe("owner_correction");
+  const originalBytes = readFileSync(join(f.vault, first.page_path));
+  const edit = async (body: string) => write(f.io, await storeClaim(f.db, event, {
+    kind: "edit", predicate: null, object: null, frontmatter: {}, body,
+    producer: "model", model_ref: "fixture:model",
+  }));
+  const target = await edit("Grace has a first model update.");
+  const later = await edit("Grace has a later model update.");
+  const revert = await undoReceipt(f.io, later.receipt_id);
+  // Corrupt H3 -> H1 names the H1 -> H2 target, although it never starts at H2.
+  f.db.query("UPDATE canon_receipts SET reverts=?,after_hash=? WHERE receipt_id=?")
+    .run(target.receipt_id, first.after_hash, revert.receipt_id);
+  writeFileSync(join(f.vault, first.page_path), originalBytes);
+  rebuildDerived(f.db, f.vault);
+  expectAuthority(f, first.page_path, "model_inference");
 });

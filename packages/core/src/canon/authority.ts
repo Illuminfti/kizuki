@@ -84,7 +84,12 @@ export class CanonAuthorityResolver {
         return this.state(path, receipt.before_hash, receipt, seen);
       case "revert": {
         const target = receipt.reverts === null ? undefined : this.byId.get(receipt.reverts);
-        if (target === undefined || target.page_path !== path || !earlier(target, receipt) || target.before_hash === null || receipt.after_hash !== target.before_hash || !isAuthorityTier(target.authority) || seen.has(target.receipt_id)) {
+        if (
+          target === undefined || target.page_path !== path || !earlier(target, receipt) ||
+          target.before_hash === null || receipt.before_hash !== target.after_hash ||
+          receipt.after_hash !== target.before_hash || !isAuthorityTier(target.authority) ||
+          seen.has(target.receipt_id)
+        ) {
           return "model_inference";
         }
         seen.add(target.receipt_id);
