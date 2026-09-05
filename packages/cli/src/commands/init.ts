@@ -22,6 +22,11 @@ import {
 import type { CliIo, Command } from "./index";
 import { serveSupervisorHost } from "../service-host";
 
+/** Only emitted after vault creation, ledger hardening and default selection succeed. */
+export class InitServiceError extends Error {
+  constructor(cause: unknown) { super(cause instanceof Error ? cause.message : String(cause), { cause }); }
+}
+
 export function createInitCommand(supervisor: typeof serveSupervisorHost = serveSupervisorHost): Command { return {
   name: "init",
   usage: "init <path> [--default | --no-default] [--no-service] [--adopt] [--dry-run]",
@@ -90,8 +95,9 @@ export function createInitCommand(supervisor: typeof serveSupervisorHost = serve
       io.out("supervisor: none (loop runs only while you run it)");
       io.out(`run: ${serveExecHint(vaultPath)}`);
     } else {
-      const host = supervisor(io.env, vaultPath);
-      const installed = installServeService(vaultPath, host);
+      let installed;
+      try { installed = installServeService(vaultPath, supervisor(io.env, vaultPath)); }
+      catch (error) { throw new InitServiceError(error); }
       io.out(vaultPath);
       io.out(`supervisor=${installed.status.kind} state=${installed.status.state}`);
       if (installed.status.state !== "active") {

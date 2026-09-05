@@ -83,6 +83,7 @@ export interface AppProtocol {
                 name: string;
             };
             setup_no_service: boolean;
+            setup_supervisor: 'systemd' | 'launchd' | 'none';
             setup_location: string;
             visibility_epoch: string;
             operations: AppOperation[];

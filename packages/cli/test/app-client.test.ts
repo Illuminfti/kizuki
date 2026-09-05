@@ -79,6 +79,30 @@ test('setup exposes an explicit opt-out and honors launcher preference', () => {
     }
 });
 
+test('setup does not promise background updates when the host has no supervisor', () => {
+    const f = fixture();
+    f.evaluate(`state.status={vault:{ready:false},setup_supervisor:'none',setup_no_service:false}; render();`);
+    expect(f.main.textContent).toContain('Background activity is unavailable on this device');
+    expect(f.main.textContent).not.toContain('even after you close the app');
+});
+
+test('partial initialization refreshes the saved vault and opens background recovery in Settings', async () => {
+    const f = fixture();
+    f.evaluate(`state.status={vault:{ready:false},visibility_epoch:'uninitialized',operations:[]}; render();`);
+    const work = f.evaluate<Promise<void>>('initialize()');
+    f.reply('initialize', { operation_id: 'init' }); await tick();
+    const job = {id:'init',kind:'initialize',state:'failed',error:{code:'service_unavailable'}};
+    f.reply('operation', job); await tick();
+    f.reply('status', status([job], 'ready')); await tick();
+    f.reply('catalog', { sources: [] }); f.reply('sources', { sources: [] }); await tick();
+    if (f.requests.some(request => request.route === 'service_status')) f.reply('service_status', {state:'absent',kind:'systemd',intent:'unknown',detail:'Enable background activity to retry.',checked_at:'2026-09-05T00:00:00Z'});
+    await work; await tick();
+    expect(f.evaluate<boolean>('state.status.vault.ready')).toBe(true);
+    expect(f.evaluate<string>('state.view')).toBe('settings');
+    expect(f.main.textContent).toContain('Enable background activity');
+    expect(f.notice.textContent).toContain('workspace is saved');
+});
+
 test('service observations cannot restore the settings view after session invalidation', async () => {
     const f = fixture();
     f.evaluate(`state.view='settings';`);

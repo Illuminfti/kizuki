@@ -13,7 +13,8 @@ import { gmailClient, gmailFields, gmailRequiredFields, openGmailBrowser, type G
 import { googleCalendarClient, googleCalendarFields, googleCalendarRequiredFields, googleCalendarId, openGoogleCalendarBrowser, type GoogleCalendarFactory } from '../google-calendar';
 import { createOwnedRetrievalInventory } from '../owned-retrieval-inventory';
 import { tryRefreshDerived } from '../derived';
-import { createInitCommand } from '../commands/init';
+import { createInitCommand, InitServiceError } from '../commands/init';
+import { detectSupervisorKind } from '@kizuki/core';
 import { serveSupervisorHost } from '../service-host';
 import type { CliIo } from '../commands';
 import type { AppCatalogEntry, AppError, AppOperation, AppRoute, AppSource, AppServiceStatus } from './protocol';
@@ -58,9 +59,9 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
     const hasSelection = baseIo.vaultOverride !== null || Boolean(baseIo.env.KIZUKI_VAULT) || Boolean(config.default_vault);
     let selected = hasSelection ? resolveVault(baseIo.env, config, baseIo.vaultOverride) : join(baseIo.env.HOME ?? homedir(), 'Kizuki');
     const jobs = new Map<string, AppOperation>(), pending = new Set<Promise<void>>(), active = new Set<Connector>();
-    let mutation = false, closed = false;
+    let mutation = false, closed = false, initializationIncomplete = false;
     const io = (): CliIo => ({ ...baseIo, vaultOverride: selected, out: () => { }, err: () => { }, prompt: async () => { throw new AppFailure('unavailable'); } });
-    const ready = () => existsSync(join(selected, '.kizuki', 'kizuki.db'));
+    const ready = () => !initializationIncomplete && existsSync(join(selected, '.kizuki', 'kizuki.db'));
     const context = <T>(fn: Parameters<typeof withVault<T>>[1]) => { if (!ready())
         throw new AppFailure('no_vault'); return withVault(io(), fn, { retrieval: 'none' }); };
     function operation(kind: string, work: (job: AppOperation) => Promise<AppOperation['result']>, urgent = false) {
@@ -93,7 +94,7 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
             return { sources: catalog() };
         if (route === 'status') {
             const epoch = ready() ? await context(async (ctx) => `${sourcePolicyEpoch(ctx.db)}:${getClaimsEpoch(ctx.db)}`) : 'uninitialized';
-            return { visibility_epoch: epoch, vault: { ready: ready(), name: basename(selected) }, setup_location: selected, setup_no_service: options.noService === true, operations: [...jobs.values()] };
+            return { visibility_epoch: epoch, vault: { ready: ready(), name: basename(selected) }, setup_location: selected, setup_no_service: options.noService === true, setup_supervisor: detectSupervisorKind(baseIo.env), operations: [...jobs.values()] };
         }
         if (route === 'service_status') {
             if (!ready()) throw new AppFailure('no_vault');
@@ -135,17 +136,19 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
                 let code;
                 try { code = await createInitCommand(supervisor).run({ ...io(), vaultOverride: null }, [path, '--default', ...(noService ? ['--no-service'] : [])]); }
                 catch (error) {
-                    // Init writes the selected default before installing the native service.
-                    // Retain that newly created vault on activation failure so repair never reinitializes it.
-                    if (readConfig(configPath(baseIo.env)).default_vault === path && existsSync(join(path, '.kizuki', 'kizuki.db'))) {
+                    if (error instanceof InitServiceError) {
                         selected = path;
+                        initializationIncomplete = false;
                         throw new AppFailure('service_unavailable');
                     }
+                    // A database file alone does not prove that initialization secured the vault.
+                    if (path === selected) initializationIncomplete = true;
                     throw error;
                 }
                 if (code !== 0)
                     throw new AppFailure('unavailable');
                 selected = path;
+                initializationIncomplete = false;
                 return { message: 'Workspace created. Check Settings for background activity.' };
             });
         }

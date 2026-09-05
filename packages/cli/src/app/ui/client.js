@@ -154,7 +154,7 @@ function renderWelcome() {
   const ready = state.status?.vault.ready;
   return el('section', { class: 'welcome' }, el('div', { class: 'eyebrow' }, 'A little less to remember'), el('h1', {}, 'Make room for', el('br'), 'what matters.'), el('p', {}, 'Bring your notes and everyday information into one private place. Find the original, see what changed, and stay in control.'), welcomeIllustration(),
     el('div', { class: 'setup-card' }, el('div', { class: 'setup-card-body' }, el('div', {}, el('h2', {}, ready ? 'Start with one source.' : 'Your memory starts here.'), el('p', {}, ready ? 'Choose a folder or an account. You decide what Kizuki can keep before anything is imported.' : 'Create a private workspace on this device. You can connect your first source when you’re ready.')), button(ready ? 'Connect a source' : 'Create my Kizuki', () => ready ? navigate('sources') : initialize(), 'primary')), el('div', { class: 'setup-card-footer' }, icon('lock'), ready ? 'Your files stay yours. No model is needed to capture and search.' : `Saved on this device${state.status?.setup_location ? ` · ${state.status.setup_location}` : ''}`)),
-    !ready && el('p', {}, state.status?.setup_no_service ? 'Background activity is turned off for this setup. You can enable it later in Settings.' : 'Kizuki will keep your permitted sources up to date in the background, even after you close the app.'),
+    !ready && el('p', {}, state.status?.setup_supervisor === 'none' ? 'Background activity is unavailable on this device. You can capture and search while the app is open.' : state.status?.setup_no_service ? 'Background activity is turned off for this setup. You can enable it later in Settings.' : 'Kizuki will keep your permitted sources up to date in the background, even after you close the app.'),
     !ready && el('details', { class: 'result-details' }, el('summary', {}, 'Setup options'), el('div', { class: 'form-field' }, el('label', { for: 'setup-path' }, 'Workspace folder'), el('input', { id: 'setup-path', type: 'text', placeholder: state.status?.setup_location || 'Full folder path', autocomplete: 'off', spellcheck: 'false' }), el('small', {}, 'Use a new empty folder. Existing folders are never adopted automatically.')), el('label', { class: 'check-row', for: 'setup-no-service' }, el('input', { id: 'setup-no-service', type: 'checkbox', checked: state.status?.setup_no_service, disabled: state.status?.setup_no_service }), 'Turn off background activity for now')),
     el('div', { class: 'getting-started' }, ...[['01', 'Connect once', 'Choose the information you want to bring along.'], ['02', 'Find it again', 'Search your saved sources, even without a model.'], ['03', 'Keep control', 'Inspect changes, undo them, or remove a source.']].map(([n,t,d]) => el('div', {}, el('span', { class: 'step-number' }, n), el('h3', {}, t), el('p', {}, d)))));
 }
@@ -384,6 +384,15 @@ async function launchOperation(route, payload, title, done) {
       state.operation = operation; updateOperationBanner();
       if (operation.state !== 'running') {
         progress.setAttribute('aria-busy', 'false');
+        if (route === 'initialize' && operation.error?.code === 'service_unavailable') {
+          if (dialog.open && dialog.contains(content)) dialog.close();
+          await refresh();
+          if (session === bearer && privateViewValid && state.status?.vault.ready) {
+            navigate('settings');
+            message(humanError('service_unavailable'));
+          }
+          return;
+        }
         if (operation.state !== 'succeeded') throw Object.assign(new Error(operation.error ? humanError(operation.error.code) : 'Completion is not confirmed. Check the source state before trying again.'), { code: operation.error?.code || 'unknown' });
         if (dialog.open && dialog.contains(content)) dialog.close();
         await done(operation); return;

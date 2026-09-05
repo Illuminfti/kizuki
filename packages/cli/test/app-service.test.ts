@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
 import { mkdirSync, readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { readServeIntent, readVaultId, type SupervisorHost } from '@kizuki/core';
 import { createAppHost } from '../src/app/host';
 import type { CliIo } from '../src/commands';
@@ -97,6 +97,54 @@ test('failed activation preserves the selected custom vault and retries without 
         expect(readVaultId(path)).toBe(id);
         expect((await call(host, 'service_status')).data.state).toBe('active');
     } finally { await host.close(); }
+});
+
+test('a ledger permission failure remains an initialization failure even with a preselected default', () => {
+    const env = h.isolatedEnv(), path = join(env.HOME!, 'Kizuki');
+    const probe = `
+        import { mock } from 'bun:test';
+        import * as core from '@kizuki/core';
+        const original = core.hardenLedgerFile;
+        let fail = true;
+        mock.module('@kizuki/core', () => ({ ...core, hardenLedgerFile(path) {
+            if (fail) throw new Error('synthetic ledger permission failure');
+            return original(path);
+        } }));
+        const { writeConfig } = await import(${JSON.stringify(resolve(import.meta.dir, '../src/config.ts'))});
+        const { createAppHost } = await import(${JSON.stringify(resolve(import.meta.dir, '../src/app/host.ts'))});
+        const env = ${JSON.stringify(env)};
+        writeConfig(env.KIZUKI_CONFIG, {schema:'kizuki.cli.config/v1',vaults:{},default_vault:${JSON.stringify(path)}});
+        const host = createAppHost({env,vaultOverride:null,out(){},err(){},prompt:async()=>''});
+        const call = async (route, body={}) => (await host.handle(new Request('http://127.0.0.1/app/v1/'+route,{method:'POST',body:JSON.stringify(body)}))).json();
+        const done = async () => {
+            const start = await call('initialize');
+            for (let i=0;i<200;i++) {
+                const job = (await call('operation',{id:start.data.operation_id})).data;
+                if (job.state !== 'running') return job;
+                await Bun.sleep(5);
+            }
+            throw Error('fixture timeout');
+        };
+        const first = await done(), status = (await call('status')).data;
+        fail = false;
+        const retry = await done();
+        await host.close();
+        process.stdout.write(JSON.stringify({first,ready:status.vault.ready,retry:retry.state}));
+    `;
+    const result = Bun.spawnSync([process.execPath, '-e', probe], { cwd: resolve(import.meta.dir, '..'), stdout: 'pipe', stderr: 'pipe' });
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    const observed = JSON.parse(result.stdout.toString());
+    expect(observed.first.error.code).toBe('unavailable');
+    expect(observed.ready).toBe(false);
+    expect(observed.retry).toBe('succeeded');
+});
+
+test('setup reports when the native supervisor is unavailable', async () => {
+    const f = fixture();
+    f.env.KIZUKI_SUPERVISOR = 'none';
+    const host = f.open();
+    try { expect((await call(host, 'status')).data.setup_supervisor).toBe('none'); }
+    finally { await host.close(); }
 });
 
 test('Gmail empty, unknown or malformed field selections refuse before provider setup', async () => {
