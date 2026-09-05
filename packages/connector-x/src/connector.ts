@@ -13,6 +13,7 @@ import type {
   SyncBatch,
 } from "@kizuki/core";
 import {
+  assertMediaStable,
   assertSnapshotStable,
   coverageDetail,
   readTweetPart,
@@ -27,7 +28,7 @@ import {
 import type { XArchiveCursor } from "./cursor";
 import { archiveError, errorDetail } from "./errors";
 import { fixtureEvents } from "./fixture";
-import { mapPost, verifyMappedMedia } from "./map";
+import { mapPost } from "./map";
 import type { MappedPost } from "./map";
 
 export const X_ARCHIVE_CONNECTOR_ID = "kizuki.import-x-archive" as const;
@@ -227,7 +228,7 @@ export class XArchiveConnector implements Connector {
         recordIndex = 0;
       }
     }
-    await verifyMappedMedia(mapped);
+    await assertMediaStable(mapped.flatMap((item) => [...item.media]));
     await assertSnapshotStable(snapshot);
     const exhausted = partOrdinal >= snapshot.parts.length;
     const nextCursor: XArchiveCursor = {

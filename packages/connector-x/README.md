@@ -8,9 +8,17 @@ It never executes archive JavaScript and never reads media bytes. Native account
 and post IDs, provider timestamps, links, and supported attachment references
 are preserved as connector evidence.
 
-The package is available through the shared connector registry for
-programmatic enrollment. This change does not add a command-line enrollment
-route.
+The package is available through the shared connector registry and the generic
+local-source CLI path:
+
+```sh
+kizuki connect import-x-archive --source /path/to/unzipped-archive
+kizuki backfill import-x-archive
+```
+
+These commands import owner posts only. Enrollment validates every supported
+post in the bounded snapshot, so a malformed post refuses before connection
+state is persisted.
 
 The connector does not inspect likes and does not support bookmarks, direct
 messages, deletion inference, ZIP input, live X sync, or the paid X API. Missing

@@ -1,7 +1,6 @@
 import { validateEventInput, isPlainObject } from "@kizuki/core";
 import type { CaptureEventInput, SubjectRef } from "@kizuki/core";
 import type { MediaEntry, XArchiveIdentity } from "./archive";
-import { assertMediaStable } from "./archive";
 import { archiveError } from "./errors";
 import { nativeId, parseArchiveDate, postRecordId, userSubjectId } from "./ids";
 import { requiredObject } from "./ytd";
@@ -160,8 +159,4 @@ export function mapPost(
     throw archiveError("parse_error", `${where} cannot be represented by kizuki.event/v1`);
   }
   return { event: valid.value, media };
-}
-
-export async function verifyMappedMedia(mapped: readonly MappedPost[]): Promise<void> {
-  await assertMediaStable(mapped.flatMap((item) => [...item.media]));
 }

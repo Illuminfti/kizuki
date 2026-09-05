@@ -5,6 +5,7 @@ import type { BigIntStats } from "node:fs";
 import path from "node:path";
 import { archiveError } from "./errors";
 import { nativeId } from "./ids";
+import { mapPost } from "./map";
 import { parseYtd, requiredObject } from "./ytd";
 
 export const MAX_ACCOUNT_BYTES = 1024 * 1024;
@@ -209,13 +210,6 @@ function parseAccount(source: string): XArchiveIdentity {
   return { account_id: accountId, username: username ?? null };
 }
 
-function postIdFromEnvelope(value: unknown, part: number, index: number): string {
-  const envelope = requiredObject(value, `tweets part ${part} record ${index}`);
-  const tweet = requiredObject(envelope["tweet"], `tweets part ${part} record ${index}.tweet`);
-  const rawId = tweet["id_str"] ?? tweet["id"];
-  return nativeId(rawId, `tweets part ${part} record ${index} post id`);
-}
-
 function mediaType(filename: string): string {
   const extension = path.extname(filename).toLowerCase();
   switch (extension) {
@@ -397,7 +391,8 @@ export async function scanArchive(rootPath: string): Promise<XArchiveSnapshot> {
       throw archiveError("misconfigured", `archive has more than ${MAX_POSTS} posts; split the import or wait for streaming support`);
     }
     records.forEach((record, index) => {
-      const id = postIdFromEnvelope(record, part, index);
+      const id = mapPost(record, part, index, identity, media.byPost, null)
+        .event.source_record_id;
       if (seen.has(id)) {
         throw archiveError("parse_error", "archive contains a duplicate native post id");
       }

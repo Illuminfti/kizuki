@@ -200,9 +200,14 @@ Known limits:
 ## X data archive
 
 `kizuki.import-x-archive` reads owner posts from an unzipped X data archive.
-The package is registered for programmatic use; command-line enrollment is not
-part of this connector change. See `packages/connector-x/README.md` for the
-accepted file names, hard limits, and exact coverage.
+It is registered for programmatic use and for the existing generic CLI path:
+`kizuki connect import-x-archive --source /path/to/unzipped-archive`, followed
+by `kizuki backfill import-x-archive`. See `packages/connector-x/README.md` for
+the accepted file names, hard limits, and exact posts-only coverage.
+
+Enrollment validates the complete bounded set of supported post records. A
+malformed supported post refuses the archive before connection state is saved;
+it cannot defer failure until a later backfill page.
 
 The importer preserves native account and post IDs, post timestamps, links,
 mentions, and portable attachment references. It labels every post `personal`
