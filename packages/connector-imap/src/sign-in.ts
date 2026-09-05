@@ -6,6 +6,7 @@ import type {
 } from "@kizuki/core";
 import { ImapSession } from "./imap/session";
 import type { MailboxEntry, SessionOptions } from "./imap/session";
+import { sanitizeDetail, secretSpellings } from "./imap/codes";
 import {
   DEFAULT_MAX_MESSAGE_BYTES,
   serializeImapState,
@@ -23,8 +24,28 @@ export interface SignInDeps {
   session?: SessionOptions;
 }
 
-function folderSummary(entries: MailboxEntry[]): string {
-  const names = entries.map((entry) => entry.display);
+/**
+ * A local, fixed-text rejection from the interactive sign-in flow. The CLI
+ * may show these errors because no provider reply or entered value is carried
+ * in their message.
+ */
+export class ImapSignInInputError extends KizukiError {}
+
+function checkedInput<T>(check: () => T): T {
+  try {
+    return check();
+  } catch (error) {
+    if (error instanceof KizukiError && error.code === "misconfigured") {
+      throw new ImapSignInInputError(error.code, error.message);
+    }
+    throw error;
+  }
+}
+
+function folderSummary(entries: MailboxEntry[], secrets: readonly string[]): string {
+  const names = entries.map((entry) =>
+    sanitizeDetail(entry.display, secrets) || "[redacted]",
+  );
   const shown = names.slice(0, MAX_LISTED_FOLDERS).join(", ");
   const extra = names.length - MAX_LISTED_FOLDERS;
   return extra > 0 ? `${shown}, +${extra} more` : shown;
@@ -49,18 +70,20 @@ export async function signInImap(
   deps: SignInDeps,
 ): Promise<SignInDisplay> {
   const host = (await io.prompt("IMAP server host: ")).trim();
-  validateHost(host);
+  checkedInput(() => validateHost(host));
   const rawPort = (await io.prompt("IMAP port [993]: ")).trim();
   const port =
     rawPort.length === 0
       ? DEFAULT_PORT
-      : validatePort(/^\d+$/.test(rawPort) ? Number(rawPort) : rawPort);
+      : checkedInput(() =>
+          validatePort(/^\d+$/.test(rawPort) ? Number(rawPort) : rawPort),
+        );
   const username = (
     await io.prompt("Username (usually your email address): ")
   ).trim();
   const password = await io.prompt("App password: ", { secret: true });
   if (username.length === 0 || password.length === 0) {
-    throw new KizukiError(
+    throw new ImapSignInInputError(
       "misconfigured",
       "kizuki.imap: username and app password are required",
     );
@@ -80,7 +103,11 @@ export async function signInImap(
   let folders: string[];
   try {
     const entries = await session.list();
-    io.notify(`Folders on the server: ${folderSummary(entries)}`);
+    // LIST names are server-controlled and can deliberately equal a password.
+    // Preserve normal folder selection while removing every password spelling.
+    io.notify(
+      `Folders on the server: ${folderSummary(entries, secretSpellings(password))}`,
+    );
     const answer = (await io.prompt("Folders to sync [INBOX]: ")).trim();
     const wanted =
       answer.length === 0
@@ -94,7 +121,7 @@ export async function signInImap(
     // so it is seeded first and the owner's picks follow it.
     const inbox = entries.find((candidate) => matches(candidate, "INBOX"));
     if (inbox === undefined) {
-      throw new KizukiError(
+      throw new ImapSignInInputError(
         "misconfigured",
         "kizuki.imap: the server lists no INBOX",
       );
@@ -110,9 +137,9 @@ export async function signInImap(
       if (!wire.includes(entry.wire)) wire.push(entry.wire);
     }
     if (unknown.length > 0) {
-      throw new KizukiError(
+      throw new ImapSignInInputError(
         "misconfigured",
-        `kizuki.imap: unknown folders: ${unknown.join(", ")}`,
+        "kizuki.imap: one or more selected folders are unavailable",
       );
     }
 

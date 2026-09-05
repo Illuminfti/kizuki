@@ -41,7 +41,7 @@ export {
 export type { ImapCursor, ImapFolderCursor } from "./cursor";
 export { BATCH, EXPUNGE_CHUNK, WINDOW, walkMailboxes } from "./mailbox";
 export type { WalkDeps, WalkResult } from "./mailbox";
-export { DEFAULT_PORT, signInImap } from "./sign-in";
+export { DEFAULT_PORT, ImapSignInInputError, signInImap } from "./sign-in";
 export type { SignInDeps } from "./sign-in";
 export { ImapSession, MAX_BODY_FETCH } from "./imap/session";
 export type {

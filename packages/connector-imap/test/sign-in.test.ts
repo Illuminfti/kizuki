@@ -245,7 +245,7 @@ describe("interactive sign-in", () => {
     db.close();
   });
 
-  test("an unknown folder name is refused by name and writes nothing", async () => {
+  test("an unknown folder name is refused without echoing it and writes nothing", async () => {
     const fake = server();
     const db = openLedger(":memory:");
     const store = new ConnectionStateStore(temporary());
@@ -264,8 +264,8 @@ describe("interactive sign-in", () => {
     ).catch((caught: unknown) => caught);
 
     expect((error as KizukiError).code).toBe("misconfigured");
-    expect((error as KizukiError).message).toContain(
-      "unknown folders: Nope, Also/Nope",
+    expect((error as KizukiError).message).toBe(
+      "kizuki.imap: one or more selected folders are unavailable",
     );
     expect(
       readdirSync(store.directory).filter((name) => name.endsWith(".state")),

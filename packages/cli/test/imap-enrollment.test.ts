@@ -26,6 +26,11 @@ import {
   loadConnector,
   selectConnection,
 } from "../src/connections";
+import {
+  safeImapSignInFailure,
+  sanitizedSignInIo,
+} from "../src/commands/connect";
+import type { CliIo } from "../src/commands";
 import { createHelpers } from "./helpers";
 
 const { cleanup, tempVault } = createHelpers();
@@ -70,7 +75,79 @@ function prompts(values: readonly string[]): SignInIo {
   };
 }
 
+function credentialFree(error: unknown, canary: string): void {
+  const seen = new Set<unknown>();
+  const visit = (value: unknown): void => {
+    if (value === null || typeof value !== "object" || seen.has(value)) return;
+    seen.add(value);
+    if (value instanceof Error) {
+      expect(value.message).not.toContain(canary);
+      visit(value.cause);
+    }
+  };
+  visit(error);
+}
+
 describe("IMAP interactive enrollment", () => {
+  test("real IMAP enrollment keeps a password canary out of notices and failures", async () => {
+    const canary = "pr435-password-canary";
+    const run = async (
+      folders: ReturnType<typeof fixtureMailbox>,
+      answer: string,
+      options: ConstructorParameters<typeof FakeImapServer>[1] = {},
+    ) => {
+      const setup = tempVault();
+      const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+      const store = new ConnectionStateStore(join(setup.vault, ".kizuki", "connections"));
+      const output: string[] = [];
+      let index = 0;
+      const io: CliIo = {
+        env: {}, vaultOverride: null, stdinIsTTY: true, stdoutIsTTY: true, stderrIsTTY: true,
+        out: (line) => output.push(line), err: (line) => output.push(line),
+        async prompt(_question, promptOptions) {
+          const answers = ["mail.acme.example", "", FIXTURE_USERNAME, canary, answer];
+          if (index === 3) expect(promptOptions).toEqual({ secret: true });
+          return answers[index++] ?? "";
+        },
+      };
+      try {
+        const connector = createImapConnector({}, {
+          dial: memoryDialer(new FakeImapServer(folders, {
+            username: FIXTURE_USERNAME,
+            password: canary,
+            ...options,
+          })),
+        });
+        const result = await enrollSignedInConnection(
+          db, store, connector, sanitizedSignInIo(io),
+        ).catch((error: unknown) => safeImapSignInFailure(error));
+        return { output, result };
+      } finally {
+        db.close();
+      }
+    };
+
+    const folderCanary = await run([
+      ...fixtureMailbox(),
+      { wire: canary, attributes: ["\\HasNoChildren"], uidvalidity: 99, uidnext: 1, messages: [] },
+    ], "");
+    expect(folderCanary.output.join("\n")).not.toContain(canary);
+    expect(folderCanary.result).not.toBeInstanceOf(Error);
+
+    const answerCanary = await run(fixtureMailbox(), canary);
+    expect(answerCanary.output.join("\n")).not.toContain(canary);
+    expect(answerCanary.result).toBeInstanceOf(Error);
+    credentialFree(answerCanary.result, canary);
+
+    const providerCanary = await run(fixtureMailbox(), "", {
+      password: "different-server-password",
+      echoCredentialsOnFailure: true,
+    });
+    expect(providerCanary.output.join("\n")).not.toContain(canary);
+    expect(providerCanary.result).toBeInstanceOf(Error);
+    credentialFree(providerCanary.result, canary);
+  });
+
   test("refuses a changed mailbox before replacing its state or checkpoint", async () => {
     const setup = tempVault();
     const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));

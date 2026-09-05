@@ -4,7 +4,6 @@ import {
   DeadlineError,
   getConnectorSensitivity,
   isSensitivity,
-  KizukiError,
   LedgerError,
   policyFromManifest,
   SENSITIVITY_ORDER,
@@ -13,7 +12,7 @@ import {
 import type { Connection, Manifest, Sensitivity } from "@kizuki/core";
 import type { Database } from "bun:sqlite";
 import { getConnector } from "@kizuki/connectors";
-import { assertSameImapIdentity } from "@kizuki/connector-imap";
+import { assertSameImapIdentity, ImapSignInInputError } from "@kizuki/connector-imap";
 import { UsageError, parseArguments, requirePositional } from "../args";
 import {
   ConnectionError,
@@ -52,10 +51,24 @@ function checkRequestedSensitivity(db: Database, manifest: Manifest, requested: 
 }
 
 export function sanitizedSignInIo(io: CliIo) {
+  const secrets: string[] = [];
+  const redact = (text: string): string => {
+    let result = text;
+    for (const secret of [...secrets].sort((a, b) => b.length - a.length)) {
+      if (secret.length === 0) continue;
+      const escaped = secret.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      result = result.replace(new RegExp(escaped, "gi"), "[redacted]");
+    }
+    return result;
+  };
   return {
-    prompt: (question: string, opts?: { secret?: boolean }) => io.prompt(question, opts),
+    async prompt(question: string, opts?: { secret?: boolean }) {
+      const answer = await io.prompt(question, opts);
+      if (opts?.secret === true) secrets.push(answer);
+      return answer;
+    },
     notify: (text: string) => {
-      const safe = clean(text).slice(0, 512);
+      const safe = clean(redact(text)).slice(0, 512);
       if (safe.length > 0) io.err(safe);
     },
     openUrl: async () => { throw new ConnectionError("IMAP sign-in does not open a browser"); },
@@ -67,7 +80,16 @@ export function isSafeImapSignInError(error: unknown): boolean {
     error instanceof ConnectionError ||
     error instanceof DeadlineError ||
     error instanceof LedgerError ||
-    error instanceof KizukiError;
+    error instanceof ImapSignInInputError;
+}
+
+export function safeImapSignInFailure(error: unknown): Error {
+  if (isSafeImapSignInError(error)) {
+    return error as Error;
+  }
+  return new ConnectionError(
+    "IMAP sign-in failed. Check the server, username, app password, and selected folders.",
+  );
 }
 
 export function imapSignInNotice(vaultPath: string): string {
@@ -130,10 +152,7 @@ export const connectCommand: Command = {
           // Authentication and transport implementations may include server
           // replies in their errors. Never relay those through the CLI while
           // an owner is entering a mailbox credential.
-          if (isSafeImapSignInError(error)) {
-            throw error;
-          }
-          throw new ConnectionError("IMAP sign-in failed. Check the server, username, app password, and selected folders.");
+          throw safeImapSignInFailure(error);
         }
         applyConnectionSensitivity(ctx.db, connection, connector.manifest(), requested);
         if (json) io.out(jsonEnvelope("connect", "ok", { connector_id: connectorId, source_key: connection.source_key, state: "enrolled" }));
