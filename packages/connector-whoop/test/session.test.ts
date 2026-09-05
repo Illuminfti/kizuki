@@ -1,50 +1,36 @@
 import { test, expect } from 'bun:test';
 import { WhoopFixture } from '../src/testing';
 import { encodeState, parseState, scopes } from '../src/state';
-for (const accountChanged of [false, true])
-    test(`late OAuth refresh cannot clobber newer ${accountChanged ? 'account' : 'same-account session'}`, async () => {
-        const f = new WhoopFixture(1), old = parseState(f.state);
-        old.oauth.tokens.expires_at = '2020-01-01T00:00:00Z';
-        f.state = encodeState(old);
-        let release!: (value: any) => void, writes = 0;
-        const port = await f.connected({
-            persist: async (b) => {
-                writes++;
-                await f.persist(b);
-            }, oauth: {
-                listen: async () => {
-                    throw Error('not enrollment');
-                }, postForm: async () => new Promise(r => {
-                    release = r;
-                })
-            }
-        });
-        const result = await port.sync(null);
-        expect(result.status).toBe('unavailable');
-        expect(result.detail).toContain('timeout');
-        const newer = parseState(f.state);
-        if (accountChanged) {
-            newer.oauth.account.id = '8';
-            f.account = 8;
-            for (const row of f.records.cycle)
-                row.user_id = 8;
-        }
-        newer.oauth.tokens.access_token = 'synthetic-new-access';
-        newer.oauth.tokens.expires_at = '2099-01-01T00:00:00Z';
-        f.state = encodeState(newer);
-        await port.connect(async () => new TextDecoder().decode(f.state));
-        const durable = f.state.slice();
-        release({
-            status: 200, body: {
-                access_token: 'synthetic-late-access', refresh_token: 'synthetic-late-refresh', expires_in: 3600, scope: scopes(f.selection).join(' '), token_type: 'Bearer'
-            }
-        });
-        await Bun.sleep(25);
-        expect(writes).toBe(0);
-        expect(f.state).toEqual(durable);
-        expect((await port.sync(null)).events).toHaveLength(1);
-        await port.close();
-    }, 10000);
+test('timed-out refresh remains fenced through late rotation and pending host write', async () => {
+    const f = new WhoopFixture(1), old = parseState(f.state);
+    old.oauth.tokens.expires_at = '2020-01-01T00:00:00Z';
+    f.state = encodeState(old);
+    let release!: (value: any) => void, finishWrite!: () => void, writes = 0;
+    const port = await f.connected({
+        persist: async bytes => { writes++; await new Promise<void>(r => { finishWrite = r; }); await f.persist(bytes); },
+        oauth: { listen: async () => { throw Error('not enrollment'); }, postForm: async () => new Promise(r => { release = r; }) }
+    });
+    const start = Date.now(), result = await port.sync(null);
+    expect(Date.now() - start).toBeLessThan(6500);
+    expect(result.status).toBe('unavailable');
+    expect(result.detail).toContain('timeout');
+    let reads = 0;
+    const resolve = async () => { reads++; return new TextDecoder().decode(f.state); };
+    await expect(port.connect(resolve)).rejects.toThrow();
+    await expect(port.sync(null)).rejects.toThrow();
+    release({ status: 200, body: { access_token: 'rotated-access', refresh_token: 'rotated-refresh', expires_in: 3600, scope: scopes(f.selection).join(' '), token_type: 'Bearer' } });
+    await Bun.sleep(10);
+    expect(writes).toBe(1);
+    await expect(port.connect(resolve)).rejects.toThrow();
+    await expect(port.sync(null)).rejects.toThrow();
+    expect(reads).toBe(0);
+    finishWrite();
+    await Bun.sleep(10);
+    expect(parseState(f.state).oauth.tokens.refresh_token).toBe('rotated-refresh');
+    await port.connect(resolve);
+    expect(reads).toBe(1);
+    await port.close();
+}, 10000);
 test('uncertain host persistence is bounded, fences reload until settlement and retains original checkpoint', async () => {
     const f = new WhoopFixture();
     let release!: () => void, held = true, calls = 0, resolves = 0;
@@ -138,5 +124,17 @@ test('refresh and API requests share one operation budget', async () => {
     expect(result.status).toBe('unavailable');
     expect(result.events).toEqual([]);
     expect(tokenCalls + f.requests.length).toBeLessThanOrEqual(48);
+    await port.close();
+});
+
+test('instance manifest declares state custody and health recovers persisted cooldown', async () => {
+    const f = new WhoopFixture();
+    let port = await f.connected();
+    expect(port.manifest().required_secrets).toEqual(['file:/synthetic-protected-state']);
+    f.failStatus = 429;
+    await port.sync(null);
+    await port.close();
+    port = await f.connected();
+    expect((await port.health()).state).toBe('rate_limited');
     await port.close();
 });

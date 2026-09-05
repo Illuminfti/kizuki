@@ -59,3 +59,18 @@ test('cross-account identity, unsafe numeric IDs and malformed selected metrics 
         }])
         expect(() => recordEvent('cycle', bad, '7', ['metrics'], '2026-02-01T00:00:00Z')).toThrow();
 });
+
+ test('RFC3339 revision and activity ordering covers leap seconds, offsets and submilliseconds', () => {
+    const observed = '2026-02-01T00:00:00Z';
+    for (const [later, earlier] of [
+        ['2016-12-31T23:59:60Z', '2016-12-31T23:59:59Z'],
+        ['2017-01-01T00:00:00Z', '2016-12-31T23:59:60.999999Z'],
+        ['2017-01-01T00:59:60+01:00', '2016-12-31T23:59:59Z'],
+        ['2026-01-01T00:00:00.000002Z', '2026-01-01T00:00:00.000001Z']
+    ]) {
+        expect(() => recordEvent('cycle', { ...record, created_at: later, updated_at: earlier }, '7', [], observed)).toThrow();
+        expect(() => recordEvent('cycle', { ...record, start: later, end: earlier }, '7', ['activity'], observed)).toThrow();
+        expect(() => recordEvent('cycle', { ...record, created_at: earlier, updated_at: later }, '7', [], observed)).not.toThrow();
+    }
+    expect(() => recordEvent('cycle', { ...record, created_at: '2017-01-01t00:59:60.100+01:00', updated_at: '2016-12-31t23:59:60.1z' }, '7', [], observed)).not.toThrow();
+ });

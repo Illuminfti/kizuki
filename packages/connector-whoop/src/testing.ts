@@ -31,7 +31,7 @@ export class WhoopFixture {
             for (let i = 1; i <= count; i++) {
                 const uuid = `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`;
                 this.records[resource].push({
-                    id: resource === 'cycle' ? i : uuid, cycle_id: i, sleep_id: uuid, user_id: 7, created_at: '2026-01-02T00:00:00Z', updated_at: '2026-01-03T00:00:00Z', start: '2026-01-01T01:00:00Z', end: '2026-01-01T09:00:00Z', timezone_offset: '+00:00', nap: false, sport_id: 1, score_state: 'SCORED', score: resource === 'cycle' ? {
+                    id: resource === 'cycle' ? i : uuid, cycle_id: i, sleep_id: uuid, user_id: 7, created_at: '2026-01-02T00:00:00Z', updated_at: '2026-01-03T00:00:00Z', start: '2026-01-01T01:00:00Z', end: '2026-01-01T09:00:00Z', timezone_offset: '+00:00', nap: false, sport_name: 'running', score_state: 'SCORED', score: resource === 'cycle' ? {
                         strain: i
                     } : resource === 'recovery' ? {
                         recovery_score: 0, user_calibrating: false

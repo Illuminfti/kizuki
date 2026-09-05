@@ -49,6 +49,27 @@ export function instant(value: unknown): string {
         throw failure();
     return value;
 }
+/** Compare the same RFC3339 grammar accepted by instant(), without Date.parse's
+ * leap-second NaN or millisecond precision loss. A leap second follows :59 and
+ * precedes the next ordinary second, including across numeric UTC offsets. */
+export function compareInstants(left: string, right: string): number {
+    const parts = (value: string): [number, number, string] => {
+        instant(value);
+        const m = /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?([Zz]|[+-]\d{2}:\d{2})$/.exec(value)!;
+        const date = new Date(0);
+        date.setUTCFullYear(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+        date.setUTCHours(Number(m[4]), Number(m[5]), Math.min(59, Number(m[6])), 0);
+        const zone = m[8]!;
+        const offset = /^[Zz]$/.test(zone) ? 0 : (zone[0] === '+' ? 1 : -1) * (Number(zone.slice(1, 3)) * 60 + Number(zone.slice(4)));
+        return [date.getTime() / 1000 - offset * 60, Number(m[6]) === 60 ? 1 : 0, m[7] ?? ''];
+    };
+    const a = parts(left), b = parts(right);
+    if (a[0] !== b[0]) return a[0] < b[0] ? -1 : 1;
+    if (a[1] !== b[1]) return a[1] - b[1];
+    const width = Math.max(a[2].length, b[2].length);
+    const af = a[2].padEnd(width, '0'), bf = b[2].padEnd(width, '0');
+    return af < bf ? -1 : af > bf ? 1 : 0;
+}
 export function integerId(value: unknown): string {
     if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0)
         throw failure();

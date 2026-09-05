@@ -1,7 +1,7 @@
 import { DeadlineError, HealthReport, OAuthSession, freezeManifest, loopbackTransport, parseOAuthState, withDeadline, type CaptureEventInput, type Connector, type OAuthProvider, type OAuthTransport, type SecretResolver, type StatePersister, type SyncBatch } from '@kizuki/core';
 import { Budget, HttpFailure, ORIGIN, request, type WhoopFetch } from './api';
 import { recordEvent } from './events';
-import { WHOOP_ID, CURSOR_SCHEMA, decodeCursor, digest, encodeCursor, encodeState, failure, integerId, parseState, planId, scopes, selection, type Selection, type Plan, type WhoopState } from './state';
+import { WHOOP_ID, CURSOR_SCHEMA, compareInstants, decodeCursor, digest, encodeCursor, encodeState, failure, integerId, parseState, planId, scopes, selection, type Selection, type Plan, type WhoopState } from './state';
 export interface WhoopConfig {
     secret_ref: string;
     client: {
@@ -30,6 +30,8 @@ export class WhoopConnector implements Connector {
     private session: OAuthSession | null = null;
     private generation = 0;
     private writes = 0;
+    private pendingTokens = 0;
+    private origin: { state: WhoopState; persist: StatePersister } | null = null;
     private operationBudget: Budget | null = null;
     private busy = false;
     private disabled = false;
@@ -50,11 +52,11 @@ export class WhoopConnector implements Connector {
         this.now = deps.now ?? (() => new Date());
     }
     manifest() {
-        return MANIFEST;
+        return freezeManifest({ ...MANIFEST, required_secrets: [this.config.secret_ref] });
     }
     async health() {
         return new HealthReport({
-            state: this.disabled ? 'disabled' : this.status, checked_at: this.now().toISOString(), detail: 'WHOOP bounded history rescan; polling cannot confirm deletions; native enrollment unqualified'
+            state: this.disabled ? 'disabled' : this.state?.retry_at && compareInstants(this.state.retry_at, this.now().toISOString()) > 0 ? 'rate_limited' : this.status, checked_at: this.now().toISOString(), detail: 'WHOOP bounded history rescan; polling cannot confirm deletions; native enrollment unqualified'
         });
     }
     private provider(): OAuthProvider {
@@ -84,14 +86,18 @@ export class WhoopConnector implements Connector {
         this.session?.forget();
         this.session = null;
         this.state = null;
+        this.origin = null;
     }
     private async persist(next: WhoopState, g = this.generation, ms = 5000) {
         this.live(g);
         const bytes = encodeState(next);
+        const origin = this.origin;
         this.writes++;
         const write = Promise.resolve().then(() => {
             this.live(g);
-            return this.deps.persist(bytes);
+            return this.deps.persist(bytes).then(() => {
+                if (origin) origin.state = next;
+            });
         }).finally(() => {
             this.writes--;
         });
@@ -106,7 +112,7 @@ export class WhoopConnector implements Connector {
         }
     }
     async connect(resolve: SecretResolver): Promise<void> {
-        if (this.disabled || this.busy || this.writes > 0)
+        if (this.disabled || this.busy || this.writes > 0 || this.pendingTokens > 0)
             throw failure('unavailable');
         const provider = this.provider();
         if (typeof this.config.secret_ref !== 'string' || !/^(env:[A-Za-z_][A-Za-z0-9_]*|file:\/[^\x00-\x1f]+)$/.test(this.config.secret_ref))
@@ -114,6 +120,7 @@ export class WhoopConnector implements Connector {
         const g = ++this.generation;
         this.session?.forget();
         this.state = null;
+        this.origin = null;
         this.session = null;
         this.reload = false;
         try {
@@ -123,6 +130,8 @@ export class WhoopConnector implements Connector {
             if (digest(state.selection) !== digest(this.config.selection) || this.config.expected_account !== undefined && state.oauth.account.id !== this.config.expected_account)
                 throw failure('identity_mismatch');
             this.state = state;
+            const origin = { state, persist: this.deps.persist };
+            this.origin = origin;
             const account = state.oauth.account.id;
             const transport = this.deps.oauth ?? loopbackTransport();
             this.session = new OAuthSession({
@@ -138,13 +147,22 @@ export class WhoopConnector implements Connector {
                         return transport.postForm(url, form);
                     },
                 }, now: this.now, persist: async (bytes) => {
-                    this.live(g);
-                    const current = this.require(), oauth = parseOAuthState(bytes, WHOOP_ID);
-                    if (current.oauth.account.id !== account || oauth.account.id !== account)
+                    // Core must persist a successful rotation even after forget().
+                    // Only the original host CAS handle owns this exchange; never
+                    // resolve/retry against a replacement connection.
+                    const oauth = parseOAuthState(bytes, WHOOP_ID);
+                    if (origin.state.oauth.account.id !== account || oauth.account.id !== account)
                         throw failure('identity_mismatch');
-                    await this.persist({
-                        ...current, oauth
-                    }, g);
+                    const next = { ...origin.state, oauth };
+                    this.writes++;
+                    try {
+                        await origin.persist(encodeState(next));
+                        origin.state = next;
+                        if (g === this.generation && !this.disabled && !this.reload)
+                            this.state = next;
+                    } finally {
+                        this.writes--;
+                    }
                 }
             });
             this.status = 'degraded';
@@ -160,7 +178,9 @@ export class WhoopConnector implements Connector {
     private async token(budget: Budget): Promise<string> {
         const g = this.generation;
         try {
-            const token = await withDeadline(this.session!.accessToken(), Math.min(5000, budget.remaining()), 'WHOOP refresh timeout');
+            this.pendingTokens++;
+            const exchange = this.session!.accessToken().finally(() => { this.pendingTokens--; });
+            const token = await withDeadline(exchange, Math.min(5000, budget.remaining()), 'WHOOP refresh timeout');
             this.live(g);
             return token;
         }
@@ -171,7 +191,7 @@ export class WhoopConnector implements Connector {
     }
     private async call(path: string, budget: Budget, query?: URLSearchParams, method: 'GET' | 'DELETE' = 'GET') {
         const state = this.require();
-        if (state.retry_at !== null && Date.parse(state.retry_at) > this.now().getTime())
+        if (state.retry_at !== null && compareInstants(state.retry_at, this.now().toISOString()) > 0)
             throw failure('rate_limited');
         const url = new URL('/developer/v2/' + path, ORIGIN);
         if (query)
@@ -247,7 +267,7 @@ export class WhoopConnector implements Connector {
             throw failure('unauthenticated');
         if (cursor !== null)
             decodeCursor(cursor);
-        if (this.busy)
+        if (this.busy || this.pendingTokens > 0 || this.writes > 0)
             throw failure('unavailable');
         this.busy = true;
         try {
@@ -274,7 +294,7 @@ export class WhoopConnector implements Connector {
             else if (cursor !== null || plan !== null)
                 throw failure('invalid_cursor');
             const observed = plan?.observed ?? this.now().toISOString(), end = plan?.end ?? observed;
-            if (Date.parse(end) < Date.parse(state.selection.history_start))
+            if (compareInstants(end, state.selection.history_start) < 0)
                 throw failure('misconfigured');
             const events = await this.scan(end, observed, budget);
             const entries = events.map(e => ({
@@ -329,10 +349,10 @@ export class WhoopConnector implements Connector {
         }
     }
     /** Explicit provider authorization revoke. This never deletes health data. */
-    async revoke(): Promise<void> {
+    async revokeProviderAccess(): Promise<void> {
         if (this.disabled)
-            return;
-        if (this.busy)
+            throw failure('unauthenticated');
+        if (this.busy || this.pendingTokens > 0 || this.writes > 0)
             throw failure('unavailable');
         this.require();
         this.busy = true;
@@ -346,6 +366,10 @@ export class WhoopConnector implements Connector {
             this.busy = false;
         }
     }
+    /** Connector contract: idempotent local cessation, not provider revocation. */
+    async revoke(): Promise<void> {
+        await this.close();
+    }
     /** Local terminal cleanup; no provider request or source-consent mutation. */
     async close(): Promise<void> {
         this.disabled = true;
@@ -353,6 +377,7 @@ export class WhoopConnector implements Connector {
         this.session?.forget();
         this.session = null;
         this.state = null;
+        this.origin = null;
     }
     async purgeSource(_subject: string): Promise<never> {
         throw failure('not_supported');

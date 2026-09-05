@@ -30,10 +30,19 @@ This package does not invent source grants.
 The OAuth envelope contains tokens and a bounded private capture checkpoint:
 fixed history range, source IDs and event hashes, with no health metric bodies.
 It is credential-sensitive state, not an exportable public checkpoint. The trusted
-host owns its lifecycle, revision CAS, recovery and cleanup. A pending host write
-with unknown outcome fences reconnect until that write settles; after failure the
-connector requires durable reload. Old refresh generations cannot write a newer
-session. Cross-process token rotation relies on the host's existing state CAS;
+host owns its lifecycle, revision CAS, recovery and cleanup. An unsettled token exchange or host write fences reconnect and capture until
+its full outcome settles; the caller still receives a bounded timeout. A late
+successful rotation after timeout or local close persists through the original
+host CAS handle, preserving its last committed non-token envelope. It never
+resurrects the closed live session or retries a failed CAS against a replacement
+handle. After failure the connector requires durable reload. Both same-account
+and different-account replacements reject the stale writer.
+
+This cannot guarantee token delivery if the host exits or closes its database
+before an uncancellable transport returns, or if WHOOP rotates a token but its
+HTTP response is lost. Persistence may then fail and operator reauthorization
+may be required; native enrollment remains unqualified. Local close does not
+cancel an already-started provider exchange or promise its completion. Cross-process token rotation relies on the host's existing state CAS;
 this component does not create an independent cross-process OAuth lock.
 
 ## Enrollment gate
@@ -55,8 +64,11 @@ use their v2 UUIDs. Integer IDs outside JavaScript's exact safe range are refuse
 Account, identity and timestamp mismatches refuse the whole batch.
 
 `occurred_at` is the actual provider `updated_at` revision time. Provider
-`created_at` is retained separately. Activity `start`, nullable `end` and time-zone
-offset are included only when selected. They are never substituted for revision
+`created_at` is retained separately. Activity `start`, `end` and time-zone offset are included only when selected.
+An active cycle's omitted or null end is retained as unknown (`null`); `Z` is a
+valid time-zone designator. Workouts retain the current required `sport_name`,
+not the retired `sport_id`. Ordering uses RFC3339-aware comparison, including
+leap seconds, numeric offsets and submillisecond fractions. They are never substituted for revision
 time. Recovery has no activity start/end in its collection response; its activity
 validity is explicitly `null`. Selecting recovery does not implicitly fetch sleep
 or invent a recovery date from the cycle number.
@@ -99,17 +111,19 @@ range remain unqualified; the manifest declares no tombstone capability.
 ## Bounds and authorization revocation
 
 An operation has a 45-second wall bound, 48 HTTP requests, five seconds per HTTP
-request or persistence wait, two MiB per response, 384 KiB protected state, and
+request or caller persistence/token wait, two MiB per response, 384 KiB protected state, and
 an eight KiB cursor. No automatic HTTP retry or redirect is followed. HTTP 429
 persists a cooldown from Retry-After or WHOOP reset headers before returning;
 restart respects it. This per-source mechanism is not an application-wide quota
 reservation system. Operator limits and concurrent applications still apply.
 
-`revoke()` explicitly calls WHOOP's fixed authorization-revocation endpoint. It
-clears the local session only after provider success, is terminal/idempotent,
+`revokeProviderAccess()` explicitly calls WHOOP's fixed authorization-revocation endpoint. It
+clears the local session only after provider success, is terminal,
 and excludes concurrent capture. Failure is reported; source consent denial must
 remain independently enforceable by Core even when WHOOP is unavailable.
-`close()` stops only the local object, with no provider request. Neither operation
+`revoke()` and `close()` stop only the local object, with no provider request or
+claim of ending provider authorization. Native source revocation independently
+owns source denial and erasure. Neither operation
 erases remote health records. `purgeSource()` is unsupported. Local owned-data
 purge remains a Core/host responsibility, with all its existing proof gates.
 

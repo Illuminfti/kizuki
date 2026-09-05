@@ -89,14 +89,14 @@ test('rate-limit cooldown is durable across restart and provider authorization r
     expect(f.requests).toHaveLength(count);
     f.failStatus = 0;
     f.time = new Date(f.time.getTime() + 61000);
-    await port.revoke();
+    await port.revokeProviderAccess();
     expect(f.requests.at(-1)!.method).toBe('DELETE');
     expect((await port.health()).state).toBe('disabled');
     await expect(port.sync(null)).rejects.toThrow();
     const g = new WhoopFixture();
     const other = await g.connected();
     g.failStatus = 500;
-    await expect(other.revoke()).rejects.toThrow();
+    await expect(other.revokeProviderAccess()).rejects.toThrow();
     expect((await other.health()).state).not.toBe('disabled');
     const before = g.requests.length;
     await other.close();
@@ -147,7 +147,7 @@ test('provider revoke owns the session operation while pending and local close n
         }
     };
     const port = await f.connected();
-    const revoking = port.revoke();
+    const revoking = port.revokeProviderAccess();
     await started;
     await expect(port.sync(null)).rejects.toThrow('unavailable');
     release();
@@ -162,4 +162,17 @@ test('long explicit provider cooldown is never shortened to a local monthly cap'
     await port.sync(null);
     expect(Date.parse(parseState(f.state).retry_at!) - f.time.getTime()).toBe(3000000000);
     await port.close();
+});
+
+test('contract revoke stops locally without credentials or provider success', async () => {
+    const f = new WhoopFixture(), port = await f.connected();
+    await expect(port.connect(async () => { throw Error('missing protected state'); })).rejects.toThrow();
+    await expect(port.revokeProviderAccess()).rejects.toThrow();
+    expect(f.requests).toHaveLength(0);
+    await port.revoke();
+    await port.revoke();
+    await expect(port.revokeProviderAccess()).rejects.toThrow();
+    expect(f.requests).toHaveLength(0);
+    expect((await port.health()).state).toBe('disabled');
+    await expect(port.backfill(null)).rejects.toThrow();
 });

@@ -1,5 +1,5 @@
 import type { CaptureEventInput } from '@kizuki/core';
-import { WHOOP_ID, integerId, instant, object, failure, type Resource, type Field } from './state';
+import { WHOOP_ID, integerId, instant, compareInstants, object, failure, type Resource, type Field } from './state';
 const NUMBERS: Record<Resource, readonly string[]> = {
     cycle: ['strain', 'kilojoule', 'average_heart_rate', 'max_heart_rate'], recovery: ['recovery_score', 'resting_heart_rate', 'hrv_rmssd_milli', 'spo2_percentage', 'skin_temp_celsius'], sleep: ['respiratory_rate', 'sleep_performance_percentage', 'sleep_consistency_percentage', 'sleep_efficiency_percentage'], workout: ['strain', 'average_heart_rate', 'max_heart_rate', 'kilojoule', 'percent_recorded', 'distance_meter', 'altitude_gain_meter', 'altitude_change_meter']
 };
@@ -43,7 +43,7 @@ export function recordEvent(resource: Resource, raw: unknown, account: string, f
         throw failure('identity_mismatch');
     const id = resource === 'cycle' ? integerId(r.id) : resource === 'recovery' ? integerId(r.cycle_id) : uuid(r.id);
     const created = instant(r.created_at), updated = instant(r.updated_at);
-    if (Date.parse(updated) < Date.parse(created))
+    if (compareInstants(updated, created) < 0)
         throw failure();
     if (!['SCORED', 'PENDING_SCORE', 'UNSCORABLE'].includes(r.score_state as string))
         throw failure();
@@ -58,10 +58,10 @@ export function recordEvent(resource: Resource, raw: unknown, account: string, f
         if (resource === 'recovery')
             metadata.activity = null;
         else {
-            const start = instant(r.start), end = r.end === null ? null : instant(r.end);
-            if (end !== null && Date.parse(end) < Date.parse(start))
+            const start = instant(r.start), end = resource === 'cycle' && (r.end === null || r.end === undefined) ? null : instant(r.end);
+            if (end !== null && compareInstants(end, start) < 0)
                 throw failure();
-            if (typeof r.timezone_offset !== 'string' || !/^[+-](?:0[0-9]|1[0-4]):[0-5][0-9]$/.test(r.timezone_offset))
+            if (typeof r.timezone_offset !== 'string' || !/^(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$/.test(r.timezone_offset))
                 throw failure();
             const activity: Record<string, unknown> = {
                 start, end, timezone_offset: r.timezone_offset
@@ -72,9 +72,9 @@ export function recordEvent(resource: Resource, raw: unknown, account: string, f
                 activity.nap = r.nap;
             }
             if (resource === 'workout') {
-                if (typeof r.sport_id !== 'number' || !Number.isSafeInteger(r.sport_id))
+                if (typeof r.sport_name !== 'string' || r.sport_name.length === 0 || r.sport_name.length > 256 || /[\p{C}]/u.test(r.sport_name))
                     throw failure();
-                activity.sport_id = r.sport_id;
+                activity.sport_name = r.sport_name;
             }
             metadata.activity = activity;
         }
