@@ -207,6 +207,8 @@ export class GoogleCalendarConnector implements Connector {
         }
     }
     private async tokenWait<T>(operation: () => Promise<T>, budget: Budget, generation: number): Promise<T> {
+        // Refuse an exhausted budget before creating asynchronous custody work.
+        const timeoutMs = Math.min(5000, budget.remaining());
         this.pendingTokens++;
         // Track the whole exchange, including mandatory late rotated-token custody.
         // withDeadline attaches a rejection handler even after its outer wait ends.
@@ -215,7 +217,7 @@ export class GoogleCalendarConnector implements Connector {
             return operation();
         }).finally(() => { this.pendingTokens--; });
         try {
-            const result = await withDeadline(pending, Math.min(5000, budget.remaining()), "Google Calendar token deadline");
+            const result = await withDeadline(pending, timeoutMs, "Google Calendar token deadline");
             this.assertGeneration(generation);
             return result;
         }
