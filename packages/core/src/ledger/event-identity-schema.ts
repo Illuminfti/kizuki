@@ -3,7 +3,7 @@ import { EVENT_LIMITS } from "../contracts/event";
 import { classifyNewEventOrigin } from "./event-origin";
 import { EventRecordError, eventFromRow, type EventRow } from "./event-record";
 import { computeOriginBinding, nativeRequestDigest } from "./event-origin-binding";
-import { assertLegacyOriginUnconsumed } from "./legacy-origin-preflight";
+import { assertLegacyOriginsUnconsumed, LEGACY_ORIGIN_CANDIDATES, LEGACY_ORIGIN_MAX_CANDIDATES, LegacyOriginRebuildRequired } from "./legacy-origin-preflight";
 import { isRfc3339 } from "../util/time";
 
 const HASH_CHECK = (column: string): string =>
@@ -70,23 +70,33 @@ export function applyEventIdentityV16(db: Database): void {
 /** The only compatibility route; callers own an unpublished immediate transaction. */
 export function bindLegacyEventOrigins(db: Database): void {
   if (!db.inTransaction) throw new EventRecordError();
-  using page = db.prepare<EventRow, [string]>("SELECT * FROM events WHERE event_id>? ORDER BY event_id LIMIT 32");
-  using update = db.prepare(`UPDATE events SET content_hash_version=1,text_hash=?,origin=?,
-    origin_binding_version=1,origin_binding_kind='legacy',origin_binding=? WHERE event_id=?`);
-  let after = "";
-  for (;;) {
-    const rows = page.all(after);
-    if (rows.length === 0) break;
-    for (const row of rows) {
-      const event = eventFromRow(row, db, "legacy");
-      const nativeDigest = nativeRequestDigest(db, event.event_id);
-      const origin = nativeDigest === null ? classifyNewEventOrigin(db, event) : "external";
-      if (origin === "self" && !event.text.includes("KIZUKI CONTEXT v1")) {
-        assertLegacyOriginUnconsumed(db, row);
+  db.exec(`CREATE TABLE ${LEGACY_ORIGIN_CANDIDATES} (
+    event_id TEXT PRIMARY KEY, accepted_at TEXT NOT NULL) WITHOUT ROWID`);
+  try {
+    using page = db.prepare<EventRow, [string]>("SELECT * FROM events WHERE event_id>? ORDER BY event_id LIMIT 32");
+    using update = db.prepare(`UPDATE events SET content_hash_version=1,text_hash=?,origin=?,
+      origin_binding_version=1,origin_binding_kind='legacy',origin_binding=? WHERE event_id=?`);
+    using candidate = db.prepare(`INSERT INTO ${LEGACY_ORIGIN_CANDIDATES}(event_id,accepted_at) VALUES (?,?)`);
+    let after = "";
+    let candidates = 0;
+    for (;;) {
+      const rows = page.all(after);
+      if (rows.length === 0) break;
+      for (const row of rows) {
+        const event = eventFromRow(row, db, "legacy");
+        const nativeDigest = nativeRequestDigest(db, event.event_id);
+        const origin = nativeDigest === null ? classifyNewEventOrigin(db, event) : "external";
+        if (origin === "self" && !event.text.includes("KIZUKI CONTEXT v1")) {
+          if (++candidates > LEGACY_ORIGIN_MAX_CANDIDATES) throw new LegacyOriginRebuildRequired();
+          candidate.run(event.event_id, row.accepted_at);
+        }
+        update.run(event.text_hash, origin, computeOriginBinding({ ...event, origin }, row.accepted_at, "legacy", nativeDigest), event.event_id);
+        after = event.event_id;
       }
-      update.run(event.text_hash, origin, computeOriginBinding({ ...event, origin }, row.accepted_at, "legacy", nativeDigest), event.event_id);
-      after = event.event_id;
     }
+    if (candidates > 0) assertLegacyOriginsUnconsumed(db);
+  } finally {
+    db.exec(`DROP TABLE ${LEGACY_ORIGIN_CANDIDATES}`);
   }
 }
 

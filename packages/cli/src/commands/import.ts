@@ -131,6 +131,7 @@ export const importCommand: Command = {
         selected.connection.connector_id,
         selected.connection.source_key,
         "backfill",
+        { vault_path: ctx.vaultPath },
       );
       const derived = tryRefreshDerived(ctx.db, ctx.vaultPath);
       io.out(formatRunCounts(result));

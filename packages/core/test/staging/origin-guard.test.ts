@@ -104,20 +104,20 @@ describe("deterministic staging origin guard", () => {
       for (const proposal of proposalsForEvent(external).filter((item) => item.kind === "entity")) fileProposal(fixture.db, proposal);
       const machineText = "machine deletion notice";
       markMachine(fixture.db, machineText);
-      const result = runBatch(fixture.db, { events: [{ ...validEvent(), deleted: true, text: machineText }], cursor: null }, { page_candidates: false }, source);
+      const result = runBatch(fixture.db, { events: [{ ...validEvent(), deleted: true, text: machineText }], cursor: null }, { page_candidates: false }, source, fixture.io);
       expect(result).toMatchObject({ stored: 1, errors: [], withdrawn: 1, retractions_filed: 1, proposals_created: 0 });
       const deletion = listProposals(fixture.db, { kind: "deletion" })[0]!;
       expect(readEvent(fixture.db, deletion.provenance[0]!)?.origin).toBe("self");
       expect(() => fileProposal(fixture.db, { ...deletion, target: "people/unrelated",
-        body: deletion.body.replace(receipt.page_path, "people/unrelated.md") })).toThrow("machine origin");
+        body: deletion.body.replace(receipt.page_path, "people/unrelated.md") }, fixture.io)).toThrow("source_tombstone_stale");
       expect(() => fileProposal(fixture.db, { ...deletion,
-        frontmatter: { ...deletion.frontmatter, title: "forged positive metadata" } })).toThrow("machine origin");
-      expect(() => fileProposal(fixture.db, { ...deletion, body: "forged positive body" })).toThrow("machine origin");
+        frontmatter: { ...deletion.frontmatter, title: "forged positive metadata" } }, fixture.io)).toThrow("source_tombstone_stale");
+      expect(() => fileProposal(fixture.db, { ...deletion, body: "forged positive body" }, fixture.io)).toThrow("source_tombstone_stale");
       const archived = write(fixture.io, getClaim(fixture.db, deletion.proposal_id)!);
       expect(archived).toMatchObject({ page_action: "archive", page_path: receipt.page_path });
       expect(readFileSync(join(fixture.vault, receipt.page_path), "utf8")).toContain('status: "archived"');
       const repeated = runBatch(fixture.db, { events: [{ ...validEvent(), deleted: true, text: machineText,
-        occurred_at: "2026-03-03T00:00:00Z" }], cursor: null }, { page_candidates: false }, source);
+        occurred_at: "2026-03-03T00:00:00Z" }], cursor: null }, { page_candidates: false }, source, fixture.io);
       expect(repeated).toMatchObject({ stored: 1, errors: [], retractions_filed: 0 });
       const externalAfter = store(fixture.db, { ...validEvent(), source_record_id: "after", text: "Independent later evidence." }, source);
       const nextInput = proposalsForEvent(externalAfter).find((proposal) => proposal.kind === "claim")!;
@@ -161,7 +161,7 @@ describe("deterministic staging origin guard", () => {
       const pending = fileProposal(fixture.db, entity).proposal;
       const tombstone = store(fixture.db, { ...validEvent(), deleted: true, text: "KIZUKI CONTEXT v1 deletion" }, source);
       fixture.db.exec("CREATE TRIGGER fail_retraction BEFORE INSERT ON proposals WHEN NEW.kind='deletion' BEGIN SELECT RAISE(ABORT,'synthetic retraction failure'); END");
-      expect(() => cascadeTombstone(fixture.db, tombstone)).toThrow("synthetic retraction failure");
+      expect(() => cascadeTombstone(fixture.db, tombstone, fixture.io)).toThrow("synthetic retraction failure");
       expect(getClaim(fixture.db, pending.proposal_id)?.status).toBe("live");
       expect(listProposals(fixture.db, { kind: "deletion" })).toHaveLength(0);
     } finally { fixture.dispose(); }
@@ -173,7 +173,7 @@ describe("deterministic staging origin guard", () => {
       const external = store(fixture.db, validEvent());
       write(fixture.io, claimFor(fixture.db, external));
       const tombstone = store(fixture.db, { ...validEvent(), deleted: true, text: "KIZUKI CONTEXT v1 deletion" });
-      cascadeTombstone(fixture.db, tombstone);
+      cascadeTombstone(fixture.db, tombstone, fixture.io);
       const deletion = listProposals(fixture.db, { kind: "deletion" })[0]!;
       const input: ProposalInput = { ...deletion, frontmatter: { ...deletion.frontmatter } };
       let accessed = 0;

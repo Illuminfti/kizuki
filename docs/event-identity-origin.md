@@ -96,6 +96,41 @@ snapshot allows at most 8 MiB total, 4 MiB per string, 32 levels, 512 object key
 4,096 array elements and 2,048 bytes per key; capture-generated proposals fit
 inside those bounds.
 
+Source retractions bind the current canon object. Historical promoted receipts
+only discover candidate paths. Core reads the current page and requires its
+active status, page ID and exact byte hash to agree with `page_index` and the
+exact receipt named by its `last_receipt` entry, including that receipt's path
+and after-hash. Receipt timestamps do not decide this revision: a writer clock
+may move backward. The current page must still name a non-deleted
+event from the tombstone's connector, record ID and managed-source binding.
+Core chooses the smallest matching event ID and files exactly these metadata
+keys: `x-connector`, `x-source-record-id`, `x-page-id`, `x-page-hash`,
+`x-page-receipt` and `x-source-event`. The tuple and fixed deletion body are
+recomputed at proposal filing and again from current disk and database state
+inside final byte admission, before a machine-byte intent. The writer also
+requires an archive at the bound path with unchanged body. These checks apply
+to ordinary external tombstones and self-origin tombstones alike.
+The fixed body includes the current receipt ID as its page-revision reference,
+so a newly bound revision has a distinct existing `(kind,target,body_hash)`
+idempotency key. An existing duplicate must pass the same current binding check
+before reuse; its historical metadata is never silently substituted.
+
+The host supplies explicit `{ vault_path }` context to `cascadeTombstone` and
+`fileProposal`. Ingestion passes it as the fifth `runBatch`, `runBackfill` or
+`runSync` argument, or the existing `runToCompletion` options object. CLI import,
+backfill, sync and the service composition supply their opened vault path.
+Pending-only withdrawals still work without a vault. A cascade with promoted
+candidate paths and missing context raises `source_tombstone_vault_required`,
+rolling back the complete cascade, including pending withdrawals. `runBatch`
+reports that fixed error and rolls back that event's admission as well.
+Historical paths whose current page is missing, replaced, edited, archived or
+no longer cites the source produce no new deletion claim. A previously filed
+tuple invalidated by a new page or receipt refuses with
+`source_tombstone_stale` before new writer effects. Legacy path-only source
+deletions remain readable, but cannot be refiled or replayed as writes; a valid
+current deletion must be regenerated through the cascade. No schema upgrade
+or caller-selected origin exception is introduced by these proposal fields.
+
 A pending decision retains its original drafts, input partition, model reference
 and integrity digest. A current filing view removes drafts supported by events
 whose immutable stamp is self, as can happen during safe legacy backfill. Later
@@ -160,26 +195,38 @@ context-marker event nor a validated native correction. Only those events need
 the contamination preflight. Existing markers were already excluded by the
 historical reader; native corrections remain external.
 
-For each such event, `legacy-origin-preflight.ts` performs these exact checks:
+Backfill collects candidate event IDs and acceptance times in
+`temp.kizuki_legacy_origin_candidates`, a SQLite `WITHOUT ROWID` relation keyed
+by event ID and capped at 1,000,000 candidates. The events themselves are still
+read with 32-row keyset pages. Once all events have been validated and bound,
+`legacy-origin-preflight.ts` performs these checks once for the candidate set:
 
-1. Claim and canon provenance must be a JSON string array of at most 65,536 bytes. A
+1. Claim and canon provenance must be a JSON string array of at most 65,536 bytes,
+   with at most 1,000,000 rows and 64 MiB of provenance per table. A
    matching event ID refuses even when the claim was subsequently superseded
    or purged. SQLite scans the bounded JSON values directly:
 
    ```sql
-   SELECT 1 FROM claims, json_each(claims.provenance) p
-   WHERE p.value = :event_id LIMIT 1;
-   SELECT 1 FROM canon_receipts, json_each(canon_receipts.provenance) p
-   WHERE p.value = :event_id LIMIT 1;
+   SELECT 1 FROM claims h CROSS JOIN json_each(h.provenance) p
+   CROSS JOIN temp.kizuki_legacy_origin_candidates c
+   WHERE c.event_id = p.value LIMIT 1;
+   SELECT 1 FROM canon_receipts h CROSS JOIN json_each(h.provenance) p
+   CROSS JOIN temp.kizuki_legacy_origin_candidates c
+   WHERE c.event_id = p.value LIMIT 1;
    ```
+
+   `CROSS JOIN` fixes history-before-JSON-before-candidate iteration, so the
+   indexed candidate lookup cannot turn into a repeated global history scan.
+   Size, total-budget and string-array checks precede these reference queries.
 
 2. The `kizuki.producer.model` / `extract` checkpoint must contain a bounded
    RFC3339 time, a tab, and a canonical ULID. A candidate at or behind that
    completed frontier refuses under the exact ordering used by extraction:
 
    ```sql
-   SELECT 1 WHERE :accepted_at < :frontier_at
-     OR (:accepted_at = :frontier_at AND :event_id <= :frontier_id);
+   SELECT 1 FROM temp.kizuki_legacy_origin_candidates
+   WHERE accepted_at < :frontier_at
+     OR (accepted_at = :frontier_at AND event_id <= :frontier_id) LIMIT 1;
    ```
 
 3. Completed deferred entries were deleted by the old code. If an
@@ -192,12 +239,15 @@ For each such event, `legacy-origin-preflight.ts` performs these exact checks:
 
    ```sql
    SELECT 1 FROM extract_deferred_inputs d
+   CROSS JOIN temp.kizuki_legacy_origin_candidates c
    LEFT JOIN source_event_bindings b ON b.event_id = d.event_id
-   WHERE d.event_id = :event_id AND d.source_key IS NOT b.source_key LIMIT 1;
+   WHERE c.event_id = d.event_id AND d.source_key IS NOT b.source_key LIMIT 1;
    ```
 
-4. Pending draft JSON must be valid and at most 1 MiB. If a draft contains the
-   event ID, any existing claim or claim-bearing canon receipt makes partial
+4. At most one pending decision may exist. Its draft JSON must be a valid array
+   of at most 1 MiB. A single `json_tree` walk joins its text values against the
+   indexed candidate relation. If a draft contains any candidate event ID,
+   any existing claim or claim-bearing canon receipt makes partial
    old filing possible and refuses. An old structural corroboration could
    have changed an unrelated existing claim without retaining incoming
    provenance. Only a pending decision with no such effects may be filtered
@@ -208,7 +258,18 @@ The first positive check raises the fixed content-free error
 `legacy_origin_rebuild_required`. Migration stays at schema 15; restore never
 publishes its destination. Event validation/backfill uses 32-row keyset pages;
 provenance, pending decisions and timestamp parsing have explicit per-value
-bounds. Current restore never executes this predicate or derives new origin.
+bounds. Checkpoints are read once; the completed frontier has a 256-byte SQL
+preflight before its value enters JavaScript. The temporary relation is dropped
+in `finally` on success or refusal, and the caller's immediate transaction
+rolls back all event bindings when validation fails. Current restore never
+executes this predicate or derives new origin.
+
+The scaling regression counts prepared global provenance scans: 100 and 200
+candidates each require eight, rather than the old 600 at 100 candidates.
+Synthetic in-memory measurements on 5 September 2026 with nonempty unrelated
+provenance measured 96.20 ms for 1,000 candidates plus 1,000 rows in each history
+table and 187.78 ms when both dimensions doubled. These are local query-scaling
+receipts, not a live-vault or cross-backend throughput claim.
 
 This intentionally refuses usable histories where a passed frontier produced
 no claim, an old deferred scan merely checked a denied source, or unrelated

@@ -8,6 +8,8 @@ import { validatePageCandidate } from "../contracts/page-candidate";
 import { pageCandidateProposal } from "./page-candidate";
 import { fileProposal, setProposalStatus, StagingError } from "./proposals";
 import type { ProposalInput } from "./proposals";
+import { sourceTombstoneProposal, SourceTombstoneError } from "../canon/source-tombstone";
+import type { SourceTombstoneContext } from "../canon/source-tombstone";
 
 /**
  * The deterministic floor: claims derivable from an event with no model.
@@ -175,6 +177,7 @@ export interface TombstoneCascade {
 export function cascadeTombstone(
   db: Database,
   tombstone: CaptureEvent,
+  context?: SourceTombstoneContext,
 ): TombstoneCascade {
   return db.transaction(() => {
     tombstone = validateEventOrigin(db, tombstone);
@@ -205,7 +208,7 @@ export function cascadeTombstone(
     // id with the claim the receipted writer materialized (RFC 0002 §18.1 v4).
     const promotedPages = db
       .query(
-        `SELECT DISTINCT p.proposal_id AS proposal_id, r.page_path AS page_path
+        `SELECT DISTINCT r.page_path AS page_path
            FROM canon_receipts r, json_each(r.claim_ids) c,
                 proposals p, json_each(p.provenance) j
           WHERE p.proposal_id = c.value
@@ -213,27 +216,14 @@ export function cascadeTombstone(
             AND p.kind NOT IN ('deletion', 'purge_review')
             AND j.value IN (${placeholders})`,
       )
-      .all(...ids) as { proposal_id: string; page_path: string }[];
+      .all(...ids) as { page_path: string }[];
 
     const retractions: string[] = [];
     for (const page of promotedPages) {
-      const result = fileProposal(db, {
-        kind: "deletion",
-        // The page path minus the extension round-trips through pageRelPath, so
-        // promoting this proposal targets the existing page instead of minting one.
-        target: page.page_path.replace(/\.md$/, ""),
-        body:
-          `Source record \`${tombstone.source_record_id}\` was deleted at ` +
-          `\`${tombstone.connector_id}\`; canon page \`${page.page_path}\` cites it.`,
-        frontmatter: {
-          "x-connector": tombstone.connector_id,
-          "x-source-record-id": tombstone.source_record_id,
-          "x-page-proposal": page.proposal_id,
-        },
-        provenance: [tombstone.event_id],
-        producer: "deterministic",
-        confidence: 1,
-      });
+      if (context === undefined) throw new SourceTombstoneError("source_tombstone_vault_required");
+      const input = sourceTombstoneProposal(db, tombstone, page.page_path, context);
+      if (input === null) continue;
+      const result = fileProposal(db, input, context);
       if (result.outcome === "stored") {
         retractions.push(result.proposal.proposal_id);
       }

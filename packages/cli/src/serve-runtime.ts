@@ -131,6 +131,7 @@ async function syncConnections(
           selected.connection.connector_id,
           selected.connection.source_key,
           "sync",
+          { vault_path: vaultPath },
         );
         events_stored += result.stored;
         events_duplicate += result.duplicates;
