@@ -7,7 +7,6 @@ import {
   countClaims,
   countUnwrittenLiveClaims,
   countWrittenLiveClaims,
-  detectSupervisorKind,
   doctorVault,
   getCanonReceipt,
   getCheckpoint,
@@ -18,7 +17,6 @@ import {
   listCanonPages,
   readHolds,
   readVaultId,
-  realSupervisorHost,
 } from "@kizuki/core";
 import type { ClaimStatus } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
@@ -29,6 +27,7 @@ import { countCanonReceiptRows, indexFreshness, walkCanonReceipts } from "../der
 import { clean, errorText, jsonEnvelope } from "../output";
 import { effectiveVaultConfig, loadVaultConfig } from "../vault-config";
 import { createServeRuntime } from "../serve-runtime";
+import { serveSupervisorHost } from "../service-host";
 import type { CliIo, Command } from "./index";
 
 const HEALTH_DEADLINE_MS = 3_000;
@@ -296,12 +295,7 @@ async function collect(
   }
 
   const unhealthy = connections.some((item) => item.health !== "ok");
-  const kind = detectSupervisorKind(env);
-  const host = realSupervisorHost(
-    kind,
-    env.HOME ?? env.XDG_CONFIG_HOME ?? "",
-    `kizuki serve --vault ${vaultPath}`,
-  );
+  const host = serveSupervisorHost(env, vaultPath);
   let boundModelRef: string | null = null;
   try {
     const runtime = await createServeRuntime({ ...ctx, env, err: () => {} });

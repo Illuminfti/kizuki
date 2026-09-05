@@ -6,24 +6,18 @@ import {
   isRailId,
   queryServeService,
   readServePid,
-  realSupervisorHost,
   runRail,
   runServeDaemon,
   serveExecHint,
   thisProcess,
   uninstallServeService,
-  writeServeIntent,
 } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
 import { withVault } from "../context";
 import { jsonEnvelope } from "../output";
 import type { CliIo, Command } from "./index";
-import { serveArgs } from "../runtime";
+import { serveSupervisorHost } from "../service-host";
 import { createServeRuntime } from "../serve-runtime";
-
-function homeOf(io: CliIo): string {
-  return io.env.HOME ?? io.env.XDG_CONFIG_HOME ?? "";
-}
 
 export const serveCommand: Command = {
   name: "serve",
@@ -39,11 +33,11 @@ export const serveCommand: Command = {
 
     return withVault(io, async (ctx) => {
       const kind = detectSupervisorKind(io.env);
-      const host = realSupervisorHost(kind, homeOf(io), serveArgs(ctx.vaultPath));
+      const host = serveSupervisorHost(io.env, ctx.vaultPath);
 
       if (parsed.flags.has("--install")) {
         if (kind === "none") {
-          writeServeIntent(ctx.vaultPath, "none");
+          installServeService(ctx.vaultPath, host);
           io.out("supervisor: none (loop runs only while you run it)");
           io.out(`run: ${serveExecHint(ctx.vaultPath)}`);
           return 0;
@@ -91,7 +85,7 @@ export const serveCommand: Command = {
           io.err("serve is not running");
           return 1;
         }
-        io.out(`stopped pid=${pid}`);
+        io.out(`stop requested for pid=${pid}`);
         return 0;
       }
 

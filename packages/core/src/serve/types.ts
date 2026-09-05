@@ -46,6 +46,7 @@ export const SUPERVISOR_KINDS = ["systemd", "launchd", "none"] as const;
 export type SupervisorKind = (typeof SUPERVISOR_KINDS)[number];
 
 export const SUPERVISOR_STATES = [
+  "unknown",
   "active",
   "disabled",
   "masked",
@@ -238,7 +239,7 @@ export interface CalibrationDoctor {
 
 export interface ServeDoctorReport {
   readonly supervisor: SupervisorStatus;
-  readonly intent: ServeIntent;
+  readonly intent: ServeIntent | "unknown";
   readonly rails: RailDoctor[];
   readonly model: ModelDoctor;
   readonly stores: StoreDoctor;
