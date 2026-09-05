@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { applySourceGrantsV11, applyNativeOwnerEvidenceV12, applySourceStoresV13, applySourceErasureV14 } from "./source-grants-schema";
+import { applySourceGrantsV11, applyNativeOwnerEvidenceV12, applySourceStoresV13, applySourceErasureV14, applySourceReceiptIntegrityV15 } from "./source-grants-schema";
 import { applyAgentsV9 } from "../agents/schema";
 import { applyCanonV4 } from "../canon/schema";
 import { applyClaimsV3 } from "../claims/schema";
@@ -169,6 +169,7 @@ const MIGRATIONS: readonly Migration[] = [
   { version: 12, apply: applyNativeOwnerEvidenceV12 },
   { version: 13, apply: applySourceStoresV13 },
   { version: 14, apply: applySourceErasureV14 },
+  { version: 15, apply: applySourceReceiptIntegrityV15 },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;

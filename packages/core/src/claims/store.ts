@@ -273,12 +273,6 @@ function resolveProvenance(db: Database, ids: readonly string[]): void {
   }
 }
 
-function eventTaint(connectorId: string): EventFacts["taint"] {
-  // Captured metadata is attacker-controlled. Only the internal owner
-  // connector may establish owner evidence (RFC 0002 §6.3, invariant 8).
-  return connectorId === "kizuki.owner" ? "owner" : "untrusted";
-}
-
 function loadEventFacts(db: Database, ids: readonly string[]): EventFacts[] {
   const placeholders = ids.map(() => "?").join(", ");
   return db
@@ -290,7 +284,7 @@ function loadEventFacts(db: Database, ids: readonly string[]): EventFacts[] {
       event_id: row.event_id,
       connector_id: row.connector_id,
       text: row.text,
-      taint: eventTaint(row.connector_id),
+      taint: db.query("SELECT 1 FROM native_owner_evidence WHERE event_id=? AND origin='correction'").get(row.event_id) !== null ? "owner" : "untrusted",
     }));
 }
 
@@ -893,7 +887,11 @@ export async function insertClaim(
   const polarity = input.polarity ?? "positive";
   const key =
     subject !== null && predicate !== null ? claimKey(subject, predicate) : null;
-  const events = input.events ?? loadEventFacts(io.db, input.provenance);
+  const events = loadEventFacts(io.db, input.provenance);
+  const ownerAttested = events.some(event => event.taint === "owner" && event.text === input.body);
+  const authorityProducer = producer === "owner" && !ownerAttested ? "deterministic" : producer;
+  const authorityIntent = input.intent === "correct" && !ownerAttested ? undefined : input.intent;
+  const authorityEvents = events.map(event => ({...event, taint: ownerAttested ? event.taint : "untrusted" as const}));
   const hasCorroboration =
     key !== null &&
     liveByKey(io.db, key).filter(live => sourceEventsAllowed(io.db, live.provenance, sourceScope)).some((live) =>
@@ -906,21 +904,21 @@ export async function insertClaim(
 
   const assigned = authorityFor(
     {
-      producer,
+      producer: authorityProducer,
       taint: input.taint ?? "clean",
       body: input.body,
       provenance: input.provenance,
       confidence: input.confidence,
-      ...(input.intent === undefined ? {} : { intent: input.intent }),
+      ...(authorityIntent === undefined ? {} : { intent: authorityIntent }),
       claim_key: key,
     },
-    events,
+    authorityEvents,
     {
-      producer: input.producer,
+      producer: input.producer === "owner" && !ownerAttested ? "deterministic" : input.producer,
       taint: input.taint ?? "clean",
       body: input.body,
       provenance: input.provenance,
-      ...(input.intent === undefined ? {} : { intent: input.intent }),
+      ...(authorityIntent === undefined ? {} : { intent: authorityIntent }),
       ...(input.relay_ceiling === undefined
         ? {}
         : { relayCeiling: input.relay_ceiling }),

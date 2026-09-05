@@ -1616,7 +1616,7 @@ const SOURCE_COLUMNS: Record<SourceBackupTable, readonly string[]> = {
   native_owner_evidence: ["event_id", "origin", "request_digest", "recorded_at", "filing_state"],
   source_grants: ["source_key", "connector_id", "revision", "status", "policy", "policy_digest", "updated_at", "revoke_operation", "purge_receipt_id"],
   source_event_bindings: ["event_id", "source_key", "grant_revision", "policy_digest"],
-  source_grant_receipts: ["sequence", "operation_id", "request_digest", "receipt"],
+  source_grant_receipts: ["sequence", "operation_id", "request_digest", "receipt", "receipt_digest"],
 };
 function* sourcePolicyRows(db: Database, table: SourceBackupTable): Generator<Record<string, unknown>> {
   // Fixed identifiers only; SQLite's iterator keeps the backup memory bounded.
@@ -1645,6 +1645,8 @@ function restoreSourcePolicy(db: Database, backup: string, manifest: ExportManif
     const path = `ledger/${table}.jsonl`;
     if (required && manifest.files[path] === undefined) throw new Error("backup source policy stream missing");
     for (const row of streamRows(backup, path, required)) {
+      if(table==="source_grant_receipts" && manifest.schema_versions.ledger<15 && row["receipt_digest"]===undefined) row["receipt_digest"]=null;
+      if(table==="source_store_inventory" && manifest.schema_versions.ledger<14 && row["erasure_report"]===undefined) row["erasure_report"]=null;
       const columns = SOURCE_COLUMNS[table];
       if (Object.keys(row).sort().join() !== [...columns].sort().join()) throw new Error("invalid source policy backup row");
       const values = columns.map(column => {
@@ -1655,6 +1657,7 @@ function restoreSourcePolicy(db: Database, backup: string, manifest: ExportManif
       db.query(`INSERT INTO ${table} (${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`).run(...values);
     }
   }
+  for(const row of db.query<{receipt:string;receipt_digest:string|null},[]>("SELECT receipt,receipt_digest FROM source_grant_receipts").iterate()) {if(row.receipt_digest!==null && row.receipt_digest!==new Bun.CryptoHasher("sha256").update(row.receipt).digest("hex"))throw new Error("backup source receipt integrity mismatch");}
   for (const row of db.query<{ event_id:string; origin:string; request_digest:string; recorded_at:string; filing_state:string }, []>("SELECT * FROM native_owner_evidence").iterate()) {
     if (row.origin !== "correction" || !/^[a-f0-9]{64}$/.test(row.request_digest) || !isRfc3339(row.recorded_at) || !["recorded","filed","failed"].includes(row.filing_state) || db.query("SELECT 1 FROM source_event_bindings WHERE event_id=?").get(row.event_id) !== null || db.query("SELECT 1 FROM events WHERE event_id=?").get(row.event_id) === null) throw new Error("invalid native owner evidence backup");
   }

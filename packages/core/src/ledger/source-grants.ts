@@ -219,12 +219,24 @@ function replay(
   },
 ): SourceGrantReceipt | null {
   const row = db
-    .query<{ request_digest: string; receipt: string }, [string]>(
-      "SELECT request_digest,receipt FROM source_grant_receipts WHERE operation_id=?",
+    .query<
+      {
+        request_digest: string;
+        receipt: string;
+        receipt_digest: string | null;
+      },
+      [string]
+    >(
+      "SELECT request_digest,receipt,receipt_digest FROM source_grant_receipts WHERE operation_id=?",
     )
     .get(operation);
   if (row === null) return null;
   if (row.request_digest !== digest) fail("operation_conflict");
+  if (
+    row.receipt_digest === null ||
+    row.receipt_digest !== sha256Hex(row.receipt)
+  )
+    fail("source_receipt_corrupt");
   let parsed: unknown;
   try {
     parsed = JSON.parse(row.receipt);
@@ -257,8 +269,13 @@ function record(
   receipt: SourceGrantReceipt,
 ): SourceGrantReceipt {
   db.query(
-    "INSERT INTO source_grant_receipts(operation_id,request_digest,receipt) VALUES (?,?,?)",
-  ).run(receipt.operation_id, digest, JSON.stringify(receipt));
+    "INSERT INTO source_grant_receipts(operation_id,request_digest,receipt,receipt_digest) VALUES (?,?,?,?)",
+  ).run(
+    receipt.operation_id,
+    digest,
+    JSON.stringify(receipt),
+    sha256Hex(JSON.stringify(receipt)),
+  );
   return receipt;
 }
 /** Owner-side trusted core administration, like enrollment; never an agent tool. */
