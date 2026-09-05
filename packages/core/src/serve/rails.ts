@@ -1,5 +1,5 @@
 import { tryWriteFlock } from "./flock";
-import { pidAlive } from "./leases";
+import { pidAlive, readBootId } from "./leases";
 import type { Database } from "bun:sqlite";
 import { pendingRetrievalOps, retryRetrievalOps } from "../claims/store";
 import type { ClaimsIo } from "../claims/store";
@@ -20,6 +20,7 @@ import {
   type CrashPoint,
   type RailId,
   type RunReceipt,
+  type RunExecution,
 } from "./types";
 import { runWritePass } from "./write-pass";
 
@@ -41,7 +42,10 @@ export interface RailHooks {
   readonly embedding_backlog?: number;
 }
 
+const processInstance = crypto.randomUUID();
+
 export interface RunRailOptions {
+  readonly execution?: RunExecution;
   readonly now?: () => string;
   readonly hooks?: RailHooks;
   readonly crashAfter?: CrashPoint;
@@ -359,6 +363,9 @@ export async function runRail(
       ...totals,
       ...partial,
       run_id: runId,
+      execution: options.execution ?? {
+        instance_id: processInstance, pid: process.pid, boot_id: readBootId(), trigger: "manual", due_at: null,
+      },
       rail,
       started_at: started,
       finished_at: finished,
@@ -379,6 +386,7 @@ export async function runRail(
       ),
     };
     persistRunReceipt(db, vaultPath, receipt, {
+      ...(rail === "brief" ? { nextRunAt: nextBriefAt(finished, config.brief_hour) } : {}),
       ...(options.crashAfter === undefined ? {} : { crashAfter: options.crashAfter }),
       ...(rail === "brief" ? { artifactPath: briefPath(vaultPath, dayOf(started)) } : {}),
     });

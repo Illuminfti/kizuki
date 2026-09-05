@@ -34,6 +34,7 @@ export type {
   RailId,
   RailSpec,
   RunReceipt,
+  RunExecution,
   RunStatus,
   ScheduleRow,
   ServeConfig,

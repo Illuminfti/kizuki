@@ -107,7 +107,17 @@ export interface RunRetrievalReport {
   readonly degraded: readonly string[];
 }
 
+export interface RunExecution {
+  readonly instance_id: string;
+  readonly pid: number;
+  readonly boot_id: string;
+  readonly trigger: "scheduled" | "manual" | "once";
+  readonly due_at: string | null;
+}
+
 export interface RunReceipt {
+  /** Legacy receipts omit this and cannot prove automatic artifact-bound execution. */
+  readonly execution?: RunExecution;
   readonly run_id: string;
   readonly rail: string;
   readonly started_at: string;

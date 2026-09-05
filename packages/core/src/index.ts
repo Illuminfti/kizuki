@@ -939,6 +939,7 @@ export type {
   RailSyncResult,
   RunRailOptions,
   RunReceipt,
+  RunExecution,
   RunStatus,
   ScheduleRow,
   ServeConfig,

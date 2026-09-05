@@ -18,6 +18,7 @@ import {
   type CrashPoint,
   type RailId,
   type RunReceipt,
+  type RunExecution,
   type RunStatus,
 } from "./types";
 
@@ -38,6 +39,17 @@ export function redactReceiptError(error: unknown): string {
   return redact(text).slice(0, 240);
 }
 
+export function parseRunExecution(value: unknown): RunExecution | undefined {
+  if (!isPlainObject(value) || typeof value["instance_id"] !== "string" ||
+      value["instance_id"].length === 0 || value["instance_id"].length > 128 ||
+      !Number.isSafeInteger(value["pid"]) || Number(value["pid"]) <= 0 ||
+      typeof value["boot_id"] !== "string" || value["boot_id"].length === 0 || value["boot_id"].length > 128 ||
+      !["scheduled", "manual", "once"].includes(String(value["trigger"])) ||
+      (value["due_at"] !== null && (typeof value["due_at"] !== "string" || !Number.isFinite(Date.parse(value["due_at"]))))) return undefined;
+  if (value["trigger"] === "scheduled" && value["due_at"] === null) return undefined;
+  return value as unknown as RunExecution;
+}
+
 function parseReceipt(value: unknown): RunReceipt | null {
   if (!isPlainObject(value)) return null;
   if (typeof value["run_id"] !== "string" || value["run_id"].length === 0) {
@@ -55,7 +67,9 @@ function parseReceipt(value: unknown): RunReceipt | null {
   const totals = emptyRunTotals();
   const model = isPlainObject(value["model"]) ? value["model"] : {};
   const retrieval = isPlainObject(value["retrieval"]) ? value["retrieval"] : {};
+  const execution = parseRunExecution(value["execution"]);
   return {
+    ...(execution === undefined ? {} : { execution }),
     run_id: value["run_id"],
     rail: value["rail"],
     started_at: value["started_at"],
@@ -249,7 +263,7 @@ export function persistRunReceipt(
   db: Database,
   vaultPath: string,
   receipt: RunReceipt,
-  options: { crashAfter?: CrashPoint; artifactPath?: string } = {},
+  options: { crashAfter?: CrashPoint; artifactPath?: string; nextRunAt?: string } = {},
 ): void {
   receipt = redactReceipt(receipt);
   if (options.artifactPath !== undefined) {
@@ -268,7 +282,7 @@ export function persistRunReceipt(
   insertReceiptRow(db, receipt);
   if (isRailId(receipt.rail)) {
     const period = schedulePeriod(db, receipt.rail);
-    const next = new Date(Date.parse(receipt.finished_at) + period * 1000).toISOString();
+    const next = options.nextRunAt ?? new Date(Date.parse(receipt.finished_at) + period * 1000).toISOString();
     markScheduleRun(db, receipt.rail, receipt.finished_at, next);
   }
   if (options.crashAfter === "after-db") {

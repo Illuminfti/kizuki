@@ -14,7 +14,7 @@ import {
 } from "./leases";
 import { recoverRunJournal } from "./receipts";
 import { dueRails, runRail, type RailHooks } from "./rails";
-import { initServe } from "./schema";
+import { initServe, listSchedules } from "./schema";
 import { SERVE_PID_PATH, ServeDaemonError, isRailId, type CrashPoint, type RailId } from "./types";
 
 export interface ServeDaemonOptions {
@@ -67,6 +67,7 @@ export async function runServeDaemon(
   initServe(db);
   const recovered = recoverRunJournal(db, vaultPath);
   const process = options.process ?? thisProcess(options.now);
+  const instanceId = crypto.randomUUID();
   const acquired = acquireLease(db, process);
   if (!acquired.acquired) {
     throw new ServeDaemonError("lease_busy", "writer lease is held by a live process");
@@ -116,6 +117,7 @@ export async function runServeDaemon(
         if (!isRailId(rail)) continue;
         await runRail(db, vaultPath, rail, {
           now: process.now,
+          execution: { instance_id: instanceId, pid: process.pid, boot_id: process.boot_id, trigger: "once", due_at: null },
           ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
           ...(options.crashAfter === undefined ? {} : { crashAfter: options.crashAfter }),
         });
@@ -131,6 +133,8 @@ export async function runServeDaemon(
       if (rail !== undefined) {
         await runRail(db, vaultPath, rail, {
           now: process.now,
+          execution: { instance_id: instanceId, pid: process.pid, boot_id: process.boot_id, trigger: "scheduled",
+            due_at: listSchedules(db).find(row => row.rail === rail)?.next_run_at ?? process.now() },
           ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
         });
         receipts += 1;
