@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterEach, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -22,7 +23,10 @@ test("offline public configured-engine rebuild preserves query results and survi
   expect(before.stdout).toContain("acme");
   const rebuilt = run("rebuild", "--layer", "all", "--json");
   expect(rebuilt.exitCode).toBe(0);
-  expect(JSON.parse(rebuilt.stdout).data.store).toBe("kizuki.retrieval.embedded-pg");
+  const report = JSON.parse(rebuilt.stdout).data;
+  expect(report.store).toBe("kizuki.retrieval.embedded-pg");
+  expect(report.backend).toBe("retrieval-port");
+  expect(report.floor_documents).toBeGreaterThan(0);
   const after = run("query", "acme", "--json");
   expect(after.exitCode).toBe(0);
   expect(after.stdout).toContain("acme");
@@ -39,3 +43,22 @@ test("offline public configured-engine rebuild preserves query results and survi
   expect(ids(retained.stdout)).toEqual(ids(after.stdout));
   expect(run("rebuild", "--layer", "vector").exitCode).toBe(2);
 }, 120_000);
+
+
+test("default rebuild JSON and text identify the actual SQLite floor count", () => {
+  const setup = helpers.tempVault();
+  expect(helpers.runCli(setup.env, "import", "markdown-folder", "--source", setup.notes).exitCode).toBe(0);
+  const rebuilt = helpers.runCli(setup.env, "rebuild", "--json");
+  expect(rebuilt.exitCode).toBe(0);
+  const report = JSON.parse(rebuilt.stdout).data;
+  const db = new Database(join(setup.vault, ".kizuki", "kizuki.db"), { readonly: true });
+  try {
+    const actual = db.query<{ n: number }, []>("SELECT count(*) AS n FROM search_documents").get()!.n;
+    expect(actual).toBeGreaterThan(0);
+    expect(report).toMatchObject({ backend: "sqlite-floor", documents: actual, floor_documents: actual, store: "kizuki.retrieval.fts5" });
+    const text = helpers.runCli(setup.env, "rebuild");
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain(`rebuilt=${actual} backend=sqlite-floor`);
+    expect(text.stdout).toContain(`floor_documents=${actual}`);
+  } finally { db.close(); }
+});

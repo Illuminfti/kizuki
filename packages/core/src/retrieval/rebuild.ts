@@ -104,5 +104,12 @@ export async function rebuildRetrieval(db: Database, vaultPath: string, port?: R
     await port.rebuildFromDocuments(docs);
   }
   const floor = rebuildDerived(db, vaultPath);
-  return { documents: docs.length, store: port?.descriptor.id ?? "kizuki.retrieval.fts5", generation: floor.generation };
+  const floorDocuments = floor.search.pages + floor.search.events;
+  return {
+    backend: port === undefined ? "sqlite-floor" as const : "retrieval-port" as const,
+    documents: port === undefined ? floorDocuments : docs.length,
+    floor_documents: floorDocuments,
+    store: port?.descriptor.id ?? "kizuki.retrieval.fts5",
+    generation: floor.generation,
+  };
 }

@@ -292,6 +292,7 @@ not resurrect purged events.
 | Create and inspect a vault | `init`, `doctor`, `version` |
 | Bring evidence in | `connect`, `backfill`, `sync`, `import` |
 | Retrieve context | `query`, `context` |
+| Rebuild derived retrieval | `rebuild [--layer all]` |
 | Correct and inspect canon | `tell`, `audit`, `undo` |
 | Operate the local loop | `serve`, `serve status`, `serve run <rail>` |
 | Import owner-supplied model weights | `models pull --from PATH` |
@@ -299,8 +300,10 @@ not resurrect purged events.
 
 `help <verb>` documents flags and exit codes. `models pull` copies a local
 GGUF file; it does not download weights. `review`, `promote`, and `reject`
-are retired. `timeline` is an MCP tool, not a CLI verb. Derived rebuild is a
-library operation; there is no `kizuki rebuild` command.
+are retired. `timeline` is an MCP tool, not a CLI verb. `rebuild` reconstructs
+the configured retrieval store and the SQLite floor; only `--layer all` is
+supported. Its report identifies the backend and counts the actual documents
+in that store, with a separate `floor_documents` count.
 
 [Full CLI reference →](docs/cli.md)
 

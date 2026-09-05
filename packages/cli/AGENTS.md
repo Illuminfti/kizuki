@@ -28,9 +28,10 @@ connector policy.
   verb writes a page except through core `tell` / `correct` or `undo`.
   `review` / `promote` / `reject` are retired and must exit 2 with a pointer
   to `audit`, `undo`, and `tell`. Public verbs on this revision are those
-  registered in `src/commands/index.ts`. `context`, `timeline`, and
-  `rebuild` are not CLI verbs; those reads live as MCP / core serving
-  functions.
+  registered in `src/commands/index.ts`. `context` and `rebuild` are registered
+  CLI verbs. `rebuild` supports only the configured retrieval store plus the
+  SQLite floor with `--layer all`; partial layers are explicitly refused.
+  `timeline` remains an MCP / core serving function.
 - Keep argument parsing, orchestration, and presentation separable and testable.
 - Use deterministic exit codes and stable, actionable errors.
 - Reserve stdout for the command's promised output. Send diagnostics and

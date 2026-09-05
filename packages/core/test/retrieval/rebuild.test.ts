@@ -3,6 +3,9 @@ import { truncateSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { readRetrievalDocuments, rebuildRetrieval } from "../../src/retrieval/rebuild";
 import { serveFixture } from "../serving/helpers";
+import { insertClaim } from "../../src/claims/store";
+import { claimInput, putEvent, FixtureVectorPort } from "../claims/helpers";
+import type { RetrievalDoc } from "../../src/contracts/retrieval";
 import type { Fixture } from "../serving/helpers";
 let fixture: Fixture | undefined;
 afterEach(() => fixture?.dispose());
@@ -46,6 +49,34 @@ test("the default rebuild reconstructs its existing lexical floor", async () => 
   fixture = serveFixture();
   const result = await rebuildRetrieval(fixture.db, fixture.vaultPath);
   expect(result.store).toBe("kizuki.retrieval.fts5");
-  expect(result.documents).toBeGreaterThan(0);
-  expect(fixture.db.query<{ n: number }, []>("SELECT count(*) AS n FROM search_documents").get()!.n).toBeGreaterThan(0);
+  const actual = fixture.db.query<{ n: number }, []>("SELECT count(*) AS n FROM search_documents").get()!.n;
+  expect(actual).toBeGreaterThan(0);
+  expect(result.documents).toBe(actual);
+  expect(result).toMatchObject({ backend: "sqlite-floor", floor_documents: actual });
+});
+
+
+test("selected port reports its validated corpus including readable claims separately from floor rows", async () => {
+  fixture = serveFixture();
+  const event = putEvent(fixture.db);
+  const stored = await insertClaim({ db: fixture.db }, claimInput(event));
+  if (stored.outcome !== "stored") throw new Error("synthetic claim was not stored");
+  class RebuildPort extends FixtureVectorPort {
+    async rebuildFromDocuments(docs: readonly RetrievalDoc[]) {
+      this.docs.clear();
+      await this.upsert(docs);
+    }
+  }
+  const port = new RebuildPort();
+  const result = await rebuildRetrieval(fixture.db, fixture.vaultPath, port);
+  expect(port.docs.get(`claim:${stored.claim.claim_id}`)).toMatchObject({ kind: "claim", authority: stored.claim.authority });
+  expect(result.documents).toBe(port.docs.size);
+  const actual = fixture.db.query<{ n: number }, []>("SELECT count(*) AS n FROM search_documents").get()!.n;
+  expect(result).toMatchObject({ backend: "retrieval-port", floor_documents: actual, store: port.descriptor.id });
+  expect(fixture.db.query("SELECT 1 FROM search_documents WHERE doc_id=?").all(`claim:${stored.claim.claim_id}`)).toHaveLength(0);
+  fixture.db.query("UPDATE claims SET sensitivity=NULL WHERE claim_id=?").run(stored.claim.claim_id);
+  const after = await rebuildRetrieval(fixture.db, fixture.vaultPath, port);
+  expect(port.docs.has(`claim:${stored.claim.claim_id}`)).toBe(false);
+  expect(after.documents).toBe(result.documents - 1);
+  expect(after.floor_documents).toBe(actual);
 });

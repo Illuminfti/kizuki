@@ -224,6 +224,27 @@ Verifies a `kizuki.backup/v1` directory. With `--into` it restores into an
 empty target after that verification. `--from DIR` alone, or with `--verify`,
 checks hashes and completeness without writing.
 
+## rebuild
+
+```text
+usage: kizuki rebuild [--layer all] [--json]
+```
+
+Reconstructs the configured retrieval store and the SQLite search/graph floor
+from the vault. Only `--layer all` is supported; partial layers exit 2.
+
+The result identifies `backend` (`sqlite-floor` or `retrieval-port`), `store`,
+`documents`, `floor_documents`, and the floor's `generation`. With default
+retrieval, `documents` equals the actual SQLite floor page/event row count.
+With an optional retrieval port, it counts the validated projection sent to
+that store, which additionally includes readable live claims. `floor_documents`
+always counts the rebuilt SQLite page/event rows. Serving applies current
+authority and access checks to results from either backend.
+
+Rebuild is atomic within each store, not across stores. Retry after a failed
+rebuild; use quiescent source writers for a fixed corpus. See
+[rebuild behavior and limits](../packages/core/RETRIEVAL-REBUILD.md).
+
 ## version
 
 ```text
@@ -242,5 +263,5 @@ Stdio adapter. Tokens never travel on argv.
 
 ## Not CLI verbs
 
-`timeline`, `rebuild`, and `agent add` are not registered. Timeline exists
-as an MCP / core serving function. Derived rebuild is a library call.
+`timeline` and `agent add` are not registered. Timeline exists
+as an MCP / core serving function.

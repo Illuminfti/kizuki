@@ -16,7 +16,7 @@ export const rebuildCommand: Command = {
     return withVault(io, async ctx => {
       const result = await rebuildRetrieval(ctx.db, ctx.vaultPath, ctx.retrieval);
       io.out(parsed.flags.has("--json") ? jsonEnvelope("rebuild", "ok", result)
-        : `rebuilt=${result.documents} store=${result.store} generation=${result.generation}`);
+        : `rebuilt=${result.documents} backend=${result.backend} store=${result.store} floor_documents=${result.floor_documents} generation=${result.generation}`);
       return 0;
     });
   },
