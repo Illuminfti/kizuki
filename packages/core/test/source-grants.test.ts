@@ -1,3 +1,4 @@
+import { rebuildRetrieval, type RetrievalPort } from "../src/index";
 import { undoReceipt } from "../src/index";
 import { write, storeClaim } from "./canon/helpers";
 import { serveGetPage } from "../src/index";
@@ -577,5 +578,234 @@ test("undo cannot restore an archive whose source authorization was revoked", as
     );
   } finally {
     db.close();
+  }
+});
+
+test("retained non-body claim payload cannot produce a completed purge", async () => {
+  const { db, dir, a } = setup();
+  try {
+    grant(db, a);
+    const input = accept(db, event(), {
+      source: { source_key: a, expected_revision: 1 },
+    });
+    if (input.status !== "stored") throw new Error("fixture failed");
+    await insertClaim(
+      { db },
+      claimInput(input.event.event_id, {
+        kind: "entity",
+        body: "",
+        object: null,
+        predicate: null,
+        target: "private-target",
+        subject: "person:private-subject",
+        subjects: ["person:private-subject"],
+        frontmatter: { title: "private title" },
+        model_ref: "private-model-reference",
+      }),
+    );
+    revokeSourceGrant(db, {
+      source_key: a,
+      expected_revision: 1,
+      operation_id: "residual-payload",
+    });
+    const result = await resumeSourceRevocation(db, dir, "residual-payload");
+    expect(result.status).toBe("denied");
+    expect(result.purge_blockers).toContain("claim_payload_retained");
+  } finally {
+    db.close();
+  }
+});
+
+test("operation retry refuses corrupted persisted receipt shape and intent", () => {
+  const { db, a } = setup();
+  try {
+    const original = grant(db, a);
+    for (const corrupt of [
+      { status: "active", revision: 999, injected: "not a receipt" },
+      { ...original, revision: original.revision + 1 },
+      { ...original, source_key: ulid() },
+    ]) {
+      db.query(
+        "UPDATE source_grant_receipts SET receipt=? WHERE operation_id=?",
+      ).run(JSON.stringify(corrupt), original.operation_id);
+      expect(() => grant(db, a)).toThrow("source_receipt_corrupt");
+    }
+  } finally {
+    db.close();
+  }
+});
+
+test("an in-flight rebuild fences purge and verifies removal after revocation", async () => {
+  const { db, dir, a } = setup();
+  try {
+    grant(db, a);
+    const input = accept(db, event(), {
+      source: { source_key: a, expected_revision: 1 },
+    });
+    if (input.status !== "stored") throw new Error("fixture failed");
+    const port = bindLocalSourcePort(
+      new FixtureVectorPort({ vector: false }),
+    ) as FixtureVectorPort & {
+      rebuildFromDocuments: NonNullable<RetrievalPort["rebuildFromDocuments"]>;
+    };
+    let release!: () => void;
+    let started!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    port.rebuildFromDocuments = async (docs) => {
+      const rows = [];
+      for await (const doc of docs) rows.push(doc);
+      started();
+      await waiting;
+      port.docs.clear();
+      await port.upsert(rows);
+    };
+    const rebuilding = rebuildRetrieval(db, dir, port).then(
+      () => null,
+      (error) => error as Error,
+    );
+    await entered;
+    revokeSourceGrant(db, {
+      source_key: a,
+      expected_revision: 1,
+      operation_id: "rebuild-denial",
+    });
+    expect(
+      (
+        await resumeSourceRevocation(db, dir, "rebuild-denial", {
+          retrieval: port,
+        })
+      ).status,
+    ).toBe("denied");
+    release();
+    expect((await rebuilding)?.message).toContain(
+      "source authorization changed",
+    );
+    expect(
+      (await port.verifyAbsent([`event:${input.event.event_id}`])).found,
+    ).toEqual([]);
+    expect(port.docs.size).toBe(0);
+  } finally {
+    db.close();
+  }
+});
+
+test("rebuild timeout retains its fence until the late operation is removed and verified", async () => {
+  const { db, dir, a } = setup();
+  try {
+    grant(db, a);
+    expect(
+      accept(db, event(), { source: { source_key: a, expected_revision: 1 } })
+        .status,
+    ).toBe("stored");
+    const port = bindLocalSourcePort(
+      new FixtureVectorPort({ vector: false }),
+    ) as FixtureVectorPort & {
+      rebuildFromDocuments: NonNullable<RetrievalPort["rebuildFromDocuments"]>;
+    };
+    Object.assign(port.descriptor, {
+      method_timeouts_ms: { rebuildFromDocuments: 15 },
+    });
+    let release!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    port.rebuildFromDocuments = async (docs) => {
+      const rows = [];
+      for await (const doc of docs) rows.push(doc);
+      await waiting;
+      await port.upsert(rows);
+    };
+    const error = await rebuildRetrieval(db, dir, port).then(
+      () => null,
+      (error) => error as Error,
+    );
+    expect(error?.message).toContain("writer remains fenced");
+    revokeSourceGrant(db, {
+      source_key: a,
+      expected_revision: 1,
+      operation_id: "timeout-denial",
+    });
+    expect(
+      (await resumeSourceRevocation(db, dir, "timeout-denial")).purge_blockers,
+    ).toContain("writer_busy");
+    release();
+    let settled = false;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      const result = await resumeSourceRevocation(db, dir, "timeout-denial");
+      if (!result.purge_blockers.includes("writer_busy")) {
+        settled = true;
+        break;
+      }
+    }
+    expect(settled).toBe(true);
+    expect(port.docs.size).toBe(0);
+  } finally {
+    db.close();
+  }
+});
+
+test("a crashed rebuild releases kernel ownership and reopened source revocation can resume", async () => {
+  const { db, dir, a } = setup();
+  let child: ReturnType<typeof Bun.spawn> | undefined;
+  try {
+    grant(db, a);
+    expect(
+      accept(db, event(), { source: { source_key: a, expected_revision: 1 } })
+        .status,
+    ).toBe("stored");
+    const sourceModule = new URL("../src/index.ts", import.meta.url).pathname;
+    const fixtureModule = new URL("./claims/helpers.ts", import.meta.url)
+      .pathname;
+    const script = `import { openLedger, bindLocalSourcePort, rebuildRetrieval } from ${JSON.stringify(sourceModule)};
+      import { FixtureVectorPort } from ${JSON.stringify(fixtureModule)};
+      const dir=${JSON.stringify(dir)};
+      const db=openLedger(dir+'/.kizuki/kizuki.db');
+      const port=bindLocalSourcePort(new FixtureVectorPort({vector:false}));
+      port.rebuildFromDocuments=async()=>{ process.stdout.write('ready\\n'); await new Promise(()=>{}); };
+      await rebuildRetrieval(db,dir,port);`;
+    child = Bun.spawn([process.execPath, "--eval", script], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stream = child.stdout as ReadableStream<Uint8Array>;
+    const reader = stream.getReader();
+    const ready = await reader.read();
+    reader.releaseLock();
+    expect(new TextDecoder().decode(ready.value)).toContain("ready");
+    revokeSourceGrant(db, {
+      source_key: a,
+      expected_revision: 1,
+      operation_id: "crash-denial",
+    });
+    expect(
+      (await resumeSourceRevocation(db, dir, "crash-denial")).purge_blockers,
+    ).toContain("writer_busy");
+    child.kill("SIGKILL");
+    await child.exited;
+    child = undefined;
+    db.close();
+    const reopened = openLedger(join(dir, ".kizuki", "kizuki.db"));
+    try {
+      expect(
+        (await resumeSourceRevocation(reopened, dir, "crash-denial"))
+          .purge_blockers,
+      ).not.toContain("writer_busy");
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    if (child !== undefined) {
+      child.kill("SIGKILL");
+      await child.exited;
+    }
+    try {
+      db.close();
+    } catch {}
   }
 });

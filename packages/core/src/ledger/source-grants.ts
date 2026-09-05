@@ -49,6 +49,7 @@ export interface SourceGrant {
     | "claim_payload_retained"
     | "identity_payload_retained"
     | "canon_rewrite_pending"
+    | "writer_busy"
   )[];
 }
 export interface SourceGrantRequest {
@@ -175,6 +176,12 @@ function replay(
   db: Database,
   operation: string,
   digest: string,
+  expected: {
+    action: "grant" | "revoke";
+    source_key: string;
+    prior_revision: number;
+    policy_digest?: string;
+  },
 ): SourceGrantReceipt | null {
   const row = db
     .query<{ request_digest: string; receipt: string }, [string]>(
@@ -183,7 +190,31 @@ function replay(
     .get(operation);
   if (row === null) return null;
   if (row.request_digest !== digest) fail("operation_conflict");
-  return JSON.parse(row.receipt) as SourceGrantReceipt;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(row.receipt);
+  } catch {
+    fail("source_receipt_corrupt");
+  }
+  if (
+    !isPlainObject(parsed) ||
+    Object.keys(parsed).sort().join(",") !==
+      "action,at,operation_id,policy_digest,prior_revision,revision,source_key,status" ||
+    parsed.operation_id !== operation ||
+    parsed.action !== expected.action ||
+    parsed.source_key !== expected.source_key ||
+    parsed.prior_revision !== expected.prior_revision ||
+    parsed.revision !== expected.prior_revision + 1 ||
+    parsed.status !== (expected.action === "grant" ? "active" : "denied") ||
+    typeof parsed.at !== "string" ||
+    !isRfc3339(parsed.at) ||
+    typeof parsed.policy_digest !== "string" ||
+    !/^[a-f0-9]{64}$/.test(parsed.policy_digest) ||
+    (expected.policy_digest !== undefined &&
+      parsed.policy_digest !== expected.policy_digest)
+  )
+    fail("source_receipt_corrupt");
+  return parsed as unknown as SourceGrantReceipt;
 }
 function record(
   db: Database,
@@ -212,7 +243,12 @@ export function setSourceGrant(
   );
   return db
     .transaction(() => {
-      const prior = replay(db, request.operation_id, digest);
+      const prior = replay(db, request.operation_id, digest, {
+        action: "grant",
+        source_key: request.source_key,
+        prior_revision: request.expected_revision,
+        policy_digest: sha256Hex(JSON.stringify(policy)),
+      });
       if (prior !== null) return prior;
       const connection = db
         .query<{ connector_id: string }, [string]>(
@@ -268,7 +304,11 @@ export function revokeSourceGrant(
   );
   return db
     .transaction(() => {
-      const prior = replay(db, request.operation_id, digest);
+      const prior = replay(db, request.operation_id, digest, {
+        action: "revoke",
+        source_key: request.source_key,
+        prior_revision: request.expected_revision,
+      });
       if (prior !== null) return prior;
       const current = inspectSourceGrant(db, request.source_key);
       if (current === null || current.revision !== request.expected_revision)
@@ -311,33 +351,45 @@ export async function resumeSourceRevocation(
   if (grant.status === "purged") return grant;
   if (grant.status !== "denied" || grant.purge_receipt_id === null)
     fail("source_not_denied");
-  const { runPurge, resumePurge } = await import("./purge");
+  const { runPurge, resumePurge, PurgeError } = await import("./purge");
   const receiptId = grant.purge_receipt_id;
   const exists =
     db.query("SELECT 1 FROM event_purges WHERE receipt_id=?").get(receiptId) !==
     null;
-  if (!exists) {
-    let first = true;
-    await runPurge(
-      db,
-      vaultPath,
-      { source_key: grant.source_key },
-      "source authorization revoked",
-      {
-        ...options,
-        allow_empty: true,
-        ids: () => {
-          if (first) {
-            first = false;
-            return receiptId;
-          }
-          return ulid();
+  try {
+    if (!exists) {
+      let first = true;
+      await runPurge(
+        db,
+        vaultPath,
+        { source_key: grant.source_key },
+        "source authorization revoked",
+        {
+          ...options,
+          allow_empty: true,
+          ids: () => {
+            if (first) {
+              first = false;
+              return receiptId;
+            }
+            return ulid();
+          },
         },
-      },
-    );
+      );
+    }
+    const verified = await resumePurge(db, vaultPath, receiptId, options);
+    if (!verified.ok) return inspectSourceGrant(db, row.source_key)!;
+  } catch (error) {
+    if (error instanceof PurgeError && error.code === "canon_changed")
+      return {
+        ...inspectSourceGrant(db, row.source_key)!,
+        purge_blockers: [
+          ...inspectSourceGrant(db, row.source_key)!.purge_blockers,
+          "writer_busy",
+        ],
+      };
+    throw error;
   }
-  const verified = await resumePurge(db, vaultPath, receiptId, options);
-  if (!verified.ok) return inspectSourceGrant(db, row.source_key)!;
   return db
     .transaction(() => {
       grant = inspectSourceGrant(db, row.source_key)!;
@@ -558,7 +610,7 @@ function sourcePurgeBlockers(
   if (
     db
       .query(
-        `SELECT 1 FROM claims WHERE claim_id IN (${sourceClaims}) AND (length(body)>0 OR object IS NOT NULL) LIMIT 1`,
+        `SELECT 1 FROM claims WHERE claim_id IN (${sourceClaims}) AND (length(body)>0 OR object IS NOT NULL OR target IS NOT NULL OR subject IS NOT NULL OR predicate IS NOT NULL OR model_ref IS NOT NULL OR subjects!='[]' OR frontmatter!='{}' OR producer NOT IN ('deterministic','model','llm','owner')) LIMIT 1`,
       )
       .get(sourceKey) !== null
   )
@@ -582,4 +634,9 @@ function sourcePurgeBlockers(
   )
     blockers.push("canon_rewrite_pending");
   return blockers;
+}
+
+/** Timeout poisons only this host-bound port instance; a fresh composition must requalify locality. */
+export function invalidateLocalSourcePort(port: object): void {
+  localPorts.delete(port);
 }

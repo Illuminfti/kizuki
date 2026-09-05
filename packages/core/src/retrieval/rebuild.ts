@@ -1,11 +1,12 @@
-import { sourcePolicyEpoch, isLocalSourcePort, sourceSensitivity, requireSourceEvents } from "../ledger/source-grants";
+import { tryWriteFlock } from "../serve/flock";
+import { sourcePolicyEpoch, isLocalSourcePort, sourceSensitivity, requireSourceEvents, sourceEventsAllowed, invalidateLocalSourcePort } from "../ledger/source-grants";
 import type { Database } from "bun:sqlite";
 import { lstatSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { OWNER, sensitivity } from "../agents";
 import { claimRetrievalDoc, listClaims } from "../claims/store";
 import { PortError } from "../contracts/ports";
-import { validateRetrievalDoc } from "../contracts/retrieval";
+import { validateRetrievalDoc, validateAbsenceProof } from "../contracts/retrieval";
 import type { RetrievalDoc, RetrievalPort } from "../contracts/retrieval";
 import { rebuildDerived } from "../derived";
 import { loadCanon, pageDecision } from "../serving/canon";
@@ -98,15 +99,28 @@ export function readRetrievalDocuments(db: Database, vaultPath: string): Retriev
 }
 
 /** Atomic inside each derived store; the stores do not share a distributed transaction. */
-export async function rebuildRetrieval(db: Database, vaultPath: string, port?: RetrievalPort) {
+async function rebuildUnderFence(db: Database, vaultPath: string, port: RetrievalPort | undefined, expired: () => boolean) {
   if (port !== undefined && sourcePolicyEpoch(db) > 0 && !isLocalSourcePort(port)) throw new PortError("unavailable", "source egress authorization unavailable", false);
+  const epoch = sourcePolicyEpoch(db);
   const docs = readRetrievalDocuments(db, vaultPath);
   if (port !== undefined) {
     for (const doc of docs) requireSourceEvents(db, doc.provenance, { owner: true, purpose: "derive", port });
     if (port.rebuildFromDocuments === undefined) {
       throw new PortError("not_supported", "configured retrieval does not support atomic authoritative rebuild", false);
     }
-    await port.rebuildFromDocuments(docs);
+    let failure: unknown;
+    try { await port.rebuildFromDocuments(docs); } catch (error) { failure = error; }
+    if (expired() || epoch !== sourcePolicyEpoch(db)) {
+      const invalid = docs.filter(doc => expired() || !sourceEventsAllowed(db, doc.provenance, { owner: true, purpose: "derive", port })).map(doc => doc.doc_id);
+      for (let offset=0; offset<invalid.length; offset+=100) {
+        const ids = invalid.slice(offset, offset+100);
+        await port.remove(ids);
+        const proof = validateAbsenceProof(await port.verifyAbsent(ids), ids);
+        if (proof.found.length !== 0 || proof.store !== port.descriptor.id) throw new PortError("unavailable", "source rebuild cleanup could not establish absence", true);
+      }
+      throw new PortError("unavailable", "source authorization changed during rebuild", true);
+    }
+    if (failure !== undefined) throw failure;
   }
   const floor = rebuildDerived(db, vaultPath);
   const floorDocuments = floor.search.pages + floor.search.events;
@@ -117,4 +131,23 @@ export async function rebuildRetrieval(db: Database, vaultPath: string, port?: R
     store: port?.descriptor.id ?? "kizuki.retrieval.fts5",
     generation: floor.generation,
   };
+}
+
+/** The bounded caller response may expire, but the writer fence remains until the late write and cleanup settle. */
+export async function rebuildRetrieval(db: Database, vaultPath: string, port?: RetrievalPort) {
+  const lock = tryWriteFlock(vaultPath);
+  if (lock === null) throw new PortError("unavailable", "canon writer is busy; retry rebuild", true);
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const configured = port?.descriptor?.method_timeouts_ms?.["rebuildFromDocuments"];
+  const deadline = typeof configured === "number" && Number.isFinite(configured) && configured > 0 ? Math.min(configured, 30_000) : 30_000;
+  const operation = rebuildUnderFence(db, vaultPath, port, () => timedOut).finally(() => { lock.release(); if (timer !== undefined) clearTimeout(timer); });
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      if (port !== undefined) invalidateLocalSourcePort(port);
+      reject(new PortError("unavailable", "rebuild timed out; writer remains fenced until settlement", true));
+    }, deadline);
+  });
+  return Promise.race([operation, timeout]);
 }

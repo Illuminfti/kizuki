@@ -1,3 +1,4 @@
+import { invalidateLocalSourcePort } from "./source-grants";
 import { tryWriteFlock } from "../serve/flock";
 import { settleWriteReservations } from "../serve/budget-ledger";
 import { purgeExtractInputs } from "../serve/extract";
@@ -1109,11 +1110,13 @@ export async function runPurge(
   reason: string,
   options: PurgeRunOptions = {},
 ): Promise<PurgeOutcome> {
+  return underPurgeFence(vaultPath, options, async () => {
+    if (tableExists(db, "canon_write_reservations")) settleWriteReservations(db, vaultPath);
   const clock = options.now ?? (() => new Date().toISOString());
   const binding = bindRetrieval(vaultPath, options.retrieval, clock);
   const retrievalStore =
     binding.status === "not_configured" ? null : FTS5_RETRIEVAL_ID;
-  const phase1 = purgeEvents(db, vaultPath, filter, reason, {
+  const phase1 = purgeEventsLocked(db, vaultPath, filter, reason, {
     ...options,
     retrieval_store: retrievalStore,
   });
@@ -1124,6 +1127,7 @@ export async function runPurge(
   }
   phase1.rewritten = rewriteHolds(db, vaultPath, options);
   return phase1;
+  }, filter);
 }
 
 export async function verifyPurge(
@@ -1180,8 +1184,25 @@ export async function verifyPurge(
 
 /** Resume existing persisted purge work without creating another deletion path. */
 export async function resumePurge(db: Database, vaultPath: string, receiptId: string, options: PurgeRunOptions = {}): Promise<PurgeVerifyReport> {
+  return underPurgeFence(vaultPath, options, async () => {
   const clock = options.now ?? (() => new Date().toISOString());
   await reconcileOps(db, receiptId, bindRetrieval(vaultPath, options.retrieval, clock), clock);
   rewriteHolds(db, vaultPath, options);
-  return verifyPurge(db, vaultPath, receiptId, options);
+  return await verifyPurge(db, vaultPath, receiptId, options);
+  });
+}
+
+/** A timeout bounds the caller, not ownership of an unsettled external operation. */
+async function underPurgeFence<T>(vaultPath: string, options: PurgeRunOptions, work: () => Promise<T>, filter?: PurgeFilter): Promise<T> {
+  const lock = tryWriteFlock(vaultPath);
+  if (lock === null) throw new PurgeError("canon_changed", "canon writer is busy; retry purge", filter);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const operation = work().finally(() => { lock.release(); if (timer !== undefined) clearTimeout(timer); });
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      if (options.retrieval !== undefined) invalidateLocalSourcePort(options.retrieval);
+      reject(new PurgeError("absence_failed", "purge timed out; writer remains fenced until settlement", filter));
+    }, 30_000);
+  });
+  return Promise.race([operation, timeout]);
 }
