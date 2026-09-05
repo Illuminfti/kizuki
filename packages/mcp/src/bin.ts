@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { initAgents, initGraph, initSearch, openLedger, PortRegistry, bindLocalSourcePort, loadConfiguredRetrieval } from "@kizuki/core";
+import { initAgents, initGraph, initSearch, openLedger, PortError, PortRegistry, bindLocalSourcePort, loadConfiguredRetrieval } from "@kizuki/core";
 import { registerEmbeddedRetrieval } from "@kizuki/retrieval-pg";
 import type { Principal, RetrievalPort } from "@kizuki/core";
 import { ownerPrincipal, principalFromToken } from "./principal";
@@ -106,14 +106,22 @@ export async function main(argv: string[]): Promise<void> {
   }
 
   let retrieval: RetrievalPort | null = null;
+  let retrievalUnavailable: true | undefined;
   try {
     const selectedRetrieval = options.retrieval ?? loadConfiguredRetrieval(options.vault).id;
     if (selectedRetrieval !== "kizuki.retrieval.fts5") {
       retrieval = await bindRetrieval(options.vault, selectedRetrieval);
     }
-  } catch {
-    db.close();
-    refuse("retrieval port could not start");
+  } catch (error) {
+    // An explicit port is a required binding. A transiently busy configured
+    // enhancement may use the same authorized, model-free floor as the CLI.
+    if (options.retrieval !== null || !(error instanceof PortError) ||
+        !error.retryable || !["lease_required", "timeout", "unavailable"].includes(error.code)) {
+      db.close();
+      refuse("retrieval port could not start");
+    }
+    retrievalUnavailable = true;
+    process.stderr.write("retrieval-unavailable; using the lexical floor\n");
   }
 
   // The handles close on the way out whatever happened: a transport that
@@ -125,6 +133,7 @@ export async function main(argv: string[]): Promise<void> {
       vaultPath: options.vault,
       principal,
       ...(retrieval === null ? {} : { retrieval }),
+      ...(retrievalUnavailable === undefined ? {} : { retrievalUnavailable }),
     });
   } finally {
     try {

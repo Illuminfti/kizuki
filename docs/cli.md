@@ -331,6 +331,14 @@ bun packages/mcp/src/bin.ts --vault PATH (--owner | --token-env VAR) [--retrieva
 
 Stdio adapter. Tokens never travel on argv.
 
+MCP uses the vault's configured retrieval engine when `--retrieval` is omitted.
+If that optional engine is temporarily busy or unavailable, the session starts
+with the authorized SQLite lexical floor. Stderr reports the degradation;
+search results and context packets include `retrieval-unavailable`. The session
+does not steal another process's lease or reconnect the engine mid-session.
+An explicit `--retrieval ID` remains required. Unknown engines and invalid
+configuration refuse startup. No model is needed for the lexical floor.
+
 ## Not CLI verbs
 
 `timeline` and `agent add` are not registered. Timeline exists
