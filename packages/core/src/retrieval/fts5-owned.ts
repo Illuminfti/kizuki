@@ -1,4 +1,4 @@
-import { closeSync, constants, fsyncSync, lstatSync, opendirSync, openSync, readFileSync, rmSync } from "node:fs";
+import { lstatSync, opendirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { PortContext } from "../contracts/ports";
 import { PortError } from "../contracts/ports";
@@ -41,9 +41,8 @@ export function lockFtsGeneration(dataDir: string) {
   if (!lock) throw new PortError("unavailable", "owned FTS generation is busy", true);
   return lock;
 }
-export function removeFtsGeneration(ctx: Pick<PortContext, "vault_path" | "data_dir">): void {
+export function removeFtsGeneration(ctx: Pick<PortContext, "vault_path" | "data_dir">, root: import("../util/owned-directory").OwnedDirectory, store: import("../util/owned-directory").OwnedDirectoryIdentity | null): void {
+  root.assertCurrent();
   validateFtsGeneration(ctx);
-  const fd = openSync(ctx.data_dir, constants.O_RDONLY | constants.O_NOFOLLOW);
-  try { rmSync(join(ctx.data_dir, "store"), { recursive: true, force: true }); fsyncSync(fd); }
-  finally { closeSync(fd); }
+  root.removeTree("store", store);
 }

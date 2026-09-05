@@ -25,10 +25,11 @@ function present(path: string): boolean {
 function context(vaultPath: string, id: string): PortContext {
   return { vault_path: vaultPath, data_dir: join(vaultPath, ".kizuki/retrieval", id), config: {}, secrets: async () => { throw new Error("owned maintenance has no secrets"); }, clock: () => new Date().toISOString(), logger: () => {} };
 }
-export function createOwnedRetrievalInventory(vaultPath: string, current?: RetrievalPort): OwnedSourceRetrievalInventory & { close(): Promise<void> } {
+export function createOwnedRetrievalInventory(vaultPath: string, current?: RetrievalPort): OwnedSourceRetrievalInventory & { close(): Promise<void>; diagnostic(): string | null } {
   const opened: RetrievalPort[] = [];
   let listing: Awaited<ReturnType<OwnedSourceRetrievalInventory["stores"]>> | undefined;
   let closed = false;
+  let diagnostic: string | null = null;
   return {
     async stores() {
       if (closed) throw new OwnedRetrievalInventoryError();
@@ -67,11 +68,15 @@ export function createOwnedRetrievalInventory(vaultPath: string, current?: Retri
             else if (id === FTS5_RETRIEVAL_ID) await eraseOwnedFts5Generation(ctx);
             else await eraseOwnedEmbeddedGeneration(ctx);
             return { owned_file_maintenance: "complete" };
-          } catch { return { owned_file_maintenance: "pending" }; }
+          } catch (error) {
+            if (error instanceof Error && error.message.includes("owned_generation_changed_restart_required")) diagnostic = error.message.includes("active_sql_uncontained") ? "process_restart_required_active_sql_uncontained" : "process_restart_required";
+            return { owned_file_maintenance: "pending" };
+          }
         } });
       }
       return listing = { stores, absent_store_ids };
     },
+    diagnostic() { return diagnostic; },
     async close() {
       if (closed) return; closed = true;
       const results = await Promise.allSettled(opened.map(port => port.close()));

@@ -50,6 +50,8 @@ import {
 } from "./schema";
 
 import { lockFtsGeneration, removeFtsGeneration, validateFtsGeneration } from "./fts5-owned";
+import { openOwnedDirectory } from "../util/owned-directory";
+import type { OwnedDirectory } from "../util/owned-directory";
 import type { AdvisoryFileLock } from "../util/advisory-file-lock";
 
 export const FTS5_RETRIEVAL_ID = "kizuki.retrieval.fts5";
@@ -125,7 +127,9 @@ export class Fts5RetrievalPort implements RetrievalPort {
   private readonly ctx: PortContext;
   private readonly db: Database;
   private closed = false;
+  private closingFailure: Error | null = null;
   private readonly lock: AdvisoryFileLock;
+  private readonly ownedRoot: OwnedDirectory | null;
   private rebuilding = false;
 
   constructor(
@@ -136,10 +140,13 @@ export class Fts5RetrievalPort implements RetrievalPort {
     this.descriptor = descriptor;
     mkdirSync(join(ctx.data_dir, "store"), { recursive: true, mode: 0o700 });
     const dbPath = join(ctx.data_dir, FTS5_RETRIEVAL_STORE_REL);
-    this.lock = lockFtsGeneration(ctx.data_dir);
+    let root: OwnedDirectory | null = null;
+    try { root = openOwnedDirectory(ctx.data_dir); } catch (error) { if (!(error instanceof Error) || error.message !== "owned_directory_unsupported") throw error; }
+    this.ownedRoot = root;
+    try { this.lock = lockFtsGeneration(ctx.data_dir); } catch (error) { root?.close(); throw error; }
     try {
       this.db = new Database(dbPath);
-    } catch (error) { this.lock.release(); throw error; }
+    } catch (error) { this.lock.release(); this.ownedRoot?.close(); throw error; }
     try {
       this.db.exec("PRAGMA busy_timeout = 0");
       this.db.exec("PRAGMA journal_mode = WAL");
@@ -149,6 +156,7 @@ export class Fts5RetrievalPort implements RetrievalPort {
     } catch (error) {
       this.db.close();
       this.lock.release();
+      this.ownedRoot?.close();
       throw error;
     }
   }
@@ -456,21 +464,29 @@ export class Fts5RetrievalPort implements RetrievalPort {
   }
 
   async close(): Promise<void> {
+    if (this.closingFailure !== null) throw this.closingFailure;
     if (this.closed) return;
     this.closed = true;
-    this.db.close();
-    this.lock.release();
+    try { this.db.close(); this.lock.release(); } finally { this.ownedRoot?.close(); }
   }
 
   /** Dispose only this separate derived store; the main ledger is never opened here. */
   async eraseOwnedGeneration(): Promise<void> {
     this.assertOpen();
+    const root = this.ownedRoot;
+    if (root === null) throw new Error("owned_directory_unsupported");
+    try { root.assertCurrent(); } catch {
+      this.closed = true; root.close();
+      this.closingFailure = new Error("owned_generation_changed_restart_required");
+      throw this.closingFailure;
+    }
     validateFtsGeneration(this.ctx);
+    const expectedStore = root.childIdentity("store");
     const checkpoint = this.db.query<{ busy: number }, []>("PRAGMA wal_checkpoint(TRUNCATE)").get();
     if (checkpoint?.busy !== 0) throw new PortError("unavailable", "owned FTS generation has active readers", true);
     this.closed = true;
-    this.db.close();
-    try { removeFtsGeneration(this.ctx); } finally { this.lock.release(); }
+    try { this.db.close(); } catch (error) { root.close(); throw error; }
+    try { removeFtsGeneration(this.ctx, root, expectedStore); } finally { root.close(); this.lock.release(); }
   }
 
   private assertOpen(): void {
@@ -543,6 +559,11 @@ export function registerFts5RetrievalPort(): void {
 /** Retry disposal of a partial/broken store without opening SQLite. */
 export async function eraseOwnedFts5Generation(ctx: PortContext): Promise<void> {
   validateFtsGeneration(ctx);
-  const lock = lockFtsGeneration(ctx.data_dir);
-  try { removeFtsGeneration(ctx); } finally { lock.release(); }
+  const root = openOwnedDirectory(ctx.data_dir);
+  let lock: AdvisoryFileLock | undefined;
+  try {
+    const expectedStore = root.childIdentity("store");
+    lock = lockFtsGeneration(ctx.data_dir);
+    removeFtsGeneration(ctx, root, expectedStore);
+  } finally { root.close(); lock?.release(); }
 }

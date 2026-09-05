@@ -339,3 +339,11 @@ absence. Broken native generations can be retried without successful SQL startup
 Reports distinguish owned-store maintenance from external copies, which remain
 out of scope. The main ledger, claims and canon have separate core erasure rules;
 only a core report with no purge blockers is rendered complete.
+
+A native root identity failure can report `process_restart_required` or
+`process_restart_required_active_sql_uncontained`. Stop the affected process and
+restore/verify the owned root before retrying; the command has not completed
+purge. This does not guarantee containment of SQL already running during an
+external path substitution, and does not authorize live vault moves. The
+native generation walker is currently qualified only for Linux x64 glibc;
+other platforms remain pending for physical generation maintenance.

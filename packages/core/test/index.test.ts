@@ -341,6 +341,7 @@ describe("public surface", () => {
       "normalizePurgeReason",
       "objectFromStatement",
       "openLedger",
+      "openOwnedDirectory",
       "orphanJournalReceipts",
       "ownerEdited",
       "pageRelPath",

@@ -93,3 +93,25 @@ under the same lease without reopening a partial database. This covers the
 application-managed generation, not external copies or arbitrary raw handles.
 An empty authoritative rebuild can clear a historical vector generation without
 its embedding model; a nonempty rebuild still requires the original model space.
+
+Native disposal now uses a retained directory capability and descriptor-relative
+`openat`/`unlinkat` traversal, with native filename bytes, entry/depth limits and
+same-directory absence verification. Completion also requires the named managed
+root to retain its original identity. Linux x64 glibc is qualified for this
+walker; other platforms return pending/unsupported until their ABI is tested.
+
+Erasure stops lease heartbeats and releases only the native lock descriptor;
+it leaves a content-free stale holder diagnostic. Reopening can therefore remain
+busy until the existing three-heartbeat grace expires (600ms with default
+settings). Erasure retains immutable extension assets rather than running a
+pathname-based asset finalizer.
+
+A root mismatch detected before shutdown terminally seals the port, rejects
+queued/future SQL callbacks and refuses cleanup that could follow the changed
+path. The native lock stays held until process exit. The report requires process
+restart. **An SQL callback already active during external root replacement is
+not contained by this fence.** It is reported as `active_sql_uncontained`, remains
+pending, and is not verified erasure or support for live vault moves. The pinned
+PGlite build uses awaited durability and has no separate NodeFS background sync
+timer; that does not make already-started SQL safe under external path changes.
+Stronger runtime containment remains a gate before live estate use.

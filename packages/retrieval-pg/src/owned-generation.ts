@@ -1,4 +1,4 @@
-import { closeSync, constants, fsyncSync, lstatSync, openSync, readFileSync, opendirSync, rmSync } from "node:fs";
+import { lstatSync, readFileSync, opendirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { PortError, isRfc3339 } from "@kizuki/core";
 import { EMBEDDED_RETRIEVAL_DESCRIPTOR } from "./descriptor";
@@ -106,17 +106,9 @@ export function validateOwnedGeneration(vaultPath: string, dataDir: string): voi
     } else refuse();
   }
 }
-/** Caller owns the existing native lease and has already confirmed SQL shutdown. */
-export function removeOwnedGeneration(vaultPath: string, dataDir: string): void {
+/** Caller owns the existing native lease, root capability, and confirmed SQL shutdown. */
+export function removeOwnedGeneration(vaultPath: string, dataDir: string, root: import("@kizuki/core").OwnedDirectory, store: import("@kizuki/core").OwnedDirectoryIdentity | null): void {
+  root.assertCurrent();
   validateOwnedGeneration(vaultPath, dataDir);
-  const root = lstatSync(dataDir);
-  const fd = openSync(dataDir, constants.O_RDONLY | constants.O_NOFOLLOW);
-  try {
-    // Stable owned root, not a selector, remains the target throughout disposal.
-    const current = lstatSync(dataDir);
-    if (current.dev !== root.dev || current.ino !== root.ino) refuse();
-    rmSync(join(dataDir, "store"), { recursive: true, force: true });
-    fsyncSync(fd);
-    try { lstatSync(join(dataDir, "store")); refuse(); } catch (error) { if (!missing(error)) throw error; }
-  } finally { closeSync(fd); }
+  root.removeTree("store", store);
 }

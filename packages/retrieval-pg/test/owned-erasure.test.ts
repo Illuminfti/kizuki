@@ -2,6 +2,7 @@ import { expect, test, spyOn } from "bun:test";
 import { existsSync, readFileSync, readdirSync, lstatSync, writeFileSync, symlinkSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { openEmbeddedRetrievalPort } from "../src/port";
+import { OwnedDirectory } from "../../core/src/util/owned-directory";
 import { SqlStore } from "../src/sql-store";
 import { temporaryPortContext, SYNTHETIC_DOCS, SYNTHETIC_QUERY, FixtureEmbeddingPort, hashVector } from "./helpers";
 
@@ -27,7 +28,8 @@ test("native maintenance removes dead SQL bytes and legacy payloads, seals the o
     expect(existsSync(join(f.ctx.data_dir, "store"))).toBe(false);
     expect(contains(f.ctx.data_dir, marker)).toBe(false);
     await expect(port.upsert([doc])).rejects.toThrow("closed");
-    const reopened = await openEmbeddedRetrievalPort(f.ctx);
+    await expect(openEmbeddedRetrievalPort(f.ctx)).rejects.toThrow("heartbeat is still fresh");
+    const reopened = await openEmbeddedRetrievalPort({ ...f.ctx, clock: () => new Date(Date.parse(f.ctx.clock()) + 120_002).toISOString() });
     try { expect((await reopened.search(SYNTHETIC_QUERY)).hits).toEqual([]); }
     finally { await reopened.close(); }
   } finally { await port.close(); f.cleanup(); }
@@ -66,7 +68,7 @@ test("confirmed SQL shutdown precedes erasure and the lease covers concurrent cl
   let release!: () => void; let entered!: () => void;
   const blocked = new Promise<void>(r => { release = r; });
   const started = new Promise<void>(r => { entered = r; });
-  const fault = spyOn(SqlStore.prototype, "close").mockImplementation(async function(this: SqlStore) { entered(); await blocked; await original.call(this); });
+  const fault = spyOn(SqlStore.prototype, "close").mockImplementation(async function(this: SqlStore, disposeAssets = true) { entered(); await blocked; await original.call(this, disposeAssets); });
   try {
     const erasing = port.eraseOwnedGeneration(); await started;
     const closing = port.close();
@@ -101,15 +103,15 @@ test("failed partial deletion retries natively without reopening broken SQL", as
   const { eraseOwnedEmbeddedGeneration } = await import("../src/port");
   const f = temporaryPortContext(); const port = await openEmbeddedRetrievalPort(f.ctx);
   await port.upsert([SYNTHETIC_DOCS[0]!]);
-  const original = fs.rmSync;
+  const original = OwnedDirectory.prototype.removeTree;
   let injected = false;
-  const fault = spyOn(fs, "rmSync").mockImplementation((path, options) => {
-    if (String(path) === join(f.ctx.data_dir, "store") && !injected) {
-      injected = true;
-      original(join(f.ctx.data_dir, "store", "pgdata", "global"), { recursive: true, force: true });
-      throw Object.assign(new Error("synthetic deletion failure"), { code: "EACCES" });
-    }
-    return original(path, options);
+  const fault = spyOn(OwnedDirectory.prototype, "removeTree").mockImplementation(function(this: OwnedDirectory, ...args: Parameters<OwnedDirectory["removeTree"]>) {
+    const sync = fs.fsyncSync;
+    const failure = spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+      if (!injected) { injected = true; throw Object.assign(new Error("synthetic deletion failure"), { code: "EACCES" }); }
+      return sync(fd);
+    });
+    try { return original.apply(this, args); } finally { failure.mockRestore(); }
   });
   try {
     await expect(port.eraseOwnedGeneration()).rejects.toThrow("synthetic deletion failure");
@@ -117,11 +119,11 @@ test("failed partial deletion retries natively without reopening broken SQL", as
     fault.mockRestore();
     // No SQL open is needed to finish the already-authorized whole-generation purge.
     const script = join(f.root, "retry.ts");
-    writeFileSync(script, `import { eraseOwnedEmbeddedGeneration } from ${JSON.stringify(join(import.meta.dir, "../src/port.ts"))}; await eraseOwnedEmbeddedGeneration({...${JSON.stringify(f.ctx)},clock:()=>new Date().toISOString(),logger:()=>{},secrets:async()=>''});`);
+    writeFileSync(script, `import { eraseOwnedEmbeddedGeneration } from ${JSON.stringify(join(import.meta.dir, "../src/port.ts"))}; await eraseOwnedEmbeddedGeneration({...${JSON.stringify(f.ctx)},clock:()=>${JSON.stringify(new Date(Date.parse(f.ctx.clock()) + 60_001).toISOString())},logger:()=>{},secrets:async()=>''});`);
     const retried = Bun.spawnSync([process.execPath, script], { stdout: "pipe", stderr: "pipe" });
     expect(retried.exitCode, retried.stderr.toString()).toBe(0);
     expect(existsSync(join(f.ctx.data_dir, "store"))).toBe(false);
-    const reopened = await openEmbeddedRetrievalPort(f.ctx);
+    const reopened = await openEmbeddedRetrievalPort({ ...f.ctx, clock: () => new Date(Date.parse(f.ctx.clock()) + 120_002).toISOString() });
     try { expect((await reopened.search(SYNTHETIC_QUERY)).hits).toEqual([]); }
     finally { await reopened.close(); }
   } finally { fault.mockRestore(); await port.close().catch(() => {}); f.cleanup(); }

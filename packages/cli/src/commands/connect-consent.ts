@@ -37,6 +37,7 @@ export async function runConnectConsent(io: CliIo, args: string[]): Promise<numb
         grant = inspectSourceGrant(ctx.db, source);
       } finally {
         try { await inventory.close(); } catch { maintenanceError = "owned_retrieval_shutdown_unavailable"; }
+        maintenanceError = inventory.diagnostic() ?? maintenanceError;
       }
     }
     const purge = maintenanceError !== null ? "pending" : grant?.status === "purged" && grant.purge_blockers.length === 0 ? "complete" : grant?.status === "denied" ? "pending" : "not_requested";

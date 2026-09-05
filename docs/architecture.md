@@ -199,3 +199,16 @@ store recovery uses the native lock without reopening SQLite. These guarantees
 cover native managed-store consumers; external copies and arbitrary raw database
 handles are outside that ownership boundary. Ledger, claim, and canon erasure
 remain separate core operations.
+
+Owned native generation deletion uses a Linux-x64-qualified descriptor-relative
+walker. Both roots and child directories remain bound to opened descriptors;
+symlink/path replacement cannot redirect the recursive removal. A changed named
+root refuses completion even when the originally opened generation was erased.
+FTS/PG erasure on unqualified platforms remains unsupported/pending. Main-ledger
+maintenance is separate and never passes through this generation walker.
+
+If a root changed before native shutdown, the port seals and requires process
+restart, retaining ownership without pathname cleanup. Queued work is fenced;
+SQL already in progress under external root replacement is explicitly uncontained
+and never counted as safe live-move or verified erasure. Successful maintenance
+requires a stable owned generation, drained SQL and descriptor-bound absence.

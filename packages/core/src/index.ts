@@ -980,3 +980,6 @@ export { SOURCE_PURPOSES, SOURCE_FIELDS, SourceGrantError, sourcePolicyEpoch, in
 export type { SourcePurpose, SourceGrantPolicy, SourceGrant, SourceGrantRequest, SourceGrantReceipt, SourceAdmission } from "./ledger/source-grants";
 
 export type { OwnedSourceRetrievalInventory, OwnedSourceRetrievalStore, SourceStoreStatus } from "./ledger/source-stores";
+
+export { openOwnedDirectory } from "./util/owned-directory";
+export type { OwnedDirectory, OwnedDirectoryIdentity } from "./util/owned-directory";

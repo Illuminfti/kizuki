@@ -208,6 +208,16 @@ export class WriterLease {
     this.holder = next;
   }
 
+  /** Stop path-based diagnostics before terminal erasure; return fd-only release. */
+  suspendForErasure(): () => void {
+    if (this.heartbeatTimer !== undefined) { clearInterval(this.heartbeatTimer); this.heartbeatTimer = undefined; }
+    return () => {
+      const unlock = this.unlock;
+      this.unlock = undefined; this.holder = null;
+      unlock?.();
+    };
+  }
+
   release(): LeaseReceipt | null {
     if (this.heartbeatTimer !== undefined) {
       clearInterval(this.heartbeatTimer);
