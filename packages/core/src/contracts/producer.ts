@@ -3,8 +3,8 @@ import type { SubjectRef } from "./event";
 import type { Port } from "./ports";
 
 export const PRODUCER_CONTRACT = "kizuki.producer/v1" as const;
-/** Minor 1 adds the optional `dropped` report on an ok result. */
-export const PRODUCER_CONTRACT_MINOR = 1;
+/** Minor 2 adds an optional content-free diagnostic to failed results. */
+export const PRODUCER_CONTRACT_MINOR = 2;
 export const PRODUCER_CAPABILITIES = ["deterministic", "model"] as const;
 export type ProducerCapability =
   (typeof PRODUCER_CAPABILITIES)[number];
@@ -47,6 +47,23 @@ export interface ModelUsage {
   readonly input_tokens: number;
   readonly output_tokens: number;
 }
+
+export type DiagnosticShape = "undefined" | "null" | "array" | "object" | "string" | "number" | "boolean" | "other";
+export interface ClaimDiagnostic {
+  readonly stage: "claims";
+  readonly rule: "text" | "size_cap" | "json" | "object" | "missing_field" | "extra_field" | "list" | "list_cap" | "bounded_string" | "enum" | "timestamp" | "confidence" | "event_ids" | "verbatim";
+  readonly field: "response" | "claims" | "claim" | "kind" | "subject" | "predicate" | "object" | "polarity" | "body" | "valid_from" | "valid_to" | "confidence" | "sensitivity" | "event_ids";
+  readonly shape: DiagnosticShape;
+  readonly claim_index: number | null;
+  readonly claim_count: number | null;
+}
+
+/** Fixed vocabulary and numeric structure only; never provider or captured text. */
+export type ProducerDiagnostic =
+  | ClaimDiagnostic
+  | { readonly stage: "response"; readonly rule: "tool_call" | "bad_response" | "unsupported_metadata" | "response_refused" | "response_truncated" | "response_incomplete" | "response_too_large" }
+  | { readonly stage: "transport"; readonly rule: "timeout" | "network" | "redirect" | "credentials" | "http" | "unavailable"; readonly http_status?: number }
+  | { readonly stage: "budget"; readonly rule: "max_calls" | "max_input_tokens" | "max_output_tokens"; readonly used: number; readonly requested: number; readonly limit: number };
 
 export const PRODUCER_REJECT_REASONS = [
   "tool_call_in_response",
@@ -120,11 +137,12 @@ export type ProduceResult =
       usage: ModelUsage;
       dropped?: DroppedDraft[];
     }
-  | { status: "unavailable"; reason: string; usage: ModelUsage }
+  | { status: "unavailable"; reason: string; usage: ModelUsage; diagnostic?: ProducerDiagnostic }
   | {
       status: "rejected";
       reason: RejectReason;
       usage: ModelUsage;
+      diagnostic?: ProducerDiagnostic;
     };
 
 export interface ProducerPort extends Port {
