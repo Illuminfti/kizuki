@@ -2,7 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { initVault, openLedger } from "@kizuki/core";
+import { initVault } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { loadItems, PAGE_SIZE, runAudit } from "../src/app";
 import type { Terminal } from "../src/terminal";
 

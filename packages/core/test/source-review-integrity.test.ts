@@ -5,12 +5,12 @@ import { join } from "node:path";
 import {
   accept,
   initVault,
-  openLedger,
   registerConnection,
   setSourceGrant,
   revokeSourceGrant,
   insertClaim,
 } from "../src/index";
+import { openLedger } from "../src/ledger/db";
 import { validEvent } from "./fixtures";
 import { ulid } from "../src/util/ulid";
 function setup() {

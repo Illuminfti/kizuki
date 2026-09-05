@@ -1,7 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { listCanonReceipts, listClaims, listConnections, listRunReceipts, openLedger, setSourceGrant } from "@kizuki/core";
+import { listCanonReceipts, listClaims, listConnections, listRunReceipts, setSourceGrant } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { startFakeEndpoint } from "../../llm/test/fake-endpoint";
 import { createHelpers } from "./helpers";
 

@@ -5,10 +5,10 @@ import {
   freezeManifest,
   getCheckpoint,
   listConnections,
-  openLedger,
   setSourceGrant,
   saveCheckpoint,
 } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import type { ConnectionStateWriter, Connector, SignInIo } from "@kizuki/core";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";

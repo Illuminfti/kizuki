@@ -2,7 +2,8 @@ import { afterEach, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeXArchiveFixture } from "@kizuki/connectors/testkit";
-import { getCheckpoint, listConnections, openLedger } from "@kizuki/core";
+import { getCheckpoint, listConnections } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { createHelpers, fixtureConsent } from "./helpers";
 
 const h = createHelpers();

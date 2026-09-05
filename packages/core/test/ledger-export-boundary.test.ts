@@ -8,9 +8,15 @@ const ROOTS = [
   "packages/mcp/src",
   "packages/tui/src",
   "packages/connectors/src",
+  "packages/connector-beeper/src",
+  "packages/connector-gmail/src",
+  "packages/connector-google-calendar/src",
   "packages/connector-ics/src",
   "packages/connector-imap/src",
+  "packages/connector-screenpipe/src",
   "packages/connector-telegram/src",
+  "packages/connector-whoop/src",
+  "packages/connector-x/src",
   "packages/llm/src",
 ];
 
