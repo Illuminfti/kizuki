@@ -17,6 +17,7 @@
       },
       "dependencies": {
         "@kizuki/connector-gmail": "workspace:*",
+        "@kizuki/connector-google-calendar": "workspace:*",
         "@kizuki/connector-imap": "workspace:*",
         "@kizuki/connector-telegram": "workspace:*",
         "@kizuki/connectors": "workspace:*",
@@ -35,6 +36,13 @@
     },
     "packages/connector-gmail": {
       "name": "@kizuki/connector-gmail",
+      "dependencies": {
+        "@kizuki/core": "workspace:*",
+      },
+    },
+    "packages/connector-google-calendar": {
+      "name": "@kizuki/connector-google-calendar",
+      "version": "0.1.0",
       "dependencies": {
         "@kizuki/core": "workspace:*",
       },
@@ -75,6 +83,7 @@
       "dependencies": {
         "@kizuki/connector-beeper": "workspace:*",
         "@kizuki/connector-gmail": "workspace:*",
+        "@kizuki/connector-google-calendar": "workspace:*",
         "@kizuki/connector-ics": "workspace:*",
         "@kizuki/connector-imap": "workspace:*",
         "@kizuki/connector-screenpipe": "workspace:*",
@@ -141,6 +150,8 @@
     "@kizuki/connector-beeper": ["@kizuki/connector-beeper@workspace:packages/connector-beeper"],
 
     "@kizuki/connector-gmail": ["@kizuki/connector-gmail@workspace:packages/connector-gmail"],
+
+    "@kizuki/connector-google-calendar": ["@kizuki/connector-google-calendar@workspace:packages/connector-google-calendar"],
 
     "@kizuki/connector-ics": ["@kizuki/connector-ics@workspace:packages/connector-ics"],
 

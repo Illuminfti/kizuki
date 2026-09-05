@@ -180,8 +180,10 @@ Kizuki keeps connection state in the owner-only local store. It does not send,
 delete, move, or mark mail read.
 
 **Source limits are part of the contract.** Native Telegram CLI sign-in is
-wired, but requires project app credentials and has no real-account qualification receipt. Dedicated Gmail, Google
-Calendar, WHOOP, and X account flows are not advertised as available here.
+wired, but requires project app credentials and has no real-account qualification receipt.
+Native [Gmail](docs/gmail.md) and [Google Calendar](docs/google-calendar.md) browser enrollment
+require operator desktop-client configuration and separate source consent; live-account
+qualification remains pending. WHOOP and X account flows are not advertised as available here.
 Screenpipe is neither a live screen recorder nor a media importer; its adapter
 requires a compatible, stopped database and does not emit source-deletion
 tombstones.

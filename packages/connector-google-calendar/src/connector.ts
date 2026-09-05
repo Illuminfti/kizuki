@@ -38,6 +38,7 @@ export class GoogleCalendarConnector implements Connector {
     private generation = 0;
     private pendingWrites = 0;
     private pendingTokens = 0;
+    private readonly custodyWork = new Set<Promise<unknown>>();
     private origin: {
         state: GoogleCalendarState;
         persist: StatePersister;
@@ -89,6 +90,24 @@ export class GoogleCalendarConnector implements Connector {
         this.state = null;
         this.origin = null;
     }
+    private track(pending: Promise<unknown>): void {
+        this.custodyWork.add(pending);
+        void pending.then(() => { this.custodyWork.delete(pending); }, () => { this.custodyWork.delete(pending); });
+    }
+    /** Native host shutdown: never revoke Google permission or invent cancellation. */
+    async close(): Promise<void> {
+        const deadline = Date.now() + 5000;
+        await this.revoke();
+        try {
+            while (this.custodyWork.size > 0) {
+                const remaining = deadline - Date.now();
+                if (remaining <= 0) throw new Error();
+                await withDeadline(Promise.allSettled([...this.custodyWork]), remaining, "Google Calendar shutdown deadline");
+            }
+        } catch {
+            throw new KizukiError("unavailable", "Google Calendar custody_unknown; native shutdown deadline elapsed before credential custody settled");
+        }
+    }
     /** Bound the wait, but retain custody until an uncancellable host write settles. */
     private async writeState(bytes: Uint8Array, write: StatePersister, generation: number, timeoutMs: number): Promise<void> {
         this.assertGeneration(generation);
@@ -97,6 +116,7 @@ export class GoogleCalendarConnector implements Connector {
             this.assertGeneration(generation);
             return write(bytes);
         }).finally(() => { this.pendingWrites--; });
+        this.track(pending);
         try {
             await withDeadline(pending, timeoutMs, "Google Calendar state persistence deadline");
             this.assertGeneration(generation);
@@ -148,6 +168,7 @@ export class GoogleCalendarConnector implements Connector {
                     const pending = Promise.resolve().then(() => origin.persist(encodeState(next))).then(() => {
                         origin.state = next;
                     }).finally(() => { this.pendingWrites--; });
+                    this.track(pending);
                     try {
                         await withDeadline(pending, 5000, "Google Calendar rotation persistence deadline");
                         if (!this.disabled && generation === this.generation && !this.reloadRequired)
@@ -216,6 +237,7 @@ export class GoogleCalendarConnector implements Connector {
             this.assertGeneration(generation);
             return operation();
         }).finally(() => { this.pendingTokens--; });
+        this.track(pending);
         try {
             const result = await withDeadline(pending, timeoutMs, "Google Calendar token deadline");
             this.assertGeneration(generation);

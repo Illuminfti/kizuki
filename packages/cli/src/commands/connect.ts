@@ -1,3 +1,4 @@
+import { runGoogleCalendarConnect } from "./connect-google-calendar";
 import { runGmailConnect } from "./connect-gmail";
 import { runConnectConsent } from "./connect-consent";
 import { consentHint } from "../source-consent";
@@ -109,12 +110,12 @@ export function imapSignInNotice(vaultPath: string): string {
 
 export const connectCommand: Command = {
   name: "connect",
-  usage: "connect [--list|status] [--json]\n       kizuki connect status --source KEY [--json]\n       kizuki connect grant --source KEY --policy FILE --expected-revision N --operation-id ID [--json]\n       kizuki connect revoke --source KEY --expected-revision N --operation-id ID [--json]\n       kizuki connect resume-revocation --source KEY --operation-id ID [--json]\n       kizuki connect <connector> --source PATH [--sensitivity public|personal|private]\n       kizuki connect beeper --token-ref env:VAR|file:/absolute/path [--endpoint http://127.0.0.1:23373] [--sensitivity public|personal|private] [--json]\n       kizuki connect imap [--source KEY] [--sensitivity public|personal|private]\n       kizuki connect gmail --fields text,subjects,headers,labels,attachments [--source KEY] [--json]\n       kizuki connect telegram [--source KEY] [--sensitivity public|personal|private] [--json]",
+  usage: "connect [--list|status] [--json]\n       kizuki connect status --source KEY [--json]\n       kizuki connect grant --source KEY --policy FILE --expected-revision N --operation-id ID [--json]\n       kizuki connect revoke --source KEY --expected-revision N --operation-id ID [--json]\n       kizuki connect resume-revocation --source KEY --operation-id ID [--json]\n       kizuki connect <connector> --source PATH [--sensitivity public|personal|private]\n       kizuki connect beeper --token-ref env:VAR|file:/absolute/path [--endpoint http://127.0.0.1:23373] [--sensitivity public|personal|private] [--json]\n       kizuki connect imap [--source KEY] [--sensitivity public|personal|private]\n       kizuki connect google-calendar --calendar CANONICAL_ID --fields summary,description,location,attendees,attachments|none [--source KEY] [--json]\n       kizuki connect gmail --fields text,subjects,headers,labels,attachments [--source KEY] [--json]\n       kizuki connect telegram [--source KEY] [--sensitivity public|personal|private] [--json]",
   summary: "enroll a supported source and check consent or sync status",
   async run(io: CliIo, args: string[]): Promise<number> {
     if (["grant", "revoke", "resume-revocation"].includes(args[0] ?? "") || (args[0] === "status" && args.includes("--source"))) return runConnectConsent(io, args);
     const parsed = parseArguments(args, {
-      options: ["--source", "--sensitivity", "--endpoint", "--token-ref", "--fields"],
+      options: ["--source", "--sensitivity", "--endpoint", "--token-ref", "--fields", "--calendar"],
       flags: ["--list", "--json"],
     });
     const json = parsed.flags.has("--json");
@@ -126,11 +127,16 @@ export const connectCommand: Command = {
     }
     if (parsed.flags.has("--list")) throw new UsageError("connect --list [--json]");
     const [rawId] = requirePositional(parsed.positionals, 1);
+    if (rawId === "google-calendar" || rawId === "kizuki.google-calendar") {
+      if (parsed.options.has("--endpoint") || parsed.options.has("--token-ref")) throw new UsageError("connect google-calendar --calendar CANONICAL_ID --fields FIELDS [--source KEY] [--json]");
+      return runGoogleCalendarConnect(io,{source:parsed.options.get("--source"),calendar:parsed.options.get("--calendar"),fields:parsed.options.get("--fields"),sensitivity:parseSensitivityFlag(parsed.options.get("--sensitivity")),json},checkRequestedSensitivity);
+    }
+    if(parsed.options.has("--calendar")) throw new UsageError("--calendar is only supported for connect google-calendar");
     if (rawId === "gmail" || rawId === "kizuki.gmail") {
       if (parsed.options.has("--endpoint") || parsed.options.has("--token-ref")) throw new UsageError("connect gmail --fields FIELDS [--source KEY] [--json]");
       return runGmailConnect(io,{source:parsed.options.get("--source"),fields:parsed.options.get("--fields"),sensitivity:parseSensitivityFlag(parsed.options.get("--sensitivity")),json},checkRequestedSensitivity);
     }
-    if(parsed.options.has("--fields")) throw new UsageError("--fields is only supported for connect gmail");
+    if(parsed.options.has("--fields")) throw new UsageError("--fields is only supported for connect gmail or google-calendar");
     if (rawId === "telegram" || rawId === "kizuki.telegram") {
       if (parsed.options.has("--endpoint") || parsed.options.has("--token-ref")) throw new UsageError("connect telegram [--source KEY] [--json]");
       return runTelegramConnect(io, { source: parsed.options.get("--source"), sensitivity: parseSensitivityFlag(parsed.options.get("--sensitivity")), json }, checkRequestedSensitivity);

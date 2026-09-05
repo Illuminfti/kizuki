@@ -14,6 +14,7 @@
     "@kizuki/connector-screenpipe": "workspace:*",
     "@kizuki/connector-telegram": "workspace:*",
     "@kizuki/connector-x": "workspace:*",
-    "@kizuki/core": "workspace:*"
+    "@kizuki/core": "workspace:*",
+    "@kizuki/connector-google-calendar": "workspace:*"
   }
 }

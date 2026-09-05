@@ -65,6 +65,8 @@ Beeper messages, use `connect beeper` followed by `backfill beeper`.
 
 ## connect
 
+Google Calendar supports `connect google-calendar --calendar CANONICAL_ID --fields summary,description,location,attendees,attachments [--source KEY] [--json]`. Operator desktop app configuration and separate source consent are required; see [the native Calendar contract and limits](google-calendar.md). Use `--fields none` for baseline metadata and event-resource identity only. `primary` is refused; existing account/calendar/fields and recovery state are preserved during reauthorization.
+
 ```text
 usage: kizuki connect [--list|status] [--json]
        kizuki connect <connector> --source PATH [--sensitivity public|personal|private]

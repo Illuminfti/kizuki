@@ -27,8 +27,10 @@ an opt-in Beeper Desktop connection reads local history through an approved
 token reference. IMAP supports local sign-in and re-enrollment that preserves
 the existing mailbox identity and checkpoint. Telegram supports native CLI
 sign-in with project app credentials and preserves its account identity and
-checkpoint; actual account qualification remains unrun. Other sign-in connectors are not
-enrollable through this CLI.
+checkpoint; actual account qualification remains unrun. Native Gmail and Google Calendar
+browser sign-in use operator-configured desktop clients and separate source consent;
+Calendar requires one canonical calendar and explicit fields. Their account and artifact
+qualification remain separate. Other sign-in connectors are not enrollable through this CLI.
 After
 `import`, claims are live and `tell --claim` can name them. Canon writing
 still requires a configured model; without one the sync rail leaves live

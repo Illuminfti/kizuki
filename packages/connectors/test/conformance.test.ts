@@ -1,3 +1,5 @@
+import { GOOGLE_CALENDAR_CONNECTOR_ID, createGoogleCalendarConnector } from "@kizuki/connector-google-calendar";
+import { CalendarFixture } from "../../connector-google-calendar/src/testing";
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { appendFile, mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
@@ -274,6 +276,10 @@ function batteryFor(
           connector: new TelegramConnector({}, scriptedDeps()),
         },
       });
+    },
+    [GOOGLE_CALENDAR_CONNECTOR_ID]: async () => {
+      const fixture = new CalendarFixture(), connector = await fixture.connected();
+      return runConformance(connector, {unavailable:{connector:createGoogleCalendarConnector({})},tombstone:{prepare:async()=>JSON.stringify(JSON.parse(new TextDecoder().decode(fixture.state)).pending.next),mutate:async()=>{fixture.rows=[{id:'allday1',status:'cancelled'}];fixture.version++;}}});
     },
     [GMAIL_CONNECTOR_ID]: async () => {
       const fixture = new GmailFixture(2);

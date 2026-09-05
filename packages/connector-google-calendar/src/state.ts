@@ -88,3 +88,13 @@ export function parseState(bytes: Uint8Array): State {
     }
 }
 export function encodeState(state: State): Uint8Array { const bytes = new TextEncoder().encode(JSON.stringify(state)); parseState(bytes); return bytes; }
+
+/** Noncredential native host projection; no tokens, page content or cursor material. */
+export function inspectGoogleCalendarState(bytes: Uint8Array): {account_id:string;calendar_id:string;fields:Field[];has_pending:boolean} {
+ const state=parseState(bytes);return{account_id:state.oauth.account.id,calendar_id:state.calendar,fields:[...state.fields],has_pending:state.pending!==null};
+}
+/** Reauthorization cannot orphan a cursor, observation anchor, or provider cooldown. */
+export function assertSameGoogleCalendarIdentity(previous:Uint8Array,candidate:Uint8Array):void{
+ const before=parseState(previous),after=parseState(candidate);
+ if(before.oauth.account.id!==after.oauth.account.id||before.calendar!==after.calendar||digest(before.fields)!==digest(after.fields)||digest(before.pending)!==digest(after.pending)||digest(before.anchors)!==digest(after.anchors)||before.retry_not_before!==after.retry_not_before)throw failure('unauthenticated');
+}

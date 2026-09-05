@@ -26,6 +26,7 @@ Markdown sources must be separate from the Kizuki vault. See the
 
 | Registry id              | Reads                                                                                                 | Kind              |
 | ------------------------ | ----------------------------------------------------------------------------------------------------- | ----------------- |
+| `kizuki.google-calendar` | Explicitly selected read-only Google calendar revisions; native CLI, explicit source consent | Bounded live source |
 | `kizuki.markdown-folder` | A folder of Markdown files, rescanned each run                                                        | Live source       |
 | `kizuki.screenpipe`      | A local screenpipe SQLite database, read-only and offline (see that package's README before using it) | Live local source |
 | `kizuki.import-chatgpt`  | The `conversations.json` of a ChatGPT data export                                                     | Snapshot importer |

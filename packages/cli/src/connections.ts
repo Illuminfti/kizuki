@@ -1,3 +1,5 @@
+import { GoogleCalendarConnector, createGoogleCalendarConnector, inspectGoogleCalendarState, type GoogleCalendarConnectorConfig } from "@kizuki/connector-google-calendar";
+import { googleCalendarClient, googleCalendarRequiredFields, googleCalendarStateConfig } from "./google-calendar";
 import { GmailConnector, createGmailConnector, inspectGmailState, type GmailConnectorConfig } from "@kizuki/connector-gmail";
 import { gmailClient, gmailRequiredFields, gmailStateConfig } from "./gmail";
 import type { Database } from "bun:sqlite";
@@ -139,7 +141,7 @@ export function listEnrollableConnectorIds(): string[] {
     .sort()
     .filter((id) => connectorAuthModes(id)?.includes("none") === true ||
       (id === "kizuki.beeper" && connectorAuthModes(id)?.includes("secret_ref") === true) ||
-      (["kizuki.imap", "kizuki.telegram", "kizuki.gmail"].includes(id) && connectorAuthModes(id)?.includes("sign_in") === true));
+      (["kizuki.imap", "kizuki.telegram", "kizuki.gmail", "kizuki.google-calendar"].includes(id) && connectorAuthModes(id)?.includes("sign_in") === true));
 }
 
 function resolveRegisteredId(input: string): string | null {
@@ -231,13 +233,13 @@ function inspectConnection(
   connection: Connection,
 ): HostConnection {
   try {
-    if (["kizuki.imap", "kizuki.telegram", "kizuki.gmail"].includes(connection.connector_id)) {
+    if (["kizuki.imap", "kizuki.telegram", "kizuki.gmail", "kizuki.google-calendar"].includes(connection.connector_id)) {
       const ref = connection.secret_refs[0];
       if (connection.secret_refs.length !== 1 || ref === undefined) throw new ConnectionError(`${connection.connector_id} connection state is missing`);
-      // Gmail capture selection is metadata-only. loadConnector admits the
+      // Google capture selection is metadata-only. loadConnector admits the
       // source before reading credentials; explicit reauthorization reads its
-      // selected prior state in runGmailConnect under owner sign-in authority.
-      if (connection.connector_id !== "kizuki.gmail" && store.read(connection) === null) throw new ConnectionError(`${connection.connector_id} connection state is missing`);
+      // selected prior state in its enrollment command under owner sign-in authority.
+      if (!["kizuki.gmail", "kizuki.google-calendar"].includes(connection.connector_id) && store.read(connection) === null) throw new ConnectionError(`${connection.connector_id} connection state is missing`);
       // Signed-in state is connector-owned opaque bytes. This small in-memory
       // descriptor exposes only the core-minted reference needed to build the
       // connector; it is never encoded or written as host state.
@@ -351,7 +353,7 @@ export async function loadConnector(
   store: ConnectionStateStore,
   db: Database,
   env: Record<string, string | undefined> = process.env,
-  factory: (id: string, config?: unknown, telegramDeps?: Partial<TelegramDeps>) => Connector = (id, config, deps) => id === "kizuki.telegram" ? new TelegramConnector(config as TelegramConnectorConfig, deps) : id === "kizuki.gmail" ? createGmailConnector(config as GmailConnectorConfig, deps?.persist ? {persist:deps.persist} : {}) : getConnector(id, config),
+  factory: (id: string, config?: unknown, telegramDeps?: Partial<TelegramDeps>) => Connector = (id, config, deps) => id === "kizuki.telegram" ? new TelegramConnector(config as TelegramConnectorConfig, deps) : id === "kizuki.gmail" ? createGmailConnector(config as GmailConnectorConfig, deps?.persist ? {persist:deps.persist} : {}) : id === "kizuki.google-calendar" ? createGoogleCalendarConnector(config as GoogleCalendarConnectorConfig, deps?.persist ? {persist:deps.persist} : {}) : getConnector(id, config),
 ): Promise<Connector> {
   try { sourceCaptureAdmission(db, selected.connection.connector_id, selected.connection.source_key); }
   catch (error) {
@@ -392,6 +394,33 @@ export async function loadConnector(
     }
     return connector;
   }
+  if (selected.connection.connector_id === "kizuki.google-calendar") {
+    const bytes = store.read(selected.connection);
+    if (bytes === null) throw new ConnectionError("Google Calendar protected state is unavailable.");
+    const identity = inspectGoogleCalendarState(bytes);
+    const grant = inspectSourceGrant(db, selected.connection.source_key);
+    if (!grant || googleCalendarRequiredFields(identity.fields).some(field => !grant.policy.allowed_fields.includes(field as "text" | "subjects" | "attachments" | "metadata"))) {
+      throw new ConnectionError("source_field_denied; Google Calendar selected fields are incompatible with this grant. Inspect the source policy and explicitly reconcile consent; projection changes through reauthorization are unsupported.");
+    }
+    const client = await googleCalendarClient(env);
+    if (sourceCaptureAdmission(db, selected.connection.connector_id, selected.connection.source_key)?.expected_revision !== grant.revision) {
+      throw new ConnectionError("source_capture_denied; source consent changed during host composition; retry with current policy.");
+    }
+    const ref = selected.connection.secret_refs[0]!;
+    const connector = factory("kizuki.google-calendar", googleCalendarStateConfig(bytes, ref, client), {
+      persist: createStatePersister(db, store, selected.connection).persist,
+    });
+    try {
+      await connector.connect(async wanted => {
+        if (wanted !== ref) throw new ConnectionError("unexpected Google Calendar state reference");
+        return new TextDecoder().decode(bytes);
+      });
+    } catch {
+      await closeHostConnector(connector);
+      throw new ConnectionError("Google Calendar connection unavailable; check operator configuration and reauthorize the existing source.");
+    }
+    return connector;
+  }
   const telegram = selected.connection.connector_id === "kizuki.telegram";
   const connector = factory(
     selected.connection.connector_id,
@@ -426,4 +455,5 @@ export async function loadConnector(
 export async function closeHostConnector(connector: Connector): Promise<void> {
   if (connector instanceof TelegramConnector) await connector.close();
   if (connector instanceof GmailConnector) await connector.close();
+  if (connector instanceof GoogleCalendarConnector) await connector.close();
 }
