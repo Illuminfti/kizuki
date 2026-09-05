@@ -72,6 +72,12 @@
         "telegram": "2.26.22",
       },
     },
+    "packages/connector-whoop": {
+      "name": "@kizuki/connector-whoop",
+      "dependencies": {
+        "@kizuki/core": "workspace:*",
+      },
+    },
     "packages/connector-x": {
       "name": "@kizuki/connector-x",
       "dependencies": {
@@ -160,6 +166,8 @@
     "@kizuki/connector-screenpipe": ["@kizuki/connector-screenpipe@workspace:packages/connector-screenpipe"],
 
     "@kizuki/connector-telegram": ["@kizuki/connector-telegram@workspace:packages/connector-telegram"],
+
+    "@kizuki/connector-whoop": ["@kizuki/connector-whoop@workspace:packages/connector-whoop"],
 
     "@kizuki/connector-x": ["@kizuki/connector-x@workspace:packages/connector-x"],
 
