@@ -74,10 +74,14 @@ private floor.
   `tombstones: false` and `purge: false`. `purgeSource()` throws
   `not_supported`. `planUnreachableSourceRecords()` is a read-only planning
   helper: it returns `{ ids, complete, continuation? }`, is capped at 10,000
-  ids and a two-second deadline, and never deletes source rows. An incomplete
+  ids and a two-second work budget, and never deletes source rows. The budget
+  is checked between primary-key pages of at most 256 source rows, with each
+  SQLite lock wait capped at the remaining budget. Lock contention reports
+  retryable `locked`; the caller's busy timeout is restored. An incomplete
   page has an opaque continuation bound to the exact subject and the same open
   SQLite connection. Each page runs in a read transaction and checks bounded
-  file-instance metadata plus SQLite's `data_version` before and after the
+  file-instance metadata plus SQLite's `data_version` and same-connection
+  `total_changes()` before and after the
   query. Reopening the source or changing it rejects continuation and requires
   a fresh enumeration rather than claiming completeness. It is never proof of
   complete source erasure. Ledger purge is the

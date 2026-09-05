@@ -212,7 +212,9 @@ describe("ScreenpipeConnector source purge", () => {
     let calls = 0;
     expect(() => planSourceRecords(fixture.writer, subjectId("app", "Race"), () => {
       calls += 1;
-      if (calls === 2) changer.query("UPDATE frames SET window_name = ? WHERE id = 1").run("changed mid-page");
+      // The fourth clock check follows snapshot capture; the earlier checks
+      // now also budget the initial SQLite lock wait.
+      if (calls === 4) changer.query("UPDATE frames SET window_name = ? WHERE id = 1").run("changed mid-page");
       return 0;
     })).toThrow("restart enumeration");
     changer.close();
@@ -260,4 +262,60 @@ describe("ScreenpipeConnector source purge", () => {
 
     expect(await digest(fixture.path)).toBe(before);
   });
+});
+
+test("same-handle WAL changes invalidate continuation before a false complete result", () => {
+  const fixture = createFixtureDatabase({ rows: false });
+  fixture.writer.exec("PRAGMA journal_mode=WAL");
+  fixture.writer.transaction(() => {
+    for (let id = 1; id <= MAX_PLAN_IDS + 2; id++) insertFrame(fixture.writer, { id, timestamp: "2026-01-01T00:00:00Z", appName: id === 5000 ? "Other" : "Stable" });
+  })();
+  const before = fixture.writer.query("PRAGMA data_version").get();
+  const page = planSourceRecords(fixture.writer, subjectId("app", "Stable"));
+  expect(page.complete).toBe(false);
+  fixture.writer.query("UPDATE frames SET app_name='Stable' WHERE id=5000").run();
+  expect(fixture.writer.query("PRAGMA data_version").get()).toEqual(before);
+  expect(() => planSourceRecords(fixture.writer, subjectId("app", "Stable"), Date.now, page.continuation)).toThrow("restart enumeration");
+});
+
+test("read-only planning bounds SQLite lock waits and preserves retryable lock classification", async () => {
+  const { openReadOnly } = await import("../src/open");
+  const fixture = createFixtureDatabase();
+  const reader = openReadOnly(fixture.path);
+  const timeout = reader.query("PRAGMA busy_timeout").get();
+  fixture.writer.exec("BEGIN EXCLUSIVE");
+  const started = performance.now();
+  let failure: unknown;
+  try { planSourceRecords(reader, subjectId("app", "Acme Mail")); } catch (error) { failure = error; }
+  finally { fixture.writer.exec("ROLLBACK"); }
+  try {
+    expect(performance.now() - started).toBeLessThan(2_750);
+    expect(failure).toMatchObject({ code: "locked" });
+    expect(reader.query("PRAGMA busy_timeout").get()).toEqual(timeout);
+    expect(planSourceRecords(reader, subjectId("app", "Acme Mail")).ids).toEqual(["frame:1"]);
+  } finally { reader.close(); }
+}, 10_000);
+
+test("v2 selectors reject noncanonical encodings and malformed UTF8", () => {
+  const fixture = createFixtureDatabase();
+  const valid = subjectId("app", "Acme Mail");
+  for (const value of [valid + "=", valid + "!", "screenpipe:app:v2:_w", "screenpipe:app:v2:", "screenpipe:app:v2:QR"]) {
+    expect(() => planSourceRecords(fixture.writer, value)).toThrow("malformed v2 subject identity");
+  }
+  expect(planSourceRecords(fixture.writer, valid).ids).toEqual(["frame:1"]);
+});
+
+
+test("sparse app matches yield a bounded continuation and resume without losing rows", () => {
+  const fixture = createFixtureDatabase({ rows: false });
+  fixture.writer.transaction(() => {
+    for (let id = 1; id <= 20_000; id++) insertFrame(fixture.writer, { id, timestamp: "2026-01-01T00:00:00Z", appName: id === 20_000 ? "Sparse" : "Other" });
+  })();
+  let tick = 0;
+  const first = planSourceRecords(fixture.writer, subjectId("app", "Sparse"), () => tick += 100);
+  expect(first).toMatchObject({ ids: [], complete: false, truncated: true });
+  const boundary = JSON.parse(Buffer.from(first.continuation!, "base64url").toString("utf8")).after_id;
+  expect(boundary).toBeGreaterThan(0);
+  expect(boundary).toBeLessThan(20_000);
+  expect(planSourceRecords(fixture.writer, subjectId("app", "Sparse"), Date.now, first.continuation)).toMatchObject({ ids: ["frame:20000"], complete: true });
 });
