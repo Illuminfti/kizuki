@@ -1,3 +1,4 @@
+import { fixtureConsent } from "./helpers";
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   readFileSync,
@@ -14,7 +15,7 @@ const { cleanup, runCli, tempVault, writeNotes } = createHelpers();
 afterEach(cleanup);
 
 describe("connect", () => {
-  test("unwired sign-in connectors are not enrollable", () => {
+  test("Telegram enrollment refuses piped credentials", () => {
     const setup = tempVault();
     const result = runCli(
       setup.env,
@@ -23,8 +24,8 @@ describe("connect", () => {
       "--source",
       setup.notes,
     );
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("not enrollable through this CLI");
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("interactive terminal required");
   });
 
   test("IMAP enrollment refuses piped credentials", () => {
@@ -47,7 +48,7 @@ describe("connect", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("unknown connector: not-a-connector");
     expect(result.stderr).toContain("kizuki.markdown-folder");
-    expect(result.stderr).not.toContain("kizuki.telegram");
+    expect(result.stderr).toContain("kizuki.telegram");
   });
 
   test("missing directory persists nothing", () => {
@@ -115,6 +116,7 @@ describe("connect", () => {
     )?.[1];
     expect(key).toBeDefined();
 
+    expect(runCli(setup.env, "connect", "grant", "--source", key!, ...fixtureConsent(setup.root)).exitCode).toBe(0);
     const byKey = runCli(
       setup.env,
       "backfill",

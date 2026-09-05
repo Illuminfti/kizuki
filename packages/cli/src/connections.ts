@@ -1,3 +1,7 @@
+import { GoogleCalendarConnector, createGoogleCalendarConnector, inspectGoogleCalendarState, type GoogleCalendarConnectorConfig } from "@kizuki/connector-google-calendar";
+import { googleCalendarClient, googleCalendarRequiredFields, googleCalendarStateConfig } from "./google-calendar";
+import { GmailConnector, createGmailConnector, inspectGmailState, type GmailConnectorConfig } from "@kizuki/connector-gmail";
+import { gmailClient, gmailRequiredFields, gmailStateConfig } from "./gmail";
 import type { Database } from "bun:sqlite";
 import { isAbsolute, resolve } from "node:path";
 import type {
@@ -9,13 +13,18 @@ import type {
 } from "@kizuki/core";
 import {
   ConnectionStateStore,
+  createStatePersister,
   enrollConnection,
   isPlainObject,
   listConnections,
+  sourceCaptureAdmission,
+  inspectSourceGrant,
 } from "@kizuki/core";
 import { REGISTRY, getConnector } from "@kizuki/connectors";
+import { TelegramConnector, type TelegramConnectorConfig, type TelegramDeps } from "@kizuki/connector-telegram";
 import { errorText } from "./output";
 import { tokenResolver, validTokenRef } from "./secrets";
+import { consentHint } from "./source-consent";
 
 export const HOST_STATE_SCHEMA = "kizuki.cli.connection-state/v1" as const;
 
@@ -25,7 +34,8 @@ export interface HostConnectionState {
   config:
     | { path: string; base_url?: never; token_secret_ref?: never }
     | { base_url: string; token_secret_ref: string; path?: never }
-    | { secret_ref: string; path?: never; base_url?: never; token_secret_ref?: never };
+    | { secret_ref: string; path?: never; base_url?: never; token_secret_ref?: never }
+    | { state_ref: string; path?: never; base_url?: never; token_secret_ref?: never; secret_ref?: never };
 }
 
 export class ConnectionError extends Error {
@@ -43,7 +53,7 @@ export function encodeHostState(state: HostConnectionState): Uint8Array {
         ? { path: state.config.path }
         : state.config.base_url !== undefined
           ? { base_url: state.config.base_url, token_secret_ref: state.config.token_secret_ref }
-          : { secret_ref: state.config.secret_ref },
+          : "state_ref" in state.config ? { state_ref: state.config.state_ref } : { secret_ref: state.config.secret_ref },
     }),
   );
 }
@@ -131,7 +141,7 @@ export function listEnrollableConnectorIds(): string[] {
     .sort()
     .filter((id) => connectorAuthModes(id)?.includes("none") === true ||
       (id === "kizuki.beeper" && connectorAuthModes(id)?.includes("secret_ref") === true) ||
-      (id === "kizuki.imap" && connectorAuthModes(id)?.includes("sign_in") === true));
+      (["kizuki.imap", "kizuki.telegram", "kizuki.gmail", "kizuki.google-calendar"].includes(id) && connectorAuthModes(id)?.includes("sign_in") === true));
 }
 
 function resolveRegisteredId(input: string): string | null {
@@ -176,11 +186,24 @@ export async function enrollHostConnection(
   }
 }
 
-/**
- * Enroll a connector that mints its own opaque state during an interactive
- * sign-in. The ledger owns both the durable filename and replacement
- * transaction: CLI code never parses, copies, or persists this state.
- */
+export class DuplicateSourceError extends ConnectionError {
+  constructor() { super("source_already_enrolled; select its existing --source KEY to reauthorize; source consent is unchanged"); }
+}
+
+function verifyGoogleEnrollment(connectorId: string): Parameters<typeof enrollConnection>[4] {
+  const identity = connectorId === "kizuki.gmail"
+    ? (bytes: Uint8Array) => JSON.stringify([inspectGmailState(bytes).account_id])
+    : connectorId === "kizuki.google-calendar"
+      ? (bytes: Uint8Array) => { const state = inspectGoogleCalendarState(bytes); return JSON.stringify([state.account_id, state.calendar_id]); }
+      : undefined;
+  if (identity === undefined) return undefined;
+  return (candidate, existing) => {
+    const selected = identity(candidate);
+    if (existing.some(item => identity(item.state) === selected)) throw new DuplicateSourceError();
+  };
+}
+
+/** Core owns state publication; provider inspectors supply only identity policy. */
 export async function enrollSignedInConnection(
   db: Database,
   store: ConnectionStateStore,
@@ -188,7 +211,9 @@ export async function enrollSignedInConnection(
   io: SignInIo,
   sourceKey?: string,
   verifyReplacement?: (previous: Uint8Array, candidate: Uint8Array) => void,
+  newSource = false,
 ): Promise<Connection> {
+  if (newSource && sourceKey !== undefined) throw new ConnectionError("--new-source and --source are mutually exclusive");
   const manifest = connector.manifest();
   if (!manifest.auth_modes.includes("sign_in") || connector.signIn === undefined) {
     throw new ConnectionError(`${manifest.connector_id} does not support interactive sign-in`);
@@ -197,19 +222,19 @@ export async function enrollSignedInConnection(
   const existing = listConnections(db, { includeDisconnected: true }).filter(
     (connection) => connection.connector_id === manifest.connector_id,
   );
-  const previous = sourceKey === undefined
+  const previous = newSource ? undefined : sourceKey === undefined
     ? existing.length === 1 ? existing[0] : undefined
     : existing.find((connection) => connection.source_key === sourceKey);
   if (sourceKey !== undefined && previous === undefined) {
     throw new ConnectionError(`no connection for ${manifest.connector_id} source=${sourceKey}`);
   }
-  if (sourceKey === undefined && existing.length > 1) {
+  if (!newSource && sourceKey === undefined && existing.length > 1) {
     throw new ConnectionError(`several connections for ${manifest.connector_id}; select a source before re-signing in`);
   }
   if (previous !== undefined) {
     return store.replace(db, previous, connector, io, verifyReplacement);
   }
-  return enrollConnection(db, store, connector, io);
+  return enrollConnection(db, store, connector, io, verifyGoogleEnrollment(manifest.connector_id));
 }
 
 export interface HostConnection {
@@ -223,11 +248,14 @@ function inspectConnection(
   connection: Connection,
 ): HostConnection {
   try {
-    if (connection.connector_id === "kizuki.imap") {
+    if (["kizuki.imap", "kizuki.telegram", "kizuki.gmail", "kizuki.google-calendar"].includes(connection.connector_id)) {
       const ref = connection.secret_refs[0];
-      if (connection.secret_refs.length !== 1 || ref === undefined) throw new ConnectionError("IMAP connection state is missing");
-      if (store.read(connection) === null) throw new ConnectionError("IMAP connection state is missing");
-      // IMAP state is connector-owned opaque bytes. This small in-memory
+      if (connection.secret_refs.length !== 1 || ref === undefined) throw new ConnectionError(`${connection.connector_id} connection state is missing`);
+      // Google capture selection is metadata-only. loadConnector admits the
+      // source before reading credentials; explicit reauthorization reads its
+      // selected prior state in its enrollment command under owner sign-in authority.
+      if (!["kizuki.gmail", "kizuki.google-calendar"].includes(connection.connector_id) && store.read(connection) === null) throw new ConnectionError(`${connection.connector_id} connection state is missing`);
+      // Signed-in state is connector-owned opaque bytes. This small in-memory
       // descriptor exposes only the core-minted reference needed to build the
       // connector; it is never encoded or written as host state.
       return {
@@ -235,7 +263,7 @@ function inspectConnection(
         state: {
           schema: HOST_STATE_SCHEMA,
           connector_id: connection.connector_id,
-          config: { secret_ref: ref },
+          config: connection.connector_id === "kizuki.telegram" ? { state_ref: ref } : { secret_ref: ref },
         },
         problem: null,
       };
@@ -338,35 +366,109 @@ export function blocksEnrollment(state: HealthState): boolean {
 export async function loadConnector(
   selected: HostConnection,
   store: ConnectionStateStore,
+  db: Database,
   env: Record<string, string | undefined> = process.env,
-  factory: (id: string, config?: unknown) => Connector = getConnector,
+  factory: (id: string, config?: unknown, telegramDeps?: Partial<TelegramDeps>) => Connector = (id, config, deps) => id === "kizuki.telegram" ? new TelegramConnector(config as TelegramConnectorConfig, deps) : id === "kizuki.gmail" ? createGmailConnector(config as GmailConnectorConfig, deps?.persist ? {persist:deps.persist} : {}) : id === "kizuki.google-calendar" ? createGoogleCalendarConnector(config as GoogleCalendarConnectorConfig, deps?.persist ? {persist:deps.persist} : {}) : getConnector(id, config),
 ): Promise<Connector> {
+  try { sourceCaptureAdmission(db, selected.connection.connector_id, selected.connection.source_key); }
+  catch (error) {
+    if (error instanceof Error && error.message === "source_capture_denied") {
+      throw new ConnectionError(`source_capture_denied; ${consentHint(db, selected.connection.source_key)}`);
+    }
+    throw error;
+  }
   if (selected.state === null) {
     throw new ConnectionError(
       `${selected.connection.connector_id} source=${selected.connection.source_key}: ${selected.problem ?? "state missing"}; reconnect it`,
     );
   }
+  if (selected.connection.connector_id === "kizuki.gmail") {
+    const bytes = store.read(selected.connection);
+    if (bytes === null) throw new ConnectionError("Gmail protected state is unavailable.");
+    const identity = inspectGmailState(bytes);
+    const grant = inspectSourceGrant(db, selected.connection.source_key);
+    if (!grant || gmailRequiredFields(identity.fields).some(field => !grant.policy.allowed_fields.includes(field as "text" | "subjects" | "attachments" | "metadata"))) {
+      throw new ConnectionError("source_field_denied; Gmail selected fields are incompatible with this grant. Inspect the source policy and explicitly reconcile consent; projection changes through reauthorization are unsupported.");
+    }
+    const client = await gmailClient(env);
+    if (sourceCaptureAdmission(db, selected.connection.connector_id, selected.connection.source_key)?.expected_revision !== grant.revision) {
+      throw new ConnectionError("source_capture_denied; source consent changed during host composition; retry with current policy.");
+    }
+    const ref = selected.connection.secret_refs[0]!;
+    const connector = factory("kizuki.gmail", gmailStateConfig(bytes, ref, client), {
+      persist: createStatePersister(db, store, selected.connection).persist,
+    });
+    try {
+      await connector.connect(async wanted => {
+        if (wanted !== ref) throw new ConnectionError("unexpected Gmail state reference");
+        return new TextDecoder().decode(bytes);
+      });
+    } catch {
+      await closeHostConnector(connector);
+      throw new ConnectionError("Gmail connection unavailable; check operator configuration and reauthorize the existing source.");
+    }
+    return connector;
+  }
+  if (selected.connection.connector_id === "kizuki.google-calendar") {
+    const bytes = store.read(selected.connection);
+    if (bytes === null) throw new ConnectionError("Google Calendar protected state is unavailable.");
+    const identity = inspectGoogleCalendarState(bytes);
+    const grant = inspectSourceGrant(db, selected.connection.source_key);
+    if (!grant || googleCalendarRequiredFields(identity.fields).some(field => !grant.policy.allowed_fields.includes(field as "text" | "subjects" | "attachments" | "metadata"))) {
+      throw new ConnectionError("source_field_denied; Google Calendar selected fields are incompatible with this grant. Inspect the source policy and explicitly reconcile consent; projection changes through reauthorization are unsupported.");
+    }
+    const client = await googleCalendarClient(env);
+    if (sourceCaptureAdmission(db, selected.connection.connector_id, selected.connection.source_key)?.expected_revision !== grant.revision) {
+      throw new ConnectionError("source_capture_denied; source consent changed during host composition; retry with current policy.");
+    }
+    const ref = selected.connection.secret_refs[0]!;
+    const connector = factory("kizuki.google-calendar", googleCalendarStateConfig(bytes, ref, client), {
+      persist: createStatePersister(db, store, selected.connection).persist,
+    });
+    try {
+      await connector.connect(async wanted => {
+        if (wanted !== ref) throw new ConnectionError("unexpected Google Calendar state reference");
+        return new TextDecoder().decode(bytes);
+      });
+    } catch {
+      await closeHostConnector(connector);
+      throw new ConnectionError("Google Calendar connection unavailable; check operator configuration and reauthorize the existing source.");
+    }
+    return connector;
+  }
+  const telegram = selected.connection.connector_id === "kizuki.telegram";
   const connector = factory(
     selected.connection.connector_id,
     selected.state.config,
+    telegram ? { persist: createStatePersister(db, store, selected.connection).persist } : undefined,
   );
   const config = selected.state.config;
-  const ref = "token_secret_ref" in config
+  const ref = "state_ref" in config ? config.state_ref : "token_secret_ref" in config
     ? config.token_secret_ref
     : "secret_ref" in config
       ? config.secret_ref
       : undefined;
-  if (selected.connection.connector_id === "kizuki.imap") {
+  if (telegram || selected.connection.connector_id === "kizuki.imap") {
     const state = store.read(selected.connection);
-    if (state === null) throw new ConnectionError("IMAP connection state is missing");
-    await connector.connect(async (wanted) => {
-      if (wanted !== ref) {
-        throw new ConnectionError("unexpected connection state reference");
-      }
-      return new TextDecoder().decode(state);
-    });
+    if (state === null) throw new ConnectionError(`${selected.connection.connector_id} connection state is missing`);
+    try {
+      await connector.connect(async (wanted) => {
+        if (wanted !== ref) throw new ConnectionError("unexpected connection state reference");
+        return new TextDecoder().decode(state);
+      });
+    } catch (error) {
+      await closeHostConnector(connector).catch(() => {});
+      throw error;
+    }
   } else {
     await connector.connect(ref === undefined ? refuseSecrets : tokenResolver(ref, env));
   }
   return connector;
+}
+
+/** Local transport/custody cleanup never revokes a provider account. */
+export async function closeHostConnector(connector: Connector): Promise<void> {
+  if (connector instanceof TelegramConnector) await connector.close();
+  if (connector instanceof GmailConnector) await connector.close();
+  if (connector instanceof GoogleCalendarConnector) await connector.close();
 }

@@ -6,6 +6,7 @@ import {
   getCheckpoint,
   listConnections,
   openLedger,
+  setSourceGrant,
   writeCheckpoint,
 } from "@kizuki/core";
 import type { ConnectionStateWriter, Connector, SignInIo } from "@kizuki/core";
@@ -339,6 +340,9 @@ describe("IMAP interactive enrollment", () => {
       const pending = store.begin();
       await pending.writer.write(serializeImapState(fixtureState()));
       const connection = store.save(db, "kizuki.imap", pending.pending);
+      setSourceGrant(db, { source_key: connection.source_key, expected_revision: 0, operation_id: "fixture-imap-load",
+        policy: { purposes: ["capture"], allowed_fields: ["text", "subjects", "attachments", "metadata"],
+          retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "private" } });
       const selected = selectConnection(db, store, "kizuki.imap", connection.source_key);
       const fake = new FakeImapServer(fixtureMailbox(), {
         username: FIXTURE_USERNAME,
@@ -347,6 +351,7 @@ describe("IMAP interactive enrollment", () => {
       const connector = await loadConnector(
         selected,
         store,
+        db,
         {},
         (_id, config) => createImapConnector(
           config as { secret_ref?: string },

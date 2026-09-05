@@ -54,13 +54,20 @@ owner edits are left in place.
 ## import
 
 ```text
-usage: kizuki import <connector> --source PATH
+usage: kizuki import <connector> --source PATH [--policy FILE --expected-revision N --operation-id ID]
 ```
 
-Enrolls a `none`-mode file source and backfills it to exhaustion. For local
+Enrolls a `none`-mode file source and backfills it to exhaustion only with an active
+source grant permitting capture. The three policy options must appear together;
+they apply explicit consent before reading content. Without a grant, import
+enrolls the source, refuses capture, and prints the source key and grant command. For local
 Beeper messages, use `connect beeper` followed by `backfill beeper`.
 
 ## connect
+
+Google Calendar supports `connect google-calendar --calendar CANONICAL_ID --fields summary,description,location,attendees,attachments [--source KEY | --new-source] [--json]`. Operator desktop app configuration and separate source consent are required; see [the native Calendar contract and limits](google-calendar.md). Use `--fields none` for baseline metadata and event-resource identity only. `primary` is refused; existing account/calendar/fields and recovery state are preserved during reauthorization.
+
+Gmail and Google Calendar accept `--new-source` for explicit additional enrollment; it cannot be combined with `--source KEY`. Duplicate account identities (Calendar: account plus canonical calendar) refuse even if fields differ or prior consent is revoked. Existing-source reauthorization preserves checkpoints and recovery state. New sources require separate grants; see the provider docs for bounds and refusal semantics.
 
 ```text
 usage: kizuki connect [--list|status] [--json]
@@ -73,7 +80,11 @@ Browse sources, inspect saved sync status, or enroll a source. Local Beeper
 enrollment checks its authenticated Desktop API before saving a secret
 reference. IMAP enrollment uses a local interactive prompt and stores its
 opaque connector state in the owner-only connection-state store. File sources
-remain supported. Other account sign-in flows are unavailable and labeled in
+remain supported. `connect telegram [--source KEY] [--json]` uses native
+phone/code sign-in and optional two-step verification in an interactive terminal.
+Project app credentials are required; missing credentials refuse before any
+prompt or network connection. Re-sign-in preserves account identity and history.
+Other account sign-in flows are unavailable and labeled in
 the catalog. See [connection setup](connect.md).
 
 Sensitivity is optional: trusted connector runs resolve each valid event
@@ -81,6 +92,100 @@ against that connection's default, floor, owner label, and source hint.
 Hints cannot lower the connection policy. A legacy connection without a
 recorded policy defaults to private. Direct unlabelled ledger writes remain
 withheld, and changing policy does not relabel historical events.
+
+## Source consent
+
+Enrollment stores connection state; credentials never imply permission to use
+captured evidence. New sources require an explicit owner grant. Existing retained
+sources are not silently migrated. `connect status --source KEY --json` shows the
+current grant, revision, policy digest, and physical purge blockers. All-source
+`connect status` keeps sync state and consent state separate. Disconnect still
+stops sync; revoking consent is a separate operation.
+
+Save a policy you intend to authorize in a regular JSON file, at most 16 KiB,
+without symlinks or secret fields. The file must belong to the effective user
+and must not be group/world writable (`0600` preferred; `0644` allowed).
+Each ancestor must be a real directory owned by root or the effective user,
+without group/world write permission; root-owned sticky directories such as
+`/tmp` are allowed. The bounded directory chain and open file are checked
+before and after reading. This is a POSIX local-owner boundary: the same user
+is trusted, and unsupported permission semantics are refused. For example, this policy permits local capture
+and owner recall of text and its provenance:
+
+```json
+{
+  "purposes": ["capture", "recall", "session", "derive"],
+  "allowed_fields": ["text", "subjects", "attachments", "metadata"],
+  "retention": "persistent_owned_until_revoked",
+  "egress": "local_only",
+  "sensitivity_floor": "private"
+}
+```
+
+Purposes are `capture`, `recall`, `session`, `correction`, `audit`, `derive`,
+`extract`, and `export`; choose only the uses you authorize. Populated fields
+outside `allowed_fields` refuse capture. `extract` does not make an untrusted
+model local. There is currently no native local model capability in the CLI.
+Managed `local_only` sources refuse extraction through the generic
+OpenAI-compatible HTTP adapter, including loopback endpoints; granting
+`extract` does not override that boundary. Owner recall remains available
+without a model.
+
+To authorize extraction through the one configured OpenAI-compatible model,
+replace `local_only` with an exact destination object. `model_endpoint` is the
+final chat-completions URL, while `[ports.llm].base_url` remains the configured
+base. HTTPS is required except for explicit loopback local-model fixtures.
+The endpoint and model must match the running host binding exactly after URL
+canonicalization:
+
+```json
+{
+  "purposes": ["capture", "recall", "derive", "extract"],
+  "allowed_fields": ["text", "subjects", "attachments", "metadata"],
+  "retention": "persistent_owned_until_revoked",
+  "egress": {
+    "model_endpoint": "https://models.example.test/v1/chat/completions",
+    "model": "example-model",
+    "external_retention": "provider_managed"
+  },
+  "sensitivity_floor": "private"
+}
+```
+
+This consent covers one destination. It contains no secret and does not bind a
+transport by itself. The trusted CLI host binds the actual configured model;
+an endpoint path or model mismatch sends no source payload. Revocation stops
+future calls and discards a result if policy changes while a call is pending.
+Owned purge removes Kizuki's retained source and derived payload, but cannot
+retract data already sent to a provider. Provider-side retention and deletion
+remain governed by that provider.
+Once a provider decision is durably journaled, a later narrowed or revoked
+grant leaves that decision pending without resending source data or advancing
+the extraction cursor. Restoring the required purpose, fields, and exact
+destination lets a later pass file the original decision under its original
+model reference; source purge removes affected pending derived work.
+Export requires the explicit `export` purpose and refuses pending revocations.
+
+```bash
+kizuki connect grant --source KEY --policy POLICY.json --expected-revision 0 --operation-id grant-1
+kizuki connect status --source KEY --json
+kizuki connect revoke --source KEY --expected-revision 1 --operation-id revoke-1
+kizuki connect resume-revocation --source KEY --operation-id revoke-1 --json
+```
+
+Grant and revoke return durable operation receipts. Retrying the exact operation
+returns its original receipt, including after restart; reusing its ID for changed
+intent is refused. Supply the exact current revision for a new operation. Status
+shows current state, which may be newer than a retried operation's receipt.
+
+Grant, status, and revoke work without opening retrieval. Revocation commits
+denial immediately. Physical purge is a separate resumable operation tied to the
+same source and revoke ID; it inventories all known owned retrieval stores and
+can retry a broken native generation without opening its SQL database. `purge=pending` / JSON `status=degraded` and exit 1 means it is **not
+complete**. Any remaining payload or canon blocker remains explicit; retry cannot invent an erasure receipt. A source cannot be
+regranted while its purge is pending. `purge=complete` is reported only from the
+native completed state with no blockers. Local revocation does not delete the
+upstream account or source file.
 
 ## backfill / sync
 
@@ -93,6 +198,11 @@ Historical capture vs source refresh. Each selected connection is drained
 until the connector reports exhaustion. `--source` requires an explicit
 connector. A named connector with no rows exits `1` (`no_connections`).
 One connection failure does not skip the rest.
+Capture through `backfill`, plain `sync`, and `import` does not open the optional
+retrieval engine, so an existing MCP retrieval session cannot block ingestion or
+source-consent checks. These commands still refresh the local SQLite search
+floor. `sync --once` runs the automation tick and retains its configured
+retrieval requirements.
 The Beeper connector conservatively rescans available history on each completed
 sync cycle to observe edits and explicit tombstones; unchanged records deduplicate.
 
@@ -227,6 +337,12 @@ Verifies a `kizuki.backup/v1` directory. With `--into` it restores into an
 empty target after that verification. `--from DIR` alone, or with `--verify`,
 checks hashes and completeness without writing.
 
+Current backups include the bounded deferred-input queue and any one pending
+model decision, so a restore can resume without sending the source text to the
+model again. Backups whose serve schema predates version 8 did not carry this
+recovery state; restore reports that limitation instead of inventing a pending
+decision.
+
 ## rebuild
 
 ```text
@@ -264,7 +380,46 @@ bun packages/mcp/src/bin.ts --vault PATH (--owner | --token-env VAR) [--retrieva
 
 Stdio adapter. Tokens never travel on argv.
 
+MCP uses the vault's configured retrieval engine when `--retrieval` is omitted.
+If that optional engine is temporarily busy or unavailable, the session starts
+with the authorized SQLite lexical floor. Stderr reports the degradation;
+search results and context packets include `retrieval-unavailable`. The session
+does not steal another process's lease or reconnect the engine mid-session.
+An explicit `--retrieval ID` remains required. Unknown engines and invalid
+configuration refuse startup. No model is needed for the lexical floor.
+
 ## Not CLI verbs
 
 `timeline` and `agent add` are not registered. Timeline exists
 as an MCP / core serving function.
+
+Source revocation maintenance inventories both known native retrieval roots under
+`.kizuki/retrieval`, including a previously selected engine. Each store has a
+vault-scoped stable `local:<implementation-id>` identity that survives a vault
+move. Logical clearing is followed by whole-generation native disposal, and
+newly opened ports are closed. A busy, unknown, symlinked or otherwise unsafe
+root leaves revocation pending; changing the configured engine never proves
+absence. Broken native generations can be retried without successful SQL startup.
+Reports distinguish owned-store maintenance from external copies, which remain
+out of scope. The main ledger, claims and canon have separate core erasure rules;
+only a core report with no purge blockers is rendered complete.
+
+A native root identity failure can report `process_restart_required` or
+`process_restart_required_active_sql_uncontained`. Stop the affected process and
+restore/verify the owned root before retrying; the command has not completed
+purge. This does not guarantee containment of SQL already running during an
+external path substitution, and does not authorize live vault moves. The
+native generation walker is currently qualified only for Linux x64 glibc;
+other platforms remain pending for physical generation maintenance.
+
+Telegram enrollment captures no history. Use `backfill telegram --source KEY`
+after the source is authorized. The connection's opaque protected session holds
+provider cooldowns, and the native CLI persists those before returning a wait;
+reopening the source checks the cooldown before opening transport. Transport
+cleanup never logs out the Telegram session. Source-consent revocation and
+provider logout are distinct operations. Telegram deletion detection and remote
+message deletion remain unsupported. Synthetic native CLI tests do not qualify
+real account access, complete provider history or a live observation period.
+Before an authenticated session exists, initial sign-in has bounded attempts
+and waits but restart-persistent throttling is unproven. Failed cooldown storage
+is a visible failure requiring repair; it is not a successful rate-limit receipt.

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   MODEL_PRODUCER_ID,
   PortRegistry,
+  bindSourceModelPort,
   isPlainObject,
   registerModelProducerPort,
   runToCompletion,
@@ -16,8 +17,8 @@ import {
   type RailSyncResult,
   type RetrievalPort,
 } from "@kizuki/core";
-import { registerLlmPorts } from "@kizuki/llm";
-import { listHostConnections, loadConnector } from "./connections";
+import { chatCompletionsUrl, parseOpenAiCompatibleConfig, registerLlmPorts } from "@kizuki/llm";
+import { listHostConnections, loadConnector, closeHostConnector } from "./connections";
 import { tryRefreshDerived } from "./derived";
 import { tokenResolver } from "./secrets";
 
@@ -122,20 +123,22 @@ async function syncConnections(
       continue;
     }
     try {
-      const connector = await loadConnector(selected, store, env);
-      const result = await runToCompletion(
-        db,
-        connector,
-        selected.connection.connector_id,
-        selected.connection.source_key,
-        "sync",
-      );
-      events_stored += result.stored;
-      events_duplicate += result.duplicates;
-      events_synced += result.stored + result.duplicates;
-      if (result.errors.length > 0 && errors.length < MAX_SYNC_ERRORS) {
-        errors.push(`connector ${selected.connection.connector_id} sync failed`);
-      }
+      const connector = await loadConnector(selected, store, db, env);
+      try {
+        const result = await runToCompletion(
+          db,
+          connector,
+          selected.connection.connector_id,
+          selected.connection.source_key,
+          "sync",
+        );
+        events_stored += result.stored;
+        events_duplicate += result.duplicates;
+        events_synced += result.stored + result.duplicates;
+        if (result.errors.length > 0 && errors.length < MAX_SYNC_ERRORS) {
+          errors.push(`connector ${selected.connection.connector_id} sync failed`);
+        }
+      } finally { await closeHostConnector(connector); }
     } catch {
       if (errors.length < MAX_SYNC_ERRORS) {
         errors.push(`connector ${selected.connection.connector_id} sync unavailable`);
@@ -178,6 +181,13 @@ export async function createServeRuntime(options: {
         { producer: MODEL_PRODUCER_ID },
         portContext(options.vaultPath, "producer", MODEL_PRODUCER_ID, {}, null, options.env, options.err),
       )).port;
+      if (selected.id === MODEL_LLM_ID) {
+        const configured = parseOpenAiCompatibleConfig(selected.config);
+        bindSourceModelPort(producer, {
+          model_endpoint: chatCompletionsUrl(configured.base_url),
+          model: configured.model,
+        });
+      }
     }
   } catch (error) {
     await llm.close();

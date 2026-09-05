@@ -1,0 +1,1 @@
+{"name":"@kizuki/connector-google-calendar","version":"0.1.0","type":"module","exports":{".":"./src/index.ts","./testing":"./src/testing.ts"},"dependencies":{"@kizuki/core":"workspace:*"}}

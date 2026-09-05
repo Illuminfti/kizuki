@@ -12,17 +12,14 @@ export interface AdvisoryFileLock {
   release(): void;
 }
 
-/** Stable inode, never unlinked. Closing this fd or process death releases ownership. */
-export function tryAdvisoryFileLock(path: string): AdvisoryFileLock | null {
-  native ??= load();
-  let fd: number;
-  try { fd = openSync(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600); }
-  catch { throw new Error("advisory file lock cannot be opened"); }
+/** Internal seam: consumes an already-open fd, including on refusal or failure. */
+export function tryAdvisoryFileLockFd(fd: number, current: () => { ino: number; dev: number; isFile(): boolean }): AdvisoryFileLock | null {
   try {
+    native ??= load();
     if (native.symbols.flock(fd, 2 | 4) !== 0) { closeSync(fd); return null; }
     const opened = fstatSync(fd);
-    const current = lstatSync(path);
-    if (!opened.isFile() || opened.nlink !== 1 || !current.isFile() || opened.ino !== current.ino || opened.dev !== current.dev) {
+    const named = current();
+    if (!opened.isFile() || opened.nlink !== 1 || !named.isFile() || opened.ino !== named.ino || opened.dev !== named.dev) {
       throw new Error("advisory file lock identity changed");
     }
     let released = false;
@@ -31,4 +28,13 @@ export function tryAdvisoryFileLock(path: string): AdvisoryFileLock | null {
     closeSync(fd);
     throw new Error("advisory file lock acquisition failed");
   }
+}
+
+/** Stable inode, never unlinked. Closing this fd or process death releases ownership. */
+export function tryAdvisoryFileLock(path: string): AdvisoryFileLock | null {
+  native ??= load();
+  let fd: number;
+  try { fd = openSync(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600); }
+  catch { throw new Error("advisory file lock cannot be opened"); }
+  return tryAdvisoryFileLockFd(fd, () => lstatSync(path));
 }

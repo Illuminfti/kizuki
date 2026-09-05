@@ -21,6 +21,9 @@ export const restoreCommand: Command = {
       const manifest = verifyBackup(backupDir);
       io.out(`verified=${backupDir}/manifest.json`);
       io.out(`schema=${manifest.schema} complete=${manifest.complete}`);
+      if (manifest.schema_versions.serve < 8) {
+        io.out("warning=backup predates durable extraction recovery; an interrupted model decision was not preserved");
+      }
       return 0;
     }
     const report = restoreVault(backupDir, resolve(into));
@@ -35,6 +38,7 @@ export const restoreCommand: Command = {
         `doctor_invalid=${report.doctor.invalid}`,
       ].join(" "),
     );
+    for (const warning of report.recovery_warnings) io.out(`warning=${warning}`);
     return 0;
   },
 };

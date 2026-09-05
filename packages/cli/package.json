@@ -13,6 +13,9 @@
     "@kizuki/embed-gguf": "workspace:*",
     "@kizuki/tui": "workspace:*",
     "@kizuki/retrieval-pg": "workspace:*",
-    "@kizuki/llm": "workspace:*"
+    "@kizuki/llm": "workspace:*",
+    "@kizuki/connector-telegram": "workspace:*",
+    "@kizuki/connector-gmail": "workspace:*",
+    "@kizuki/connector-google-calendar": "workspace:*"
   }
 }

@@ -50,5 +50,5 @@ export {
 } from "./fixture";
 export type { ScriptedAccount, ScriptedSignIn } from "./fixture";
 export { ScriptedTelegramApi, scriptedDeps } from "./scripted";
-export { TELEGRAM_STATE_SCHEMA, encodeState, parseState } from "./state";
+export { TELEGRAM_STATE_SCHEMA, encodeState, parseState, assertSameTelegramIdentity, assertTelegramRetryAllowed } from "./state";
 export type { TelegramState } from "./state";

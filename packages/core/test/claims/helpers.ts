@@ -3,6 +3,8 @@ import type { Sensitivity } from "../../src/agents/types";
 import type { EventFacts } from "../../src/claims/authority";
 import type { InsertClaimInput } from "../../src/claims/store";
 import { accept } from "../../src/ledger/ledger";
+import { recordNativeCorrection } from "../../src/correction/evidence";
+import { sha256Hex } from "../../src/util/hash";
 import { openLedger } from "../../src/ledger/db";
 import { validEvent } from "../fixtures";
 import type {
@@ -28,6 +30,13 @@ export const FIXED_NOW = "2026-09-02T12:00:00.000Z";
 
 export function claimsDb(): Database {
   return openLedger(":memory:");
+}
+
+/** Positive authority fixture uses native recording, never a captured label. */
+export function nativeOwnerEvent(db: Database, body: string): string {
+  const request = sha256Hex(`fixture-native:${crypto.randomUUID()}`);
+  return recordNativeCorrection(db, { ...validEvent(), connector_id: "kizuki.owner",
+    source_record_id: request, kind: "correction", text: body, metadata: {} }, request).event_id;
 }
 
 export function putEvent(

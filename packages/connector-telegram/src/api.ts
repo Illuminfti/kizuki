@@ -85,6 +85,8 @@ export type TelegramApiFactory = (
 ) => TelegramApi;
 
 export type TelegramErrorCode =
+  | "closed"
+  | "state_persistence_failed"
   | "placeholder_credentials"
   | "missing_session"
   | "corrupt_state"

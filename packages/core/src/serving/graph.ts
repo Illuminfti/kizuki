@@ -112,7 +112,7 @@ function classifyGraph(
       case "source": {
         const event = facts.get(edge.dst);
         if (event === undefined) continue;
-        const eventAccess = eventDecision(grant, event);
+        const eventAccess = eventDecision(grant, event, index.sourceContext);
         if (!eventAccess.allow) {
           withheld.push({ id: event.event_id, reason: eventAccess.reason });
           continue;

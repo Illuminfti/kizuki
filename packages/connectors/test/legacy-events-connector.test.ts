@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { initVault, listClaims, openLedger, registerConnection, runBackfill, runSync } from "@kizuki/core";
+import { initVault, listClaims, openLedger, setSourceGrant, registerConnection, runBackfill, runSync } from "@kizuki/core";
 import { getCheckpoint } from "@kizuki/core";
 import { KizukiError } from "../src/errors";
 import { InMemoryLedger } from "../src/ledger";
@@ -262,6 +262,16 @@ describe("the run through a real ledger", () => {
       const connector = createLegacyEventsConnector({ path: jsonlPath });
       const source = "01JJ0000000000000000000004";
       registerConnection(db, LEGACY_EVENTS_CONNECTOR_ID, source);
+      // Explicit synthetic owner consent; keep connector sensitivity authoritative.
+      setSourceGrant(db, {
+        source_key: source, expected_revision: 0, operation_id: "fixture-grant",
+        policy: {
+          purposes: ["capture", "recall", "derive"],
+          allowed_fields: ["text", "subjects", "attachments", "metadata"],
+          retention: "persistent_owned_until_revoked", egress: "local_only",
+          sensitivity_floor: "public",
+        },
+      });
       const first = await runSync(
         db,
         connector,
@@ -338,6 +348,16 @@ describe("a row the ledger would refuse", () => {
       const connector = createLegacyEventsConnector({ path: jsonlPath });
       const source = "01JJ0000000000000000000004";
       registerConnection(db, LEGACY_EVENTS_CONNECTOR_ID, source);
+      // Explicit synthetic owner consent; keep connector sensitivity authoritative.
+      setSourceGrant(db, {
+        source_key: source, expected_revision: 0, operation_id: "fixture-grant",
+        policy: {
+          purposes: ["capture", "recall", "derive"],
+          allowed_fields: ["text", "subjects", "attachments", "metadata"],
+          retention: "persistent_owned_until_revoked", egress: "local_only",
+          sensitivity_floor: "public",
+        },
+      });
       const run = await runBackfill(
         db,
         connector,

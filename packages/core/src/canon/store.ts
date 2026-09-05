@@ -92,7 +92,7 @@ export function readPage(io: CanonIo, relPath: string): ExistingPage | null {
 export function appendReceiptLine(io: CanonIo, receipt: CanonReceipt): void {
   const receiptsPath = join(io.vault_path, RECEIPTS_PATH);
   mkdirSync(dirname(receiptsPath), { recursive: true });
-  appendFileSync(receiptsPath, `${JSON.stringify(receipt)}\n`, "utf8");
+  appendFileSync(receiptsPath, `${JSON.stringify(receipt)}\n`, {encoding:"utf8",mode:0o600});
   const fd = openSync(receiptsPath, "r");
   try {
     fsyncSync(fd);

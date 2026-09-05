@@ -56,6 +56,8 @@ INSERT INTO retrieval_meta VALUES ('schema', '1') ON CONFLICT DO NOTHING;
 /** One FIFO serializes complete interactions; model calls never enter it. */
 export class SqlStore {
   private tail: Promise<unknown> = Promise.resolve();
+  private terminal = false;
+  private active = 0;
   private constructor(readonly db: PGlite, private readonly dispose: () => void) { }
   static async open(dataDir: string): Promise<SqlStore> {
     const resource = await openDatabase(dataDir);
@@ -87,7 +89,11 @@ export class SqlStore {
     }
   }
   run<T>(fn: () => Promise<T>): Promise<T> {
-    const pending = this.tail.then(fn).catch(error => {
+    const pending = this.tail.then(async () => {
+      if (this.terminal) throw new PortError("unavailable", "owned_generation_changed_restart_required", false);
+      this.active++;
+      try { return await fn(); } finally { this.active--; }
+    }).catch(error => {
       if (error instanceof PortError) {
         throw error;
       }
@@ -97,7 +103,9 @@ export class SqlStore {
     return pending;
   }
   transaction<T>(fn: (tx: Transaction) => Promise<T>): Promise<T> { return this.db.transaction(tx => runStoreTransaction(() => fn(tx))); }
-  async close(): Promise<void> { await this.run(() => this.db.close()); this.dispose(); }
+  /** Stops queued/future callbacks. Already active work is explicitly not contained. */
+  abortForErasure(): boolean { this.terminal = true; return this.active > 0; }
+  async close(disposeAssets = true): Promise<void> { await this.run(() => this.db.close()); if (disposeAssets) this.dispose(); }
   async meta(key: string): Promise<unknown> {
     return (await this.db.query<{
       value: unknown;

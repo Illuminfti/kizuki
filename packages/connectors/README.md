@@ -19,10 +19,14 @@ Two kinds of adapter live in this package:
 - A **snapshot importer** reads a file the owner exported once. It cannot tell
   a deleted record from a shorter export, so it never emits a tombstone.
 
+Markdown sources must be separate from the Kizuki vault. See the
+[folder boundary and its limits](../../docs/markdown-sources.md).
+
 ## The registry
 
 | Registry id              | Reads                                                                                                 | Kind              |
 | ------------------------ | ----------------------------------------------------------------------------------------------------- | ----------------- |
+| `kizuki.google-calendar` | Explicitly selected read-only Google calendar revisions; native CLI, explicit source consent | Bounded live source |
 | `kizuki.markdown-folder` | A folder of Markdown files, rescanned each run                                                        | Live source       |
 | `kizuki.screenpipe`      | A local screenpipe SQLite database, read-only and offline (see that package's README before using it) | Live local source |
 | `kizuki.import-chatgpt`  | The `conversations.json` of a ChatGPT data export                                                     | Snapshot importer |

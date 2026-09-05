@@ -1,3 +1,4 @@
+import { GOOGLE_CALENDAR_CONNECTOR_ID, GOOGLE_CALENDAR_CURSOR_SCHEMA, createGoogleCalendarConnector, type GoogleCalendarConnectorConfig } from "@kizuki/connector-google-calendar";
 import {
   PORT_CONTRACTS,
   PortError,
@@ -7,6 +8,8 @@ import {
   validatePortDescriptor,
 } from "@kizuki/core";
 import type { Connector, PortDescriptor } from "@kizuki/core";
+import { GMAIL_CONNECTOR_ID, GMAIL_CURSOR_SCHEMA, createGmailConnector } from "@kizuki/connector-gmail";
+import type { GmailConnectorConfig } from "@kizuki/connector-gmail";
 import {
   ICS_CONNECTOR_ID,
   ICS_CURSOR_SCHEMA,
@@ -330,6 +333,38 @@ enroll(
   (config) => createClaudeImportConnector(config as ClaudeImportConfig),
   { ...LOCAL, cursor_schema: IMPORT_SNAPSHOT_CURSOR_SCHEMA },
 );
+// OAuth state refresh and recovery require trusted host composition through
+// createGmailConnector(config, deps). An unbound registry instance fails closed.
+enroll(
+  GMAIL_CONNECTOR_ID,
+  ["backfill", "sync", "tombstones", "fixture", "sign_in"],
+  "@kizuki/connector-gmail",
+  (config) => createGmailConnector(config as GmailConnectorConfig),
+  {
+    contract_minor: 1,
+    implementation: "@kizuki/connector-gmail",
+    allowed_egress: ["accounts.google.com", "oauth2.googleapis.com", "openidconnect.googleapis.com", "gmail.googleapis.com"],
+    cursor_schema: GMAIL_CURSOR_SCHEMA,
+    default_sensitivity: "private",
+    sensitivity_floor: "private",
+  },
+);
+// OAuth state refresh and recovery require trusted host composition through
+// createGoogleCalendarConnector(config, deps). An unbound registry instance fails closed.
+enroll(
+  GOOGLE_CALENDAR_CONNECTOR_ID,
+  ["backfill", "sync", "tombstones", "fixture", "sign_in"],
+  "@kizuki/connector-google-calendar",
+  (config) => createGoogleCalendarConnector(config as GoogleCalendarConnectorConfig),
+  {
+    contract_minor: 1,
+    implementation: "@kizuki/connector-google-calendar",
+    allowed_egress: ["accounts.google.com", "oauth2.googleapis.com", "openidconnect.googleapis.com", "www.googleapis.com"],
+    cursor_schema: GOOGLE_CALENDAR_CURSOR_SCHEMA,
+    default_sensitivity: "private",
+    sensitivity_floor: "private",
+  },
+);
 enroll(
   IMAP_CONNECTOR_ID,
   ["backfill", "sync", "tombstones", "purge", "fixture", "sign_in"],
@@ -438,6 +473,11 @@ export function getConnector(
 export function getConnector(
   id: typeof CLAUDE_IMPORT_CONNECTOR_ID,
   config: ClaudeImportConfig,
+): Connector;
+export function getConnector(id: typeof GOOGLE_CALENDAR_CONNECTOR_ID, config: GoogleCalendarConnectorConfig): Connector;
+export function getConnector(
+  id: typeof GMAIL_CONNECTOR_ID,
+  config: GmailConnectorConfig,
 ): Connector;
 export function getConnector(
   id: typeof IMAP_CONNECTOR_ID,

@@ -246,7 +246,7 @@ function validateProvenance(ctx: ServeContext, provenance: string[]): void {
         "must name live events this principal can read",
       );
     }
-    const decision = eventDecision(ctx.principal.grant, event);
+    const decision = eventDecision(ctx.principal.grant, event, ctx);
     if (!decision.allow) {
       throw new ServeError(decision.reason, "provenance outside the grant");
     }

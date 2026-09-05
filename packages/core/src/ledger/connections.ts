@@ -311,8 +311,8 @@ export function registerConnection(
   const version = options?.implementation_version ?? "";
   db.query(
     `INSERT INTO connections
-       (connector_id, source_key, config, secret_refs, connected_at, disconnected_at, implementation_version)
-     VALUES (?, ?, ?, '[]', ?, NULL, ?)`,
+       (connector_id, source_key, config, secret_refs, connected_at, disconnected_at, implementation_version, consent_required)
+     VALUES (?, ?, ?, '[]', ?, NULL, ?, 1)`,
   ).run(connector_id, source_key, NULL_CONFIG, new Date().toISOString(), version);
   const connection = getConnection(db, connector_id, source_key);
   if (connection === null) throw new LedgerError("registered connection was not found");

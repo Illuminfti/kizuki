@@ -1,3 +1,5 @@
+import { GOOGLE_CALENDAR_CONNECTOR_ID, createGoogleCalendarConnector } from "@kizuki/connector-google-calendar";
+import { CalendarFixture } from "../../connector-google-calendar/src/testing";
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { appendFile, mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
@@ -47,6 +49,8 @@ import type { ConformanceResult } from "../src/testkit";
 import { fixtureJsonl as jsonlFixture } from "../src/import-legacy-events/fixture";
 import { encodeState } from "@kizuki/connector-telegram";
 import { BEEPER_CONNECTOR_ID, createBeeperConnector } from "@kizuki/connector-beeper";
+import { GMAIL_CONNECTOR_ID, createGmailConnector } from "@kizuki/connector-gmail";
+import { GmailFixture } from "@kizuki/connector-gmail/testing";
 import type { Connector } from "@kizuki/core";
 import {
   FakeImapServer,
@@ -270,6 +274,21 @@ function batteryFor(
       return runConformance(telegram, {
         unavailable: {
           connector: new TelegramConnector({}, scriptedDeps()),
+        },
+      });
+    },
+    [GOOGLE_CALENDAR_CONNECTOR_ID]: async () => {
+      const fixture = new CalendarFixture(), connector = await fixture.connected();
+      return runConformance(connector, {unavailable:{connector:createGoogleCalendarConnector({})},tombstone:{prepare:async()=>JSON.stringify(JSON.parse(new TextDecoder().decode(fixture.state)).pending.next),mutate:async()=>{fixture.rows=[{id:'allday1',status:'cancelled'}];fixture.version++;}}});
+    },
+    [GMAIL_CONNECTOR_ID]: async () => {
+      const fixture = new GmailFixture(2);
+      const gmail = await fixture.connected();
+      return runConformance(gmail, {
+        unavailable: { connector: createGmailConnector({}) },
+        tombstone: {
+          prepare: async () => (await gmail.backfill(null)).cursor,
+          mutate: async () => { fixture.change("m1", "messagesDeleted"); },
         },
       });
     },

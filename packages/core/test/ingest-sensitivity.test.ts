@@ -1,3 +1,4 @@
+import { setSourceGrant } from "../src/ledger/source-grants";
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -66,6 +67,7 @@ function setup(
 ) {
   const db = openLedger(":memory:");
   const connection = registerConnection(db, "fixture", source);
+  setSourceGrant(db, { source_key: source, expected_revision: 0, operation_id: "fixture-" + source, policy: { purposes: ["capture", "recall", "derive"], allowed_fields: ["text", "subjects", "attachments", "metadata"], retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "public" } });
   const configured = manifest();
   if (seeded) {
     applyConnectionSensitivity(db, connection, configured, requested);
@@ -134,6 +136,7 @@ describe("connector-run sensitivity resolution", () => {
     const personal = setup({ ...validEvent(), source_record_id: "personal" });
     await runBackfill(personal.db, personal.connector, "fixture", SOURCE);
     const connection = registerConnection(personal.db, "fixture", secondSource);
+  setSourceGrant(personal.db, { source_key: secondSource, expected_revision: 0, operation_id: "fixture-" + secondSource, policy: { purposes: ["capture", "recall", "derive"], allowed_fields: ["text", "subjects", "attachments", "metadata"], retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "public" } });
     applyConnectionSensitivity(personal.db, connection, manifest(), "private");
     const privateConnector = new FixtureConnector(
       { events: [{ ...validEvent(), source_record_id: "private" }], cursor: null },

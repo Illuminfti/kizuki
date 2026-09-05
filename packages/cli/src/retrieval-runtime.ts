@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { loadConfiguredRetrieval, PortRegistry } from "@kizuki/core";
+import { bindLocalSourcePort, loadConfiguredRetrieval, PortRegistry } from "@kizuki/core";
 import type { RetrievalPort } from "@kizuki/core";
 import { registerEmbeddedRetrieval } from "@kizuki/retrieval-pg";
 
@@ -17,5 +17,6 @@ export async function openConfiguredRetrieval(vaultPath: string, selected?: stri
     clock: () => new Date().toISOString(),
     logger: () => {},
   });
-  return bound.port;
+  // Only this host-created embedded implementation receives the local capability.
+  return id === "kizuki.retrieval.embedded-pg" ? bindLocalSourcePort(bound.port, { store_id: `local:${id}` }) : bound.port;
 }

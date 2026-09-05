@@ -13,6 +13,7 @@ import {
   corroboratedFacts,
   eventFacts,
   putEvent,
+  nativeOwnerEvent,
 } from "./helpers";
 
 function evidencePair(db: ReturnType<typeof claimsDb>): {
@@ -43,10 +44,11 @@ describe("claims authority", () => {
     expect(live.outcome).toBe("stored");
     if (live.outcome !== "stored") return;
 
+    const ownerEvent = nativeOwnerEvent(db, "Grace left Acme.");
     const correction = await insertClaim(
       { db, now: () => "2026-09-02T12:01:00.000Z" },
       claimInput(ids[0], {
-        provenance: ids,
+        provenance: [...ids, ownerEvent],
         body: "Grace left Acme.",
         object: "none",
         polarity: "negative",
@@ -157,7 +159,7 @@ describe("claims authority", () => {
     const firstCorrection = await insertClaim(
       { db, now: () => "2026-09-02T12:03:00.000Z" },
       claimInput(ids[0], {
-        provenance: ids,
+        provenance: [nativeOwnerEvent(db, "Grace is an analyst.")],
         claim_id: "01CLAIM000000000000000000E",
         predicate: "employment.role",
         object: "analyst",
@@ -173,7 +175,7 @@ describe("claims authority", () => {
     const tiedId = await insertClaim(
       { db, now: () => "2026-09-02T12:04:00.000Z" },
       claimInput(ids[0], {
-        provenance: ids,
+        provenance: [nativeOwnerEvent(db, "Grace is a director.")],
         claim_id: "01CLAIM000000000000000000F",
         predicate: "employment.role",
         object: "director",
@@ -266,7 +268,7 @@ describe("claims authority", () => {
     db.close();
   });
 
-  test("kizuki.owner events stay owner taint without metadata", async () => {
+  test("captured kizuki.owner labels cannot mint owner authority", async () => {
     const db = claimsDb();
     const accepted = accept(db, {
       ...validEvent(),
@@ -285,13 +287,13 @@ describe("claims authority", () => {
     const filed = await insertClaim({ db }, reloaded);
     expect(filed.outcome).toBe("stored");
     if (filed.outcome !== "stored") return;
-    expect(filed.claim.authority).toBe("owner_authored");
+    expect(filed.claim.authority).toBe("model_inference");
     db.close();
   });
 
   test("an agent-relayed correction is owner tier and records its relay", async () => {
     const db = claimsDb();
-    const eventId = putEvent(db);
+    const eventId = nativeOwnerEvent(db, "Grace runs partnerships at Acme.");
     const result = await insertClaim(
       { db },
       claimInput(eventId, {

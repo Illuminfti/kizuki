@@ -1,3 +1,4 @@
+import { invalidateLocalSourcePort } from "./source-grants";
 import { tryWriteFlock } from "../serve/flock";
 import { settleWriteReservations } from "../serve/budget-ledger";
 import { purgeExtractInputs } from "../serve/extract";
@@ -107,6 +108,7 @@ export interface PurgeOutcome {
 }
 
 export interface PurgeFilter {
+  source_key?: string;
   event_id?: string;
   connector_id?: string;
   subject_handle?: string;
@@ -171,6 +173,7 @@ interface PageFingerprint {
 }
 
 interface RetrievalBinding {
+  owned?: boolean;
   status: PurgeStorePresence;
   port: RetrievalPort | null;
 }
@@ -196,6 +199,7 @@ function describeFilter(filter: PurgeFilter): string {
   if (filter.subject_handle !== undefined) {
     parts.push(`subject_handle=${filter.subject_handle}`);
   }
+  if (filter.source_key !== undefined) parts.push(`source_key=${filter.source_key}`);
   if (filter.source_record_id !== undefined) {
     parts.push(`source_record_id=${filter.source_record_id}`);
   }
@@ -327,6 +331,10 @@ function selector(
 ): { where: string; bindings: string[] } {
   const conditions: string[] = [];
   const bindings: string[] = [];
+  if (filter.source_key !== undefined) {
+    conditions.push("EXISTS (SELECT 1 FROM source_event_bindings b WHERE b.event_id=events.event_id AND b.source_key=?)");
+    bindings.push(filter.source_key);
+  }
   if (filter.event_id !== undefined) {
     conditions.push("events.event_id = ?");
     bindings.push(filter.event_id);
@@ -682,7 +690,7 @@ function bindRetrieval(
     return { status: "not_configured", port: null };
   }
   try {
-    return { status: "configured", port: createVaultFts5Port(vaultPath, clock) };
+    return { status: "configured", port: createVaultFts5Port(vaultPath, clock), owned: true };
   } catch {
     return { status: "unavailable", port: null };
   }
@@ -899,6 +907,12 @@ function purgeEventsLocked(
   return outcome;
 }
 
+function ownedErasureProof(db:Database, receiptId:string, op:PurgeOp, at:string):AbsenceProof|null {
+  if(!tableExists(db,"source_retrieval_stores")) return null;
+  const proved=db.query("SELECT 1 FROM source_grants g JOIN source_retrieval_stores s ON s.source_key=g.source_key WHERE g.purge_receipt_id=? AND s.store_id=? AND s.status IN ('maintained','absent')").get(receiptId,`local:${op.store}`);
+  return proved===null ? null : {checked:op.ids.length,found:[],store:op.store,method:"owned-generation-erasure",at};
+}
+
 async function reconcileOps(
   db: Database,
   receiptId: string,
@@ -1058,6 +1072,12 @@ function rewriteHolds(
       if (matchable.has(hold.page_path)) liftHold(db, hold.page_path);
       continue;
     }
+    // Removing only the citation would discard the authorization link while
+    // retaining mixed or unmatched prose. Keep the hold until source erasure
+    // can prove that every retained payload is independent of the denied source.
+    if (tableExists(db, "source_event_bindings") && toRemove.some(id =>
+      db.query("SELECT 1 FROM source_event_bindings b JOIN source_grants g ON g.source_key=b.source_key WHERE b.event_id=? AND g.status!='active'").get(id) !== null,
+    )) continue;
     const purged = new Set(toRemove);
     const matchingClaims = claimsCiting(db, toRemove).filter((claim) => {
       if (claim.target !== null && hold.page_path.startsWith(claim.target)) {
@@ -1097,11 +1117,14 @@ export async function runPurge(
   reason: string,
   options: PurgeRunOptions = {},
 ): Promise<PurgeOutcome> {
+  return underPurgeFence(vaultPath, options, async () => {
+    if (tableExists(db, "canon_write_reservations")) settleWriteReservations(db, vaultPath);
   const clock = options.now ?? (() => new Date().toISOString());
   const binding = bindRetrieval(vaultPath, options.retrieval, clock);
+  try {
   const retrievalStore =
-    binding.status === "not_configured" ? null : FTS5_RETRIEVAL_ID;
-  const phase1 = purgeEvents(db, vaultPath, filter, reason, {
+    binding.status === "not_configured" ? null : binding.port?.descriptor.id ?? FTS5_RETRIEVAL_ID;
+  const phase1 = purgeEventsLocked(db, vaultPath, filter, reason, {
     ...options,
     retrieval_store: retrievalStore,
   });
@@ -1112,6 +1135,8 @@ export async function runPurge(
   }
   phase1.rewritten = rewriteHolds(db, vaultPath, options);
   return phase1;
+  } finally { if (binding.owned) await binding.port?.close(); }
+  }, filter);
 }
 
 export async function verifyPurge(
@@ -1123,15 +1148,16 @@ export async function verifyPurge(
   initPurgeOps(db);
   const clock = options.now ?? (() => new Date().toISOString());
   const binding = bindRetrieval(vaultPath, options.retrieval, clock);
+  try {
   const ops = listOps(db, receiptId);
   const proofs: AbsenceProof[] = [];
   let ok = true;
   for (const op of ops) {
-    if (binding.port === null) {
+    if (binding.port === null && ownedErasureProof(db,receiptId,op,clock()) === null) {
       ok = false;
       continue;
     }
-    const proof = await binding.port.verifyAbsent(op.ids);
+    const proof = ownedErasureProof(db,receiptId,op,clock()) ?? await binding.port!.verifyAbsent(op.ids);
     proofs.push(proof);
     if (proof.found.length > 0) ok = false;
     if (proof.found.length === 0 && op.state !== "done") {
@@ -1164,4 +1190,33 @@ export async function verifyPurge(
     hold_lifted: holdLifted,
     ok,
   };
+  } finally { if (binding.owned) await binding.port?.close(); }
+}
+
+/** Resume existing persisted purge work without creating another deletion path. */
+export async function resumePurge(db: Database, vaultPath: string, receiptId: string, options: PurgeRunOptions = {}): Promise<PurgeVerifyReport> {
+  return underPurgeFence(vaultPath, options, async () => {
+  const clock = options.now ?? (() => new Date().toISOString());
+  const binding = bindRetrieval(vaultPath, options.retrieval, clock);
+  try {
+    await reconcileOps(db, receiptId, binding, clock);
+    rewriteHolds(db, vaultPath, options);
+    return await verifyPurge(db, vaultPath, receiptId, {...options,...(binding.port === null ? {} : {retrieval:binding.port})});
+  } finally { if (binding.owned) await binding.port?.close(); }
+  });
+}
+
+/** A timeout bounds the caller, not ownership of an unsettled external operation. */
+export async function underPurgeFence<T>(vaultPath: string, options: PurgeRunOptions, work: () => Promise<T>, filter?: PurgeFilter): Promise<T> {
+  const lock = tryWriteFlock(vaultPath);
+  if (lock === null) throw new PurgeError("canon_changed", "canon writer is busy; retry purge", filter);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const operation = work().finally(() => { lock.release(); if (timer !== undefined) clearTimeout(timer); });
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      if (options.retrieval !== undefined) invalidateLocalSourcePort(options.retrieval);
+      reject(new PurgeError("absence_failed", "purge timed out; writer remains fenced until settlement", filter));
+    }, 30_000);
+  });
+  return Promise.race([operation, timeout]);
 }

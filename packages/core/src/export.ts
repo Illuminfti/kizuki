@@ -1,3 +1,5 @@
+import { isRfc3339 } from "./util/time";
+import { sourcePolicyEpoch, inspectSourceGrant, sourceEventsAllowed } from "./ledger/source-grants";
 import type { Database } from "bun:sqlite";
 import {
   chmodSync,
@@ -28,12 +30,13 @@ import { CLAIMS_SCHEMA_VERSION, syncCompatProposals } from "./claims/schema";
 import { rebuildDerived } from "./derived";
 import { validateEventInput } from "./contracts/event";
 import { computeContentHash } from "./util/hash";
-import { ulid } from "./util/ulid";
+import { isUlid, ulid } from "./util/ulid";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "./ledger/db";
 import { PURGE_SCHEMA_VERSION } from "./ledger/purge-schema";
 import { tableExists } from "./ledger/schema";
 import { SENSITIVITY_SCHEMA_VERSION } from "./sensitivity/schema";
 import { SERVE_SCHEMA_VERSION } from "./serve/types";
+import { validateDurableExtractStorage } from "./serve/extract";
 import { readVaultId, vaultIdPath } from "./serve/vault-id";
 import { doctorVault } from "./vault/doctor";
 import { initVault } from "./vault/init";
@@ -46,6 +49,8 @@ const CHUNK = 65_536;
 const STAGING_MARK = ".kizuki-backup-";
 const INCOMPLETE = ".kizuki-backup-incomplete";
 const CONTROL_DIR = ".kizuki";
+const EXTRACT_BATCH_BACKUP = "serve/extract-batches.jsonl";
+const MAX_EXTRACT_BATCH_BACKUP_BYTES = 2_000_000;
 const FORBIDDEN_KEYS = new Set([
   "resolved_secret",
   "client_secret",
@@ -100,6 +105,8 @@ export interface RestoreReport {
   receipts: number;
   vault_files: number;
   doctor: { total: number; valid: number; invalid: number };
+  /** Older backup formats did not preserve an interrupted model decision. */
+  recovery_warnings: readonly string[];
 }
 
 interface EventRow {
@@ -177,6 +184,27 @@ interface CheckpointRow {
   updated_at: string;
   last_run_at: string;
   last_result: string;
+}
+
+interface DeferredInputRow {
+  event_id: string;
+  source_key: string | null;
+  checked_revision: number;
+  checked_binding_digest: string;
+}
+
+interface ExtractBatchRow {
+  previous_cursor: string;
+  cursor: string;
+  drafts: string;
+  model_ref: string | null;
+  created_at: string;
+  input_ids: string | null;
+  integrity: string | null;
+  outcome: string;
+  batch_mode: string;
+  model_inputs: string | null;
+  deferred_inputs: string | null;
 }
 
 interface SupersessionRow {
@@ -777,7 +805,7 @@ function* pageConnections(db: Database): Generator<Record<string, unknown>> {
       rows = db
         .query<ConnectionRow, [number]>(
           `SELECT connector_id, source_key, config, secret_refs,
-                  connected_at, disconnected_at, implementation_version
+                  connected_at, disconnected_at, implementation_version, consent_required
            FROM connections
            ORDER BY connector_id, source_key LIMIT ?`,
         )
@@ -786,7 +814,7 @@ function* pageConnections(db: Database): Generator<Record<string, unknown>> {
       rows = db
         .query<ConnectionRow, [string, string, string, number]>(
           `SELECT connector_id, source_key, config, secret_refs,
-                  connected_at, disconnected_at, implementation_version
+                  connected_at, disconnected_at, implementation_version, consent_required
            FROM connections
            WHERE connector_id > ?
               OR (connector_id = ? AND source_key > ?)
@@ -804,6 +832,7 @@ function* pageConnections(db: Database): Generator<Record<string, unknown>> {
         connected_at: row.connected_at,
         disconnected_at: row.disconnected_at,
         implementation_version: row.implementation_version,
+        consent_required: (row as ConnectionRow & { consent_required: number }).consent_required,
       };
     }
     const last: ConnectionRow | undefined = rows.at(-1);
@@ -848,6 +877,32 @@ function* pageCheckpoints(db: Database): Generator<Record<string, unknown>> {
     const last: CheckpointRow | undefined = rows.at(-1);
     if (last === undefined || rows.length < PAGE) break;
     after = { connector_id: last.connector_id, source_key: last.source_key };
+  }
+}
+
+function* pageDeferredInputs(db: Database): Generator<DeferredInputRow> {
+  if (!tableExists(db, "extract_deferred_inputs")) return;
+  let after = "";
+  while (true) {
+    const rows = db.query<DeferredInputRow, [string, number]>(
+      `SELECT event_id,source_key,checked_revision,checked_binding_digest
+         FROM extract_deferred_inputs WHERE event_id>? ORDER BY event_id LIMIT ?`,
+    ).all(after, PAGE);
+    if (rows.length === 0) return;
+    yield* rows;
+    if (rows.length < PAGE) return;
+    after = rows.at(-1)!.event_id;
+  }
+}
+
+function* pendingExtractBatch(db: Database): Generator<ExtractBatchRow> {
+  validateDurableExtractStorage(db);
+  const rows = db.query<ExtractBatchRow, []>(`SELECT previous_cursor,cursor,drafts,model_ref,created_at,input_ids,integrity,outcome,batch_mode,model_inputs,deferred_inputs
+    FROM extract_batches ORDER BY created_at,previous_cursor LIMIT 2`).all();
+  if (rows.length > 1) throw new Error("durable extraction batch is corrupt");
+  for (const row of rows) {
+    extractBatchValues({ ...row });
+    yield row;
   }
 }
 
@@ -1006,6 +1061,8 @@ export function exportVault(
   options: ExportOptions = {},
 ): ExportManifest {
   throwIfAborted(options.signal);
+  const sourceEpoch = sourcePolicyEpoch(db);
+  assertSourceExport(db);
   const source = resolve(vaultPath);
   const destination = resolve(outDir);
   assertSeparated(source, destination);
@@ -1029,59 +1086,70 @@ export function exportVault(
     }
 
     options.onProgress?.("ledger");
-    const snapshot = snapshotOf(db);
-    writeStream(
-      staging,
-      "ledger/events.jsonl",
-      pageEvents(db, snapshot),
-      files,
-      options.signal,
-    );
-    writeStream(staging, "ledger/event_purges.jsonl", pagePurges(db), files, options.signal);
-    options.onProgress?.("claims");
-    writeStream(staging, "claims/claims.jsonl", pageClaims(db), files, options.signal);
-    writeStream(
-      staging,
-      "claims/supersessions.jsonl",
-      pageSupersessions(db),
-      files,
-      options.signal,
-    );
-    writeStream(staging, "claims/bindings.jsonl", pageBindings(db), files, options.signal);
-    writeStream(
-      staging,
-      "claims/identity_links.jsonl",
-      pageIdentityLinks(db),
-      files,
-      options.signal,
-    );
-    writeStream(
-      staging,
-      "ledger/connector_sensitivity.jsonl",
-      pageConnectorSensitivity(db),
-      files,
-      options.signal,
-    );
-    options.onProgress?.("receipts");
-    writeStream(staging, "canon/receipts.jsonl", pageReceipts(db), files, options.signal);
-    writeStream(
-      staging,
-      "connections.jsonl",
-      pageConnections(db),
-      files,
-      options.signal,
-    );
-    writeStream(
-      staging,
-      "checkpoints.jsonl",
-      pageCheckpoints(db),
-      files,
-      options.signal,
-    );
+    let snapshot!: BackupSnapshot;
+    // Keep ledger, authority, queue, checkpoint, and pending-decision streams
+    // on one SQLite snapshot. A concurrent completion must not produce a
+    // backup whose checkpoint and journal describe different moments.
+    db.transaction(() => {
+      snapshot = snapshotOf(db);
+      writeStream(
+        staging,
+        "ledger/events.jsonl",
+        pageEvents(db, snapshot),
+        files,
+        options.signal,
+      );
+      writeStream(staging, "ledger/event_purges.jsonl", pagePurges(db), files, options.signal);
+      for (const table of SOURCE_BACKUP_TABLES) writeStream(staging, `ledger/${table}.jsonl`, sourcePolicyRows(db, table), files, options.signal);
+      options.onProgress?.("claims");
+      writeStream(staging, "claims/claims.jsonl", pageClaims(db), files, options.signal);
+      writeStream(
+        staging,
+        "claims/supersessions.jsonl",
+        pageSupersessions(db),
+        files,
+        options.signal,
+      );
+      writeStream(staging, "claims/bindings.jsonl", pageBindings(db), files, options.signal);
+      writeStream(
+        staging,
+        "claims/identity_links.jsonl",
+        pageIdentityLinks(db),
+        files,
+        options.signal,
+      );
+      writeStream(
+        staging,
+        "ledger/connector_sensitivity.jsonl",
+        pageConnectorSensitivity(db),
+        files,
+        options.signal,
+      );
+      options.onProgress?.("receipts");
+      writeStream(staging, "canon/receipts.jsonl", pageReceipts(db), files, options.signal);
+      writeStream(
+        staging,
+        "connections.jsonl",
+        pageConnections(db),
+        files,
+        options.signal,
+      );
+      writeStream(
+        staging,
+        "checkpoints.jsonl",
+        pageCheckpoints(db),
+        files,
+        options.signal,
+      );
+      writeStream(staging, "serve/extract-deferred-inputs.jsonl", pageDeferredInputs(db), files, options.signal);
+      writeStream(staging, EXTRACT_BATCH_BACKUP, pendingExtractBatch(db), files, options.signal);
 
-    if ((files["ledger/events.jsonl"]?.count ?? 0) !== snapshot.event_count) {
-      throw new Error("export event stream drifted from the snapshot");
-    }
+      if ((files["ledger/events.jsonl"]?.count ?? 0) !== snapshot.event_count) {
+        throw new Error("export event stream drifted from the snapshot");
+      }
+      if (sourcePolicyEpoch(db) !== sourceEpoch) throw new Error("source authorization changed during export");
+    })();
+    if (sourcePolicyEpoch(db) !== sourceEpoch) throw new Error("source authorization changed during export");
     const manifest = signManifest({
       schema: BACKUP_SCHEMA,
       vault_id: readVaultId(source),
@@ -1124,6 +1192,17 @@ function verifyFiles(root: string, manifest: ExportManifest): void {
   }).manifest_sha256;
   if (manifest.manifest_sha256 !== expectedHash) {
     throw new Error("backup manifest hash does not match");
+  }
+  if (manifest.schema_versions.serve >= 8) {
+    if (manifest.files["serve/extract-deferred-inputs.jsonl"] === undefined) {
+      throw new Error("backup deferred extraction stream is missing");
+    }
+    const batches = manifest.files[EXTRACT_BATCH_BACKUP];
+    if (batches === undefined) throw new Error("backup durable extraction stream is missing");
+    if (!Number.isSafeInteger(batches.count) || batches.count < 0 || batches.count > 1 ||
+        !Number.isSafeInteger(batches.size) || batches.size < 0 || batches.size > MAX_EXTRACT_BATCH_BACKUP_BYTES) {
+      throw new Error("backup durable extraction stream exceeds its bound");
+    }
   }
   for (const key of Object.keys(manifest.files).sort(compareCodeUnits)) {
     const entry = manifest.files[key];
@@ -1383,8 +1462,8 @@ function insertConnectionRow(db: Database, raw: Record<string, unknown>): void {
   db.query(
     `INSERT INTO connections
        (connector_id, source_key, config, secret_refs, connected_at, disconnected_at,
-        implementation_version)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        implementation_version, consent_required)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     asString(raw.connector_id, "connector_id"),
     asString(raw.source_key, "source_key"),
@@ -1393,6 +1472,7 @@ function insertConnectionRow(db: Database, raw: Record<string, unknown>): void {
     asString(raw.connected_at, "connected_at"),
     asStringOrNull(raw.disconnected_at, "disconnected_at"),
     asString(raw.implementation_version ?? "", "implementation_version"),
+    raw.consent_required === undefined ? 0 : raw.consent_required === 0 || raw.consent_required === 1 ? raw.consent_required : (() => { throw new Error("invalid consent requirement"); })(),
   );
 }
 
@@ -1447,6 +1527,63 @@ function insertCheckpointRow(db: Database, raw: Record<string, unknown>): void {
   );
 }
 
+function insertDeferredInput(db: Database, raw: Record<string, unknown>): void {
+  const expected = "checked_binding_digest,checked_revision,event_id,source_key";
+  if (Object.keys(raw).sort().join(",") !== expected) throw new Error("invalid deferred extraction backup row");
+  const eventId = asString(raw.event_id, "event_id");
+  const sourceKey = asStringOrNull(raw.source_key, "source_key");
+  const revision = asNumber(raw.checked_revision, "checked_revision");
+  const digest = asString(raw.checked_binding_digest, "checked_binding_digest");
+  if (!isUlid(eventId) || (sourceKey !== null && !isUlid(sourceKey)) || !Number.isSafeInteger(revision) || revision < 0 || !/^[a-f0-9]{64}$/.test(digest)) {
+    throw new Error("invalid deferred extraction backup value");
+  }
+  const binding = db.query<{ source_key: string }, [string]>("SELECT source_key FROM source_event_bindings WHERE event_id=?").get(eventId)?.source_key ?? null;
+  if (binding !== sourceKey || db.query("SELECT 1 FROM events WHERE event_id=?").get(eventId) === null) {
+    throw new Error("deferred extraction backup source binding mismatch");
+  }
+  db.query(`INSERT INTO extract_deferred_inputs
+    (event_id,source_key,checked_revision,checked_binding_digest) VALUES (?,?,?,?)`).run(eventId, sourceKey, revision, digest);
+}
+
+function boundedStoredString(value: unknown, field: string, maxBytes: number, nullable = false): string | null {
+  if (value === null && nullable) return null;
+  if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > maxBytes) {
+    throw new Error(`invalid durable extraction backup ${field}`);
+  }
+  return value;
+}
+
+function extractBatchValues(raw: Record<string, unknown>): readonly [
+  string, string, string, string | null, string, string | null, string | null,
+  string, string, string | null, string | null,
+] {
+  const expected = "batch_mode,created_at,cursor,deferred_inputs,drafts,input_ids,integrity,model_inputs,model_ref,outcome,previous_cursor";
+  if (Object.keys(raw).sort().join(",") !== expected) throw new Error("invalid durable extraction backup row");
+  const previous = boundedStoredString(raw.previous_cursor, "previous_cursor", 256)!;
+  const cursor = boundedStoredString(raw.cursor, "cursor", 256)!;
+  const drafts = boundedStoredString(raw.drafts, "drafts", 1_600_000)!;
+  const modelRef = boundedStoredString(raw.model_ref, "model_ref", 2_048, true);
+  const createdAt = boundedStoredString(raw.created_at, "created_at", 64)!;
+  const inputIds = boundedStoredString(raw.input_ids, "input_ids", 4_096, true);
+  const digest = boundedStoredString(raw.integrity, "integrity", 64, true);
+  const outcome = boundedStoredString(raw.outcome, "outcome", 16)!;
+  const mode = boundedStoredString(raw.batch_mode, "batch_mode", 16)!;
+  const modelInputs = boundedStoredString(raw.model_inputs, "model_inputs", 8_192, true);
+  const deferredInputs = boundedStoredString(raw.deferred_inputs, "deferred_inputs", 8_192, true);
+  if (!isRfc3339(createdAt) || (digest !== null && !/^[a-f0-9]{64}$/.test(digest)) ||
+      !["ok", "purged"].includes(outcome) || !["frontier", "deferred"].includes(mode)) {
+    throw new Error("invalid durable extraction backup value");
+  }
+  return [previous, cursor, drafts, modelRef, createdAt, inputIds, digest, outcome, mode, modelInputs, deferredInputs];
+}
+
+function insertExtractBatch(db: Database, raw: Record<string, unknown>): void {
+  const values = extractBatchValues(raw);
+  db.query(`INSERT INTO extract_batches
+    (previous_cursor,cursor,drafts,model_ref,created_at,input_ids,integrity,outcome,batch_mode,model_inputs,deferred_inputs)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(...values);
+}
+
 function* streamRows(
   backupDir: string,
   relativePath: string,
@@ -1489,6 +1626,9 @@ export function restoreVault(
     throw new Error(
       `backup ledger schema ${manifest.schema_versions.ledger} is newer than ${supported.ledger}`,
     );
+  }
+  if (manifest.schema_versions.serve > supported.serve) {
+    throw new Error(`backup serve schema ${manifest.schema_versions.serve} is newer than ${supported.serve}`);
   }
   prepareDestination(destination);
   const parent = dirname(destination);
@@ -1555,6 +1695,26 @@ export function restoreVault(
         for (const row of streamRows(source, "ledger/connector_sensitivity.jsonl", false)) {
           insertConnectorSensitivity(db, row);
         }
+        restoreSourcePolicy(db, source, manifest);
+        const deferredPath = "serve/extract-deferred-inputs.jsonl";
+        const deferredRequired = manifest.schema_versions.serve >= 8;
+        let deferredCount = 0;
+        for (const row of streamRows(source, deferredPath, deferredRequired)) {
+          insertDeferredInput(db, row);
+          deferredCount += 1;
+        }
+        if (deferredRequired && deferredCount !== manifest.files[deferredPath]!.count) {
+          throw new Error("backup deferred extraction count mismatch");
+        }
+        let batchCount = 0;
+        for (const row of streamRows(source, EXTRACT_BATCH_BACKUP, deferredRequired)) {
+          insertExtractBatch(db, row);
+          batchCount += 1;
+        }
+        if (deferredRequired && batchCount !== manifest.files[EXTRACT_BATCH_BACKUP]!.count) {
+          throw new Error("backup durable extraction count mismatch");
+        }
+        validateDurableExtractStorage(db);
       })();
 
       const events =
@@ -1582,6 +1742,9 @@ export function restoreVault(
           key.startsWith("vault/"),
         ).length,
         doctor: doctor.counts,
+        recovery_warnings: manifest.schema_versions.serve < 8
+          ? ["backup predates durable extraction recovery; an interrupted model decision was not preserved"]
+          : [],
       };
       db.close();
       unlinkSync(join(staging, INCOMPLETE));
@@ -1596,5 +1759,74 @@ export function restoreVault(
   } catch (error) {
     rmSync(staging, { recursive: true, force: true });
     throw error;
+  }
+}
+
+const SOURCE_BACKUP_TABLES = ["source_grants", "source_event_bindings", "source_grant_receipts", "native_owner_evidence", "source_retrieval_stores", "source_store_inventory"] as const;
+type SourceBackupTable = typeof SOURCE_BACKUP_TABLES[number];
+const SOURCE_COLUMNS: Record<SourceBackupTable, readonly string[]> = {
+  source_retrieval_stores: ["source_key", "store_id", "status"],
+  source_store_inventory: ["source_key", "checked", "payload_complete", "erasure_report"],
+  native_owner_evidence: ["event_id", "origin", "request_digest", "recorded_at", "filing_state"],
+  source_grants: ["source_key", "connector_id", "revision", "status", "policy", "policy_digest", "updated_at", "revoke_operation", "purge_receipt_id"],
+  source_event_bindings: ["event_id", "source_key", "grant_revision", "policy_digest"],
+  source_grant_receipts: ["sequence", "operation_id", "request_digest", "receipt", "receipt_digest"],
+};
+function* sourcePolicyRows(db: Database, table: SourceBackupTable): Generator<Record<string, unknown>> {
+  // Fixed identifiers only; SQLite's iterator keeps the backup memory bounded.
+  for (const row of db.query<Record<string, unknown>, []>(`SELECT * FROM ${table} ORDER BY ${SOURCE_COLUMNS[table][0]}`).iterate()) yield row;
+}
+function assertSourceExport(db: Database): void {
+  if (db.query("SELECT 1 FROM canon_source_erasure_intents LIMIT 1").get() !== null) throw new Error("source_erasure_recovery_pending");
+  if (sourcePolicyEpoch(db) === 0) return;
+  for (const row of db.query<{ source_key: string }, []>("SELECT source_key FROM source_grants").iterate()) {
+    const grant = inspectSourceGrant(db, row.source_key)!;
+    if (grant.status === "denied" || (grant.status === "active" && !grant.policy.purposes.includes("export"))) throw new Error("source_export_denied");
+  }
+  // Native purge currently retains derived claim rows. Status alone cannot
+  // authorize copying their payload after a source denial.
+  for (const row of db.query<{ provenance: string }, []>("SELECT provenance FROM claims WHERE status!='purged' OR length(body)>0 OR object IS NOT NULL OR target IS NOT NULL OR subject IS NOT NULL OR predicate IS NOT NULL OR model_ref IS NOT NULL OR subjects!='[]' OR frontmatter!='{}'").iterate()) {
+    const ids = JSON.parse(row.provenance) as string[];
+    const managed = ids.filter(id => db.query("SELECT 1 FROM source_event_bindings WHERE event_id=?").get(id) !== null);
+    if (!sourceEventsAllowed(db, managed, { owner: true, purpose: "export" })) throw new Error("source_export_denied");
+  }
+  for (const row of db.query<{ event_id: string }, []>("SELECT event_id FROM source_event_bindings WHERE event_id IN (SELECT event_id FROM events)").iterate()) {
+    if (!sourceEventsAllowed(db, [row.event_id], { owner: true, purpose: "export" })) throw new Error("source_export_denied");
+  }
+}
+function restoreSourcePolicy(db: Database, backup: string, manifest: ExportManifest): void {
+  for (const table of SOURCE_BACKUP_TABLES) {
+    const required = manifest.schema_versions.ledger >= (table === "native_owner_evidence" ? 12 : table === "source_store_inventory" ? 14 : table === "source_retrieval_stores" ? 13 : 11);
+    const path = `ledger/${table}.jsonl`;
+    if (required && manifest.files[path] === undefined) throw new Error("backup source policy stream missing");
+    for (const row of streamRows(backup, path, required)) {
+      if(table==="source_grant_receipts" && manifest.schema_versions.ledger<15 && row["receipt_digest"]===undefined) row["receipt_digest"]=null;
+      if(table==="source_store_inventory" && manifest.schema_versions.ledger<14 && row["erasure_report"]===undefined) row["erasure_report"]=null;
+      const columns = SOURCE_COLUMNS[table];
+      if (Object.keys(row).sort().join() !== [...columns].sort().join()) throw new Error("invalid source policy backup row");
+      const values = columns.map(column => {
+        const value = row[column];
+        if (value !== null && typeof value !== "string" && !(typeof value === "number" && Number.isSafeInteger(value))) throw new Error("invalid source policy backup value");
+        return value as string | number | null;
+      });
+      db.query(`INSERT INTO ${table} (${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`).run(...values);
+    }
+  }
+  for(const row of db.query<{receipt:string;receipt_digest:string|null},[]>("SELECT receipt,receipt_digest FROM source_grant_receipts").iterate()) {if(row.receipt_digest!==null && row.receipt_digest!==new Bun.CryptoHasher("sha256").update(row.receipt).digest("hex"))throw new Error("backup source receipt integrity mismatch");}
+  for (const row of db.query<{ event_id:string; origin:string; request_digest:string; recorded_at:string; filing_state:string }, []>("SELECT * FROM native_owner_evidence").iterate()) {
+    if (row.origin !== "correction" || !/^[a-f0-9]{64}$/.test(row.request_digest) || !isRfc3339(row.recorded_at) || !["recorded","filed","failed"].includes(row.filing_state) || db.query("SELECT 1 FROM source_event_bindings WHERE event_id=?").get(row.event_id) !== null || db.query("SELECT 1 FROM events WHERE event_id=?").get(row.event_id) === null) throw new Error("invalid native owner evidence backup");
+  }
+  for (const row of db.query<{ source_key: string }, []>("SELECT source_key FROM source_grants").iterate()) {
+    const grant = inspectSourceGrant(db, row.source_key)!;
+    const connection = db.query<{ connector_id: string }, [string]>("SELECT connector_id FROM connections WHERE source_key=?").get(grant.source_key);
+    if (connection?.connector_id !== grant.connector_id) throw new Error("backup source enrollment mismatch");
+    const latest = db.query<{ receipt: string }, [string]>("SELECT receipt FROM source_grant_receipts WHERE json_extract(receipt,'$.source_key')=? ORDER BY sequence DESC LIMIT 1").get(grant.source_key);
+    if (latest === null) throw new Error("backup source receipt missing");
+    const receipt = JSON.parse(latest.receipt) as Record<string, unknown>;
+    if (receipt.revision !== grant.revision || receipt.status !== grant.status || receipt.policy_digest !== grant.policy_digest) throw new Error("backup source receipt mismatch");
+  }
+  for (const row of db.query<{ event_id: string; connector_id: string; source_key: string; grant_revision: number }, []>("SELECT b.*,e.connector_id FROM source_event_bindings b LEFT JOIN events e ON e.event_id=b.event_id").iterate()) {
+    const grant = inspectSourceGrant(db, row.source_key);
+    if (grant === null || row.grant_revision < 1 || row.grant_revision > grant.revision || (row.connector_id !== null && row.connector_id !== grant.connector_id)) throw new Error("backup source binding mismatch");
   }
 }

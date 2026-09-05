@@ -1,13 +1,50 @@
+import { fixtureConsent } from "./helpers";
 import { afterEach, expect, test } from "bun:test";
 import { readFileSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { getCheckpoint, listConnections, openLedger } from "@kizuki/core";
+import { getCheckpoint, listConnections, openLedger, setSourceGrant, revokeSourceGrant } from "@kizuki/core";
 import { createHelpers } from "./helpers";
 
 const h = createHelpers();
 afterEach(h.cleanup);
 const main = resolve(import.meta.dir, "../src/main.ts");
 const token = "synthetic-local-message-token";
+
+test("ungranted and revoked sources never open provider transport through native consumers", async () => {
+  const setup = h.tempVault();
+  const env = { ...setup.env, BEEPER_TOKEN: token };
+  let requests = 0;
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch() {
+    requests++;
+    return Response.json({ app: { name: "Beeper", version: "fixture" }, server: { status: "running" } });
+  } });
+  try {
+    const connected = await cli(env, "connect", "beeper", "--token-ref", "env:BEEPER_TOKEN",
+      "--endpoint", `http://127.0.0.1:${server.port}`, "--json");
+    expect(connected.exitCode, connected.stderr).toBe(0);
+    const source = JSON.parse(connected.stdout).data.source_key as string;
+    const enrollmentRequests = requests;
+    expect(enrollmentRequests).toBeGreaterThan(0);
+    for (const state of ["ungranted", "revoked"]) {
+      if (state === "revoked") {
+        // Synthetic core policy setup; the separate policy-file suite proves
+        // native owner grant custody. No real account authorization is used.
+        const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+        try {
+          setSourceGrant(db, { source_key: source, expected_revision: 0, operation_id: "fixture-transport-grant",
+            policy: { purposes: ["capture"], allowed_fields: ["text", "subjects", "attachments", "metadata"],
+              retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "private" } });
+          revokeSourceGrant(db, { source_key: source, expected_revision: 1, operation_id: "fixture-transport-revoke" });
+        } finally { db.close(); }
+      }
+      for (const args of [["backfill", "beeper"], ["sync", "beeper"], ["sync", "--once"], ["doctor"]]) {
+        const result = await cli(env, ...args);
+        expect(result.exitCode, `${state}: ${args.join(" ")}: ${result.stdout} ${result.stderr}`).not.toBe(0);
+        expect(requests).toBe(enrollmentRequests);
+      }
+    }
+  } finally { await server.stop(true); }
+}, 20_000);
 
 async function cli(env: Record<string, string | undefined>, ...args: string[]) {
   // Async child keeps the loopback fixture responsive while the real CLI runs.
@@ -63,6 +100,7 @@ test("Beeper enrollment, paginated recall, dedupe and unavailable sync preserve 
       "--token-ref", "env:NEW_TOKEN", "--sensitivity", "personal");
     expect(lower.exitCode).toBe(2);
     expect(readFileSync(savedPath, "utf8")).toBe(priorState);
+    expect((await cli(env, "connect", "grant", "--source", sourceKey, ...fixtureConsent(setup.root))).exitCode).toBe(0);
     const backfill = await cli(env, "backfill", "beeper");
     expect(backfill.exitCode).toBe(0);
     expect(backfill.stdout).toContain("stored=2");

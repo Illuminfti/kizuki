@@ -1,3 +1,4 @@
+import { setSourceGrant } from "../src/ledger/source-grants";
 import { describe, expect, test } from "bun:test";
 import type {
   Connector,
@@ -123,6 +124,7 @@ function database() {
   const db = openLedger(":memory:");
   initStaging(db);
   registerConnection(db, "fixture", SOURCE);
+  setSourceGrant(db, { source_key: SOURCE, expected_revision: 0, operation_id: "fixture-" + SOURCE, policy: { purposes: ["capture", "recall", "derive"], allowed_fields: ["text", "subjects", "attachments", "metadata"], retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "public" } });
   return db;
 }
 

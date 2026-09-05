@@ -1,3 +1,4 @@
+import { fixtureConsent } from "./helpers";
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
@@ -33,6 +34,10 @@ describe("sync selectors", () => {
       runCli(setup.env, "connect", "markdown-folder", "--source", extra).exitCode,
     ).toBe(0);
 
+    const status = JSON.parse(runCli(setup.env, "connect", "status", "--json").stdout);
+    for (const [index, source] of status.data.connections.entries()) {
+      expect(runCli(setup.env, "connect", "grant", "--source", source.source_key, ...fixtureConsent(setup.root, `sync-fixture-${index}`)).exitCode).toBe(0);
+    }
     const synced = runCli(setup.env, "sync");
     expect(synced.exitCode).toBe(0);
     expect(synced.stdout).toContain("kizuki.markdown-folder");

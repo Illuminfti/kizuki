@@ -1,3 +1,4 @@
+import { fixtureConsent } from "../helpers";
 import { afterEach, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -8,7 +9,7 @@ afterEach(helpers.cleanup);
 
 test("the offline retrieval rail refreshes canon edits and deletion through the public consumer", () => {
   const f = helpers.tempVault();
-  expect(helpers.runCli(f.env, "import", "markdown-folder", "--source", f.notes).exitCode).toBe(0);
+  expect(helpers.runCli(f.env, "import", "markdown-folder", "--source", f.notes, ...fixtureConsent(f.root)).exitCode).toBe(0);
   const page = join(f.vault, "facts/orchard.md");
   const data = { id: "fact:orchard", title: "Orchard", type: "fact", status: "active", sensitivity: "personal", taint: "clean" };
   writeFileSync(page, serializePage({ data, body: "The library opens after sunrise." }));

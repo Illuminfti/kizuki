@@ -1,3 +1,4 @@
+import { sourceEventsAllowed, sourceSensitivity } from "../ledger/source-grants";
 import { authorize, sensitivity } from "../agents";
 import type { DenyReason, Grant, Sensitivity, Servable } from "../agents";
 import type { AuthorityTier } from "../contracts/proposal";
@@ -10,6 +11,7 @@ import type { PageTaint } from "../vault/schema";
 import type { CanonChunk, ServeContext } from "./types";
 
 export interface CanonIndex {
+  sourceContext: ServeContext;
   pages: CanonPage[];
   byId: Map<string, CanonPage>;
   /** Vault-relative path with forward slashes, as the walk produced it. */
@@ -67,6 +69,7 @@ export function loadCanon(ctx: ServeContext): CanonIndex {
     byPath.set(page.relPath, page);
   }
   return {
+    sourceContext: ctx,
     pages: report.pages,
     byId,
     byPath,
@@ -102,11 +105,14 @@ export function pageDecision(
   // instead of casts. A page missing either is withheld from everyone, the
   // owner included: an unstamped page may be verbatim capture, and serving
   // it as canon would hand a reader capture dressed as produced prose.
-  const label = sensitivity(page.data["sensitivity"]);
+  const sourceCtx = index.sourceContext;
+  if (!sourceEventsAllowed(sourceCtx.db, stringArray(page.data["sources"]), { owner: sourceCtx.principal.kind === "owner", purpose: sourceCtx.sourcePurpose ?? "recall" })) return { allow: false, reason: "held" };
+  const original = sensitivity(page.data["sensitivity"]);
+  const label = original === null ? null : sourceSensitivity(sourceCtx.db, stringArray(page.data["sources"]), original);
   if (label === null) return { allow: false, reason: "missing_sensitivity" };
   const taint = asTaint(page.data["taint"]);
   if (taint === null) return { allow: false, reason: "missing_taint" };
-  const decision = authorize(grant, pageServable(index, page));
+  const decision = authorize(grant, { ...pageServable(index, page), sensitivity: label });
   return decision.allow
     ? { allow: true, sensitivity: label, taint }
     : { allow: false, reason: decision.reason };

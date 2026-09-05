@@ -25,8 +25,12 @@ query, doctor, tell/undo/audit, serve loopback, context packets, and MCP stdio
 adapter. Capture never writes canon. Local files and exports are enrollable;
 an opt-in Beeper Desktop connection reads local history through an approved
 token reference. IMAP supports local sign-in and re-enrollment that preserves
-the existing mailbox identity and checkpoint. Other sign-in connectors are not
-enrollable through this CLI.
+the existing mailbox identity and checkpoint. Telegram supports native CLI
+sign-in with project app credentials and preserves its account identity and
+checkpoint; actual account qualification remains unrun. Native Gmail and Google Calendar
+browser sign-in use operator-configured desktop clients and separate source consent;
+Calendar requires one canonical calendar and explicit fields. Their account and artifact
+qualification remain separate. Other sign-in connectors are not enrollable through this CLI.
 After
 `import`, claims are live and `tell --claim` can name them. Canon writing
 still requires a configured model; without one the sync rail leaves live

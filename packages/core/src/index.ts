@@ -227,6 +227,7 @@ export {
   Fts5RetrievalPort,
   bareRetrievalId,
   createFts5RetrievalPort,
+  eraseOwnedFts5Generation,
   registerFts5RetrievalPort,
   retrievalDocId,
 } from "./retrieval";
@@ -974,3 +975,11 @@ export type { EstateIssueCode, EstateImportIssue, EstateImportMapping, EstateImp
 export { EstateImportError, planEstateImport } from "./import/estate";
 export { evaluateQualification, QUALIFICATION_WINDOW_MS } from "./serve/qualification";
 export type { QualificationProfile, QualificationRail, QualificationReceipt, QualificationProcess, QualificationSample } from "./serve/qualification";
+
+export { SOURCE_PURPOSES, SOURCE_FIELDS, SourceGrantError, sourcePolicyEpoch, sourceCaptureAdmission, inspectSourceGrant, setSourceGrant, revokeSourceGrant, resumeSourceRevocation, bindLocalSourcePort, bindSourceModelPort } from "./ledger/source-grants";
+export type { SourcePurpose, SourceModelEgress, SourceGrantPolicy, SourceGrant, SourceGrantRequest, SourceGrantReceipt, SourceAdmission } from "./ledger/source-grants";
+
+export type { OwnedSourceRetrievalInventory, OwnedSourceRetrievalStore, SourceStoreStatus } from "./ledger/source-stores";
+
+export { openOwnedDirectory } from "./util/owned-directory";
+export type { OwnedDirectory, OwnedDirectoryIdentity } from "./util/owned-directory";

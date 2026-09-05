@@ -1,3 +1,4 @@
+import { fixtureConsent } from "./helpers";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -23,7 +24,7 @@ describe("RFC 0002 §16.4 purge and undo", () => {
       "import",
       "markdown-folder",
       "--source",
-      setup.notes,
+      setup.notes, ...fixtureConsent(setup.root),
     );
     expect(imported.exitCode).toBe(0);
 
@@ -159,7 +160,7 @@ describe("RFC 0002 §16.4 purge and undo", () => {
     const setup = tempVault();
     writeFileSync(join(setup.notes, "acme.md"), "Grace runs partnerships at Acme.\n");
     expect(
-      runCli(setup.env, "import", "markdown-folder", "--source", setup.notes).exitCode,
+      runCli(setup.env, "import", "markdown-folder", "--source", setup.notes, ...fixtureConsent(setup.root)).exitCode,
     ).toBe(0);
 
     const preview = runCli(

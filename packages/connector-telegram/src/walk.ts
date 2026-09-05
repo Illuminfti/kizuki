@@ -16,7 +16,7 @@ import { waitSeconds } from "./sign-in";
 export type WalkMode = "backfill" | "sync";
 
 export interface WalkDeps {
-  api: TelegramApi;
+  api: Pick<TelegramApi, "dialogs" | "messages">;
   self: TelegramUser;
   now: () => number;
   plan: PurgeIndex;
@@ -50,7 +50,7 @@ interface Batch {
 }
 
 async function listDialogs(
-  api: TelegramApi,
+  api: Pick<TelegramApi, "dialogs" | "messages">,
 ): Promise<{ dialogs: TelegramDialog[]; limitReached: boolean }> {
   const dialogs: TelegramDialog[] = [];
   for await (const dialog of api.dialogs(MAX_DIALOGS)) {

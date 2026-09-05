@@ -1,3 +1,4 @@
+import { closeHostConnector } from "../connections";
 import { runRail, runToCompletion } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
 import {
@@ -37,7 +38,7 @@ export const syncCommand: Command = {
         try {
           const receipt = await runRail(ctx.db, ctx.vaultPath, "sync", { hooks: runtime.hooks });
           io.out(`sync events_stored=${receipt.events_stored} duplicates=${receipt.events_duplicate} errors=${receipt.errors.length}`);
-          return receipt.status === "failed" ? 1 : 0;
+          return receipt.status === "failed" || receipt.errors.length > 0 ? 1 : 0;
         } finally {
           await runtime.close();
         }
@@ -67,23 +68,25 @@ export const syncCommand: Command = {
             failed = true;
             continue;
           }
-          const connector = await loadConnector(selected, ctx.store);
-          const result = await runToCompletion(
-            ctx.db,
-            connector,
-            selected.connection.connector_id,
-            selected.connection.source_key,
-            "sync",
-          );
-          const derived = tryRefreshDerived(ctx.db, ctx.vaultPath);
-          io.out(
-            `${selected.connection.connector_id} source=${selected.connection.source_key} ${formatRunCounts(result)}`,
-          );
-          for (const text of result.errors) {
-            io.err(`error: ${text}`);
-            failed = true;
-          }
-          for (const warning of derived.degraded) io.err(`degraded: ${warning}`);
+          const connector = await loadConnector(selected, ctx.store, ctx.db, io.env);
+          try {
+            const result = await runToCompletion(
+              ctx.db,
+              connector,
+              selected.connection.connector_id,
+              selected.connection.source_key,
+              "sync",
+            );
+            const derived = tryRefreshDerived(ctx.db, ctx.vaultPath);
+            io.out(
+              `${selected.connection.connector_id} source=${selected.connection.source_key} ${formatRunCounts(result)}`,
+            );
+            for (const text of result.errors) {
+              io.err(`error: ${text}`);
+              failed = true;
+            }
+            for (const warning of derived.degraded) io.err(`degraded: ${warning}`);
+          } finally { await closeHostConnector(connector); }
         } catch (error) {
           failed = true;
           io.err(
@@ -92,6 +95,6 @@ export const syncCommand: Command = {
         }
       }
       return failed ? 1 : 0;
-    });
+    }, { retrieval: parsed.flags.has("--once") ? "required" : "none" });
   },
 };

@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { openLedger, registerConnection, replay, runBackfill, runSync } from "@kizuki/core";
+import { openLedger, setSourceGrant, registerConnection, replay, runBackfill, runSync } from "@kizuki/core";
 import type { CaptureEvent, Connector } from "@kizuki/core";
 import {
   OMNIVORE_FIXTURE_FILES,
@@ -31,6 +31,19 @@ interface Scenario {
   connector_id: string;
   fullCount: number;
   subsetCount: number;
+}
+
+function grantFixtureSource(db: Database): void {
+  // Explicit synthetic owner consent; keep connector sensitivity authoritative.
+  setSourceGrant(db, {
+    source_key: SOURCE_KEY, expected_revision: 0, operation_id: "fixture-grant",
+    policy: {
+      purposes: ["capture", "recall", "derive"],
+      allowed_fields: ["text", "subjects", "attachments", "metadata"],
+      retention: "persistent_owned_until_revoked", egress: "local_only",
+      sensitivity_floor: "public",
+    },
+  });
 }
 
 function openVault(): Database {
@@ -118,6 +131,7 @@ async function withScenario(
   try {
     const scenario = await build(root);
     registerConnection(db, scenario.connector_id, SOURCE_KEY);
+    grantFixtureSource(db);
     await body(scenario, db);
   } finally {
     db.close();
@@ -221,6 +235,7 @@ test("a file appearing beside an export does not fork the message", async () => 
     });
     const id = connector.manifest().connector_id;
     registerConnection(db, id, SOURCE_KEY);
+    grantFixtureSource(db);
 
     // The media folder was not copied in yet: the message imports with no
     // attachment, exactly as a "without media" export would.
@@ -257,6 +272,7 @@ test("a content file appearing later does not fork the item", async () => {
     const connector = createOmnivoreImportConnector({ path: root });
     const id = connector.manifest().connector_id;
     registerConnection(db, id, SOURCE_KEY);
+    grantFixtureSource(db);
 
     expect((await runBackfill(db, connector, id, SOURCE_KEY)).stored).toBe(1);
     expect(stored(db)[0]?.attachments).toEqual([]);
@@ -283,6 +299,7 @@ test("an edited record is a new version, never a deletion", async () => {
     const connector = createPocketImportConnector({ path: file });
     const id = connector.manifest().connector_id;
     registerConnection(db, id, SOURCE_KEY);
+    grantFixtureSource(db);
 
     await writeFile(file, row("unread"));
     expect((await runBackfill(db, connector, id, SOURCE_KEY)).stored).toBe(1);
@@ -324,6 +341,7 @@ test("a repeat's number is a position, and a subset renumbers it", async () => {
     const connector = createPocketImportConnector({ path: file });
     const id = connector.manifest().connector_id;
     registerConnection(db, id, SOURCE_KEY);
+    grantFixtureSource(db);
 
     await writeFile(file, POCKET_FIXTURE_EXPORT);
     expect((await runBackfill(db, connector, id, SOURCE_KEY)).stored).toBe(4);

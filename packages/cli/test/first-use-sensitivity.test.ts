@@ -1,3 +1,4 @@
+import { fixtureConsent } from "./helpers";
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHelpers } from "./helpers";
 
@@ -8,7 +9,7 @@ describe("first-use sensitivity", () => {
   test("a markdown-folder import is searchable and appears in owner context without a model", () => {
     const setup = tempVault();
     expect(
-      runCli(setup.env, "import", "markdown-folder", "--source", setup.notes).exitCode,
+      runCli(setup.env, "import", "markdown-folder", "--source", setup.notes, ...fixtureConsent(setup.root)).exitCode,
     ).toBe(0);
 
     const query = runCli(setup.env, "query", "acme", "--scope", "ledger");

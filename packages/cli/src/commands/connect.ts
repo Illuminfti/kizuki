@@ -1,6 +1,12 @@
+import { runGoogleCalendarConnect } from "./connect-google-calendar";
+import { runGmailConnect } from "./connect-gmail";
+import { runConnectConsent } from "./connect-consent";
+import { consentHint } from "../source-consent";
+import { runTelegramConnect } from "./connect-telegram";
 import { resolve } from "node:path";
 import {
   applyConnectionSensitivity,
+  inspectSourceGrant,
   DeadlineError,
   getConnectorSensitivity,
   isSensitivity,
@@ -25,7 +31,6 @@ import {
   enrollHostConnection,
   encodeHostState,
   listHostConnections,
-  loadConnector,
   refuseSecrets,
   resolveConnectorId,
 } from "../connections";
@@ -105,14 +110,18 @@ export function imapSignInNotice(vaultPath: string): string {
 
 export const connectCommand: Command = {
   name: "connect",
-  usage: "connect [--list|status] [--json]\n       kizuki connect <connector> --source PATH [--sensitivity public|personal|private]\n       kizuki connect beeper --token-ref env:VAR|file:/absolute/path [--endpoint http://127.0.0.1:23373] [--sensitivity public|personal|private] [--json]\n       kizuki connect imap [--source KEY] [--sensitivity public|personal|private]",
-  summary: "choose a source, connect Beeper or local files, and check sync status",
+  usage: "connect [--list|status] [--json]\n       kizuki connect status --source KEY [--json]\n       kizuki connect grant --source KEY --policy FILE --expected-revision N --operation-id ID [--json]\n       kizuki connect revoke --source KEY --expected-revision N --operation-id ID [--json]\n       kizuki connect resume-revocation --source KEY --operation-id ID [--json]\n       kizuki connect <connector> --source PATH [--sensitivity public|personal|private]\n       kizuki connect beeper --token-ref env:VAR|file:/absolute/path [--endpoint http://127.0.0.1:23373] [--sensitivity public|personal|private] [--json]\n       kizuki connect imap [--source KEY] [--sensitivity public|personal|private]\n       kizuki connect google-calendar --calendar CANONICAL_ID --fields summary,description,location,attendees,attachments|none [--source KEY | --new-source] [--json]\n       kizuki connect gmail --fields text,subjects,headers,labels,attachments [--source KEY | --new-source] [--json]\n       kizuki connect telegram [--source KEY] [--sensitivity public|personal|private] [--json]",
+  summary: "enroll a supported source and check consent or sync status",
   async run(io: CliIo, args: string[]): Promise<number> {
+    if (["grant", "revoke", "resume-revocation"].includes(args[0] ?? "") || (args[0] === "status" && args.includes("--source"))) return runConnectConsent(io, args);
     const parsed = parseArguments(args, {
-      options: ["--source", "--sensitivity", "--endpoint", "--token-ref"],
-      flags: ["--list", "--json"],
+      options: ["--source", "--sensitivity", "--endpoint", "--token-ref", "--fields", "--calendar"],
+      flags: ["--list", "--json", "--new-source"],
     });
     const json = parsed.flags.has("--json");
+    const newSource = parsed.flags.has("--new-source");
+    if (newSource && parsed.options.has("--source")) throw new UsageError("--new-source and --source are mutually exclusive");
+    if (newSource && !["gmail", "kizuki.gmail", "google-calendar", "kizuki.google-calendar"].includes(parsed.positionals[0] ?? "")) throw new UsageError("--new-source is only supported for Gmail or Google Calendar enrollment");
     if (parsed.positionals.length === 0 && parsed.options.size === 0) {
       return printConnectorCatalog(io, json);
     }
@@ -121,6 +130,20 @@ export const connectCommand: Command = {
     }
     if (parsed.flags.has("--list")) throw new UsageError("connect --list [--json]");
     const [rawId] = requirePositional(parsed.positionals, 1);
+    if (rawId === "google-calendar" || rawId === "kizuki.google-calendar") {
+      if (parsed.options.has("--endpoint") || parsed.options.has("--token-ref")) throw new UsageError("connect google-calendar --calendar CANONICAL_ID --fields FIELDS [--source KEY] [--json]");
+      return runGoogleCalendarConnect(io,{newSource,source:parsed.options.get("--source"),calendar:parsed.options.get("--calendar"),fields:parsed.options.get("--fields"),sensitivity:parseSensitivityFlag(parsed.options.get("--sensitivity")),json},checkRequestedSensitivity);
+    }
+    if(parsed.options.has("--calendar")) throw new UsageError("--calendar is only supported for connect google-calendar");
+    if (rawId === "gmail" || rawId === "kizuki.gmail") {
+      if (parsed.options.has("--endpoint") || parsed.options.has("--token-ref")) throw new UsageError("connect gmail --fields FIELDS [--source KEY] [--json]");
+      return runGmailConnect(io,{newSource,source:parsed.options.get("--source"),fields:parsed.options.get("--fields"),sensitivity:parseSensitivityFlag(parsed.options.get("--sensitivity")),json},checkRequestedSensitivity);
+    }
+    if(parsed.options.has("--fields")) throw new UsageError("--fields is only supported for connect gmail or google-calendar");
+    if (rawId === "telegram" || rawId === "kizuki.telegram") {
+      if (parsed.options.has("--endpoint") || parsed.options.has("--token-ref")) throw new UsageError("connect telegram [--source KEY] [--json]");
+      return runTelegramConnect(io, { source: parsed.options.get("--source"), sensitivity: parseSensitivityFlag(parsed.options.get("--sensitivity")), json }, checkRequestedSensitivity);
+    }
     if (rawId === "imap" || rawId === "kizuki.imap") {
       if (parsed.options.has("--endpoint") || parsed.options.has("--token-ref") || !io.stdinIsTTY || !io.stderrIsTTY) {
         throw new UsageError("connect imap [--source KEY] [--sensitivity public|personal|private] (interactive terminal required)");
@@ -162,14 +185,15 @@ export const connectCommand: Command = {
           throw safeImapSignInFailure(error);
         }
         applyConnectionSensitivity(ctx.db, connection, connector.manifest(), requested);
-        if (json) io.out(jsonEnvelope("connect", "ok", { connector_id: connectorId, source_key: connection.source_key, state: "enrolled" }));
+        if (json) io.out(jsonEnvelope("connect", "ok", { connector_id: connectorId, source_key: connection.source_key, state: "enrolled", consent: inspectSourceGrant(ctx.db, connection.source_key)?.status ?? "required", next: consentHint(ctx.db, connection.source_key) }));
         else {
           io.out(`connected ${connectorId} source=${connection.source_key}`);
           io.out("Email stays local. Kizuki reads mail; it never sends, deletes, or marks it read.");
+          if (inspectSourceGrant(ctx.db, connection.source_key)?.status !== "active") io.out(consentHint(ctx.db, connection.source_key));
           io.out(`next: ${INVOCATION} backfill imap`);
         }
         return 0;
-      });
+      }, { retrieval: "none" });
     }
     if (rawId === "beeper" || rawId === "kizuki.beeper") {
       const ref = parsed.options.get("--token-ref");
@@ -206,15 +230,16 @@ export const connectCommand: Command = {
           connection = existing.connection;
         }
         applyConnectionSensitivity(ctx.db, connection, connector.manifest(), requested);
-        if (json) io.out(jsonEnvelope("connect", "ok", { connector_id: connectorId, source_key: connection.source_key, state: "enrolled" }));
+        if (json) io.out(jsonEnvelope("connect", "ok", { connector_id: connectorId, source_key: connection.source_key, state: "enrolled", consent: inspectSourceGrant(ctx.db, connection.source_key)?.status ?? "required", next: consentHint(ctx.db, connection.source_key) }));
         else {
           io.out(`connected ${connectorId} source=${connection.source_key} health=${health.state}`);
           io.out("Messages stay local. Kizuki reads messages; it never sends or marks them read.");
+          if (inspectSourceGrant(ctx.db, connection.source_key)?.status !== "active") io.out(consentHint(ctx.db, connection.source_key));
           io.out(`next: ${INVOCATION} backfill beeper`);
           io.out(`then: ${INVOCATION} context --purpose session --query "your topic"`);
         }
         return 0;
-      });
+      }, { retrieval: "none" });
     }
     if (parsed.options.has("--endpoint") || parsed.options.has("--token-ref") || json) {
       throw new UsageError(this.usage);
@@ -236,7 +261,11 @@ export const connectCommand: Command = {
         (item) => item.state?.config.path === absolute,
       );
       if (existing !== undefined && existing.state !== null) {
-        const connector = await loadConnector(existing, ctx.store);
+        // An explicit reconnect may validate the selected local source before
+        // capture consent. Background loads use the gated loadConnector path.
+        const connector = getConnector(connectorId, existing.state.config);
+        if (!connector.manifest().auth_modes.includes("none")) throw new ConnectionError(`sign-in for ${connectorId} is not wired yet`);
+        await connector.connect(refuseSecrets);
         checkRequestedSensitivity(ctx.db, connector.manifest(), requested, existing.connection);
         const health = await connector.health();
         if (blocksEnrollment(health.state)) {
@@ -254,6 +283,7 @@ export const connectCommand: Command = {
         io.out(
           `connected ${connectorId} source=${existing.connection.source_key} path=${absolute} health=${health.state}`,
         );
+        if (inspectSourceGrant(ctx.db, existing.connection.source_key)?.status !== "active") io.out(consentHint(ctx.db, existing.connection.source_key));
         return 0;
       }
 
@@ -292,7 +322,8 @@ export const connectCommand: Command = {
       io.out(
         `connected ${connectorId} source=${connection.source_key} path=${absolute} health=${health.state}`,
       );
+      if (inspectSourceGrant(ctx.db, connection.source_key)?.status !== "active") io.out(consentHint(ctx.db, connection.source_key));
       return 0;
-    });
+    }, { retrieval: "none" });
   },
 };

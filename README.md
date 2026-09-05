@@ -75,8 +75,13 @@ Mira leads Project Atlas.
 We chose keyboard-first navigation for the accessibility prototype.
 NOTE
 
+cat > "$demo/policy.json" <<'POLICY'
+{"purposes":["capture","recall","session","derive"],"allowed_fields":["text","subjects","attachments","metadata"],"retention":"persistent_owned_until_revoked","egress":"local_only","sensitivity_floor":"private"}
+POLICY
+chmod 600 "$demo/policy.json"
+
 bun packages/cli/src/main.ts init "$demo/vault" --no-default --no-service
-bun packages/cli/src/main.ts import markdown-folder --source "$demo/notes" --vault "$demo/vault"
+bun packages/cli/src/main.ts import markdown-folder --source "$demo/notes" --policy "$demo/policy.json" --expected-revision 0 --operation-id demo-import --vault "$demo/vault"
 bun packages/cli/src/main.ts query "Atlas" --vault "$demo/vault"
 bun packages/cli/src/main.ts context --purpose session --query "Atlas" --vault "$demo/vault"
 bun packages/cli/src/main.ts doctor --vault "$demo/vault"
@@ -127,7 +132,11 @@ service.
 
 Start with `kizuki connect` to see the catalog and
 `kizuki connect status` to inspect enrolled sources and their last run.
-Connections assign sensitivity automatically from their policy; you do not
+New enrollment requires an explicit [source consent policy](docs/cli.md#source-consent)
+before capture. Import accepts `--policy FILE --expected-revision 0
+--operation-id ID`; otherwise it prints the enrolled key and grant next step.
+Revocation denies use immediately; physical purge may remain blocked and must be
+reported as pending. Connections assign sensitivity automatically from their policy; you do not
 need to label every captured record by hand.
 
 | Your source | Available entry point | Boundary that matters |
@@ -147,6 +156,7 @@ environment variable or an owner-only local file, then:
 
 ```bash
 kizuki connect beeper --token-ref env:BEEPER_TOKEN
+kizuki connect grant --source KEY --policy POLICY.json --expected-revision 0 --operation-id beeper-grant
 kizuki backfill beeper
 kizuki connect status
 ```
@@ -160,6 +170,7 @@ synthetic, not a claim of live-account validation.
 
 ```bash
 kizuki connect imap
+kizuki connect grant --source KEY --policy POLICY.json --expected-revision 0 --operation-id imap-grant
 kizuki backfill imap
 ```
 
@@ -168,9 +179,11 @@ password is masked while typed and is not accepted as a command-line flag.
 Kizuki keeps connection state in the owner-only local store. It does not send,
 delete, move, or mark mail read.
 
-**Source limits are part of the contract.** Telegram's package exists, but
-Telegram sign-in is not enrollable through this CLI. Dedicated Gmail, Google
-Calendar, WHOOP, and X account flows are not advertised as available here.
+**Source limits are part of the contract.** Native Telegram CLI sign-in is
+wired, but requires project app credentials and has no real-account qualification receipt.
+Native [Gmail](docs/gmail.md) and [Google Calendar](docs/google-calendar.md) browser enrollment
+require operator desktop-client configuration and separate source consent; live-account
+qualification remains pending. WHOOP and X account flows are not advertised as available here.
 Screenpipe is neither a live screen recorder nor a media importer; its adapter
 requires a compatible, stopped database and does not emit source-deletion
 tombstones.
@@ -374,8 +387,9 @@ serving keeps quoted capture distinct from canon and carries trust metadata.
 
 **A readable exit.** `export` writes a `kizuki.backup/v1` directory;
 `restore` verifies hashes and completeness before restoring into an empty
-target. `purge` removes selected data with a receipt, and `purge --verify`
-reports per-store absence and operation state. Local purge is not a promise
+target. Current backups preserve bounded pending extraction recovery state;
+older formats disclose that they did not. `purge` removes selected data with a
+receipt, and `purge --verify` reports per-store absence and operation state. Local purge is not a promise
 to erase provider history, independent backups, or forensic traces on disk.
 
 **An honest threat model.** The current vault and canon are not encrypted by
@@ -469,7 +483,7 @@ packages/
 ├── core/                  # contracts, ledger, claims, canon, policy, serving
 ├── cli/                   # public commands and local loop composition
 ├── connectors/            # curated registry, importers, conformance tests
-├── connector-telegram/    # implementation; not CLI-enrollable
+├── connector-telegram/    # native sign-in; project credentials required
 ├── connector-imap/        # read-only email and terminal enrollment
 ├── connector-ics/         # calendar-file ingestion
 ├── connector-screenpipe/  # offline screen text and transcription ingestion

@@ -44,3 +44,5 @@ export function registerEmbeddedRetrieval(registry?: PortRegistry): void {
     (ctx) => createEmbeddedRetrievalPort(ctx),
   );
 }
+
+export { eraseOwnedEmbeddedGeneration } from "./port";

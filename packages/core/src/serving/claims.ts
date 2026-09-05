@@ -1,4 +1,6 @@
 import type { Database } from "bun:sqlite";
+import { sourceEventsAllowed, sourceSensitivity, sourcePolicyEpoch, type SourceReadScope } from "../ledger/source-grants";
+import { OWNER } from "../agents";
 import { authorize, sensitivity, SENSITIVITY_ORDER } from "../agents";
 import type { AuditDenial, AuditItem, Grant, Sensitivity, Servable } from "../agents";
 import type { IdentityLink } from "../claims/identity";
@@ -24,7 +26,7 @@ function validLifecycle(claim: Claim): boolean {
 }
 
 /** One call's policy snapshot. Neither source text nor denied names escape. */
-export function claimReader(db: Database, grant: Grant) {
+export function claimReader(db: Database, grant: Grant, sourceScope: SourceReadScope = { owner: grant === OWNER.grant, purpose: "recall" }) {
   const decisions = new Map<string, boolean>();
   const events = new Map<string, ServableEvent | null>();
   const denied = new Map<string, AuditDenial>();
@@ -42,7 +44,10 @@ export function claimReader(db: Database, grant: Grant) {
     return events.get(id) ?? null;
   }
 
+  let decisionEpoch = sourcePolicyEpoch(db);
   function canRead(claim: Claim): boolean {
+    if (decisionEpoch !== sourcePolicyEpoch(db)) { decisions.clear(); readableClaims.clear(); decisionEpoch = sourcePolicyEpoch(db); }
+    if (!sourceEventsAllowed(db, claim.provenance, sourceScope)) return false;
     const cached = decisions.get(claim.claim_id);
     if (cached !== undefined) return cached;
     const raw = db.query<{ sensitivity: string | null }, [string]>(
@@ -53,12 +58,13 @@ export function claimReader(db: Database, grant: Grant) {
     const type = claim.frontmatter["type"];
     const item: Servable = {
       id: claim.claim_id,
-      sensitivity: raw?.sensitivity,
+      sensitivity: raw?.sensitivity === "public" || raw?.sensitivity === "personal" || raw?.sensitivity === "private" ? sourceSensitivity(db, claim.provenance, raw.sensitivity) : raw?.sensitivity,
       ...(typeof type === "string" ? { type } : {}),
       subjects: claim.subject === null ? claim.subjects : [claim.subject],
       occurred_at: claim.valid_from,
     };
     const decision = authorize(grant, item);
+    if (item.sensitivity === "public" || item.sensitivity === "personal" || item.sensitivity === "private") claim.sensitivity = item.sensitivity;
     let reason = decision.allow ? undefined : decision.reason;
     if (reason === undefined && asTaint(claim.taint) === null) reason = "missing_taint";
     if (reason === undefined && (!isAuthorityTier(claim.authority) ||
@@ -105,9 +111,11 @@ export function claimReader(db: Database, grant: Grant) {
       // Legacy bare ids must resolve unambiguously. Typed references select
       // one namespace; unknown/deleted evidence never contributes a label.
       if ((source === null) === (claim === null)) return deny("held");
-      const evidenceLabel = sensitivity(source?.sensitivity ?? claim?.sensitivity);
+      const originalLabel = sensitivity(source?.sensitivity ?? claim?.sensitivity);
+      const evidenceLabel = originalLabel === null ? null : sourceSensitivity(db, source !== null ? [source.event_id] : claim!.provenance, originalLabel);
       if (evidenceLabel === null) return deny("missing_sensitivity");
       if (source !== null) {
+        if (!sourceEventsAllowed(db, [source.event_id], sourceScope)) return deny("held");
         const decision = eventDecision(grant, source);
         if (!decision.allow) return deny(decision.reason);
       }

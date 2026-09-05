@@ -8,7 +8,7 @@ import initdb from "../node_modules/@electric-sql/pglite/dist/initdb.wasm" with 
 import data from "../node_modules/@electric-sql/pglite/dist/pglite.data" with { type: "file" };
 import vector from "../node_modules/@electric-sql/pglite-pgvector/dist/vector.tar.gz" with { type: "file" };
 import trgm from "../node_modules/@electric-sql/pglite/dist/pg_trgm.tar.gz" with { type: "file" };
-const hashes = {
+export const EXTENSION_HASHES = {
   vector: "881caf1c550dc4ecde6bfae95018d90684c6a61189273f13e0071595819513a2",
   trgm: "4e76ac1614c092647846eecdbb1f7e8453113d5b326c3113984155b4f780e534",
 };
@@ -56,7 +56,7 @@ export async function openDatabase(dataDir: string): Promise<{
     finally {
       closeSync(fd);
     }
-    if (new Bun.CryptoHasher("sha256").update(readFileSync(path)).digest("hex") !== hashes[name]) {
+    if (new Bun.CryptoHasher("sha256").update(readFileSync(path)).digest("hex") !== EXTENSION_HASHES[name]) {
       throw new Error("retrieval extension asset integrity mismatch");
     }
     return { name: name === "trgm" ? "pg_trgm" : name, setup: async () => ({ bundlePath: pathToFileURL(path) }) };

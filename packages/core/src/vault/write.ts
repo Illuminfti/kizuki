@@ -1,5 +1,7 @@
 import {
   closeSync,
+  constants,
+  fstatSync,
   copyFileSync,
   existsSync,
   fsyncSync,
@@ -12,7 +14,15 @@ import {
   unlinkSync,
   writeSync,
 } from "node:fs";
-import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
+import {
+  basename,
+  dirname,
+  extname,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { serializePage } from "./frontmatter";
 import type { VaultPage } from "./frontmatter";
 import { validatePage } from "./schema";
@@ -25,7 +35,9 @@ export const WRITERS = ["loop", "correction", "revert", "import"] as const;
 export type Writer = (typeof WRITERS)[number];
 
 export function isWriter(value: unknown): value is Writer {
-  return typeof value === "string" && (WRITERS as readonly string[]).includes(value);
+  return (
+    typeof value === "string" && (WRITERS as readonly string[]).includes(value)
+  );
 }
 
 /**
@@ -119,6 +131,8 @@ export interface WritePageOptions {
    * reversible.
    */
   delete?: boolean;
+  /** Native source erasure: retain hashes/receipts, never a payload preimage. */
+  erase_prior?: boolean;
 }
 
 export interface WriteOutcome {
@@ -158,7 +172,10 @@ function isSymlink(path: string): boolean {
 export function findVaultRoot(file: string): string {
   let current = dirname(resolve(file));
   while (true) {
-    if (isDirectory(join(current, "archive")) && isDirectory(join(current, ".kizuki"))) {
+    if (
+      isDirectory(join(current, "archive")) &&
+      isDirectory(join(current, ".kizuki"))
+    ) {
       return current;
     }
     const parent = dirname(current);
@@ -179,8 +196,8 @@ function nextArchivePath(vault: string, file: string): string {
   return candidate;
 }
 
-function writeDurably(path: string, content: string, flag: "wx" | "w"): void {
-  const fd = openSync(path, flag);
+function writeDurably(path: string, content: string, flag: "wx" | "w", mode?: number): void {
+  const fd = openSync(path, flag, mode);
   try {
     writeSync(fd, content);
     fsyncSync(fd);
@@ -189,9 +206,25 @@ function writeDurably(path: string, content: string, flag: "wx" | "w"): void {
   }
 }
 
-function replaceAtomically(path: string, content: string, stamp: string): void {
+function replaceAtomically(path: string, content: string, stamp: string, resumeExact = false): void {
   const temp = join(dirname(path), `.${basename(path)}.${stamp}.tmp`);
-  writeDurably(temp, content, "wx");
+  if (resumeExact && existsSync(temp)) {
+    const before = lstatSync(temp);
+    const fd = openSync(temp, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      const stat = fstatSync(fd);
+      if (!stat.isFile() || before.isSymbolicLink() || stat.nlink !== 1 ||
+        stat.ino !== before.ino || stat.dev !== before.dev ||
+        stat.uid !== process.geteuid?.() || (stat.mode & 0o077) !== 0 ||
+        stat.size !== Buffer.byteLength(content) || readFileSync(fd,"utf8") !== content) {
+        throw new CanonWriteRefused("page_changed", "source erasure temporary revision changed");
+      }
+      fsyncSync(fd);
+      const current=lstatSync(temp);
+      if(current.ino!==stat.ino || current.dev!==stat.dev || current.isSymbolicLink())
+        throw new CanonWriteRefused("page_changed", "source erasure temporary revision changed");
+    } finally { closeSync(fd); }
+  } else writeDurably(temp, content, "wx", resumeExact ? 0o600 : undefined);
   try {
     renameSync(temp, path);
   } catch (error) {
@@ -200,9 +233,16 @@ function replaceAtomically(path: string, content: string, stamp: string): void {
   }
 }
 
-function deleteExistingPage(path: string, expectedHash: string | undefined): WriteOutcome {
+function deleteExistingPage(
+  path: string,
+  expectedHash: string | undefined,
+  erasePrior = false,
+): WriteOutcome {
   if (!existsSync(path)) {
-    throw new CanonWriteRefused("page_missing", `Refusing to delete a missing page: ${path}`);
+    throw new CanonWriteRefused(
+      "page_missing",
+      `Refusing to delete a missing page: ${path}`,
+    );
   }
   if (expectedHash === undefined) {
     throw new CanonWriteRefused(
@@ -215,6 +255,16 @@ function deleteExistingPage(path: string, expectedHash: string | undefined): Wri
       "page_changed",
       `Refusing to delete a page that changed since it was read: ${path}`,
     );
+  }
+  if (erasePrior) {
+    unlinkSync(path);
+    const fd = openSync(dirname(path), "r");
+    try {
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    return { archive_path: null, after_hash: ABSENT_PAGE_HASH };
   }
   const vault = findVaultRoot(path);
   mkdirSync(join(vault, "archive"), { recursive: true });
@@ -241,11 +291,18 @@ export function writePage(
   consume(cap);
 
   if (isSymlink(path)) {
-    throw new CanonWriteRefused("symlink", `Refusing to write through a symlink: ${path}`);
+    throw new CanonWriteRefused(
+      "symlink",
+      `Refusing to write through a symlink: ${path}`,
+    );
   }
 
   if (opts.delete === true) {
-    return deleteExistingPage(path, opts.expected_hash);
+    return deleteExistingPage(
+      path,
+      opts.expected_hash,
+      opts.erase_prior === true,
+    );
   }
 
   const errors = validatePage(page.data);
@@ -259,11 +316,17 @@ export function writePage(
   const exists = existsSync(path);
 
   if (exists && opts.revision !== true) {
-    throw new CanonWriteRefused("page_exists", `Refusing to overwrite existing page: ${path}`);
+    throw new CanonWriteRefused(
+      "page_exists",
+      `Refusing to overwrite existing page: ${path}`,
+    );
   }
   if (!exists) {
     if (opts.revision === true) {
-      throw new CanonWriteRefused("page_missing", `Refusing to revise a missing page: ${path}`);
+      throw new CanonWriteRefused(
+        "page_missing",
+        `Refusing to revise a missing page: ${path}`,
+      );
     }
     mkdirSync(dirname(path), { recursive: true });
     writeDurably(path, content, "wx");
@@ -283,6 +346,16 @@ export function writePage(
     );
   }
 
+  if (opts.erase_prior === true) {
+    replaceAtomically(path, content, cap.receipt_id, true);
+    const fd = openSync(dirname(path), "r");
+    try {
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    return { archive_path: null, after_hash: hashFile(path) };
+  }
   const vault = findVaultRoot(path);
   mkdirSync(join(vault, "archive"), { recursive: true });
   const archive = nextArchivePath(vault, path);

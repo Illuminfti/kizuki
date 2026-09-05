@@ -82,3 +82,43 @@ Without one, hybrid reads declare `vector-skipped`, and claim insertion and owne
 correction use structural deduplication while still updating the SQL index. The
 current CLI and MCP composition binds lexical retrieval; it does not configure a
 production embedding model or claim calibrated vector deduplication.
+
+Native source-revocation maintenance may discard the entire owned `store/`
+generation after SQL shutdown while retaining the writer lease. It seals the
+old port, stops its watcher, drains queued SQL work, removes SQL/WAL and legacy
+payload files, and fsyncs the managed root. Known engine/assets/lease metadata
+remain. Unknown files, symlinks and hardlinks refuse deletion. If deletion is
+interrupted after SQL closes, the native SQL-free maintenance entry can retry
+under the same lease without reopening a partial database. This covers the
+application-managed generation, not external copies or arbitrary raw handles.
+An empty authoritative rebuild can clear a historical vector generation without
+its embedding model; a nonempty rebuild still requires the original model space.
+
+Native disposal now uses a retained directory capability and descriptor-relative
+`openat`/`unlinkat` traversal, with native filename bytes, entry/depth limits and
+same-directory absence verification. Completion also requires the named managed
+root to retain its original identity. Linux x64 glibc is qualified for this
+walker; other platforms return pending/unsupported until their ABI is tested.
+
+Erasure stops lease heartbeats and releases only the native lock descriptor;
+it leaves a content-free stale holder diagnostic. Reopening can therefore remain
+busy until the existing three-heartbeat grace expires (600ms with default
+settings). Erasure retains immutable extension assets rather than running a
+pathname-based asset finalizer.
+
+A root mismatch detected before shutdown terminally seals the port, rejects
+queued/future SQL callbacks and refuses cleanup that could follow the changed
+path. The native lock stays held until process exit. The report requires process
+restart. **An SQL callback already active during external root replacement is
+not contained by this fence.** It is reported as `active_sql_uncontained`, remains
+pending, and is not verified erasure or support for live vault moves. The pinned
+PGlite build uses awaited durability and has no separate NodeFS background sync
+timer; that does not make already-started SQL safe under external path changes.
+Stronger runtime containment remains a gate before live estate use.
+
+SQL-free erasure recovery acquires the existing `lease/writer.lock` through
+its captured directory descriptor. It neither creates a missing lock nor
+writes holder, heartbeat or receipt files. Legacy live owners and fresh
+ownership diagnostics still block maintenance. A missing compatible lock
+leaves erasure pending. The separate FTS recovery path uses the same
+existing-inode rule; ordinary engine startup retains its existing protocol.

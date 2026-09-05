@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { openEmbeddedRetrievalPort } from "@kizuki/retrieval-pg";
 import { serializePage } from "@kizuki/core";
 import { mcpFixture } from "./helpers";
 import type { McpFixture } from "./helpers";
@@ -89,6 +90,55 @@ describe("the stdio process entry", () => {
     expect(result.stderr.trim()).toBe(
       "kizuki-mcp ready principal=owner tools=9",
     );
+  });
+
+  test("a configured busy engine keeps the authorized lexical floor while an explicit engine remains required", async () => {
+    const running = live();
+    const id = "kizuki.retrieval.embedded-pg";
+    writeFileSync(join(running.vaultPath, ".kizuki/serve.toml"), `[ports]\nretrieval="${id}"\n`);
+    const holder = await openEmbeddedRetrievalPort({
+      vault_path: running.vaultPath, data_dir: join(running.vaultPath, ".kizuki/retrieval", id),
+      config: {}, secrets: async () => { throw new Error("no secret"); },
+      clock: () => new Date().toISOString(), logger: () => {},
+    });
+    try {
+      const input = [
+        JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "offline-proof", version: "0" } } }),
+        JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+        JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "search", arguments: { query: "kettle", scope: "all" } } }),
+        JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "context_packet", arguments: { query: "kettle", purpose: "recall", budget_tokens: 1000 } } }), "",
+      ].join("\n");
+      const args = ["--vault", running.vaultPath, "--token-env", "KIZUKI_TEST_TOKEN"];
+      const env = { KIZUKI_TEST_TOKEN: running.tokens["reader-personal"]! };
+      const result = await run(args, input, env);
+      expect(result.code).toBe(0);
+      const messages = result.stdout.trim().split("\n").map(line => JSON.parse(line));
+      const search = messages.find(message => message.id === 2)?.result;
+      expect(search?.isError).not.toBe(true);
+      expect(search?.structuredContent?.data?.degraded).toContain("retrieval-unavailable");
+      expect(JSON.stringify(search)).toContain("public kettle");
+      expect(JSON.stringify(search)).not.toContain("private kettle protocol");
+      const packet = messages.find(message => message.id === 3)?.result;
+      expect(packet?.isError).not.toBe(true);
+      expect(packet?.structuredContent?.data?.retrieval_degraded).toContain("retrieval-unavailable");
+      expect(JSON.stringify(packet)).not.toContain("private kettle protocol");
+      expect(result.stderr).toContain("retrieval-unavailable; using the lexical floor");
+      expect(result.stderr).not.toContain(running.vaultPath);
+      const required = await run([...args, "--retrieval", id], HANDSHAKE, env);
+      expect(required.code).toBe(1);
+      expect(required.stdout).toBe("");
+      expect(required.stderr.trim()).toBe("retrieval port could not start");
+      expect((await holder.health()).status).toBe("ready");
+    } finally { await holder.close(); }
+  }, 30_000);
+
+  test("an invalid configured engine refuses instead of silently falling back", async () => {
+    const running = live();
+    writeFileSync(join(running.vaultPath, ".kizuki/serve.toml"), '[ports]\nretrieval="kizuki.retrieval.missing"\n');
+    const result = await run(["--vault", running.vaultPath, "--owner"], HANDSHAKE);
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr.trim()).toBe("retrieval port could not start");
   });
 
   test("an unregistered retrieval port refuses before the server starts", async () => {

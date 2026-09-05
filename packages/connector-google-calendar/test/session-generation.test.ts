@@ -1,0 +1,101 @@
+import { expect, test } from "bun:test";
+import { createGoogleCalendarConnector } from "../src/connector";
+import { CalendarFixture } from "../src/testing";
+import { encodeState, parseState, FIELDS, SCOPES as GOOGLE_CALENDAR_SCOPES } from "../src/state";
+for (const replaceAccount of [false, true])
+    test(`unsettled rotation fences ${replaceAccount ? 'different account' : 'same account'} replacement and survives later expiry`, async () => {
+        const f = new CalendarFixture(), old = parseState(f.state);
+        old.oauth.tokens.expires_at = '2020-01-01T00:00:00Z';
+        f.state = encodeState(old);
+        let release!: (value: any) => void, writes = 0, posts = 0, resolves = 0;
+        const connector = createGoogleCalendarConnector({ client: { id: 'synthetic' }, secret_ref: 'file:synthetic', calendar_id: f.calendar, fields: FIELDS }, { now: f.now, fetch: f.fetch, persist: async (bytes) => { writes++; await f.persist(bytes); }, oauth: { listen: async () => { throw Error('unused'); }, postForm: async (_url, form) => {
+                    posts++;
+                    if (posts === 1)
+                        return new Promise(resolve => { release = resolve; });
+                    expect(form.refresh_token).toBe('synthetic-rotated-refresh');
+                    return { status: 200, body: { access_token: 'synthetic-later-access', refresh_token: 'synthetic-next-refresh', expires_in: 3600, scope: GOOGLE_CALENDAR_SCOPES.join(' '), token_type: 'Bearer' } };
+                } } });
+        await expect(connector.connect(async () => new TextDecoder().decode(f.state))).rejects.toMatchObject({ code: 'timeout' });
+        const proposed = parseState(f.state);
+        if (replaceAccount)
+            proposed.oauth.account.id = 'synthetic-other';
+        proposed.oauth.tokens.access_token = 'synthetic-replacement';
+        await expect(connector.connect(async () => { resolves++; return new TextDecoder().decode(encodeState(proposed)); })).rejects.toMatchObject({ code: 'unavailable' });
+        expect(resolves).toBe(0);
+        expect(writes).toBe(0);
+        release({ status: 200, body: { access_token: 'synthetic-rotated-access', refresh_token: 'synthetic-rotated-refresh', expires_in: 3600, scope: GOOGLE_CALENDAR_SCOPES.join(' '), token_type: 'Bearer' } });
+        await Bun.sleep(20);
+        expect(writes).toBe(1);
+        expect(parseState(f.state).oauth.account.id).toBe(f.account);
+        expect(parseState(f.state).oauth.tokens.refresh_token).toBe('synthetic-rotated-refresh');
+        await expect(connector.backfill(null)).rejects.toThrow();
+        f.advance();
+        await connector.connect(async () => new TextDecoder().decode(f.state));
+        expect(posts).toBe(2);
+        expect(parseState(f.state).oauth.tokens.refresh_token).toBe('synthetic-next-refresh');
+        expect((await connector.backfill(null)).events).toHaveLength(2);
+    }, 10000);
+test('local revoke permits mandatory rotation custody without resurrecting capture', async () => {
+    const f = new CalendarFixture(), state = parseState(f.state);
+    state.oauth.tokens.expires_at = '2020-01-01T00:00:00Z';
+    f.state = encodeState(state);
+    let release!: (value: any) => void, entered!: () => void, writes = 0;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const connector = createGoogleCalendarConnector({ client: { id: 'synthetic' }, secret_ref: 'file:synthetic', calendar_id: f.calendar, fields: FIELDS }, { now: f.now, fetch: f.fetch, persist: async (bytes) => { writes++; await f.persist(bytes); }, oauth: { listen: async () => { throw Error('unused'); }, postForm: async () => new Promise(resolve => { release = resolve; entered(); }) } });
+    const connecting = connector.connect(async () => new TextDecoder().decode(f.state));
+    const observed = connecting.catch(() => { });
+    await started;
+    await connector.revoke();
+    release({ status: 200, body: { access_token: 'synthetic-after-close', refresh_token: 'synthetic-after-close-refresh', expires_in: 3600, scope: GOOGLE_CALENDAR_SCOPES.join(' '), token_type: 'Bearer' } });
+    await observed;
+    expect(writes).toBe(1);
+    expect(parseState(f.state).oauth.tokens.refresh_token).toBe('synthetic-after-close-refresh');
+    expect((await connector.health()).state).toBe('disabled');
+    const calls = f.calls.length;
+    await expect(connector.backfill(null)).rejects.toThrow();
+    expect(f.calls).toHaveLength(calls);
+});
+test('pending state write is bounded and prevents reconnect until settlement', async () => {
+    const f = new CalendarFixture();
+    let release!: () => void, calls = 0, resolutions = 0;
+    const connector = await f.connected(async (bytes) => { calls++; await new Promise<void>(resolve => { release = resolve; }); await f.persist(bytes); });
+    const started = Date.now();
+    const pending = connector.backfill(null);
+    const result = await Promise.race([pending, Bun.sleep(6500).then(() => null)]);
+    expect(result).not.toBeNull();
+    expect(Date.now() - started).toBeLessThan(6500);
+    expect(result!.status).toBe('unavailable');
+    expect(result!.detail).toContain('timeout');
+    expect(result!.events).toEqual([]);
+    expect(result!.cursor).toBeNull();
+    await expect(connector.connect(async () => { resolutions++; return new TextDecoder().decode(f.state); })).rejects.toThrow();
+    expect(resolutions).toBe(0);
+    await expect(connector.backfill(null)).rejects.toThrow();
+    expect(calls).toBe(1);
+    release();
+    await Bun.sleep(20);
+    await connector.connect(async () => new TextDecoder().decode(f.state));
+    expect(resolutions).toBe(0);
+    // The next persisted witness also waits; settle it to avoid abandoning a fixture promise.
+    const retry = connector.backfill(null);
+    await Bun.sleep(20);
+    release();
+    expect((await retry).events).toHaveLength(2);
+}, 12000);
+test('an OAuth write already in custody fences reconnect until its late settlement', async () => {
+    const f = new CalendarFixture(), old = parseState(f.state);
+    old.oauth.tokens.expires_at = '2020-01-01T00:00:00Z';
+    f.state = encodeState(old);
+    let release!: () => void, entered = 0, resolutions = 0;
+    const connector = createGoogleCalendarConnector({ client: { id: 'synthetic' }, secret_ref: 'file:synthetic', calendar_id: "fixture-calendar", fields: FIELDS }, { now: f.now, fetch: f.fetch, persist: async (bytes) => { entered++; await new Promise<void>(resolve => { release = resolve; }); await f.persist(bytes); }, oauth: { listen: async () => { throw Error('unused'); }, postForm: async () => ({ status: 200, body: { access_token: 'synthetic-late-write', refresh_token: 'synthetic-late-refresh', expires_in: 3600, scope: GOOGLE_CALENDAR_SCOPES.join(' '), token_type: 'Bearer' } }) } });
+    await expect(connector.connect(async () => new TextDecoder().decode(f.state))).rejects.toMatchObject({ code: 'timeout' });
+    expect(entered).toBe(1);
+    await expect(connector.connect(async () => { resolutions++; return new TextDecoder().decode(f.state); })).rejects.toThrow();
+    expect(resolutions).toBe(0);
+    release();
+    await Bun.sleep(20);
+    expect(parseState(f.state).oauth.tokens.access_token).toBe('synthetic-late-write');
+    await connector.connect(async () => { resolutions++; return new TextDecoder().decode(f.state); });
+    expect(resolutions).toBe(1);
+    expect(entered).toBe(1);
+}, 10000);

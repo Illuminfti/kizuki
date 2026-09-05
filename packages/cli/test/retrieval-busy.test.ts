@@ -1,3 +1,4 @@
+import { fixtureConsent } from "./helpers";
 import { afterEach, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -9,7 +10,7 @@ afterEach(cleanup);
 
 test("a busy optional engine preserves recall and daemon controls while required bindings refuse", async () => {
   const f = tempVault();
-  expect(runCli(f.env, "import", "markdown-folder", "--source", f.notes).exitCode).toBe(0);
+  expect(runCli(f.env, "import", "markdown-folder", "--source", f.notes, ...fixtureConsent(f.root)).exitCode).toBe(0);
   writeFileSync(join(f.vault, ".kizuki/serve.toml"), '[ports]\nretrieval="kizuki.retrieval.embedded-pg"\n');
   const retrieval = await openConfiguredRetrieval(f.vault);
   expect(retrieval).toBeDefined();

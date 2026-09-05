@@ -1,3 +1,4 @@
+import { fixtureConsent } from "./helpers";
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -20,7 +21,7 @@ describe("kizuki CLI stranger loop", () => {
       "import",
       "markdown-folder",
       "--source",
-      setup.notes,
+      setup.notes, ...fixtureConsent(setup.root),
     );
     expect(imported).toMatchObject({
       exitCode: 0,
