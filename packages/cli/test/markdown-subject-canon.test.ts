@@ -137,9 +137,15 @@ describe("a markdown-folder import reaches canon typed correctly", () => {
     const once = await runCliLive(env, "serve", "--once", "--no-http", "--json");
     expect(once.exitCode).toBe(0);
 
+    // The connector's subject id is a sha256 digest of the file's relative
+    // path (#431's resolution against main's independent documentSubject),
+    // so the entity page it mints is keyed by that digest, not the filename.
+    const digest = new Bun.CryptoHasher("sha256")
+      .update("field-log.md")
+      .digest("hex");
     const rows = auditRows(env);
     const entityWrite = rows.find((row) =>
-      row.page_path.includes("field-log"),
+      row.page_path.includes(digest),
     );
     expect(entityWrite).toBeDefined();
     if (entityWrite === undefined) return;
@@ -149,8 +155,10 @@ describe("a markdown-folder import reaches canon typed correctly", () => {
     const page = parseFrontmatter(readFileSync(pagePath, "utf8"));
 
     // #431: the file itself is a subject, stable and derived from its own
-    // relative path rather than a lossy slug.
-    expect(page.data["x-subject-id"]).toBe("markdown:field-log.md");
+    // relative path rather than a lossy slug (a sha256 digest under
+    // markdown-folder:, not the path itself — see #431's resolution against
+    // main's independent documentSubject).
+    expect(page.data["x-subject-id"]).toMatch(/^markdown-folder:[a-f0-9]{64}$/);
     // #430: an unrecognized subject namespace never mints a person page.
     // This is the one subject the file carries, so the deterministic capture
     // note that shares it binds onto the same page in this pass and its own

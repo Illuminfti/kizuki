@@ -389,7 +389,12 @@ describe("kizuki serve model wiring (M4)", () => {
 
     const result = runCli(setup.env, "serve", "run", "sync", "--json");
     expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain("config_invalid");
+    // createServeRuntime resolves the secret before any rail is allowed to
+    // start; a shape it cannot resolve (not env: or file:) fails closed with
+    // one generic message rather than leaking which validation rejected it.
+    expect(result.stderr).toContain(
+      "configured secret reference cannot be resolved",
+    );
     expect(runReceiptCount(setup.vault)).toBe(0);
   });
 
