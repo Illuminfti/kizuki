@@ -1,3 +1,4 @@
+import { fixtureConsent } from "../helpers";
 import { afterEach, describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -141,7 +142,7 @@ describe("doctor liveness", () => {
       "import",
       "markdown-folder",
       "--source",
-      setup.notes,
+      setup.notes, ...fixtureConsent(setup.root),
     );
     expect(imported.exitCode).toBe(0);
     const result = runCli(setup.env, "doctor");

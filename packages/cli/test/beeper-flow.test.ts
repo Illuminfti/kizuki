@@ -1,3 +1,4 @@
+import { fixtureConsent } from "./helpers";
 import { afterEach, expect, test } from "bun:test";
 import { readFileSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -63,6 +64,7 @@ test("Beeper enrollment, paginated recall, dedupe and unavailable sync preserve 
       "--token-ref", "env:NEW_TOKEN", "--sensitivity", "personal");
     expect(lower.exitCode).toBe(2);
     expect(readFileSync(savedPath, "utf8")).toBe(priorState);
+    expect((await cli(env, "connect", "grant", "--source", sourceKey, ...fixtureConsent(setup.root))).exitCode).toBe(0);
     const backfill = await cli(env, "backfill", "beeper");
     expect(backfill.exitCode).toBe(0);
     expect(backfill.stdout).toContain("stored=2");

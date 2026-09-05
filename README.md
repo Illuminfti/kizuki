@@ -75,8 +75,12 @@ Mira leads Project Atlas.
 We chose keyboard-first navigation for the accessibility prototype.
 NOTE
 
+cat > "$demo/policy.json" <<'POLICY'
+{"purposes":["capture","recall","session","derive"],"allowed_fields":["text","subjects","attachments","metadata"],"retention":"persistent_owned_until_revoked","egress":"local_only","sensitivity_floor":"private"}
+POLICY
+
 bun packages/cli/src/main.ts init "$demo/vault" --no-default --no-service
-bun packages/cli/src/main.ts import markdown-folder --source "$demo/notes" --vault "$demo/vault"
+bun packages/cli/src/main.ts import markdown-folder --source "$demo/notes" --policy "$demo/policy.json" --expected-revision 0 --operation-id demo-import --vault "$demo/vault"
 bun packages/cli/src/main.ts query "Atlas" --vault "$demo/vault"
 bun packages/cli/src/main.ts context --purpose session --query "Atlas" --vault "$demo/vault"
 bun packages/cli/src/main.ts doctor --vault "$demo/vault"
@@ -127,7 +131,11 @@ service.
 
 Start with `kizuki connect` to see the catalog and
 `kizuki connect status` to inspect enrolled sources and their last run.
-Connections assign sensitivity automatically from their policy; you do not
+New enrollment requires an explicit [source consent policy](docs/cli.md#source-consent)
+before capture. Import accepts `--policy FILE --expected-revision 0
+--operation-id ID`; otherwise it prints the enrolled key and grant next step.
+Revocation denies use immediately; physical purge may remain blocked and must be
+reported as pending. Connections assign sensitivity automatically from their policy; you do not
 need to label every captured record by hand.
 
 | Your source | Available entry point | Boundary that matters |
@@ -147,6 +155,7 @@ environment variable or an owner-only local file, then:
 
 ```bash
 kizuki connect beeper --token-ref env:BEEPER_TOKEN
+kizuki connect grant --source KEY --policy POLICY.json --expected-revision 0 --operation-id beeper-grant
 kizuki backfill beeper
 kizuki connect status
 ```
@@ -160,6 +169,7 @@ synthetic, not a claim of live-account validation.
 
 ```bash
 kizuki connect imap
+kizuki connect grant --source KEY --policy POLICY.json --expected-revision 0 --operation-id imap-grant
 kizuki backfill imap
 ```
 

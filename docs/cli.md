@@ -51,10 +51,13 @@ owner edits are left in place.
 ## import
 
 ```text
-usage: kizuki import <connector> --source PATH
+usage: kizuki import <connector> --source PATH [--policy FILE --expected-revision N --operation-id ID]
 ```
 
-Enrolls a `none`-mode file source and backfills it to exhaustion. For local
+Enrolls a `none`-mode file source and backfills it to exhaustion only with an active
+source grant permitting capture. The three policy options must appear together;
+they apply explicit consent before reading content. Without a grant, import
+enrolls the source, refuses capture, and prints the source key and grant command. For local
 Beeper messages, use `connect beeper` followed by `backfill beeper`.
 
 ## connect
@@ -78,6 +81,61 @@ against that connection's default, floor, owner label, and source hint.
 Hints cannot lower the connection policy. A legacy connection without a
 recorded policy defaults to private. Direct unlabelled ledger writes remain
 withheld, and changing policy does not relabel historical events.
+
+## Source consent
+
+Enrollment stores connection state; credentials never imply permission to use
+captured evidence. New sources require an explicit owner grant. Existing retained
+sources are not silently migrated. `connect status --source KEY --json` shows the
+current grant, revision, policy digest, and physical purge blockers. All-source
+`connect status` keeps sync state and consent state separate. Disconnect still
+stops sync; revoking consent is a separate operation.
+
+Save a policy you intend to authorize in a regular JSON file, at most 16 KiB,
+without symlinks or secret fields. For example, this policy permits local capture
+and owner recall of text and its provenance:
+
+```json
+{
+  "purposes": ["capture", "recall", "session", "derive"],
+  "allowed_fields": ["text", "subjects", "attachments", "metadata"],
+  "retention": "persistent_owned_until_revoked",
+  "egress": "local_only",
+  "sensitivity_floor": "private"
+}
+```
+
+Purposes are `capture`, `recall`, `session`, `correction`, `audit`, `derive`,
+`extract`, and `export`; choose only the uses you authorize. Populated fields
+outside `allowed_fields` refuse capture. Only the retention and egress values
+shown above are supported. `extract` does not make an untrusted model local.
+There is currently no native local model capability in the CLI. Managed
+`local_only` sources refuse extraction through the generic OpenAI-compatible
+HTTP adapter, including loopback endpoints; granting `extract` does not override
+that boundary. Owner recall remains available without a model.
+Export requires the explicit `export` purpose and refuses pending revocations.
+
+```bash
+kizuki connect grant --source KEY --policy POLICY.json --expected-revision 0 --operation-id grant-1
+kizuki connect status --source KEY --json
+kizuki connect revoke --source KEY --expected-revision 1 --operation-id revoke-1
+kizuki connect resume-revocation --source KEY --operation-id revoke-1 --json
+```
+
+Grant and revoke return durable operation receipts. Retrying the exact operation
+returns its original receipt, including after restart; reusing its ID for changed
+intent is refused. Supply the exact current revision for a new operation. Status
+shows current state, which may be newer than a retried operation's receipt.
+
+Grant, status, and revoke work without opening retrieval. Revocation commits
+denial immediately. Physical purge is a separate resumable operation tied to the
+same source and revoke ID; it requires the configured retrieval store to be
+available. `purge=pending` / JSON `status=degraded` and exit 1 means it is **not
+complete**. Retained claim or identity payloads and `canon_rewrite_pending` remain
+explicit blockers; retry cannot invent an erasure receipt. A source cannot be
+regranted while its purge is pending. `purge=complete` is reported only from the
+native completed state with no blockers. Local revocation does not delete the
+upstream account or source file.
 
 ## backfill / sync
 

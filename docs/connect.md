@@ -8,6 +8,10 @@ File folders and exports remain local imports. The available catalog is the
 truth for this revision; entries marked unavailable are not wired through the
 CLI.
 
+New connections require an explicit owner [source consent policy](cli.md#source-consent)
+before backfill or sync. Use the enrolled source key with `connect grant`;
+credentials do not create a grant. Import can accept the policy before capture.
+
 ## Connection design
 
 Public documentation checked on 2026-09-04: Sealgate's Connect setup uses
@@ -40,6 +44,7 @@ history where possible.
 ```bash
 export BEEPER_TOKEN='approved-token'
 kizuki connect beeper --token-ref env:BEEPER_TOKEN --sensitivity private
+kizuki connect grant --source KEY --policy POLICY.json --expected-revision 0 --operation-id beeper-grant
 kizuki backfill beeper
 kizuki connect status
 ```
@@ -97,5 +102,7 @@ re-authenticates the existing IMAP source atomically, keeping its source key.
 If more than one IMAP source exists, choose the source key shown by `kizuki
 connect status`: `kizuki connect imap --source KEY`.
 
-After enrollment, run `kizuki backfill imap`. The connector uses TLS and reads
+After enrollment, grant the intended policy with `kizuki connect grant --source KEY
+--policy POLICY.json --expected-revision 0 --operation-id imap-grant`, then run
+`kizuki backfill imap`. The connector uses TLS and reads
 mail without sending, deleting, moving, or marking messages read.

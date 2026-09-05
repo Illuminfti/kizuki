@@ -1,6 +1,9 @@
+import { runConnectConsent } from "./connect-consent";
+import { consentHint } from "../source-consent";
 import { resolve } from "node:path";
 import {
   applyConnectionSensitivity,
+  inspectSourceGrant,
   DeadlineError,
   getConnectorSensitivity,
   isSensitivity,
@@ -105,9 +108,10 @@ export function imapSignInNotice(vaultPath: string): string {
 
 export const connectCommand: Command = {
   name: "connect",
-  usage: "connect [--list|status] [--json]\n       kizuki connect <connector> --source PATH [--sensitivity public|personal|private]\n       kizuki connect beeper --token-ref env:VAR|file:/absolute/path [--endpoint http://127.0.0.1:23373] [--sensitivity public|personal|private] [--json]\n       kizuki connect imap [--source KEY] [--sensitivity public|personal|private]",
+  usage: "connect [--list|status] [--json]\n       kizuki connect status --source KEY [--json]\n       kizuki connect grant --source KEY --policy FILE --expected-revision N --operation-id ID [--json]\n       kizuki connect revoke --source KEY --expected-revision N --operation-id ID [--json]\n       kizuki connect resume-revocation --source KEY --operation-id ID [--json]\n       kizuki connect <connector> --source PATH [--sensitivity public|personal|private]\n       kizuki connect beeper --token-ref env:VAR|file:/absolute/path [--endpoint http://127.0.0.1:23373] [--sensitivity public|personal|private] [--json]\n       kizuki connect imap [--source KEY] [--sensitivity public|personal|private]",
   summary: "choose a source, connect Beeper or local files, and check sync status",
   async run(io: CliIo, args: string[]): Promise<number> {
+    if (["grant", "revoke", "resume-revocation"].includes(args[0] ?? "") || (args[0] === "status" && args.includes("--source"))) return runConnectConsent(io, args);
     const parsed = parseArguments(args, {
       options: ["--source", "--sensitivity", "--endpoint", "--token-ref"],
       flags: ["--list", "--json"],
@@ -162,14 +166,15 @@ export const connectCommand: Command = {
           throw safeImapSignInFailure(error);
         }
         applyConnectionSensitivity(ctx.db, connection, connector.manifest(), requested);
-        if (json) io.out(jsonEnvelope("connect", "ok", { connector_id: connectorId, source_key: connection.source_key, state: "enrolled" }));
+        if (json) io.out(jsonEnvelope("connect", "ok", { connector_id: connectorId, source_key: connection.source_key, state: "enrolled", consent: inspectSourceGrant(ctx.db, connection.source_key)?.status ?? "required", next: consentHint(ctx.db, connection.source_key) }));
         else {
           io.out(`connected ${connectorId} source=${connection.source_key}`);
           io.out("Email stays local. Kizuki reads mail; it never sends, deletes, or marks it read.");
+          if (inspectSourceGrant(ctx.db, connection.source_key)?.status !== "active") io.out(consentHint(ctx.db, connection.source_key));
           io.out(`next: ${INVOCATION} backfill imap`);
         }
         return 0;
-      });
+      }, { retrieval: "none" });
     }
     if (rawId === "beeper" || rawId === "kizuki.beeper") {
       const ref = parsed.options.get("--token-ref");
@@ -206,15 +211,16 @@ export const connectCommand: Command = {
           connection = existing.connection;
         }
         applyConnectionSensitivity(ctx.db, connection, connector.manifest(), requested);
-        if (json) io.out(jsonEnvelope("connect", "ok", { connector_id: connectorId, source_key: connection.source_key, state: "enrolled" }));
+        if (json) io.out(jsonEnvelope("connect", "ok", { connector_id: connectorId, source_key: connection.source_key, state: "enrolled", consent: inspectSourceGrant(ctx.db, connection.source_key)?.status ?? "required", next: consentHint(ctx.db, connection.source_key) }));
         else {
           io.out(`connected ${connectorId} source=${connection.source_key} health=${health.state}`);
           io.out("Messages stay local. Kizuki reads messages; it never sends or marks them read.");
+          if (inspectSourceGrant(ctx.db, connection.source_key)?.status !== "active") io.out(consentHint(ctx.db, connection.source_key));
           io.out(`next: ${INVOCATION} backfill beeper`);
           io.out(`then: ${INVOCATION} context --purpose session --query "your topic"`);
         }
         return 0;
-      });
+      }, { retrieval: "none" });
     }
     if (parsed.options.has("--endpoint") || parsed.options.has("--token-ref") || json) {
       throw new UsageError(this.usage);
@@ -254,6 +260,7 @@ export const connectCommand: Command = {
         io.out(
           `connected ${connectorId} source=${existing.connection.source_key} path=${absolute} health=${health.state}`,
         );
+        if (inspectSourceGrant(ctx.db, existing.connection.source_key)?.status !== "active") io.out(consentHint(ctx.db, existing.connection.source_key));
         return 0;
       }
 
@@ -292,7 +299,8 @@ export const connectCommand: Command = {
       io.out(
         `connected ${connectorId} source=${connection.source_key} path=${absolute} health=${health.state}`,
       );
+      if (inspectSourceGrant(ctx.db, connection.source_key)?.status !== "active") io.out(consentHint(ctx.db, connection.source_key));
       return 0;
-    });
+    }, { retrieval: "none" });
   },
 };

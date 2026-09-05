@@ -215,9 +215,13 @@ export async function runArtifactProof(args: ProofArgs): Promise<string> {
     mkdirSync(notes, { recursive: true, mode: 0o700 });
     writeFileSync(join(notes, "welcome.md"), "Ada met Grace at the library.\n", { encoding: "utf8", mode: 0o600 });
 
+    // This isolated synthetic source receives explicit fixture consent before capture.
+    const policy = join(execution, "source-policy.json");
+    writeFileSync(policy, JSON.stringify({ purposes: ["capture", "recall", "session", "derive", "export"], allowed_fields: ["text", "subjects", "attachments", "metadata"], retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "private" }), { mode: 0o600 });
+
     run(executable, execution, env, "help", ["--help"], steps);
     run(executable, execution, env, "init", ["init", vault, "--no-service"], steps);
-    run(executable, execution, env, "import", ["import", "markdown-folder", "--source", notes, "--vault", vault], steps);
+    run(executable, execution, env, "import", ["import", "markdown-folder", "--source", notes, "--policy", policy, "--expected-revision", "0", "--operation-id", "synthetic-import", "--vault", vault], steps);
     requireFixture("query-result", run(executable, execution, env, "query", ["query", "Ada", "--vault", vault], steps), steps);
     requireFixture("context-result", run(executable, execution, env, "context", ["context", "--query", "Ada", "--vault", vault], steps), steps);
     run(executable, execution, env, "export", ["export", "--out", exported, "--vault", vault], steps);

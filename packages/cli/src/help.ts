@@ -16,7 +16,7 @@ const GROUPS: readonly { title: string; names: readonly string[] }[] = [
 
 const EXAMPLES: Readonly<Record<string, readonly string[]>> = {
   init: [`${INVOCATION} init ./vault`],
-  import: [`${INVOCATION} import markdown-folder --source ./notes`],
+  import: [`${INVOCATION} import markdown-folder --source ./notes --policy POLICY.json --expected-revision 0 --operation-id first-import`],
   query: [
     `${INVOCATION} query acme`,
     `${INVOCATION} query acme --scope canon`,
@@ -34,6 +34,8 @@ const EXAMPLES: Readonly<Record<string, readonly string[]>> = {
     `${INVOCATION} connect imap`,
     `${INVOCATION} connect markdown-folder --source ./notes`,
     `${INVOCATION} connect status --json`,
+    `${INVOCATION} connect grant --source KEY --policy POLICY.json --expected-revision 0 --operation-id first-grant`,
+    `${INVOCATION} connect revoke --source KEY --expected-revision 1 --operation-id revoke-1`,
   ],
   backfill: [`${INVOCATION} backfill markdown-folder`],
   sync: [`${INVOCATION} sync`, `${INVOCATION} sync markdown-folder`],
@@ -99,7 +101,7 @@ export function printRootHelp(
 
   write("Examples");
   write(`  ${INVOCATION} init ./vault`);
-  write(`  ${INVOCATION} import markdown-folder --source ./notes`);
+  write(`  ${INVOCATION} import markdown-folder --source ./notes --policy POLICY.json --expected-revision 0 --operation-id first-import`);
   write(`  ${INVOCATION} query acme`);
   write(`  ${INVOCATION} context --purpose session --query "acme"`);
   write(`  ${INVOCATION} doctor`);

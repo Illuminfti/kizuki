@@ -1,3 +1,4 @@
+import { fixtureConsent } from "./helpers";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -20,7 +21,7 @@ function importNotes(setup: ReturnType<typeof tempVault>) {
     "import",
     "markdown-folder",
     "--source",
-    setup.notes,
+    setup.notes, ...fixtureConsent(setup.root),
   );
   expect(imported.exitCode).toBe(0);
   return imported;
@@ -40,6 +41,10 @@ function seedCanonPage(
     status?: "active" | "archived";
   },
 ): string {
+  const evidence = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+  // This fixture page cites real captured evidence under its explicit source grant.
+  const source = evidence.query<{ event_id: string }, []>("SELECT event_id FROM events ORDER BY event_id LIMIT 1").get();
+  evidence.close();
   const data = {
     id,
     title: id,
@@ -47,7 +52,7 @@ function seedCanonPage(
     status,
     sensitivity: "personal",
     taint: "clean",
-    sources: ["event:fixture"],
+    sources: source === null ? [] : [source.event_id],
   };
   const page: CanonPage = {
     id,

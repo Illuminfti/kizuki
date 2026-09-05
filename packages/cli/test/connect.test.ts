@@ -1,3 +1,4 @@
+import { fixtureConsent } from "./helpers";
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   readFileSync,
@@ -115,6 +116,7 @@ describe("connect", () => {
     )?.[1];
     expect(key).toBeDefined();
 
+    expect(runCli(setup.env, "connect", "grant", "--source", key!, ...fixtureConsent(setup.root)).exitCode).toBe(0);
     const byKey = runCli(
       setup.env,
       "backfill",

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { initAgents, initGraph, initSearch, openLedger, PortRegistry, loadConfiguredRetrieval } from "@kizuki/core";
+import { initAgents, initGraph, initSearch, openLedger, PortRegistry, bindLocalSourcePort, loadConfiguredRetrieval } from "@kizuki/core";
 import { registerEmbeddedRetrieval } from "@kizuki/retrieval-pg";
 import type { Principal, RetrievalPort } from "@kizuki/core";
 import { ownerPrincipal, principalFromToken } from "./principal";
@@ -63,7 +63,8 @@ async function bindRetrieval(vault: string, id: string): Promise<RetrievalPort> 
     // stdout is the protocol channel; a port's own lines go to stderr.
     logger: (line) => process.stderr.write(`${line.level} ${line.message}\n`),
   });
-  return port;
+  // The host registry above contains only the concrete local embedded factory.
+  return id === "kizuki.retrieval.embedded-pg" ? bindLocalSourcePort(port) : port;
 }
 
 function refuse(message: string): never {

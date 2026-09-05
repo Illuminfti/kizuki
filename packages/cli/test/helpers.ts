@@ -131,3 +131,11 @@ export function createHelpers(): CliHelpers {
     writeNotes,
   };
 }
+
+/** Explicit synthetic fixture authorization; never used by production enrollment. */
+export function fixtureConsent(root: string, operation = "fixture-import"): string[] {
+  const file = join(root, "fixture-source-policy.json");
+  writeFileSync(file, JSON.stringify({ purposes: ["capture", "recall", "session", "correction", "audit", "derive", "extract", "export"],
+    allowed_fields: ["text", "subjects", "attachments", "metadata"], retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "public" }));
+  return ["--policy", file, "--expected-revision", "0", "--operation-id", operation];
+}

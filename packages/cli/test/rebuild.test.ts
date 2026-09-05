@@ -1,3 +1,4 @@
+import { fixtureConsent } from "./helpers";
 import { Database } from "bun:sqlite";
 import { afterEach, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "node:fs";
@@ -8,7 +9,7 @@ afterEach(helpers.cleanup);
 
 test("offline public configured-engine rebuild preserves query results and survives refused rebuild", () => {
   const setup = helpers.tempVault();
-  expect(helpers.runCli(setup.env, "import", "markdown-folder", "--source", setup.notes).exitCode).toBe(0);
+  expect(helpers.runCli(setup.env, "import", "markdown-folder", "--source", setup.notes, ...fixtureConsent(setup.root)).exitCode).toBe(0);
   writeFileSync(join(setup.vault, ".kizuki", "serve.toml"), '[ports]\nretrieval = "kizuki.retrieval.embedded-pg"\n');
   const deny = join(setup.root, "deny-fetch.ts");
   writeFileSync(deny, 'globalThis.fetch = async () => { throw new Error("runtime fetch forbidden"); };');
@@ -47,7 +48,7 @@ test("offline public configured-engine rebuild preserves query results and survi
 
 test("default rebuild JSON and text identify the actual SQLite floor count", () => {
   const setup = helpers.tempVault();
-  expect(helpers.runCli(setup.env, "import", "markdown-folder", "--source", setup.notes).exitCode).toBe(0);
+  expect(helpers.runCli(setup.env, "import", "markdown-folder", "--source", setup.notes, ...fixtureConsent(setup.root)).exitCode).toBe(0);
   const rebuilt = helpers.runCli(setup.env, "rebuild", "--json");
   expect(rebuilt.exitCode).toBe(0);
   const report = JSON.parse(rebuilt.stdout).data;
