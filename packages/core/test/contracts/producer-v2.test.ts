@@ -48,6 +48,42 @@ describe("producer v2 response parser", () => {
     expect(parse(response)).toEqual({ ok: true, response, dropped: [] });
   });
 
+  test("rejects a reversed interval ending at a leap second", () => {
+    expect(parse({
+      ...response,
+      claims: [{
+        ...response.claims[0]!,
+        temporal_basis: "explicit",
+        valid_from: "2017-01-01T00:00:00Z",
+        valid_to: "2016-12-31T23:59:60Z",
+      }],
+    })).toMatchObject({ ok: false });
+  });
+
+  test("accepts an increasing interval within one millisecond", () => {
+    expect(parse({
+      ...response,
+      claims: [{
+        ...response.claims[0]!,
+        temporal_basis: "explicit",
+        valid_from: "2026-01-01T00:00:00.0001Z",
+        valid_to: "2026-01-01T00:00:00.0002Z",
+      }],
+    })).toMatchObject({ ok: true });
+  });
+
+  test("rejects equal interval endpoints with different UTC offsets", () => {
+    expect(parse({
+      ...response,
+      claims: [{
+        ...response.claims[0]!,
+        temporal_basis: "explicit",
+        valid_from: "2026-01-01T00:00:00Z",
+        valid_to: "2026-01-01T01:00:00+01:00",
+      }],
+    })).toMatchObject({ ok: false });
+  });
+
   test("rejects an arbitrary durable reference and an unknown local reference", () => {
     const arbitrary = structuredClone(response) as any;
     arbitrary.mentions[0]!.candidate_refs = [{ kind: "supplied", id: "durable-secret-id" }];

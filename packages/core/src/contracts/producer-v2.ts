@@ -1,4 +1,5 @@
 import { isRfc3339 } from "../util/time";
+import { compareRfc3339 } from "../agents/time";
 import { isUlid } from "../util/ulid";
 import { cloneExactJson, isPlainObject, utf8ByteLength } from "../util/validate";
 import type { Sensitivity } from "../agents/types";
@@ -447,7 +448,7 @@ function parseResponse(text: string, input: ProducerV2ParseInput): ParseExtractR
       raw.valid_to !== null)) ||
       (raw.valid_from !== null &&
       raw.valid_to !== null &&
-      Date.parse(raw.valid_to) <= Date.parse(raw.valid_from))) {
+      compareRfc3339(raw.valid_to, "valid_to", raw.valid_from, "valid_from") <= 0)) {
       return fail(`claims[${index}] has an invalid interval`);
     }
     const anchors = readAnchors(raw.anchors, events, `claims[${index}].anchors`, 1);

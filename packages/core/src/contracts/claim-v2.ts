@@ -1,6 +1,7 @@
 import { isVisibleIdentifier } from "../util/opaque-identifier";
 import { EVENT_LIMITS } from "./event";
 import { isRfc3339 } from "../util/time";
+import { compareRfc3339 } from "../agents/time";
 import { isUlid } from "../util/ulid";
 import { cloneExactJson, isPlainObject, utf8ByteLength } from "../util/validate";
 import type { ExactJsonLimits } from "../util/validate";
@@ -190,7 +191,8 @@ function validateAssertion(value: Record<string, unknown>): ClaimV2ValidationRes
   if (value.temporal_basis === "unknown" && (value.valid_from !== null || value.valid_to !== null)) {
     return INVALID;
   }
-  if (value.valid_from !== null && value.valid_to !== null && Date.parse(value.valid_to) <= Date.parse(value.valid_from)) {
+  if (value.valid_from !== null && value.valid_to !== null &&
+    compareRfc3339(value.valid_to, "valid_to", value.valid_from, "valid_from") <= 0) {
     return INVALID;
   }
   const context = value.context as RawSubjectRef[];
