@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { MAX_CURSOR_BYTES } from "../contracts/connector";
 import type { RunResult } from "../ingest/run";
 import { isPlainObject } from "../util/validate";
-import { ulid } from "../util/ulid";
+import { isUlid, ulid } from "../util/ulid";
 
 export interface Connection {
   connector_id: string;
@@ -93,7 +93,6 @@ interface ConnectionRunRow {
 
 const NULL_CONFIG = '{"schema":"kizuki.connection-config/v1","state_ref_index":null}';
 const STATE_CONFIG = '{"schema":"kizuki.connection-config/v1","state_ref_index":0}';
-const CORE_ULID = /^[0-9A-HJKMNPQRSTVWXYZ]{26}$/;
 
 function stringArray(raw: string, field: string): string[] {
   const parsed: unknown = JSON.parse(raw);
@@ -115,7 +114,7 @@ function configFromRow(raw: string, refs: string[], sourceKey: string): Connecti
 }
 
 function connectionFromRow(row: ConnectionRow): Connection {
-  if (!CORE_ULID.test(row.source_key)) {
+  if (!isUlid(row.source_key)) {
     throw new LedgerError("connection source_key is not core-generated");
   }
   if (typeof row.implementation_version !== "string") {
@@ -306,7 +305,7 @@ export function registerConnection(
   if (typeof connector_id !== "string" || connector_id.length === 0) {
     throw new LedgerError("connector_id is required");
   }
-  if (!CORE_ULID.test(source_key)) {
+  if (!isUlid(source_key)) {
     throw new LedgerError("connection source_key is not core-generated");
   }
   const version = options?.implementation_version ?? "";
