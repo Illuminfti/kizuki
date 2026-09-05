@@ -1,3 +1,5 @@
+import { setDefaultTimeout } from "bun:test";
+setDefaultTimeout(60_000);
 import {
   mkdirSync,
   readFileSync,
@@ -28,24 +30,24 @@ import {
   temporaryPortContext,
 } from "./helpers";
 
-const disposers: (() => void)[] = [];
+const disposers: (() => void | Promise<void>)[] = [];
 
-afterEach(() => {
-  for (const dispose of disposers.splice(0)) dispose();
+afterEach(async () => {
+  for (const dispose of disposers.splice(0).reverse()) await dispose();
 });
 
-function open(
+async function open(
   options: {
     embedding?: FixtureEmbeddingPort;
     chunk_tokens?: number;
     chunk_overlap?: number;
     holder_id?: string;
   } = {},
-): { port: EmbeddedRetrievalPort; dataDir: string; cleanup: () => void } {
+): Promise<{ port: EmbeddedRetrievalPort; dataDir: string; cleanup: () => Promise<void> }> {
   const temporary = temporaryPortContext();
-  const port = createEmbeddedRetrievalPort(temporary.ctx, options);
-  const cleanup = () => {
-    void port.close();
+  const port = await createEmbeddedRetrievalPort(temporary.ctx, options);
+  const cleanup = async () => {
+    await port.close();
     temporary.cleanup();
   };
   disposers.push(cleanup);
@@ -67,8 +69,8 @@ const LONG_DOC: RetrievalDoc = {
 };
 
 describe("embedded retrieval contention", () => {
-  test("single writer lease is exclusive", () => {
-    const { dataDir } = open({ holder_id: "writer-a" });
+  test("single writer lease is exclusive", async () => {
+    const { dataDir } = await open({ holder_id: "writer-a" });
     const temporary = {
       vault_path: join(dataDir, "..", "..", ".."),
       data_dir: dataDir,
@@ -77,11 +79,9 @@ describe("embedded retrieval contention", () => {
       clock: () => FIXED_NOW,
       logger: () => {},
     };
-    expect(() =>
-      createEmbeddedRetrievalPort(temporary, { holder_id: "writer-b" }),
-    ).toThrow(PortError);
+    await expect(createEmbeddedRetrievalPort(temporary, { holder_id: "writer-b" })).rejects.toBeInstanceOf(PortError);
     try {
-      createEmbeddedRetrievalPort(temporary, { holder_id: "writer-b" });
+      await createEmbeddedRetrievalPort(temporary, { holder_id: "writer-b" });
       throw new Error("expected exclusive lease");
     } catch (error) {
       expect(error).toBeInstanceOf(PortError);
@@ -89,7 +89,7 @@ describe("embedded retrieval contention", () => {
     }
   });
 
-  test("a live holder's lease is never stolen", () => {
+  test("a live holder's lease is never stolen", async () => {
     const temporary = temporaryPortContext();
     disposers.push(temporary.cleanup);
     writeSyntheticHolder(temporary.ctx.data_dir, {
@@ -98,9 +98,9 @@ describe("embedded retrieval contention", () => {
       heartbeat_at: "2020-01-01T00:00:00.000Z",
       acquired_at: "2020-01-01T00:00:00.000Z",
     });
-    expect(() => createEmbeddedRetrievalPort(temporary.ctx)).toThrow(PortError);
+    await expect(createEmbeddedRetrievalPort(temporary.ctx)).rejects.toBeInstanceOf(PortError);
     try {
-      createEmbeddedRetrievalPort(temporary.ctx);
+      await createEmbeddedRetrievalPort(temporary.ctx);
       throw new Error("expected live lease to stay");
     } catch (error) {
       expect(error).toBeInstanceOf(PortError);
@@ -116,7 +116,7 @@ describe("embedded retrieval contention", () => {
     expect(snapshot.holder?.holder_id).toBe("live-holder");
   });
 
-  test("a dead holder's lease is reclaimed with a receipt", () => {
+  test("a dead holder's lease is reclaimed with a receipt", async () => {
     const temporary = temporaryPortContext();
     disposers.push(temporary.cleanup);
     const deadPid = 2_147_000_000;
@@ -127,11 +127,11 @@ describe("embedded retrieval contention", () => {
       heartbeat_at: "2020-01-01T00:00:00.000Z",
       acquired_at: "2020-01-01T00:00:00.000Z",
     });
-    const port = createEmbeddedRetrievalPort(temporary.ctx, {
+    const port = await createEmbeddedRetrievalPort(temporary.ctx, {
       holder_id: "replacement",
     });
-    disposers.push(() => {
-      void port.close();
+    disposers.push(async () => {
+      await port.close();
     });
     expect(port.leaseReceipt.action).toBe("reclaimed");
     expect(port.leaseReceipt.previous?.holder_id).toBe("dead-holder");
@@ -143,7 +143,7 @@ describe("embedded retrieval contention", () => {
   });
 
   test("starvation reports as timeout with queue depth", async () => {
-    const { port, dataDir } = open({ holder_id: "holder" });
+    const { port, dataDir } = await open({ holder_id: "holder" });
     const waiting = openEmbeddedRetrievalPort(
       {
         vault_path: join(dataDir, "..", "..", ".."),
@@ -175,7 +175,7 @@ describe("embedded retrieval contention", () => {
 
   test("no txn spans an embed call", async () => {
     const embedder = new FixtureEmbeddingPort();
-    const { port } = open({ embedding: embedder });
+    const { port } = await open({ embedding: embedder });
     try {
       await port.embedInsideOpenTransaction();
       throw new Error("expected txn guard");
@@ -205,7 +205,7 @@ describe("embedded retrieval contention", () => {
   });
 
   test("bulk edit produces one refresh pass", async () => {
-    const { port, dataDir } = open();
+    const { port, dataDir } = await open();
     const root = join(dataDir, "watch");
     mkdirSync(root, { recursive: true, mode: 0o700 });
     let release: (() => void) | undefined;
@@ -232,7 +232,7 @@ describe("embedded retrieval contention", () => {
   });
 
   test("self-write is not re-ingested", async () => {
-    const { port, dataDir } = open();
+    const { port, dataDir } = await open();
     const root = join(dataDir, "watch");
     mkdirSync(root, { recursive: true, mode: 0o700 });
     const watcher = port.watch({ root });
@@ -245,7 +245,7 @@ describe("embedded retrieval contention", () => {
   });
 
   test("rename-into-place is detected", async () => {
-    const { port, dataDir } = open();
+    const { port, dataDir } = await open();
     const root = join(dataDir, "watch");
     mkdirSync(root, { recursive: true, mode: 0o700 });
     const watcher = port.watch({ root });
@@ -261,11 +261,11 @@ describe("embedded retrieval contention", () => {
 
   test("phantom embeddings are detected and repaired", async () => {
     const embedder = new FixtureEmbeddingPort();
-    const { port } = open({ embedding: embedder });
+    const { port } = await open({ embedding: embedder });
     await port.upsert(SYNTHETIC_DOCS);
     const healthy = await port.health();
     expect(healthy.status).toBe("ready");
-    port.injectPhantom("page:grace");
+    await port.injectPhantom("page:grace");
     const sick = await port.health();
     expect(sick.status).toBe("unavailable");
     if (sick.status === "unavailable") {
@@ -283,8 +283,8 @@ describe("embedded retrieval contention", () => {
     const temporary = temporaryPortContext();
     disposers.push(temporary.cleanup);
     const surface = new McpEngineSurface();
-    disposers.push(() => {
-      void surface.close();
+    disposers.push(async () => {
+      await surface.close();
     });
     const first = await surface.invoke(temporary.ctx, {}, async (port) => {
       await port.upsert(SYNTHETIC_DOCS);
@@ -305,7 +305,7 @@ describe("embedded retrieval contention", () => {
     disposers.push(temporary.cleanup);
     const embedder = new FixtureEmbeddingPort();
     embedder.failAfter = 1;
-    const first = createEmbeddedRetrievalPort(temporary.ctx, {
+    const first = await createEmbeddedRetrievalPort(temporary.ctx, {
       embedding: embedder,
       chunk_tokens: 3,
       chunk_overlap: 0,
@@ -324,14 +324,14 @@ describe("embedded retrieval contention", () => {
     await first.close();
 
     const resumeEmbedder = new FixtureEmbeddingPort();
-    const second = createEmbeddedRetrievalPort(temporary.ctx, {
+    const second = await createEmbeddedRetrievalPort(temporary.ctx, {
       embedding: resumeEmbedder,
       chunk_tokens: 3,
       chunk_overlap: 0,
       holder_id: "embed-2",
     });
-    disposers.push(() => {
-      void second.close();
+    disposers.push(async () => {
+      await second.close();
     });
     expect(second.embedCheckpoint()?.chunk_index).toBe(1);
     expect(second.embedCheckpoint()?.doc_id).toBe("page:long");

@@ -1,3 +1,4 @@
+import { canonAuthorities } from "../canon/authority";
 import type { Database } from "bun:sqlite";
 import { SENSITIVITY_ORDER } from "../agents/types";
 import type { Sensitivity } from "../agents/types";
@@ -31,6 +32,7 @@ export interface GraphEdge {
 }
 
 export interface GraphRebuildInput {
+  authorities?: ReadonlyMap<string,RetrievalAuthority>;
   generation: string;
   pages: readonly CanonPage[];
   skipped: readonly SkippedPage[];
@@ -227,6 +229,7 @@ function pageEdges(
   index: LinkIndex,
   byId: ReadonlyMap<string, CanonPage>,
   eventHints: ReadonlyMap<string, string>,
+  authority: RetrievalAuthority,
 ): StoredEdge[] {
   const provenance = JSON.stringify(stringArray(page.data["sources"]));
   const sensitivity = pageSensitivity(page);
@@ -244,7 +247,7 @@ function pageEdges(
       sensitivity,
       dest_sensitivity: destSensitivity(kind, dst, byId, eventHints),
       taint,
-      authority: "owner_authored",
+      authority,
       provenance,
     });
   };
@@ -284,6 +287,7 @@ function insertEdge(db: Database, edge: StoredEdge): void {
 export function replacePageEdges(
   db: Database,
   pages: readonly CanonPage[],
+  authorities = canonAuthorities(db,pages),
 ): void {
   const live = pages.filter(isLiveCanonPage);
   const index = linkIndexFromPages(pages);
@@ -291,7 +295,7 @@ export function replacePageEdges(
   const eventHints = eventSensitivityHints(db, sourceEventIds(live));
   db.exec("DELETE FROM graph_edges");
   for (const page of live) {
-    for (const edge of pageEdges(page, index, byId, eventHints)) {
+    for (const edge of pageEdges(page, index, byId, eventHints, authorities.get(page.relPath)??"model_inference")) {
       insertEdge(db, edge);
     }
   }
@@ -351,9 +355,10 @@ export function refreshPageEdges(
   page: CanonPage,
   pages: readonly CanonPage[],
   skipped: number,
+  authorities = canonAuthorities(db,pages),
 ): void {
   if (skipped === 0) {
-    replacePageEdges(db, pages);
+    replacePageEdges(db, pages,authorities);
     restoreGraphStamp(db, pages);
     return;
   }
@@ -364,7 +369,7 @@ export function refreshPageEdges(
   db.query("DELETE FROM graph_edges WHERE src = ?").run(page.id);
   if (isLiveCanonPage(page)) {
     const eventHints = eventSensitivityHints(db, sourceEventIds([page]));
-    for (const edge of pageEdges(page, index, byId, eventHints)) {
+    for (const edge of pageEdges(page, index, byId, eventHints, authorities.get(page.relPath)??"model_inference")) {
       insertEdge(db, edge);
     }
   }
@@ -431,7 +436,7 @@ export function rebuildGraphLayer(
   input: GraphRebuildInput,
 ): GraphRebuildResult {
   const live = input.pages.filter(isLiveCanonPage);
-  replacePageEdges(db, live);
+  replacePageEdges(db, live,input.authorities===undefined?canonAuthorities(db,live):new Map(input.authorities));
   const edges =
     db
       .query<{ count: number }, []>(

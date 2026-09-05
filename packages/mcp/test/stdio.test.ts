@@ -98,7 +98,7 @@ describe("the stdio process entry", () => {
       HANDSHAKE,
     );
     expect(result.code).toBe(1);
-    expect(result.stderr.trim()).toBe("retrieval port not registered: nobody");
+    expect(result.stderr.trim()).toBe("retrieval port could not start");
     expect(result.stdout).toBe("");
   });
 

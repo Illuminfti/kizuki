@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import nodeProcess from "node:process";
 import { loadServeConfig } from "./config";
 import { startServeHttp } from "./http";
 import type { ServeHttpHandle } from "./http";
@@ -70,22 +71,31 @@ export async function runServeDaemon(
   if (!acquired.acquired) {
     throw new ServeDaemonError("lease_busy", "writer lease is held by a live process");
   }
+  let http: ServeHttpHandle | null = null;
+  let receipts = recovered.length;
+  const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  // SIGTERM is the public stop mechanism.  Consume it here so an in-flight
+  // receipted write can reach its durable boundary, then leave the loop and
+  // release the writer lease/PID in the finally block below.
+  let stopping = false;
+  const requestStop = (): void => { stopping = true; };
+  nodeProcess.once("SIGTERM", requestStop);
+  nodeProcess.once("SIGINT", requestStop);
+  try {
   writePid(vaultPath, process.pid);
   const config = loadServeConfig(vaultPath);
   const httpEnabled = options.http ?? config.http;
-  let http: ServeHttpHandle | null = null;
   if (httpEnabled) {
     http = startServeHttp({
       db,
       vaultPath,
       host: config.bind_host,
       port: options.port ?? config.bind_port,
+      ...(options.hooks?.claims?.retrieval === undefined ? {} : { retrieval: options.hooks.claims.retrieval }),
     });
   }
 
-  let receipts = recovered.length;
-  const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
-  try {
+
     if (options.once === true) {
       const rails =
         options.rails ??
@@ -102,6 +112,7 @@ export async function runServeDaemon(
         "journal-prune",
       ];
       for (const rail of listed) {
+        if (stopping) break;
         if (!isRailId(rail)) continue;
         await runRail(db, vaultPath, rail, {
           now: process.now,
@@ -113,7 +124,7 @@ export async function runServeDaemon(
       return { receipts, http };
     }
 
-    while (options.shouldContinue?.() ?? true) {
+    while (!stopping && (options.shouldContinue?.() ?? true)) {
       heartbeatLease(db, process);
       const due = dueRails(db, process.now());
       const rail = due[0];
@@ -126,13 +137,17 @@ export async function runServeDaemon(
         continue;
       }
       await sleep(1_000);
-      if (options.shouldContinue !== undefined && !options.shouldContinue()) break;
+      if (stopping || (options.shouldContinue !== undefined && !options.shouldContinue())) break;
     }
     return { receipts, http };
   } finally {
-    if (http !== null) await http.stop();
-    releaseLease(db, process);
-    clearPid(vaultPath);
+    nodeProcess.off("SIGTERM", requestStop);
+    nodeProcess.off("SIGINT", requestStop);
+    try { if (http !== null) await http.stop(); }
+    finally {
+      try { releaseLease(db, process); }
+      finally { clearPid(vaultPath); }
+    }
   }
 }
 

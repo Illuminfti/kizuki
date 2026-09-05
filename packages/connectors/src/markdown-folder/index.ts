@@ -5,6 +5,7 @@ import path from "node:path";
 import { freezeManifest, isPlainObject, policyForConnector } from "@kizuki/core";
 import type {
   CaptureEventInput,
+  SubjectRef,
   Connector,
   Cursor,
   HealthReport,
@@ -568,6 +569,12 @@ function hiddenByScanError(
   return false;
 }
 
+/** Source-record identity, bounded without lossy path normalization or mtime dependence. */
+function documentSubject(relpath: string): SubjectRef {
+  const digest=new Bun.CryptoHasher("sha256").update(relpath).digest("hex");
+  return {subject_id:`markdown-folder:${digest}`,role:"about",display_name:path.basename(relpath)};
+}
+
 function fileEvent(file: MarkdownFile, observedAt: string): CaptureEventInput {
   return {
     schema: "kizuki.event/v1",
@@ -577,7 +584,7 @@ function fileEvent(file: MarkdownFile, observedAt: string): CaptureEventInput {
     occurred_at: new Date(file.mtimeMs).toISOString(),
     observed_at: observedAt,
     text: file.content,
-    subjects: [],
+    subjects: [documentSubject(file.relpath)],
     deleted: false,
     attachments: [],
     metadata: {
@@ -597,7 +604,7 @@ function tombstone(relpath: string, observedAt: string): CaptureEventInput {
     occurred_at: observedAt,
     observed_at: observedAt,
     text: "",
-    subjects: [],
+    subjects: [documentSubject(relpath)],
     deleted: true,
     attachments: [],
     metadata: { relpath, snapshot: "absent" },
@@ -613,7 +620,7 @@ function fixtureEvent(relpath: string, text: string): CaptureEventInput {
     occurred_at: "2026-01-01T00:00:00.000Z",
     observed_at: "2026-01-01T00:00:00.000Z",
     text,
-    subjects: [],
+    subjects: [documentSubject(relpath)],
     deleted: false,
     attachments: [],
     metadata: {

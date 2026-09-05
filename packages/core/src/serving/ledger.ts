@@ -169,3 +169,14 @@ export function ledgerHitSource(hit: SearchHit): QuotedSource {
     text: hit.snippet,
   };
 }
+
+/** Load the current authoritative row; cached retrieval snippets are never evidence. */
+export function currentQuotedSource(db: Database, eventId: string): QuotedSource | null {
+  if (!liveEventIds(db, [eventId]).has(eventId)) return null;
+  const row = db.query<ServableEventRow & { connector_id: string; text: string }, [string]>(
+    `SELECT event_id, connector_id, kind, occurred_at, text,
+            coalesce(sensitivity_hint, 'unlabeled') AS sensitivity, subjects
+       FROM events WHERE event_id = ?`,
+  ).get(eventId);
+  return row === null ? null : { ...row, subjects: subjectIds(row.subjects) };
+}

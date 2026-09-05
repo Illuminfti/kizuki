@@ -150,10 +150,10 @@ describe("serveGetPage", () => {
     const written = serveGetPage(fixture.owner(), { path: receipt.page_path });
     expect(receipt.page_path).toBe("facts/receipted.md");
     expect(written.canon[0]?.authority).toBe(receipt.authority);
-    // A hand-authored page no receipt covers borrows no tier.
+    // RFC 0002 section 5.1: unmatched owner-controlled bytes are owner-authored.
     expect(
       serveGetPage(fixture.owner(), { id: "person:ada" }).canon[0]?.authority,
-    ).toBeNull();
+    ).toBe("owner_authored");
   });
 });
 

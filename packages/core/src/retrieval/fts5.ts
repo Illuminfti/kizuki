@@ -118,6 +118,7 @@ export class Fts5RetrievalPort implements RetrievalPort {
   private readonly ctx: PortContext;
   private readonly db: Database;
   private closed = false;
+  private rebuilding = false;
 
   constructor(
     ctx: PortContext,
@@ -142,8 +143,11 @@ export class Fts5RetrievalPort implements RetrievalPort {
   async upsert(
     docs: readonly RetrievalDoc[],
   ): Promise<RetrievalMutationReport> {
-    this.assertOpen();
-    const validated = docs.map(validateRetrievalDoc);
+    this.assertMutable();
+    return this.writeDocs(docs.map(validateRetrievalDoc));
+  }
+
+  private writeDocs(validated: readonly RetrievalDoc[]): RetrievalMutationReport {
     this.db.transaction(() => {
       const removeDocs = this.db.query<never, [string]>(
         "DELETE FROM search_docs WHERE doc_id = ?",
@@ -215,13 +219,37 @@ export class Fts5RetrievalPort implements RetrievalPort {
           JSON.stringify(doc.subjects),
           JSON.stringify(doc.provenance),
           doc.occurred_at ?? "",
-          doc.updated_at,
+          doc.updated_at ?? "",
         ];
         replace.run(...bindings);
         insert.run(...bindings);
       }
     }).immediate();
     return { processed: validated.length };
+  }
+
+  async rebuildFromDocuments(source: AsyncIterable<RetrievalDoc> | Iterable<RetrievalDoc>): Promise<void> {
+    this.assertMutable();
+    this.rebuilding = true;
+    try {
+      const docs: RetrievalDoc[] = [];
+      for await (const doc of source) {
+        if (docs.length >= 10_000) throw new PortError("config_invalid", "FTS rebuild exceeds 10000 documents", false);
+        docs.push(validateRetrievalDoc(doc));
+      }
+      this.assertOpen();
+      this.db.transaction(() => {
+        this.db.exec("DELETE FROM search_docs; DELETE FROM search_documents");
+        this.writeDocs(docs);
+      }).immediate();
+    } finally {
+      this.rebuilding = false;
+    }
+  }
+
+  private assertMutable(): void {
+    this.assertOpen();
+    if (this.rebuilding) throw new PortError("unavailable", "retrieval rebuild is in progress", true);
   }
 
   async search(query: RetrievalQuery): Promise<RetrievalResult> {
@@ -355,7 +383,7 @@ export class Fts5RetrievalPort implements RetrievalPort {
   }
 
   async remove(ids: readonly string[]): Promise<RetrievalMutationReport> {
-    this.assertOpen();
+    this.assertMutable();
     this.db.transaction(() => {
       const removeFts = this.db.query<never, [string]>(
         "DELETE FROM search_docs WHERE doc_id = ?",

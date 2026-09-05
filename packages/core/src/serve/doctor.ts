@@ -36,6 +36,8 @@ export interface ServeDoctorOptions {
   readonly now?: string;
   readonly supervisor?: SupervisorHost;
   readonly model_ref?: string | null;
+  /** Raw config intent is shown as unverified until a host binds its port. */
+  readonly configured_model_ref?: string | null;
 }
 
 function ageSeconds(from: string | null, now: string): number | null {
@@ -178,14 +180,16 @@ function calibration(db: Database, receipts: RunReceipt[], now: string): Calibra
 function modelDoctor(
   receipts: RunReceipt[],
   modelRef: string | null | undefined,
+  configuredModelRef: string | null | undefined,
   configCanonDay: number,
   usedToday: number,
 ): ModelDoctor {
   const on = typeof modelRef === "string" && modelRef.length > 0;
-  const lastOk = [...receipts].reverse().find((receipt) => receipt.model.calls > 0);
+  const unverified = !on && typeof configuredModelRef === "string" && configuredModelRef.length > 0;
+  const lastOk = [...receipts].reverse().find((receipt) => receipt.model.calls > 0 && receipt.model.usage_unknown !== true && receipt.model.unavailable === 0);
   const unavailable = receipts.reduce((sum, receipt) => sum + receipt.model.unavailable, 0);
   return {
-    canon_writing: on ? "on" : "off",
+    canon_writing: on ? "on" : unverified ? "unverified" : "off",
     model_ref: on ? modelRef : null,
     last_success_at: lastOk?.finished_at ?? null,
     unavailable,
@@ -193,7 +197,9 @@ function modelDoctor(
       canon_writes_per_day: { used: usedToday, limit: configCanonDay },
     },
     detail: on
-      ? `canon writing: on (${modelRef})`
+      ? `canon writing: on (${modelRef}); last_success=${lastOk?.finished_at ?? "never"} unavailable=${unavailable}`
+      : unverified
+        ? "canon writing: unverified (model configured but not bound by the running host)"
       : "canon writing: off (no model configured — connectors, ledger, search, timeline and undo still work)",
   };
 }
@@ -339,8 +345,9 @@ export function inspectServeDoctor(
   const usedToday = receipts
     .filter((receipt) => receipt.finished_at.startsWith(now.slice(0, 10)))
     .reduce((sum, receipt) => sum + receipt.canon_writes, 0);
-  const modelRef = options.model_ref ?? loadConfiguredModelRef(vaultPath);
-  const model = modelDoctor(receipts, modelRef, config.canon_writes_per_day, usedToday);
+  const modelRef = options.model_ref ?? null;
+  const configuredModelRef = options.configured_model_ref ?? loadConfiguredModelRef(vaultPath);
+  const model = modelDoctor(receipts, modelRef, configuredModelRef, config.canon_writes_per_day, usedToday);
   const stores = storeDoctor(db, vaultPath, now);
   const cal = calibration(db, receipts, now);
   const failures: string[] = [];

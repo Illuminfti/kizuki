@@ -1,11 +1,8 @@
 import type { Database } from "bun:sqlite";
 import type { CaptureEventInput } from "@kizuki/core";
 import type { ParsedScreenpipeConfig } from "./config";
-import {
-  recordSkippedFrame,
-  recordSkippedTranscription,
-  type ScreenpipeCursor,
-} from "./cursor";
+import { type ScreenpipeCursor } from "./cursor";
+import { ScreenpipeConnectorError } from "./errors";
 import { mapFrame, mapTranscription } from "./map";
 import {
   readFrames,
@@ -52,7 +49,7 @@ export function createFrameWalker(
     cursor.last_frame_id,
     cursor.snapshot_frame_max,
     (after, limit, through) => readFrames(db, after, limit, through),
-    (row) => prepareFrame(row, cursor, boundary, observedAt, config),
+    (row) => prepareFrame(row, boundary, observedAt, config),
     (id) => {
       cursor.last_frame_id = id;
     },
@@ -70,7 +67,7 @@ export function createTranscriptionWalker(
     cursor.last_transcription_id,
     cursor.snapshot_transcription_max,
     (after, limit, through) => readTranscriptions(db, after, limit, through),
-    (row) => prepareTranscription(row, cursor, boundary, observedAt, config),
+    (row) => prepareTranscription(row, boundary, observedAt, config),
     (id) => {
       cursor.last_transcription_id = id;
     },
@@ -79,7 +76,6 @@ export function createTranscriptionWalker(
 
 type PrepareResult =
   | { kind: "emit"; prepared: PreparedEvent }
-  | { kind: "skip" }
   | { kind: "pause" };
 
 class RowWalker<T extends { id: number }> implements StreamWalker {
@@ -129,10 +125,6 @@ class RowWalker<T extends { id: number }> implements StreamWalker {
       switch (prepared.kind) {
         case "emit":
           return prepared.prepared;
-        case "skip":
-          this.commitId(row.id);
-          this.#after = row.id;
-          continue;
         case "pause":
           this.paused = true;
           return null;
@@ -158,24 +150,17 @@ class RowWalker<T extends { id: number }> implements StreamWalker {
 
 function prepareFrame(
   row: FrameRow,
-  cursor: ScreenpipeCursor,
   boundary: string,
   observedAt: string,
   config: ParsedScreenpipeConfig,
 ): PrepareResult {
   const resolved = resolveTimestamp(row.timestamp, config.timezone);
   if ("reject" in resolved) {
-    return skipFrame(
-      cursor,
-      row.id,
-      resolved.reject === "offset_unknown"
-        ? "frames_offset_unknown"
-        : "frames_bad_timestamp",
-    );
+    throw malformedRow("frame", row.id, "timestamp");
   }
   if (resolved.iso > boundary) return { kind: "pause" };
   if (row.full_text === null || row.full_text.trim().length === 0) {
-    return skipFrame(cursor, row.id, "frames_without_text");
+    throw malformedRow("frame", row.id, "text");
   }
   return {
     kind: "emit",
@@ -193,24 +178,17 @@ function prepareFrame(
 
 function prepareTranscription(
   row: TranscriptionRow,
-  cursor: ScreenpipeCursor,
   boundary: string,
   observedAt: string,
   config: ParsedScreenpipeConfig,
 ): PrepareResult {
   const resolved = resolveTimestamp(row.timestamp, config.timezone);
   if ("reject" in resolved) {
-    return skipTranscription(
-      cursor,
-      row.id,
-      resolved.reject === "offset_unknown"
-        ? "transcriptions_offset_unknown"
-        : "transcriptions_bad_timestamp",
-    );
+    throw malformedRow("transcription", row.id, "timestamp");
   }
   const occurredAt = offsetSeconds(resolved.iso, row.start_time);
   if (occurredAt === null) {
-    return skipTranscription(cursor, row.id, "transcriptions_bad_offset");
+    throw malformedRow("transcription", row.id, "offset");
   }
   if (occurredAt > boundary) return { kind: "pause" };
   return {
@@ -227,25 +205,13 @@ function prepareTranscription(
   };
 }
 
-function skipFrame(
-  cursor: ScreenpipeCursor,
+function malformedRow(
+  kind: StreamKind,
   id: number,
-  reason: "frames_offset_unknown" | "frames_bad_timestamp" | "frames_without_text",
-): PrepareResult {
-  cursor.skipped[reason] += 1;
-  recordSkippedFrame(cursor, id);
-  return { kind: "skip" };
-}
-
-function skipTranscription(
-  cursor: ScreenpipeCursor,
-  id: number,
-  reason:
-    | "transcriptions_offset_unknown"
-    | "transcriptions_bad_timestamp"
-    | "transcriptions_bad_offset",
-): PrepareResult {
-  cursor.skipped[reason] += 1;
-  recordSkippedTranscription(cursor, id);
-  return { kind: "skip" };
+  field: string,
+): ScreenpipeConnectorError {
+  return new ScreenpipeConnectorError(
+    "parse_error",
+    `kizuki.screenpipe: malformed ${kind}:${id} ${field}; checkpoint was not advanced`,
+  );
 }

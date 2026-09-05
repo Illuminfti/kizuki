@@ -28,6 +28,7 @@ import type { VaultContext } from "../context";
 import { countCanonReceiptRows, indexFreshness, walkCanonReceipts } from "../derived";
 import { clean, errorText, jsonEnvelope } from "../output";
 import { effectiveVaultConfig, loadVaultConfig } from "../vault-config";
+import { createServeRuntime } from "../serve-runtime";
 import type { CliIo, Command } from "./index";
 
 const HEALTH_DEADLINE_MS = 3_000;
@@ -95,7 +96,7 @@ export const doctorCommand: Command = {
       }
       printHuman(io, report);
       return report.ok ? 0 : 1;
-    });
+    }, { retrieval: "none" });
   },
 };
 
@@ -301,8 +302,21 @@ async function collect(
     env.HOME ?? env.XDG_CONFIG_HOME ?? "",
     `kizuki serve --vault ${vaultPath}`,
   );
+  let boundModelRef: string | null = null;
+  try {
+    const runtime = await createServeRuntime({ ...ctx, env, err: () => {} });
+    try {
+      boundModelRef = runtime.hooks.model_ref ?? null;
+    } finally {
+      await runtime.close();
+    }
+  } catch {
+    // Doctor reports raw configuration as unverified below. Binding errors
+    // never make a string configuration look like an enabled writer.
+  }
   const serve = inspectServeDoctor(ctx.db, vaultPath, {
     supervisor: host,
+    model_ref: boundModelRef,
   });
   const ok =
     vault.counts.invalid === 0 &&

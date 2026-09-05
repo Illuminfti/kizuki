@@ -93,7 +93,7 @@ describe("doctor liveness", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("doctor reports canon writing on from a configured model ref", () => {
+  test("doctor reports an unverified configured model rather than a write-enabled string", () => {
     const setup = tempVault();
     writeFileSync(
       join(setup.vault, ".kizuki", "serve.toml"),
@@ -102,8 +102,22 @@ describe("doctor liveness", () => {
     const result = runCli(setup.env, "doctor");
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain(
-      "canon writing: on (kizuki.llm.openai-compatible:synthetic@local)",
+      "canon writing: unverified (model configured but not bound by the running host)",
     );
+  });
+
+  test("doctor does not call a model with an unresolved configured secret bound", () => {
+    const setup = tempVault();
+    writeFileSync(
+      join(setup.vault, ".kizuki", "serve.toml"),
+      '[ports.llm]\nid = "kizuki.llm.openai-compatible"\nbase_url = "http://127.0.0.1:7777/v1"\nmodel = "loopback"\nsecret_ref = "env:MODEL_KEY"\n',
+    );
+    const result = runCli(setup.env, "doctor");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "canon writing: unverified (model configured but not bound by the running host)",
+    );
+    expect(result.stdout).not.toContain("canon writing: on");
   });
 
   test("doctor does not treat KIZUKI_MODEL_REF as a configured write path", () => {

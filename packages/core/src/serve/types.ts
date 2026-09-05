@@ -90,6 +90,8 @@ export interface LeaseRow {
 }
 
 export interface RunModelReport {
+  /** An interrupted producer attempt: token counts are lower bounds, not measured totals. */
+  readonly usage_unknown?: boolean;
   readonly calls: number;
   readonly input_tokens: number;
   readonly output_tokens: number;
@@ -174,7 +176,7 @@ export interface RailDoctor {
 }
 
 export interface ModelDoctor {
-  readonly canon_writing: "on" | "off";
+  readonly canon_writing: "on" | "off" | "unverified";
   readonly model_ref: string | null;
   readonly last_success_at: string | null;
   readonly unavailable: number;

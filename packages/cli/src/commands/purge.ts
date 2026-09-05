@@ -97,7 +97,7 @@ export const purgeCommand: Command = {
         throw new UsageError(this.usage);
       }
       return withVault(io, async (ctx) => {
-        const report = await verifyPurge(ctx.db, ctx.vaultPath, verifyId);
+        const report = await verifyPurge(ctx.db, ctx.vaultPath, verifyId, ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval });
         if (asJson) {
           io.out(
             jsonEnvelope("purge", report.ok ? "ok" : "error", {
@@ -193,6 +193,7 @@ export const purgeCommand: Command = {
         const outcome = await runPurge(ctx.db, ctx.vaultPath, filter, reason, {
           include_aliases: includeAliases,
           allow_empty: allowEmpty,
+          ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }),
         });
         if (asJson) {
           io.out(

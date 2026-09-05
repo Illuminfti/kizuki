@@ -15,6 +15,7 @@ import {
 } from "../../src/producer/model";
 import {
   FAKE_MODEL_REF,
+  GRACE,
   GRACE_EVENT,
   TOM,
   TOM_EVENT,
@@ -86,13 +87,18 @@ describe("kizuki.producer.model", () => {
     const llm = scriptedLlm(() => unavailableError());
     await withProducer(llm, async (producer) => {
       const result = await producer.produce(input([GRACE_EVENT]));
-      expect(result).toEqual({ status: "unavailable", reason: "llm unavailable" });
+      expect(result).toEqual({
+        status: "unavailable",
+        reason: "llm unavailable",
+        usage: { calls: 1, input_tokens: 0, output_tokens: 0 },
+      });
     });
     const timeout = scriptedLlm(() => new PortError("timeout", "model request timed out", true));
     await withProducer(timeout, async (producer) => {
       expect(await producer.produce(input([GRACE_EVENT]))).toEqual({
         status: "unavailable",
         reason: "llm timeout",
+        usage: { calls: 1, input_tokens: 0, output_tokens: 0 },
       });
     });
     const thrown = scriptedLlm(() => new Error("provider said: leak-me"));
@@ -100,6 +106,7 @@ describe("kizuki.producer.model", () => {
       expect(await producer.produce(input([GRACE_EVENT]))).toEqual({
         status: "unavailable",
         reason: "llm error",
+        usage: { calls: 1, input_tokens: 0, output_tokens: 0 },
       });
     });
   });
@@ -196,22 +203,44 @@ describe("kizuki.producer.model", () => {
     });
   });
 
-  test("a subject the input never named is dropped, not minted", async () => {
+  test("a draft cannot borrow evidence from an event that does not name its subject", async () => {
     const llm = scriptedLlm(() =>
       responseText([draft(), draft({ subject: "acme-mail:invented" })]),
     );
     await withProducer(llm, async (producer) => {
       const result = await producer.produce(input([GRACE_EVENT]));
-      expect(result.status).toBe("ok");
-      if (result.status !== "ok") return;
-      expect(result.claims).toEqual([draft()]);
-      expect(result.dropped).toEqual([
-        {
-          reason: "unknown_subject",
-          subject: "acme-mail:invented",
-          event_ids: [GRACE_EVENT.event_id],
+      expect(result).toMatchObject({
+        status: "ok",
+        claims: [expect.objectContaining({ subject: "acme-mail:grace" })],
+        dropped: [expect.objectContaining({ reason: "unknown_subject", subject: "acme-mail:invented" })],
+      });
+    });
+  });
+
+  test("each request carries only that batch's event subjects and known claims", async () => {
+    const llm = scriptedLlm(() => responseText([draft()]));
+    await withProducer(llm, async (producer) => {
+      const request = input([GRACE_EVENT]);
+      const result = await producer.produce({
+        ...request,
+        context: {
+          ...request.context,
+          subjects: [...request.context.subjects, ...TOM_EVENT.subjects],
+          known_claims: [{
+            claim_id: "01JKNOWNCLAIM00000000000000",
+            subject: TOM,
+            predicate: "location.based_in",
+            object: "Lisbon",
+            polarity: "positive",
+            confidence: 0.9,
+          }],
         },
-      ]);
+      });
+      expect(result.status).toBe("ok");
+      const quoted = llm.requests[0]!.messages[1]!.content;
+      expect(quoted).toContain(GRACE);
+      expect(quoted).not.toContain(TOM);
+      expect(quoted).not.toContain("01JKNOWNCLAIM00000000000000");
     });
   });
 
@@ -391,7 +420,7 @@ describe("kizuki.producer.model", () => {
     expect(registry.listPorts("producer").map((d) => d.id)).toEqual([MODEL_PRODUCER_ID]);
     const temporary = temporaryProducerContext(MODEL_PRODUCER_DESCRIPTOR);
     try {
-      const bound = registry.bindFromConfig<ProducerPort>(
+      const bound = await registry.bindFromConfig<ProducerPort>(
         "producer",
         { producer: MODEL_PRODUCER_ID },
         temporary.ctx,

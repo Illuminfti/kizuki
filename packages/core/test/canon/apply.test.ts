@@ -91,7 +91,7 @@ describe("applyCanonWrite", () => {
     );
     expect((dayStopped as BudgetExhausted).stopped).toBe("budget:canon_writes_per_day");
 
-    // Charged before the request: a refused write still spent its unit.
+    // Unknown claims fail trust preflight before admission spends a write unit.
     const strict = createBudgetTracker({ canon_writes_per_run: 1 });
     const ghost: Claim = { ...second, claim_id: "01GHOST00000000000000000000" };
     expect(
@@ -106,7 +106,8 @@ describe("applyCanonWrite", () => {
       attempt(() =>
         applyCanonWrite(io, second, resolveTarget(io, second), { writer: "loop", budget: strict }),
       ),
-    ).toBeInstanceOf(BudgetExhausted);
+    ).toBeUndefined();
+    expect(strict.usage().canon_writes_per_run.used).toBe(1);
 
     // A skip decision is not a write and does not charge.
     const untouched = createBudgetTracker({ canon_writes_per_run: 1 });

@@ -15,15 +15,10 @@ export interface ServeContext {
   db: Database;
   vaultPath: string;
   principal: Principal;
-  /**
-   * One `kizuki.retrieval/v1` connection, bound by the host for the life of
-   * the process and handed to the claim store, which uses it to nominate
-   * near-duplicates and to index what it writes. Reads still go to the
-   * lexical index in this database: no implementation of the port ships in
-   * this tree, and routing reads through a port nobody has registered would
-   * answer nothing where the deterministic floor answers (invariant 5).
-   */
+  /** One host-owned engine nominates IDs; core rechecks current evidence and grants. */
   retrieval?: RetrievalPort;
+  /** A configured optional engine could not bind; reads use the deterministic floor. */
+  retrievalUnavailable?: true;
 }
 
 export interface CanonChunk {
@@ -34,7 +29,7 @@ export interface CanonChunk {
   sensitivity: Sensitivity;
   /** `quoted` means the body carries verbatim capture inside blockquotes. */
   taint: PageTaint;
-  /** The tier of the receipt that last wrote the page; null when unwritten. */
+  /** Effective authority of the page snapshot, resolved against its byte hash. */
   authority: AuthorityTier | null;
   subjects: string[];
   sources: string[];

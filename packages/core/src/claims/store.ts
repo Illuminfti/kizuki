@@ -477,7 +477,7 @@ async function nominateSemantic(
   return nominated;
 }
 
-function retrievalDoc(claim: Claim): RetrievalDoc {
+export function claimRetrievalDoc(claim: Claim): RetrievalDoc {
   return {
     doc_id: retrievalDocId("claim", claim.claim_id),
     kind: "claim",
@@ -489,7 +489,7 @@ function retrievalDoc(claim: Claim): RetrievalDoc {
     subjects: claim.subject !== null ? [claim.subject, ...claim.subjects] : claim.subjects,
     provenance: claim.provenance,
     occurred_at: claim.valid_from,
-    updated_at: claim.asserted_at,
+    updated_at: claim.created_at,
   };
 }
 
@@ -551,7 +551,7 @@ export async function retryRetrievalOps(
       continue;
     }
     try {
-      await io.retrieval.upsert([retrievalDoc(claim)]);
+      await io.retrieval.upsert([claimRetrievalDoc(claim)]);
       finishOp(io.db, op.op_id, nowOf(io));
       retried += 1;
     } catch {
@@ -569,7 +569,7 @@ async function upsertRetrieval(
 ): Promise<void> {
   if (io.retrieval === undefined) return;
   try {
-    await io.retrieval.upsert([retrievalDoc(claim)]);
+    await io.retrieval.upsert([claimRetrievalDoc(claim)]);
     if (opId !== null) finishOp(io.db, opId, nowOf(io));
   } catch {
     // The claim stands and the operation stays pending: a degraded refresh

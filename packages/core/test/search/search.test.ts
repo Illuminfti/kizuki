@@ -36,6 +36,7 @@ function page(
       ...overrides,
     },
     body,
+    contentHash: "0".repeat(64),
   };
 }
 

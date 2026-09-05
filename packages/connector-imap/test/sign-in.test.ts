@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   mkdtempSync,
@@ -398,6 +399,13 @@ describe("interactive sign-in", () => {
     expect(raw.includes(Buffer.from("mail.acme.example"))).toBe(false);
     // The README says so plainly: the checkpoint cursor is keyed by folder and
     // every event carries metadata.folder, so folder names are not a secret.
-    expect(raw.includes(Buffer.from("Archive/2026"))).toBe(true);
+    // SQLite may split the string across pages. Prove logical persistence by
+    // decoding a reopened read-only row; the raw secret scans above stay intact.
+    const reopened = new Database(dbPath, { readonly: true });
+    try {
+      const folders = reopened.query<{ metadata: string }, []>("SELECT metadata FROM events")
+        .all().map(row => (JSON.parse(row.metadata) as { folder?: string }).folder);
+      expect(folders).toContain("Archive/2026");
+    } finally { reopened.close(); }
   });
 });

@@ -65,6 +65,7 @@ export class ScreenpipeConnector implements Connector {
   #db: Database | null = null;
   #revoked = false;
   #lastSuccessAt: string | undefined;
+  #lastFailure: string | undefined;
   #totalSkipped: SkippedCounters = emptySkipped();
   #oldestSkippedFrameId = 0;
   #oldestSkippedTranscriptionId = 0;
@@ -112,11 +113,12 @@ export class ScreenpipeConnector implements Connector {
         parseErrors > 0 || this.#totalSkipped.frames_without_text > 0
           ? `; ${skipped}${oldest}`
           : "";
+      const failure = this.#lastFailure === undefined ? "" : `; last_failure=${this.#lastFailure}`;
       return new HealthReport({
         state:
-          parseErrors >= SKIP_DEGRADE_THRESHOLD ? "degraded" : "ok",
+          parseErrors >= SKIP_DEGRADE_THRESHOLD || this.#lastFailure !== undefined ? "degraded" : "ok",
         checked_at: checkedAt,
-        detail: `${report.detail}${suffix}`,
+        detail: `${report.detail}${suffix}${failure}`,
         ...(this.#lastSuccessAt === undefined
           ? {}
           : { last_success_at: this.#lastSuccessAt }),
@@ -195,7 +197,8 @@ export class ScreenpipeConnector implements Connector {
     cursor: Cursor | null,
     mode: "backfill" | "sync",
   ): Promise<SyncBatch> {
-    return this.#withDatabase((db) => {
+    try {
+      const batch = this.#withDatabase((db) => {
       assertSchema(db);
       const identity = inspectIdentity(db, this.#config.path);
       const current =
@@ -273,12 +276,19 @@ export class ScreenpipeConnector implements Connector {
         frames.done && transcriptions.done,
       );
       this.#lastSuccessAt = observedAt;
+      this.#lastFailure = undefined;
       this.#totalSkipped = { ...current.skipped };
       this.#oldestSkippedFrameId = current.oldest_skipped_frame_id;
       this.#oldestSkippedTranscriptionId =
         current.oldest_skipped_transcription_id;
       return { events, cursor: encodeCursor(current) };
-    });
+      });
+      return batch;
+    } catch (error) {
+      const mapped = classifyDatabaseError(error, this.#config.path);
+      if (mapped.code === "parse_error") this.#lastFailure = mapped.message;
+      throw mapped;
+    }
   }
 
   #ensureOpen(): Database {

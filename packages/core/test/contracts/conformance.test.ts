@@ -39,7 +39,7 @@ const ALTERNATE_DESCRIPTOR = {
 
 function harness(
   descriptor: PortDescriptor,
-  factory: (ctx: PortContext) => RetrievalPort,
+  factory: (ctx: PortContext) => RetrievalPort | Promise<RetrievalPort>,
 ): RetrievalConformanceHarness {
   return {
     descriptor,
@@ -139,7 +139,7 @@ describe("port conformance", () => {
     );
   });
 
-  test("a major contract mismatch is refused at bind time", () => {
+  test("a major contract mismatch is refused at bind time", async () => {
     const registry = new PortRegistry();
     const incompatible = {
       ...DIRECT_RETRIEVAL_DESCRIPTOR,
@@ -154,15 +154,15 @@ describe("port conformance", () => {
     const temporary = temporaryPortContext(incompatible);
 
     try {
-      expect(() =>
+      await expect(
         registry.bindFromConfig<RetrievalPort>(
           "retrieval",
           { retrieval: incompatible.id },
           temporary.ctx,
         ),
-      ).toThrow(PortError);
+      ).rejects.toThrow(PortError);
       try {
-        registry.bindFromConfig<RetrievalPort>(
+        await registry.bindFromConfig<RetrievalPort>(
           "retrieval",
           { retrieval: incompatible.id },
           temporary.ctx,

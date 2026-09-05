@@ -28,6 +28,7 @@ import {
   quotedChunk,
   timelineSource,
 } from "./ledger";
+import { retrievalCandidates } from "./retrieval";
 import type { PacketSection } from "./sections";
 import type { CanonChunk, QuotedChunk, ServeContext } from "./types";
 
@@ -144,18 +145,30 @@ function loadSubjectGaps(db: Database, wanted: string[] | undefined, canRead: (c
  * The packet's candidates, in the order they are offered to the packer:
  * canon first, then the pages one link away, then the window's records.
  */
-export function collectPieces(
+export async function collectPieces(
   ctx: ServeContext,
   request: PieceRequest,
-): { pieces: Piece[]; withheld: AuditDenial[] } {
+): Promise<{ pieces: Piece[]; withheld: AuditDenial[]; degraded: string[] }> {
   const withheld: AuditDenial[] = [];
   const grant = ctx.principal.grant;
+  const nominated = request.query === undefined || !request.include.includes("canon")
+    ? { ids: [], degraded: ctx.retrievalUnavailable ? ["retrieval-unavailable"] : [] }
+    : await retrievalCandidates(ctx, request.query, {
+      scope: "canon", limit: CANDIDATE_LIMIT, ceiling: grant.ceiling,
+      ...(request.subjects === undefined ? {} : { subjects: request.subjects }),
+      ...(request.types === undefined ? {} : { types: request.types }),
+    });
   const index = loadCanon(ctx);
   const pieces: Piece[] = [];
   const packed = new Set<string>();
 
   if (request.include.includes("canon")) {
-    const candidates: CanonPage[] = [];
+    const candidates: CanonPage[] = nominated.ids.flatMap((id) => {
+      const page = id.startsWith("page:") ? index.byId.get(bareRetrievalId(id)) : undefined;
+      if (page === undefined) return [];
+      if (request.subjects !== undefined && !stringArray(page.data["subjects"]).some((id) => request.subjects!.includes(id))) return [];
+      return [page];
+    });
     if (request.query !== undefined) {
       const opts: SearchOptions = {
         scope: "canon",
@@ -328,5 +341,5 @@ export function collectPieces(
     withheld.push(...reader.denied.values());
   }
 
-  return { pieces, withheld };
+  return { pieces, withheld, degraded: nominated.degraded };
 }

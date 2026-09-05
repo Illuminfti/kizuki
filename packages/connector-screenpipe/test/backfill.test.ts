@@ -16,7 +16,7 @@ import {
 afterEach(cleanupFixtureDatabases);
 
 describe("ScreenpipeConnector backfill", () => {
-  test("first backfill emits the settled fixture rows in id order with the documented skip counters", async () => {
+  test("first backfill emits the settled fixture rows in id order", async () => {
     const fixture = createFixtureDatabase();
     const connector = new ScreenpipeConnector(
       { path: fixture.path, settle_seconds: 0 },
@@ -39,15 +39,7 @@ describe("ScreenpipeConnector backfill", () => {
     const cursor = parseCursor(batch.cursor);
     expect(cursor.last_frame_id).toBe(8);
     expect(cursor.last_transcription_id).toBe(3);
-    expect(cursor.skipped).toEqual({
-      frames_without_text: 2,
-      frames_bad_timestamp: 1,
-      frames_offset_unknown: 0,
-      transcriptions_bad_timestamp: 0,
-      transcriptions_bad_offset: 0,
-      transcriptions_offset_unknown: 0,
-    });
-    expect(cursor.oldest_skipped_frame_id).toBe(4);
+    expect(cursor.skipped.frames_bad_timestamp).toBe(0);
     expect(cursor.phase).toBe("exhausted");
     expect(cursor.db_path).toBe(path.resolve(fixture.path));
     expect(cursor.db_fingerprint).toMatch(/^[0-9a-f]{64}$/);
@@ -148,7 +140,7 @@ describe("ScreenpipeConnector backfill", () => {
     await connector.revoke();
   });
 
-  test("a frame without text past the settle window is skipped for good", async () => {
+  test("a frame without text fails without returning an advancing checkpoint", async () => {
     const fixture = createFixtureDatabase({ rows: false });
     insertFrame(fixture.writer, {
       id: 1,
@@ -160,17 +152,7 @@ describe("ScreenpipeConnector backfill", () => {
       fixtureDeps("2026-01-09T00:00:00.000Z"),
     );
 
-    const skipped = await connector.backfill(null);
-    fixture.writer
-      .query("UPDATE frames SET full_text = ? WHERE id = 1")
-      .run("too late");
-    const afterUpdate = await connector.backfill(skipped.cursor);
-
-    expect(afterUpdate.events).toEqual([]);
-    if (afterUpdate.cursor === null) {
-      throw new Error("expected a screenpipe cursor");
-    }
-    expect(parseCursor(afterUpdate.cursor).skipped.frames_without_text).toBe(1);
+    await expect(connector.backfill(null)).rejects.toMatchObject({ code: "parse_error" });
     await connector.revoke();
   });
 

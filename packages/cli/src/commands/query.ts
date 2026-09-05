@@ -1,5 +1,5 @@
-import type { SearchHit, SearchOptions } from "@kizuki/core";
-import { listCanonPages, readHolds, search } from "@kizuki/core";
+import type { SearchHit } from "@kizuki/core";
+import { OWNER, initAgents, retrievalDocId, serveSearch } from "@kizuki/core";
 import { UsageError, parseArguments, requirePositional } from "../args";
 import { withVault } from "../context";
 import { indexFreshness } from "../derived";
@@ -12,7 +12,7 @@ type SearchScope = (typeof SCOPES)[number];
 function parseLimit(raw: string): number {
   if (!/^[0-9]+$/.test(raw)) throw new UsageError("invalid --limit");
   const value = Number(raw);
-  if (!Number.isInteger(value) || value < 1 || value > 500) {
+  if (!Number.isInteger(value) || value < 1 || value > 50) {
     throw new UsageError("invalid --limit");
   }
   return value;
@@ -28,8 +28,8 @@ function formatHit(hit: SearchHit): string {
 
 export const queryCommand: Command = {
   name: "query",
-  usage: "query <text> [--scope canon|ledger|all] [--limit N] [--json] [--degraded]",
-  summary: "search labeled canon and ledger text through the FTS floor",
+  usage: "query <text> [--scope canon|ledger|all] [--limit 1..50] [--json] [--degraded]",
+  summary: "search current authorized evidence through configured retrieval and the lexical floor",
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, {
       options: ["--scope", "--limit"],
@@ -55,42 +55,37 @@ export const queryCommand: Command = {
         return 1;
       }
 
-      let pages;
-      try {
-        pages = listCanonPages(ctx.vaultPath);
-      } catch (error) {
-        throw error instanceof Error ? error : new Error(String(error));
-      }
-
-      const excludePaths = [
-        ...readHolds(ctx.db).map((hold) => hold.page_path),
-        ...pages
-          .filter((page) => page.data["status"] === "archived")
-          .map((page) => page.relPath),
+      initAgents(ctx.db);
+      const envelope = await serveSearch({
+        db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER,
+        ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }), ...(ctx.retrievalUnavailable ? { retrievalUnavailable: true as const } : {}),
+      }, { query: text, scope: rawScope as SearchScope, limit });
+      const hits: SearchHit[] = [
+        ...envelope.canon.map((chunk, index): SearchHit => ({
+          doc_id: retrievalDocId("page", chunk.page_id), scope: "canon", title: chunk.title,
+          path: chunk.path, page_type: chunk.type, sensitivity: chunk.sensitivity,
+          taint: chunk.taint, authority: chunk.authority ?? "model_inference", occurred_at: "",
+          connector_id: "", subjects: chunk.subjects, snippet: chunk.excerpt, rank: index,
+        })),
+        ...envelope.quoted.map((chunk, index): SearchHit => ({
+          doc_id: retrievalDocId("event", chunk.event_id), scope: "ledger", title: `${chunk.connector_id} ${chunk.kind}`,
+          path: "", page_type: chunk.kind, sensitivity: chunk.sensitivity,
+          taint: "quoted", authority: "connector_evidence", occurred_at: chunk.occurred_at,
+          connector_id: chunk.connector_id, subjects: chunk.subjects, snippet: chunk.text, rank: index,
+        })),
       ];
-
-      const base: SearchOptions = {
-        scope: rawScope as SearchScope,
-        limit,
-        excludePaths,
-      };
-      const hits = search(ctx.db, text, { ...base, ceiling: "private" });
-      const unfiltered = search(ctx.db, text, base);
-      const withheld = unfiltered.length - hits.length;
-      if (withheld > 0) {
-        io.err(`withheld=${withheld} (no sensitivity label)`);
-      }
-      if (!freshness.fresh) {
-        io.err(`degraded=${freshness.degraded.join(",")}`);
-      }
+      const withheld = envelope.denied.reduce((sum, item) => sum + item.count, 0);
+      const degraded = [...new Set([...freshness.degraded, ...(envelope.data?.degraded ?? [])])];
+      if (withheld > 0) io.err(`withheld=${withheld} (excluded by access policy)`);
+      if (degraded.length > 0) io.err(`degraded=${degraded.join(",")}`);
 
       if (parsed.flags.has("--json")) {
         io.out(
           jsonEnvelope(
             "query",
-            freshness.fresh ? "ok" : "degraded",
+            degraded.length === 0 ? "ok" : "degraded",
             { hits, withheld },
-            { degraded: freshness.degraded },
+            { degraded },
           ),
         );
         return 0;
@@ -100,6 +95,6 @@ export const queryCommand: Command = {
       }
       for (const hit of hits) io.out(formatHit(hit));
       return 0;
-    });
+    }, { retrieval: "optional" });
   },
 };

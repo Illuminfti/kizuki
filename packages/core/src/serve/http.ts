@@ -17,6 +17,7 @@ export interface ServeHttpOptions {
   readonly host?: string;
   readonly port?: number;
   readonly token?: string;
+  readonly retrieval?: ServeContext["retrieval"];
 }
 
 export interface ServeHttpHandle {
@@ -141,7 +142,9 @@ export function startServeHttp(options: ServeHttpOptions): ServeHttpHandle {
       }
       try {
         const envelope = await dispatchServeTool(
-          { db: options.db, vaultPath: options.vaultPath, principal },
+          { db: options.db, vaultPath: options.vaultPath, principal,
+            ...(options.retrieval === undefined ? {} : { retrieval: options.retrieval }),
+          },
           tool as Tool,
           args,
         );

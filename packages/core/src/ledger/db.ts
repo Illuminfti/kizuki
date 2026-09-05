@@ -3,7 +3,7 @@ import { applyAgentsV9 } from "../agents/schema";
 import { applyCanonV4 } from "../canon/schema";
 import { applyClaimsV3 } from "../claims/schema";
 import { applyDerivedV10 } from "../derived";
-import { applyServeV7 } from "../serve/schema";
+import { applyServeV7, initServe } from "../serve/schema";
 import { applySensitivityV6 } from "../sensitivity/schema";
 import { applyConnectionsV8 } from "./connections-schema";
 import { applyPurgeV5 } from "./purge-schema";
@@ -215,6 +215,7 @@ export function openLedger(dbPath: string): Database {
     db.exec("PRAGMA journal_mode = WAL");
     db.exec("PRAGMA foreign_keys = ON");
     migrate(db);
+    initServe(db);
     return db;
   } catch (error) {
     db.close();

@@ -120,7 +120,7 @@ export type ProduceResult =
       usage: ModelUsage;
       dropped?: DroppedDraft[];
     }
-  | { status: "unavailable"; reason: string }
+  | { status: "unavailable"; reason: string; usage: ModelUsage }
   | {
       status: "rejected";
       reason: RejectReason;

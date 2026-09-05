@@ -16,6 +16,27 @@ import {
 export { SERVE_SCHEMA_VERSION };
 
 const TABLES = `
+CREATE TABLE IF NOT EXISTS extract_invalidations (
+  purge_receipt_id TEXT PRIMARY KEY,
+  reason TEXT NOT NULL CHECK (reason = 'invalid_derived_journal'),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS canon_write_reservations (
+  receipt_id TEXT PRIMARY KEY,
+  day TEXT NOT NULL,
+  page_path TEXT NOT NULL,
+  before_hash TEXT
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS extract_usage (
+  run_id TEXT PRIMARY KEY,
+  model_ref TEXT,
+  metrics TEXT NOT NULL,
+  holder_pid INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS schedules (
   rail TEXT PRIMARY KEY,
   period_s INTEGER NOT NULL,
@@ -49,6 +70,16 @@ CREATE TABLE IF NOT EXISTS budget_ledger (
   used REAL NOT NULL,
   PRIMARY KEY (day, name)
 ) STRICT;
+CREATE TABLE IF NOT EXISTS extract_batches (
+  previous_cursor TEXT PRIMARY KEY,
+  cursor TEXT NOT NULL,
+  drafts TEXT NOT NULL,
+  model_ref TEXT,
+  created_at TEXT NOT NULL,
+  input_ids TEXT,
+  integrity TEXT,
+  outcome TEXT NOT NULL DEFAULT 'ok'
+) STRICT;
 `;
 
 export function applyServeV7(db: Database): void {
@@ -57,11 +88,14 @@ export function applyServeV7(db: Database): void {
 }
 
 export function initServe(db: Database): void {
-  if (!tableExists(db, "schedules")) {
-    applyServeV7(db);
-    return;
-  }
-  seedSchedules(db);
+  db.transaction(() => {
+    db.exec(TABLES);
+    const columns = new Set(db.query<{ name: string }, []>("PRAGMA table_info(extract_batches)").all().map(row => row.name));
+    for (const [name, definition] of [["input_ids", "TEXT"], ["integrity", "TEXT"], ["outcome", "TEXT NOT NULL DEFAULT 'ok'"]] as const) {
+      if (!columns.has(name)) db.exec(`ALTER TABLE extract_batches ADD COLUMN ${name} ${definition}`);
+    }
+    seedSchedules(db);
+  }).immediate();
 }
 
 export function seedSchedules(db: Database): void {

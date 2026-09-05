@@ -149,3 +149,15 @@ describe("withdrawForTombstone", () => {
     expect(getProposal(db, id)?.status).toBe("withdrawn");
   });
 });
+
+test.each([
+  ["person:grace","person"], ["org:acme","org"], ["project:atlas","project"],
+  ["email:team@example.test","topic"], ["calendar:work","topic"],
+  ["screenpipe:app:browser","topic"], ["screenpipe:site:example.test","topic"],
+  ["screenpipe:speaker:1","topic"], ["screenpipe:audio-device:mic","topic"],
+  ["markdown-folder:document-digest","topic"], ["unknown:item","topic"],
+])("source subject %s has grounded or generic page type %s",(subject,type)=>{
+ const [entity]=proposalsForEvent(event({subjects:[{subject_id:subject!,role:"about"}]}));
+ expect(entity?.frontmatter["type"]).toBe(type);
+ expect(entity?.target).toBe(subject);
+});

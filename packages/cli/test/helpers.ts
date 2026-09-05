@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 const mainPath = resolve(import.meta.dir, "../src/main.ts");
 
@@ -71,6 +71,8 @@ export function createHelpers(): CliHelpers {
 
     const result = Bun.spawnSync([process.execPath, mainPath, ...args], {
       env: spawnEnv,
+      // Bun may initialize a HOME-relative cache before CLI config rejects HOME.
+      cwd: isAbsolute(home) ? process.cwd() : tempDir("kizuki-cli-cwd-"),
       stderr: "pipe",
       stdout: "pipe",
     });

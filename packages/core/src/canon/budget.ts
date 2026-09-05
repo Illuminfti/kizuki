@@ -1,8 +1,7 @@
 /**
- * RFC 0002 §4.5: budget enforcement lives inside the writer. The per-run
- * ceiling is in memory; the per-day ceiling is seeded by the caller from
- * whatever durable accounting it keeps, so the tracker itself never touches
- * storage.
+ * Budget enforcement lives inside the writer. A runtime may reserve a durable
+ * daily slot using the receipt identity; standalone trackers enforce their
+ * supplied per-run and per-day limits in memory.
  */
 export const CANON_WRITE_BUDGETS = [
   "canon_writes_per_run",
@@ -27,8 +26,8 @@ export interface BudgetUsage {
 }
 
 export interface BudgetTracker {
-  /** Charges one canon write before any side effect; throws when exhausted. */
-  chargeWrite(): void;
+  /** Charges one canon write before the canon file effect; throws when exhausted. */
+  chargeWrite(write?: { receipt_id: string; page_path: string; before_hash: string | null }): void;
   usage(): Record<CanonWriteBudget, BudgetUsage>;
 }
 

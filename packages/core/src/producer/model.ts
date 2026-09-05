@@ -435,18 +435,25 @@ export function createModelProducerPort(
       }
 
       const predicates = new Set(input.context.predicates);
-      const knownSubjects = new Set(
-        input.context.subjects.map((subject) => subject.subject_id),
-      );
 
       for (const batch of batches) {
         assertOpen();
+        // Context is scoped per request. A subject or claim from another
+        // batch must never become evidence for this batch's model call.
+        const batchSubjects = new Map<string, SubjectRef>();
+        for (const event of batch.events) {
+          for (const subject of event.subjects) batchSubjects.set(subject.subject_id, subject);
+        }
+        const scopedSubjects = [...batchSubjects.values()];
+        const scopedKnownClaims = input.context.known_claims.filter(
+          (claim) => claim.subject !== null && batchSubjects.has(claim.subject),
+        );
         const nonce = newFenceNonce();
         const messages = buildExtractionMessages(
           {
             events: batch.events,
-            subjects: input.context.subjects,
-            known_claims: input.context.known_claims,
+            subjects: scopedSubjects,
+            known_claims: scopedKnownClaims,
             predicates: input.context.predicates,
           },
           nonce,
@@ -470,7 +477,10 @@ export function createModelProducerPort(
         const outcome = await callModel(llm, messages, maxOutput, config.deadline_ms);
         usage.calls += 1;
         if (outcome.kind === "unavailable") {
-          return { status: "unavailable", reason: outcome.reason };
+          // A transport failure is not an empty call.  Preserve the charged
+          // attempt in the receipt so an unavailable model cannot masquerade
+          // as a rail that never contacted its configured port.
+          return { status: "unavailable", reason: outcome.reason, usage };
         }
         if (outcome.kind === "rejected") {
           return { status: "rejected", reason: outcome.reason, usage };
@@ -493,10 +503,12 @@ export function createModelProducerPort(
         }
 
         const batchEventIds = new Set(batch.events.map((event) => event.event_id));
-        const batchSubjects = new Set(knownSubjects);
-        for (const event of batch.events) {
-          for (const subject of event.subjects) batchSubjects.add(subject.subject_id);
-        }
+        const subjectsByEvent = new Map(
+          batch.events.map((event) => [
+            event.event_id,
+            new Set(event.subjects.map((subject) => subject.subject_id)),
+          ]),
+        );
         const sources = batch.events.map((event) => event.text);
 
         for (const draft of parsed.claims) {
@@ -532,6 +544,9 @@ export function createModelProducerPort(
             dropped.push(item);
             drop(item);
             continue;
+          }
+          if (!draft.event_ids.every((id) => subjectsByEvent.get(id)?.has(draft.subject) === true)) {
+            return { status: "rejected", reason: "provenance_not_cited", usage };
           }
           claims.push(draft);
         }

@@ -50,7 +50,8 @@ export interface RetrievalDoc {
   readonly subjects: readonly string[];
   readonly provenance: readonly string[];
   readonly occurred_at: string | null;
-  readonly updated_at: string;
+  /** Null means the authoritative source does not establish an update instant. */
+  readonly updated_at: string | null;
 }
 
 export interface RetrievalScope {
@@ -124,6 +125,8 @@ export interface GraphQueryOptions {
 }
 
 export interface RetrievalPort extends Port {
+  /** Stage all documents before atomically replacing the active index. */
+  rebuildFromDocuments?(docs: AsyncIterable<RetrievalDoc> | Iterable<RetrievalDoc>): Promise<void>;
   upsert(docs: readonly RetrievalDoc[]): Promise<RetrievalMutationReport>;
   search(query: RetrievalQuery): Promise<RetrievalResult>;
   remove(ids: readonly string[]): Promise<RetrievalMutationReport>;
@@ -211,7 +214,7 @@ export function validateRetrievalDoc(value: unknown): RetrievalDoc {
   ) {
     invalid("document.occurred_at");
   }
-  if (!isRfc3339(value["updated_at"])) {
+  if (value["updated_at"] !== null && !isRfc3339(value["updated_at"])) {
     invalid("document.updated_at");
   }
   return value as unknown as RetrievalDoc;

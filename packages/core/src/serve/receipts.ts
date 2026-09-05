@@ -86,6 +86,7 @@ function parseReceipt(value: unknown): RunReceipt | null {
     canon_writes: numberOr(value["canon_writes"], totals.canon_writes),
     canon_reverts: numberOr(value["canon_reverts"], totals.canon_reverts),
     model: {
+      ...(model["usage_unknown"] === true ? { usage_unknown: true } : {}),
       calls: numberOr(model["calls"], 0),
       input_tokens: numberOr(model["input_tokens"], 0),
       output_tokens: numberOr(model["output_tokens"], 0),
@@ -214,19 +215,22 @@ function appendJsonl(vaultPath: string, receipt: RunReceipt): void {
 }
 
 function insertReceiptRow(db: Database, receipt: RunReceipt): void {
-  db.query(
-    `INSERT OR IGNORE INTO run_receipts
-       (run_id, rail, started_at, finished_at, status, stopped, report)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    receipt.run_id,
-    receipt.rail,
-    receipt.started_at,
-    receipt.finished_at,
-    receipt.status,
-    receipt.stopped,
-    JSON.stringify(receipt),
-  );
+  db.transaction(() => {
+    db.query(
+      `INSERT OR IGNORE INTO run_receipts
+         (run_id, rail, started_at, finished_at, status, stopped, report)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      receipt.run_id,
+      receipt.rail,
+      receipt.started_at,
+      receipt.finished_at,
+      receipt.status,
+      receipt.stopped,
+      JSON.stringify(receipt),
+    );
+    if (tableExists(db, "extract_usage")) db.query("DELETE FROM extract_usage WHERE run_id = ?").run(receipt.run_id);
+  }).immediate();
 }
 
 function redactReceipt(receipt: RunReceipt): RunReceipt {

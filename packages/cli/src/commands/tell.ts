@@ -37,7 +37,7 @@ export const tellCommand: Command = {
     return withVault(io, async (ctx) => {
       try {
         const result = await correct(
-          { db: ctx.db, vault_path: ctx.vaultPath },
+          { db: ctx.db, vault_path: ctx.vaultPath, ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }) },
           {
             statement,
             ...(target === undefined ? {} : { target }),

@@ -8,9 +8,11 @@ packages/llm/test/fake-endpoint.ts:loopback fake model endpoint for tests
 packages/connector-ics/src/fetch.ts:owner-configured ICS calendar URL; the single fetch of the ICS connector
 packages/connector-beeper/src/connector.ts:owner-configured local Beeper Desktop API loopback; the single read-only fetch of the Beeper connector
 packages/cli/test/beeper-flow.test.ts:synthetic Beeper API bound to 127.0.0.1 for real CLI enrollment and recall checks
+packages/cli/test/serve/runtime.test.ts:synthetic loopback Beeper and model endpoint for end-to-end daemon composition
 packages/connector-imap/src/transport.ts:owner-configured IMAP server over TLS; the single socket of the IMAP connector
 packages/connector-imap/test/transport.test.ts:loopback TLS server bound by the IMAP transport tests
 packages/core/test/auth/loopback.test.ts:loopback fake authorization server and client for the OAuth sign-in tests
 packages/core/src/auth/loopback.ts:OAuth sign-in loopback listener on 127.0.0.1 and the single token-endpoint fetch of the owner-configured provider
 packages/core/src/serve/http.ts:standing loopback MCP endpoint under kizuki serve
 packages/core/test/serve/http.test.ts:loopback fetch against the standing serve endpoint
+packages/core/test/serve/http-retrieval.test.ts:synthetic loopback HTTP reads against the host-bound retrieval surface

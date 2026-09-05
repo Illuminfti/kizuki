@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
-import { initAgents, initGraph, initSearch, openLedger, resolvePort } from "@kizuki/core";
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { initAgents, initGraph, initSearch, openLedger, PortRegistry, loadConfiguredRetrieval } from "@kizuki/core";
+import { registerEmbeddedRetrieval } from "@kizuki/retrieval-pg";
 import type { Principal, RetrievalPort } from "@kizuki/core";
 import { ownerPrincipal, principalFromToken } from "./principal";
 import { runStdio } from "./stdio";
@@ -40,7 +41,7 @@ function parse(argv: string[]): Options | null {
 
   if (vault === null) return null;
   if (owner === (tokenEnv !== null)) return null;
-  return { vault, tokenEnv, retrieval };
+  return { vault: resolve(vault), tokenEnv, retrieval };
 }
 
 /**
@@ -49,19 +50,20 @@ function parse(argv: string[]): Options | null {
  * runs on the deterministic floor, which is what invariant 5 requires of
  * every served read.
  */
-function bindRetrieval(vault: string, id: string): RetrievalPort {
+async function bindRetrieval(vault: string, id: string): Promise<RetrievalPort> {
   const dataDir = join(vault, ".kizuki", "retrieval", id);
-  mkdirSync(dataDir, { recursive: true });
-  const registration = resolvePort<RetrievalPort>("retrieval", id);
-  return registration.factory({
+  const registry = new PortRegistry();
+  registerEmbeddedRetrieval(registry);
+  const { port } = await registry.bindFromConfig<RetrievalPort>("retrieval", { retrieval: id }, {
     vault_path: vault,
     data_dir: dataDir,
-    config: {},
+    config: loadConfiguredRetrieval(vault).config,
     secrets: () => Promise.reject(new Error("no secret is configured")),
     clock: () => new Date().toISOString(),
     // stdout is the protocol channel; a port's own lines go to stderr.
     logger: (line) => process.stderr.write(`${line.level} ${line.message}\n`),
   });
+  return port;
 }
 
 function refuse(message: string): never {
@@ -103,14 +105,14 @@ export async function main(argv: string[]): Promise<void> {
   }
 
   let retrieval: RetrievalPort | null = null;
-  if (options.retrieval !== null) {
-    try {
-      retrieval = bindRetrieval(options.vault, options.retrieval);
-    } catch {
-      db.close();
-      // The id is the caller's own argument, so naming it leaks nothing.
-      refuse(`retrieval port not registered: ${options.retrieval}`);
+  try {
+    const selectedRetrieval = options.retrieval ?? loadConfiguredRetrieval(options.vault).id;
+    if (selectedRetrieval !== "kizuki.retrieval.fts5") {
+      retrieval = await bindRetrieval(options.vault, selectedRetrieval);
     }
+  } catch {
+    db.close();
+    refuse("retrieval port could not start");
   }
 
   // The handles close on the way out whatever happened: a transport that
@@ -124,8 +126,11 @@ export async function main(argv: string[]): Promise<void> {
       ...(retrieval === null ? {} : { retrieval }),
     });
   } finally {
-    if (retrieval !== null) await retrieval.close();
-    db.close();
+    try {
+      if (retrieval !== null) await retrieval.close();
+    } finally {
+      db.close();
+    }
   }
 }
 

@@ -13,7 +13,7 @@ import {
 import { collectPieces } from "./candidates";
 import type { Piece } from "./candidates";
 import { claimsEpoch } from "./epoch";
-import { auditArguments, gate, principalName } from "./gate";
+import { auditArguments, gateAsync, principalName } from "./gate";
 import type { Served } from "./gate";
 import {
   PACKET_PURPOSES,
@@ -23,20 +23,13 @@ import {
 } from "./sections";
 import { ServeError } from "./types";
 import type { CanonChunk, Envelope, QuotedChunk, ServeContext } from "./types";
+import { PACKET_TOKENIZER_ID, packetTokens as tokens } from "./packet-tokenizer";
 
-export { PACKET_PURPOSES, PACKET_SECTIONS };
-
-/** Pinned estimator: Unicode code points / 4. Lives on the envelope. */
-export const PACKET_TOKENIZER_ID = "kizuki.packet.chars-div-4/v1";
+export { PACKET_PURPOSES, PACKET_SECTIONS, PACKET_TOKENIZER_ID };
 
 const MAX_QUERY_CHARS = 512;
 const MAX_SUBJECTS = 16;
-/**
- * The header is not optional: it is what makes the packet identifiable when
- * it later turns up inside a captured transcript, and it costs about fifty
- * tokens. The floor is the spec's, so the smallest legal budget buys the
- * header and nothing else rather than being refused.
- */
+/** Accepted argument range; a mandatory header that cannot fit is refused. */
 const MIN_BUDGET = 50;
 const MAX_BUDGET = 2_000;
 const DEFAULT_BUDGET = 450;
@@ -72,6 +65,8 @@ export interface ContextPacketArgs {
 
 export interface ContextPacketData {
   packet_md: string;
+  retrieval_degraded: string[];
+  /** Exact encoded count of packet_md under the declared tokenizer. */
   tokens_estimate: number;
   budget_tokens: number;
   sections: { canon: number; graph: number; timeline: number; claims: number };
@@ -89,10 +84,6 @@ export interface ContextPacketData {
    * The fresh packet is in the same response either way.
    */
   status: "current" | "superseded";
-}
-
-function tokens(value: string): number {
-  return Math.ceil(Array.from(value).length / 4);
 }
 
 function hashBody(value: string): string {
@@ -159,15 +150,15 @@ function sectionList(
  * gathering the packet degrades to the header instead of failing the
  * session; refusals and argument errors still throw.
  */
-export function serveContextPacket(
+export async function serveContextPacket(
   ctx: ServeContext,
   args: ContextPacketArgs,
-): Envelope<ContextPacketData> {
-  return gate(
+): Promise<Envelope<ContextPacketData>> {
+  return gateAsync(
     ctx,
     "context_packet",
     auditArguments(args),
-    ({ ctx, at }): Served<ContextPacketData> => {
+    async ({ ctx, at }): Promise<Served<ContextPacketData>> => {
       const grant = ctx.principal.grant;
       const budget = range(
         "budget_tokens",
@@ -237,6 +228,13 @@ export function serveContextPacket(
         `principal=${principalName(ctx.principal)} purpose=${purpose}` +
         ` budget=${budget} epoch=${epoch} at=${at}\n` +
         `${PACKET_RULES}\n`;
+      const headerTokens = tokens(header);
+      if (headerTokens > budget) {
+        throw new ServeError(
+          "invalid_arguments",
+          `invalid arguments: budget_tokens: mandatory header requires at least ${headerTokens} tokens under ${PACKET_TOKENIZER_ID}`,
+        );
+      }
       const emptySections = {
         canon: 0,
         graph: 0,
@@ -249,6 +247,7 @@ export function serveContextPacket(
         withheld: [{ id: "tool:context_packet", reason: "error" }],
         data: {
           packet_md: header,
+          retrieval_degraded: ["context-unavailable"],
           tokens_estimate: tokens(header),
           budget_tokens: budget,
           sections: emptySections,
@@ -265,8 +264,9 @@ export function serveContextPacket(
 
       let pieces: Piece[];
       let withheld: AuditDenial[];
+      let degraded: string[];
       try {
-        ({ pieces, withheld } = collectPieces(ctx, {
+        ({ pieces, withheld, degraded } = await collectPieces(ctx, {
           include,
           ...(query === undefined ? {} : { query }),
           ...(subjects === undefined ? {} : { subjects }),
@@ -279,7 +279,6 @@ export function serveContextPacket(
       }
 
       let body = "";
-      let estimate = tokens(header);
       const canon: CanonChunk[] = [];
       const quoted: QuotedChunk[] = [];
       const audit = new Map<string, AuditItem>();
@@ -288,18 +287,17 @@ export function serveContextPacket(
       for (const piece of pieces) {
         const prefix = piece.heading === heading ? "" : `${piece.heading}\n`;
         const rendered = `${prefix}${piece.block}`;
-        const cost = tokens(rendered);
+        const candidateTokens = tokens(`${header}${body}${rendered}`);
         // Packing stops at the first chunk that does not fit: skipping ahead
         // would make the packet depend on chunk order in a way a reader
         // cannot predict.
-        if (estimate + cost > budget) break;
+        if (candidateTokens > budget) break;
         const freshAudit = (piece.audit ?? []).filter((item) => !audit.has(item.id));
         const chunkCount = Number(piece.canon !== undefined) + Number(piece.quoted !== undefined);
         // A compact gap can cite hundreds of intervals. Never serve a unit
         // whose complete provenance audit cannot fit in one bounded row.
         if (audit.size + canon.length + quoted.length + freshAudit.length + chunkCount > MAX_AUDIT_ITEMS) break;
         body += rendered;
-        estimate += cost;
         heading = piece.heading;
         sections[piece.section] += 1;
         for (const item of freshAudit) audit.set(item.id, item);
@@ -313,7 +311,8 @@ export function serveContextPacket(
         canDelta &&
         retainPrefix &&
         priorHash === packetHash &&
-        status === "current";
+        status === "current" &&
+        tokens(`${header}UNCHANGED\n`) <= budget;
       const packet = unchanged ? `${header}UNCHANGED\n` : `${header}${body}`;
 
       return {
@@ -323,6 +322,7 @@ export function serveContextPacket(
         audit_served: unchanged ? [] : [...audit.values()],
         data: {
           packet_md: packet,
+          retrieval_degraded: degraded,
           tokens_estimate: tokens(packet),
           budget_tokens: budget,
           sections: unchanged ? emptySections : sections,

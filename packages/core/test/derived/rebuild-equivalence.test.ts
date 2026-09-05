@@ -30,6 +30,7 @@ function writeCanonPage(
     relPath,
     data,
     body,
+    contentHash: new Bun.CryptoHasher("sha256").update(serializePage({ data, body })).digest("hex"),
   };
 }
 

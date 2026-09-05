@@ -46,6 +46,7 @@ function seedCanonPage(
     type: "fact",
     status,
     sensitivity: "personal",
+    taint: "clean",
     sources: ["event:fixture"],
   };
   const page: CanonPage = {
@@ -54,6 +55,7 @@ function seedCanonPage(
     relPath,
     data,
     body,
+    contentHash: new Bun.CryptoHasher("sha256").update(serializePage({ data, body })).digest("hex"),
   };
   writeFileSync(
     join(setup.vault, relPath),

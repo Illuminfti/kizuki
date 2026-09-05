@@ -56,10 +56,10 @@ function transcription(
 }
 
 describe("screenpipe mapping", () => {
-  test("frame subjects: app slug and site host", () => {
+  test("frame subjects preserve the exact app identity and site host", () => {
     expect(mapFrame(frame(), OBSERVED_AT).subjects).toEqual([
       {
-        subject_id: "screenpipe:app:acme-mail",
+        subject_id: "screenpipe:app:v2:QWNtZSBNYWls",
         role: "about",
         display_name: "Acme Mail",
       },
@@ -72,13 +72,13 @@ describe("screenpipe mapping", () => {
     expect(slug(" ＡＣＭＥ / Mail ")).toBe("acme-mail");
   });
 
-  test("an app_name that slugs to nothing yields no app subject", () => {
+  test("a Unicode app name has a stable reversible subject", () => {
     expect(
       mapFrame(
         frame({ app_name: "日本語", browser_url: null }),
         OBSERVED_AT,
       ).subjects,
-    ).toEqual([]);
+    ).toEqual([{ subject_id: "screenpipe:app:v2:5pel5pys6Kqe", role: "about", display_name: "日本語" }]);
   });
 
   test("a non-http browser_url yields no site subject and query strings never appear in subjects", () => {
@@ -152,12 +152,28 @@ describe("screenpipe mapping", () => {
     expect(event.metadata["text_truncated"]).toBe(true);
   });
 
+  test("truncation never leaves a lone surrogate", () => {
+    const event = mapFrame(
+      frame({ full_text: "x".repeat(MAX_TEXT_CHARS - 1) + "😀tail" }),
+      OBSERVED_AT,
+    );
+    expect(event.text).toBe("x".repeat(MAX_TEXT_CHARS - 1));
+    expect(event.metadata["text_truncated"]).toBe(true);
+  });
+
+  test("punctuation, case, and Unicode identities never collide", () => {
+    const left = mapFrame(frame({ app_name: "A/B", browser_url: null }), OBSERVED_AT);
+    const right = mapFrame(frame({ app_name: "a b", browser_url: null }), OBSERVED_AT);
+    const unicode = mapFrame(frame({ app_name: "Ａ／Ｂ", browser_url: null }), OBSERVED_AT);
+    expect(new Set([left.subjects[0]?.subject_id, right.subjects[0]?.subject_id, unicode.subjects[0]?.subject_id]).size).toBe(3);
+  });
+
   test("transcription occurred_at adds start_time", () => {
     const event = mapTranscription(transcription(), OBSERVED_AT);
     expect(event.occurred_at).toBe("2026-01-06T10:00:12.500Z");
     expect(event.subjects.map(({ subject_id }) => subject_id)).toEqual([
       "screenpipe:speaker:1",
-      "screenpipe:audio-device:macbook-microphone-input",
+      "screenpipe:audio-device:v2:TWFjQm9vayBNaWNyb3Bob25lIChpbnB1dCk",
     ]);
   });
 
@@ -207,14 +223,14 @@ describe("screenpipe mapping", () => {
         .digest("hex"),
     );
     expect(hashes).toEqual([
-      "c8f286697358286082edd3e326b416454f3288a5cd614813d15c3029a3087528",
-      "4a0fd8e2119a74fe698735e9a71fbddefacea1e59f7cb4e1b637bf9a3571d8db",
-      "cd816d47aedcf00772d6b08c4fbd0389b2470a4ff0f7948dccc0f26a81d9fc28",
-      "1195dc565593e2f9e43425d98c6c80b5c31731eb1c52f5551125278b6cd69bed",
+      "d43e61b8c5ebf16b84c76c235c96421f58842b77105e26178bd5faa97abdd21e",
+      "6ab95bdbdfcb18b7cb22409e8ee459fc81e070867919f79478d3959b79188eb2",
+      "5231d39af256c222f8288ac348a1491cabc853a3f5fb98c2499a2cb30e9f99e2",
+      "dd68a6cc7df7a147fd2778f3803fa73f87b654b4f3e9b557bc471fed439991b8",
       "fcef17c6245580e5698749d2f2ae817985bfa843fd318f86572803f056edf04d",
-      "a597c78d15d314c7bbaf6fedb2ba4e9b3af6fc44fb9c1d7f6b7a02c2b2d6f490",
-      "5f66a0146a68b062dcacd0b42ff6988a00905bfada1b58298b66059aef91d003",
-      "da6ff79839fd55a8b27773a37a4205b007e28344bb45b863d2d53defd05292f5",
+      "2f5e3eebc444aefc94ec1eac5b8a8ca51a8368e24dacb3d18159c1cd76b42df0",
+      "645c182a35b0bb94852cfbdb697a2f8e079ae8b2696a1fbf31873738e6e0bcb1",
+      "ba514502628e7957ed1ab565881f0cb8a41acc2531fa5d83bd1024bc5d1ba1cd",
     ]);
   });
 });
