@@ -10,6 +10,9 @@ Installation succeeds only after the supervisor reports both active and enabled.
 An unavailable supervisor is reported as unknown. `serve --uninstall` must confirm
 that the service is stopped and disabled before removing its definition or
 recording the opt-out. Neither command deletes the vault or captured evidence.
+Masking or disabling enablement does not establish that a service stopped.
+Unknown activity and transitional states retain the definition and installed
+intent; the command refuses to claim successful removal.
 
 Definitions and service intent use bounded private files, atomic replacement and
 directory synchronization. A process lock serializes changes for one vault. A

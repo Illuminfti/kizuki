@@ -50,3 +50,27 @@ test("public service installation uses XDG config directly even with empty HOME"
   expect(runCli(env, "serve", "--uninstall").exitCode).toBe(0);
   expect(existsSync(unit)).toBe(false);
 });
+
+test("masking or disabling enablement cannot prove a service stopped", () => {
+  for (const [enablement, activity, exit, expected] of [
+    ["masked", "active", "0", "active"],
+    ["disabled", "unknown", "4", "unknown"],
+    ["masked", "unknown", "4", "unknown"],
+    ["disabled", "deactivating", "3", "unknown"],
+  ] as const) {
+    const setup = tempVault();
+    const env = {...fakeSystemd(setup.root, setup.env), KIZUKI_SUPERVISOR: "systemd"};
+    const installed = runCli(env, "serve", "--install", "--json");
+    expect(installed.exitCode).toBe(0);
+    const unit = JSON.parse(installed.stdout).data.unitPath;
+    const original = readFileSync(unit, "utf8");
+    const uncertain = {...env, TEST_SUPERVISOR_STATE: enablement, TEST_SUPERVISOR_ACTIVITY: activity, TEST_SUPERVISOR_ACTIVITY_EXIT: exit};
+    expect(runCli(uncertain, "serve", "--uninstall", "--json").exitCode).toBe(1);
+    expect(readFileSync(unit, "utf8")).toBe(original);
+    expect(readFileSync(join(setup.vault, ".kizuki", "serve-intent"), "utf8").trim()).toBe("installed");
+    const status = runCli(uncertain, "serve", "status", "--json");
+    expect(status.exitCode).toBe(1);
+    expect(JSON.parse(status.stdout).data.supervisor.state).toBe(expected);
+    expect(JSON.parse(status.stdout).data.doctor.ok).toBe(false);
+  }
+});

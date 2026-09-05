@@ -21,6 +21,7 @@ case "$2" in
       *) printf 'not-found\\n'; exit 4 ;;
     esac ;;
   is-active)
+    if [ -n "$TEST_SUPERVISOR_ACTIVITY" ]; then printf '%s\\n' "$TEST_SUPERVISOR_ACTIVITY"; exit "\${TEST_SUPERVISOR_ACTIVITY_EXIT:-3}"; fi
     if [ "$state" = active ]; then printf 'active\\n'; exit 0; fi
     printf 'inactive\\n'; exit 3 ;;
   *) exit 1 ;;

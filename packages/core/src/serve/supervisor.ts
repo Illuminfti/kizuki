@@ -46,13 +46,14 @@ export function detectSupervisorKind(
   return "none";
 }
 
-function runCommand(argv: string[]): { ok: boolean; stdout: string; stderr: string } {
+function runCommand(argv: string[]): { ok: boolean; exitCode: number | null; stdout: string; stderr: string } {
   const result = spawnSync(argv[0] ?? "", argv.slice(1), {
     encoding: "utf8",
     timeout: 5_000,
   });
   return {
     ok: result.status === 0,
+    exitCode: result.status,
     stdout: (result.stdout ?? "").trim(),
     stderr: (result.stderr ?? "").trim(),
   };
@@ -83,13 +84,17 @@ export function realSupervisorHost(
         const unit = systemdUnitName(vaultId);
         const enabled = runCommand(["systemctl", "--user", "is-enabled", unit]);
         const active = runCommand(["systemctl", "--user", "is-active", unit]);
-        const text = `${enabled.stdout} ${enabled.stderr} ${active.stdout}`.toLowerCase();
         let state: SupervisorState = "unknown";
-        if (text.includes("masked")) state = "masked";
-        else if (enabled.stdout === "enabled" || active.stdout === "active") {
-          state = active.ok && active.stdout === "active" ? "active" : "disabled";
-        } else if (enabled.stdout === "disabled") state = "disabled";
-        else if (enabled.stdout === "not-found" || text.includes("could not be found")) state = "absent";
+        // Enablement/masking is independent of runtime activity. Neither proves a stop.
+        const inactive = active.exitCode === 3 && (active.stdout === "inactive" || active.stdout === "failed");
+        const absent = enabled.exitCode !== null && enabled.exitCode > 0 && enabled.stdout === "not-found";
+        if (active.ok && active.stdout === "active") state = "active";
+        else if (inactive) {
+          if (enabled.exitCode !== null && enabled.exitCode > 0 && enabled.stdout === "masked") state = "masked";
+          else if ((enabled.ok && enabled.stdout === "enabled") ||
+            (enabled.exitCode !== null && enabled.exitCode > 0 && enabled.stdout === "disabled")) state = "disabled";
+          else if (absent) state = "absent";
+        } else if (absent && active.exitCode === 4 && active.stdout === "unknown") state = "absent";
         return {
           kind,
           state,
