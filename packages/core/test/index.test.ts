@@ -236,6 +236,7 @@ describe("public surface", () => {
       "encodeRemoteValue",
       "enrollConnection",
       "ensureVaultId",
+      "eraseOwnedFts5Generation",
       "escapeFenceText",
       "evaluateQualification",
       "exportVault",

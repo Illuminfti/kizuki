@@ -227,6 +227,7 @@ export {
   Fts5RetrievalPort,
   bareRetrievalId,
   createFts5RetrievalPort,
+  eraseOwnedFts5Generation,
   registerFts5RetrievalPort,
   retrievalDocId,
 } from "./retrieval";

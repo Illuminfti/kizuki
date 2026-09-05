@@ -49,6 +49,9 @@ import {
   initFts5RetrievalStore,
 } from "./schema";
 
+import { lockFtsGeneration, removeFtsGeneration, validateFtsGeneration } from "./fts5-owned";
+import type { AdvisoryFileLock } from "../util/advisory-file-lock";
+
 export const FTS5_RETRIEVAL_ID = "kizuki.retrieval.fts5";
 
 export const FTS5_RETRIEVAL_DESCRIPTOR = {
@@ -57,7 +60,7 @@ export const FTS5_RETRIEVAL_DESCRIPTOR = {
   contract: RETRIEVAL_CONTRACT,
   contract_minor: RETRIEVAL_CONTRACT_MINOR,
   supports: ["lexical"],
-  requires_lease: false,
+  requires_lease: true,
   optional_package: null,
 } as const satisfies PortDescriptor;
 
@@ -118,24 +121,30 @@ export class Fts5RetrievalPort implements RetrievalPort {
   private readonly ctx: PortContext;
   private readonly db: Database;
   private closed = false;
+  private readonly lock: AdvisoryFileLock;
   private rebuilding = false;
 
   constructor(
     ctx: PortContext,
     descriptor: PortDescriptor = FTS5_RETRIEVAL_DESCRIPTOR,
   ) {
-    this.ctx = ctx;
+    this.ctx = { ...ctx };
     this.descriptor = descriptor;
     mkdirSync(join(ctx.data_dir, "store"), { recursive: true, mode: 0o700 });
     const dbPath = join(ctx.data_dir, FTS5_RETRIEVAL_STORE_REL);
-    this.db = new Database(dbPath);
+    this.lock = lockFtsGeneration(ctx.data_dir);
     try {
+      this.db = new Database(dbPath);
+    } catch (error) { this.lock.release(); throw error; }
+    try {
+      this.db.exec("PRAGMA busy_timeout = 0");
       this.db.exec("PRAGMA journal_mode = WAL");
       initFts5RetrievalStore(this.db);
       chmodSync(dbPath, 0o600);
       this.ensureEngineJson();
     } catch (error) {
       this.db.close();
+      this.lock.release();
       throw error;
     }
   }
@@ -446,6 +455,18 @@ export class Fts5RetrievalPort implements RetrievalPort {
     if (this.closed) return;
     this.closed = true;
     this.db.close();
+    this.lock.release();
+  }
+
+  /** Dispose only this separate derived store; the main ledger is never opened here. */
+  async eraseOwnedGeneration(): Promise<void> {
+    this.assertOpen();
+    validateFtsGeneration(this.ctx);
+    const checkpoint = this.db.query<{ busy: number }, []>("PRAGMA wal_checkpoint(TRUNCATE)").get();
+    if (checkpoint?.busy !== 0) throw new PortError("unavailable", "owned FTS generation has active readers", true);
+    this.closed = true;
+    this.db.close();
+    try { removeFtsGeneration(this.ctx); } finally { this.lock.release(); }
   }
 
   private assertOpen(): void {
@@ -513,4 +534,11 @@ export function registerFts5RetrievalPort(): void {
   if (registered) return;
   registerPort(FTS5_RETRIEVAL_DESCRIPTOR, (ctx) => new Fts5RetrievalPort(ctx));
   registered = true;
+}
+
+/** Retry disposal of a partial/broken store without opening SQLite. */
+export async function eraseOwnedFts5Generation(ctx: PortContext): Promise<void> {
+  validateFtsGeneration(ctx);
+  const lock = lockFtsGeneration(ctx.data_dir);
+  try { removeFtsGeneration(ctx); } finally { lock.release(); }
 }

@@ -71,7 +71,7 @@ describe("kizuki.retrieval.fts5", () => {
     ).toMatchObject({
       contract: "kizuki.retrieval/v1",
       supports: ["lexical"],
-      requires_lease: false,
+      requires_lease: true,
       optional_package: null,
     });
   });

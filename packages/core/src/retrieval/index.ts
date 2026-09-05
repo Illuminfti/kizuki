@@ -19,6 +19,7 @@ export {
   FTS5_RETRIEVAL_ID,
   Fts5RetrievalPort,
   createFts5RetrievalPort,
+  eraseOwnedFts5Generation,
   registerFts5RetrievalPort,
 } from "./fts5";
 
