@@ -402,7 +402,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
   private async swap(
     db: Database,
     connection: Connection,
-    update: (writer: ConnectionStateWriter) => Promise<void>,
+    update: (writer: ConnectionStateWriter, previous: Uint8Array) => Promise<void>,
     options: {
       missingStateMessage: string;
       refuseDisconnected: boolean;
@@ -444,7 +444,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
     if (previous === null) throw new LedgerError("connection state is missing");
     const pending = this.beginFor(persisted.source_key);
     try {
-      await update(pending.writer);
+      await update(pending.writer, previous);
       if (!pending.pending.written) {
         throw new LedgerError(options.missingStateMessage);
       }
@@ -487,8 +487,8 @@ export class ConnectionStateStore implements ConnectionStateReader {
     return this.swap(
       db,
       connection,
-      async (writer) => {
-        await runGuardedSignIn(connector, io, writer);
+      async (writer, previous) => {
+        await runGuardedSignIn(connector, io, writer, { mode: "replace", previous_state: previous });
       },
       {
         missingStateMessage:
@@ -514,7 +514,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
     connection: Connection,
     update: (writer: ConnectionStateWriter) => Promise<void>,
   ): Promise<Connection> {
-    return this.swap(db, connection, update, {
+    return this.swap(db, connection, writer => update(writer), {
       missingStateMessage: "state rewrite did not provide connection state",
       refuseDisconnected: true,
       implementationVersion: connection.implementation_version,

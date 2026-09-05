@@ -151,6 +151,16 @@ export interface ConnectionStateWriter {
   write(state: Uint8Array): Promise<void>;
 }
 
+/**
+ * Connector minor 2: the trusted host identifies the sign-in operation.
+ * Replacement bytes are a copy of the previous opaque state, never a path or
+ * row handle. A connector checks them before browser/network work. Legacy
+ * two-argument implementations may ignore this additive context.
+ */
+export type SignInContext =
+  | { mode: "new" }
+  | { mode: "replace"; previous_state: Uint8Array };
+
 export interface HealthReportInit {
   state: HealthState;
   checked_at: string; // RFC3339
@@ -235,12 +245,12 @@ export interface Connector {
   sync(cursor: Cursor | null): Promise<SyncBatch>;
   revoke(): Promise<void>;
   /**
-   * Interactive first-time sign-in (phone code, browser OAuth, app
+   * Interactive sign-in (phone code, browser OAuth, app
    * password). The trusted host lends a scoped opaque-state writer and owns
    * both the filename and persisted connection record. Required when
    * `auth_modes` includes `sign_in` or `oauth`.
    */
-  signIn?(io: SignInIo, state: ConnectionStateWriter): Promise<SignInDisplay>;
+  signIn?(io: SignInIo, state: ConnectionStateWriter, context?: SignInContext): Promise<SignInDisplay>;
   purgeSource(subject_id: string): Promise<PurgePlan>;
   /** Offline sample used by the conformance suite; must need no credentials. */
   fixture(): Promise<CaptureEventInput[]>;
