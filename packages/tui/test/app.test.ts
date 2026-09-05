@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   chmodSync,
+  existsSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { editInEditor, parseEditorCommand, pickEditor } from "../src/editor";
 
 const temporary: string[] = [];
@@ -43,6 +45,16 @@ describe("editor", () => {
       "01ARZ3NDEKTSV4RRFFQ69G5FAV",
     );
     expect(result).toBe("changed");
+  });
+
+  test("editor buffers have explicit owner-only modes and are removed after failure", () => {
+    const record = join(mkdtempSync(join(tmpdir(), "kizuki-editor-record-")), "path");
+    temporary.push(dirname(record));
+    const editor = fakeEditor(`printf '%s' "$1" > '${record}'; test "$(stat -c %a \"$1\")" = 600; test "$(stat -c %a \"$(dirname \"$1\")\")" = 700; exit 3`);
+    expect(() => editInEditor(editor, "private", "mode-check")).toThrow("exited with 3");
+    const file = readFileSync(record, "utf8");
+    expect(existsSync(file)).toBe(false);
+    expect(existsSync(dirname(file))).toBe(false);
   });
 
   test("a failing editor is reported, not swallowed", () => {

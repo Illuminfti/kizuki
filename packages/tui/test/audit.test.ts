@@ -76,6 +76,23 @@ describe("audit reducer", () => {
     expect(refused.state.notice?.text).toContain("type yes");
   });
 
+  test("bracketed paste cannot invoke list shortcuts or authorize undo", () => {
+    const start = state([item()]);
+    expect(reduce(start, { name: "paste", text: "uq" }, VIEWPORT).effects).toEqual([]);
+    const confirm = reduce(start, { name: "char", ch: "u" }, VIEWPORT).state;
+    if (confirm.mode.name !== "confirm") throw new Error("expected undo confirmation");
+    const pasted = reduce(confirm, { name: "paste", text: "yes" }, VIEWPORT);
+    expect(pasted.state.mode).toEqual({ ...confirm.mode, text: "" });
+    expect(reduce(pasted.state, { name: "enter" }, VIEWPORT).effects).toEqual([]);
+  });
+
+  test("bracketed paste is filter text only and cannot synthesize submit", () => {
+    const start = reduce(state([item()]), { name: "char", ch: "/" }, VIEWPORT).state;
+    const result = reduce(start, { name: "paste", text: "grace\n" }, VIEWPORT);
+    expect(result.effects).toEqual([]);
+    expect(result.state.mode).toEqual({ name: "filter", text: "grace" });
+  });
+
   test("o and enter emit open; q emits quit; slash emits filter", () => {
     const start = state([item({ page_path: "people/grace.md" })]);
     expect(press(start, chars("o")).effects).toEqual([

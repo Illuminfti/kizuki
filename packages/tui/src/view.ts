@@ -75,7 +75,11 @@ function header(state: AuditState, cols: number, p: Paint): string {
   const session = state.session.undone > 0 ? p.dim(`session undo ${state.session.undone}`) : "";
   const gap = cols - stringWidth(left) - stringWidth(session);
   if (gap >= 2) return left + " ".repeat(gap) + session;
-  const raw = sanitize(`kizuki audit · ${state.vaultName} · ${listed}`);
+  // Keep command scope ahead of incidental vault decoration when a narrow
+  // terminal forces the one-line fallback; scope changes what is being shown.
+  const raw = sanitize(state.commandFilter
+    ? `kizuki audit · scope ${state.commandFilter} · ${listed}`
+    : `kizuki audit · ${state.vaultName} · ${listed}`);
   if (!state.pageTruncated) return truncate(raw, cols);
   return `${truncate(raw, Math.max(0, cols - 1), "…")}+`;
 }

@@ -175,4 +175,22 @@ describe("createTerminal", () => {
     stdin.emit("data", encoded.slice(1));
     expect(seen).toEqual(["気"]);
   });
+
+  test("enables bracketed paste and never turns pasted shortcuts into key events", () => {
+    const stdin = new FakeStdin();
+    const stdout = new FakeStdout();
+    const terminal = createTerminal(
+      stdin as unknown as NodeJS.ReadStream,
+      stdout as unknown as NodeJS.WriteStream,
+      { signals: null },
+    );
+    const seen: import("../src/keys").Key[] = [];
+    terminal.onKeys((keys) => seen.push(...keys));
+    terminal.enter();
+    stdin.emit("data", "\x1b[200~uq\x1b[201~");
+    terminal.leave();
+    expect(seen).toEqual([{ name: "paste", text: "uq" }]);
+    expect(stdout.writes.join("")).toContain(`${CSI}?2004h`);
+    expect(stdout.writes.join("")).toContain(`${CSI}?2004l`);
+  });
 });

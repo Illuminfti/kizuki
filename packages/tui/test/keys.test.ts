@@ -52,4 +52,27 @@ describe("parseKeys", () => {
       ]);
     }
   });
+
+  test("buffers every split of CSI and SS3 sequences without leaking shortcut bytes", () => {
+    for (const sequence of ["\x1b[A", "\x1bOu", "\x1b]0;uq\x07"]) {
+      for (let index = 1; index < sequence.length; index += 1) {
+        const stream = createKeyStream();
+        expect(stream.push(sequence.slice(0, index))).toEqual([]);
+        const keys = [...stream.push(sequence.slice(index)), ...stream.end()];
+        expect(keys.some((key) => key.name === "char" && (key.ch === "u" || key.ch === "A"))).toBe(false);
+      }
+    }
+    const lone = createKeyStream();
+    expect(lone.push("\x1b")).toEqual([]);
+    expect(lone.flush()).toEqual([{ name: "escape" }]);
+  });
+
+  test("emits bracketed paste as one data event across all marker boundaries", () => {
+    const input = "\x1b[200~uq\n\x1b[201~";
+    for (let index = 1; index < input.length; index += 1) {
+      const stream = createKeyStream();
+      const keys = [...stream.push(input.slice(0, index)), ...stream.push(input.slice(index)), ...stream.end()];
+      expect(keys).toEqual([{ name: "paste", text: "uq\n" }]);
+    }
+  });
 });

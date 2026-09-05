@@ -20,12 +20,20 @@ describe("width", () => {
     expect(stringWidth("é")).toBe(1);
     expect(stringWidth("\x1b[1mbold\x1b[0m")).toBe(4);
   });
+
+  test("uses grapheme clusters and maintained Unicode widths for emoji and flags", () => {
+    expect(stringWidth("👩‍💻")).toBe(2);
+    expect(stringWidth("🇬🇧")).toBe(2);
+    expect(stringWidth("·")).toBe(2);
+    expect(truncate("👩‍💻x", 2, "")).toBe("👩‍💻");
+    expect(wrap("🇬🇧x", 2)).toEqual(["🇬🇧", "x"]);
+  });
 });
 
 describe("truncate", () => {
   test("leaves short text alone and cuts long text with an ellipsis", () => {
     expect(truncate("short", 10)).toBe("short");
-    expect(truncate("a much longer line", 8)).toBe("a much …");
+    expect(truncate("a much longer line", 8)).toBe("a much…");
     expect(stringWidth(truncate("気づきのしゅんかん", 7))).toBeLessThanOrEqual(
       7,
     );
