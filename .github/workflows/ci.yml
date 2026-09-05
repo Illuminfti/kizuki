@@ -43,3 +43,15 @@ jobs:
         run: bun run ci:secrets
       - name: gitleaks
         run: bash scripts/ci-gitleaks.sh
+  container-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { fetch-depth: 0 }
+      - name: keep origin/main only
+        run: bash scripts/ci-restrict-origin-refs.sh
+      - name: container floor proof
+        run: bash deploy/proof/container.sh
+      - name: compose lint proof
+        run: bash deploy/proof/compose-lint.sh

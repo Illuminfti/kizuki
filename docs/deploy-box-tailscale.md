@@ -362,25 +362,150 @@ key, which this task's author cannot mint. The node `kizuki-m2-proof`
 (`100.125.239.98` on `taila6c912.ts.net`) remains listed in the tailnet
 admin console, offline; the owner needs to remove it.
 
+Finding (2026-09-04/05, M3 lane): checks 2.6–2.14 above are no longer
+"not yet proven live" — the M3 lane provisioned a real Box VM, ran the
+compose stack on it with a fresh reusable, tagged (`tag:kizuki`) auth key,
+and ran `deploy/proof/tailnet.sh` from `lars-pc` (a genuine second tailnet
+node, Windows) against it. All eight checks passed:
+`PASS 2.6 node-online`, `PASS 2.7 health-over-tailnet`,
+`PASS 2.8 mcp-over-tailnet`, `PASS 2.9 fail-closed-no-token`,
+`PASS 2.10 public-ip-dark`, `PASS 2.11 no-shell-exposed`,
+`PASS 2.12 restart-keeps-identity`, `PASS 2.14 only-served-ports-reachable`
+— exit 0. This is the first time this proof has run end to end; see the M3
+section and its own pull request receipts for the full transcript. Getting
+there needed one real fix, recorded here because it corrects a row of this
+document rather than of M3's own plan text:
+`deploy/tailscale/entrypoint.sh` was tracked in git as mode `100644`
+(non-executable) while `deploy/entrypoint.sh` was `100755`; on a real Linux
+box this made `containerboot`'s wrapper fail with `exec: "/local/
+entrypoint.sh": permission denied` and the tailscale service never started.
+It was never caught locally because the single-use key available during
+M2's own work was spent before a full `docker compose up` completed against
+the real image (see the Auth key exhaustion finding above) — the M2 finish
+line's own static check, `compose-lint.sh`, has no way to see a bind-mounted
+script's executable bit, since that bit lives on the host filesystem, not
+in `compose.yml`. Fixed with `git update-index --chmod=+x
+deploy/tailscale/entrypoint.sh` (this repository has `core.filemode=false`,
+so the bit had to be set in the index directly rather than relying on a
+local `chmod` to be picked up).
+
 ### M3 Box golden snapshot and one-command setup
 
 Files: `deploy/box/bootstrap.sh`, `deploy/box/README.md`,
 `deploy/proof/box.sh`.
 
-`bootstrap.sh` on a fresh Box VM: install nothing global beyond what the
-image ships (Docker is present), clone the pinned tag or copy the compose
-bundle, create the `TS_AUTHKEY` secret from an argument that is never
-echoed, `docker compose up -d`, wait for 1.4. Then `box stop` and snapshot.
+Correction (2026-09-04/05): there is no `box` CLI available to this work,
+and no pre-existing snapshot to fork from (`GET /snapshots` returned an
+empty list at the start of this lane). Everything here goes through the
+HTTP API at `https://ascii.dev/api/box/v1` directly — `POST /boxes`,
+`GET /boxes/{id}`, `POST /boxes/{id}/{stop,resume,fork}`,
+`DELETE /boxes/{id}`, and, in place of SSH (a hosted box exposes none, see
+M2's shell-removal finding), `POST /boxes/{id}/commands` and
+`PUT|GET /boxes/{id}/files`. `bootstrap.sh` provisions a box, uploads a
+`git bundle` of this repository's exact commit (the box's own GitHub remote
+needs credentials this script does not have) and clones it, places the
+tailnet auth key, and runs `docker compose up -d --build`, waiting for the
+same health signal as M1 check 1.4 (a `docker compose exec` `curl`, since
+nothing is bound to the box's own host network — see `deploy/box/README.md`
+for the full command contract and every API fact this script relies on).
 
-Finish line, `deploy/proof/box.sh` (runs from the owner's machine with the
-`box` CLI; receipts in the PR):
+Finish line, `deploy/proof/box.sh` (not CI-runnable; provisions and deletes
+real boxes; run against `https://ascii.dev/api/box/v1` on 2026-09-05, exact
+head in this PR):
 
-| # | Assertion | How it is decided |
-| --- | --- | --- |
-| 3.1 | One command, five minutes. | Wall clock from `box new --from <snapshot>` to 2.7 passing is ≤ 300 s, measured by the script. |
-| 3.2 | Stop and start keep the vault. | `box stop`, `box start`; 1.6 passes without re-import. |
-| 3.3 | Fork is a fresh identity. | A forked box comes up as a different tailnet node id and its `/vault/.kizuki/vault-id` differs. |
-| 3.4 | Stranger proof runs against it. | `scripts/stranger-proof.sh` (when it lands from its own lane) exits 0 with the box as target; until then this row is marked BLOCKED, not PASS. |
+| # | Assertion | Result | How it is decided |
+| --- | --- | --- | --- |
+| 3.1 | One command, five minutes. | **PASS**, measured 49–85s across four runs. | Wall clock from `bootstrap.sh`'s own box creation to its own health check passing, asserted ≤ 300s. |
+| 3.2 | Stop and start keep the vault. | **FAIL**, reproduced on every attempt, root cause now understood — see the correction below. | Import 3 fixtures (`events=3`), `POST /stop`, wait for `state=archived`, `POST /resume`, wait usable, bring the compose stack back up, re-read `events=`. |
+| 3.3 | Fork is a fresh identity. | **FAIL/BLOCKED** (never reached a clean comparison, cascading from 3.2's cause). | `POST /boxes/{id}/fork` is a real endpoint (confirmed: a fork against a nonexistent box id returns a distinct `not_found` shape from a genuine unrouted path) and does return a second box id, but reading `/vault/.kizuki/vault-id` from either box requires the kizuki container to actually start, which 3.2's finding shows it does not reliably do after a resume or fork. |
+| 3.4 | Stranger proof runs against it. | **BLOCKED** (correctly — `scripts/stranger-proof.sh` does not exist in this tree; see `docs/CURRENT.md`). | `[ -x scripts/stranger-proof.sh ]`. |
+
+Finding (2026-09-05): **stop/resume and fork do not restart the compose
+stack, and only images and named volumes reliably survive them — running
+containers do not.** `docker ps -a` immediately after a resume shows no
+containers at all (not even exited ones), while `docker volume ls` and
+`docker images` show the same named volumes (`deploy_kizuki-vault`,
+`deploy_tailscale-state`) and the previously built `deploy-kizuki` image
+still present. `docker compose up -d` must be run again — `bootstrap.sh`'s
+own bring-up sequence, not something `resume`/`fork` do automatically —
+and its first attempt after a resume or fork reliably (reproduced on every
+box tried) fails with `Error response from daemon: Conflict ... name
+"/deploy-tailscale-1" is already in use by container <id>`, a race between
+dockerd's own post-resume container reconciliation and this script's
+attempt to create the same name; `docker rm -f` on the two named
+containers and a retry clears it. `deploy/proof/box.sh`'s `bring_up_compose`
+implements this retry so 3.2/3.3 fail for their own real reason rather than
+this separate, cosmetic race.
+
+Correction (2026-09-05): this document's first pass at the deeper cause —
+that a resume restores a stale periodic snapshot taken before the last
+write, so the vault itself comes back missing recent data — is **wrong**,
+and was disproved by an isolated test (no Kizuki involved) run by the
+plan's owner: a marker file written 75 seconds before `/stop`, and a second
+one written seconds before it, both survived a stop/resume intact. Disk
+writes, including ones made moments before `/stop`, do survive. The
+`events=3` → `events=0` result reported in the previous revision of this
+row was never actually a fresh empty vault, either — that framing was an
+inference from `doctor`'s number, not a check of what was really
+happening. Two more precise, directly observed symptoms were re-checked
+after this correction, on a fresh box, with `docker volume ls --format` and
+a `com.docker.compose.config-hash` label comparison proving the *exact
+same* `deploy_kizuki-vault` volume (identical label set, not just a
+same-named new one) present before and after the stop/resume cycle: the
+kizuki container exits immediately after a post-resume bring-up with
+`error: writer lease is held by a live process`, and its logs show `docker
+logs deploy-kizuki-1` reporting exactly that string. The volume, and the
+data on it, were never the problem.
+
+The real cause is a bug in this repository, in
+`packages/core/src/serve/leases.ts`'s `isBusy`:
+
+```ts
+function isBusy(lease: LeaseRow, process: LeaseProcess, now: string): boolean {
+  if (lease.holder_pid === process.pid && lease.holder_boot_id === process.boot_id) {
+    return false;
+  }
+  if (process.isAlive(lease.holder_pid)) return true;   // <- ignores boot_id
+  const staleAfter = HEARTBEAT_SECONDS * LEASE_RECLAIM_HEARTBEATS;
+  return ageSeconds(lease.heartbeat_at, now) < staleAfter;
+}
+```
+
+The comment above this function (and RFC 0002 §11.3) says a `boot_id`
+mismatch is what distinguishes a genuine still-running holder from a stale
+lease whose PID number was reused after a reboot — but the code does not
+implement that: `process.isAlive(lease.holder_pid)` runs unconditionally,
+regardless of whether `boot_id` changed. Inside any container, PID 1 is
+always the current entrypoint process, so `pidAlive(1)` is always true,
+for every restart, forever, independent of whether anything about the
+underlying host actually rebooted. Direct evidence from the fresh box used
+to re-check this: the host's `/proc/sys/kernel/random/boot_id` read
+`bbe263b3-141d-4d6a-98d2-4d4cb81682d0` after the resume, while the stored
+lease row (queried straight out of `kizuki.db` via a throwaway container
+mounting the same volume) was `{"holder_pid":1,"holder_boot_id":"97b1007b-
+448b-477d-99e9-ac1000aa0c8b", ...}` — a *different* boot_id, proving the
+Box VM's guest kernel genuinely did reboot across this stop/resume (so the
+platform's own `/stop`+`/resume` behaves as advertised at the kernel level)
+and that this is exactly the reuse case the comment names, mishandled by
+the code. This is not a Box-specific defect and not something
+`deploy/compose.yml`, `deploy/entrypoint.sh`, or either proof script can
+fix: every container runtime reuses PID 1 on every restart, on every
+platform, so this lease would refuse to reclaim itself after *any*
+container restart following an unclean shutdown, Box or otherwise. Neither
+`deploy/proof/box.sh` nor `deploy/box/bootstrap.sh` works around it — doing
+so from a deploy script would hide a real defect in the lease's own
+correctness rather than report it, and `AGENTS.md` is explicit that a proof
+does not get bent to pass. Row 3.2 stays a genuine, understood FAIL until
+`isBusy` is fixed to treat a `boot_id` mismatch as conclusive (a holder from
+a different boot can never be "the same process," regardless of whether its
+old PID number happens to be occupied again) — filing that fix is outside
+this deploy-focused lane's scope (`packages/core`, not `deploy/`) and is
+named here as a dependency for M3's "value" (duty-cycling a box between
+customer sessions) rather than fixed in this pull request.
+
+Every box created while chasing this, both before and after this
+correction (and every other box this lane created), was deleted;
+`GET /boxes` was empty at the end of every run.
 
 ### M4 Canon writing from configuration
 

@@ -1,0 +1,5 @@
+#!/bin/sh
+# Thin wrapper: the image ships the tree and runs it with pinned bun, per
+# docs/deploy-box-tailscale.md non-goal "a compiled binary".
+set -eu
+exec bun /app/packages/cli/src/main.ts "$@"

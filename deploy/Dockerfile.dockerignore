@@ -1,0 +1,9 @@
+# Docker resolves the ignore file for `deploy/Dockerfile` as
+# `deploy/Dockerfile.dockerignore` relative to the build context (verified
+# empirically 2026-09-03: a plain `deploy/.dockerignore` is NOT picked up
+# when the Dockerfile lives in a subdirectory of the context). This file is
+# the one Docker actually reads.
+.git
+**/node_modules
+**/dist
+deploy/proof/*.log
