@@ -30,3 +30,14 @@ export function applySourceGrantsV11(db: Database): void {
     ) STRICT;
   `);
 }
+
+/** Explicit native authority is never inferred from captured connector metadata. */
+export function applyNativeOwnerEvidenceV12(db: Database): void {
+  db.exec(`CREATE TABLE native_owner_evidence (
+    event_id TEXT PRIMARY KEY,
+    origin TEXT NOT NULL CHECK(origin='correction'),
+    request_digest TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    filing_state TEXT NOT NULL CHECK(filing_state IN ('recorded','filed','failed'))
+  ) STRICT;`);
+}

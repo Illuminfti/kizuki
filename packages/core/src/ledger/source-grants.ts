@@ -537,6 +537,12 @@ export function sourceEventsAllowed(
       .get(id);
     if (row === null) return false;
     if (row.source_key === null) {
+      const native = db
+        .query(
+          "SELECT 1 FROM native_owner_evidence WHERE event_id=? AND origin='correction'",
+        )
+        .get(id);
+      if (native !== null && !scope.model && scope.port === undefined) continue;
       if (!scope.owner || scope.model || scope.port !== undefined) return false;
       continue;
     }

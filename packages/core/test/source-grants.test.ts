@@ -809,3 +809,139 @@ test("a crashed rebuild releases kernel ownership and reopened source revocation
     } catch {}
   }
 });
+
+test("native relayed corrections preserve owner origin and source closure across retry and restore", async () => {
+  const { db, dir, a } = setup();
+  setSourceGrant(db, {
+    source_key: a,
+    expected_revision: 0,
+    operation_id: "correction-grant",
+    policy: { ...policy(), purposes: [...policy().purposes, "correction"] },
+  });
+  const accepted = accept(db, event(), {
+    source: { source_key: a, expected_revision: 1 },
+  });
+  if (accepted.status !== "stored") throw new Error("fixture admission failed");
+  const target = await insertClaim(
+    { db },
+    {
+      ...claimInput(accepted.event.event_id),
+      subject: "person:ada",
+      predicate: "employment.works_at",
+      object: "Acme",
+      subjects: ["person:ada"],
+    },
+  );
+  if (!("claim" in target)) throw new Error("fixture claim failed");
+  const principal = authenticate(
+    db,
+    addAgent(db, "source-relay", {
+      ceiling: "private",
+      tools: ["correct"],
+      relay_owner_corrections: true,
+    }).token,
+  )!;
+  const { serveCorrect } = await import("../src/index");
+  const args = {
+    statement: "Ada left Acme.",
+    target: { claim_id: target.claim.claim_id },
+  };
+  const result = await serveCorrect({ db, vaultPath: dir, principal }, args);
+  expect(result.data!.event_id).not.toBeNull();
+  const stored = db
+    .query<{ provenance: string }, [string]>(
+      "SELECT provenance FROM claims WHERE claim_id=?",
+    )
+    .get(result.data!.claim_id!);
+  expect(JSON.parse(stored!.provenance)).toContain(accepted.event.event_id);
+  expect(
+    db
+      .query("SELECT filing_state FROM native_owner_evidence WHERE event_id=?")
+      .get(result.data!.event_id!),
+  ).toEqual({ filing_state: "filed" });
+  const replay = await serveCorrect({ db, vaultPath: dir, principal }, args);
+  expect(replay.data!.event_id).toBe(result.data!.event_id);
+  await expect(
+    serveCorrect(
+      { db, vaultPath: dir, principal },
+      { ...args, object: "Other" },
+    ),
+  ).rejects.toThrow();
+  const roundtrip = mkdtempSync(join(tmpdir(), "origin-roundtrip-"));
+  dirs.push(roundtrip);
+  const backup = join(roundtrip, "backup");
+  exportVault(db, dir, backup);
+  const restored = join(roundtrip, "restored");
+  await restoreVault(backup, restored);
+  const reopened = openLedger(join(restored, ".kizuki", "kizuki.db"));
+  expect(
+    reopened
+      .query("SELECT filing_state FROM native_owner_evidence WHERE event_id=?")
+      .get(result.data!.event_id!),
+  ).toEqual({ filing_state: "filed" });
+  reopened.close();
+  revokeSourceGrant(db, {
+    source_key: a,
+    expected_revision: 1,
+    operation_id: "origin-revoke",
+  });
+  expect(
+    claimReader(db, OWNER.grant).canRead(
+      JSON.parse(JSON.stringify(target.claim)),
+    ),
+  ).toBe(false);
+  expect(
+    db
+      .query("SELECT 1 FROM events WHERE event_id=?")
+      .get(result.data!.event_id!),
+  ).not.toBeNull();
+  db.close();
+});
+
+test("a failed native correction has a durable recording receipt and can retry after reopen", async () => {
+  const { db, dir, a } = setup();
+  setSourceGrant(db, {
+    source_key: a,
+    expected_revision: 0,
+    operation_id: "failed-correction-grant",
+    policy: { ...policy(), purposes: [...policy().purposes, "correction"] },
+  });
+  const accepted = accept(db, event(), {
+    source: { source_key: a, expected_revision: 1 },
+  });
+  if (accepted.status !== "stored") throw new Error("fixture failed");
+  const target = await insertClaim({ db }, claimInput(accepted.event.event_id));
+  if (!("claim" in target)) throw new Error("fixture claim failed");
+  const { serveCorrect } = await import("../src/index");
+  const args = {
+    statement: "The recorded employer is wrong.",
+    target: { claim_id: target.claim.claim_id },
+  };
+  db.exec(
+    "CREATE TRIGGER refuse_fixture_correction BEFORE INSERT ON claims WHEN NEW.target LIKE 'correction:%' BEGIN SELECT RAISE(FAIL, 'synthetic filing failure'); END",
+  );
+  await expect(
+    serveCorrect({ db, vaultPath: dir, principal: OWNER }, args),
+  ).rejects.toThrow("serving failed");
+  const recorded = db
+    .query<{ event_id: string; filing_state: string }, []>(
+      "SELECT event_id,filing_state FROM native_owner_evidence",
+    )
+    .get()!;
+  expect(recorded.filing_state).toBe("failed");
+  expect(
+    db.query("SELECT 1 FROM events WHERE event_id=?").get(recorded.event_id),
+  ).not.toBeNull();
+  db.exec("DROP TRIGGER refuse_fixture_correction");
+  db.close();
+  const reopened = openLedger(join(dir, ".kizuki", "kizuki.db"));
+  const retried = await serveCorrect(
+    { db: reopened, vaultPath: dir, principal: OWNER },
+    args,
+  );
+  expect(retried.data!.event_id).toBe(recorded.event_id);
+  expect(
+    reopened.query("SELECT count(*) AS n FROM native_owner_evidence").get(),
+  ).toEqual({ n: 1 });
+  reopened.close();
+});

@@ -1,3 +1,4 @@
+import { isRfc3339 } from "./util/time";
 import { sourcePolicyEpoch, inspectSourceGrant, sourceEventsAllowed } from "./ledger/source-grants";
 import type { Database } from "bun:sqlite";
 import {
@@ -1607,9 +1608,10 @@ export function restoreVault(
   }
 }
 
-const SOURCE_BACKUP_TABLES = ["source_grants", "source_event_bindings", "source_grant_receipts"] as const;
+const SOURCE_BACKUP_TABLES = ["source_grants", "source_event_bindings", "source_grant_receipts", "native_owner_evidence"] as const;
 type SourceBackupTable = typeof SOURCE_BACKUP_TABLES[number];
 const SOURCE_COLUMNS: Record<SourceBackupTable, readonly string[]> = {
+  native_owner_evidence: ["event_id", "origin", "request_digest", "recorded_at", "filing_state"],
   source_grants: ["source_key", "connector_id", "revision", "status", "policy", "policy_digest", "updated_at", "revoke_operation", "purge_receipt_id"],
   source_event_bindings: ["event_id", "source_key", "grant_revision", "policy_digest"],
   source_grant_receipts: ["sequence", "operation_id", "request_digest", "receipt"],
@@ -1636,8 +1638,8 @@ function assertSourceExport(db: Database): void {
   }
 }
 function restoreSourcePolicy(db: Database, backup: string, manifest: ExportManifest): void {
-  const required = manifest.schema_versions.ledger >= 11;
   for (const table of SOURCE_BACKUP_TABLES) {
+    const required = manifest.schema_versions.ledger >= (table === "native_owner_evidence" ? 12 : 11);
     const path = `ledger/${table}.jsonl`;
     if (required && manifest.files[path] === undefined) throw new Error("backup source policy stream missing");
     for (const row of streamRows(backup, path, required)) {
@@ -1650,6 +1652,9 @@ function restoreSourcePolicy(db: Database, backup: string, manifest: ExportManif
       });
       db.query(`INSERT INTO ${table} (${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`).run(...values);
     }
+  }
+  for (const row of db.query<{ event_id:string; origin:string; request_digest:string; recorded_at:string; filing_state:string }, []>("SELECT * FROM native_owner_evidence").iterate()) {
+    if (row.origin !== "correction" || !/^[a-f0-9]{64}$/.test(row.request_digest) || !isRfc3339(row.recorded_at) || !["recorded","filed","failed"].includes(row.filing_state) || db.query("SELECT 1 FROM source_event_bindings WHERE event_id=?").get(row.event_id) !== null || db.query("SELECT 1 FROM events WHERE event_id=?").get(row.event_id) === null) throw new Error("invalid native owner evidence backup");
   }
   for (const row of db.query<{ source_key: string }, []>("SELECT source_key FROM source_grants").iterate()) {
     const grant = inspectSourceGrant(db, row.source_key)!;

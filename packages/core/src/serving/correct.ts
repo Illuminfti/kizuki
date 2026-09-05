@@ -1,7 +1,11 @@
-import { sourcePolicyEpoch } from "../ledger/source-grants";
+import { sha256Hex } from "../util/hash";
+import {
+  sourcePolicyEpoch,
+  requireSourceEvents,
+} from "../ledger/source-grants";
 import { claimReader } from "./claims";
 import type { Sensitivity } from "../agents";
-import { insertClaim } from "../claims/store";
+import { insertClaim, getClaim } from "../claims/store";
 import type { AuthorityTier, Claim } from "../contracts/proposal";
 import { accept } from "../ledger/ledger";
 import { text } from "./arguments";
@@ -85,37 +89,61 @@ function recordStatement(
   sourceRecordId: string,
   subject: string,
   at: string,
+  requestDigest: string,
 ): string {
-  // A replay of the same sentence at the same target is the same evidence
-  // (RFC 0002 §6.3): the ledger keeps one row for it, and the accepted
-  // instant would otherwise make every replay a new record.
-  const existing = ctx.db
-    .query<{ event_id: string }, [string, string]>(
-      `SELECT event_id FROM events
+  return ctx.db
+    .transaction(() => {
+      // A replay of the same sentence at the same target is the same evidence
+      // (RFC 0002 §6.3): the ledger keeps one row for it, and the accepted
+      // instant would otherwise make every replay a new record.
+      const existing = ctx.db
+        .query<{ event_id: string }, [string, string]>(
+          `SELECT event_id FROM events
          WHERE connector_id = ? AND source_record_id = ?
          ORDER BY accepted_at LIMIT 1`,
-    )
-    .get(CORRECTION_CONNECTOR, sourceRecordId);
-  if (existing !== null) return existing.event_id;
+        )
+        .get(CORRECTION_CONNECTOR, sourceRecordId);
+      if (existing !== null) {
+        const marker = ctx.db
+          .query<{ request_digest: string }, [string]>(
+            "SELECT request_digest FROM native_owner_evidence WHERE event_id=?",
+          )
+          .get(existing.event_id);
+        if (marker === null || marker.request_digest !== requestDigest)
+          throw new ServeError(
+            "invalid_arguments",
+            "correction recording conflicts with existing evidence",
+          );
+        return existing.event_id;
+      }
 
-  const stored = accept(ctx.db, {
-    schema: "kizuki.event/v1",
-    connector_id: CORRECTION_CONNECTOR,
-    source_record_id: sourceRecordId,
-    kind: CORRECTION_KIND,
-    occurred_at: at,
-    observed_at: at,
-    text: statement,
-    subjects: [{ subject_id: subject, role: "about" }],
-    sensitivity_hint: "private",
-    deleted: false,
-    attachments: [],
-    metadata: {},
-  });
-  if (stored.status === "stored") return stored.event.event_id;
-  throw new ServeError("error", "serving failed", {
-    cause: stored.status === "error" ? stored.error : "duplicate statement",
-  });
+      const stored = accept(ctx.db, {
+        schema: "kizuki.event/v1",
+        connector_id: CORRECTION_CONNECTOR,
+        source_record_id: sourceRecordId,
+        kind: CORRECTION_KIND,
+        occurred_at: at,
+        observed_at: at,
+        text: statement,
+        subjects: [],
+        sensitivity_hint: "private",
+        deleted: false,
+        attachments: [],
+        metadata: {},
+      });
+      if (stored.status === "stored") {
+        ctx.db
+          .query(
+            "INSERT INTO native_owner_evidence VALUES (?, 'correction', ?, ?, 'recorded')",
+          )
+          .run(stored.event.event_id, requestDigest, at);
+        return stored.event.event_id;
+      }
+      throw new ServeError("error", "serving failed", {
+        cause: stored.status === "error" ? stored.error : "duplicate statement",
+      });
+    })
+    .immediate();
 }
 
 function ambiguousAnswer(groups: Map<string, Claim[]>): CorrectData {
@@ -187,9 +215,76 @@ export async function serveCorrect(
         args.object === undefined
           ? undefined
           : text("object", args.object, MAX_OBJECT_CHARS);
+      // A filed native recording remains replayable after its target was retired.
+      if (args.target !== undefined && args.dry_run !== true) {
+        const recorded = ctx.db
+          .query<
+            { event_id: string; request_digest: string },
+            [string, string]
+          >(
+            "SELECT e.event_id,n.request_digest FROM events e JOIN native_owner_evidence n ON n.event_id=e.event_id WHERE e.connector_id=? AND e.source_record_id=?",
+          )
+          .get(CORRECTION_CONNECTOR, recordId(statement, args.target));
+        if (recorded !== null) {
+          if (
+            recorded.request_digest !==
+            sha256Hex(
+              JSON.stringify([statement, args.target, replacement ?? null]),
+            )
+          )
+            throw refuse(
+              "object",
+              "conflicts with the recorded correction intent",
+            );
+          const filedRow = ctx.db
+            .query<{ claim_id: string }, [string]>(
+              "SELECT claim_id FROM claims WHERE EXISTS (SELECT 1 FROM json_each(claims.provenance) WHERE value=?) AND target LIKE 'correction:%' ORDER BY created_at LIMIT 1",
+            )
+            .get(recorded.event_id);
+          const prior =
+            filedRow === null ? null : getClaim(ctx.db, filedRow.claim_id);
+          if (prior !== null) {
+            readable(grant, [prior]);
+            requireSourceEvents(ctx.db, prior.provenance, {
+              owner: ctx.principal.kind === "owner",
+              purpose: "correction",
+            });
+            ctx.db
+              .query(
+                "UPDATE native_owner_evidence SET filing_state='filed' WHERE event_id=?",
+              )
+              .run(recorded.event_id);
+            return {
+              canon: [],
+              quoted: [],
+              withheld: [],
+              data: {
+                receipt_id: null,
+                event_id: recorded.event_id,
+                claim_id: prior.claim_id,
+                superseded: [],
+                rewritten: [],
+                ambiguous: [],
+                answer:
+                  "That correction was already recorded; nothing changed.",
+              },
+            };
+          }
+        }
+      }
       const resolved = resolve(ctx, args.target);
-      const sourceReader = claimReader(ctx.db, grant, { owner: ctx.principal.kind === "owner", purpose: "correction" });
-      if (sourcePolicyEpoch(ctx.db) > 0 && resolved.claims.some(claim => !sourceReader.canRead(claim))) throw new ServeError("held", "source authorization does not permit this correction");
+      const sourceReader = claimReader(ctx.db, grant, {
+        owner: ctx.principal.kind === "owner",
+        purpose: "correction",
+      });
+      if (
+        sourcePolicyEpoch(ctx.db) > 0 &&
+        resolved.claims.some((claim) => !sourceReader.canRead(claim))
+      )
+        throw new ServeError(
+          "held",
+          "source authorization does not permit this correction",
+        );
       readable(grant, resolved.claims);
 
       const groups = groupByKey(resolved.claims);
@@ -236,12 +331,22 @@ export async function serveCorrect(
         };
       }
 
+      const targetEvidence = [
+        ...new Set(group.flatMap((claim) => claim.provenance)),
+      ].sort();
+      requireSourceEvents(ctx.db, targetEvidence, {
+        owner: ctx.principal.kind === "owner",
+        purpose: "correction",
+      });
       const eventId = recordStatement(
         ctx,
         statement,
         recordId(statement, resolved.target),
         subject,
         at,
+        sha256Hex(
+          JSON.stringify([statement, resolved.target, replacement ?? null]),
+        ),
       );
       const sensitivity: Sensitivity = first.sensitivity;
       const ceiling = relayCeiling(ctx);
@@ -252,7 +357,7 @@ export async function serveCorrect(
         // the store's idempotency index.
         target: `correction:${claimKeyValue}`,
         body: statement,
-        provenance: [eventId],
+        provenance: [...new Set([eventId, ...targetEvidence])],
         subjects: [subject],
         subject,
         predicate,
@@ -272,7 +377,19 @@ export async function serveCorrect(
         taint: "clean",
         sensitivity,
         ...(ceiling === undefined ? {} : { relay_ceiling: ceiling }),
+      }).catch((error) => {
+        ctx.db
+          .query(
+            "UPDATE native_owner_evidence SET filing_state='failed' WHERE event_id=?",
+          )
+          .run(eventId);
+        throw error;
       });
+      ctx.db
+        .query(
+          "UPDATE native_owner_evidence SET filing_state='filed' WHERE event_id=?",
+        )
+        .run(eventId);
 
       const claim =
         filed.outcome === "contested" ? filed.incoming : filed.claim;
