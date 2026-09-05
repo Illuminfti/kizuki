@@ -4,7 +4,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
-  EXTRACTION_SYSTEM_PROMPT, addAgent,
+  EXTRACTION_SYSTEM_PROMPT, addAgent, authenticate, authorize, toolAllowed,
   initAgents, listCanonReceipts, listClaims, listConnections, openLedger, readSince, setSourceGrant,
 } from "../packages/core/src/index";
 import type { CaptureEvent, Claim, Envelope, RunReceipt, SearchHit } from "../packages/core/src/index";
@@ -318,7 +318,15 @@ export async function runNativeQuality(options: { artifact?: string } = {}) {
     const expectedCanon = item.expected.filter((claim) => claim.bodies.some((body) => body.toLowerCase().includes(item.retrieval_query.toLowerCase())));
     const token = withLedger(vault, (db) => {
       initAgents(db);
-      return addAgent(db, `quality-public-${commands.length}`, { ceiling: "public", tools: ["search", "context_packet"] }).token;
+      const created = addAgent(db, `quality-public-${commands.length}`, {
+        ceiling: "public", tools: ["search", "context_packet"], types: null, subjects: null,
+      });
+      const principal = authenticate(db, created.token);
+      assert(principal !== null && principal.kind === "agent", "quality public agent did not authenticate");
+      assert(toolAllowed(principal.grant, "search") && toolAllowed(principal.grant, "context_packet") &&
+        authorize(principal.grant, { id: "quality:public-control", sensitivity: "public", type: "fact", subjects: ["quality:probe"] }).allow,
+        "quality public agent has no record authority; disclosure result would be vacuous");
+      return created.token;
     });
     const [owner] = await mcp(vault, [{ name: "search", arguments: { query: item.retrieval_query, scope: "ledger" } }]);
     const [publicResult, publicPacket] = await mcp(vault, [

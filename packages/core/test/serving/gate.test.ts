@@ -7,7 +7,7 @@ import {
   expect,
   test,
 } from "bun:test";
-import { listAudit, revokeAgent, setGrant } from "../../src/agents";
+import { listAudit, revokeAgent, setGrant, TOOLS } from "../../src/agents";
 import type { AuditDenial } from "../../src/agents";
 import { listClaims } from "../../src/claims/store";
 import { gate } from "../../src/serving/gate";
@@ -42,6 +42,18 @@ function refusal(run: () => unknown): ServeError {
   }
   throw new Error("expected a ServeError");
 }
+
+test("a default enrolled token is refused before every serving-tool callback", () => {
+  const context = fixture.agent("plain");
+  let called = 0;
+  for (const tool of TOOLS) {
+    expect(refusal(() => gate(context, tool, {}, () => { called++; return emptyRun(); })).code).toBe("tool_not_granted");
+  }
+  expect(called).toBe(0);
+  const rows = listAudit(fixture.db, "plain", { kind: "access", limit: TOOLS.length });
+  expect(rows).toHaveLength(TOOLS.length);
+  expect(rows.every(row => row.denied.some(item => item.reason === "tool_not_granted"))).toBe(true);
+});
 
 const CANON: CanonChunk = {
   page_id: "person:ada",
