@@ -13,14 +13,14 @@ describe("timeline", () => {
     });
     storedEvent(db, "next", { occurred_at: "2026-02-04T00:00:00Z" });
 
-    expect(timeline(db, { day: "2026-02-03" }).map(({ event_id }) => event_id)).toEqual([
+    expect(timeline(db, { ceiling: "private", day: "2026-02-03" }).map(({ event_id }) => event_id)).toEqual([
       start.event_id,
       end.event_id,
     ]);
   });
 
   test("rejects a calendar date that does not exist", () => {
-    expect(() => timeline(searchDb(), { day: "2026-02-30" })).toThrow(
+    expect(() => timeline(searchDb(), { ceiling: "private", day: "2026-02-30" })).toThrow(
       RangeError,
     );
   });
@@ -34,7 +34,7 @@ describe("timeline", () => {
       occurred_at: "2026-02-03T23:30:00-02:00",
     });
 
-    expect(timeline(db, { day: "2026-02-03" }).map(({ event_id }) => event_id)).toEqual([
+    expect(timeline(db, { ceiling: "private", day: "2026-02-03" }).map(({ event_id }) => event_id)).toEqual([
       inside.event_id,
     ]);
   });
@@ -48,7 +48,7 @@ describe("timeline", () => {
       occurred_at: "2026-06-30T23:59:60Z",
     });
 
-    expect(timeline(db, { day: "2026-06-30" }).map(({ event_id }) => event_id)).toEqual([
+    expect(timeline(db, { ceiling: "private", day: "2026-06-30" }).map(({ event_id }) => event_id)).toEqual([
       lowercase.event_id,
       leap.event_id,
     ]);
@@ -64,7 +64,7 @@ describe("timeline", () => {
     });
 
     expect(
-      timeline(db, { subject: "person:grace" }).map(({ event_id }) => event_id),
+      timeline(db, { ceiling: "private", subject: "person:grace" }).map(({ event_id }) => event_id),
     ).toEqual([grace.event_id]);
   });
 
@@ -90,8 +90,8 @@ describe("timeline", () => {
     ).toEqual([publicEvent.event_id, personal.event_id]);
   });
 
-  test.todo(
-    "sensitivity lane: owner timeline excludes events without sensitivity",
+  test(
+    "an explicit owner ceiling excludes events without sensitivity",
     () => {
       const db = searchDb();
       const event = storedEvent(db, "unlabeled", {
@@ -101,7 +101,7 @@ describe("timeline", () => {
         "UPDATE events SET sensitivity_hint = NULL WHERE event_id = ?",
       ).run(event.event_id);
 
-      expect(timeline(db).map(({ event_id }) => event_id)).not.toContain(
+      expect(timeline(db, { ceiling: "private" }).map(({ event_id }) => event_id)).not.toContain(
         event.event_id,
       );
     },
@@ -126,7 +126,7 @@ describe("timeline", () => {
     });
 
     expect(
-      timeline(db, {
+      timeline(db, { ceiling: "private",
         connector_id: "mail",
         kind: "email",
         since: "2026-01-15T00:00:00Z",
@@ -142,7 +142,7 @@ describe("timeline", () => {
     });
     storedEvent(db, "second", { occurred_at: "2026-02-01T00:00:00Z" });
 
-    expect(timeline(db, { limit: 1 }).map(({ event_id }) => event_id)).toEqual([
+    expect(timeline(db, { ceiling: "private", limit: 1 }).map(({ event_id }) => event_id)).toEqual([
       first.event_id,
     ]);
   });
@@ -151,7 +151,7 @@ describe("timeline", () => {
     const db = searchDb();
     storedEvent(db, "live");
     storedEvent(db, "deleted", { deleted: true });
-    expect(timeline(db)).toHaveLength(1);
+    expect(timeline(db, { ceiling: "private" })).toHaveLength(1);
   });
 
   test("collapses preview whitespace and bounds it to 160 characters", () => {
@@ -160,7 +160,7 @@ describe("timeline", () => {
       text: `  alpha\n\tbeta   ${"x".repeat(200)}  `,
     });
 
-    const [entry] = timeline(db);
+    const [entry] = timeline(db, { ceiling: "private" });
     expect(entry?.taint).toBe("quoted");
     expect(entry?.text_preview.startsWith("alpha beta xxx")).toBe(true);
     expect(entry?.text_preview).toHaveLength(160);
@@ -175,7 +175,7 @@ describe("timeline", () => {
       occurred_at: "2026-02-03T03:00:00Z",
     });
 
-    expect(timeline(db).map(({ event_id }) => event_id)).toEqual([
+    expect(timeline(db, { ceiling: "private" }).map(({ event_id }) => event_id)).toEqual([
       earlierUtc.event_id,
       laterOffset.event_id,
     ]);
@@ -184,15 +184,15 @@ describe("timeline", () => {
   test("rejects a garbage since or until instead of returning an empty window", () => {
     const db = searchDb();
     storedEvent(db, "live");
-    expect(() => timeline(db, { since: "garbage" })).toThrow(RangeError);
-    expect(() => timeline(db, { until: "garbage" })).toThrow(RangeError);
+    expect(() => timeline(db, { ceiling: "private", since: "garbage" })).toThrow(RangeError);
+    expect(() => timeline(db, { ceiling: "private", until: "garbage" })).toThrow(RangeError);
   });
 
   test("does not split a trailing emoji into a lone UTF-16 surrogate", () => {
     const db = searchDb();
     storedEvent(db, "emoji", { text: `${"x".repeat(159)}\u{1F600}` });
 
-    const preview = timeline(db)[0]?.text_preview ?? "";
+    const preview = timeline(db, { ceiling: "private" })[0]?.text_preview ?? "";
     expect(preview.charCodeAt(preview.length - 1)).not.toBe(0xd83d);
     expect([...preview]).toEqual([...("x".repeat(159) + "\u{1F600}")]);
   });
@@ -205,6 +205,6 @@ describe("timeline", () => {
         { subject_id: "person:grace", role: "to" },
       ],
     });
-    expect(timeline(db)[0]?.subjects).toEqual(["person:ada", "person:grace"]);
+    expect(timeline(db, { ceiling: "private" })[0]?.subjects).toEqual(["person:ada", "person:grace"]);
   });
 });

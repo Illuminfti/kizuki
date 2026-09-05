@@ -2,10 +2,14 @@ import { subjectPageType } from "../vault/subject-type";
 import type { Database } from "bun:sqlite";
 import type { CaptureEvent, SubjectRef } from "../contracts/event";
 import { tableExists } from "../ledger/schema";
+import { validateEventOrigin } from "../ledger/event-origin";
+import { requireSourceEvents } from "../ledger/source-grants";
 import { validatePageCandidate } from "../contracts/page-candidate";
 import { pageCandidateProposal } from "./page-candidate";
-import { fileProposal, setProposalStatus } from "./proposals";
+import { fileProposal, setProposalStatus, StagingError } from "./proposals";
 import type { ProposalInput } from "./proposals";
+import { sourceTombstoneProposal, SourceTombstoneError } from "../canon/source-tombstone";
+import type { SourceTombstoneContext } from "../canon/source-tombstone";
 
 /**
  * The deterministic floor: claims derivable from an event with no model.
@@ -106,7 +110,7 @@ export function proposalsForEvent(
   event: CaptureEvent,
   grants: ProducerGrants = NO_GRANTS,
 ): ProposalInput[] {
-  if (event.deleted) return [];
+  if (event.deleted || event.origin === "self") return [];
 
   const proposals: ProposalInput[] = [];
   const seen = new Set<string>();
@@ -173,61 +177,60 @@ export interface TombstoneCascade {
 export function cascadeTombstone(
   db: Database,
   tombstone: CaptureEvent,
+  context?: SourceTombstoneContext,
 ): TombstoneCascade {
-  const eventRows = db
-    .query(
-      "SELECT event_id FROM events WHERE connector_id = ? AND source_record_id = ?",
-    )
-    .all(tombstone.connector_id, tombstone.source_record_id) as {
-    event_id: string;
-  }[];
-  const eventIds = new Set(eventRows.map((r) => r.event_id));
-  eventIds.add(tombstone.event_id);
-  const ids = [...eventIds];
+  return db.transaction(() => {
+    tombstone = validateEventOrigin(db, tombstone);
+    if (!tombstone.deleted) throw new StagingError("tombstone: stored event is not deleted");
+    // Recording deletion and withdrawing stale pending evidence belong to
+    // capture. Any canon control below independently requires derive authority.
+    requireSourceEvents(db, [tombstone.event_id], { owner: true, purpose: "capture" });
+    const eventRows = db
+      .query(
+        `SELECT e.event_id FROM events e
+          LEFT JOIN source_event_bindings b ON b.event_id=e.event_id
+          WHERE e.connector_id = ? AND e.source_record_id = ?
+            AND b.source_key IS (SELECT source_key FROM source_event_bindings WHERE event_id=?)`,
+      )
+      .all(tombstone.connector_id, tombstone.source_record_id, tombstone.event_id) as {
+      event_id: string;
+    }[];
+    const eventIds = new Set(eventRows.map((r) => r.event_id));
+    eventIds.add(tombstone.event_id);
+    const ids = [...eventIds];
 
-  const withdrawn: string[] = [];
-  for (const id of ids) withdrawn.push(...withdrawForTombstone(db, id));
+    const withdrawn: string[] = [];
+    for (const id of ids) withdrawn.push(...withdrawForTombstone(db, id));
 
-  if (!tableExists(db, "canon_receipts")) {
-    return { withdrawn, retractions_filed: [] };
-  }
-  const placeholders = ids.map(() => "?").join(", ");
-  // Receipts name their claims in `claim_ids`; a promoted proposal shares its
-  // id with the claim the receipted writer materialized (RFC 0002 §18.1 v4).
-  const promotedPages = db
-    .query(
-      `SELECT DISTINCT p.proposal_id AS proposal_id, r.page_path AS page_path
-         FROM canon_receipts r, json_each(r.claim_ids) c,
-              proposals p, json_each(p.provenance) j
-        WHERE p.proposal_id = c.value
-          AND p.status = 'promoted'
-          AND j.value IN (${placeholders})`,
-    )
-    .all(...ids) as { proposal_id: string; page_path: string }[];
-
-  const retractions: string[] = [];
-  for (const page of promotedPages) {
-    const result = fileProposal(db, {
-      kind: "deletion",
-      // The page path minus the extension round-trips through pageRelPath, so
-      // promoting this proposal targets the existing page instead of minting one.
-      target: page.page_path.replace(/\.md$/, ""),
-      body:
-        `Source record \`${tombstone.source_record_id}\` was deleted at ` +
-        `\`${tombstone.connector_id}\`; canon page \`${page.page_path}\` cites it.`,
-      frontmatter: {
-        "x-connector": tombstone.connector_id,
-        "x-source-record-id": tombstone.source_record_id,
-        "x-page-proposal": page.proposal_id,
-      },
-      provenance: [tombstone.event_id],
-      producer: "deterministic",
-      confidence: 1,
-    });
-    if (result.outcome === "stored") {
-      retractions.push(result.proposal.proposal_id);
+    if (!tableExists(db, "canon_receipts")) {
+      return { withdrawn, retractions_filed: [] };
     }
-  }
+    const placeholders = ids.map(() => "?").join(", ");
+    // Receipts name their claims in `claim_ids`; a promoted proposal shares its
+    // id with the claim the receipted writer materialized (RFC 0002 §18.1 v4).
+    const promotedPages = db
+      .query(
+        `SELECT DISTINCT r.page_path AS page_path
+           FROM canon_receipts r, json_each(r.claim_ids) c,
+                proposals p, json_each(p.provenance) j
+          WHERE p.proposal_id = c.value
+            AND p.status = 'promoted'
+            AND p.kind NOT IN ('deletion', 'purge_review')
+            AND j.value IN (${placeholders})`,
+      )
+      .all(...ids) as { page_path: string }[];
 
-  return { withdrawn, retractions_filed: retractions };
+    const retractions: string[] = [];
+    for (const page of promotedPages) {
+      if (context === undefined) throw new SourceTombstoneError("source_tombstone_vault_required");
+      const input = sourceTombstoneProposal(db, tombstone, page.page_path, context);
+      if (input === null) continue;
+      const result = fileProposal(db, input, context);
+      if (result.outcome === "stored") {
+        retractions.push(result.proposal.proposal_id);
+      }
+    }
+
+    return { withdrawn, retractions_filed: retractions };
+  }).immediate();
 }

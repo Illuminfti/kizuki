@@ -14,6 +14,10 @@ Nothing in this document is a claim that any of it is built. Every lane in
 §18 names its exit proof; until that proof exists the surface does not
 exist (invariant 10).
 
+Clarification (2026-09-05): §12.1 projects consumed provider-envelope
+fields and reserved refusals. Exact extra-key refusal applies to the
+extraction claim payload in §4.2, not to unread assistant-message keys.
+
 ---
 
 ## 1. Motivation: queues rot, and the evidence is not theoretical
@@ -295,9 +299,13 @@ is `undo`, and undo goes through the core receipt reverser.
 silently merged)" with:
 
 ```
-   (candidate links; merged autonomously only above the configured
-   threshold with independent corroboration; every merge receipted and
-   reversible; purge keyed on raw subject refs, never on merged identity).
+   (legacy identity links are inert until a separately reviewed, receipted
+   authority design exists; purge keyed on raw subject refs, never on merged
+   identity). The legacy mutation and alias APIs fail closed with a typed
+   unsupported condition. Alias-expanded purge refuses before planning;
+   ordinary raw-subject purge remains available. Legacy evidence accepts only
+   bounded exact `event:<id>` and `claim:<id>` references for cleanup and
+   absence verification. Import and restore preserve rows as inert history.
 ```
 
 **Append §11:**
@@ -673,11 +681,30 @@ Three additions:
   `kizuki.owner` connector (CLI `tell`, MCP `correct`, hand edits detected
   in canon) are `owner` — and even those are stored as data, never
   concatenated into a system prompt.
-- **Origin stamp.** `events.origin TEXT NOT NULL` ∈ `{"external",
-"self"}`. An event whose `text` contains the context-packet marker
-  `KIZUKI CONTEXT v1` (§12.6) is `self`. Self events are ledgered — they
-  are real history — and **excluded from extraction**. This is E8's fix
-  enforced at the reader.
+- **Origin stamp.** `events.origin TEXT NOT NULL` ∈ `{"external", "self"}`
+  is an immutable causal admission fact. Core classifies ordinary capture as
+  self when accepted text contains `KIZUKI CONTEXT v1` (§12.6), or its nonempty
+  exact UTF-8 text hash matches loop bytes already admitted by a receipt or a
+  durable machine-byte intent. Capture and intent admission serialize under
+  SQLite's immediate write transaction. An intent commits before file effects;
+  a later matching intent never changes an earlier event's origin. Duplicate
+  delivery preserves and validates the original stamp. The internal native
+  correction operation admits its external event and exact owner proof in one
+  transaction; public capture has no exemption argument.
+  Core binds event ID, revision hash/version, text hash, acceptance time, origin,
+  binding kind and native request digest with `origin_binding_version=1`,
+  `origin_binding_kind=capture|native|legacy` and a domain-separated SHA-256
+  `origin_binding`. These are Core spine fields, excluded from connector input.
+  Reads and current restores validate that binding without reclassifying it.
+  Self events remain captured history but cannot supply positive claim effects,
+  corroboration, known-claim model context or positive canon writes through any
+  producer label. An exact persisted source tombstone may still withdraw its
+  own source evidence and archive the corresponding receipted page.
+  Legacy compatibility derives a conservative immutable binding once; machine
+  matches with possibly consumed historical model state refuse migration or
+  restore with `legacy_origin_rebuild_required`. See the binding definition,
+  bounded preflight proof and conservative loss contract in
+  [Event identity and origin](../docs/event-identity-origin.md).
 - **Internal events are idempotent by construction.** For a correction,
   `source_record_id = sha256(statement || "�" || target_json)`, so
   repeating the same correction is a `duplicate`, not a second row.
@@ -733,8 +760,10 @@ prose). It never calls a model, never fails, and is what runs when
   `EXTRACT_INPUT_CHARS = 24_000` characters of quoted text per call;
 - the system prompt is a constant in the tree; captured text appears only
   in the user role, only inside a nonce fence (§12.2);
-- the response must be a JSON object matching `ExtractResponse` exactly —
-  extra keys are a `schema_invalid` rejection, not a warning;
+- the assistant text must parse as a JSON object matching
+  `ExtractResponse` exactly — extra keys are a `schema_invalid`
+  rejection, not a warning. This exactness is the extraction payload,
+  not the provider HTTP envelope (§12.1);
 - every draft must cite at least one `event_id` from the input set;
   citing anything else is `provenance_not_cited` and the whole call is
   discarded;
@@ -870,6 +899,44 @@ re-extracted identical claim is a `duplicate` outcome, not a second row
 4. when the retrieval port declares `degraded` or the embedding space is
    unavailable, step 3 is skipped and the run receipt records
    `dedup: "structural-only"`. It is never silently skipped.
+
+**Durable extraction filing.** The complete accepted producer decision is
+journaled before filing. Semantic candidate lookup may await outside a SQLite
+transaction; it nominates IDs only. Filing reloads provenance, source policy,
+origin, sensitivity, authority and live claim state in one immediate
+transaction. Every draft's insert, corroboration, supersession and retrieval
+outbox row commits together with the saved decision's deferred-input updates,
+frontier advancement and journal deletion. A later failure rolls all of those
+effects back; restart replays the saved decision without another producer call.
+
+That replay guarantee applies to decisions journaled with the domain-bound
+`atomic-v1:` integrity envelope. Pre-atomic pending decisions remain ambiguous
+because their writer could commit a structural corroboration without retaining
+the incoming provenance. They refuse effectful replay with
+`legacy_extraction_reconciliation_required`; storage-only export/restore and
+authorized purge retain the legacy version without granting replay authority.
+See [the recovery contract](../docs/extraction-recovery.md) for exact encoding,
+preservation, conservative loss of availability and separate-copy reconciliation.
+
+Retrieval publication runs after that commit and reads each claim's current
+status and evidence. An unavailable index leaves work pending. Purge or loss of
+source access during an upsert causes removal; failed removal remains pending
+until retry succeeds. A retry drains only its bound store. Public claim
+insertion and retrieval publication refuse an enclosing uncommitted transaction.
+
+Machine-origin evidence cannot support a positive claim through any producer
+label, corroborate an external claim, enter known-claim model context, or reach
+the canon writer. Capture and evidence inspection remain available. The
+regressions for the filing boundary live in
+`packages/core/test/serve/extract-atomic.test.ts`.
+
+A source-deletion control is a separate exact tuple, revalidated against the
+actual opened vault's current receipted page at preparation, transactional
+filing, duplicate return and final canon admission. It retains confidence 1,
+connector-evidence authority and no structural assertion, belief key, correction
+intent or relay metadata. A stale or incomplete control never falls back to
+ordinary external evidence. Direct control filing requires the host's actual
+vault path; ordinary external claims retain their existing context-free API.
 
 ### 4.4 Stage 5: arbitration — create vs edit
 
@@ -1827,6 +1894,17 @@ filesystem handle and no network handle other than its configured LLM port
 — it receives a plain `ProduceInput` and returns a plain `ProduceResult`
 (§3.2 rule 1 makes this structural, not conventional).
 
+Provider responses are bounded, attacker-controlled JSON. Kizuki strictly
+validates every field it consumes and rejects reserved effect-bearing fields
+at the response, choice, and assistant-message seams; refusal,
+truncated/incomplete completion, non-assistant roles, and any content part
+other than an exact text part are also rejected. Every returned choice is
+validated before using the first choice's text. Unrecognized provider
+metadata outside that consumed projection is discarded without traversal and
+never enters `LlmResponse`, logs, receipts, prompts, claims, or canon. Exact
+key sets still apply to the model-authored extraction payload after text
+projection.
+
 ### 10.2 Quoted text is data, and it is fenced with a nonce
 
 ```
@@ -2061,9 +2139,13 @@ Requirements:
   config is a startup failure. Nothing is logged that could contain a key,
   and provider error bodies are truncated and scrubbed before they reach a
   receipt.
-- The provider response is **attacker-controlled input** and is validated
-  strictly: exact schema, no extra keys, size caps, and the tool-call
-  rejection of §10.1.
+- The provider HTTP envelope is **attacker-controlled input**. The LLM
+  port projects only consumed fields (assistant text, model id, usage)
+  after validating those fields, reserved tool and data keys (§10.1),
+  named passive-metadata shapes, and size caps. Other assistant-message
+  keys are discarded unread and uncopied. Exact-schema, no-extra-keys
+  validation applies to the extraction claim payload (§4.2), not to
+  unread provider envelope metadata.
 - `model_ref` recorded on every claim and receipt is
   `"<port_id>:<model>@<host>"` — enough to answer "which model wrote this"
   without recording a credential.
@@ -2128,11 +2210,40 @@ proved.
 
 ### 13.2 Identity and purge
 
-Purge is keyed on **raw subject refs**, never on merged identity. An
-identity merge is a claim like any other and can be wrong; keying deletion
-on it would make a wrong merge a data-loss event. `kizuki purge --subject
-<ref>` expands through `identity_links` only with `--include-aliases`,
-which prints the alias set for confirmation and records it in the receipt.
+Purge is keyed on **raw subject refs**. A0 retires `identity_links` as an
+authority source: `--include-aliases` refuses before planning or mutation,
+and ordinary raw-subject purge remains available. The retained table is inert
+compatibility history only; incident rows are removed when an endpoint or durable
+support is erased. Before deletion, selected event subjects are strictly decoded
+under the ingress subject limits. Retained typed support must resolve to a current
+event or non-purged claim; malformed, dangling or erased support prevents a
+successful absence assertion. One scanner bounds SQLite field sizes before
+payload reads, then limits rows, aggregate bytes and references for purge,
+source erasure, export and restore.
+
+No erased subject dictionary, plain endpoint hash or keyed endpoint digest is
+retained for proof. Public `verifyPurge` can therefore prove legacy identity
+absence only when the legacy table is empty; unrelated inert rows produce
+`ok: false` and are not silently deleted. Verification checks after external
+verification and owned-port closure settle. Source completion checks again in
+its final transaction. Legacy `affected_identity_hashes` report fields are
+scrubbed to an empty compatibility array during resumed source erasure; retained
+or malformed hash fields block source completion.
+
+Backup `kizuki.backup/v3` requires the legacy identity stream and encodes evidence
+as exactly `{ encoding: "kizuki.identity-evidence/raw-v1", raw: string }`.
+The bounded opaque text is preserved byte for byte, including whitespace and
+malformed historical JSON, and grants no authority. Current restore rejects
+unknown/missing tag fields, oversized rows or streams, and scanner-budget
+violations before publishing the target. V1/V2 retain their original JSON-value
+import semantics and optional identity stream; older readers reject v3. This
+format adds no purge-proof stream or identity authority. Backup and restore also
+refuse known erased endpoint hashes retained in legacy source-erasure reports,
+even when an old grant says `purged`; resume source erasure before exporting.
+V1/V2 may normalize an absent compatibility hash field to `[]`, but every
+version refuses a present malformed or nonempty field. Current v3 requires the
+empty field explicitly. The exact inventory row is bounded and validated before
+serialization; restore decodes JSONL with fatal UTF-8 validation before parsing.
 
 ### 13.3 What the ledger must never hold
 
@@ -2154,7 +2265,7 @@ that a review queue would consume it. With no queue, each item resolves:
 | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `wm_claims` — atomic claims                  | **Shipped as `claims`** (§4.3). The working model _is_ the write journal; there is no separate staging vocabulary. `contracts/proposal.ts`'s unused `Proposal`, `PROPOSAL_STATUSES` and `validateProposal` are **deleted** — two contracts for one record was already a defect.                                                                             |
 | normalized event envelopes, activities       | Deferred still, and now clearly optional: extraction reads `kizuki.event/v1` directly and the normalization the deep model needs is expressed as predicates, not as a second envelope. Revisit only if a connector class demands it.                                                                                                                        |
-| entity + identity candidates                 | `entities` and `identity_links(subject_a, subject_b, score, evidence, status, decided_by, at)`. Autonomous merge at `score ≥ IDENTITY_MERGE_MIN = 0.9` **and** corroboration from two independent connectors; otherwise `candidate`. Candidates influence ranking as soft aliases and never purge keying (§13.2). Every merge is a receipt and is undoable. |
+| entity + identity candidates                 | Historical `identity_links(subject_a, subject_b, score, evidence, status, decided_by, at)` rows remain inert compatibility state during A0. They grant no alias, ranking, merge, or purge authority; mutation and alias APIs refuse with `identity_unsupported`. |
 | bi-temporal validity                         | Shipped on `claims`: `valid_from` / `valid_to` (valid time) and `asserted_at` / `retracted_at` (transaction time). Query parameters `as_of_valid` / `as_of_transaction` remain deferred as read-only surface (§17).                                                                                                                                         |
 | claim groups                                 | Superseded by `claim_key` grouping plus `claim_supersessions`. No separate table.                                                                                                                                                                                                                                                                           |
 | review packets                               | Become **audit packets**: the same grouping code (by kind, then subject, then time, with diffs) renders receipts read-only in `kizuki audit`. No accept/reject effect exists.                                                                                                                                                                               |
@@ -2278,7 +2389,7 @@ structural protection of the vault):
 - `verifyAbsent proves the ids are gone from every configured store`
 - `a pending purge op older than the SLA is a doctor failure`
 - `the canon rewrite lands in the same loop pass and lifts the hold`
-- `purge keyed on a subject does not follow identity links without the flag`
+- `purge keyed on a raw subject succeeds while alias expansion always refuses`
 
 **`packages/core/test/contracts/conformance.test.ts`**
 
@@ -2632,7 +2743,8 @@ CREATE TABLE retrieval_ops (op_id TEXT PRIMARY KEY, store TEXT NOT NULL,
   created_at TEXT NOT NULL, done_at TEXT) STRICT;
 ```
 
-**v6 — ports, identity, sensitivity.**
+**v6 — ports, historical identity storage, sensitivity.** `identity_links`
+below is inert compatibility state under A0 and grants no authority.
 
 ```sql
 CREATE TABLE port_state (kind TEXT PRIMARY KEY, port_id TEXT NOT NULL,

@@ -315,8 +315,11 @@ writes a completion receipt. `--dry-run` prints a bounded plan and writes
 nothing. Connector selectors use ledger identity, including retired ids.
 Broad subject or connector-only deletes require `--confirm`. Exact `--event`
 and `--connector --record` paths stay noninteractive. Purged events are not
-resurrected by undo; canon rewrites stay reversible. `--verify` prints
-per-store absence proofs and `pending`/`done`/`failed` operation state.
+resurrected by undo; canon rewrites stay reversible. `--include-aliases` is
+retired and refuses before planning or deletion. `--verify` prints per-store
+absence proofs and `pending`/`done`/`failed` operation state. While any inert
+legacy identity row remains, identity absence is unprovable rather than
+successful.
 
 ## export
 
@@ -325,7 +328,7 @@ usage: kizuki export --out DIR
 ```
 
 Dumps vault files and ledger tables into an empty directory as
-`kizuki.backup/v1`. The destination must sit outside the source vault.
+`kizuki.backup/v3`. The destination must sit outside the source vault.
 
 ## restore
 
@@ -333,7 +336,8 @@ Dumps vault files and ledger tables into an empty directory as
 usage: kizuki restore --from DIR [--into DIR] [--verify]
 ```
 
-Verifies a `kizuki.backup/v1` directory. With `--into` it restores into an
+Verifies a `kizuki.backup/v3` directory and accepts `kizuki.backup/v1` and
+`kizuki.backup/v2` as legacy restore inputs. With `--into` it restores into an
 empty target after that verification. `--from DIR` alone, or with `--verify`,
 checks hashes and completeness without writing.
 

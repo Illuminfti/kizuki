@@ -61,7 +61,7 @@ describe("proposalsForEvent", () => {
   });
 
   test("the same subject seen twice dedupes onto one staged candidate", () => {
-    const db = memoryDb();
+    const db = memoryDb([event(), event({ event_id: "01ARZ3NDEKTSV4RRFFQ69G5FB0", text: "later" })]);
     const first = proposalsForEvent(event())[0];
     const second = proposalsForEvent(
       event({ event_id: "01ARZ3NDEKTSV4RRFFQ69G5FB0", text: "later" }),
@@ -124,7 +124,7 @@ describe("withdrawForTombstone", () => {
   });
 
   test("leaves proposals citing other events alone", () => {
-    const db = memoryDb();
+    const db = memoryDb([event({ event_id: "01ARZ3NDEKTSV4RRFFQ69G5FB1", text: "elsewhere" })]);
     const elsewhere = proposalsForEvent(
       event({ event_id: "01ARZ3NDEKTSV4RRFFQ69G5FB1", text: "elsewhere" }),
     ).find((p) => p.kind === "claim");

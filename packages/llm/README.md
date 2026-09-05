@@ -25,8 +25,9 @@ port; the receipted writer owns canon. Tests use a loopback fake endpoint.
 ## Fail-closed rules
 
 - No tools or function schema are sent.
-- A response with `tool_calls`, `function_call`, or a non-text content part
-  is discarded as `rejected: tool_call_in_response`.
+- A response with `tool_calls`, `function_call`, `function_calls`,
+  `tool_call_id`, audio, image, file, attachment or data fields, or a
+  non-text content part is discarded as `rejected: tool_call_in_response`.
 - Network, timeout, and schema failures throw `PortError`. They are not an
   empty completion.
 - Provider bodies and secret values never appear in errors.
@@ -41,13 +42,14 @@ bounded to 262,144 characters each; details have at most 128 records and
 262,144 total string characters. Annotations may be absent, null or empty.
 Reasoning and annotations are never forwarded as claims, prompts or logs.
 
-Unknown assistant-message fields or malformed passive metadata fail with
-`unsupported_metadata`. Audio, image, file and tool payloads are refused,
-including additional data fields hidden beside a text content part. Every
-returned choice is validated before the first choice supplies text. Refused,
-truncated and incomplete completions have distinct failure classes. These
-response failures are terminal for that call and are not retried. No universal
-compatibility with future provider metadata is claimed.
+Unread assistant-message keys are discarded without being copied into the
+result. Malformed named passive metadata fails with `unsupported_metadata`.
+Audio, image, file and tool payloads are refused, including additional data
+fields hidden beside a text content part. Every returned choice is validated
+before the first choice supplies text. Refused, truncated and incomplete
+completions have distinct failure classes. These response failures are
+terminal for that call and are not retried. The extraction claim payload
+inside assistant text remains an exact schema.
 
 Run receipts preserve a content-free `model.diagnostic` when available:
 response/transport class, or claim schema field/rule/type/count, or a budget

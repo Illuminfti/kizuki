@@ -141,6 +141,7 @@ export class PortRegistry {
     kind: PortKind,
     config: PortsConfig,
     context: PortContext,
+    expectedContract?: string,
   ): Promise<{ port: T; d: PortDescriptor }> {
     const selected = config[kind];
     if (typeof selected !== "string" || selected.length === 0) {
@@ -152,7 +153,7 @@ export class PortRegistry {
     }
 
     const registration = this.resolvePort<T>(kind, selected);
-    assertPortContract(registration.d, kind);
+    assertPortContract(registration.d, kind, expectedContract);
     const validatedContext = validateContext(kind, selected, context);
     return {
       port: await registration.factory(validatedContext),
@@ -164,6 +165,7 @@ export class PortRegistry {
     kind: PortKind,
     config: PortsConfig,
     contextFor: (id: string) => PortContext,
+    expectedContract?: string,
   ): Promise<{ port: T; d: PortDescriptor }[]> {
     const selected = config[kind];
     if (!Array.isArray(selected)) {
@@ -189,7 +191,7 @@ export class PortRegistry {
     // Resolve and validate every selection before any factory acquires resources.
     const prepared = selected.map((id) => {
       const registration = this.resolvePort<T>(kind, id);
-      assertPortContract(registration.d, kind);
+      assertPortContract(registration.d, kind, expectedContract);
       return {
         registration,
         context: validateContext(kind, id, contextFor(id)),
@@ -245,14 +247,16 @@ export function bindFromConfig<T>(
   kind: PortKind,
   config: PortsConfig,
   context: PortContext,
+  expectedContract?: string,
 ): Promise<{ port: T; d: PortDescriptor }> {
-  return defaultRegistry.bindFromConfig(kind, config, context);
+  return defaultRegistry.bindFromConfig(kind, config, context, expectedContract);
 }
 
 export function bindManyFromConfig<T extends Port>(
   kind: PortKind,
   config: PortsConfig,
   contextFor: (id: string) => PortContext,
+  expectedContract?: string,
 ): Promise<{ port: T; d: PortDescriptor }[]> {
-  return defaultRegistry.bindManyFromConfig(kind, config, contextFor);
+  return defaultRegistry.bindManyFromConfig(kind, config, contextFor, expectedContract);
 }

@@ -9,6 +9,8 @@ import { search, searchResult, toFtsQuery } from "../../src/search/query";
 import { initSearch } from "../../src/search/schema";
 import { serializePage } from "../../src/vault/frontmatter";
 import type { CanonPage } from "../../src/vault/pages";
+import { computeContentHash, sha256Hex } from "../../src/util/hash";
+import { computeOriginBinding } from "../../src/ledger/event-origin-binding";
 import { searchDb, storedEvent, tempVault } from "./helpers";
 
 const disposers: (() => void)[] = [];
@@ -74,7 +76,7 @@ describe("toFtsQuery", () => {
 
   test("drops a query with no usable token without touching SQLite", () => {
     const db = new Database(":memory:");
-    expect(search(db, "OR - ^")).toEqual([]);
+    expect(search(db, "OR - ^", { ceiling: "private" })).toEqual([]);
   });
 
   test("keeps literal dates, handles, times, and hyphenated words as typed", () => {
@@ -88,7 +90,7 @@ describe("toFtsQuery", () => {
   test("searches a literal date the way it was typed", () => {
     const db = searchDb();
     indexPage(db, page("fact:dated", "Meeting on 2026-02-03 at noon."));
-    expect(search(db, "2026-02-03").map(({ doc_id }) => doc_id)).toEqual([
+    expect(search(db, "2026-02-03", { ceiling: "private" }).map(({ doc_id }) => doc_id)).toEqual([
       "page:fact:dated",
     ]);
   });
@@ -97,7 +99,7 @@ describe("toFtsQuery", () => {
     const db = searchDb();
     indexPage(db, page("fact:hello", "hello world"));
     expect(toFtsQuery(`a\u0000b`)).toBe('"ab"');
-    expect(search(db, `a\u0000b`)).toEqual([]);
+    expect(search(db, `a\u0000b`, { ceiling: "private" })).toEqual([]);
   });
 });
 
@@ -120,8 +122,8 @@ describe("search indexing", () => {
     indexPage(db, page("fact:one", "old wording"));
     indexPage(db, page("fact:one", "new wording"));
 
-    expect(search(db, "old")).toEqual([]);
-    expect(search(db, "new").map(({ doc_id }) => doc_id)).toEqual(["page:fact:one"]);
+    expect(search(db, "old", { ceiling: "private" })).toEqual([]);
+    expect(search(db, "new", { ceiling: "private" }).map(({ doc_id }) => doc_id)).toEqual(["page:fact:one"]);
     expect(
       db.query<{ count: number }, []>("SELECT count(*) AS count FROM search_docs").get(),
     ).toEqual({ count: 1 });
@@ -131,7 +133,7 @@ describe("search indexing", () => {
     const db = searchDb();
     const event = storedEvent(db, "same-source", { text: "vanishing record" });
     indexEvent(db, event);
-    expect(search(db, "vanishing")).toHaveLength(1);
+    expect(search(db, "vanishing", { ceiling: "private" })).toHaveLength(1);
 
     const tombstone = storedEvent(db, "same-source", {
       text: "",
@@ -140,14 +142,14 @@ describe("search indexing", () => {
     expect(tombstone.event_id).not.toBe(event.event_id);
     indexEvent(db, tombstone);
 
-    expect(search(db, "vanishing")).toEqual([]);
+    expect(search(db, "vanishing", { ceiling: "private" })).toEqual([]);
   });
 
   test("prefix search works and snippets mark the match", () => {
     const db = searchDb();
     indexPage(db, page("fact:prefix", "A telescope reveals distant worlds."));
 
-    const [hit] = search(db, "tele*");
+    const [hit] = search(db, "tele*", { ceiling: "private" });
     expect(hit?.doc_id).toBe("page:fact:prefix");
     expect(hit?.snippet).toContain("[telescope]");
   });
@@ -155,7 +157,7 @@ describe("search indexing", () => {
   test("unicode61 matches diacritics-insensitively", () => {
     const db = searchDb();
     indexPage(db, page("fact:cafe", "The café closes at dusk."));
-    expect(search(db, "cafe").map(({ doc_id }) => doc_id)).toEqual([
+    expect(search(db, "cafe", { ceiling: "private" }).map(({ doc_id }) => doc_id)).toEqual([
       "page:fact:cafe",
     ]);
   });
@@ -171,7 +173,7 @@ describe("search indexing", () => {
       page("fact:body", "UniqueKeyword here", { title: "Other title words" }),
     );
 
-    expect(search(db, "UniqueKeyword").map(({ doc_id }) => doc_id)).toEqual([
+    expect(search(db, "UniqueKeyword", { ceiling: "private" }).map(({ doc_id }) => doc_id)).toEqual([
       "page:fact:title",
       "page:fact:body",
     ]);
@@ -184,17 +186,17 @@ describe("search indexing", () => {
     indexPage(db, page(event.event_id, "canon unique phrase"));
 
     expect(
-      search(db, "ledger").map(({ scope, doc_id }) => `${scope}:${doc_id}`),
+      search(db, "ledger", { ceiling: "private" }).map(({ scope, doc_id }) => `${scope}:${doc_id}`),
     ).toEqual([`ledger:event:${event.event_id}`]);
     expect(
-      search(db, "canon").map(({ scope, doc_id }) => `${scope}:${doc_id}`),
+      search(db, "canon", { ceiling: "private" }).map(({ scope, doc_id }) => `${scope}:${doc_id}`),
     ).toEqual([`canon:page:${event.event_id}`]);
 
     removeDoc(db, "canon", event.event_id);
-    expect(search(db, "canon")).toEqual([]);
-    expect(search(db, "ledger").map(({ scope }) => scope)).toEqual(["ledger"]);
+    expect(search(db, "canon", { ceiling: "private" })).toEqual([]);
+    expect(search(db, "ledger", { ceiling: "private" }).map(({ scope }) => scope)).toEqual(["ledger"]);
     removeDoc(db, "ledger", event.event_id);
-    expect(search(db, "ledger")).toEqual([]);
+    expect(search(db, "ledger", { ceiling: "private" })).toEqual([]);
   });
 });
 
@@ -221,8 +223,8 @@ describe("search rebuild", () => {
 
     expect(result.pages).toBe(1);
     expect(result.events).toBe(1);
-    expect(search(db, "kettle").map(({ scope }) => scope)).toEqual(["canon"]);
-    expect(search(db, "teacup").map(({ scope }) => scope)).toEqual(["ledger"]);
+    expect(search(db, "kettle", { ceiling: "private" }).map(({ scope }) => scope)).toEqual(["canon"]);
+    expect(search(db, "teacup", { ceiling: "private" }).map(({ scope }) => scope)).toEqual(["ledger"]);
     expect(
       db
         .query<{ layer: string; doc_count: number }, []>(
@@ -253,7 +255,7 @@ describe("search rebuild", () => {
     rebuildSearch(db, vault.path);
     rebuildSearch(db, vault.path);
 
-    expect(search(db, "repeatable")).toHaveLength(2);
+    expect(search(db, "repeatable", { ceiling: "private" })).toHaveLength(2);
     expect(
       db.query<{ count: number }, []>("SELECT count(*) AS count FROM search_docs").get(),
     ).toEqual({ count: 2 });
@@ -265,7 +267,7 @@ describe("search rebuild", () => {
     disposers.push(vault.dispose);
     storedEvent(db, "gone", { text: "never indexed", deleted: true });
     expect(rebuildSearch(db, vault.path).events).toBe(0);
-    expect(search(db, "indexed")).toEqual([]);
+    expect(search(db, "indexed", { ceiling: "private" })).toEqual([]);
   });
 
   test("rebuild applies tombstones after earlier source versions", () => {
@@ -276,7 +278,7 @@ describe("search rebuild", () => {
     storedEvent(db, "same-source", { text: "", deleted: true });
 
     expect(rebuildSearch(db, vault.path).events).toBe(0);
-    expect(search(db, "obsolete")).toEqual([]);
+    expect(search(db, "obsolete", { ceiling: "private" })).toEqual([]);
   });
 
   test("rebuildSearch stays linear for thousands of ledger rows", () => {
@@ -287,19 +289,23 @@ describe("search rebuild", () => {
       `INSERT INTO events (
          event_id, connector_id, source_record_id, kind, occurred_at, observed_at,
          text, subjects, sensitivity_hint, deleted, attachments, metadata,
-         content_hash, accepted_at
+         content_hash, accepted_at, content_hash_version, text_hash, origin,
+         origin_binding_version, origin_binding_kind, origin_binding
        ) VALUES (?, 'fixture', ?, 'message', '2026-02-28T10:30:00Z',
-                '2026-03-01T00:00:00Z', ?, '[]', 'personal', 0, '[]', '{}', ?, ?)`,
+                '2026-03-01T00:00:00Z', ?, '[]', 'personal', 0, '[]', '{}', ?, ?, 2, ?, 'external', 1, 'capture', ?)`,
     );
     db.transaction(() => {
       for (let index = 0; index < 6000; index += 1) {
-        insert.run(
-          `E${String(index).padStart(25, "0")}`,
-          `src-${index}`,
-          `body ${index}`,
-          `${"h".repeat(64)}${index}`,
-          "2026-03-01T00:00:00.000Z",
-        );
+        const eventId = `01${String(index).padStart(24, "0")}`;
+        const textHash = sha256Hex(`body ${index}`);
+        const contentHash = computeContentHash({ schema: "kizuki.event/v1", connector_id: "fixture",
+          source_record_id: `src-${index}`, kind: "message", occurred_at: "2026-02-28T10:30:00Z",
+          observed_at: "2026-03-01T00:00:00Z", text: `body ${index}`, subjects: [],
+          sensitivity_hint: "personal", deleted: false, attachments: [], metadata: {} });
+        const acceptedAt = "2026-03-01T00:00:00.000Z";
+        insert.run(eventId, `src-${index}`, `body ${index}`, contentHash, acceptedAt, textHash,
+          computeOriginBinding({ event_id: eventId, content_hash: contentHash, content_hash_version: 2,
+            text_hash: textHash, origin: "external" }, acceptedAt, "capture", null));
       }
     })();
 
@@ -344,11 +350,11 @@ describe("search policy and filters", () => {
     ).toEqual(["page:fact:public"]);
   });
 
-  test.todo(
-    "retrieval-fts5 lane: owner search excludes documents without sensitivity",
+  test(
+    "an explicit owner ceiling excludes documents without sensitivity",
     () => {
       expect(
-        search(policyDb(), "shared").map(({ doc_id }) => doc_id),
+        search(policyDb(), "shared", { ceiling: "private" }).map(({ doc_id }) => doc_id),
       ).not.toContain("page:fact:unlabeled");
     },
   );
@@ -361,7 +367,7 @@ describe("search policy and filters", () => {
     indexEvent(db, storedEvent(db, "filtered-event", { text: "filterword" }));
 
     expect(
-      search(db, "filterword", {
+      search(db, "filterword", { ceiling: "private",
         scope: "canon",
         types: ["topic"],
         excludePaths: [held.relPath],
@@ -387,7 +393,7 @@ describe("search policy and filters", () => {
     indexEvent(db, later);
 
     expect(
-      search(db, "windowword", {
+      search(db, "windowword", { ceiling: "private",
         since: "2026-01-15T00:00:00Z",
         until: "2026-03-01T00:00:00Z",
         subjects: ["person:grace"],
@@ -405,7 +411,7 @@ describe("search policy and filters", () => {
     indexPage(db, page("fact:empty", "windowword"));
 
     expect(
-      search(db, "windowword", {
+      search(db, "windowword", { ceiling: "private",
         since: "2026-02-03T04:00:00Z",
         until: "2026-02-03T06:00:00Z",
       })
@@ -413,7 +419,7 @@ describe("search policy and filters", () => {
         .sort(),
     ).toEqual([`canon:page:fact:empty`, `ledger:event:${offset.event_id}`].sort());
     expect(
-      search(db, "windowword", { since: "2026-02-03T00:00:00Z" }).map(
+      search(db, "windowword", { ceiling: "private", since: "2026-02-03T00:00:00Z" }).map(
         ({ scope }) => scope,
       ),
     ).toContain("canon");
@@ -422,16 +428,16 @@ describe("search policy and filters", () => {
   test("rejects a garbage search time bound instead of matching nothing", () => {
     const db = searchDb();
     indexEvent(db, storedEvent(db, "live", { text: "windowword" }));
-    expect(() => search(db, "windowword", { since: "garbage" })).toThrow(
+    expect(() => search(db, "windowword", { ceiling: "private", since: "garbage" })).toThrow(
       RangeError,
     );
-    expect(() => search(db, "windowword", { until: "garbage" })).toThrow(
+    expect(() => search(db, "windowword", { ceiling: "private", until: "garbage" })).toThrow(
       RangeError,
     );
   });
 
   test("caps limit at MAX_RETRIEVAL_LIMIT before SQL", () => {
-    expect(() => search(searchDb(), "word", { limit: MAX_RETRIEVAL_LIMIT + 1 })).toThrow(
+    expect(() => search(searchDb(), "word", { ceiling: "private", limit: MAX_RETRIEVAL_LIMIT + 1 })).toThrow(
       RangeError,
     );
   });
@@ -441,7 +447,7 @@ describe("search policy and filters", () => {
     indexPage(db, page("fact:clean", "taintword", { taint: "clean" }));
     const event = storedEvent(db, "quoted-src", { text: "taintword captured" });
     indexEvent(db, event);
-    const hits = search(db, "taintword");
+    const hits = search(db, "taintword", { ceiling: "private" });
     expect(hits.find((hit) => hit.scope === "canon")?.taint).toBe("clean");
     expect(hits.find((hit) => hit.scope === "ledger")).toMatchObject({
       taint: "quoted",
@@ -451,7 +457,7 @@ describe("search policy and filters", () => {
 
   test("a missing search table is empty and index-degraded", () => {
     const db = new Database(":memory:");
-    expect(searchResult(db, "anything")).toEqual({
+    expect(searchResult(db, "anything", { ceiling: "private" })).toEqual({
       hits: [],
       degraded: ["index-degraded"],
     });
@@ -469,7 +475,7 @@ describe("search policy and filters", () => {
       skipped_count: 1,
       status: "degraded",
     });
-    expect(searchResult(db, "degradeword").degraded).toContain("index-degraded");
+    expect(searchResult(db, "degradeword", { ceiling: "private" }).degraded).toContain("index-degraded");
   });
 });
 
@@ -477,12 +483,12 @@ describe("search live eligibility and identity", () => {
   test("refuses to index an archived page and removes a stale row", () => {
     const db = searchDb();
     indexPage(db, page("fact:gone", "vanishing archived"));
-    expect(search(db, "vanishing")).toHaveLength(1);
+    expect(search(db, "vanishing", { ceiling: "private" })).toHaveLength(1);
     indexPage(
       db,
       page("fact:gone", "vanishing archived", { status: "archived" }),
     );
-    expect(search(db, "vanishing")).toEqual([]);
+    expect(search(db, "vanishing", { ceiling: "private" })).toEqual([]);
   });
 
   test("rebuild omits archived pages", () => {
@@ -514,7 +520,7 @@ describe("search live eligibility and identity", () => {
       "liveword archived",
     );
     expect(rebuildSearch(db, vault.path).pages).toBe(1);
-    expect(search(db, "liveword").map(({ doc_id }) => doc_id)).toEqual([
+    expect(search(db, "liveword", { ceiling: "private" }).map(({ doc_id }) => doc_id)).toEqual([
       "page:fact:live",
     ]);
   });

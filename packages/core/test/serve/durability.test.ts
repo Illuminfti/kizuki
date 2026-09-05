@@ -178,7 +178,8 @@ for (const corruption of ["integrity", "drafts"] as const) test(`owner purge dis
     f.db.exec("DROP TRIGGER fail_b");
     const receipt = await runRail(f.db, f.path, "sync", { hooks: { ...f.hooks, producer: { ...f.producer, produce: async () => ({ status: "ok", claims: [], usage: { calls: 1, input_tokens: 10, output_tokens: 1 } }) } } });
     expect(receipt.errors).toEqual([]);
-    expect(listClaims(f.db, { status: "live", limit: 20 })).toHaveLength(1);
+    // The interrupted atomic batch committed no prefix before it was invalidated.
+    expect(listClaims(f.db, { status: "live", limit: 20 })).toHaveLength(0);
   } finally { f.db.close(); }
 });
 

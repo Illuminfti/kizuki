@@ -133,7 +133,7 @@ test("a failed deferred prefix retains its scan and all unprocessed rows across 
   expect(deferred(f)).toEqual([]);
 });
 
-for (const deferredMode of [false, true]) test(`a partially filed prefix replays its durable manifest before its tail, deferred=${deferredMode}`, async () => {
+for (const deferredMode of [false, true]) test(`an interrupted prefix replays its durable manifest atomically before its tail, deferred=${deferredMode}`, async () => {
   const f = fixture(), owned = source(f, !deferredMode), events = Array.from({ length: 8 }, () => capture(f, owned));
   const runner = model(f);
   if (deferredMode) {
@@ -144,7 +144,7 @@ for (const deferredMode of [false, true]) test(`a partially filed prefix replays
   f.db.exec("CREATE TRIGGER fail_second_budget_claim BEFORE INSERT ON claims WHEN NEW.subject='fixture:person-1-0' BEGIN SELECT RAISE(ABORT,'synthetic prefix interruption'); END");
   expect((await runner.run()).errors.length).toBeGreaterThan(0);
   expect(runner.requests).toHaveLength(1);
-  expect(listClaims(f.db, { limit: 20 }).filter(claim => claim.producer === "model")).toHaveLength(1);
+  expect(listClaims(f.db, { limit: 20 }).filter(claim => claim.producer === "model")).toHaveLength(0);
   const journal = f.db.query<{ input_ids: string; model_inputs: string; deferred_inputs: string; batch_mode: string }, []>("SELECT input_ids,model_inputs,deferred_inputs,batch_mode FROM extract_batches").get()!;
   expect(JSON.parse(journal.input_ids)).toEqual(events.slice(0, 4).map(event => event.event_id));
   expect(JSON.parse(journal.model_inputs).map((input: { event_id: string }) => input.event_id)).toEqual(JSON.parse(journal.input_ids));

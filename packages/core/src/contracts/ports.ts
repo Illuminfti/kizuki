@@ -231,14 +231,18 @@ export function validatePortDescriptor(value: unknown): PortDescriptor {
 export function assertPortContract(
   descriptor: PortDescriptor,
   kind: PortKind,
+  expectedContract: string = PORT_CONTRACTS[kind],
 ): void {
+  const supported = expectedContract === PORT_CONTRACTS[kind] ||
+    (kind === "producer" && expectedContract === "kizuki.producer/v2");
   if (
+    !supported ||
     descriptor.kind !== kind ||
-    descriptor.contract !== PORT_CONTRACTS[kind]
+    descriptor.contract !== expectedContract
   ) {
     throw new PortError(
       "contract_mismatch",
-      `port ${descriptor.id} does not implement ${PORT_CONTRACTS[kind]}`,
+      "port contract does not match the supported expected contract",
       false,
     );
   }

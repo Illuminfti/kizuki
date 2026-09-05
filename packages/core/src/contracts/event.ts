@@ -108,10 +108,18 @@ export interface CaptureEvent {
   metadata: Record<string, unknown>; // persisted verbatim exact JSON
   content_hash: string; // sha256 of canonical serialization —
   // computed by the spine, never caller-supplied
+  content_hash_version: 1 | 2;
+  text_hash: string; // exact UTF-8 text bytes, independent of revision identity
+  origin: "external" | "self"; // spine annotation; never connector authority
+  origin_binding_version: 1;
+  origin_binding_kind: "capture" | "native" | "legacy";
+  origin_binding: string; // immutable admission binding, not a signature
 }
 
-/** What a connector hands to `accept`. The spine supplies event_id and content_hash. */
-export type CaptureEventInput = Omit<CaptureEvent, "event_id" | "content_hash">;
+/** Frozen connector ingress. Identity and origin are supplied only by Core. */
+export type CaptureEventInput = Omit<CaptureEvent,
+  "event_id" | "content_hash" | "content_hash_version" | "text_hash" | "origin" |
+  "origin_binding_version" | "origin_binding_kind" | "origin_binding">;
 
 function rejectUnknownKeys(
   raw: Record<string, unknown>,

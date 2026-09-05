@@ -4,6 +4,8 @@ export * from "./retrieval";
 export * from "./embedding";
 export * from "./llm";
 export * from "./producer";
+export * from "./producer-v2";
+export * from "./claim-v2";
 export * from "./notifier";
 export * from "./storage";
 export * from "./surface";

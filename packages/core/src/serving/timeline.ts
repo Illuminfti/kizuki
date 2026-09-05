@@ -1,6 +1,6 @@
 import type { AuditDenial } from "../agents";
-import { timeline } from "../query/timeline";
-import type { TimelineEntry, TimelineOptions } from "../query/timeline";
+import { timeline, timelineAuditCandidates } from "../query/timeline";
+import type { TimelineOptions } from "../query/timeline";
 import {
   day,
   identifier,
@@ -16,6 +16,7 @@ import {
   eventDecision,
   liveEventIds,
   quotedChunk,
+  readServableEvents,
   timelineSource,
 } from "./ledger";
 import type { Envelope, QuotedChunk, ServeContext } from "./types";
@@ -53,7 +54,7 @@ export function serveTimeline(ctx: ServeContext, args: TimelineArgs): Envelope {
     if (kind !== undefined) scopedTypes(grant, [kind]);
 
     const rows = limit("limit", args.limit, MAX_LIMIT, DEFAULT_LIMIT);
-    const base: TimelineOptions = {
+    const base: Omit<TimelineOptions, "ceiling"> = {
       limit: rows,
       ...(args.day === undefined ? {} : { day: day("day", args.day) }),
       ...window,
@@ -68,29 +69,28 @@ export function serveTimeline(ctx: ServeContext, args: TimelineArgs): Envelope {
     const withheld: AuditDenial[] = [];
     const seen = new Set<string>();
 
-    const collect = (entries: TimelineEntry[], keep: boolean): void => {
-      const live = liveEventIds(
-        ctx.db,
-        entries.map((entry) => entry.event_id),
-      );
-      for (const entry of entries) {
-        if (seen.has(entry.event_id)) continue;
-        seen.add(entry.event_id);
-        // A tombstoned record still has a live-looking row; it is dropped,
-        // not counted, so fewer than `limit` entries may come back.
-        if (!live.has(entry.event_id)) continue;
-        const source = timelineSource(entry);
-        const decision = eventDecision(grant, source, ctx);
-        if (!decision.allow) {
-          withheld.push({ id: entry.event_id, reason: decision.reason });
-          continue;
-        }
-        if (keep) quoted.push(quotedChunk(source, decision.sensitivity));
-      }
-    };
+    const entries = timeline(ctx.db, { ...base, ceiling: grant.ceiling });
+    const live = liveEventIds(ctx.db, entries.map(entry => entry.event_id));
+    for (const entry of entries) {
+      seen.add(entry.event_id);
+      // A tombstoned record is dropped, not counted as a denial.
+      if (!live.has(entry.event_id)) continue;
+      const source = timelineSource(entry);
+      const decision = eventDecision(grant, source, ctx);
+      if (!decision.allow) withheld.push({ id: entry.event_id, reason: decision.reason });
+      else quoted.push(quotedChunk(source, decision.sensitivity));
+    }
 
-    collect(timeline(ctx.db, { ...base, ceiling: grant.ceiling }), true);
-    collect(timeline(ctx.db, base), false);
+    const auditIds = timelineAuditCandidates(ctx.db, base);
+    const auditFacts = readServableEvents(ctx.db, auditIds);
+    for (const id of auditIds) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const facts = auditFacts.get(id);
+      if (facts === undefined) continue;
+      const decision = eventDecision(grant, facts, ctx);
+      if (!decision.allow) withheld.push({ id, reason: decision.reason });
+    }
 
     return { canon: [], quoted, withheld };
   });

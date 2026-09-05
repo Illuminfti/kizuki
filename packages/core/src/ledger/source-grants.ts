@@ -864,16 +864,13 @@ function sourcePurgeBlockers(
   ).all(sourceKey);
   if (retainedProposals.length > 10000 || retainedProposals.some(row => row.payload !== 0 || row.body_hash !== sourceBodyTombstoneHash("proposals", row.proposal_id)))
     blockers.push("proposal_payload_retained");
-  if (
-    db
-      .query(
-        `SELECT 1 FROM identity_links l JOIN json_each(l.evidence) e
-    WHERE replace(e.value,'event:','') IN (SELECT event_id FROM source_event_bindings WHERE source_key=?)
-       OR replace(e.value,'claim:','') IN (${sourceClaims}) LIMIT 1`,
-      )
-      .get(sourceKey, sourceKey) !== null
-  )
-    blockers.push("identity_payload_retained");
+  // An empty table proves absence without retaining erased endpoint labels.
+  // Old erasure reports may still contain guessable endpoint hashes; resume
+  // their existing erasure operation before certifying completion again.
+  const legacyRows = tableExists(db, "identity_links") && db.query("SELECT 1 FROM identity_links LIMIT 1").get() !== null;
+  const legacyHashes = db.query(`SELECT 1 FROM source_store_inventory WHERE source_key=? AND erasure_report IS NOT NULL
+    AND CASE WHEN json_valid(erasure_report) THEN (json_type(erasure_report,'$.affected_identity_hashes') IS NOT 'array' OR json_array_length(erasure_report,'$.affected_identity_hashes')>0) ELSE 1 END LIMIT 1`).get(sourceKey) !== null;
+  if (legacyRows || legacyHashes) blockers.push("identity_payload_retained");
   if (
     db
       .query(

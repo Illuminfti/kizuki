@@ -8,6 +8,7 @@ import { applyServeV7, initServe } from "../serve/schema";
 import { applySensitivityV6 } from "../sensitivity/schema";
 import { applyConnectionsV8 } from "./connections-schema";
 import { applyPurgeV5 } from "./purge-schema";
+import { applyEventIdentityV16 } from "./event-identity-schema";
 
 interface Migration {
   version: number;
@@ -170,6 +171,7 @@ const MIGRATIONS: readonly Migration[] = [
   { version: 13, apply: applySourceStoresV13 },
   { version: 14, apply: applySourceErasureV14 },
   { version: 15, apply: applySourceReceiptIntegrityV15 },
+  { version: 16, apply: applyEventIdentityV16 },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
