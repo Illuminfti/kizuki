@@ -184,7 +184,7 @@ function insertFixtureReceipt(
     "people/Ada.md",
     kind,
     null,
-    "afterhash",
+    "a".repeat(64),
     "2026-01-01T00:00:00.000Z",
     "write",
     "edit",
@@ -243,7 +243,7 @@ function utf8BodyOnChunkBoundary(): string {
 }
 
 describe("exportVault", () => {
-  test("writes a complete kizuki.backup/v1 manifest with matching hashes", () => {
+  test("writes a complete kizuki.backup/v2 manifest with matching hashes", () => {
     const { db, vaultPath } = populated();
     const outDir = join(temporary("kizuki-export-parent-"), "dump");
     const manifest = exportVault(db, vaultPath, outDir);
@@ -252,6 +252,7 @@ describe("exportVault", () => {
     expect(manifest.complete).toBe(true);
     expect(manifest.schema_versions.ledger).toBe(LEDGER_SCHEMA_VERSION);
     expect(manifest.files["ledger/events.jsonl"]?.count).toBe(1);
+    expect(manifest.files["ledger/canon-machine-byte-intents.jsonl"]?.count).toBe(0);
     expect(manifest.files["ledger/event_purges.jsonl"]?.count).toBe(1);
     expect(manifest.files["connections.jsonl"]?.count).toBe(1);
     expect(manifest.files["checkpoints.jsonl"]?.count).toBe(1);

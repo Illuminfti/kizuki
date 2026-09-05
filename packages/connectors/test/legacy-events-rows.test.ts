@@ -468,6 +468,9 @@ describe("a column named after the floor's page-candidate key", () => {
       ...event,
       event_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
       content_hash: "c".repeat(64),
+      content_hash_version: 2,
+      text_hash: new Bun.CryptoHasher("sha256").update(event.text).digest("hex"),
+      origin: "external",
     });
     const page = proposals.at(-1);
     expect(page?.target).toBeNull();

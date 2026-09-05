@@ -2,6 +2,7 @@ import { stageSourceErasureIntent, readSourceErasureIntent, appendSourceErasureR
 import { serializePage } from "../vault/frontmatter";
 import { hashBytes, ABSENT_PAGE_HASH } from "../vault/write";
 import { requireSourceEvents, sourceSensitivity } from "../ledger/source-grants";
+import { commitMachineByteIntent, requireExternalEvents } from "../ledger/event-origin";
 import { subjectPageType } from "../vault/subject-type";
 import { CanonAuthorityResolver } from "./authority";
 import { join } from "node:path";
@@ -429,6 +430,9 @@ export function applyCanonWrite(
   if (!isWriter(opts.writer)) {
     throw new CanonWriteError("writer_invalid", "writer must be loop, correction, revert or import");
   }
+  if (opts.writer === "loop" && io.db.inTransaction) {
+    throw new Error("loop byte admission requires a top-level transaction");
+  }
   const supplied: Claim[] = Array.isArray(claim) ? [...(claim as readonly Claim[])] : [claim as Claim];
   assertBatch(supplied);
   const target = targetOf(decision);
@@ -469,10 +473,26 @@ export function applyCanonWrite(
 
   const cap = grantCanonWrite(opts.writer, receiptId);
   const path = join(io.vault_path, target.rel_path);
+  const expectedAfter = hashBytes(Buffer.from(serializePage(prepared.page)));
+  const admit = (): void => {
+    persistedClaims(io, claims);
+    assertProvenance(io, provenance);
+    requireSourceEvents(io.db, existingSources(prepared.page), { owner: true, purpose: "derive" });
+    if (sourceSensitivity(io.db, provenance, prepared.sensitivity) !== prepared.page.data["sensitivity"]) {
+      throw new CanonWriteError("decision_stale", "source sensitivity changed before byte admission");
+    }
+    if (primary.producer === "model") requireExternalEvents(io.db, existingSources(prepared.page));
+  };
+  if (opts.writer === "loop") {
+    commitMachineByteIntent(io.db, { receipt_id: receiptId, before_hash: existing?.hash ?? null, after_hash: expectedAfter }, admit);
+  } else {
+    io.db.transaction(admit).immediate();
+  }
   const outcome =
     existing === null
       ? writePage(cap, path, prepared.page)
       : writePage(cap, path, prepared.page, { revision: true, expected_hash: existing.hash });
+  if (outcome.after_hash !== expectedAfter) throw new CanonWriteError("decision_stale", "canon postimage changed after byte admission");
 
   const receipt: CanonReceipt = {
     receipt_id: receiptId,
@@ -620,6 +640,7 @@ export function applyPurgeRewrite(
   io: CanonIo,
   input: PurgeRewriteInput,
 ): CanonReceipt {
+  if (io.db.inTransaction) throw new Error("loop byte admission requires a top-level transaction");
   initCanon(io.db);
   const existing = readPage(io, input.rel_path);
   if (existing === null) {
@@ -717,15 +738,21 @@ export function applyPurgeRewrite(
   const receiptId = mintId(io);
   const cap = grantCanonWrite("loop", receiptId);
   const path = join(io.vault_path, input.rel_path);
+  const next = { data, body: body.length === 0 ? "\n" : body };
+  const expectedAfter = hashBytes(Buffer.from(serializePage(next)));
+  commitMachineByteIntent(io.db, { receipt_id: receiptId, before_hash: existing.hash, after_hash: expectedAfter }, () => {
+    requireSourceEvents(io.db, existingSources(next), { owner: true, purpose: "derive" });
+  });
   const outcome = writePage(
     cap,
     path,
-    { data, body: body.length === 0 ? "\n" : body },
+    next,
     {
       revision: true,
       expected_hash: existing.hash,
     },
   );
+  if (outcome.after_hash !== expectedAfter) throw new CanonWriteError("decision_stale", "purge postimage changed after byte admission");
 
   const pageIdRaw = existing.page.data["id"];
   const pageId =
@@ -889,6 +916,12 @@ function applySourcePurgeWrite(io: CanonIo, input: SourcePurgeInput, prepared: S
         superseded: [], candidates: [], retrieval_ops: [], reverts: null, reverted_by: null, at: nowOf(io),
     };
     const intent = stageSourceErasureIntent(io, input.source_erasure.source_key, input.purged_event_ids, receipt, pageId);
+    commitMachineByteIntent(io.db, intent.receipt, () => {
+      if (input.purged_event_ids.some(id => io.db.query(
+        "SELECT 1 FROM source_event_bindings b JOIN source_grants g ON g.source_key=b.source_key WHERE b.event_id=? AND g.status!='active'",
+      ).get(id) === null)) throw new CanonWriteError("decision_stale", "source erasure admission changed");
+      if (next !== null) requireSourceEvents(io.db, existingSources(next), { owner: true, purpose: "derive" });
+    });
     const cap = grantCanonWrite("loop", intent.receipt.receipt_id);
     const outcome = writePage(cap, join(io.vault_path, input.rel_path), next ?? { data, body: "\n" }, {
         revision: true, expected_hash: existing.hash, erase_prior: true, delete: nothingRemains,

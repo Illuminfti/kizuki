@@ -28,10 +28,11 @@ import {
 } from "./canon/receipts";
 import { CLAIMS_SCHEMA_VERSION, syncCompatProposals } from "./claims/schema";
 import { rebuildDerived } from "./derived";
-import { validateEventInput } from "./contracts/event";
-import { computeContentHash } from "./util/hash";
+import { EVENT_LIMITS, type CaptureEvent } from "./contracts/event";
 import { isUlid, ulid } from "./util/ulid";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "./ledger/db";
+import { eventFromRow, validateEventRecord } from "./ledger/event-record";
+import { classifyEventOrigin, refreshEventOrigin } from "./ledger/event-origin";
 import { PURGE_SCHEMA_VERSION } from "./ledger/purge-schema";
 import { tableExists } from "./ledger/schema";
 import { SENSITIVITY_SCHEMA_VERSION } from "./sensitivity/schema";
@@ -41,7 +42,9 @@ import { readVaultId, vaultIdPath } from "./serve/vault-id";
 import { doctorVault } from "./vault/doctor";
 import { initVault } from "./vault/init";
 
-export const BACKUP_SCHEMA = "kizuki.backup/v1" as const;
+export const BACKUP_SCHEMA = "kizuki.backup/v2" as const;
+export const LEGACY_BACKUP_SCHEMA = "kizuki.backup/v1" as const;
+type BackupSchema = typeof BACKUP_SCHEMA | typeof LEGACY_BACKUP_SCHEMA;
 const FILE_MODE = 0o600;
 const DIR_MODE = 0o700;
 const PAGE = 256;
@@ -50,7 +53,10 @@ const STAGING_MARK = ".kizuki-backup-";
 const INCOMPLETE = ".kizuki-backup-incomplete";
 const CONTROL_DIR = ".kizuki";
 const EXTRACT_BATCH_BACKUP = "serve/extract-batches.jsonl";
+const MACHINE_BYTE_INTENTS_BACKUP = "ledger/canon-machine-byte-intents.jsonl";
 const MAX_EXTRACT_BATCH_BACKUP_BYTES = 2_000_000;
+const MAX_EVENT_BACKUP_ROW_BYTES = EVENT_LIMITS.eventBytes + 2_048;
+const MAX_MACHINE_BYTE_INTENT_ROW_BYTES = 512;
 const FORBIDDEN_KEYS = new Set([
   "resolved_secret",
   "client_secret",
@@ -83,7 +89,7 @@ export interface BackupSnapshot {
 }
 
 export interface ExportManifest {
-  schema: typeof BACKUP_SCHEMA;
+  schema: BackupSchema;
   vault_id: string | null;
   created_at: string;
   schema_versions: BackupSchemaVersions;
@@ -123,7 +129,16 @@ interface EventRow {
   attachments: string;
   metadata: string;
   content_hash: string;
+  content_hash_version: 1 | 2;
+  text_hash: string;
+  origin: "external" | "self";
   accepted_at: string;
+}
+
+interface MachineByteIntentRow {
+  receipt_id: string;
+  before_hash: string | null;
+  after_hash: string;
 }
 
 interface PurgeRow {
@@ -245,7 +260,7 @@ interface SensitivityRow {
 const EVENT_COLUMNS = `
   event_id, connector_id, source_record_id, kind, occurred_at, observed_at,
   text, subjects, sensitivity_hint, deleted, attachments, metadata,
-  content_hash, accepted_at
+  content_hash, content_hash_version, text_hash, origin, accepted_at
 `;
 
 function compareCodeUnits(left: string, right: string): number {
@@ -482,8 +497,22 @@ function eventRecord(row: EventRow): Record<string, unknown> {
     attachments: JSON.parse(row.attachments) as unknown,
     metadata: JSON.parse(row.metadata) as unknown,
     content_hash: row.content_hash,
+    content_hash_version: row.content_hash_version,
+    text_hash: row.text_hash,
+    origin: row.origin,
     accepted_at: row.accepted_at,
   };
+}
+
+function backupEventRecord(
+  raw: Record<string, unknown>,
+  format: "legacy" | "current",
+): { event: CaptureEvent; accepted_at: string } {
+  const { accepted_at, ...record } = raw;
+  if (typeof accepted_at !== "string" || !isRfc3339(accepted_at)) {
+    throw new Error("backup event accepted_at is invalid");
+  }
+  return { event: validateEventRecord(record, format), accepted_at };
 }
 
 function claimRecord(row: ClaimRow): Record<string, unknown> {
@@ -566,6 +595,53 @@ function* pageEvents(
     for (const row of rows) yield eventRecord(row);
     const last: EventRow | undefined = rows.at(-1);
     if (last === undefined || rows.length < PAGE) break;
+    cursor = { accepted_at: last.accepted_at, event_id: last.event_id };
+  }
+}
+
+function* pageMachineByteIntents(db: Database): Generator<MachineByteIntentRow> {
+  let after = "";
+  while (true) {
+    const rows = db
+      .query<MachineByteIntentRow, [string, number]>(
+        `SELECT receipt_id, before_hash, after_hash
+         FROM canon_machine_byte_intents
+         WHERE receipt_id > ?
+         ORDER BY receipt_id
+         LIMIT ?`,
+      )
+      .all(after, PAGE);
+    if (rows.length === 0) return;
+    yield* rows;
+    if (rows.length < PAGE) return;
+    after = rows.at(-1)!.receipt_id;
+  }
+}
+
+function refreshExportEventOrigins(db: Database, snapshot: BackupSnapshot): void {
+  if (snapshot.last_event_id === null || snapshot.last_accepted_at === null) return;
+  const capAt = snapshot.last_accepted_at;
+  const capId = snapshot.last_event_id;
+  let cursor: { accepted_at: string; event_id: string } | null = null;
+  while (true) {
+    const rows: EventRow[] = cursor === null
+      ? db.query<EventRow, [string, string, string, number]>(
+          `SELECT ${EVENT_COLUMNS} FROM events
+           WHERE accepted_at < ? OR (accepted_at = ? AND event_id <= ?)
+           ORDER BY accepted_at, event_id LIMIT ?`,
+        ).all(capAt, capAt, capId, PAGE)
+      : db.query<EventRow, [string, string, string, string, string, string, number]>(
+          `SELECT ${EVENT_COLUMNS} FROM events
+           WHERE (accepted_at > ? OR (accepted_at = ? AND event_id > ?))
+             AND (accepted_at < ? OR (accepted_at = ? AND event_id <= ?))
+           ORDER BY accepted_at, event_id LIMIT ?`,
+        ).all(cursor.accepted_at, cursor.accepted_at, cursor.event_id, capAt, capAt, capId, PAGE);
+    if (rows.length === 0) return;
+    for (const row of rows) {
+      refreshEventOrigin(db, eventFromRow(row));
+    }
+    if (rows.length < PAGE) return;
+    const last: EventRow = rows.at(-1)!;
     cursor = { accepted_at: last.accepted_at, event_id: last.event_id };
   }
 }
@@ -943,7 +1019,7 @@ function refuseSecrets(value: unknown, path: string): void {
   }
 }
 
-function* readJsonl(path: string): Generator<unknown> {
+function* readJsonl(path: string, maxRowBytes = Infinity): Generator<unknown> {
   const fd = openSync(path, "r");
   let leftover = Buffer.alloc(0);
   try {
@@ -955,9 +1031,11 @@ function* readJsonl(path: string): Generator<unknown> {
       while (newline !== -1) {
         const line = leftover.subarray(0, newline);
         leftover = leftover.subarray(newline + 1);
+        if (line.byteLength > maxRowBytes) throw new Error("backup record exceeds its byte bound");
         if (line.byteLength > 0) yield JSON.parse(line.toString("utf8"));
         newline = leftover.indexOf(0x0a);
       }
+      if (leftover.byteLength > maxRowBytes) throw new Error("backup record exceeds its byte bound");
       read = readSync(fd, buf);
     }
     if (leftover.byteLength > 0) yield JSON.parse(leftover.toString("utf8"));
@@ -1092,6 +1170,7 @@ export function exportVault(
     // backup whose checkpoint and journal describe different moments.
     db.transaction(() => {
       snapshot = snapshotOf(db);
+      refreshExportEventOrigins(db, snapshot);
       writeStream(
         staging,
         "ledger/events.jsonl",
@@ -1127,6 +1206,13 @@ export function exportVault(
       );
       options.onProgress?.("receipts");
       writeStream(staging, "canon/receipts.jsonl", pageReceipts(db), files, options.signal);
+      writeStream(
+        staging,
+        MACHINE_BYTE_INTENTS_BACKUP,
+        pageMachineByteIntents(db),
+        files,
+        options.signal,
+      );
       writeStream(
         staging,
         "connections.jsonl",
@@ -1178,9 +1264,7 @@ function basenameSafe(path: string): string {
 }
 
 function verifyFiles(root: string, manifest: ExportManifest): void {
-  if (manifest.schema !== BACKUP_SCHEMA) {
-    throw new Error(`backup schema is not ${BACKUP_SCHEMA}`);
-  }
+  assertBackupFormat(manifest);
   const expectedHash = signManifest({
     schema: manifest.schema,
     vault_id: manifest.vault_id,
@@ -1203,6 +1287,13 @@ function verifyFiles(root: string, manifest: ExportManifest): void {
         !Number.isSafeInteger(batches.size) || batches.size < 0 || batches.size > MAX_EXTRACT_BATCH_BACKUP_BYTES) {
       throw new Error("backup durable extraction stream exceeds its bound");
     }
+  }
+  const intents = manifest.files[MACHINE_BYTE_INTENTS_BACKUP];
+  if (manifest.schema === BACKUP_SCHEMA && intents === undefined) {
+    throw new Error("backup machine-byte intent stream is missing");
+  }
+  if (manifest.schema === LEGACY_BACKUP_SCHEMA && intents !== undefined) {
+    throw new Error("legacy backup must not include machine-byte intents");
   }
   for (const key of Object.keys(manifest.files).sort(compareCodeUnits)) {
     const entry = manifest.files[key];
@@ -1254,10 +1345,24 @@ function readManifest(backupDir: string): ExportManifest {
   const path = join(backupDir, "manifest.json");
   if (!existsSync(path)) throw new Error("backup manifest is missing");
   const manifest = JSON.parse(readTextFile(path)) as ExportManifest;
-  if (manifest.schema !== BACKUP_SCHEMA) {
-    throw new Error(`backup schema is not ${BACKUP_SCHEMA}`);
-  }
+  assertBackupFormat(manifest);
   return manifest;
+}
+
+function assertBackupFormat(manifest: ExportManifest): void {
+  if (manifest.schema !== BACKUP_SCHEMA && manifest.schema !== LEGACY_BACKUP_SCHEMA) {
+    throw new Error("backup schema is unsupported");
+  }
+  const versions = manifest.schema_versions;
+  if (typeof versions !== "object" || versions === null || !Number.isSafeInteger(versions.ledger)) {
+    throw new Error("backup schema versions are invalid");
+  }
+  if (manifest.schema === BACKUP_SCHEMA && versions.ledger !== LEDGER_SCHEMA_VERSION) {
+    throw new Error("current backup ledger schema is invalid");
+  }
+  if (manifest.schema === LEGACY_BACKUP_SCHEMA && (versions.ledger < 1 || versions.ledger > 15)) {
+    throw new Error("legacy backup ledger schema is invalid");
+  }
 }
 
 function asRecord(value: unknown, path: string): Record<string, unknown> {
@@ -1284,58 +1389,38 @@ function asNumber(value: unknown, field: string): number {
   return value;
 }
 
-function asBoolean(value: unknown, field: string): boolean {
-  if (typeof value !== "boolean") throw new Error(`${field}: must be a boolean`);
-  return value;
-}
-
-function insertEvent(db: Database, raw: Record<string, unknown>): void {
-  const validated = validateEventInput({
-    schema: "kizuki.event/v1",
-    connector_id: asString(raw.connector_id, "connector_id"),
-    source_record_id: asString(raw.source_record_id, "source_record_id"),
-    kind: asString(raw.kind, "kind"),
-    occurred_at: asString(raw.occurred_at, "occurred_at"),
-    observed_at: asString(raw.observed_at, "observed_at"),
-    text: asString(raw.text, "text"),
-    subjects: raw.subjects,
-    deleted: asBoolean(raw.deleted, "deleted"),
-    attachments: raw.attachments,
-    metadata: raw.metadata,
-    ...(typeof raw.sensitivity_hint === "string"
-      ? { sensitivity_hint: raw.sensitivity_hint }
-      : {}),
-  });
-  if (!validated.ok) {
-    throw new Error(`backup event is invalid: ${validated.errors.join("; ")}`);
-  }
-  const input = validated.value;
-  const contentHash = computeContentHash(input);
-  if (contentHash !== asString(raw.content_hash, "content_hash")) {
-    throw new Error(`backup event content_hash does not match ${raw.event_id}`);
-  }
+function insertEvent(
+  db: Database,
+  raw: Record<string, unknown>,
+  format: "legacy" | "current",
+): CaptureEvent {
+  const { event, accepted_at } = backupEventRecord(raw, format);
   db.query(
     `INSERT INTO events (
        event_id, connector_id, source_record_id, kind, occurred_at, observed_at,
        text, subjects, sensitivity_hint, deleted, attachments, metadata,
-       content_hash, accepted_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       content_hash, content_hash_version, text_hash, origin, accepted_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    asString(raw.event_id, "event_id"),
-    input.connector_id,
-    input.source_record_id,
-    input.kind,
-    input.occurred_at,
-    input.observed_at,
-    input.text,
-    JSON.stringify(input.subjects),
-    input.sensitivity_hint ?? null,
-    input.deleted ? 1 : 0,
-    JSON.stringify(input.attachments),
-    JSON.stringify(input.metadata),
-    contentHash,
-    asString(raw.accepted_at, "accepted_at"),
+    event.event_id,
+    event.connector_id,
+    event.source_record_id,
+    event.kind,
+    event.occurred_at,
+    event.observed_at,
+    event.text,
+    JSON.stringify(event.subjects),
+    event.sensitivity_hint ?? null,
+    event.deleted ? 1 : 0,
+    JSON.stringify(event.attachments),
+    JSON.stringify(event.metadata),
+    event.content_hash,
+    event.content_hash_version,
+    event.text_hash,
+    event.origin,
+    accepted_at,
   );
+  return event;
 }
 
 function insertPurge(db: Database, raw: Record<string, unknown>): void {
@@ -1511,6 +1596,62 @@ function insertReceipt(db: Database, raw: Record<string, unknown>): void {
   );
 }
 
+function isSha256(value: unknown): value is string {
+  return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+}
+
+function insertMachineByteIntent(db: Database, raw: Record<string, unknown>): void {
+  if (Object.keys(raw).sort(compareCodeUnits).join(",") !== "after_hash,before_hash,receipt_id") {
+    throw new Error("invalid machine-byte intent backup row");
+  }
+  const receiptId = raw.receipt_id;
+  const beforeHash = raw.before_hash;
+  const afterHash = raw.after_hash;
+  if (!isUlid(receiptId) || (beforeHash !== null && !isSha256(beforeHash)) || !isSha256(afterHash)) {
+    throw new Error("invalid machine-byte intent backup row");
+  }
+  if (db.query("SELECT 1 FROM canon_receipts WHERE receipt_id = ?").get(receiptId) !== null) {
+    throw new Error("machine-byte intent conflicts with receipt");
+  }
+  db.query(
+    `INSERT INTO canon_machine_byte_intents (receipt_id, before_hash, after_hash)
+     VALUES (?, ?, ?)`,
+  ).run(receiptId, beforeHash, afterHash);
+}
+
+function reconcileRestoredEventOrigins(
+  db: Database,
+  format: "legacy" | "current",
+): void {
+  let after = "";
+  while (true) {
+    const rows = db
+      .query<EventRow, [string, number]>(
+        `SELECT ${EVENT_COLUMNS} FROM events
+         WHERE event_id > ? ORDER BY event_id LIMIT ?`,
+      )
+      .all(after, PAGE);
+    if (rows.length === 0) return;
+    for (const row of rows) {
+      const event = eventFromRow(row);
+      const nativeOwner = db.query(
+        "SELECT 1 FROM native_owner_evidence WHERE event_id = ? LIMIT 1",
+      ).get(event.event_id) !== null;
+      const classified = classifyEventOrigin(db, event);
+      if (nativeOwner && event.origin !== "external") {
+        throw new Error("backup native-owner event origin is invalid");
+      }
+      if (format === "legacy") {
+        refreshEventOrigin(db, event);
+      } else if (event.origin === "external" && classified === "self") {
+        throw new Error("backup event origin is inconsistent");
+      }
+    }
+    if (rows.length < PAGE) return;
+    after = rows.at(-1)!.event_id;
+  }
+}
+
 function insertCheckpointRow(db: Database, raw: Record<string, unknown>): void {
   db.query(
     `INSERT INTO checkpoints
@@ -1594,7 +1735,9 @@ function* streamRows(
     if (required) throw new Error(`backup is missing ${relativePath}`);
     return;
   }
-  for (const row of readJsonl(path)) {
+  const maxRowBytes = relativePath === "ledger/events.jsonl" ? MAX_EVENT_BACKUP_ROW_BYTES
+    : relativePath === MACHINE_BYTE_INTENTS_BACKUP ? MAX_MACHINE_BYTE_INTENT_ROW_BYTES : Infinity;
+  for (const row of readJsonl(path, maxRowBytes)) {
     refuseSecrets(row, relativePath);
     yield asRecord(row, relativePath);
   }
@@ -1630,6 +1773,7 @@ export function restoreVault(
   if (manifest.schema_versions.serve > supported.serve) {
     throw new Error(`backup serve schema ${manifest.schema_versions.serve} is newer than ${supported.serve}`);
   }
+  const eventFormat = manifest.schema === LEGACY_BACKUP_SCHEMA ? "legacy" : "current";
   prepareDestination(destination);
   const parent = dirname(destination);
   mkdirPrivate(parent);
@@ -1665,7 +1809,7 @@ export function restoreVault(
       db.transaction(() => {
         for (const row of streamRows(source, "ledger/events.jsonl", true)) {
           throwIfAborted(options.signal);
-          insertEvent(db, row);
+          insertEvent(db, row, eventFormat);
         }
         for (const row of streamRows(source, "ledger/event_purges.jsonl", true)) {
           insertPurge(db, row);
@@ -1696,6 +1840,19 @@ export function restoreVault(
           insertConnectorSensitivity(db, row);
         }
         restoreSourcePolicy(db, source, manifest);
+        let intentCount = 0;
+        for (const row of streamRows(
+          source,
+          MACHINE_BYTE_INTENTS_BACKUP,
+          eventFormat === "current",
+        )) {
+          insertMachineByteIntent(db, row);
+          intentCount += 1;
+        }
+        if (eventFormat === "current" && intentCount !== manifest.files[MACHINE_BYTE_INTENTS_BACKUP]!.count) {
+          throw new Error("backup machine-byte intent count mismatch");
+        }
+        reconcileRestoredEventOrigins(db, eventFormat);
         const deferredPath = "serve/extract-deferred-inputs.jsonl";
         const deferredRequired = manifest.schema_versions.serve >= 8;
         let deferredCount = 0;
@@ -1767,7 +1924,7 @@ type SourceBackupTable = typeof SOURCE_BACKUP_TABLES[number];
 const SOURCE_COLUMNS: Record<SourceBackupTable, readonly string[]> = {
   source_retrieval_stores: ["source_key", "store_id", "status"],
   source_store_inventory: ["source_key", "checked", "payload_complete", "erasure_report"],
-  native_owner_evidence: ["event_id", "origin", "request_digest", "recorded_at", "filing_state"],
+  native_owner_evidence: ["event_id", "origin", "request_digest", "recorded_at", "filing_state", "event_content_hash"],
   source_grants: ["source_key", "connector_id", "revision", "status", "policy", "policy_digest", "updated_at", "revoke_operation", "purge_receipt_id"],
   source_event_bindings: ["event_id", "source_key", "grant_revision", "policy_digest"],
   source_grant_receipts: ["sequence", "operation_id", "request_digest", "receipt", "receipt_digest"],
@@ -1800,6 +1957,11 @@ function restoreSourcePolicy(db: Database, backup: string, manifest: ExportManif
     const path = `ledger/${table}.jsonl`;
     if (required && manifest.files[path] === undefined) throw new Error("backup source policy stream missing");
     for (const row of streamRows(backup, path, required)) {
+      if (table === "native_owner_evidence" && manifest.schema === LEGACY_BACKUP_SCHEMA) {
+        if (Object.hasOwn(row, "event_content_hash")) throw new Error("legacy native owner proof contains a current field");
+        row["event_content_hash"] = db.query<{ content_hash: string }, [string]>("SELECT content_hash FROM events WHERE event_id=?")
+          .get(asString(row["event_id"], "event_id"))?.content_hash ?? null;
+      }
       if(table==="source_grant_receipts" && manifest.schema_versions.ledger<15 && row["receipt_digest"]===undefined) row["receipt_digest"]=null;
       if(table==="source_store_inventory" && manifest.schema_versions.ledger<14 && row["erasure_report"]===undefined) row["erasure_report"]=null;
       const columns = SOURCE_COLUMNS[table];

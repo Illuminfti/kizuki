@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { CaptureEvent } from "../../src/contracts/event";
+import { sha256Hex } from "../../src/util/hash";
 import { MODEL_PRODUCER_DESCRIPTOR, createModelProducerPort } from "../../src/producer/model";
 import { FENCE_CLOSE, FENCE_OPEN } from "../../src/producer/fence";
 import { proposalsForEvent } from "../../src/staging/producers";
@@ -29,6 +30,9 @@ const CAPTURE: CaptureEvent = {
   attachments: [],
   metadata: {},
   content_hash: "0".repeat(64),
+  content_hash_version: 2,
+  text_hash: sha256Hex(INJECTION_TEXT),
+  origin: "external",
 };
 
 const CLOSED_DRAFT_KEYS = [

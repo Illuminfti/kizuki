@@ -32,6 +32,8 @@ import { ulid } from "../src/util/ulid";
 import { exportVault, restoreVault, verifyBackup, type ExportManifest } from "../src/export";
 import { purgeEvents } from "../src/ledger/purge";
 import { runWritePass } from "../src/serve/write-pass";
+import { commitMachineByteIntent } from "../src/ledger/event-origin";
+import { sha256Hex } from "../src/util/hash";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -690,8 +692,8 @@ test("an unbound historical null-manifest journal replays without a provider res
     journalExtractBatch(db, mined, "historical-model-ref", bound);
     db.query("UPDATE extract_batches SET model_inputs=NULL,deferred_inputs=NULL,input_ids=NULL,integrity=NULL").run();
 
-    db.query("INSERT INTO native_owner_evidence(event_id,origin,request_digest,recorded_at,filing_state) VALUES (?,'correction',?,?,'recorded')")
-      .run(accepted.event.event_id, "a".repeat(64), new Date().toISOString());
+    db.query("INSERT INTO native_owner_evidence(event_id,origin,request_digest,recorded_at,filing_state,event_content_hash) VALUES (?,'correction',?,?,'recorded',?)")
+      .run(accepted.event.event_id, "a".repeat(64), new Date().toISOString(), accepted.event.content_hash);
     expect(() => readDurableExtractBatch(db, bound))
       .toThrow("durable extraction legacy input authority is corrupt");
     db.query("DELETE FROM native_owner_evidence WHERE event_id=?").run(accepted.event.event_id);
@@ -830,6 +832,62 @@ test("purge keeps a surviving historical journal in its null-manifest form", asy
     expect(db.query("SELECT model_inputs,deferred_inputs,outcome FROM extract_batches").get())
       .toEqual({ model_inputs: null, deferred_inputs: null, outcome: "purged" });
     expect(readDurableExtractBatch(db, bound)?.drafts).toEqual([draft(first.event.event_id)]);
+  } finally { db.close(); }
+});
+
+test("managed pending origin filtering preserves the saved decision, external claims, and deferred membership", async () => {
+  const { vault, db, source } = setup();
+  try {
+    const held = ulid();
+    registerConnection(db, "kizuki.fixture", held);
+    grant(db, source);
+    grant(db, held, "local_only", "grant-origin-held");
+    const first = capture(db, source, "origin-first");
+    const laterSelf = capture(db, source, "origin-later-self");
+    const last = capture(db, source, "origin-last");
+    const deferred = capture(db, held, "origin-held");
+    const alreadySelf = accept(db, { ...validEvent(), connector_id: "kizuki.fixture", source_record_id: "origin-already-self",
+      text: "KIZUKI CONTEXT v1 bounded managed source" }, { source: { source_key: source, expected_revision: 1 } });
+    if (alreadySelf.status !== "stored") throw new Error("fixture failed");
+    let calls = 0;
+    let sent: string[] = [];
+    const drafts = [
+      { ...draft(first.event_id), subject: "person:first", body: "First external interpretation." },
+      { ...draft(laterSelf.event_id), subject: "person:self", body: "Mixed origin interpretation.", event_ids: [first.event_id, laterSelf.event_id] },
+      { ...draft(last.event_id), subject: "person:last", body: "Last external interpretation." },
+    ];
+    const bound = bindSourceModelPort(producer({ status: "ok", claims: drafts,
+      usage: { calls: 1, input_tokens: 1, output_tokens: 1 } }, input => {
+      calls += 1; sent = input.events.map(event => event.event_id);
+    }), { model_endpoint: endpoint, model: "fixture-model" });
+    const options = { budget: createBudgetTracker({ canon_writes_per_run: 8 }), model_ref: "original-origin-model",
+      claims: { db }, producer: bound };
+    db.exec("CREATE TRIGGER interrupt_origin BEFORE INSERT ON claims WHEN NEW.subject='person:self' BEGIN SELECT RAISE(ABORT,'synthetic origin interruption'); END");
+    await expect(runWritePass(db, vault, options)).rejects.toThrow("synthetic origin interruption");
+    db.exec("DROP TRIGGER interrupt_origin");
+    const original = db.query<Record<string, unknown>, []>("SELECT * FROM extract_batches").get()!;
+    const originalClaim = listClaims(db, { status: "live", limit: 20 }).find(claim => claim.subject === "person:first")!;
+    expect(originalClaim).toBeDefined();
+    expect(calls).toBe(1);
+    expect(sent).toEqual([first.event_id, laterSelf.event_id, last.event_id]);
+    commitMachineByteIntent(db, { receipt_id: ulid(), before_hash: null, after_hash: sha256Hex(laterSelf.text) }, () => undefined);
+    const pending = readDurableExtractBatch(db, bound)!;
+    expect(pending.drafts).toEqual(drafts);
+    expect(pending.filing_drafts).toEqual([drafts[0]!, drafts[2]!]);
+    expect(pending.model_inputs.map(input => input.event_id)).toEqual(sent);
+    expect(pending.deferred_inputs.map(input => input.event_id)).toEqual([deferred.event_id]);
+    expect(db.query("SELECT * FROM extract_batches").get()).toEqual(original);
+    const result = await runWritePass(db, vault, { ...options, model_ref: "changed-current-model" });
+    expect(result.errors).toEqual([]);
+    expect(calls).toBe(1);
+    const claims = listClaims(db, { status: "live", limit: 20 }).filter(claim => claim.producer === "model");
+    expect(claims.map(claim => claim.subject).sort()).toEqual(["person:first", "person:last"]);
+    expect(claims.find(claim => claim.subject === "person:first")?.claim_id).toBe(originalClaim.claim_id);
+    expect(claims.every(claim => claim.model_ref === "original-origin-model")).toBe(true);
+    expect(readExtractCursor(db)).toContain(alreadySelf.event.event_id);
+    expect(db.query("SELECT * FROM extract_batches").get()).toBeNull();
+    expect(db.query<{ event_id: string }, []>("SELECT event_id FROM extract_deferred_inputs").all())
+      .toEqual([{ event_id: deferred.event_id }]);
   } finally { db.close(); }
 });
 

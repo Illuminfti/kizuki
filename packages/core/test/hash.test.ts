@@ -1,20 +1,22 @@
 import { describe, expect, test } from "bun:test";
-import { canonicalSerialize, computeContentHash } from "../src/util/hash";
+import { canonicalSerialize, computeContentHash, computeLegacyContentHash } from "../src/util/hash";
 import type { CaptureEventInput } from "../src/contracts/event";
 import { validEvent } from "./fixtures";
 
 describe("canonicalSerialize", () => {
-  test("covers exactly the eight identity fields", () => {
+  test("covers exactly the ten version-2 identity fields", () => {
     const parsed = JSON.parse(canonicalSerialize(validEvent())) as Record<
       string,
       unknown
     >;
     expect(Object.keys(parsed)).toEqual([
+      "attachments",
       "connector_id",
       "deleted",
       "kind",
       "metadata",
       "occurred_at",
+      "sensitivity_hint",
       "source_record_id",
       "subjects",
       "text",
@@ -196,13 +198,7 @@ describe("computeContentHash", () => {
     });
   }
 
-  const ignored: [string, (e: CaptureEventInput) => void][] = [
-    [
-      "re-observation time",
-      (e) => {
-        e.observed_at = "2030-01-01T00:00:00Z";
-      },
-    ],
+  const revised: [string, (e: CaptureEventInput) => void][] = [
     [
       "a revised sensitivity_hint",
       (e) => {
@@ -216,20 +212,26 @@ describe("computeContentHash", () => {
       },
     ],
     [
-      "re-hosted attachments",
+      "removed attachments",
       (e) => {
         e.attachments = [];
       },
     ],
   ];
 
-  for (const [name, mutate] of ignored) {
-    test(`is unchanged by ${name}`, () => {
+  for (const [name, mutate] of revised) {
+    test(`changes on ${name}, preserving legacy compatibility`, () => {
       const event = validEvent();
       mutate(event);
-      expect(computeContentHash(event)).toBe(baseline);
+      expect(computeContentHash(event)).not.toBe(baseline);
+      expect(computeLegacyContentHash(event)).toBe(computeLegacyContentHash(validEvent()));
     });
   }
+
+  test("preserves the fixed historical v1 vector and ignores re-observation", () => {
+    expect(computeLegacyContentHash(validEvent())).toBe("7c2763905c19903867d9fe751a6c7f7b92f2543a6107704523f54e96630b328c");
+    expect(computeContentHash({ ...validEvent(), observed_at: "2030-01-01T00:00:00Z" })).toBe(baseline);
+  });
 
   test("two subject orderings hash differently but each is self-stable", () => {
     const one = validEvent();

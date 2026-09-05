@@ -1,4 +1,5 @@
 import { inheritSourcePortBindings } from "../ledger/source-grants";
+import { SelfOriginError, requireExternalEvents } from "../ledger/event-origin";
 import { readReceiptsLog } from "../canon/receipts";
 import { settleWriteReservations } from "./budget-ledger";
 import { ulid } from "../util/ulid";
@@ -221,7 +222,7 @@ async function runWritePassLocked(
       pendingBatch = null;
     }
     if (stopped === null && pendingBatch !== null) {
-      const filed = await fileProducedDrafts(options.claims, pendingBatch.drafts, "model", pendingBatch.model_ref, pendingBatch.historical_source_write);
+      const filed = await fileProducedDrafts(options.claims, pendingBatch.filing_drafts, "model", pendingBatch.model_ref, pendingBatch.historical_source_write);
       // Replay files an existing decision; it is not another extraction.
       extracted = 0;
       deduped += filed.deduped;
@@ -276,7 +277,7 @@ async function runWritePassLocked(
         if (durable === null) throw new Error("durable extraction decision is missing");
         const filed = await fileProducedDrafts(
           options.claims,
-          durable.drafts,
+          durable.filing_drafts,
           "model",
           durable.model_ref,
           durable.historical_source_write,
@@ -322,6 +323,7 @@ async function runWritePassLocked(
     if (canonWrites >= WRITE_PASS_LIMIT) break;
     const receiptsBefore = loopReceiptCount(db, vaultPath);
     try {
+      if (claim.producer === "model") requireExternalEvents(db, claim.provenance);
       const decision = segregateLoopDecision(resolveTarget(io, claim));
       if (decision.action === "skip") continue;
       applyCanonWrite(io, claim, decision, {
@@ -332,6 +334,7 @@ async function runWritePassLocked(
       canonWrites += committed;
       written += committed;
     } catch (error) {
+      if (error instanceof SelfOriginError) continue;
       // Derived refresh happens after the canon receipt is durable.  Count a
       // committed write even when that optional follow-up fails, so the run
       // receipt and budget cannot hide it.

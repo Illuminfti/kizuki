@@ -2,8 +2,8 @@ import type { CaptureEventInput } from "../contracts/event";
 
 /**
  * Fields that define event identity. `observed_at` is excluded so re-observing
- * an unchanged record dedupes; `attachments` and `sensitivity_hint` are
- * excluded so attachment re-hosting and hint revision do not fork history.
+ * an unchanged record dedupes. These are the historical v1 fields; v2 also
+ * binds the accepted sensitivity hint and canonical attachment references.
  */
 const HASHED_FIELDS = [
   "connector_id",
@@ -41,12 +41,26 @@ function sortDeep(value: unknown): unknown {
  * Canonical JSON over the identity fields with object keys sorted at every
  * depth. Array order is significant: `subjects` is a sequence, not a set.
  */
-export function canonicalSerialize(event: CaptureEventInput): string {
+export function canonicalSerializeLegacy(event: CaptureEventInput): string {
   const subset: Record<string, unknown> = {};
   for (const field of HASHED_FIELDS) {
     subset[field] = event[field];
   }
   return JSON.stringify(sortDeep(subset));
+}
+
+export function canonicalSerialize(event: CaptureEventInput): string {
+  const subset: Record<string, unknown> = {};
+  for (const field of HASHED_FIELDS) subset[field] = event[field];
+  subset["sensitivity_hint"] = event.sensitivity_hint ?? null;
+  subset["attachments"] = [...event.attachments].sort((a, b) =>
+    a.attachment_id < b.attachment_id ? -1 : a.attachment_id > b.attachment_id ? 1 : 0);
+  return JSON.stringify(sortDeep(subset));
+}
+
+/** Historical compatibility only. New acceptance never chooses this version. */
+export function computeLegacyContentHash(input: CaptureEventInput): string {
+  return sha256Hex(canonicalSerializeLegacy(input));
 }
 
 /**
@@ -55,7 +69,7 @@ export function canonicalSerialize(event: CaptureEventInput): string {
  * `event_id`-collision check both rest on this function alone.
  */
 export function computeContentHash(input: CaptureEventInput): string {
-  return sha256Hex(canonicalSerialize(input));
+  return sha256Hex(`kizuki.event-revision/v2\0${canonicalSerialize(input)}`);
 }
 
 /** Hex SHA-256 of bytes or UTF-8 text. Used for event identity and opaque state. */

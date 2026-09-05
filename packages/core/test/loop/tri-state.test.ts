@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProduceResult, ProducerPort } from "../../src/contracts/producer";
 import { openLedger } from "../../src/ledger/db";
+import { accept } from "../../src/ledger/ledger";
 import {
   commitExtractCursor,
   mineLiveDrafts,
@@ -12,6 +13,7 @@ import {
 } from "../../src/serve/extract";
 import { initVault } from "../../src/vault/init";
 import { putEvent } from "../claims/helpers";
+import { validEvent } from "../fixtures";
 
 function stubProducer(result: ProduceResult): ProducerPort {
   return {
@@ -141,8 +143,8 @@ describe("extract tri-state cursor", () => {
     const path = join(directory, "vault");
     initVault(path);
     const db = openLedger(join(path, ".kizuki", "kizuki.db"));
-    const deleted = putEvent(db, { source_record_id: "deleted", text: "deleted source" });
-    db.query("UPDATE events SET deleted = 1 WHERE event_id = ?").run(deleted);
+    expect(accept(db, { ...validEvent(), source_record_id: "deleted", text: "deleted source", deleted: true }).status)
+      .toBe("stored");
     putEvent(db, { source_record_id: "context", text: "KIZUKI CONTEXT v1\nprincipal=owner" });
     putEvent(db, { source_record_id: "live", text: "live source" });
     let seen = [] as readonly string[];

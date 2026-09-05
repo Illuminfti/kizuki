@@ -9,6 +9,7 @@ import { search, searchResult, toFtsQuery } from "../../src/search/query";
 import { initSearch } from "../../src/search/schema";
 import { serializePage } from "../../src/vault/frontmatter";
 import type { CanonPage } from "../../src/vault/pages";
+import { computeContentHash, sha256Hex } from "../../src/util/hash";
 import { searchDb, storedEvent, tempVault } from "./helpers";
 
 const disposers: (() => void)[] = [];
@@ -287,18 +288,22 @@ describe("search rebuild", () => {
       `INSERT INTO events (
          event_id, connector_id, source_record_id, kind, occurred_at, observed_at,
          text, subjects, sensitivity_hint, deleted, attachments, metadata,
-         content_hash, accepted_at
+         content_hash, accepted_at, content_hash_version, text_hash, origin
        ) VALUES (?, 'fixture', ?, 'message', '2026-02-28T10:30:00Z',
-                '2026-03-01T00:00:00Z', ?, '[]', 'personal', 0, '[]', '{}', ?, ?)`,
+                '2026-03-01T00:00:00Z', ?, '[]', 'personal', 0, '[]', '{}', ?, ?, 2, ?, 'external')`,
     );
     db.transaction(() => {
       for (let index = 0; index < 6000; index += 1) {
         insert.run(
-          `E${String(index).padStart(25, "0")}`,
+          `01${String(index).padStart(24, "0")}`,
           `src-${index}`,
           `body ${index}`,
-          `${"h".repeat(64)}${index}`,
+          computeContentHash({ schema: "kizuki.event/v1", connector_id: "fixture",
+            source_record_id: `src-${index}`, kind: "message", occurred_at: "2026-02-28T10:30:00Z",
+            observed_at: "2026-03-01T00:00:00Z", text: `body ${index}`, subjects: [],
+            sensitivity_hint: "personal", deleted: false, attachments: [], metadata: {} }),
           "2026-03-01T00:00:00.000Z",
+          sha256Hex(`body ${index}`),
         );
       }
     })();
