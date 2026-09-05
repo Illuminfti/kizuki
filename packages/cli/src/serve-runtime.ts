@@ -7,6 +7,7 @@ import {
   isPlainObject,
   registerModelProducerPort,
   runToCompletion,
+  readRetrievalDocuments,
   type ClaimsIo,
   type LlmPort,
   type PortContext,
@@ -193,8 +194,18 @@ export async function createServeRuntime(options: {
       claims,
       sync: () => syncConnections(options.db, options.vaultPath, options.store, options.env),
       refresh: async () => {
+        const degraded: string[] = [];
+        if (options.retrieval !== undefined) {
+          try {
+            if (options.retrieval.rebuildFromDocuments === undefined) throw new Error("rebuild unavailable");
+            // Reuse the public bounded, authority-preserving projection. The engine
+            // stages it before replacement, including edits, deletions and page writes.
+            await options.retrieval.rebuildFromDocuments(readRetrievalDocuments(options.db, options.vaultPath));
+          } catch { degraded.push("retrieval refresh unavailable"); }
+        }
         const result = tryRefreshDerived(options.db, options.vaultPath);
-        return result.degraded.length === 0 ? [] : ["derived index refresh degraded"];
+        if (result.degraded.length > 0) degraded.push("derived index refresh degraded");
+        return degraded;
       },
     },
     async close(): Promise<void> {

@@ -154,13 +154,17 @@ async function runRetrievalSweep(
     };
   }
   const result = await retryRetrievalOps(hooks.claims);
+  let refreshed: readonly string[] = [];
+  try { refreshed = await hooks.refresh?.() ?? []; }
+  catch { refreshed = ["retrieval refresh unavailable"]; }
+  const degraded = [...(result.pending === 0 ? [] : ["retrieval-ops-pending"]), ...refreshed];
   return {
-    status: result.pending === 0 ? "ok" : "degraded",
+    status: degraded.length === 0 ? "ok" : "degraded",
     retrieval: {
       upserts: result.retried,
       removals: 0,
       pending_ops: result.pending,
-      degraded: result.pending === 0 ? [] : ["retrieval-ops-pending"],
+      degraded,
     },
   };
 }
