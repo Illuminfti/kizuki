@@ -146,6 +146,10 @@ function checkString(
     errors.push(`${path}: must be a non-empty string`);
     return false;
   }
+  if (!opts.allowEmpty && (value.trim() !== value || /[\p{Cc}\p{Cf}]/u.test(value))) {
+    errors.push(`${path}: must be a visible identifier without controls or edge whitespace`);
+    return false;
+  }
   if (utf8ByteLength(value) > maxBytes) {
     errors.push(`${path}: exceeds ${maxBytes} UTF-8 bytes`);
     return false;

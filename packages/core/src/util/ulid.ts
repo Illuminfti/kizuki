@@ -16,7 +16,7 @@ export function isUlid(value: unknown): value is string {
 }
 
 let lastTime = -1;
-const lastRandom: number[] = new Array<number>(RANDOM_LEN).fill(0);
+let lastRandom: number[] = new Array<number>(RANDOM_LEN).fill(0);
 
 function encodeTime(time: number): string {
   let out = "";
@@ -55,14 +55,20 @@ export function ulid(): string {
     throw new RangeError("ulid: timestamp exceeds the 48-bit ULID range");
   }
 
+  if (!Number.isSafeInteger(now) || now < 0) {
+    throw new RangeError("ulid: timestamp must be a non-negative integer");
+  }
+  const nextRandom = [...lastRandom];
   if (now > lastTime) {
-    lastTime = now;
-    fillRandom(lastRandom);
+    fillRandom(nextRandom);
   } else {
     // Same millisecond, or a clock that stepped backwards: keep the previous
     // timestamp and step the random field so ordering never regresses.
-    incrementRandom(lastRandom);
+    incrementRandom(nextRandom);
   }
+  // Commit monotonic state only after random generation/increment succeeds.
+  lastRandom = nextRandom;
+  lastTime = Math.max(now, lastTime);
 
   let out = encodeTime(lastTime);
   for (let i = 0; i < RANDOM_LEN; i++) {

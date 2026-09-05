@@ -825,3 +825,21 @@ test("oversized record shapes and invalid metadata return bounded errors", () =>
     expect(result.errors.join(" ").length).toBeLessThan(128);
   }
 });
+
+
+test("identifiers reject controls, invisible values and edge whitespace without normalization", () => {
+  for (const value of [" ", "\t", "\n", " leading", "trailing ", "a\u0000b", "a\u001bb", "\u200b", "a\u202eb"]) {
+    for (const field of ["connector_id", "source_record_id", "kind", "subject_id", "attachment_id", "media_type"]) {
+      const event = rawEvent();
+      if (field === "subject_id") event["subjects"] = [{ subject_id: value, role: "about" }];
+      else if (field === "attachment_id" || field === "media_type") event["attachments"] = [{ attachment_id: "a", media_type: "text/plain", [field]: value }];
+      else event[field] = value;
+      expect(validateEventInput(event).ok).toBe(false);
+    }
+  }
+  const event = { ...rawEvent(), source_record_id: "meeting notes/東京.md" };
+  const result = validateEventInput(event);
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error("unreachable");
+  expect(result.value.source_record_id).toBe(event.source_record_id);
+});
