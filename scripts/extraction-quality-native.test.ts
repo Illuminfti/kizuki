@@ -1,8 +1,10 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadCorpus } from "./evaluate-extraction";
+import { checksumManifest } from "./release-artifacts";
+import { nativeReleaseTarget } from "./release-targets";
 import {
   mapImportedEvidence, persistedReference, runNativeQuality, verifyNativeArtifact,
 } from "./extraction-quality-native";
@@ -33,6 +35,48 @@ test("a matching-looking source SHA without a valid checksummed artifact is refu
   const path = mkdtempSync(join(tmpdir(), "quality-invalid-artifact-")); directories.push(path);
   writeFileSync(join(path, "BUILD.json"), JSON.stringify({ source_sha: "a".repeat(40) }));
   expect(() => verifyNativeArtifact(path, "a".repeat(40))).toThrow();
+});
+
+const artifactNames = ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"];
+const sourceSha = "a".repeat(40);
+const validBuild = { schema: "kizuki.release-build/v1", source_sha: sourceSha,
+  target: nativeReleaseTarget().target, bun_version: Bun.version };
+
+function artifact(build: unknown): string {
+  const path = mkdtempSync(join(tmpdir(), "quality-artifact-metadata-")); directories.push(path);
+  for (const name of artifactNames) {
+    writeFileSync(join(path, name), name === "BUILD.json" ? JSON.stringify(build) : `synthetic metadata fixture: ${name}`);
+  }
+  writeFileSync(join(path, "SHA256SUMS"), checksumManifest(path, artifactNames));
+  return path;
+}
+
+test("artifact metadata binds a complete native build and the expected source revision", () => {
+  const path = artifact(validBuild);
+  expect(() => verifyNativeArtifact(path, sourceSha)).not.toThrow();
+  expect(() => verifyNativeArtifact(path, "b".repeat(40))).toThrow();
+});
+
+test.each([
+  null,
+  [],
+  { source_sha: sourceSha },
+  { ...validBuild, extra: "untrusted" },
+  { ...validBuild, schema: "wrong-schema" },
+  { ...validBuild, source_sha: "not-a-source-revision" },
+  { ...validBuild, target: "wrong-os-wrong-arch" },
+  { ...validBuild, target: validBuild.target === "bun-linux-x64-baseline" ? "bun-darwin-arm64" : "bun-linux-x64-baseline" },
+  { ...validBuild, bun_version: "0.0.0" },
+].map((build) => [build] as const))("artifact checksums cannot authorize malformed or incompatible build metadata %#", (build) => {
+  expect(() => verifyNativeArtifact(artifact(build), sourceSha)).toThrow();
+});
+
+test("artifact root must be a real directory even when the linked contents have valid checksums", () => {
+  const path = artifact(validBuild), link = `${path}-link`;
+  directories.push(link);
+  symlinkSync(path, link, "dir");
+  expect(() => verifyNativeArtifact(link, sourceSha)).toThrow("artifact must be a regular directory");
+  expect(() => verifyNativeArtifact(join(path, "BUILD.json"), sourceSha)).toThrow("artifact must be a regular directory");
 });
 
 test("the complete offline corpus uses native import, model filing, CLI and MCP consumers", async () => {

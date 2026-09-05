@@ -111,8 +111,9 @@ bun scripts/extraction-quality-native.ts \
   --out /tmp/extraction-quality-native-artifact.json
 ```
 
-The runner verifies the existing release checksum manifest and `BUILD.json`,
-copies the artifact into its temporary fixture directory, verifies it again and
+The runner refuses symlink roots and validates the exact `BUILD.json` schema,
+source SHA, supported native target and pinned Bun runtime. It verifies the
+release checksum manifest, copies the artifact into its temporary fixture directory, verifies it again and
 runs the copied `kizuki` and `kizuki-mcp` executables. A successful source run
 does not stand in for this artifact consumer check.
 

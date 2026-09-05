@@ -1,5 +1,5 @@
 import {
-  cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync,
+  cpSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -9,13 +9,16 @@ import {
 } from "../packages/core/src/index";
 import type { CaptureEvent, Claim, Envelope, RunReceipt, SearchHit } from "../packages/core/src/index";
 import { verifyChecksumManifest } from "./release-artifacts";
+import { releaseTarget, requireNativeHost } from "./release-targets";
+import { parseBuildInfo } from "./stranger-proof";
 import {
-  canonicalJson, corpusDigest, loadCorpus, loadResponseSet, readBoundedJson,
+  canonicalJson, corpusDigest, loadCorpus, loadResponseSet,
   scoreExtraction, sha256, validateCorpus, validateResponseSet, writeQualityReport,
 } from "./evaluate-extraction";
 import type { QualityCase, QualityCorpus, QualityResponse, QualityResponseSet } from "./evaluate-extraction";
 
 const SOURCE_ROOT = resolve(import.meta.dir, "..");
+const PINNED_BUN = readFileSync(join(SOURCE_ROOT, ".bun-version"), "utf8").trim();
 const MODEL = "quality-scripted";
 const ARTIFACT_NAMES = ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"];
 const NEGATIVE_QUERY = "zymurgylatticeabsent";
@@ -59,8 +62,14 @@ export function mapImportedEvidence(item: QualityCase, events: readonly Imported
 }
 
 export function verifyNativeArtifact(path: string, sourceSha: string): void {
+  const stat = lstatSync(path);
+  assert(stat.isDirectory() && !stat.isSymbolicLink(), "artifact must be a regular directory");
+  const buildPath = join(path, "BUILD.json");
+  assert(lstatSync(buildPath).size <= 1_048_576, "artifact BUILD.json exceeds fixture bound");
   verifyChecksumManifest(path, ARTIFACT_NAMES);
-  const build = readBoundedJson(join(path, "BUILD.json")) as { source_sha?: unknown };
+  const build = parseBuildInfo(buildPath);
+  requireNativeHost(releaseTarget(build.target));
+  assert(Bun.version === PINNED_BUN && build.bun_version === Bun.version, `native fixture and artifact require Bun ${PINNED_BUN}`);
   assert(build.source_sha === sourceSha, "artifact and evaluation source revisions differ");
 }
 
@@ -131,6 +140,7 @@ function modelStatus(receipt: RunReceipt): QualityResponse["status"] {
 }
 
 export async function runNativeQuality(options: { artifact?: string } = {}) {
+  assert(Bun.version === PINNED_BUN, `native fixture requires Bun ${PINNED_BUN}`);
   const sourceSha = git("rev-parse", "HEAD");
   const sourceTree = git("rev-parse", "HEAD^{tree}");
   assert(git("status", "--porcelain", "--", "packages").length === 0, "native evaluation requires unchanged product source");
