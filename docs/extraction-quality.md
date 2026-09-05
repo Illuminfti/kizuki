@@ -113,9 +113,16 @@ bun scripts/extraction-quality-native.ts \
 
 The runner refuses symlink roots and validates the exact `BUILD.json` schema,
 source SHA, supported native target and pinned Bun runtime. It verifies the
-release checksum manifest, copies the artifact into its temporary fixture directory, verifies it again and
-runs the copied `kizuki` and `kizuki-mcp` executables. A successful source run
-does not stand in for this artifact consumer check.
+release checksum manifest, copies the artifact into its temporary fixture
+directory, verifies it again, requires the complete copied identity to match
+the original, and runs the copied `kizuki` and `kizuki-mcp` executables.
+Report schema `kizuki.native-extraction-quality/v2` retains the validated copied
+build fields, every packaged file digest, and the full checksum manifest with
+its own digest under `artifact`. Both executables, `BUILD.json` and `README.txt`
+are identified. Source CLI reports set `artifact` to `null`. The old v1
+`artifact_sha256` identified only the CLI and must not be interpreted as a
+complete package identity. A successful source run does not stand in for this
+artifact consumer check.
 
 ## Verification
 

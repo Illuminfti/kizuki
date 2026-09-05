@@ -1,8 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadCorpus } from "./evaluate-extraction";
+import { loadCorpus, sha256 } from "./evaluate-extraction";
 import { checksumManifest } from "./release-artifacts";
 import { nativeReleaseTarget } from "./release-targets";
 import {
@@ -40,7 +40,7 @@ test("a matching-looking source SHA without a valid checksummed artifact is refu
 const artifactNames = ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"];
 const sourceSha = "a".repeat(40);
 const validBuild = { schema: "kizuki.release-build/v1", source_sha: sourceSha,
-  target: nativeReleaseTarget().target, bun_version: Bun.version };
+  target: nativeReleaseTarget().target, bun_version: Bun.version } as const;
 
 function artifact(build: unknown): string {
   const path = mkdtempSync(join(tmpdir(), "quality-artifact-metadata-")); directories.push(path);
@@ -53,8 +53,30 @@ function artifact(build: unknown): string {
 
 test("artifact metadata binds a complete native build and the expected source revision", () => {
   const path = artifact(validBuild);
-  expect(() => verifyNativeArtifact(path, sourceSha)).not.toThrow();
+  const identity = verifyNativeArtifact(path, sourceSha);
+  expect(identity.build).toEqual(validBuild);
+  expect(Object.keys(identity.files_sha256).sort()).toEqual([...artifactNames].sort());
+  for (const name of artifactNames) expect(identity.files_sha256[name]).toBe(sha256(readFileSync(join(path, name))));
+  expect(identity.checksum_manifest).toBe(readFileSync(join(path, "SHA256SUMS"), "utf8"));
+  expect(identity.manifest_sha256).toBe(sha256(identity.checksum_manifest));
   expect(() => verifyNativeArtifact(path, "b".repeat(40))).toThrow();
+});
+
+test("artifact identity binds copied MCP bytes even when CLI bytes and build metadata match", () => {
+  const path = artifact(validBuild), copy = `${path}-copy`;
+  directories.push(copy);
+  const original = verifyNativeArtifact(path, sourceSha);
+  cpSync(path, copy, { recursive: true, errorOnExist: true });
+  expect(verifyNativeArtifact(copy, sourceSha)).toEqual(original);
+  writeFileSync(join(copy, "kizuki-mcp"), "different synthetic MCP executable");
+  expect(() => verifyNativeArtifact(copy, sourceSha)).toThrow("release checksum verification failed");
+  writeFileSync(join(copy, "SHA256SUMS"), checksumManifest(copy, artifactNames));
+  const changed = verifyNativeArtifact(copy, sourceSha);
+  expect(changed.build).toEqual(original.build);
+  expect(changed.files_sha256.kizuki).toBe(original.files_sha256.kizuki);
+  expect(changed.files_sha256["kizuki-mcp"]).not.toBe(original.files_sha256["kizuki-mcp"]);
+  expect(changed.manifest_sha256).not.toBe(original.manifest_sha256);
+  expect(changed).not.toEqual(original);
 });
 
 test.each([
@@ -81,6 +103,8 @@ test("artifact root must be a real directory even when the linked contents have 
 
 test("the complete offline corpus uses native import, model filing, CLI and MCP consumers", async () => {
   const result = await runNativeQuality();
+  expect(result.schema).toBe("kizuki.native-extraction-quality/v2");
+  expect(result.artifact).toBeNull();
   expect(result.execution_mode).toBe("source_cli");
   expect(result.model_quality_claim).toBe(false);
   expect(result.raw_score.passed).toBe(true);

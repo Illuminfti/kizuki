@@ -61,7 +61,7 @@ export function mapImportedEvidence(item: QualityCase, events: readonly Imported
   return mapping;
 }
 
-export function verifyNativeArtifact(path: string, sourceSha: string): void {
+export function verifyNativeArtifact(path: string, sourceSha: string) {
   const stat = lstatSync(path);
   assert(stat.isDirectory() && !stat.isSymbolicLink(), "artifact must be a regular directory");
   const buildPath = join(path, "BUILD.json");
@@ -71,6 +71,12 @@ export function verifyNativeArtifact(path: string, sourceSha: string): void {
   requireNativeHost(releaseTarget(build.target));
   assert(Bun.version === PINNED_BUN && build.bun_version === Bun.version, `native fixture and artifact require Bun ${PINNED_BUN}`);
   assert(build.source_sha === sourceSha, "artifact and evaluation source revisions differ");
+  const manifest = readFileSync(join(path, "SHA256SUMS"), "utf8");
+  const files = Object.fromEntries(manifest.trim().split("\n").map((line) => {
+    const [digest, name] = line.split("  ");
+    return [name!, digest!];
+  }));
+  return { build, files_sha256: files, checksum_manifest: manifest, manifest_sha256: sha256(manifest) };
 }
 
 interface QueryData { hits: SearchHit[]; withheld: number }
@@ -151,7 +157,7 @@ export async function runNativeQuality(options: { artifact?: string } = {}) {
   const commands: CommandRecord[] = [];
   let executable = [process.execPath, join(SOURCE_ROOT, "packages/cli/src/main.ts")];
   let mcpExecutable = [process.execPath, join(SOURCE_ROOT, "packages/mcp/src/bin.ts")];
-  let artifactDigest: string | null = null;
+  let artifactIdentity: ReturnType<typeof verifyNativeArtifact> | null = null;
   let active: Replay | null = null;
   const server = Bun.serve({
     hostname: "127.0.0.1", port: 0,
@@ -346,10 +352,11 @@ export async function runNativeQuality(options: { artifact?: string } = {}) {
   let recovery: { no_extra_model_calls: boolean; undo_restored_bytes: boolean; restored_recall: boolean } | null = null;
   try {
     if (options.artifact !== undefined) {
-      verifyNativeArtifact(options.artifact, sourceSha);
+      const expectedArtifact = verifyNativeArtifact(options.artifact, sourceSha);
       const copy = join(root, "artifact"); cpSync(options.artifact, copy, { recursive: true, errorOnExist: true });
-      verifyNativeArtifact(copy, sourceSha); executable = [join(copy, "kizuki")]; mcpExecutable = [join(copy, "kizuki-mcp")];
-      artifactDigest = sha256(readFileSync(executable[0]!));
+      artifactIdentity = verifyNativeArtifact(copy, sourceSha);
+      assert(canonicalJson(artifactIdentity) === canonicalJson(expectedArtifact), "copied artifact identity differs from the verified source package");
+      executable = [join(copy, "kizuki")]; mcpExecutable = [join(copy, "kizuki-mcp")];
     }
     for (const item of corpus.cases) {
       const fixture = await setup(item, item.id);
@@ -416,8 +423,8 @@ export async function runNativeQuality(options: { artifact?: string } = {}) {
       controls.unavailable.status === "unavailable" && controls.unavailable.model_requests === 1 && controls.unavailable.claims === 0 &&
       controls.malformed.status === "rejected" && controls.malformed.model_requests === 1 && controls.malformed.claims === 0 &&
       Object.values(controls.recovery).every(Boolean);
-    return { schema: "kizuki.native-extraction-quality/v1", execution_mode: options.artifact === undefined ? "source_cli" : "copied_native_cli",
-      at: new Date().toISOString(), source_sha: sourceSha, source_tree: sourceTree, artifact_sha256: artifactDigest,
+    return { schema: "kizuki.native-extraction-quality/v2", execution_mode: options.artifact === undefined ? "source_cli" : "copied_native_cli",
+      at: new Date().toISOString(), source_sha: sourceSha, source_tree: sourceTree, artifact: artifactIdentity,
       runner_sha256: sha256(readFileSync(import.meta.filename)), source_changes: git("status", "--porcelain").split("\n").filter(Boolean),
       fixture_setup: "native CLI enrollment/import; exact source grant and synthetic public-agent enrollment use public Core; no policy-file custody claim",
       mode: "scripted_contract", model_quality_claim: false, usage_evidence: "fixture omitted provider usage; native zero values do not establish measured zero",
