@@ -75,4 +75,10 @@ describe("parseKeys", () => {
       expect(keys).toEqual([{ name: "paste", text: "uq\n" }]);
     }
   });
+
+  test("drops an oversized paste through its closing marker before resuming keys", () => {
+    const stream = createKeyStream();
+    expect(stream.push(`\x1b[200~${"x".repeat(1_048_577)}`)).toEqual([]);
+    expect(stream.push("\x1b[201~q")).toEqual([{ name: "char", ch: "q" }]);
+  });
 });

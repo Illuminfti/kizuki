@@ -31,6 +31,7 @@ const ESC = "\x1b";
 const PASTE_START = "\x1b[200~";
 const PASTE_END = "\x1b[201~";
 const MAX_SEQUENCE_CHARS = 128;
+const MAX_PASTE_CHARS = 1_048_576;
 
 function keyFor(ch: string): Key {
   const cp = ch.codePointAt(0) ?? 0;
@@ -93,23 +94,70 @@ export function createKeyStream(): {
   let pending = "";
   let pasting = false;
   let pasted = "";
+  let pasteTooLarge = false;
+  let quarantine: "csi" | "string" | null = null;
 
   const drain = (): Key[] => {
     const keys: Key[] = [];
     while (pending.length > 0) {
+      if (quarantine === "csi") {
+        let end = -1;
+        for (let index = 0; index < pending.length; index += 1) {
+          const cp = pending.codePointAt(index) ?? 0;
+          if (cp >= 0x40 && cp <= 0x7e) {
+            end = index + 1;
+            break;
+          }
+        }
+        if (end === -1) {
+          pending = "";
+          break;
+        }
+        pending = pending.slice(end);
+        quarantine = null;
+        continue;
+      }
+      if (quarantine === "string") {
+        const bel = pending.indexOf("\x07");
+        const st = pending.indexOf(`${ESC}\\`);
+        const end = bel === -1 ? st : st === -1 ? bel : Math.min(bel, st);
+        if (end === -1) {
+          // Keep only a possible split ST prefix; every other byte is inert.
+          pending = pending.endsWith(ESC) ? ESC : "";
+          break;
+        }
+        pending = pending.slice(end + (pending.startsWith(`${ESC}\\`, end) ? 2 : 1));
+        quarantine = null;
+        continue;
+      }
       if (pasting) {
         const end = pending.indexOf(PASTE_END);
         if (end === -1) {
           const keep = suffixPrefixLength(pending, PASTE_END);
-          pasted += pending.slice(0, pending.length - keep);
+          const piece = pending.slice(0, pending.length - keep);
+          if (!pasteTooLarge) {
+            if (pasted.length + piece.length > MAX_PASTE_CHARS) {
+              pasted = "";
+              pasteTooLarge = true;
+            } else {
+              pasted += piece;
+            }
+          }
           pending = pending.slice(pending.length - keep);
           break;
         }
-        pasted += pending.slice(0, end);
+        const piece = pending.slice(0, end);
+        if (!pasteTooLarge && pasted.length + piece.length <= MAX_PASTE_CHARS) {
+          pasted += piece;
+        } else {
+          pasted = "";
+          pasteTooLarge = true;
+        }
         pending = pending.slice(end + PASTE_END.length);
         pasting = false;
-        keys.push({ name: "paste", text: pasted });
+        if (!pasteTooLarge) keys.push({ name: "paste", text: pasted });
         pasted = "";
+        pasteTooLarge = false;
         continue;
       }
       if (!pending.startsWith(ESC)) {
@@ -121,11 +169,17 @@ export function createKeyStream(): {
       }
       const escaped = consumeEscape(pending);
       if (escaped.pending && pending.length <= MAX_SEQUENCE_CHARS) break;
+      if (escaped.pending) {
+        quarantine = /^\x1b[\]PX^_]/.test(pending) ? "string" : "csi";
+        pending = quarantine === "string" && pending.endsWith(ESC) ? ESC : "";
+        continue;
+      }
       if (escaped.key !== null) keys.push(escaped.key);
       if (pending.startsWith(PASTE_START)) {
         pending = pending.slice(PASTE_START.length);
         pasting = true;
         pasted = "";
+        pasteTooLarge = false;
       } else {
         pending = pending.slice(escaped.pending ? pending.length : escaped.length);
       }
@@ -157,6 +211,7 @@ export function createKeyStream(): {
       if (pasting) {
         pending = "";
         pasted = "";
+        pasteTooLarge = false;
         return [];
       }
       if (pending === ESC) return this.flush();

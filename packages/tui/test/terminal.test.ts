@@ -218,4 +218,26 @@ describe("createTerminal", () => {
     stdin.emit("data", "00~uyes\r\x1b[201~");
     expect(seen).toEqual([{ name: "unknown" }, { name: "paste", text: "uyes\r" }]);
   });
+
+  test("quarantines oversized control sequences until their terminator", async () => {
+    const stdin = new FakeStdin();
+    const stdout = new FakeStdout();
+    const terminal = createTerminal(
+      stdin as unknown as NodeJS.ReadStream,
+      stdout as unknown as NodeJS.WriteStream,
+      { signals: null },
+    );
+    const seen: import("../src/keys").Key[] = [];
+    terminal.onKeys((keys) => seen.push(...keys));
+    stdin.emit("data", `\x1b]${"x".repeat(127)}`);
+    await Bun.sleep(40);
+    stdin.emit("data", "uyes\r\x1b");
+    stdin.emit("data", "\\z");
+    expect(seen).toEqual([{ name: "char", ch: "z" }]);
+
+    stdin.emit("data", `\x1b[${"1".repeat(127)}`);
+    await Bun.sleep(40);
+    stdin.emit("data", "uz");
+    expect(seen).toEqual([{ name: "char", ch: "z" }, { name: "char", ch: "z" }]);
+  });
 });

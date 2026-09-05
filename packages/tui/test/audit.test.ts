@@ -84,6 +84,7 @@ describe("audit reducer", () => {
     const pasted = reduce(confirm, { name: "paste", text: "yes" }, VIEWPORT);
     expect(pasted.state.mode).toEqual({ ...confirm.mode, text: "" });
     expect(reduce(pasted.state, { name: "enter" }, VIEWPORT).effects).toEqual([]);
+    expect(reduce(start, { name: "unknown" }, VIEWPORT).effects).toEqual([]);
   });
 
   test("bracketed paste is filter text only and cannot synthesize submit", () => {
