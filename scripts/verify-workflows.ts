@@ -1,3 +1,9 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+const ROOT = resolve(import.meta.dir, "..");
+const BUN_VERSION = readFileSync(resolve(ROOT, ".bun-version"), "utf8").trim();
+
 export interface WorkflowFailure {
   path: string;
   reason: string;
@@ -150,10 +156,10 @@ export function validateWorkflowText(path: string, text: string): WorkflowFailur
     if (typeof uses === "string" && SETUP_BUN.test(uses)) {
       const withField = record["with"];
       const bunVersion = isRecord(withField) ? withField["bun-version"] : undefined;
-      if (bunVersion !== "1.3.10") {
+      if (bunVersion !== BUN_VERSION) {
         failures.push({
           path,
-          reason: "setup-bun must pin bun-version to 1.3.10",
+          reason: `setup-bun must pin bun-version to ${BUN_VERSION}`,
         });
       }
     }
@@ -199,8 +205,41 @@ export async function validateTrackedWorkflows(opts?: {
   return failures;
 }
 
+export function validateToolchain(root = ROOT, runtime = Bun.version): WorkflowFailure[] {
+  try {
+    const version = readFileSync(resolve(root, ".bun-version"), "utf8").trim();
+    if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error("invalid .bun-version");
+    const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
+    const parsedLock = Bun.JSON5.parse(readFileSync(resolve(root, "bun.lock"), "utf8"));
+    const requireRecord = (value: unknown): Record<string, unknown> => {
+      if (!isRecord(value)) throw new Error("invalid toolchain metadata");
+      return value;
+    };
+    const lock = requireRecord(parsedLock);
+    const workspace = requireRecord(requireRecord(lock["workspaces"])[""]);
+    const packages = requireRecord(lock["packages"]);
+    const types = packages["@types/bun"];
+    const runtimeTypes = packages["bun-types"];
+    const failures: WorkflowFailure[] = [];
+    const check = (ok: boolean, path: string, reason: string) => { if (!ok) failures.push({ path, reason }); };
+    check(runtime === version, ".bun-version", `verification requires Bun ${version}`);
+    check(pkg?.packageManager === `bun@${version}`, "package.json", "packageManager must match .bun-version exactly");
+    check(pkg?.engines?.bun === version, "package.json", "engines.bun must match .bun-version exactly");
+    check(pkg?.devDependencies?.["@types/bun"] === version, "package.json", "Bun runtime types must match .bun-version exactly");
+    check(requireRecord(workspace["devDependencies"])["@types/bun"] === version,
+      "bun.lock", "locked workspace runtime types must match .bun-version");
+    check(Array.isArray(types) && types[0] === `@types/bun@${version}` &&
+      requireRecord(requireRecord(types[2])["dependencies"])["bun-types"] === version &&
+      Array.isArray(runtimeTypes) && runtimeTypes[0] === `bun-types@${version}`,
+      "bun.lock", "resolved Bun runtime types must match .bun-version exactly");
+    return failures;
+  } catch {
+    return [{ path: root, reason: "toolchain metadata is missing or malformed" }];
+  }
+}
+
 async function main(): Promise<void> {
-  const failures = await validateTrackedWorkflows();
+  const failures = [...validateToolchain(), ...await validateTrackedWorkflows()];
   for (const failure of failures) {
     console.error(`${failure.path}: ${failure.reason}`);
   }

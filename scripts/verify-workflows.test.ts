@@ -1,8 +1,35 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import {
+  validateToolchain,
   validateTrackedWorkflows,
   validateWorkflowText,
 } from "./verify-workflows";
+
+test("runtime, package metadata and resolved types share the checked-in Bun pin", () => {
+  expect(validateToolchain()).toEqual([]);
+  expect(validateToolchain(undefined, "1.4.0")).toEqual([
+    expect.objectContaining({ reason: "verification requires Bun 1.3.10" }),
+  ]);
+  const root = mkdtempSync(join(tmpdir(), "kizuki-toolchain-"));
+  try {
+    for (const name of [".bun-version", "package.json", "bun.lock"]) {
+      writeFileSync(join(root, name), readFileSync(resolve(import.meta.dir, "..", name)));
+    }
+    expect(validateToolchain(root)).toEqual([]);
+    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+    pkg.devDependencies["@types/bun"] = "^1.3.0";
+    writeFileSync(join(root, "package.json"), JSON.stringify(pkg));
+    expect(validateToolchain(root).some(failure => failure.reason.includes("runtime types"))).toBe(true);
+    const lock = readFileSync(join(root, "bun.lock"), "utf8").replace('"bun-types@1.3.10"', '"bun-types@1.4.0"');
+    writeFileSync(join(root, "bun.lock"), lock);
+    expect(validateToolchain(root).some(failure => failure.reason.includes("resolved Bun"))).toBe(true);
+    writeFileSync(join(root, "package.json"), "{");
+    expect(validateToolchain(root)).toEqual([expect.objectContaining({ reason: "toolchain metadata is missing or malformed" })]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 const pinnedCheckout = "actions/checkout@11d5960a326750d5838078e36cf38b85af677262";
 const pinnedBun = "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6";
