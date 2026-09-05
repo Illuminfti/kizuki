@@ -207,15 +207,20 @@ function modelDoctor(
     receipt.model.model_ref_sha256 !== undefined ? receipt.model.model_ref_sha256 === currentDigest :
       receipt.model.model_ref !== null && !isRedactedModelReference(receipt.model.model_ref) && receipt.model.model_ref === currentRef
   ));
-  const unattributed = currentRef === null ? 0 : receipts.filter(receipt => receipt.rail === "sync" &&
+  const unattributed = currentRef === null ? [] : receipts.filter(receipt => receipt.rail === "sync" &&
     receipt.model.model_ref_sha256 === undefined && receipt.model.model_ref !== null && isRedactedModelReference(receipt.model.model_ref) &&
-    receipt.model.model_ref === displayRef && (receipt.model.calls > 0 || modelFailure(receipt) !== null)).length;
+    receipt.model.model_ref === displayRef && (receipt.model.calls > 0 || modelFailure(receipt) !== null));
   const latestFirst = [...current].reverse();
   const lastOk = latestFirst.find(receipt => receipt.model.calls > 0 && modelFailure(receipt) === null);
   const lastFailed = latestFirst.find(receipt => modelFailure(receipt) !== null);
   const lastFailure = lastFailed === undefined ? null : { at: lastFailed.finished_at, detail: modelFailure(lastFailed)! };
   const lastAttempt = latestFirst.find(receipt => receipt.model.calls > 0 || modelFailure(receipt) !== null);
   const currentFailure = lastAttempt !== undefined && modelFailure(lastAttempt) !== null ? lastFailure : null;
+  const lastUnattributed = unattributed.at(-1);
+  // Use the durable receipt order, including its run-id tie break. An older
+  // known success cannot resolve a newer potentially matching unknown attempt.
+  const historyUnverified = lastUnattributed !== undefined && (lastAttempt === undefined ||
+    receipts.lastIndexOf(lastUnattributed) > receipts.lastIndexOf(lastAttempt));
   const unavailable = current.reduce((sum, receipt) => sum + receipt.model.unavailable, 0);
   return {
     canon_writing: on ? "on" : unverified ? "unverified" : "off",
@@ -223,7 +228,8 @@ function modelDoctor(
     last_success_at: lastOk?.finished_at ?? null,
     last_failure: lastFailure,
     current_failure: currentFailure,
-    unattributed_receipts: unattributed,
+    unattributed_receipts: unattributed.length,
+    history_unverified: historyUnverified,
     unavailable,
     budget: {
       canon_writes_per_day: { used: usedToday, limit: configCanonDay },
@@ -233,7 +239,7 @@ function modelDoctor(
       : unverified
         ? "canon writing: unverified (model configured but not bound by the running host)"
       : "canon writing: off (no model configured — connectors, ledger, search, timeline and undo still work)") +
-      (unattributed === 0 ? "" : `; model history: unattributed receipts=${unattributed}`),
+      (unattributed.length === 0 ? "" : `; model history: unattributed receipts=${unattributed.length}${historyUnverified ? "; current history unverified" : ""}`),
   };
 }
 
@@ -387,7 +393,7 @@ export function inspectServeDoctor(
   const cal = calibration(db, receipts, now);
   const failures: string[] = [];
   if (model.current_failure !== null) failures.push(`${model.current_failure.detail} (at ${model.current_failure.at})`);
-  if (model.unattributed_receipts > 0 && model.last_success_at === null && model.last_failure === null) failures.push(`model history has ${model.unattributed_receipts} unattributed receipts; the stored reference was redacted before stable identity was recorded`);
+  if (model.history_unverified) failures.push(`model history has ${model.unattributed_receipts} unattributed receipts; the stored reference was redacted before stable identity was recorded`);
   if (intent === "unknown") failures.push("service intent unavailable or invalid");
   else if (intent !== "installed" && (supervisor.enabled || supervisor.state === "active")) {
     failures.push("supervisor active or enabled without installed intent");

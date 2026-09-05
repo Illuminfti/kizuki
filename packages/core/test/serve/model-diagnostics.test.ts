@@ -189,3 +189,37 @@ test("doctor health follows the latest current-model attempt while retaining fai
     expect(failed.ok).toBe(false);
   } finally { db.close(); }
 });
+
+for (const tied of [false, true]) test(`newer ambiguous model history remains unverified until a later known attempt (tied=${tied})`, () => {
+  const { path, db } = fixture();
+  writeServeIntent(path, "opted-out");
+  const current = "kizuki.llm.openai-compatible:deepseek/deepseek-v4-flash-0731@openrouter.ai";
+  const ambiguous = "kizuki.llm.openai-compatible:deepseek/[redacted]@openrouter.ai";
+  const inspect = () => inspectServeDoctor(db, path, { model_ref: current, now: "2026-09-05T00:00:09Z" });
+  const persist = (index: number, model: string, calls: number, failed = false) => {
+    const at = `2026-09-05T00:00:0${tied ? 1 : index}Z`;
+    persistRunReceipt(db, path, { ...emptyRunTotals(), run_id: `00${index}`, rail: "sync", started_at: at, finished_at: at, status: failed ? "degraded" : "ok", stopped: null,
+      model: { ...emptyRunTotals().model, model_ref: model, calls, ...(failed ? { diagnostic } : {}) } });
+  };
+  try {
+    persist(1, current, 1);
+    expect(inspect().ok).toBe(true);
+    persist(2, ambiguous, 1, true);
+    const unknown = inspect();
+    expect(unknown.ok).toBe(false);
+    expect(unknown.failures.some(value => value.includes("model history"))).toBe(true);
+    expect(unknown.model.history_unverified).toBe(true);
+    expect(unknown.model.last_success_at).not.toBeNull();
+    expect(unknown.model.last_failure).toBeNull();
+    persist(3, current, 0);
+    expect(inspect().ok).toBe(false);
+    persist(4, "model:other", 1);
+    expect(inspect().ok).toBe(false);
+    persist(5, current, 1);
+    const recovered = inspect();
+    expect(recovered.ok).toBe(true);
+    expect(recovered.model.history_unverified).toBe(false);
+    expect(recovered.model.unattributed_receipts).toBe(1);
+    expect(recovered.model.detail).toContain("unattributed");
+  } finally { db.close(); }
+});
