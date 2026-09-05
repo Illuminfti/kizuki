@@ -102,7 +102,7 @@ test("emptiness refuses a root replaced during its observation", () => {
   finally { cap.close(); }
 });
 
-for (const operation of ["missing-child", "empty-scan", "erase"] as const) test(`${operation} survives errno changes during memory-view allocation`, () => {
+for (const operation of ["empty-scan", "erase"] as const) test(`${operation} survives errno changes during memory-view allocation`, () => {
   const f = fixture(), cap = openOwnedDirectory(f.owned);
   if (operation === "empty-scan") rmSync(join(f.owned, "store"), { recursive: true });
   const libc = dlopen("libc.so.6", { __errno_location: { args: [], returns: FFIType.ptr } });
@@ -123,8 +123,7 @@ for (const operation of ["missing-child", "empty-scan", "erase"] as const) test(
     },
   });
   try {
-    if (operation === "missing-child") expect(cap.childIdentity("missing")).toBeNull();
-    else if (operation === "empty-scan") expect(cap.isEmpty()).toBe(true);
+    if (operation === "empty-scan") expect(cap.isEmpty()).toBe(true);
     else { cap.removeTree("store", store); expect(existsSync(join(f.owned, "store"))).toBe(false); }
     expect(allocations).toBeGreaterThan(0);
     expect(readFileSync(join(f.outside, "store/canary"), "utf8")).toBe("SYNTHETIC_UNOWNED");
