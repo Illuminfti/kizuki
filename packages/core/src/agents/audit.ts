@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { isPlainObject } from "../util/validate";
+import { isPlainObject, utf8ByteLength } from "../util/validate";
 import { ulid } from "../util/ulid";
 import { sha256 } from "./hash";
 import { rfc3339Millis } from "./time";
@@ -22,6 +22,14 @@ import type {
 
 const POLICY_DENIAL_ID = /^(?:tool|more):/;
 const DANGEROUS_KEY = /^(?:__proto__|constructor|prototype)$/;
+const MAX_SHAPE_DEPTH = 8;
+const MAX_SHAPE_NODES = 256;
+const MAX_OBJECT_KEYS = 32;
+const MAX_ARRAY_ITEMS = 32;
+const MAX_KEY_CODE_UNITS = 256;
+const MAX_STRING_CODE_UNITS = 8 * 1024;
+const MAX_HASHED_TEXT_CODE_UNITS = 64 * 1024;
+const MAX_QUERY_SHAPE_BYTES = 32 * 1024;
 
 interface StoredAuditRow {
   audit_id: string;
@@ -38,45 +46,226 @@ function emptyObject(): Record<string, unknown> {
   return Object.create(null) as Record<string, unknown>;
 }
 
-function shapeValue(value: unknown): unknown {
-  if (typeof value === "string") {
-    return value.length === 0
-      ? ""
-      : { len: value.length, sha256: sha256(value) };
-  }
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? value : { type: "non_finite_number" };
-  }
-  if (typeof value === "boolean" || value === null) return value;
-  if (Array.isArray(value)) {
-    return value.map((nested) => shapeValue(nested));
-  }
-  if (isPlainObject(value)) {
-    const shaped = emptyObject();
-    for (const [key, nested] of Object.entries(value)) {
-      if (DANGEROUS_KEY.test(key)) {
-        shaped[sha256(key)] = { key: "rejected", sha256: sha256(key) };
-        continue;
-      }
-      shaped[key] = shapeValue(nested);
-    }
-    return shaped;
-  }
-  return { type: typeof value };
+interface ShapeBudget {
+  nodes: number;
+  hashedTextCodeUnits: number;
 }
 
-export function shapeArguments(
-  args: Record<string, unknown>,
-): Record<string, unknown> {
+const NODE_LIMIT = Symbol("audit shape node limit");
+
+// Count every emitted JSON value, including containers and marker fields.
+// Reserve four values for the fixed root marker if any construction limit trips.
+function chargeNodes(budget: ShapeBudget, count: number): void {
+  if (budget.nodes + count > MAX_SHAPE_NODES - 4) throw NODE_LIMIT;
+  budget.nodes += count;
+}
+
+function marker(budget: ShapeBudget, type: string, reason?: string): Record<string, unknown> {
+  chargeNodes(budget, reason === undefined ? 2 : 3);
   const shaped = emptyObject();
-  for (const [key, value] of Object.entries(args)) {
-    if (DANGEROUS_KEY.test(key)) {
-      shaped[sha256(key)] = { key: "rejected", sha256: sha256(key) };
-      continue;
-    }
-    shaped[key] = shapeValue(value);
+  shaped.type = type;
+  if (reason !== undefined) shaped.reason = reason;
+  return shaped;
+}
+
+function rootMarker(type: string, reason?: string): Record<string, unknown> {
+  const shaped = emptyObject();
+  const detail = emptyObject();
+  detail.type = type;
+  if (reason !== undefined) detail.reason = reason;
+  shaped.__audit_arguments__ = detail;
+  return shaped;
+}
+
+function shapeString(value: string, budget: ShapeBudget): unknown {
+  if (value.length === 0) {
+    chargeNodes(budget, 1);
+    return "";
+  }
+  const available = Math.min(
+    MAX_STRING_CODE_UNITS,
+    Math.max(0, MAX_HASHED_TEXT_CODE_UNITS - budget.hashedTextCodeUnits),
+  );
+  if (value.length <= available) {
+    chargeNodes(budget, 3);
+    budget.hashedTextCodeUnits += value.length;
+    return { len: value.length, sha256: sha256(value) };
+  }
+
+  const shaped = marker(budget, "string_truncated", "text_limit");
+  chargeNodes(budget, available > 0 ? 3 : 1);
+  shaped.len = value.length;
+  if (available > 0) {
+    budget.hashedTextCodeUnits += available;
+    shaped.hashed_prefix_len = available;
+    shaped.sha256_prefix = sha256(value.slice(0, available));
   }
   return shaped;
+}
+
+function metadataKey(preferred: string, reserved: Set<string>): string {
+  let candidate = preferred;
+  let suffix = 0;
+  while (reserved.has(candidate)) {
+    candidate = `${preferred}_${++suffix}`;
+  }
+  reserved.add(candidate);
+  return candidate;
+}
+
+function shapeKey(
+  key: string,
+  reserved: Set<string>,
+  index: number,
+  budget: ShapeBudget,
+): { outputKey: string; keyShape?: Record<string, unknown> } {
+  if (key.length <= MAX_KEY_CODE_UNITS) return { outputKey: key };
+  const keyShape = marker(budget, "key_truncated", "key_length_limit");
+  const available = Math.min(
+    key.length,
+    MAX_STRING_CODE_UNITS,
+    Math.max(0, MAX_HASHED_TEXT_CODE_UNITS - budget.hashedTextCodeUnits),
+  );
+  chargeNodes(budget, available > 0 ? 3 : 1);
+  keyShape.len = key.length;
+  if (available > 0) {
+    budget.hashedTextCodeUnits += available;
+    keyShape.hashed_prefix_len = available;
+    keyShape.sha256_prefix = sha256(key.slice(0, available));
+  }
+  return { outputKey: metadataKey(`__audit_truncated_key_${index}__`, reserved), keyShape };
+}
+
+function shapeValue(
+  value: unknown,
+  depth: number,
+  budget: ShapeBudget,
+  ancestors: WeakSet<object>,
+): unknown {
+  if (typeof value === "string") {
+    return shapeString(value, budget);
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return marker(budget, "non_finite_number");
+    chargeNodes(budget, 1);
+    return value;
+  }
+  if (typeof value === "boolean" || value === null) {
+    chargeNodes(budget, 1);
+    return value;
+  }
+  if (typeof value !== "object") return marker(budget, typeof value);
+  if (depth >= MAX_SHAPE_DEPTH) return marker(budget, "truncated", "depth_limit");
+  if (ancestors.has(value)) return marker(budget, "cycle");
+  try {
+    if (Array.isArray(value)) {
+      return shapeArray(value, depth, budget, ancestors);
+    }
+    if (isPlainObject(value)) {
+      return shapeObject(value, depth, budget, ancestors);
+    }
+  } catch (error) {
+    if (error === NODE_LIMIT) throw error;
+    return marker(budget, "uninspectable");
+  }
+  return marker(budget, "object");
+}
+
+function shapeArray(
+  value: unknown[],
+  depth: number,
+  budget: ShapeBudget,
+  ancestors: WeakSet<object>,
+): unknown[] {
+  chargeNodes(budget, 1);
+  const shaped: unknown[] = [];
+  ancestors.add(value);
+  try {
+    const visibleLength = value.length > MAX_ARRAY_ITEMS
+      ? MAX_ARRAY_ITEMS - 1
+      : value.length;
+    for (let index = 0; index < visibleLength; index += 1) {
+      const property = Object.getOwnPropertyDescriptor(value, String(index));
+      if (property === undefined) {
+        shaped.push(marker(budget, "hole"));
+      } else if (!("value" in property)) {
+        shaped.push(marker(budget, "accessor"));
+      } else {
+        shaped.push(shapeValue(property.value, depth + 1, budget, ancestors));
+      }
+    }
+    if (value.length > MAX_ARRAY_ITEMS) {
+      shaped.push(marker(budget, "truncated", "array_limit"));
+    }
+    return shaped;
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
+function shapeObject(
+  value: Record<string, unknown>,
+  depth: number,
+  budget: ShapeBudget,
+  ancestors: WeakSet<object>,
+): Record<string, unknown> {
+  chargeNodes(budget, 1);
+  const shaped = emptyObject();
+  ancestors.add(value);
+  try {
+    // Reserve every retained caller key before choosing metadata names, so a
+    // later caller entry cannot replace an earlier truncation/rejection marker.
+    const entries: [string, PropertyDescriptor][] = [];
+    let truncated = false;
+    for (const key in value) {
+      if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+      const property = Object.getOwnPropertyDescriptor(value, key);
+      if (property === undefined || !property.enumerable) continue;
+      if (entries.length >= MAX_OBJECT_KEYS) {
+        truncated = true;
+        break;
+      }
+      entries.push([key, property]);
+    }
+    const reserved = new Set(entries.map(([key]) => key));
+    for (const [index, [key, property]] of entries.entries()) {
+      if (DANGEROUS_KEY.test(key)) {
+        chargeNodes(budget, 3);
+        const hash = sha256(key);
+        shaped[metadataKey(hash, reserved)] = { key: "rejected", sha256: hash };
+        continue;
+      }
+      const keyResult = shapeKey(key, reserved, index + 1, budget);
+      const nested = !("value" in property)
+        ? marker(budget, "accessor")
+        : shapeValue(property.value, depth + 1, budget, ancestors);
+      if (keyResult.keyShape !== undefined) chargeNodes(budget, 1);
+      shaped[keyResult.outputKey] = keyResult.keyShape === undefined
+        ? nested
+        : { key: keyResult.keyShape, value: nested };
+    }
+    if (truncated) {
+      shaped[metadataKey("__audit_truncated_entries__", reserved)] = marker(budget, "truncated", "object_key_limit");
+    }
+    return shaped;
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
+export function shapeArguments(args: Record<string, unknown>): Record<string, unknown> {
+  const budget = { nodes: 0, hashedTextCodeUnits: 0 };
+  let shaped: Record<string, unknown>;
+  try {
+    shaped = isPlainObject(args)
+      ? shapeObject(args, 0, budget, new WeakSet<object>())
+      : rootMarker("not_plain_object");
+  } catch (error) {
+    shaped = error === NODE_LIMIT ? rootMarker("truncated", "node_limit") : rootMarker("uninspectable");
+  }
+  return utf8ByteLength(JSON.stringify(shaped)) <= MAX_QUERY_SHAPE_BYTES
+    ? shaped
+    : rootMarker("truncated", "serialized_size_limit");
 }
 
 function redactId(id: string): string {

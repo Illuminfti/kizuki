@@ -95,9 +95,201 @@ describe("shapeArguments", () => {
       ],
     });
   });
+
+  test("bounds cyclic, deep, wide, sparse, and oversized hostile arguments", () => {
+    const canary = "audit-shape-bounds-secret";
+    const cyclic: Record<string, unknown> = { canary };
+    cyclic.self = cyclic;
+    const deep: Record<string, unknown> = {};
+    let cursor = deep;
+    for (let index = 0; index < 32; index += 1) {
+      const next: Record<string, unknown> = {};
+      cursor.next = next;
+      cursor = next;
+    }
+    const wide = Object.fromEntries(
+      Array.from({ length: 80 }, (_, index) => [`key_${index}`, canary]),
+    );
+    const sparse: unknown[] = [];
+    sparse.length = 1_000_000;
+    sparse[999_999] = canary;
+    const oversizedKey = `${canary}-${"k".repeat(16_384)}`;
+    const oversized = Object.create(null) as Record<string, unknown>;
+    oversized[oversizedKey] = canary;
+
+    for (const args of [
+      { cyclic },
+      { deep },
+      { wide },
+      { sparse },
+      oversized,
+      { giant: canary.repeat(16_384) },
+    ]) {
+      const serialized = JSON.stringify(shapeArguments(args));
+      expect(serialized.length).toBeLessThanOrEqual(32 * 1024);
+      expect(serialized).not.toContain(canary);
+    }
+  });
+
+  test("does not invoke caller-owned getters while shaping", () => {
+    const args = Object.create(null) as Record<string, unknown>;
+    Object.defineProperty(args, "trap", {
+      enumerable: true,
+      get() {
+        throw new Error("must not run");
+      },
+    });
+
+    expect(shapeArguments(args)).toEqual({
+      trap: { type: "accessor" },
+    });
+  });
+
+  test("retains the width marker when a caller uses its preferred metadata key", () => {
+    const args = Object.fromEntries([
+      ["__audit_truncated_entries__", false],
+      ...Array.from({ length: 32 }, (_, index) => [`key_${index}`, index]),
+    ]);
+    const shaped = shapeArguments(args);
+    expect(shaped.__audit_truncated_entries__).toBe(false);
+    expect(JSON.stringify(shaped)).toContain('"reason":"object_key_limit"');
+  });
 });
 
 describe("audit trail", () => {
+  for (const reverse of [false, true]) {
+    for (const kind of ["oversized", "prototype"] as const) {
+      test(`denials retain ${kind} key evidence with colliding caller keys, reverse=${reverse}`, () => {
+        const { db, principal } = principalWithRate(1);
+        const dangerous = kind === "oversized" ? "k".repeat(300) : "__proto__";
+        const collision = kind === "oversized" ? "__audit_truncated_key_1__" : sha256(dangerous);
+        const entries: [string, unknown][] = [[dangerous, "private-value"], [collision, false]];
+        const args = Object.fromEntries(reverse ? entries.reverse() : entries);
+        try {
+          const first = recordAudit(db, principal, "search", args, [], [
+            { id: "tool:search", reason: "invalid_arguments" },
+          ], "2026-03-01T12:00:00Z");
+          const second = reserveAudit(db, principal, "search", args, "2026-03-01T12:00:01Z");
+          expect(second).toMatchObject({ allow: false, reason: "rate_limited" });
+          const rows = listAudit(db, "reader-1", { kind: "access" });
+          expect(rows.find((row) => row.audit_id === first)?.denied).toEqual([
+            { id: "tool:search", reason: "invalid_arguments" },
+          ]);
+          for (const row of rows) {
+            const encoded = JSON.stringify(row.query_shape);
+            expect(encoded).toContain(kind === "oversized" ? '"type":"key_truncated"' : '"key":"rejected"');
+            expect(encoded).toContain(sha256(dangerous));
+            expect(encoded).not.toContain("private-value");
+            expect(row.query_shape[collision]).toBe(false);
+          }
+        } finally {
+          db.close();
+        }
+      });
+    }
+  }
+
+  test("charges holes, accessors and markers against the emitted node budget", () => {
+    const countValues = (value: unknown): number => 1 + (
+      value !== null && typeof value === "object"
+        ? Object.values(value).reduce<number>((sum, nested) => sum + countValues(nested), 0)
+        : 0
+    );
+    const holes = Object.fromEntries(Array.from({ length: 32 }, (_, index) => [`array_${index}`, new Array(32)]));
+    const accessors: Record<string, unknown> = {};
+    for (let index = 0; index < 32; index += 1) {
+      const child: Record<string, unknown> = {};
+      for (let item = 0; item < 32; item += 1) {
+        Object.defineProperty(child, `item_${item}`, { enumerable: true, get() { throw new Error("getter invoked"); } });
+      }
+      accessors[`child_${index}`] = child;
+    }
+    for (const args of [holes, accessors]) {
+      const shaped = shapeArguments(args);
+      expect(countValues(shaped)).toBeLessThanOrEqual(256);
+      expect(JSON.stringify(shaped)).toContain("node_limit");
+      const { db, principal } = principalWithRate(1);
+      try {
+        recordAudit(db, principal, "search", {}, [], [], "2026-03-01T12:00:00Z");
+        const denied = reserveAudit(db, principal, "search", args, "2026-03-01T12:00:01Z");
+        expect(denied.allow).toBe(false);
+        const row = listAudit(db, "reader-1", { kind: "access" }).find((entry) => entry.audit_id === denied.audit_id)!;
+        expect(countValues(row.query_shape)).toBeLessThanOrEqual(256);
+        expect(JSON.stringify(row.query_shape)).toContain("node_limit");
+      } finally {
+        db.close();
+      }
+    }
+  });
+
+  test("records a bounded audit row for cyclic public-agent arguments", () => {
+    const { db, principal } = principalWithRate(60);
+    const canary = "reserve-audit-cycle-secret";
+    const args: Record<string, unknown> = { canary };
+    args.self = args;
+
+    const reserved = reserveAudit(db, principal, "search", args);
+    expect(reserved.allow).toBe(true);
+    const row = db
+      .query<{ query_shape: string }, [string]>(
+        "SELECT query_shape FROM agent_audit WHERE audit_id = ?",
+      )
+      .get(reserved.audit_id);
+    expect(row?.query_shape.length).toBeLessThanOrEqual(32 * 1024);
+    expect(row?.query_shape).not.toContain(canary);
+    expect(listAudit(db, "reader-1", { kind: "access" })).toHaveLength(1);
+    db.close();
+  });
+
+  test("keeps a cyclic request denied when its reservation is rate limited", () => {
+    const { db, principal } = principalWithRate(1);
+    recordAudit(db, principal, "search", {}, [], [], "2026-03-01T12:00:00.000Z");
+    const canary = "rate-limited-cycle-secret";
+    const args: Record<string, unknown> = { canary };
+    args.self = args;
+
+    const reserved = reserveAudit(
+      db,
+      principal,
+      "search",
+      args,
+      "2026-03-01T12:00:01.000Z",
+    );
+    expect(reserved).toMatchObject({ allow: false, reason: "rate_limited" });
+    const row = db
+      .query<{ query_shape: string }, [string]>(
+        "SELECT query_shape FROM agent_audit WHERE audit_id = ?",
+      )
+      .get(reserved.audit_id);
+    expect(row?.query_shape.length).toBeLessThanOrEqual(32 * 1024);
+    expect(row?.query_shape).not.toContain(canary);
+    expect(listAudit(db, "reader-1", { kind: "access" })).toHaveLength(2);
+    db.close();
+  });
+
+  test("records a bounded row without leaking hostile getter or oversized key text", () => {
+    const { db, principal } = principalWithRate(60);
+    const canary = "record-audit-oversized-secret";
+    const args = Object.create(null) as Record<string, unknown>;
+    Object.defineProperty(args, `${canary}-${"k".repeat(16_384)}`, {
+      enumerable: true,
+      get() {
+        throw new Error("must not run");
+      },
+    });
+
+    const auditId = recordAudit(db, principal, "search", args, [], []);
+    const row = db
+      .query<{ query_shape: string }, [string]>(
+        "SELECT query_shape FROM agent_audit WHERE audit_id = ?",
+      )
+      .get(auditId);
+    expect(row?.query_shape.length).toBeLessThanOrEqual(32 * 1024);
+    expect(row?.query_shape).not.toContain(canary);
+    expect(listAudit(db, "reader-1", { kind: "access" })).toHaveLength(1);
+    db.close();
+  });
+
   test("stores only the query shape and round-trips served and denied", () => {
     const { db, principal } = principalWithRate(60);
     const query = "Ada's confidential calendar";
