@@ -45,6 +45,9 @@ import { ClaimError } from "./errors";
 import { claimKey, hashBody, normalizeObject, objectsMatch } from "./hash";
 import { isRegisteredPredicate } from "./predicates";
 import { initClaims } from "./schema";
+import { boundedClaimRows, decodeClaimV1, type ClaimRow } from "./record-storage";
+import { appendClaimTransition, claimProjection, type HistoryOperation } from "./history";
+import { compareRfc3339 } from "../agents/time";
 
 /** One sweep never walks the whole backlog: the next pass takes the rest. */
 export const RETRIEVAL_SWEEP_LIMIT = 32;
@@ -120,37 +123,6 @@ export type InsertClaimResult =
       dedup: DedupMode;
     };
 
-interface ClaimRow {
-  claim_id: string;
-  kind: string;
-  target: string | null;
-  body: string;
-  frontmatter: string;
-  provenance: string;
-  subjects: string;
-  producer: string;
-  confidence: number;
-  status: string;
-  created_at: string;
-  body_hash: string;
-  subject: string | null;
-  predicate: string | null;
-  object: string | null;
-  polarity: string;
-  claim_key: string | null;
-  authority: string;
-  sensitivity: string | null;
-  taint: string;
-  model_ref: string | null;
-  valid_from: string;
-  valid_to: string | null;
-  asserted_at: string;
-  retracted_at: string | null;
-  superseded_by: string | null;
-  receipt_id: string | null;
-  corroboration: number;
-  last_confirmed_at: string | null;
-}
 
 function nowOf(io: ClaimsIo): string {
   return io.now?.() ?? new Date().toISOString();
@@ -172,40 +144,7 @@ function parseStringArray(raw: string, field: string): string[] {
   return parsed;
 }
 
-function rowToClaim(row: ClaimRow): Claim {
-  return {
-    schema: CLAIM_SCHEMA,
-    claim_id: row.claim_id,
-    kind: row.kind as ClaimKind,
-    target: row.target,
-    body: row.body,
-    frontmatter: parseJsonObject(row.frontmatter),
-    provenance: parseStringArray(row.provenance, "provenance"),
-    subjects: parseStringArray(row.subjects, "subjects"),
-    producer: row.producer as CanonicalProducer,
-    confidence: row.confidence,
-    status: row.status as ClaimStatus,
-    created_at: row.created_at,
-    body_hash: row.body_hash,
-    subject: row.subject,
-    predicate: row.predicate,
-    object: row.object,
-    polarity: row.polarity as ClaimPolarity,
-    claim_key: row.claim_key,
-    authority: row.authority as AuthorityTier,
-    sensitivity: (row.sensitivity ?? "private") as Sensitivity,
-    taint: row.taint as ClaimTaint,
-    model_ref: row.model_ref,
-    valid_from: row.valid_from,
-    valid_to: row.valid_to,
-    asserted_at: row.asserted_at,
-    retracted_at: row.retracted_at,
-    superseded_by: row.superseded_by,
-    receipt_id: row.receipt_id,
-    corroboration: row.corroboration,
-    last_confirmed_at: row.last_confirmed_at,
-  };
-}
+const rowToClaim = decodeClaimV1;
 
 function toConflict(claim: Claim, purged = false): ConflictClaim {
   return {
@@ -226,7 +165,7 @@ function toConflict(claim: Claim, purged = false): ConflictClaim {
 
 function minTimestamp(left: string | null, right: string): string {
   if (left === null || left === "") return right;
-  return left < right ? left : right;
+  return compareRfc3339(left,"valid_to",right,"valid_from") < 0 ? left : right;
 }
 
 function assertInput(input: InsertClaimInput): void {
@@ -361,13 +300,16 @@ function insertRow(db: Database, claim: Claim): void {
     claim.corroboration,
     claim.last_confirmed_at,
   );
+  appendClaimTransition(db,claim.claim_id,"assertion",claim.asserted_at,null,claimProjection(claim));
 }
 
 function higherAuthority(left: AuthorityTier, right: AuthorityTier): AuthorityTier {
   return AUTHORITY_TIERS[left] >= AUTHORITY_TIERS[right] ? left : right;
 }
 
-function persistClaim(db: Database, claim: Claim): void {
+function persistClaim(db: Database, claim: Claim, at?:string, operation?:HistoryOperation): void {
+  db.transaction(()=>{
+  const before=getClaim(db,claim.claim_id);
   db.query(
     `UPDATE claims SET
        confidence = ?, status = ?, retracted_at = ?, superseded_by = ?,
@@ -386,6 +328,15 @@ function persistClaim(db: Database, claim: Claim): void {
     JSON.stringify(claim.frontmatter),
     claim.claim_id,
   );
+  if(before!==null) {
+    const changedStatus=before.status!==claim.status;
+    const action=operation ?? (changedStatus ? claim.status==="superseded"?"supersession":claim.status==="reverted"?"revert":claim.status==="live"?"reinstate":"retraction" : "support_addition");
+    const time=at ?? (before.retracted_at!==claim.retracted_at?claim.retracted_at:null) ??
+      (before.last_confirmed_at!==claim.last_confirmed_at?claim.last_confirmed_at:null) ?? new Date().toISOString();
+    if(JSON.stringify(claimProjection(before))!==JSON.stringify(claimProjection(claim)))
+      appendClaimTransition(db,claim.claim_id,action,time,claimProjection(before),claimProjection(claim),claim.receipt_id);
+  }
+  }).immediate();
 }
 
 function writeSupersession(
@@ -412,7 +363,7 @@ function findExact(
   const row = db
     .query<ClaimRow, [string, string, string]>(
       `SELECT * FROM claims
-        WHERE kind = ? AND coalesce(target, '') = ? AND body_hash = ?`,
+        WHERE claim_schema='kizuki.claim/v1' AND kind = ? AND coalesce(target, '') = ? AND body_hash = ?`,
     )
     .get(kind, target ?? "", bodyHash);
   return row === null ? null : rowToClaim(row);
@@ -421,7 +372,7 @@ function findExact(
 function liveByKey(db: Database, key: string): Claim[] {
   return db
     .query<ClaimRow, [string]>(
-      `SELECT * FROM claims WHERE claim_key = ? AND status = 'live'`,
+      `SELECT * FROM claims WHERE claim_schema='kizuki.claim/v1' AND claim_key = ? AND status = 'live'`,
     )
     .all(key)
     .map(rowToClaim);
@@ -607,14 +558,14 @@ export function countClaims(
   if (!tableExists(db, "claims")) return 0;
   if (opts.status === undefined) {
     return (
-      db.query<{ n: number }, []>("SELECT count(*) AS n FROM claims").get()?.n ??
+      db.query<{ n: number }, []>("SELECT count(*) AS n FROM claims WHERE claim_schema='kizuki.claim/v1'").get()?.n ??
       0
     );
   }
   return (
     db
       .query<{ n: number }, [string]>(
-        "SELECT count(*) AS n FROM claims WHERE status = ?",
+        "SELECT count(*) AS n FROM claims WHERE claim_schema='kizuki.claim/v1' AND status = ?",
       )
       .get(opts.status)?.n ?? 0
   );
@@ -627,7 +578,7 @@ export function countUnwrittenLiveClaims(db: Database): number {
     db
       .query<{ n: number }, []>(
         `SELECT count(*) AS n FROM claims
-          WHERE status = 'live' AND receipt_id IS NULL`,
+          WHERE claim_schema='kizuki.claim/v1' AND status = 'live' AND receipt_id IS NULL`,
       )
       .get()?.n ?? 0
   );
@@ -640,7 +591,7 @@ export function countWrittenLiveClaims(db: Database): number {
     db
       .query<{ n: number }, []>(
         `SELECT count(*) AS n FROM claims
-          WHERE status = 'live' AND receipt_id IS NOT NULL`,
+          WHERE claim_schema='kizuki.claim/v1' AND status = 'live' AND receipt_id IS NOT NULL`,
       )
       .get()?.n ?? 0
   );
@@ -656,15 +607,7 @@ export function listUnwrittenLiveClaims(
 ): Claim[] {
   if (!tableExists(db, "claims")) return [];
   const bound = Number.isSafeInteger(limit) && limit > 0 ? limit : 32;
-  return db
-    .query<ClaimRow, [number]>(
-      `SELECT * FROM claims
-        WHERE status = 'live' AND receipt_id IS NULL
-        ORDER BY created_at, claim_id
-        LIMIT ?`,
-    )
-    .all(bound)
-    .map(rowToClaim);
+  return listClaims(db,{status:"live",limit:bound,filter:claim=>claim.receipt_id===null});
 }
 
 /**
@@ -675,30 +618,23 @@ export function listUnwrittenLiveClaims(
  */
 export function reviveUncontestedSkipped(db: Database): number {
   initClaims(db);
-  const result = db
-    .query<{ changes: number }, []>(
-      `UPDATE claims SET status = 'live'
-        WHERE status = 'skipped'
-          AND retracted_at IS NULL
-          AND superseded_by IS NULL
-          AND (
-            claim_key IS NULL
-            OR claim_key NOT IN (
-              SELECT claim_key FROM claims
-               WHERE status = 'live' AND claim_key IS NOT NULL
-            )
-          )`,
-    )
-    .run();
-  return result.changes;
+  return db.transaction(()=>{
+    const candidates=listClaims(db,{status:"skipped",limit:-1,filter:claim=>claim.retracted_at===null && claim.superseded_by===null});
+    let changed=0;
+    const at=new Date().toISOString();
+    for(const claim of candidates) if(claim.claim_key===null || liveByKey(db,claim.claim_key).length===0) {
+      persistClaim(db,{...claim,status:"live"},at,"reinstate"); changed++;
+    }
+    return changed;
+  }).immediate();
 }
 
 export function getClaim(db: Database, claimId: string): Claim | null {
   if (!tableExists(db, "claims")) return null;
-  const row = db
-    .query<ClaimRow, [string]>("SELECT * FROM claims WHERE claim_id = ?")
-    .get(claimId);
-  return row === null ? null : rowToClaim(row);
+  return db.transaction(()=>{
+    const row=boundedClaimRows(db,"WHERE claim_id=?",[claimId],1)[0];
+    return row===undefined?null:rowToClaim(row);
+  }).deferred();
 }
 
 export function listClaims(
@@ -716,7 +652,7 @@ export function listClaims(
   } = {},
 ): Claim[] {
   if (!tableExists(db, "claims")) return [];
-  const clauses: string[] = [];
+  const clauses: string[] = ["claim_schema='kizuki.claim/v1'"];
   const params: (string | number)[] = [];
   if (opts.status !== undefined) {
     clauses.push("status = ?");
@@ -731,35 +667,25 @@ export function listClaims(
     params.push(opts.subject);
   }
   if (opts.keyed === true) clauses.push("claim_key IS NOT NULL");
-  const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
-  const limit = opts.limit ?? 200;
-  if (opts.filter !== undefined) {
-    if (!Number.isSafeInteger(limit)) throw new TypeError("claim limit must be a safe integer");
-    if (limit === 0) return [];
-    const selected: Claim[] = [];
-    // The predicate may need database reads. Own this uncached statement and
-    // release it on exhaustion, an accepted-result limit, or a thrown filter.
-    const statement = db.prepare<ClaimRow, (string | number)[]>(
-      `SELECT * FROM claims${where} ORDER BY created_at, claim_id`,
-    );
-    try {
-      for (const row of statement.iterate(...params)) {
-        const claim = rowToClaim(row);
-        if (!opts.filter(claim)) continue;
+  const limit=opts.limit??200;
+  if(!Number.isSafeInteger(limit)) throw new TypeError("claim limit must be a safe integer");
+  if(limit===0) return [];
+  return db.transaction(()=>{
+    const selected:Claim[]=[];
+    let created="",id="";
+    for(;;) {
+      const page=boundedClaimRows(db,`WHERE ${clauses.join(" AND ")} AND (created_at>? OR (created_at=? AND claim_id>?)) ORDER BY created_at,claim_id`,[...params,created,created,id]);
+      if(page.length===0) break;
+      for(const row of page) {
+        created=row.created_at; id=row.claim_id;
+        const claim=rowToClaim(row);
+        if(opts.filter!==undefined && !opts.filter(claim)) continue;
         selected.push(claim);
-        if (limit > 0 && selected.length >= limit) break;
+        if(limit>0 && selected.length>=limit) return selected;
       }
-      return selected;
-    } finally {
-      statement.finalize();
     }
-  }
-  return db
-    .query<ClaimRow, (string | number)[]>(
-      `SELECT * FROM claims${where} ORDER BY created_at, claim_id LIMIT ?`,
-    )
-    .all(...params, limit)
-    .map(rowToClaim);
+    return selected;
+  }).deferred();
 }
 
 export function listSupersessions(
@@ -798,6 +724,7 @@ export function reinstateClaim(
   db: Database,
   claimId: string,
   priorValidTo: string | null,
+  at = new Date().toISOString(),
 ): void {
   const claim = getClaim(db, claimId);
   if (claim === null) return;
@@ -807,7 +734,7 @@ export function reinstateClaim(
     superseded_by: null,
     retracted_at: null,
     valid_to: priorValidTo,
-  });
+  },at,"reinstate");
 }
 
 /** Undo of a revert: put a previously-reinstated loser back to superseded. */

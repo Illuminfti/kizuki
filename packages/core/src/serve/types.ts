@@ -6,7 +6,7 @@ import type { ProducerDiagnostic } from "../contracts/producer";
  * opens a Markdown page itself.
  */
 
-export const SERVE_SCHEMA_VERSION = 8;
+export const SERVE_SCHEMA_VERSION = 9;
 
 export const RUN_RECEIPTS_PATH = ".kizuki/run-receipts.jsonl";
 export const SERVE_INTENT_PATH = ".kizuki/serve-intent";

@@ -363,13 +363,15 @@ function queuedEvents(db: Database): CaptureEvent[] {
   });
 }
 function saveBatch(db: Database, batch: DurableExtractBatch, legacyManifest = false): void {
-  db.query(`INSERT INTO extract_batches (previous_cursor,cursor,drafts,model_ref,created_at,input_ids,integrity,outcome,batch_mode,model_inputs,deferred_inputs)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(previous_cursor) DO UPDATE SET
+  db.query(`INSERT INTO extract_batches (previous_cursor,cursor,drafts,model_ref,created_at,input_ids,integrity,outcome,batch_mode,model_inputs,deferred_inputs,producer_contract,draft_schema,integrity_version)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,'kizuki.producer/v1','kizuki.claim-draft/v1',?) ON CONFLICT(previous_cursor) DO UPDATE SET
     cursor=excluded.cursor,drafts=excluded.drafts,model_ref=excluded.model_ref,input_ids=excluded.input_ids,integrity=excluded.integrity,outcome=excluded.outcome,
-    batch_mode=excluded.batch_mode,model_inputs=excluded.model_inputs,deferred_inputs=excluded.deferred_inputs`).run(
+    batch_mode=excluded.batch_mode,model_inputs=excluded.model_inputs,deferred_inputs=excluded.deferred_inputs,
+    producer_contract=excluded.producer_contract,draft_schema=excluded.draft_schema,integrity_version=excluded.integrity_version`).run(
     batch.previous_cursor ?? NULL_CURSOR, encodeCursor(batch.cursor), JSON.stringify(batch.drafts), batch.model_ref,
     new Date().toISOString(), JSON.stringify(batch.input_ids), legacyManifest ? legacyIntegrity(batch) : integrity(batch), batch.outcome, batch.mode,
     legacyManifest ? null : JSON.stringify(batch.model_inputs), legacyManifest ? null : JSON.stringify(batch.deferred_inputs),
+    batch.filing_version === 1 ? "atomic-v1" : "legacy-v1",
   );
 }
 /** Persist the entire decision before filing; no model is called again on replay. */
@@ -672,7 +674,7 @@ export function purgeExtractInputs(db: Database, eventIds: ReadonlySet<string>, 
     filing_drafts: [], outcome: "purged",
     authorization_epoch: null }, legacyManifest);
   if (unhashedLegacy) {
-    db.query("UPDATE extract_batches SET input_ids=NULL,integrity=NULL WHERE previous_cursor=?").run(nextPrevious ?? NULL_CURSOR);
+    db.query("UPDATE extract_batches SET input_ids=NULL,integrity=NULL,integrity_version='legacy-v1' WHERE previous_cursor=?").run(nextPrevious ?? NULL_CURSOR);
   }
 }
 
