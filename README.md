@@ -534,3 +534,8 @@ Protocol. [Upstream policy and attribution →](docs/upstream-policy.md)
 [Start with one source.](#quick-start)
 
 </div>
+
+A [durable fixture observation harness](docs/qualification.md) can retain exact
+artifact and automatic-rail evidence across explicit samples. It does not start
+services or count synthetic tests as elapsed observation, estate qualification,
+or human-use acceptance.
