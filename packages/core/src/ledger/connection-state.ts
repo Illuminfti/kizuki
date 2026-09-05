@@ -220,6 +220,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
     pending: PendingState,
     expect?: ConnectionExpectation,
     implementationVersion = "",
+    verifyNew?: (candidate: Uint8Array, existing: readonly { connection: Connection; state: Uint8Array }[]) => void,
   ): Connection {
     if (
       !this.handles.has(pending) ||
@@ -252,6 +253,43 @@ export class ConnectionStateStore implements ConnectionStateReader {
     };
     try {
       writeLocked(db, () => {
+        if (verifyNew !== undefined) {
+          if (expect !== undefined || existsSync(pending.finalPath) || getConnection(db, connectorId, pending.sourceKey) !== null) {
+            throw new LedgerError("new enrollment verification cannot replace a source");
+          }
+          const staging = pending.temporaryPath;
+          if (!pending.written || staging === null) throw new LedgerError("new enrollment state is missing");
+          const candidate = this.readStatePath(staging);
+          if (candidate.byteLength !== pending.byteLength || sha256Hex(candidate) !== pending.digest) {
+            throw new LedgerError("new enrollment staged digest mismatch");
+          }
+          // Limit at the SQL boundary; never authorize from a truncated scan.
+          const rows = db.query<{ source_key: string }, [string]>(
+            "SELECT source_key FROM connections WHERE connector_id = ? ORDER BY source_key LIMIT 33",
+          ).all(connectorId);
+          if (rows.length >= 32) throw new LedgerError("new enrollment identity scan exceeds bounds");
+          let totalBytes = candidate.byteLength;
+          const existingStates = rows.map(row => {
+            const connection = getConnection(db, connectorId, row.source_key);
+            if (connection === null) throw new LedgerError("new enrollment identity is unavailable");
+            const state = this.read(connection);
+            if (state === null) throw new LedgerError("new enrollment identity is unavailable");
+            totalBytes += state.byteLength;
+            if (totalBytes > 8 * 1024 * 1024) throw new LedgerError("new enrollment identity scan exceeds bounds");
+            return { connection, state };
+          });
+          // Trusted synchronous host policy, with the same lock that publishes
+          // the file and row. No provider call or asynchronous work belongs here.
+          const result: unknown = verifyNew(candidate, existingStates);
+          if (result !== undefined) {
+            if (result instanceof Promise) void result.catch(() => {});
+            throw new LedgerError("new enrollment verifier must complete synchronously");
+          }
+          const verified = this.readStatePath(staging);
+          if (verified.byteLength !== pending.byteLength || sha256Hex(verified) !== pending.digest) {
+            throw new LedgerError("new enrollment staged digest mismatch");
+          }
+        }
         const existing = existsSync(pending.finalPath);
         if (existing && !pending.written) {
           throw new LedgerError(

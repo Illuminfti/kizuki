@@ -172,3 +172,14 @@ test('cancelled Calendar reauthorization preserves source consent and opaque sta
  const {inspectSourceGrant}=await import('@kizuki/core');expect(inspectSourceGrant(db,connection.source_key)!.status).toBe('denied');
  }finally{db.close();}
 });
+
+test('explicit new Calendar source distinguishes account/calendar but ignores fields for duplicate identity',async()=>{
+ const setup=h.tempVault(),owner=ownerIo(setup);
+ async function enroll(account:string,calendar:string,chosen=fields){const f=new CalendarFixture();f.account=account;f.calendar=calendar;const sign=oauth(f);return runGoogleCalendarConnect(owner.io,{calendar,fields:chosen,newSource:true,json:true},()=>{},sign.create,sign.open);}
+ expect(await enroll('synthetic-A','calendar-one')).toBe(0);
+ await expect(enroll('synthetic-A','calendar-one','none')).rejects.toThrow('source');
+ expect(await enroll('synthetic-A','calendar-two')).toBe(0);expect(await enroll('synthetic-B','calendar-one')).toBe(0);
+ const db=openLedger(join(setup.vault,'.kizuki/kizuki.db')),store=new ConnectionStateStore(join(setup.vault,'.kizuki'));
+ try{const all=listConnections(db);expect(all).toHaveLength(3);expect(new Set(all.map(item=>item.source_key)).size).toBe(3);for(const item of all){expect(getCheckpoint(db,'kizuki.google-calendar',item.source_key)).toBeNull();expect(statSync(join(store.directory,`${item.source_key}.state`)).mode&0o777).toBe(0o600);}}
+ finally{db.close();}
+});

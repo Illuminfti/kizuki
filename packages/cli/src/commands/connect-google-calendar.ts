@@ -2,7 +2,7 @@ import { applyConnectionSensitivity, inspectSourceGrant, type Connection, type M
 import { assertSameGoogleCalendarIdentity, createGoogleCalendarConnector, inspectGoogleCalendarState } from '@kizuki/connector-google-calendar';
 import type { Database } from 'bun:sqlite';
 import { UsageError } from '../args';
-import { ConnectionError, closeHostConnector, enrollSignedInConnection, listHostConnections } from '../connections';
+import { ConnectionError, DuplicateSourceError, closeHostConnector, enrollSignedInConnection, listHostConnections } from '../connections';
 import { withVault } from '../context';
 import { jsonEnvelope } from '../output';
 import { consentHint } from '../source-consent';
@@ -10,24 +10,26 @@ import { googleCalendarClient, googleCalendarFields, googleCalendarId, googleCal
 import type { CliIo } from './index';
 export interface GoogleCalendarEnrollmentOptions {
     source?: string | undefined;
+    newSource?: boolean | undefined;
     fields?: string | undefined;
     calendar?: string | undefined;
     sensitivity?: Sensitivity | undefined;
     json: boolean;
 }
 export async function runGoogleCalendarConnect(io: CliIo, options: GoogleCalendarEnrollmentOptions, checkSensitivity: (db: Database, manifest: Manifest, requested: Sensitivity | undefined, connection?: Connection) => void, create: GoogleCalendarFactory = createGoogleCalendarConnector, openUrl: (url: string) => Promise<void> = openGoogleCalendarBrowser): Promise<number> {
+    if (options.newSource && options.source !== undefined) throw new UsageError("--new-source and --source are mutually exclusive");
     // Configuration refusal precedes terminal checks, prompts, browser or provider I/O.
     const calendar = googleCalendarId(options.calendar), fields = googleCalendarFields(options.fields), client = await googleCalendarClient(io.env);
     if (!io.stdinIsTTY || !io.stderrIsTTY)
-        throw new UsageError('connect google-calendar --calendar CANONICAL_ID --fields FIELDS [--source KEY] [--json] (interactive desktop terminal required)');
+        throw new UsageError('connect google-calendar --calendar CANONICAL_ID --fields FIELDS [--source KEY | --new-source] [--json] (interactive desktop terminal required)');
     return withVault(io, async (ctx) => {
         const existing = listHostConnections(ctx.db, ctx.store, 'kizuki.google-calendar', { includeDisconnected: true });
         if (existing.some(item => item.state === null))
             throw new ConnectionError('Google Calendar protected state is unavailable. Restore it before reauthorization.');
-        const selected = options.source === undefined ? existing.length === 1 ? existing[0] : undefined : existing.find(item => item.connection.source_key === options.source);
+        const selected = options.newSource ? undefined : options.source === undefined ? existing.length === 1 ? existing[0] : undefined : existing.find(item => item.connection.source_key === options.source);
         if (options.source !== undefined && !selected)
             throw new ConnectionError('No Google Calendar connection matches this source key.');
-        if (options.source === undefined && existing.length > 1)
+        if (!options.newSource && options.source === undefined && existing.length > 1)
             throw new ConnectionError('Several Google Calendar sources exist; select --source KEY.');
         const previous = selected ? ctx.store.read(selected.connection) : null;
         if (selected && !previous)
@@ -40,9 +42,10 @@ export async function runGoogleCalendarConnect(io: CliIo, options: GoogleCalenda
         io.err('Google Calendar will open your system browser for read-only calendar event access and account identity. Google grants read-only access to events on all calendars. Kizuki reads only the calendar you selected and stores only selected fields plus required identity/schedule metadata. Selected data and protected OAuth state stay in this vault. No event modification access; attachment bodies unsupported. Enrollment captures no history and source consent is separate. Press Ctrl-C to cancel.');
         let connection: Connection;
         try {
-            connection = await enrollSignedInConnection(ctx.db, ctx.store, connector, { prompt: async () => { throw new ConnectionError('Google Calendar does not request pasted keys or authorization codes.'); }, notify: () => { }, openUrl }, options.source, assertSameGoogleCalendarIdentity);
+            connection = await enrollSignedInConnection(ctx.db, ctx.store, connector, { prompt: async () => { throw new ConnectionError('Google Calendar does not request pasted keys or authorization codes.'); }, notify: () => { }, openUrl }, options.source, assertSameGoogleCalendarIdentity, options.newSource);
         }
-        catch {
+        catch (error) {
+            if (error instanceof DuplicateSourceError) throw error;
             throw new ConnectionError('Google Calendar sign-in did not complete or account/history identity differed; inspect protected state before retrying.');
         }
         finally {

@@ -186,11 +186,24 @@ export async function enrollHostConnection(
   }
 }
 
-/**
- * Enroll a connector that mints its own opaque state during an interactive
- * sign-in. The ledger owns both the durable filename and replacement
- * transaction: CLI code never parses, copies, or persists this state.
- */
+export class DuplicateSourceError extends ConnectionError {
+  constructor() { super("source_already_enrolled; select its existing --source KEY to reauthorize; source consent is unchanged"); }
+}
+
+function verifyGoogleEnrollment(connectorId: string): Parameters<typeof enrollConnection>[4] {
+  const identity = connectorId === "kizuki.gmail"
+    ? (bytes: Uint8Array) => JSON.stringify([inspectGmailState(bytes).account_id])
+    : connectorId === "kizuki.google-calendar"
+      ? (bytes: Uint8Array) => { const state = inspectGoogleCalendarState(bytes); return JSON.stringify([state.account_id, state.calendar_id]); }
+      : undefined;
+  if (identity === undefined) return undefined;
+  return (candidate, existing) => {
+    const selected = identity(candidate);
+    if (existing.some(item => identity(item.state) === selected)) throw new DuplicateSourceError();
+  };
+}
+
+/** Core owns state publication; provider inspectors supply only identity policy. */
 export async function enrollSignedInConnection(
   db: Database,
   store: ConnectionStateStore,
@@ -198,7 +211,9 @@ export async function enrollSignedInConnection(
   io: SignInIo,
   sourceKey?: string,
   verifyReplacement?: (previous: Uint8Array, candidate: Uint8Array) => void,
+  newSource = false,
 ): Promise<Connection> {
+  if (newSource && sourceKey !== undefined) throw new ConnectionError("--new-source and --source are mutually exclusive");
   const manifest = connector.manifest();
   if (!manifest.auth_modes.includes("sign_in") || connector.signIn === undefined) {
     throw new ConnectionError(`${manifest.connector_id} does not support interactive sign-in`);
@@ -207,19 +222,19 @@ export async function enrollSignedInConnection(
   const existing = listConnections(db, { includeDisconnected: true }).filter(
     (connection) => connection.connector_id === manifest.connector_id,
   );
-  const previous = sourceKey === undefined
+  const previous = newSource ? undefined : sourceKey === undefined
     ? existing.length === 1 ? existing[0] : undefined
     : existing.find((connection) => connection.source_key === sourceKey);
   if (sourceKey !== undefined && previous === undefined) {
     throw new ConnectionError(`no connection for ${manifest.connector_id} source=${sourceKey}`);
   }
-  if (sourceKey === undefined && existing.length > 1) {
+  if (!newSource && sourceKey === undefined && existing.length > 1) {
     throw new ConnectionError(`several connections for ${manifest.connector_id}; select a source before re-signing in`);
   }
   if (previous !== undefined) {
     return store.replace(db, previous, connector, io, verifyReplacement);
   }
-  return enrollConnection(db, store, connector, io);
+  return enrollConnection(db, store, connector, io, verifyGoogleEnrollment(manifest.connector_id));
 }
 
 export interface HostConnection {
