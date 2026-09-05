@@ -82,16 +82,14 @@ export function applyServeV7(db: Database): void {
 }
 
 export function initServe(db: Database): void {
-  if (!tableExists(db, "schedules")) {
-    applyServeV7(db);
-    return;
-  }
-  db.exec(TABLES);
-  const columns = new Set(db.query<{ name: string }, []>("PRAGMA table_info(extract_batches)").all().map(row => row.name));
-  for (const [name, definition] of [["input_ids", "TEXT"], ["integrity", "TEXT"], ["outcome", "TEXT NOT NULL DEFAULT 'ok'"]] as const) {
-    if (!columns.has(name)) db.exec(`ALTER TABLE extract_batches ADD COLUMN ${name} ${definition}`);
-  }
-  seedSchedules(db);
+  db.transaction(() => {
+    db.exec(TABLES);
+    const columns = new Set(db.query<{ name: string }, []>("PRAGMA table_info(extract_batches)").all().map(row => row.name));
+    for (const [name, definition] of [["input_ids", "TEXT"], ["integrity", "TEXT"], ["outcome", "TEXT NOT NULL DEFAULT 'ok'"]] as const) {
+      if (!columns.has(name)) db.exec(`ALTER TABLE extract_batches ADD COLUMN ${name} ${definition}`);
+    }
+    seedSchedules(db);
+  }).immediate();
 }
 
 export function seedSchedules(db: Database): void {

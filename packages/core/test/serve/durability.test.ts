@@ -1,3 +1,5 @@
+import { Database } from "bun:sqlite";
+import { initServe } from "../../src/serve/schema";
 import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -140,4 +142,14 @@ test("purging the previous extraction checkpoint scrubs its ID without replaying
   expect(JSON.stringify(f.db.query("SELECT * FROM extract_batches").all())).not.toContain(f.b);
   const retry = await runRail(f.db, f.path, "sync", { hooks: { ...f.hooks, producer: { ...empty, produce: async () => { throw new Error("must replay saved decision"); } } } });
   expect(retry.errors).toEqual([]); expect(readExtractCursor(f.db)).toContain(c); f.db.close();
+});
+
+
+test("an incompatible schedule rolls back every additive runtime table", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE schedules (unexpected TEXT)");
+  expect(() => initServe(db)).toThrow();
+  expect(db.query("SELECT name FROM sqlite_master WHERE name='extract_batches'").all()).toHaveLength(0);
+  expect(db.query("SELECT name FROM sqlite_master WHERE name='extract_usage'").all()).toHaveLength(0);
+  db.close();
 });
