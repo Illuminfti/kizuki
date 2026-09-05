@@ -23,7 +23,7 @@ function oauthFixture(scope = GMAIL_SCOPES.join(" "), cancel = false) {
         } };
     let state: Uint8Array | undefined;
     const connector = createGmailConnector({ client: { id: "synthetic-desktop-client" }, fields: FIELDS }, { oauth: transport, fetch: async () => { gets++; return Response.json({ sub: "fixture-account", email: "mutable@example.test" }); }, now: () => new Date("2024-01-01T00:00:00Z") });
-    return { connector, io, writer: { write: async (bytes: Uint8Array) => { writes++; state = bytes; } }, counts: () => ({ posts, writes, gets }), state: () => state };
+    return { connector, io, deps: {oauth: transport, fetch: async () => Response.json({sub:"fixture-account"}), now: () => new Date("2024-01-01T00:00:00Z")}, writer: { write: async (bytes: Uint8Array) => { writes++; state = bytes; } }, counts: () => ({ posts, writes, gets }), state: () => state };
 }
 test("sanctioned PKCE sign-in writes one scoped opaque state with stable OIDC sub", async () => {
     const f = oauthFixture();
@@ -42,4 +42,23 @@ test("cancel and missing granted scope write no state; missing scope performs no
     const narrow = oauthFixture("openid email");
     await expect(narrow.connector.signIn(narrow.io, narrow.writer)).rejects.toMatchObject({ code: "unauthenticated" });
     expect(narrow.counts()).toEqual({ posts: 1, writes: 0, gets: 0 });
+});
+
+test('reauthorization retains the exact pending history witness instead of orphaning its checkpoint',async()=>{
+ const {GmailFixture}=await import('../src/testing');const source=new GmailFixture(1);await (await source.connected()).backfill(null);
+ const previous=parseState(source.state), f=oauthFixture();let candidate:Uint8Array|undefined;
+ // Exercise the real OAuth sign-in with previous state supplied only at runtime.
+ const original=f.deps;
+ const connector=createGmailConnector({client:{id:'synthetic-desktop-client'},fields:FIELDS},{...original,previousState:source.state});
+ await connector.signIn(f.io,{write:async bytes=>{candidate=bytes}});
+ expect(parseState(candidate!).pending).toEqual(previous.pending);
+});
+
+test('public state inspection omits credentials and replacement rejects changed fields or pending history',async()=>{
+ const {inspectGmailState,assertSameGmailIdentity}=await import('../src/index');
+ const {encodeState}=await import('../src/state');const {GmailFixture}=await import('../src/testing');
+ const f=new GmailFixture(1);await (await f.connected()).backfill(null);const original=f.state.slice();
+ expect(inspectGmailState(original)).toEqual({account_id:'fixture-account',fields:[...FIELDS],has_pending:true});expect(JSON.stringify(inspectGmailState(original))).not.toContain('synthetic-access');
+ const rotated=parseState(original);rotated.oauth.tokens.access_token='synthetic-rotated';expect(()=>assertSameGmailIdentity(original,encodeState(rotated))).not.toThrow();
+ for(const change of ['account','fields','pending'] as const){const candidate=parseState(original);if(change==='account')candidate.oauth.account.id='other-synthetic';else if(change==='fields')candidate.fields=['text'];else candidate.pending=null;expect(()=>assertSameGmailIdentity(original,encodeState(candidate))).toThrow();}
 });

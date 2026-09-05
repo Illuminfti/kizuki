@@ -16,11 +16,13 @@ export interface GmailConnectorConfig {
 }
 export interface GmailConnectorDeps {
     persist?: StatePersister;
+    /** Trusted host snapshot for reauthorization; never serialized configuration. */
+    previousState?: Uint8Array;
     oauth?: OAuthTransport;
     fetch?: GmailFetch;
     now?: () => Date;
 }
-const MANIFEST = freezeManifest({ schema: "kizuki.connector/v1", connector_id: GMAIL_CONNECTOR_ID, version: "0.1.0", contract_minor: 1, implementation: "@kizuki/connector-gmail", allowed_egress: ["accounts.google.com", "oauth2.googleapis.com", "openidconnect.googleapis.com", "gmail.googleapis.com"], cursor_schema: GMAIL_CURSOR_SCHEMA, kinds: ["email"], capabilities: { backfill: true, sync: true, tombstones: true, purge: false, fixture: true }, required_secrets: [], emits_sensitivity_hint: true, default_sensitivity: "private", sensitivity_floor: "private", auth_modes: ["oauth"] });
+const MANIFEST = freezeManifest({ schema: "kizuki.connector/v1", connector_id: GMAIL_CONNECTOR_ID, version: "0.1.0", contract_minor: 1, implementation: "@kizuki/connector-gmail", allowed_egress: ["accounts.google.com", "oauth2.googleapis.com", "openidconnect.googleapis.com", "gmail.googleapis.com"], cursor_schema: GMAIL_CURSOR_SCHEMA, kinds: ["email"], capabilities: { backfill: true, sync: true, tombstones: true, purge: false, fixture: true }, required_secrets: [], emits_sensitivity_hint: true, default_sensitivity: "private", sensitivity_floor: "private", auth_modes: ["oauth", "sign_in"] });
 class SnapshotGap extends Error {
 }
 export class GmailConnector implements Connector {
@@ -34,10 +36,12 @@ export class GmailConnector implements Connector {
     private last: "ok" | "misconfigured" | "unauthenticated" | "degraded" | "rate_limited" = "misconfigured";
     private readonly now: () => Date;
     private readonly config: GmailConnectorConfig;
+    private readonly previousState: GmailState | null;
     private readonly deps: GmailConnectorDeps;
     constructor(config: GmailConnectorConfig = {}, deps: GmailConnectorDeps = {}) {
         this.config = { ...config, ...(config.client ? { client: { ...config.client } } : {}), ...(config.fields ? { fields: [...config.fields] } : {}) };
         this.deps = { ...deps };
+        this.previousState = deps.previousState === undefined ? null : parseState(deps.previousState.slice());
         this.now = deps.now ?? (() => new Date());
     }
     manifest() { return MANIFEST; }
@@ -150,7 +154,8 @@ export class GmailConnector implements Connector {
             if (this.config.expected_account !== undefined && account !== this.config.expected_account)
                 throw failure("unauthenticated");
             const oauth = { schema: "kizuki.oauth-state/v1" as const, provider: GMAIL_CONNECTOR_ID, account: { id: account, display: "Gmail account" }, tokens, written_at: this.now().toISOString() };
-            const state: GmailState = { schema: "kizuki.gmail-state/v1", oauth, fields: selected, pending: null };
+            if (this.previousState !== null && (this.previousState.oauth.account.id !== account || digest(this.previousState.fields) !== digest(selected))) throw failure("unauthenticated");
+            const state: GmailState = { schema: "kizuki.gmail-state/v1", oauth, fields: selected, pending: this.previousState?.pending ?? null };
             await writer.write(encodeState(state));
             this.live();
             return { display: "Gmail account" };

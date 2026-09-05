@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { ConnectionStateStore, createStatePersister, getConnection, getCheckpoint, openLedger, runToCompletion } from "@kizuki/core";
+import { ConnectionStateStore, createStatePersister, getConnection, getCheckpoint, openLedger, runToCompletion, setSourceGrant } from "@kizuki/core";
 import { GMAIL_CONNECTOR_ID } from "../src/index";
 import { GmailFixture } from "../src/testing";
 test("native runToCompletion reopens persisted deletion observation after lost state-write response, before tombstone", async () => {
@@ -15,6 +15,7 @@ test("native runToCompletion reopens persisted deletion observation after lost s
         await enrollment.writer.write(fixture.state);
         let connection = store.save(db, GMAIL_CONNECTOR_ID, enrollment.pending);
         const source = connection.source_key;
+        setSourceGrant(db, {source_key:source,expected_revision:0,operation_id:"synthetic-gmail-grant",policy:{purposes:["capture"],allowed_fields:["text","subjects","attachments","metadata"],retention:"persistent_owned_until_revoked",egress:"local_only",sensitivity_floor:"private"}});
         let handle = createStatePersister(db, store, connection);
         let connector = await fixture.connected(async (bytes) => { await handle.persist(bytes); fixture.state = bytes; });
         const captured = await runToCompletion(db, connector, GMAIL_CONNECTOR_ID, source, "backfill");
@@ -70,6 +71,7 @@ for (const boundary of ["before-accept", "after-accept"] as const) {
                 await enrollment.writer.write(fixture.state);
                 let connection = store.save(db, GMAIL_CONNECTOR_ID, enrollment.pending);
                 const source = connection.source_key;
+        setSourceGrant(db, {source_key:source,expected_revision:0,operation_id:"synthetic-gmail-grant",policy:{purposes:["capture"],allowed_fields:["text","subjects","attachments","metadata"],retention:"persistent_owned_until_revoked",egress:"local_only",sensitivity_floor:"private"}});
                 let handle = createStatePersister(db, store, connection);
                 let witnessWritten = false;
                 let connector = await fixture.connected(async (bytes) => {

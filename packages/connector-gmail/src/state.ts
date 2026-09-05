@@ -165,3 +165,14 @@ export function encodeState(state: GmailState): Uint8Array {
     parseState(bytes);
     return bytes;
 }
+
+/** Public noncredential projection for trusted native host composition. */
+export function inspectGmailState(bytes: Uint8Array): { account_id: string; fields: Field[]; has_pending: boolean } {
+    const state = parseState(bytes);
+    return { account_id: state.oauth.account.id, fields: [...state.fields], has_pending: state.pending !== null };
+}
+/** Reauthorization may rotate credentials but cannot silently replace history. */
+export function assertSameGmailIdentity(previous: Uint8Array, candidate: Uint8Array): void {
+    const before = parseState(previous), after = parseState(candidate);
+    if (before.oauth.account.id !== after.oauth.account.id || digest(before.fields) !== digest(after.fields) || digest(before.pending) !== digest(after.pending)) throw failure("unauthenticated");
+}
