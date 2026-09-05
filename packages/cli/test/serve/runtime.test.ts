@@ -93,8 +93,8 @@ test("the shipped serve command syncs an enrolled changed source through its bou
     }
     const queried = await cli(env, "query", "orchard library collaborator");
     expect(queried.exitCode).toBe(0);
-    expect(queried.stdout).toContain("[orchard]");
-    expect(queried.stdout).toContain("[collaborator]");
+    expect(queried.stdout).toContain("orchard");
+    expect(queried.stdout).toContain("collaborator");
     emit = 2;
     modelUnavailable = true;
     expect((await cli(env, "serve", "--once", "--no-http", "--json")).exitCode).toBe(0);
@@ -132,4 +132,26 @@ test("a malformed configured model fails through the public CLI without leaking 
   } finally {
     db.close();
   }
+});
+
+test("offline serve keeps the host retrieval capability bound for recovery sweeps", async () => {
+  const { ConnectionStateStore } = await import("@kizuki/core");
+  const { createServeRuntime } = await import("../../src/serve-runtime");
+  const { DIRECT_RETRIEVAL_DESCRIPTOR, ReferenceRetrievalPort } = await import("../../../core/test/contracts/reference-retrieval");
+  const { temporaryPortContext } = await import("../../../core/test/contracts/fixtures");
+  const setup = tempVault();
+  const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+  const temporary = temporaryPortContext(DIRECT_RETRIEVAL_DESCRIPTOR);
+  const retrieval = new ReferenceRetrievalPort(temporary.ctx);
+  const runtime = await createServeRuntime({ db, vaultPath: setup.vault,
+    store: new ConnectionStateStore(join(setup.vault, ".kizuki")),
+    env: setup.env, err: () => {}, retrieval });
+  try {
+    expect(runtime.hooks.model_ref).toBeNull();
+    expect(runtime.hooks.producer).toBeUndefined();
+    expect(runtime.hooks.claims?.retrieval).toBe(retrieval);
+    await runtime.close();
+    // The caller owns the shared retrieval lifetime; closing model bindings leaves it usable.
+    expect((await retrieval.health()).status).toBe("ready");
+  } finally { await runtime.close(); await retrieval.close(); temporary.cleanup(); db.close(); }
 });

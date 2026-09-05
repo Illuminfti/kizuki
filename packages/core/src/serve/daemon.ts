@@ -91,6 +91,7 @@ export async function runServeDaemon(
       vaultPath,
       host: config.bind_host,
       port: options.port ?? config.bind_port,
+      ...(options.hooks?.claims?.retrieval === undefined ? {} : { retrieval: options.hooks.claims.retrieval }),
     });
   }
 

@@ -13,6 +13,7 @@ import {
   type ProducerPort,
   type RailHooks,
   type RailSyncResult,
+  type RetrievalPort,
 } from "@kizuki/core";
 import { registerLlmPorts } from "@kizuki/llm";
 import { listHostConnections, loadConnector } from "./connections";
@@ -149,6 +150,7 @@ export async function createServeRuntime(options: {
   readonly vaultPath: string;
   readonly store: Parameters<typeof listHostConnections>[1];
   readonly env: Record<string, string | undefined>;
+  readonly retrieval?: RetrievalPort;
   readonly err: (line: string) => void;
 }): Promise<ServeRuntime> {
   const selected = readLlmSelection(options.vaultPath);
@@ -180,13 +182,15 @@ export async function createServeRuntime(options: {
     await llm.close();
     throw error;
   }
-  const claims: ClaimsIo | undefined = producer === undefined ? undefined : { db: options.db };
+  const claims: ClaimsIo = { db: options.db,
+    ...(options.retrieval === undefined ? {} : { retrieval: options.retrieval }),
+  };
   let closed = false;
   return {
     hooks: {
       model_ref: llm.model_ref,
       ...(producer === undefined ? {} : { producer }),
-      ...(claims === undefined ? {} : { claims }),
+      claims,
       sync: () => syncConnections(options.db, options.vaultPath, options.store, options.env),
       refresh: async () => {
         const result = tryRefreshDerived(options.db, options.vaultPath);
