@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import {
   ConnectionStateStore,
   assertVaultControl,
+  ensureVaultId,
   initSearch,
   openLedger,
   PortError,
@@ -95,6 +96,8 @@ export function assertVault(path: string): string {
       `vault identity missing: ${absolutePath}; run: kizuki init ${absolutePath}`,
     );
   }
+  // Remint a snapshot-cloned identity once this volume lands on a new machine.
+  ensureVaultId(absolutePath);
   if (!existsSync(dbPath) || !statSync(dbPath).isFile()) {
     throw new Error(
       `vault ledger missing: ${absolutePath}; run: kizuki init ${absolutePath}`,
