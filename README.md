@@ -349,6 +349,15 @@ bun run verify
 
 [Contributing](CONTRIBUTING.md) · [Agent instructions](AGENTS.md) · [Architecture](docs/architecture.md) · [Binding decisions](docs/decision-log.md)
 
+## Retrieval credit
+
+The hybrid retrieval recipe and entity-graph walk are a permitted fork of
+[GBrain](https://github.com/garrytan/gbrain) at public commit
+`8c70f6255047a7647adb30b1d6333a48068d9fa5`, vendored under
+`packages/retrieval-pg/vendor/`. It is not a registry dependency. Rerank and
+local GGUF remain Kizuki's own work.
+[Upstream policy and attribution →](docs/upstream-policy.md)
+
 ## License
 
 [MIT](LICENSE). **Free local forever. Recall is never metered.**
