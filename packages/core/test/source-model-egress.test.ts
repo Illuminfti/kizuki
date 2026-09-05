@@ -716,7 +716,24 @@ test("an unbound historical null-manifest journal replays without a provider res
       object: "fixture role",
       polarity: "positive",
       body: "Different text must not reuse the replay capability.",
+      valid_from: accepted.event.observed_at,
       provenance: [accepted.event.event_id],
+      subjects: ["person:fixture"],
+      producer: "model",
+      model_ref: "historical-model-ref",
+      confidence: 0.7,
+      taint: "quoted",
+      sensitivity: "private",
+    })).rejects.toThrow("source_access_denied");
+    await expect(insertClaim({ db, historical_source_write: replayAuthorization }, {
+      kind: "claim",
+      subject: "person:fixture",
+      predicate: "employment.role",
+      object: "fixture role",
+      polarity: "positive",
+      body: "Synthetic model interpretation.",
+      provenance: [accepted.event.event_id],
+      valid_from: "2099-01-01T00:00:00Z",
       subjects: ["person:fixture"],
       producer: "model",
       model_ref: "historical-model-ref",
@@ -748,6 +765,7 @@ test("an unbound historical null-manifest journal replays without a provider res
       polarity: "positive",
       body: "Synthetic model interpretation.",
       provenance: [accepted.event.event_id],
+      valid_from: accepted.event.observed_at,
       subjects: ["person:fixture"],
       producer: "model",
       model_ref: "historical-model-ref",
@@ -755,6 +773,7 @@ test("an unbound historical null-manifest journal replays without a provider res
       taint: "quoted",
       sensitivity: "private",
     })).rejects.toThrow("source_access_denied");
+    expect(changedEpoch).toBe(true);
     expect(listClaims(db, { status: "live", limit: 20 }).filter(claim => claim.producer === "model")).toEqual([]);
 
     const replayed = await runWritePass(db, vault, {
