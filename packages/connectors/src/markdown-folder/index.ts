@@ -11,6 +11,7 @@ import type {
   Manifest,
   PurgePlan,
   SecretResolver,
+  SubjectRef,
   SyncBatch,
 } from "@kizuki/core";
 import { KizukiError, notSupported } from "../errors";
@@ -568,6 +569,20 @@ function hiddenByScanError(
   return false;
 }
 
+/**
+ * The one subject a connector that only reads files, and never their prose,
+ * can honestly name: the file itself. `relpath` is the same value already
+ * used as `source_record_id`, carried verbatim rather than slugged — a slug
+ * can collide across distinct paths (#74), which would merge unrelated files'
+ * entity pages. The namespace follows the precedent of `screenpipe:app:` and
+ * `calendar:`; it is deliberately not `person:` or any other namespace
+ * `pageTypeForSubject` (packages/core/src/staging/producers.ts) reads as a
+ * confirmed person, so the stub page it mints types as `topic`.
+ */
+function subjectsFor(relpath: string): SubjectRef[] {
+  return [{ subject_id: `markdown:${relpath}`, role: "about" }];
+}
+
 function fileEvent(file: MarkdownFile, observedAt: string): CaptureEventInput {
   return {
     schema: "kizuki.event/v1",
@@ -577,7 +592,7 @@ function fileEvent(file: MarkdownFile, observedAt: string): CaptureEventInput {
     occurred_at: new Date(file.mtimeMs).toISOString(),
     observed_at: observedAt,
     text: file.content,
-    subjects: [],
+    subjects: subjectsFor(file.relpath),
     deleted: false,
     attachments: [],
     metadata: {
@@ -597,7 +612,10 @@ function tombstone(relpath: string, observedAt: string): CaptureEventInput {
     occurred_at: observedAt,
     observed_at: observedAt,
     text: "",
-    subjects: [],
+    // Same subject as the file's own events, so the tombstone cascade
+    // (cascadeTombstone, packages/core/src/staging/producers.ts) retracts the
+    // page this file's imports minted rather than orphaning it.
+    subjects: subjectsFor(relpath),
     deleted: true,
     attachments: [],
     metadata: { relpath, snapshot: "absent" },
@@ -613,7 +631,7 @@ function fixtureEvent(relpath: string, text: string): CaptureEventInput {
     occurred_at: "2026-01-01T00:00:00.000Z",
     observed_at: "2026-01-01T00:00:00.000Z",
     text,
-    subjects: [],
+    subjects: subjectsFor(relpath),
     deleted: false,
     attachments: [],
     metadata: {

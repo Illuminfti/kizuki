@@ -24,8 +24,11 @@ describe("kizuki CLI stranger loop", () => {
     );
     expect(imported).toMatchObject({
       exitCode: 0,
+      // 3 files each stage two proposals: one entity candidate for the
+      // file's own `markdown:<relpath>` subject (#431) plus one capture
+      // note quoting its text.
       stdout:
-        "events_stored=3 duplicates=0 proposals_created=3 withdrawn=0 retractions_filed=0 errors=0\n",
+        "events_stored=3 duplicates=0 proposals_created=6 withdrawn=0 retractions_filed=0 errors=0\n",
     });
 
     const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
@@ -68,8 +71,10 @@ describe("kizuki CLI stranger loop", () => {
     expect(doctor.stdout).not.toContain("retraction-pending");
     expect(doctor.stdout).toContain("claims live=");
     expect(doctor.stdout).toContain("filed=");
+    // 6, not 3: each file now stages both an entity claim for its own
+    // `markdown:<relpath>` subject (#431) and its capture note.
     expect(doctor.stdout).toMatch(
-      /claims live=3 filed=0 written=0 unwritten=3 superseded=0 skipped=0/,
+      /claims live=6 filed=0 written=0 unwritten=6 superseded=0 skipped=0/,
     );
     expect(doctor.stdout).toContain("unwritten=");
     expect(doctor.stdout).toContain("derived search=");
@@ -82,7 +87,9 @@ describe("kizuki CLI stranger loop", () => {
     rmSync(join(setup.notes, "linus.md"));
     const synced = runCli(setup.env, "sync", "markdown-folder");
     expect(synced.exitCode).toBe(0);
-    expect(synced.stdout).toContain("withdrawn=1");
+    // 2, not 1: the tombstone withdraws both linus.md's entity proposal and
+    // its capture note, since they now share one tombstoned event (#431).
+    expect(synced.stdout).toContain("withdrawn=2");
     expect(synced.stdout).toContain("retractions_filed=0");
 
     const doctorAfter = runCli(setup.env, "doctor");
