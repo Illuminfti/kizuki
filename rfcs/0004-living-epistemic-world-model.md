@@ -2,7 +2,7 @@
 
 Status: **Proposed — not binding and not implemented**. Date: 2026-09-05.
 Owner: Kizuki core. Design packet: #481.
-Implementation baseline: `8f87c7d368227534fbba2f16b7863cc03c1178d6`.
+Implementation baseline: `a96c5f4a4455d22fb4b40537c308c6d019a36d0d`.
 
 This proposal reconciles the world-model epic (#497)
 with [RFC 0003](0003-rich-subject-foundation.md), which is merged as an explicitly
@@ -121,8 +121,10 @@ legitimately see different groupings. Merge/separation may change a visible
 group, but retained member handles are still resolvable subject to current
 policy, so old client references do not silently name an unrelated object.
 
-External object references are keyed pseudonyms of a handle and its authorization
-namespace, not the internal handle or a source/name hash. Core resolves them
+External object references are random 32-byte opaque values allocated once per
+authorization namespace and exact typed target. The durable mapping has uniqueness
+on both its token and its namespace/kind/target tuple; lookup reuses the saved ref.
+There is no content-derived pseudonym or durable derivation key to back up. Core resolves them
 under the authenticated principal; the token itself confers no authority. The
 namespace binds principal, normalized permitted scope/purpose/ceiling and schema,
 remains stable through ordinary visible evidence additions, and rotates when
@@ -146,8 +148,11 @@ type Recorded = { admittedAt: string; admissionSeq: number };
 type EpistemicKind = "observed" | "reported" | "owner_assertion"
   | "model_inference" | "hypothesis" | "recommendation" | "scenario";
 type DurableEvidence = {
+  id: InternalId<"evidence">;
   admissionId: InternalId<"admission">; eventId: InternalId<"event">;
-  eventHashVersion: number; eventHash: string;
+  eventHashVersion: 1 | 2; eventHash: string;
+  textHash: string; originBinding: string; eventAcceptedAt: string;
+  sourceBinding: { sourceKey: string; grantRevision: number; policyDigest: string } | null;
   span: { kind: "text"; startUtf16: number; endUtf16: number }
       | { kind: "metadata"; field: string };
 };
@@ -155,8 +160,10 @@ type DurableObservation = {
   schema: "kizuki.observation-record/v1"; id: InternalId<"observation">;
   admissionId: InternalId<"admission">; evidence: readonly DurableEvidence[];
   attribution: readonly {
+    id: InternalId<"attribution">;
     role: "sender" | "recipient" | "quoted_author" | "thread" | "place";
     ref: RawSubjectRef; basis: "source_field"; field: string;
+    evidenceIds: readonly InternalId<"evidence">[];
   }[];
   fidelity: "verbatim_text" | "source_metadata" | "lossy_transcript";
   occurred: KnownTime; sourceObservedAt: string | null;
@@ -217,7 +224,7 @@ type Observation = {
 };
 type StateTransition = {
   schema: "kizuki.state-transition/v1";
-  claim: ClaimRef; causeReceipt: ReceiptRef; recordedAt: string;
+  claim: ClaimRef; causeReceipt: ReceiptRef | null; recordedAt: string;
   before: "absent" | "active" | "retracted" | "superseded";
   after: "active" | "retracted" | "superseded";
   valid: KnownTime;
@@ -233,10 +240,15 @@ recorded stamp, exact support/lineage and independently attributable rendering.
 Both use explicit schema dispatch, never the anchored DTO parser as a fallback.
 Identity controls keep their distinct existing discriminator and A1 receipt path.
 
-Wire tokens for every object/claim/admission/event-version/observation/receipt are
-domain-separated keyed pseudonyms in the same principal namespace, with at least
-128 bits of forgery resistance; names, hashes, internal sequences and source IDs
-never substitute for them. Event-version refs name an exact retained version
+Wire refs for every object/claim/admission/event-version/observation/receipt use
+32 cryptographically random bytes, encoded as 43 unpadded base64url characters.
+Their kind is a separate closed discriminator. Core allocates and persists each
+exact namespace/kind/target mapping atomically, reuses it for that tuple, and
+retries a random collision without changing the target. Names, hashes, internal
+sequences and source IDs never substitute for refs. Durable mapping rows survive
+backup/restore only with valid typed targets and current policy; physical purge
+and authorization-namespace retirement erase their sensitive targets and tokens.
+No derivation secret or raw target appears in the wire value. Event-version refs name an exact retained version
 without publishing its content digest. The protected resolver performs current
 support authorization before returning the object; the ref does not grant access.
 All identified endpoints and perspective/context roles must have complete
@@ -280,7 +292,7 @@ type ConceptCard = {
     facet: "exposure" | "explanation" | "application" | "demonstration";
     assertion: Relation;
     assistance: "assisted" | "unassisted" | "unknown";
-    assistanceClaims: readonly ClaimRef[];
+    assistanceEvidence: readonly Relation[];
   }[];
   knownAt: { kind: "current" } | { kind: "snapshot"; ref: SnapshotRef };
   coverage: Coverage;
@@ -305,7 +317,10 @@ classifier or numeric confidence can invent assistance. The initial registry
 includes `learning.assistance` on the supported task-context raw ref, with only
 trusted vocabulary values `learning/assisted` and `learning/unassisted`; the
 learning Relation must share that exact context. Opposing supported claims
-produce unknown assistance and retain the conflict. A claim of unassisted work
+produce unknown assistance and retain the conflict. `assistanceEvidence` contains
+the complete qualifying Relations, including perspective, actor/context, validity,
+assessment and conflict; the scalar is derived only from that displayed set.
+Claim refs alone do not replace those qualifiers. A claim of unassisted work
 is still attributed evidence, not proof of mastery or an independently observed
 successful outcome.
 
@@ -345,7 +360,7 @@ reserved design work, not accepted production enum members.
 | `concept.label` | Concept → bounded literal; many with attributable language/context | Alias candidates do not establish identity |
 | `concept.definition` | Concept → literal; many qualified definitions | Preserve contradictory definitions and perspectives |
 | `concept.requires` | Concept → Concept; many directed edges | Claimed prerequisite in its stated context, not proven causation |
-| `concept.example` / `concept.counterexample` | Concept → literal or supported artifact ref; many | Exact evidence/version required |
+| `concept.example` / `concept.counterexample` | Concept → literal or existing supported raw subject ref; many | Exact evidence/version required; no new artifact object discriminator |
 | `concept.distinguished_from` | Concept → Concept; many | A semantic distinction, not automatically an owner identity-separation control |
 | `learning.exposure`, `learning.explanation`, `learning.application`, `learning.demonstration` | Person raw ref → Concept; many context/time-scoped claims | Independent evidence facets, never ordinal transitions |
 | `learning.assistance` | Supported task-context raw ref → trusted `learning/assisted` or `learning/unassisted`; qualified claims | Joins only the exact actor/task context; absence or conflict stays unknown |
@@ -376,61 +391,17 @@ temporal constraints. A graph engine adds no necessary authority primitive.
 
 Choose existing `claims` plus normalized common support/history children, small
 identity bookkeeping and rebuildable indexes. No new dependency is selected.
-The following SQL is the proposed relational shape; it extends the final B1b
-migration rather than installing an independent `wm_*` store. Shared child
-names are reconciled with that migration before code is accepted.
+The [storage and codec appendix](0004-world-storage.md) gives the proposed
+closed payloads, component version allocation, exact event/source and composite
+ownership constraints, normalized Observation/endpoint/dependency/history tables,
+raw handle/receipt lifecycle, wire mapping and bounded cache schema. It extends
+the existing B1 `claim_v2_semantics` and `claim_v2_support` family; there is no
+parallel meaning/admission authority. Its SQL, validators, migrations and
+consumers must be implemented as one accepted lifecycle unit before mutation.
 
-```sql
--- Existing shared claims remain assertion authority.
-CREATE TABLE claim_meanings (
-  claim_id TEXT PRIMARY KEY REFERENCES claims(claim_id),
-  codec TEXT NOT NULL CHECK(codec = 'kizuki.claim-meaning/v1'),
-  semantic_key TEXT NOT NULL UNIQUE,
-  payload TEXT NOT NULL
-) STRICT;
-CREATE TABLE claim_admissions (
-  admission_id TEXT PRIMARY KEY,
-  claim_id TEXT NOT NULL REFERENCES claims(claim_id),
-  admission_key TEXT NOT NULL UNIQUE,
-  payload TEXT NOT NULL,
-  rendering TEXT NOT NULL
-) STRICT;
-CREATE INDEX admissions_by_claim ON claim_admissions(claim_id, admission_id);
-CREATE TABLE claim_admission_events (
-  admission_id TEXT NOT NULL REFERENCES claim_admissions(admission_id),
-  event_id TEXT NOT NULL REFERENCES events(event_id),
-  PRIMARY KEY(admission_id, event_id)
-) STRICT;
-CREATE INDEX admissions_by_event ON claim_admission_events(event_id, admission_id);
-CREATE TABLE claim_dependencies (
-  admission_id TEXT NOT NULL REFERENCES claim_admissions(admission_id),
-  prerequisite_claim_id TEXT NOT NULL REFERENCES claims(claim_id),
-  prerequisite_admission_id TEXT NOT NULL REFERENCES claim_admissions(admission_id),
-  PRIMARY KEY(admission_id, prerequisite_claim_id, prerequisite_admission_id)
-) STRICT;
-CREATE INDEX dependents_by_admission
-  ON claim_dependencies(prerequisite_admission_id, admission_id);
-CREATE TABLE semantic_handles (
-  handle_id TEXT PRIMARY KEY -- random, no source/name hash or semantic payload
-) STRICT;
-CREATE TABLE semantic_bindings (
-  raw_kind TEXT NOT NULL CHECK(raw_kind IN ('occurrence','supplied')),
-  raw_id TEXT NOT NULL,
-  handle_id TEXT NOT NULL REFERENCES semantic_handles(handle_id),
-  allocation_receipt_id TEXT NOT NULL,
-  PRIMARY KEY(raw_kind, raw_id),
-  UNIQUE(handle_id)
-) STRICT;
-```
-
-The shared migration must enforce composite ownership of a prerequisite admission
-by its named claim (unique parent key plus composite FK), and bind every raw ref
-and allocation receipt to the corresponding occurrence/supplied-ref and receipt
-tables. SQL sketches without those final FKs are not migration acceptance.
-Use explicit staged erasure order rather than accidental `CASCADE` as the
-purge policy. Observation, endpoint-support and source-binding children belong
-to each immutable admission; their normalized reverse indexes are rebuilt and
-checked against the closed admission payload on restore.
+Explicitly ordered erasure, full-preimage comparison, same-transaction child
+cardinality checks and restore validation are required alongside SQL foreign
+keys. A digest match or a successfully parsed DDL block is not authority.
 
 The meaning codec excludes source anchors and rendering, retains raw endpoints,
 perspective excluding its anchors, context, original validity and record
@@ -442,13 +413,19 @@ source/event versions and derivation lineage. Full identities are compared on
 collision; a digest match alone never accepts differing payload.
 
 **Rendering decision:** retain independently attributable, bounded rendering per
-complete admission. Common `claims.body/frontmatter` for v2 are a disposable
-current materialization with explicit admission dependencies, never the only
-copy of authority. Dual readers cannot expose v2 through an unconverted v1 body
-path. Changing/loss of any contributing admission clears affected common prose
-and old hashes immediately and holds its canon/retrieval projections. Rebuild
-uses only remaining eligible complete admissions; it never relabels old prose
-as supported by a survivor. Canon uses its existing writer and child receipts.
+complete admission. Common legacy `claims.body/frontmatter/body_hash` columns on
+v2 rows are always neutral compatibility storage: empty body, canonical empty
+frontmatter object and the digest of the empty body. They are never a v2 rendering
+cache. Every v2 reader dispatches on `record_codec` and builds its permitted
+projection from complete admission rendering; no unconverted v1 body path can
+expose it. This avoids another materialization and dependency table.
+
+Loss of any contributing admission immediately holds affected canon/retrieval
+outputs and invalidates dependent views. Rebuild uses only remaining eligible
+complete admissions, never relabels old prose as supported by a survivor, and
+uses the existing canon writer and child receipts. Physical purge removes the
+old admission rendering, canon preimages and old output hashes through that
+same erasure closure.
 
 History stores actual state transitions plus support references, not copied
 rendering/preimages by default. Where rollback requires payload, that payload
@@ -482,9 +459,13 @@ resolves **once** to an exact committed internal cutoff `(recorded_at, seq)` and
 returns a Core-issued opaque `SnapshotRef`; subsequent stable history reads use
 that ref, not the timestamp again. On clock rollback several commits may share
 a clamped timestamp, so a new resolution of the same timestamp is explicitly a
-new lookup, never a promise to reproduce an earlier resolved snapshot. A caller
-requiring reproducibility must retain the issued ref. This avoids exposing a
-sequence merely to make the cutoff precise.
+new lookup, never a promise to reproduce an earlier resolved snapshot. A caller requiring repeated reads within the cache session must retain the
+issued ref. This is **cache-local reproducibility only while that token remains
+valid**. It is not a durable history link: expiry, principal-local quota eviction,
+policy change, purge or restart/restore may invalidate it earlier. Repeating the
+timestamp afterward is a new resolution and may select a different exact cutoff.
+Durable bookmarked history is a separate future contract, not implied here.
+No sequence is exposed merely to make the cutoff precise.
 
 Snapshot tokens use the same 32-random-byte, principal-namespace, purpose/scope,
 fixed-15-minute-TTL and shared 16-token/4-MiB reservation rules as views, with
@@ -643,10 +624,16 @@ revalidation is the retained authority for that active binding, not an invented
 reassignment of allocation history to B. Restore validates its exact raw-ref,
 handle, surviving complete support, current lifecycle and purge linkage together;
 it does not demand or reconstruct forbidden metadata from the erased receipt.
-A later loss of B removes this revalidation and the binding unless another
-independent complete survivor supports a new fenced revalidation. A retained binding requires at least one independently
-complete eligible support, enforced on admission/loss/restore in the transaction;
-otherwise remove the binding and handle. A revoked support may remain in custody
+Ordinary correction, supersession or revocation of B records a Core-stamped
+retirement transition and removes its *current* authority; it retains the original
+revalidation and its history for authorized audit/undo. If complete C survives,
+the same transaction makes C's new revalidation current. Otherwise there is no
+externally resolvable current binding, although retained historical revalidations
+may keep the internal bookkeeping handle alive. Only physical purge deletes
+sensitive revalidation payload/history under the explicit erasure exception.
+Every current binding needs at least one independently complete eligible support,
+enforced on admission/loss/restore. No current support means fixed not_found on
+external resolution, not invented active authority from a historical record. A revoked support may remain in custody
 but cannot sustain an externally resolvable object. Surviving binding/support
 ownership and receipt variant are validated together after every purge phase.
 
@@ -680,7 +667,9 @@ edge counts, unrelated policy activity, workload timestamps and cache generation
 No token or signature is a grant. Retained view material is bounded sensitive
 cache, indexed for purge and partitioned by principal quotas. Each token uses
 32 cryptographically random bytes encoded as unpadded base64url (43 characters),
-with collision retry; server storage keeps only a keyed token digest. Fixed TTL
+with collision retry; server storage keeps only SHA-256 of the random token.
+The 256-bit unpredictable token is the preimage, never a low-entropy name or
+source identifier, so this needs no persistent or process-secret derivation key. Fixed TTL
 is 15 minutes from issuance, never extended by reads. Each principal namespace
 has 16 token slots and 4 MiB total retained payload, each token at most 256 KiB;
 an authenticated principal has at most one active namespace. Namespace change
@@ -757,7 +746,7 @@ Proposed contracts and negotiation are exact:
 | --- | --- |
 | Serving output | `kizuki.envelope/v2`; closed `schema, tool, principal, at, canon, quoted, data` fields with typed authorized refs; no `denied`, global epochs, source-policy counters or raw internal IDs. Request timestamp is ordinary response metadata, excluded from view equality. Operation-level errors remain fixed independent of hidden candidate counts. |
 | Semantic response | `kizuki.world-view/v1`; the complete `ViewResult` union above, closed Concept/Relation/Observation/history codecs and no authority implied by a token. |
-| Context packet | `kizuki.context-packet/v2`, explicit request capability `scoped-view-v1`; opaque `view`, no numeric `epoch` or `claims_epoch`. Body starts `KIZUKI CONTEXT v2` and preserves CANON/QUOTED separation. Ingress machine-origin detection must recognize v1 and v2 before any v2 packet can be emitted. |
+| Context packet | Selecting `kizuki.envelope/v2` forces `kizuki.context-packet/v2`; no separate content-version request switch exists. `scoped-view-v1` is a server capability advertisement only after implementation. Opaque `view`, no numeric `epoch` or `claims_epoch`; body starts `KIZUKI CONTEXT v2` and preserves CANON/QUOTED separation. Ingress machine-origin detection must recognize both markers before v2 emission. |
 | Surface port | Existing `kizuki.surface/v1` serves `doctor.report` and `serve.run`, not context. Reserve `kizuki.surface/v2`, minor 0, only if a world-read consumer uses this port; add exact compiled-major support and that real consumer together. CLI/MCP envelope negotiation does not imply this port already serves world reads. |
 | Conditional/diff | Additional `world-diff-v1`, implemented and tested only under #490; no capability advertisement until conformance passes. |
 | Historical query | Additional `world-history-v1`, implemented with #483 and an actual Core/adapter consumer; `validAt`/`knownAt` are rejected as unsupported before that point. |
@@ -788,23 +777,51 @@ but never serialize or alone decide external equality/staleness.
 
 ### Exact adapter selector and nested v2 output
 
-The selector is `response_contract: "kizuki.envelope/v1" |
-"kizuki.envelope/v2"`, default v1 only for compatibility dispatch. It is not a
-capability or grant. At Core, a validated per-call serve option carries the
-selector into the gate; it never comes from captured content. At MCP, each
-existing tool input has this optional top-level argument alongside its existing
-arguments; dispatch removes it before the tool-specific parser, and the declared
-output is a discriminator-checked v1/v2 union. Both stdio MCP and HTTP MCP use
-that identical tool argument, with no independent HTTP-header negotiation.
-The existing CLI read/tell/propose verbs get the explicitly proposed
-`--response-contract` option and forward it to the same Core option; human output
-formats the selected validated DTO. No CLI option or MCP schema is advertised
-until those paths execute and conformance passes. Missing/unknown selectors
-never silently switch a narrow caller to old content.
+One selector, `response_contract: "kizuki.envelope/v1" |
+"kizuki.envelope/v2"`, chooses the complete serving contract. It grants no
+authority. Authenticate first, choose the following branch before candidate
+discovery, then check the existing operation grant:
+
+| Selector | Built-in OWNER | Any scoped agent/client |
+| --- | --- | --- |
+| Missing or explicit v1 | Existing v1 only | Fixed `unsupported_contract` |
+| Explicit v2 and implemented consumer | V2 envelope and, for context, v2 packet | Same v2 dispatch under existing grants |
+| Unknown, conflicting or unsupported selector | Fixed `unsupported_contract` | Same fixed refusal |
+
+V2 rejects the legacy context `capabilities`, `retain_prefix`, `prior_hash` and
+`epoch` keys. Its only optional baseline is typed `priorView`; v2 selection alone
+chooses the new packet format. Unknown tool-input keys cannot become a second
+version switch. A valid unsupported view/history capability is never silently
+handled by a v1 reader. Operation-level grant denial remains independent of
+target existence.
+
+Core receives a validated separate contract option plus the selected typed input.
+Stdio MCP places `response_contract` alongside the actual tool arguments and
+strips it before the selected tool parser. Its advertised output is the exact
+implemented discriminated contract. The existing Core **loopback HTTP tool
+endpoint**, not an HTTP MCP server, uses a closed v2 wrapper
+`{response_contract:"kizuki.envelope/v2", args: V2ToolInput[K]}` on its existing
+`/v1/(mcp/)?tool` routes. The `/v1/` route labels the transport, not this new
+content codec. Nested or conflicting selectors refuse; they are never dropped by
+`body.args` unwrapping. Bare legacy body forms remain OWNER-v1 only.
+
+The actual CLI consumers are `query`, `context` and `tell`; there are no existing
+`read` or `propose` CLI verbs. Their proposed `--response-contract` option selects
+the corresponding new semantic result, and `--json` v2 emits the separately
+versioned closed `{schema:"kizuki.cli-result/v2", command, result}` wrapper,
+where `command` is exactly `query|context|tell` and `result` is the corresponding
+validated search/context/correct v2 envelope or fixed failure. Query must stop
+converting v2 into raw `SearchHit` IDs, context must preserve the selected packet,
+and tell must use the shared Core correction operation plus its authorized v2
+projector instead of leaking its legacy internal result. Human output renders
+that same DTO. Explicit OWNER legacy CLI output remains its old shape.
+The current stdio MCP package stays stdio-only; the existing TUI stays audit/undo.
+These adapter changes and their concrete stdout/HTTP/MCP conformance tests must
+land together before advertising any selector or capability.
 
 Every v2 tool uses the following nested codecs. `SourceRef`, `PageRef`,
 `CapturedSubjectRef`, `ClaimRef`, `EventVersionRef` and `ReceiptRef` are distinct
-principal-namespace pseudonyms. Captured-subject refs resolve retained raw source
+random principal-namespace references. Captured-subject refs resolve retained raw source
 subjects; they require no model-produced semantic handle, preserving model-free
 raw capture/reads. They are not interchangeable with semantic `ObjectRef`.
 No bare internal page path, connector/source binding key, event ID, semantic key,
@@ -830,20 +847,21 @@ type QuotedChunkV2 = {
   subjects: readonly CapturedSubjectRef[]; text: string; tainted: true;
 };
 type ReadGap = "retrieval_unavailable" | "coverage" | "budget";
+type GraphAnchorV2 = CapturedSubjectRef | PageRef | EventVersionRef;
+type GraphEdgeV2 =
+  | { kind: "wikilink"; from: PageRef;
+      to: PageRef | { kind: "unresolved"; text: string; quoted: true } }
+  | { kind: "subject"; from: PageRef; to: CapturedSubjectRef }
+  | { kind: "source"; from: PageRef; to: EventVersionRef };
 type GraphDataV2 = {
-  anchor: CapturedSubjectRef | PageRef;
-  edges: readonly {
-    from: CapturedSubjectRef | PageRef; to: CapturedSubjectRef | PageRef;
-    relation: string; evidence: readonly EventVersionRef[];
-  }[];
-  truncated: boolean;
+  anchor: GraphAnchorV2; edges: readonly GraphEdgeV2[]; truncated: boolean;
 };
-type PacketDataV2 = {
-  schema: "kizuki.context-packet/v2";
+type PacketContentV2 = {
   packetMd: string; tokens: number; budgetTokens: number; tokenizer: string;
   purpose: "session" | "recall" | "correction" | "audit"; coverage: Coverage;
-  delivery: "full" | "unchanged";
-  view: ViewToken | { status: "not_issued" }; validUntil: string;
+};
+type PacketDataV2 = {
+  schema: "kizuki.context-packet/v2"; result: ViewResult<PacketContentV2>;
 };
 type ProposeDataV2 = {
   outcome: "stored" | "duplicate" | "skipped" | "contested";
@@ -852,9 +870,31 @@ type ProposeDataV2 = {
 type CorrectDataV2 = {
   receipt: ReceiptRef | null; eventVersion: EventVersionRef | null;
   claim: ClaimRef | null; superseded: readonly ClaimRef[];
-  rewritten: readonly { page: PageRef; diff: string }[];
+  rewritten: readonly { page: PageRef; diff: { status: "unavailable" } }[];
   ambiguous: readonly { candidate: Ref<"claim_group">; claims: readonly ClaimRef[] }[];
-  answer: string;
+  message: "correction_recorded" | "ambiguous" | "dry_run" | "no_change";
+};
+// Existing scalar types/limits come from these baseline serving argument types.
+// These are closed parsed objects, not arbitrary intersections at the boundary.
+type V2ToolInput = {
+  search: Omit<SearchArgs, "subjects"> & { subjects?: CapturedSubjectRef[] };
+  get_page: { page: PageRef };
+  query_entities: EntitiesArgs;
+  timeline: Omit<TimelineArgs, "subject" | "connector_id"> & {
+    subject?: CapturedSubjectRef; source?: SourceRef;
+  };
+  graph_neighbors: Omit<GraphArgs, "id"> & { anchor: GraphAnchorV2 };
+  context_packet: Omit<ContextPacketArgs,
+    "subjects" | "capabilities" | "retain_prefix" | "prior_hash" | "epoch"> & {
+      subjects?: CapturedSubjectRef[]; priorView?: ViewToken;
+    };
+  propose: Omit<ProposeArgs, "target" | "subject" | "subjects" | "provenance"> & {
+    target?: PageRef | null; subject?: CapturedSubjectRef;
+    subjects?: CapturedSubjectRef[]; provenance: EventVersionRef[];
+  };
+  correct: Omit<CorrectArgs, "target"> & {
+    target?: ClaimRef | Ref<"claim_group"> | CapturedSubjectRef;
+  };
 };
 type V2ToolData = {
   search: { gaps: readonly ReadGap[] };
@@ -885,34 +925,49 @@ A separate scoped operational-health proposal may follow, but v2 does not spread
 legacy `HealthData`. This exception is an explicit part of the compatibility
 amendment. CLI doctor and the existing internal surface remain owner operations.
 
-For v2 `get_page`, `graph_neighbors`, `query_entities`, propose provenance and
-correct targets, typed refs replace identifier-bearing input positions too;
-Core resolves them under the same grant before any lookup, mutation or disclosure.
-Other bounded source-text/scalar inputs retain their existing validators. Correct
-uses an explicit claim/group/subject ref target; ambiguous candidates are already
-authorized and bounded. Missing/inaccessible ref resolves to fixed not_found;
-no fallback attempts a raw ID. Propose/correct still require their existing tool
-and owner-relay grants. V2 changes serialization, not authority or the v2 claim
-writer gate. They cannot expose a durable rich writer before B1b–d/A1 acceptance.
+Every identifier-bearing argument is closed by `V2ToolInput`, including search
+and context subjects, timeline subject/source, graph reverse event roots, propose
+target/subject/subjects/provenance, and exact correction targets. V2 timeline's
+`source` means one currently permitted source binding rather than the legacy
+connector-wide raw-string filter; OWNER-v1 retains that legacy filter. Entity
+name/type filters are bounded source text/registry scalars, not identity keys.
+Absent optional correction target uses only the existing bounded authorized
+target discovery; it never interprets an input string as a raw reference.
+Unknown or inaccessible typed targets return fixed not_found without raw-ID
+fallback. Propose/correct keep their existing tool and owner-relay grants.
+V2 changes serialization, not the rich-writer acceptance gate.
 
 Empty canon/quoted arrays are explicit for tools whose data owns the result.
 Get-page/entity/timeline data is exactly null; results are their validated chunks.
 Search gaps describe only the caller's available retrieval capability/coverage,
 not hidden source counts. Graph truncation considers authorized expansion only.
 Canon page prose is served only when its complete rendering support is allowed;
-a source path is never needed to render a chunk. Correct diffs require both
-retained sides to be currently authorized, contain only the affected permitted
-page text and use typed page labels; otherwise no private preimage is emitted.
-The plain answer is rendered from that already validated result.
+a source path is never needed to render a chunk. Graph source edges retain exact
+event-version targets and reverse roots. Wikilinks resolve only against permitted
+pages: an absent and an inaccessible target both remain the same bounded quoted
+literal from the already permitted source page, with no existence distinction or
+raw filesystem link. Unresolved text is never treated as an identity or command.
+
+The first v2 correction result deliberately omits old/new diff bytes and free-form
+legacy answer strings. `diff.status="unavailable"` is explicit; the human adapter
+renders only the fixed message and validated typed fields. It must not reuse
+legacy unifiedDiff or answer formatters, which contain raw paths/IDs and internal
+frontmatter. A future structured page-diff codec must explicitly project every
+frontmatter/reference field and authorize both sides before it can replace this
+unavailable state. Existing fully authorized OWNER-v1 audit/undo remains.
+`ReceiptRef` in this slice is attribution, not a bearer capability or advertised
+undo handle; no narrow audit/undo command is added by its presence.
 
 Packet Markdown is constructed from v2 chunks/claim references. Generated labels
 are `[page-ref:<token>]`, `[event-version-ref:<token>]`, and
 `[claim-ref:<token>]`; no raw identifier/header hash is copied from v1. Source
 text can literally contain strings resembling identifiers; it remains quoted
 untrusted content and is never interpreted as a typed reference or instruction.
-Full and unchanged packets follow the same completed authorized-view check;
-unchanged carries an empty packet body and the retained view, never newly
-computed hidden metadata. The tokenizer is an exact registered identifier, and
+The packet's `result` uses the same `ViewResult` state machine as world reads.
+Current carries the complete packet content; unchanged carries only the retained
+view and validity, with no packet content or newly computed hidden metadata.
+Invalid/expired baseline, incomplete coverage and unavailable storage retain their
+explicit branches instead of masquerading as a full empty packet. The tokenizer is an exact registered identifier, and
 all strings/arrays inherit existing field bounds plus the 256-KiB/2,000-token
 response cap. Golden tests parse actual stdout/MCP/HTTP and packet text for
 these nested fields; checking TypeScript types alone is insufficient.
@@ -958,6 +1013,23 @@ latency/memory/storage against pinned current Kizuki before selecting release SL
 
 ## Worked longitudinal examples and expected observations
 
+The repository-safe [Concept fixture](fixtures/world-concept-design.json) and
+[longitudinal extension](fixtures/world-longitudinal-design.json) are concrete
+neutral development inputs and isolated expected outcomes. Their status fields
+state proposed/unimplemented/not-run; static validation is not product proof.
+The extension includes two commitments, exact deadline correction, four separate
+outcome-evidence events and post-purge restore. Its base hash binds the sanitized
+Concept copy, while the original design snapshots remain preserved separately.
+
+The first fixture's S4 restriction maps to **existing subject scope**, not a new
+principal-source ACL. Its captures have a unique source-local raw subject that
+g1 grants and g2 does not; both clients may retain private ceilings. No additional
+granted subject, alias or identity expansion makes S4 reachable for g2. Source
+consent remains global, and all semantic endpoints/support still pass current
+principal authorization. Arbitrary per-client source allowlists would require a
+separate explicit Grant version/migration. Unknown source occurrence r03 remains
+unsupported at frozen ingress rather than receiving a fabricated capture time.
+
 Use a frozen neutral corpus and oracle under #496.
 The oracle is written independently of extractor output. Reveal events only at
 their recorded availability time. The first Concept fixture exercises its own
@@ -983,13 +1055,15 @@ Kizuki does not execute the task or certify an external success from a tool name
 
 ## Migration, recovery and export
 
-Keep RFC 0003's complete B1b–d and A1 merge groups. Their nominal ledger/component/
-backup reservations remain subject to the actual integration base; this document
-does not silently consume or renumber a schema. Inventory every required stream
-before assigning the final next versions. Export includes authority, complete
+Keep RFC 0003's complete B1b–d and A1 merge groups. The storage appendix assigns coordinated next ledger/component/backup versions
+against the pinned baseline and lists the streams each version owns. Recheck the
+actual integration base before implementation; a collision consumes a fresh
+version through review, never different DDL under an already used number. Export includes authority, complete
 support, Observation, lineage, handles/bindings, identity/history and purge linkage;
 derived indexes rebuild. Opaque live view caches/tokens do not survive export or
-restore. A restore installs a fresh view namespace before accepting reads.
+restore. A restore installs a fresh view runtime generation before accepting reads;
+the durable authorization namespace and valid random target mappings are restored
+separately. A service restart also invalidates the runtime cache atomically.
 
 Old v1 rows retain exact bytes, hashes, interpretation and supported replay.
 No inferred backfill creates historical evidence independence, learning state,

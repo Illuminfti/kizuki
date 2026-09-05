@@ -1,0 +1,518 @@
+{
+  "schema": "kizuki.world-longitudinal-design-extension/v1",
+  "title": "Two commitments, qualified outcome evidence and restore",
+  "status": "future_unimplemented",
+  "evaluation_state": "not_run",
+  "base": {
+    "file": "world-concept-design.json",
+    "sha256": "e0f981352a7a8d48e6f5546871d6ffd0fe812e31d611f0781c73a0e3e7642bac",
+    "start_after": "2025-01-07T10:00:00Z",
+    "mutation": "This repository copy binds the explicit subject-scope version of the base fixture; scenario evidence, semantic assertions and purge selection are retained. The original separately reviewed snapshots remain preserved."
+  },
+  "contracts": {
+    "symbols": "x_* IDs are extension-local. base:* refs resolve only against the frozen base fixture. No symbol is a runtime identifier, grant, wire token or production ingress field.",
+    "applicability": "All extension semantic, view and recovery assertions are proposed future/unimplemented behavior. These are concrete development inputs and independent oracle expectations, not executed product tests or accepted public APIs.",
+    "g1_clarification": "base:g1 denotes a synthetic owner-controlled CLIENT with explicit scoped grants and narrow correction capabilities. It is distinct from built-in OWNER and can lose its client grant. Restore runs through the isolated harness's authorized owner-plane recovery boundary, not implicit g1 authority.",
+    "base_known_at_clarification": "The base current_core known_at lane means replaying only released raw captures into a fresh isolated prefix vault and querying existing supported reads. It does not claim an existing as-of API. Historical interpreted-state assertions require the future contract and separate admission boundaries.",
+    "prefix_isolation": "Feed only current-prefix inputs to the system under test. Never send this oracle, later records, later artifacts, later controls or the frozen generator output to extraction, retrieval, tuning or consolidation.",
+    "time": "available_at is trusted synthetic release time; source_observed_at is untrusted source metadata. Core accepted_at and later admitted_at/admission_seq come from the simulated Core clock in controlled mechanics. Real-producer runs retain their actual stamps without backdating.",
+    "policy": "Inherit final base revocation/purge/grant state: r01 and r05 are erased; s1 is revoked; g1 cannot use s4. S2 remains permitted. Earlier semantic knowledge is gated by known_at; current disclosure and restore validity are gated at delivery_at.",
+    "question": "The independent unresolved question in base:r03 remains source-faithful evidence with unknown occurrence time and unresolved A. Vale under current g1/g2 grants. No durable Question API or factual answer is assumed.",
+    "evidence": "Captures are distinct events even when stored by the same S2 notebook connector. Ben's inspection is an independently performed observation in this synthetic scenario, not independence inferred from source count or copied acknowledgements.",
+    "opaque_wire": "Use proposed typed principal-scoped opaque references; no raw internal IDs or hashes on the wire. Object absence/purge/revocation/denial gives fixed not_found. Invalid view/cursor baseline gives fixed new_view_required. Every envelope excludes hidden counters and global epochs.",
+    "view": "Use reserved synthetic principal cache partitions and fixed 900-second token TTL. Restore installs a fresh view runtime generation before reads; old live tokens are not exported or restored. A token confers no grant. Durable authorization namespaces and valid random typed-target mappings survive the validated backup; only live view/snapshot runtime state is replaced.",
+    "authority": "Source text is untrusted evidence. Only explicitly authenticated controls below can correct state. Goal/commitment/outcome labels below are fixture concepts, not new production registry members.",
+    "subject_scope": "Inherit base source-local subject grants. No per-principal source ACL exists; S4 denial is the absence of scope_s4 from the current client subject grant, with no identity expansion."
+  },
+  "input": {
+    "records": [
+      {
+        "id": "x_r_goal_c1",
+        "source_ref": "base:s2",
+        "speaker_ref": "base:actor_ada",
+        "available_at": "2025-01-08T09:00:00Z",
+        "source_observed_at": "2025-01-08T08:58:00Z",
+        "occurred_at": "2025-01-08T08:58:00Z",
+        "content": "Ada Vale: Our goal is a delivered and reviewed one-page idempotency note. I separately commit to send Ben the note, version v2, by Friday 10 January 2025 at 17:00 UTC. Delivery must be to the synthetic review desk and v2 must include the heading Retries repeat safely and the sentence Copies are not independent evidence.",
+        "core_accepted_at": "2025-01-08T09:00:00Z",
+        "controlled_admitted_at": "2025-01-08T09:00:30Z",
+        "capture_seq": 22,
+        "admission_seq": 23
+      },
+      {
+        "id": "x_r_c2",
+        "source_ref": "base:s2",
+        "speaker_ref": "base:actor_ben",
+        "available_at": "2025-01-08T09:02:00Z",
+        "source_observed_at": "2025-01-08T09:01:00Z",
+        "occurred_at": "2025-01-08T09:01:00Z",
+        "content": "Ben Reed: I separately commit to review Ada's delivered note for conceptual accuracy and send my review by Monday 13 January 2025 at 17:00 UTC. Delivery by Ada is not completion of my review.",
+        "core_accepted_at": "2025-01-08T09:02:00Z",
+        "controlled_admitted_at": "2025-01-08T09:02:30Z",
+        "capture_seq": 24,
+        "admission_seq": 25
+      },
+      {
+        "id": "x_r_deadline_conflict",
+        "source_ref": "base:s2",
+        "speaker_ref": "base:actor_ben",
+        "available_at": "2025-01-08T09:04:00Z",
+        "source_observed_at": "2025-01-08T09:03:00Z",
+        "occurred_at": "2025-01-08T09:03:00Z",
+        "content": "Ben Reed: My understanding is that Ada's delivery commitment is due Thursday 9 January 2025 at 17:00 UTC. I have not confirmed this with Ada. My own review remains due Monday 13 January at 17:00 UTC.",
+        "core_accepted_at": "2025-01-08T09:04:00Z",
+        "controlled_admitted_at": "2025-01-08T09:04:30Z",
+        "capture_seq": 26,
+        "admission_seq": 27
+      },
+      {
+        "id": "x_r_agent_done",
+        "source_ref": "base:s2",
+        "available_at": "2025-01-13T08:30:00Z",
+        "source_observed_at": "2025-01-13T08:29:00Z",
+        "occurred_at": "2025-01-13T08:29:00Z",
+        "source_attribution": "Synthetic task agent, captured message; not Ada or Ben's own assertion.",
+        "content": "Synthetic task agent: Done. I uploaded idempotency-note version v2 for Ada's delivery commitment. Request upload-01.",
+        "core_accepted_at": "2025-01-13T08:30:00Z",
+        "controlled_admitted_at": "2025-01-13T08:30:30Z",
+        "capture_seq": 29,
+        "admission_seq": 30
+      },
+      {
+        "id": "x_r_provider_ack",
+        "source_ref": "base:s2",
+        "available_at": "2025-01-13T08:31:00Z",
+        "source_observed_at": "2025-01-13T08:30:50Z",
+        "occurred_at": "2025-01-13T08:30:50Z",
+        "source_attribution": "Synthetic storage provider acknowledgement captured verbatim.",
+        "content": "Synthetic provider: Request upload-01 accepted. Object idempotency-note stored. The request is acknowledged; content/version inspection and recipient review are not asserted.",
+        "core_accepted_at": "2025-01-13T08:31:00Z",
+        "controlled_admitted_at": "2025-01-13T08:31:30Z",
+        "capture_seq": 31,
+        "admission_seq": 32
+      },
+      {
+        "id": "x_r_wrong_version",
+        "source_ref": "base:s2",
+        "speaker_ref": "base:actor_ben",
+        "available_at": "2025-01-13T08:35:00Z",
+        "source_observed_at": "2025-01-13T08:34:00Z",
+        "occurred_at": "2025-01-13T08:34:00Z",
+        "artifact_refs": [
+          "x_artifact_v1"
+        ],
+        "content": "Ben Reed: I independently inspected what arrived at the synthetic review desk. It is idempotency-note v1, with the heading but without Copies are not independent evidence. It fails C1's required version/content check. I have not completed C2's conceptual review.",
+        "core_accepted_at": "2025-01-13T08:35:00Z",
+        "controlled_admitted_at": "2025-01-13T08:35:30Z",
+        "capture_seq": 33,
+        "admission_seq": 34
+      },
+      {
+        "id": "x_r_correct_version",
+        "source_ref": "base:s2",
+        "speaker_ref": "base:actor_ben",
+        "available_at": "2025-01-13T08:50:00Z",
+        "source_observed_at": "2025-01-13T08:49:00Z",
+        "occurred_at": "2025-01-13T08:49:00Z",
+        "artifact_refs": [
+          "x_artifact_v2"
+        ],
+        "content": "Ben Reed: I independently received and inspected the replacement at the synthetic review desk. It is idempotency-note v2 with Retries repeat safely and Copies are not independent evidence. C1's delivery/version/content criteria now match. This was only a delivery check; C2's conceptual review is still pending.",
+        "core_accepted_at": "2025-01-13T08:50:00Z",
+        "controlled_admitted_at": "2025-01-13T08:50:30Z",
+        "capture_seq": 35,
+        "admission_seq": 36
+      }
+    ],
+    "artifacts": [
+      {
+        "id": "x_artifact_v1",
+        "available_at": "2025-01-13T08:35:00Z",
+        "logical_name": "idempotency-note",
+        "version": "v1",
+        "media_type": "text/plain",
+        "content": "Idempotency note v1\nRetries repeat safely\nApplying an idempotent operation again has the same effect.\n"
+      },
+      {
+        "id": "x_artifact_v2",
+        "available_at": "2025-01-13T08:50:00Z",
+        "logical_name": "idempotency-note",
+        "version": "v2",
+        "media_type": "text/plain",
+        "content": "Idempotency note v2\nRetries repeat safely\nApplying an idempotent operation again has the same effect.\nCopies are not independent evidence.\n"
+      }
+    ],
+    "controls": [
+      {
+        "id": "x_ctl_correct_c1",
+        "kind": "owner_exact_correction",
+        "available_at": "2025-01-09T09:00:00Z",
+        "actor_ref": "base:g1",
+        "target_record_refs": [
+          "x_r_goal_c1",
+          "x_r_deadline_conflict"
+        ],
+        "scope": "Only the authoritative current C1 deadline interpretation, through its exact supported target. Original attributed statements remain historical; no change to C2.",
+        "replacement": "C1's corrected deadline is Monday 13 January 2025 at 09:00 UTC.",
+        "replacement_valid_from": "2025-01-08T08:58:00Z",
+        "correction_deadline": "2025-01-13T09:00:00Z",
+        "admission_seq": 28
+      },
+      {
+        "id": "x_ctl_export",
+        "kind": "create_isolated_post_purge_checkpoint",
+        "available_at": "2025-01-13T08:52:00Z",
+        "snapshot_ref": "x_snapshot",
+        "executor": "Authorized isolated harness recovery boundary.",
+        "scope": "Export retained authority/history, existing purge linkage, current source policy and client grants. Exclude live view cache/tokens.",
+        "admission_seq": 37
+      },
+      {
+        "id": "x_ctl_restore",
+        "kind": "restore_checkpoint_into_clean_target",
+        "available_at": "2025-01-13T08:54:00Z",
+        "snapshot_ref": "x_snapshot",
+        "executor": "Authorized isolated harness recovery boundary.",
+        "branch": "restore",
+        "scope": "Validate retained authority and erasure journal, stage privately, install fresh view runtime generation and publish atomically before accepting reads. No in-place downgrade or real vault operation is authorized.",
+        "admission_seq": 38
+      }
+    ],
+    "snapshot": {
+      "id": "x_snapshot",
+      "available_at": "2025-01-13T08:52:00Z",
+      "retained_base_record_refs": [
+        "base:r02",
+        "base:r03",
+        "base:r04",
+        "base:r06"
+      ],
+      "retained_extension_record_refs": [
+        "x_r_goal_c1",
+        "x_r_c2",
+        "x_r_deadline_conflict",
+        "x_r_agent_done",
+        "x_r_provider_ack",
+        "x_r_wrong_version",
+        "x_r_correct_version"
+      ],
+      "artifact_refs": [
+        "x_artifact_v1",
+        "x_artifact_v2"
+      ],
+      "retained_control_refs": [
+        "base:ctl_revoke_s1",
+        "base:ctl_purge_s1",
+        "base:ctl_purge_copy",
+        "base:ctl_narrow_g1",
+        "x_ctl_correct_c1"
+      ],
+      "excluded_raw_record_refs": [
+        "base:r01",
+        "base:r05"
+      ],
+      "live_view_tokens_included": false,
+      "meaning": "Concrete expected checkpoint inventory for a future adapter; not a generated or validated product archive."
+    },
+    "queries": [
+      {
+        "id": "x_q_conflict",
+        "principal_ref": "base:g1",
+        "known_at": "2025-01-08T09:06:00Z",
+        "delivery_at": "2025-01-08T09:06:00Z",
+        "request": "Show the goal, both commitments, each speaker's C1 deadline perspective, and the independent unresolved base question."
+      },
+      {
+        "id": "x_q_before_correction",
+        "principal_ref": "base:g1",
+        "known_at": "2025-01-09T08:59:00Z",
+        "delivery_at": "2025-01-09T08:59:00Z",
+        "request": "Retain a complete current view of both commitments before the owner correction."
+      },
+      {
+        "id": "x_q_corrected",
+        "principal_ref": "base:g1",
+        "known_at": "2025-01-09T09:01:00Z",
+        "delivery_at": "2025-01-09T09:01:00Z",
+        "baseline_query_ref": "x_q_before_correction",
+        "request": "Revalidate both commitments after the exact owner correction."
+      },
+      {
+        "id": "x_q_old_knowledge",
+        "principal_ref": "base:g1",
+        "known_at": "2025-01-08T09:06:00Z",
+        "delivery_at": "2025-01-09T09:02:00Z",
+        "valid_at": "2025-01-08T08:58:00Z",
+        "request": "Reconstruct the earlier admitted deadline perspectives under current permitted policy; do not inject the later correction."
+      },
+      {
+        "id": "x_q_agent",
+        "principal_ref": "base:g1",
+        "known_at": "2025-01-13T08:30:40Z",
+        "delivery_at": "2025-01-13T08:30:40Z",
+        "request": "What evidence supports completion now?"
+      },
+      {
+        "id": "x_q_ack",
+        "principal_ref": "base:g1",
+        "known_at": "2025-01-13T08:31:40Z",
+        "delivery_at": "2025-01-13T08:31:40Z",
+        "request": "What changed after acknowledgement, and what remains unverified?"
+      },
+      {
+        "id": "x_q_wrong",
+        "principal_ref": "base:g1",
+        "known_at": "2025-01-13T08:36:00Z",
+        "delivery_at": "2025-01-13T08:36:00Z",
+        "request": "Read both commitments and the goal after the independent wrong-version observation."
+      },
+      {
+        "id": "x_q_correct",
+        "principal_ref": "base:g1",
+        "known_at": "2025-01-13T08:51:00Z",
+        "delivery_at": "2025-01-13T08:51:00Z",
+        "request": "Read the exact version/outcome history and both commitments; retain a complete scoped view token."
+      },
+      {
+        "id": "x_q_pre_success_history",
+        "principal_ref": "base:g1",
+        "known_at": "2025-01-13T08:36:00Z",
+        "delivery_at": "2025-01-13T08:51:30Z",
+        "request": "Read outcome evidence as known after the failure but before the replacement; current authorization applies."
+      },
+      {
+        "id": "x_q_restored_old_token",
+        "principal_ref": "base:g1",
+        "known_at": "2025-01-13T08:55:00Z",
+        "delivery_at": "2025-01-13T08:55:00Z",
+        "branch": "restore",
+        "baseline_query_ref": "x_q_correct",
+        "request": "Use the pre-restore token against the restored target while it would otherwise remain within TTL."
+      },
+      {
+        "id": "x_q_restored_fresh",
+        "principal_ref": "base:g1",
+        "known_at": "2025-01-13T08:56:00Z",
+        "delivery_at": "2025-01-13T08:56:00Z",
+        "branch": "restore",
+        "request": "Obtain a fresh view of both commitments, complete retained outcome history and the independent unresolved base question."
+      }
+    ]
+  },
+  "oracle": {
+    "isolation": "All expected meanings below are held outside the system-under-test input. No expected status is a measured result.",
+    "entities": [
+      {
+        "id": "x_goal",
+        "kind": "proposed_goal",
+        "evidence_refs": [
+          "x_r_goal_c1"
+        ],
+        "meaning": "A delivered AND conceptually reviewed one-page note; C1 and C2 are distinct necessary commitments."
+      },
+      {
+        "id": "x_c1",
+        "kind": "proposed_commitment",
+        "evidence_refs": [
+          "x_r_goal_c1"
+        ],
+        "actor_ref": "base:actor_ada",
+        "goal_ref": "x_goal",
+        "meaning": "Deliver exact v2 with specified content to Ben's synthetic review desk."
+      },
+      {
+        "id": "x_c2",
+        "kind": "proposed_commitment",
+        "evidence_refs": [
+          "x_r_c2"
+        ],
+        "actor_ref": "base:actor_ben",
+        "goal_ref": "x_goal",
+        "meaning": "Independently review conceptual accuracy and send review; deadline 2025-01-13T17:00:00Z."
+      }
+    ],
+    "assertions": [
+      {
+        "id": "x_a_conflict",
+        "query_refs": [
+          "x_q_conflict",
+          "x_q_before_correction",
+          "x_q_old_knowledge"
+        ],
+        "evidence_refs": [
+          "x_r_goal_c1",
+          "x_r_c2",
+          "x_r_deadline_conflict",
+          "base:r03"
+        ],
+        "semantic_control_refs": [],
+        "expected": "One explicit goal and two distinct commitments. C1 retains Ada's Friday 10 January 17:00 claim and Ben's unconfirmed Thursday 9 January 17:00 perspective; no agreed deadline is invented. C2 is Ben's separate review due 13 January 17:00. A. Vale's base question remains unresolved with unknown occurrence time and is not answered by the new commitment text.",
+        "forbidden": [
+          "Merge C1 and C2 by shared goal.",
+          "Apply later correction in the earlier known_at view.",
+          "Infer A. Vale identity from Ada's new records.",
+          "Claim a new Question API exists."
+        ]
+      },
+      {
+        "id": "x_a_correction",
+        "query_refs": [
+          "x_q_corrected"
+        ],
+        "evidence_refs": [
+          "x_r_goal_c1",
+          "x_r_c2",
+          "x_r_deadline_conflict"
+        ],
+        "semantic_control_refs": [
+          "x_ctl_correct_c1"
+        ],
+        "expected": "C1 current authoritative deadline becomes 13 January 09:00 by the exact owner correction, with source perspectives still attributable in retained history. C2 remains 13 January 17:00 with its own actor/action/support. The prior complete view has visibly changed within two minutes: revalidation cannot return unchanged; serve a newly validated current result under the future contract.",
+        "forbidden": [
+          "Rewrite raw deadline statements.",
+          "Change C2 or mark either commitment complete.",
+          "Defer authority until asynchronous consolidation.",
+          "Treat a visible correction as a grant change."
+        ]
+      },
+      {
+        "id": "x_a_agent",
+        "query_refs": [
+          "x_q_agent"
+        ],
+        "evidence_refs": [
+          "x_r_agent_done"
+        ],
+        "semantic_control_refs": [
+          "x_ctl_correct_c1"
+        ],
+        "expected": "Exactly one available completion-evidence event: the agent's claim. C1's independent delivery/version check, C2 review and goal achievement remain unverified.",
+        "forbidden": [
+          "Use later acknowledgement, inspections or v2 bytes.",
+          "Treat the word done as achieved objective."
+        ]
+      },
+      {
+        "id": "x_a_ack",
+        "query_refs": [
+          "x_q_ack"
+        ],
+        "evidence_refs": [
+          "x_r_agent_done",
+          "x_r_provider_ack"
+        ],
+        "semantic_control_refs": [
+          "x_ctl_correct_c1"
+        ],
+        "expected": "Two distinct attributable events: agent claim and provider acknowledgement. Acknowledgement proves only what the synthetic receipt asserts, not correct version/content, recipient acceptance, completed review or whole-goal success.",
+        "forbidden": [
+          "Collapse both events into independently observed success.",
+          "Use future inspected artifact bytes."
+        ]
+      },
+      {
+        "id": "x_a_wrong",
+        "query_refs": [
+          "x_q_wrong",
+          "x_q_pre_success_history"
+        ],
+        "evidence_refs": [
+          "x_r_agent_done",
+          "x_r_provider_ack",
+          "x_r_wrong_version"
+        ],
+        "artifact_refs": [
+          "x_artifact_v1"
+        ],
+        "semantic_control_refs": [
+          "x_ctl_correct_c1"
+        ],
+        "expected": "Three distinct events, including Ben's independently observed v1/content failure. C1 delivery criteria are not met at this knowledge boundary; C2 and the goal remain incomplete. The earlier agent claim and acknowledgement persist with their own weaker meanings.",
+        "forbidden": [
+          "Let later v2 success rewrite this earlier failed state.",
+          "Treat source-record count as independent witness count.",
+          "Read future v2 bytes or its inspection."
+        ]
+      },
+      {
+        "id": "x_a_correct",
+        "query_refs": [
+          "x_q_correct"
+        ],
+        "evidence_refs": [
+          "x_r_agent_done",
+          "x_r_provider_ack",
+          "x_r_wrong_version",
+          "x_r_correct_version"
+        ],
+        "artifact_refs": [
+          "x_artifact_v1",
+          "x_artifact_v2"
+        ],
+        "semantic_control_refs": [
+          "x_ctl_correct_c1"
+        ],
+        "expected": "Four distinct attributable evidence events. Ben's later observed exact v2 delivery satisfies C1's stated delivery/version/content criterion before its corrected 09:00 deadline. Earlier v1 failure remains historical. C2 conceptual review is still pending, so the combined goal is not established achieved.",
+        "forbidden": [
+          "Infer C2 review from a delivery check.",
+          "Rewrite the first agent claim as verified at its original time.",
+          "Invent assisted performance, unobserved actions or review receipts."
+        ]
+      },
+      {
+        "id": "x_a_restore_old",
+        "query_refs": [
+          "x_q_restored_old_token"
+        ],
+        "evidence_refs": [],
+        "semantic_control_refs": [],
+        "delivery_control_refs": [
+          "x_ctl_restore"
+        ],
+        "baseline_query_ref": "x_q_correct",
+        "expected": "Fixed new_view_required with no old identifiers/counts/details. The token is only four minutes old, so fresh view runtime-generation invalidation, not expiry, causes refusal. No old token is imported into the restored cache.",
+        "forbidden": [
+          "unchanged",
+          "empty successful diff",
+          "Using a token as authorization.",
+          "Serving bytes before restored policy and view runtime generation are installed."
+        ]
+      },
+      {
+        "id": "x_a_restore_fresh",
+        "query_refs": [
+          "x_q_restored_fresh"
+        ],
+        "evidence_refs": [
+          "x_r_goal_c1",
+          "x_r_c2",
+          "x_r_deadline_conflict",
+          "x_r_agent_done",
+          "x_r_provider_ack",
+          "x_r_wrong_version",
+          "x_r_correct_version",
+          "base:r03"
+        ],
+        "artifact_refs": [
+          "x_artifact_v1",
+          "x_artifact_v2"
+        ],
+        "semantic_control_refs": [
+          "x_ctl_correct_c1"
+        ],
+        "delivery_control_refs": [
+          "x_ctl_restore"
+        ],
+        "expected": "Fresh current projection, if complete and supported: C1's corrected deadline and later observed v2 delivery, C2 review pending, goal not yet achieved, all four outcome events retained with original knowledge times, and unresolved A. Vale question. Current source/grant restrictions and base purge tombstones survive restore; r01/r05 do not resurrect. Historical earlier queries still exclude later admissions.",
+        "forbidden": [
+          "Restore a pre-purge raw event or source-derived erased proof.",
+          "Expose r06-only private identity through g1's narrowed grant.",
+          "Mark missing history current/unchanged or invent an empty past.",
+          "Claim bytes already held by external clients were revoked."
+        ]
+      }
+    ]
+  },
+  "validation_scope": "Strict JSON, frozen-base hash, all local/cross-base references, record/admission/query chronology, oracle prefix availability, artifact versions, exact C1/C2 separation, four outcome events, token timing and snapshot selection. Passing these static checks does not execute the proposed product contracts.",
+  "original_design_sha256": "d35f8cc8fde3a4087bf603c865e74d7e7c6e0ea46db22a5319d9986d73fd8c9b"
+}
