@@ -972,3 +972,5 @@ export { claimRetrievalDoc } from "./claims/store";
 export { ESTATE_IMPORT_LIMITS } from "./contracts/estate-import";
 export type { EstateIssueCode, EstateImportIssue, EstateImportMapping, EstateImportReport, EstateSlice, EstateRecord, EstateAuthorization } from "./contracts/estate-import";
 export { EstateImportError, planEstateImport } from "./import/estate";
+export { evaluateQualification, QUALIFICATION_WINDOW_MS } from "./serve/qualification";
+export type { QualificationProfile, QualificationRail, QualificationReceipt, QualificationProcess, QualificationSample } from "./serve/qualification";
