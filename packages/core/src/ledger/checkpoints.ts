@@ -42,12 +42,3 @@ export function writeRailCursor(
 ): void {
   writeResumeCursor(db, rail, sourceKey, cursor);
 }
-
-export function writeCheckpoint(
-  db: Database,
-  connectorId: string,
-  sourceKey: string,
-  cursor: Cursor,
-): void {
-  writeRailCursor(db, connectorId, sourceKey, cursor);
-}

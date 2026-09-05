@@ -4,7 +4,7 @@ import { openLedger } from "../src/ledger/db";
 import {
   readCheckpoint,
   readRailCursor,
-  writeCheckpoint,
+  writeRailCursor,
 } from "../src/ledger/checkpoints";
 import {
   getCheckpoint,
@@ -56,8 +56,8 @@ describe("checkpoints", () => {
 
   test("rail cursors round-trip without a connections row", () => {
     const db = openLedger(":memory:");
-    writeCheckpoint(db, "kizuki.producer.model", "extract", "cursor-a");
-    writeCheckpoint(db, "kizuki.producer.model", "other", "cursor-other");
+    writeRailCursor(db, "kizuki.producer.model", "extract", "cursor-a");
+    writeRailCursor(db, "kizuki.producer.model", "other", "cursor-other");
 
     expect(readRailCursor(db, "kizuki.producer.model", "extract")).toBe("cursor-a");
     expect(readRailCursor(db, "kizuki.producer.model", "other")).toBe("cursor-other");
@@ -70,8 +70,8 @@ describe("checkpoints", () => {
 
   test("rewriting a rail cursor replaces the stored token", () => {
     const db = openLedger(":memory:");
-    writeCheckpoint(db, "rail", "extract", "first");
-    writeCheckpoint(db, "rail", "extract", "second");
+    writeRailCursor(db, "rail", "extract", "first");
+    writeRailCursor(db, "rail", "extract", "second");
     expect(readRailCursor(db, "rail", "extract")).toBe("second");
     expect(
       db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM rail_cursors").get(),
