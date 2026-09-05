@@ -6,11 +6,18 @@ const OUTPUT_LIMIT = 64 * 1024;
 type DrainedOutput = { text: string; overflowed: boolean };
 type ChildResult =
   | { kind: "exited"; exitCode: number; stdout: DrainedOutput; stderr: DrainedOutput }
-  | { kind: "child_timeout"; exitCode: number; stdoutDrained: true; stderrDrained: true };
+  | {
+      kind: "child_timeout";
+      exitCode: number | null;
+      signalCode: string | null;
+      killed: boolean;
+      stdoutDrained: true;
+      stderrDrained: true;
+    };
 
 async function drainBounded(stream: ReadableStream<Uint8Array>, limit: number): Promise<DrainedOutput> {
   const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
+  const bytes = new Uint8Array(limit);
   let retained = 0;
   let overflowed = false;
 
@@ -22,22 +29,16 @@ async function drainBounded(stream: ReadableStream<Uint8Array>, limit: number): 
         overflowed = true;
         continue;
       }
-      const prefix = value.subarray(0, limit - retained);
-      chunks.push(prefix);
-      retained += prefix.length;
-      if (prefix.length !== value.length) overflowed = true;
+      const accepted = Math.min(value.length, limit - retained);
+      bytes.set(value.subarray(0, accepted), retained);
+      retained += accepted;
+      if (accepted !== value.length) overflowed = true;
     }
   } finally {
     reader.releaseLock();
   }
 
-  const bytes = new Uint8Array(retained);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return { text: new TextDecoder().decode(bytes), overflowed };
+  return { text: new TextDecoder().decode(bytes.subarray(0, retained)), overflowed };
 }
 
 async function runChild(script: string, deadlineMs = 15_000): Promise<ChildResult> {
@@ -57,12 +58,19 @@ async function runChild(script: string, deadlineMs = 15_000): Promise<ChildResul
   try {
     const [exitCode, drainedStdout, drainedStderr] = await Promise.all([child.exited, stdout, stderr]);
     if (timedOut) {
-      return { kind: "child_timeout", exitCode, stdoutDrained: true, stderrDrained: true };
+      return {
+        kind: "child_timeout",
+        exitCode: child.exitCode,
+        signalCode: child.signalCode,
+        killed: child.killed,
+        stdoutDrained: true,
+        stderrDrained: true,
+      };
     }
     return { kind: "exited", exitCode, stdout: drainedStdout, stderr: drainedStderr };
   } finally {
     clearTimeout(deadline);
-    if (child.exitCode === null) child.kill("SIGKILL");
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
     await child.exited;
     await Promise.allSettled([stdout, stderr]);
   }
@@ -130,13 +138,15 @@ for (const mode of ["memfd", "write", "add-seals", "read-seals", "compile", "suc
     expect(result.exitCode).toBe(0);
     expect(result.stdout.text).toBe("passed");
     expect(result.stderr.text).toBe("");
-  });
+  }, 20_000);
 
-test("native child harness kills, reaps, and drains a deadline-overrun child", async () => {
-  const result = await runChild("await new Promise(() => {});", 25);
+test("native child harness owns its 15-second deadline, kills, reaps, and drains", async () => {
+  const result = await runChild("await new Promise(() => {});");
   expect(result.kind).toBe("child_timeout");
   if (result.kind !== "child_timeout") throw new Error("native_loader_child_deadline_missing");
-  expect(result.exitCode).not.toBe(0);
+  expect(result.exitCode).toBeNull();
+  expect(result.signalCode).toBe("SIGKILL");
+  expect(result.killed).toBe(true);
   expect(result.stdoutDrained).toBe(true);
   expect(result.stderrDrained).toBe(true);
-});
+}, 20_000);
