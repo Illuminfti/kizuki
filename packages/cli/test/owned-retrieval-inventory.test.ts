@@ -7,7 +7,8 @@ import { openEmbeddedRetrievalPort, EMBEDDED_RETRIEVAL_ID } from "@kizuki/retrie
 import { createOwnedRetrievalInventory } from "../src/owned-retrieval-inventory";
 import { createHelpers } from "./helpers";
 import { SYNTHETIC_DOCS } from "../../core/test/contracts/fixtures";
-const h = createHelpers(); afterEach(h.cleanup);
+// Temporary diagnostics for the CI-only native erasure failure; remove after repair.
+const h = createHelpers({ preload: join(import.meta.dir, "owned-retrieval-diagnostics-preload.ts") }); afterEach(h.cleanup);
 function ctx(vault: string, id: string): PortContext { return { vault_path: vault, data_dir: join(vault, ".kizuki/retrieval", id), config: {}, clock: () => new Date().toISOString(), secrets: async () => "", logger: () => {} }; }
 
 test("inventory covers historical roots independently of config and closes both discarded ports", async () => {
