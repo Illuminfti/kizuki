@@ -154,6 +154,33 @@ describe("shapeArguments", () => {
     expect(shaped.__audit_truncated_entries__).toBe(false);
     expect(JSON.stringify(shaped)).toContain('"reason":"object_key_limit"');
   });
+
+  test("preserves root counters and collision-safe evidence when nested data exhausts the budget", () => {
+    const args = {
+      nested: Object.fromEntries(Array.from({ length: 32 }, (_, index) => [`array_${index}`, new Array(32)])),
+      count: 7,
+      __audit_arguments__: false,
+    };
+    const shaped = shapeArguments(args);
+    expect(shaped.count).toBe(7);
+    expect(shaped.__audit_arguments__).toBe(false);
+    expect(shaped.nested).toBeUndefined();
+    expect(JSON.stringify(shaped)).toContain('"reason":"node_limit"');
+  });
+
+  test("the scalar fallback obeys UTF-8 and JSON-escaped key byte limits", () => {
+    for (const unit of ["界", "\u0000"]) {
+      const args: Record<string, unknown> = { count: 19 };
+      for (let index = 0; index < 31; index += 1) {
+        args[`${unit.repeat(254)}${String(index).padStart(2, "0")}`] = index;
+      }
+      const shaped = shapeArguments(args);
+      const encoded = JSON.stringify(shaped);
+      expect(Buffer.byteLength(encoded)).toBeLessThanOrEqual(32 * 1024);
+      expect(shaped.count).toBe(19);
+      if (unit === "\u0000") expect(encoded).toContain('"reason":"serialized_size_limit"');
+    }
+  });
 });
 
 describe("audit trail", () => {

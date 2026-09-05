@@ -51,6 +51,11 @@ interface ShapeBudget {
   hashedTextCodeUnits: number;
 }
 
+interface RootShape {
+  value: Record<string, unknown>;
+  reserved: Set<string>;
+}
+
 const NODE_LIMIT = Symbol("audit shape node limit");
 
 // Count every emitted JSON value, including containers and marker fields.
@@ -75,6 +80,30 @@ function rootMarker(type: string, reason?: string): Record<string, unknown> {
   if (reason !== undefined) detail.reason = reason;
   shaped.__audit_arguments__ = detail;
   return shaped;
+}
+
+function isScalar(value: unknown): boolean {
+  return value === null || typeof value === "number" || typeof value === "boolean" || value === "";
+}
+
+/** Retain bounded root counters when nested data cannot be represented. */
+function truncateRoot(root: RootShape, reason: string): Record<string, unknown> {
+  const key = metadataKey("__audit_arguments__", root.reserved);
+  const detail = rootMarker("truncated", reason).__audit_arguments__;
+  // The original root container and retained scalars were already charged.
+  // The temporary root and fixed detail consume the four reserved values.
+  let bytes = 2 + utf8ByteLength(JSON.stringify(key)) + 1 + utf8ByteLength(JSON.stringify(detail));
+  for (const [field, value] of Object.entries(root.value)) {
+    if (!isScalar(value)) {
+      delete root.value[field];
+      continue;
+    }
+    const entryBytes = 1 + utf8ByteLength(JSON.stringify(field)) + 1 + utf8ByteLength(JSON.stringify(value));
+    if (bytes + entryBytes > MAX_QUERY_SHAPE_BYTES) delete root.value[field];
+    else bytes += entryBytes;
+  }
+  root.value[key] = detail;
+  return root.value;
 }
 
 function shapeString(value: string, budget: ShapeBudget): unknown {
@@ -208,9 +237,10 @@ function shapeObject(
   depth: number,
   budget: ShapeBudget,
   ancestors: WeakSet<object>,
+  root?: RootShape,
 ): Record<string, unknown> {
   chargeNodes(budget, 1);
-  const shaped = emptyObject();
+  const shaped = root?.value ?? emptyObject();
   ancestors.add(value);
   try {
     // Reserve every retained caller key before choosing metadata names, so a
@@ -227,7 +257,17 @@ function shapeObject(
       }
       entries.push([key, property]);
     }
-    const reserved = new Set(entries.map(([key]) => key));
+    const reserved = root?.reserved ?? new Set<string>();
+    for (const [key] of entries) {
+      // Oversized names are never emitted and cannot equal a metadata key.
+      if (key.length <= MAX_KEY_CODE_UNITS) reserved.add(key);
+    }
+    if (root !== undefined) {
+      // Structural counters must survive a large nested value, regardless of
+      // its insertion order. Inspect only the captured own data descriptors.
+      const scalar = (property: PropertyDescriptor): boolean => "value" in property && isScalar(property.value);
+      entries.sort((left, right) => Number(scalar(right[1])) - Number(scalar(left[1])));
+    }
     for (const [index, [key, property]] of entries.entries()) {
       if (DANGEROUS_KEY.test(key)) {
         chargeNodes(budget, 3);
@@ -255,17 +295,19 @@ function shapeObject(
 
 export function shapeArguments(args: Record<string, unknown>): Record<string, unknown> {
   const budget = { nodes: 0, hashedTextCodeUnits: 0 };
+  const root: RootShape = { value: emptyObject(), reserved: new Set() };
   let shaped: Record<string, unknown>;
   try {
     shaped = isPlainObject(args)
-      ? shapeObject(args, 0, budget, new WeakSet<object>())
+      ? shapeObject(args, 0, budget, new WeakSet<object>(), root)
       : rootMarker("not_plain_object");
   } catch (error) {
-    shaped = error === NODE_LIMIT ? rootMarker("truncated", "node_limit") : rootMarker("uninspectable");
+    if (error === NODE_LIMIT) return truncateRoot(root, "node_limit");
+    return rootMarker("uninspectable");
   }
   return utf8ByteLength(JSON.stringify(shaped)) <= MAX_QUERY_SHAPE_BYTES
     ? shaped
-    : rootMarker("truncated", "serialized_size_limit");
+    : truncateRoot(root, "serialized_size_limit");
 }
 
 function redactId(id: string): string {

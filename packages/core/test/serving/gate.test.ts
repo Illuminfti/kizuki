@@ -403,4 +403,25 @@ describe("authority is re-read on every served call", () => {
     expect(JSON.stringify(row?.query_shape).length).toBeLessThan(20_000);
     expect(row?.query_shape["+truncated"]).toBeGreaterThan(0);
   });
+
+  test("root overflow preserves the exact serving marker ahead of caller keys", () => {
+    const ctx = live.agent("search-only");
+    const args: Record<string, unknown> = { "+truncated": 999_999 };
+    for (let index = 0; index < 64; index += 1) {
+      args[`field-${index}`] = Array.from({ length: 200 }, () => "private-canary");
+    }
+    expect(refusal(() => gate(ctx, "propose", args, emptyRun)).code).toBe("tool_not_granted");
+    const row = listAudit(live.db, "search-only", { limit: 1 })[0];
+    expect(row?.query_shape["+truncated"]).toBeGreaterThan(0);
+    expect(row?.query_shape["+truncated"]).not.toBe(999_999);
+    expect(JSON.stringify(row?.query_shape)).not.toContain("private-canary");
+    expect(JSON.stringify(row?.query_shape)).toContain("node_limit");
+  });
+
+  test("a caller cannot manufacture the reserved serving truncation count", () => {
+    const ctx = live.agent("search-only");
+    expect(refusal(() => gate(ctx, "propose", { "+truncated": 999_999 }, emptyRun)).code).toBe("tool_not_granted");
+    const row = listAudit(live.db, "search-only", { limit: 1 })[0];
+    expect(row?.query_shape["+truncated"]).toBe(1);
+  });
 });

@@ -118,9 +118,14 @@ function boundedArguments(
 ): Record<string, unknown> {
   const budget: Budget = { leaves: AUDIT_LEAF_CAP, dropped: 0 };
   const shaped = boundedValue(args, 0, budget) as Record<string, unknown>;
-  return budget.dropped === 0
-    ? shaped
-    : { ...shaped, [TRUNCATION_KEY]: budget.dropped };
+  if (Object.hasOwn(shaped, TRUNCATION_KEY)) {
+    delete shaped[TRUNCATION_KEY];
+    budget.dropped += 1;
+  }
+  if (budget.dropped === 0) return shaped;
+  // Put trusted omission evidence before caller entries so the shared audit
+  // layer's own width cap cannot discard it. Caller keys cannot replace it.
+  return { [TRUNCATION_KEY]: budget.dropped, ...shaped };
 }
 
 /**
