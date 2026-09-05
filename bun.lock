@@ -17,6 +17,7 @@
       },
       "dependencies": {
         "@kizuki/connector-imap": "workspace:*",
+        "@kizuki/connector-telegram": "workspace:*",
         "@kizuki/connectors": "workspace:*",
         "@kizuki/core": "workspace:*",
         "@kizuki/embed-gguf": "workspace:*",

@@ -76,7 +76,11 @@ Browse sources, inspect saved sync status, or enroll a source. Local Beeper
 enrollment checks its authenticated Desktop API before saving a secret
 reference. IMAP enrollment uses a local interactive prompt and stores its
 opaque connector state in the owner-only connection-state store. File sources
-remain supported. Other account sign-in flows are unavailable and labeled in
+remain supported. `connect telegram [--source KEY] [--json]` uses native
+phone/code sign-in and optional two-step verification in an interactive terminal.
+Project app credentials are required; missing credentials refuse before any
+prompt or network connection. Re-sign-in preserves account identity and history.
+Other account sign-in flows are unavailable and labeled in
 the catalog. See [connection setup](connect.md).
 
 Sensitivity is optional: trusted connector runs resolve each valid event
@@ -350,3 +354,15 @@ purge. This does not guarantee containment of SQL already running during an
 external path substitution, and does not authorize live vault moves. The
 native generation walker is currently qualified only for Linux x64 glibc;
 other platforms remain pending for physical generation maintenance.
+
+Telegram enrollment captures no history. Use `backfill telegram --source KEY`
+after the source is authorized. The connection's opaque protected session holds
+provider cooldowns, and the native CLI persists those before returning a wait;
+reopening the source checks the cooldown before opening transport. Transport
+cleanup never logs out the Telegram session. Source-consent revocation and
+provider logout are distinct operations. Telegram deletion detection and remote
+message deletion remain unsupported. Synthetic native CLI tests do not qualify
+real account access, complete provider history or a live observation period.
+Before an authenticated session exists, initial sign-in has bounded attempts
+and waits but restart-persistent throttling is unproven. Failed cooldown storage
+is a visible failure requiring repair; it is not a successful rate-limit receipt.

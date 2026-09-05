@@ -15,6 +15,7 @@ import type {
   SignInDisplay,
   SignInIo,
   SyncBatch,
+  StatePersister,
 } from "@kizuki/core";
 import { TelegramConnectorError } from "./api";
 import type { TelegramApi, TelegramUser } from "./api";
@@ -32,6 +33,7 @@ import { notConnected, notSignedIn, revoked } from "./refusals";
 import { disconnectQuietly, openSession } from "./session";
 import type { SessionDeps } from "./session";
 import { enroll, waitSeconds } from "./sign-in";
+import { encodeState, type TelegramState } from "./state";
 import { TELEGRAM_CURSOR_SCHEMA } from "./cursor";
 import { walk } from "./walk";
 import type { DialogListing } from "./walk";
@@ -49,6 +51,7 @@ export interface TelegramConnectorConfig {
 export interface TelegramDeps extends SessionDeps {
   now: () => number;
   sleep: (ms: number) => Promise<void>;
+  persist: StatePersister;
 }
 
 const MANIFEST: Manifest = freezeManifest({
@@ -85,6 +88,9 @@ export class TelegramConnector implements Connector {
   #floodUntil = 0;
   #listing: DialogListing | null = null;
   #revoked = false;
+  #closed = false;
+  #closing: Promise<void> | null = null;
+  #state: TelegramState | null = null;
   #lastSuccessAt: string | undefined;
 
   constructor(
@@ -97,6 +103,7 @@ export class TelegramConnector implements Connector {
       credentials: deps.credentials ?? appCredentials,
       now: deps.now ?? Date.now,
       sleep: deps.sleep ?? Bun.sleep,
+      persist: deps.persist ?? (async () => { throw new Error("state persister unavailable"); }),
     };
   }
 
@@ -105,6 +112,7 @@ export class TelegramConnector implements Connector {
   }
 
   signIn(io: SignInIo, state: ConnectionStateWriter): Promise<SignInDisplay> {
+    this.#assertOpen();
     return enroll(this.#deps, io, state);
   }
 
@@ -112,10 +120,13 @@ export class TelegramConnector implements Connector {
     // Revocation is terminal for the instance, not a state to reconnect out
     // of: whatever the stored ref still resolves to, this connector was told
     // its access ended.
+    this.#assertOpen();
     if (this.#revoked) throw revoked();
     const ref = this.#stateRef;
     if (ref === null) throw notSignedIn();
-    const opened = await openSession(this.#deps, ref, resolve);
+    if (this.#deps.now() < this.#floodUntil) throw this.#waiting();
+    const opened = await openSession(this.#deps, ref, resolve, { now: this.#deps.now, onState: state => { this.#state = state; }, onFlood: seconds => this.#recordFlood(this.#deps.now() + seconds * 1000) });
+    if (this.#closed) { await disconnectQuietly(opened.api); this.#assertOpen(); }
     // Re-authentication keeps the same connection, so a second connect
     // supersedes the first: hand its client back rather than abandon a live
     // one for the life of the process. Only once the replacement is proven.
@@ -130,6 +141,7 @@ export class TelegramConnector implements Connector {
   }
 
   async health(): Promise<HealthReport> {
+    this.#assertOpen();
     const checked_at = this.#nowIso();
     const success =
       this.#lastSuccessAt === undefined
@@ -168,7 +180,9 @@ export class TelegramConnector implements Connector {
       });
     }
     try {
-      if (!(await api.isAuthorized())) {
+      const authorized = await api.isAuthorized();
+      this.#assertOpen();
+      if (!authorized) {
         return new HealthReport({
           state: "unauthenticated",
           checked_at,
@@ -177,6 +191,7 @@ export class TelegramConnector implements Connector {
         });
       }
     } catch (error) {
+      this.#assertOpen();
       if (
         error instanceof TelegramConnectorError &&
         error.code === "unauthenticated"
@@ -194,7 +209,7 @@ export class TelegramConnector implements Connector {
         // what keeps the next batch from spending a request into the same
         // wait, and calling throttling an outage would send `doctor` looking
         // for a fault there is none of.
-        this.#floodUntil = this.#deps.now() + seconds * 1000;
+        await this.#recordFlood(this.#deps.now() + seconds * 1000);
         return new HealthReport({
           state: "rate_limited",
           checked_at,
@@ -293,6 +308,7 @@ export class TelegramConnector implements Connector {
     cursor: Cursor | null,
     mode: "backfill" | "sync",
   ): Promise<SyncBatch> {
+    this.#assertOpen();
     if (this.#revoked) throw revoked();
     const api = this.#api;
     const self = this.#self;
@@ -305,12 +321,16 @@ export class TelegramConnector implements Connector {
       throw this.#waiting();
     }
     const result = await walk(cursor, mode, {
-      api,
+      api: {
+        dialogs: limit => this.#guardIteration(() => api.dialogs(limit)),
+        messages: (peer, query) => this.#guardIteration(() => api.messages(peer, query)),
+      },
       self,
       now: this.#deps.now,
       plan: this.#plan,
       dialogs: this.#listing?.dialogs ?? null,
     });
+    this.#assertOpen();
     // A pass that listed nothing says nothing about the account's dialogs.
     if (result.listing !== null) this.#listing = result.listing;
     if (result.floodUntil === null) {
@@ -319,7 +339,7 @@ export class TelegramConnector implements Connector {
     }
     // The pass stopped where the provider told it to, not where it meant to:
     // that instant is the last failure, not the last success.
-    this.#floodUntil = result.floodUntil;
+    await this.#recordFlood(result.floodUntil);
     // A batch is worth handing back mid-wait when the pass actually moved:
     // records collected, or pages read past ids that will not be asked for
     // again. Dropping the second kind is what makes a dialog whose leading
@@ -332,6 +352,44 @@ export class TelegramConnector implements Connector {
       moved && result.batch.cursor !== null && result.batch.cursor !== cursor;
     if (!resumable) throw this.#waiting();
     return result.batch;
+  }
+
+  async *#guardIteration<T>(create: () => AsyncIterable<T>): AsyncGenerator<T> {
+    this.#assertOpen();
+    const iterator = create()[Symbol.asyncIterator]();
+    try {
+      for (;;) {
+        this.#assertOpen();
+        const next = await iterator.next();
+        this.#assertOpen();
+        if (next.done) return;
+        yield next.value;
+      }
+    } finally { await iterator.return?.(); }
+  }
+
+  #assertOpen(): void { if (this.#closed) throw new TelegramConnectorError("closed", "kizuki.telegram: connector is closed"); }
+
+  async #recordFlood(until: number): Promise<void> {
+    this.#assertOpen();
+    this.#floodUntil = Math.max(this.#floodUntil, until);
+    try {
+      if (this.#state === null || !Number.isSafeInteger(this.#floodUntil) || this.#floodUntil > 253402300799999) throw new Error("invalid cooldown");
+      const next = { ...this.#state, retry_not_before: new Date(this.#floodUntil).toISOString() };
+      await this.#deps.persist(encodeState(next));
+      this.#state = next;
+    } catch {
+      throw new TelegramConnectorError("state_persistence_failed", "kizuki.telegram: provider cooldown could not be saved; stop this source and repair connection state before retrying");
+    }
+  }
+
+  /** Terminal transport cleanup only; never logs out the provider session. */
+  async close(): Promise<void> {
+    if (this.#closing !== null) return this.#closing;
+    this.#closed = true;
+    const api = this.#api; this.#api = null; this.#self = null; this.#listing = null;
+    this.#closing = api === null ? Promise.resolve() : api.disconnect();
+    return this.#closing;
   }
 
   /** The pause still in force, as the error a caller can act on. */

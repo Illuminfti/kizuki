@@ -66,6 +66,7 @@ export function harness(options: {
     api: () => api,
     credentials: () => FIXTURE_CREDENTIALS,
     now: () => clock.now,
+    persist: async () => {}, // Synthetic host; durability has a separate persisted-session suite.
     sleep: async (ms) => {
       sleeps.push(ms);
     },

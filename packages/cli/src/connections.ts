@@ -9,12 +9,14 @@ import type {
 } from "@kizuki/core";
 import {
   ConnectionStateStore,
+  createStatePersister,
   enrollConnection,
   isPlainObject,
   listConnections,
   sourceCaptureAdmission,
 } from "@kizuki/core";
 import { REGISTRY, getConnector } from "@kizuki/connectors";
+import { TelegramConnector, type TelegramConnectorConfig, type TelegramDeps } from "@kizuki/connector-telegram";
 import { errorText } from "./output";
 import { tokenResolver, validTokenRef } from "./secrets";
 import { consentHint } from "./source-consent";
@@ -27,7 +29,8 @@ export interface HostConnectionState {
   config:
     | { path: string; base_url?: never; token_secret_ref?: never }
     | { base_url: string; token_secret_ref: string; path?: never }
-    | { secret_ref: string; path?: never; base_url?: never; token_secret_ref?: never };
+    | { secret_ref: string; path?: never; base_url?: never; token_secret_ref?: never }
+    | { state_ref: string; path?: never; base_url?: never; token_secret_ref?: never; secret_ref?: never };
 }
 
 export class ConnectionError extends Error {
@@ -45,7 +48,7 @@ export function encodeHostState(state: HostConnectionState): Uint8Array {
         ? { path: state.config.path }
         : state.config.base_url !== undefined
           ? { base_url: state.config.base_url, token_secret_ref: state.config.token_secret_ref }
-          : { secret_ref: state.config.secret_ref },
+          : "state_ref" in state.config ? { state_ref: state.config.state_ref } : { secret_ref: state.config.secret_ref },
     }),
   );
 }
@@ -133,7 +136,7 @@ export function listEnrollableConnectorIds(): string[] {
     .sort()
     .filter((id) => connectorAuthModes(id)?.includes("none") === true ||
       (id === "kizuki.beeper" && connectorAuthModes(id)?.includes("secret_ref") === true) ||
-      (id === "kizuki.imap" && connectorAuthModes(id)?.includes("sign_in") === true));
+      (["kizuki.imap", "kizuki.telegram"].includes(id) && connectorAuthModes(id)?.includes("sign_in") === true));
 }
 
 function resolveRegisteredId(input: string): string | null {
@@ -225,11 +228,11 @@ function inspectConnection(
   connection: Connection,
 ): HostConnection {
   try {
-    if (connection.connector_id === "kizuki.imap") {
+    if (["kizuki.imap", "kizuki.telegram"].includes(connection.connector_id)) {
       const ref = connection.secret_refs[0];
-      if (connection.secret_refs.length !== 1 || ref === undefined) throw new ConnectionError("IMAP connection state is missing");
-      if (store.read(connection) === null) throw new ConnectionError("IMAP connection state is missing");
-      // IMAP state is connector-owned opaque bytes. This small in-memory
+      if (connection.secret_refs.length !== 1 || ref === undefined) throw new ConnectionError(`${connection.connector_id} connection state is missing`);
+      if (store.read(connection) === null) throw new ConnectionError(`${connection.connector_id} connection state is missing`);
+      // Signed-in state is connector-owned opaque bytes. This small in-memory
       // descriptor exposes only the core-minted reference needed to build the
       // connector; it is never encoded or written as host state.
       return {
@@ -237,7 +240,7 @@ function inspectConnection(
         state: {
           schema: HOST_STATE_SCHEMA,
           connector_id: connection.connector_id,
-          config: { secret_ref: ref },
+          config: connection.connector_id === "kizuki.telegram" ? { state_ref: ref } : { secret_ref: ref },
         },
         problem: null,
       };
@@ -342,7 +345,8 @@ export async function loadConnector(
   store: ConnectionStateStore,
   db: Database,
   env: Record<string, string | undefined> = process.env,
-  factory: (id: string, config?: unknown) => Connector = getConnector,
+  factory: (id: string, config?: unknown, telegramDeps?: Partial<TelegramDeps>) => Connector = (id, config, deps) => id === "kizuki.telegram" ? new TelegramConnector(config as TelegramConnectorConfig, deps) : getConnector(id, config),
+  db?: Database,
 ): Promise<Connector> {
   try { sourceCaptureAdmission(db, selected.connection.connector_id, selected.connection.source_key); }
   catch (error) {
@@ -356,27 +360,38 @@ export async function loadConnector(
       `${selected.connection.connector_id} source=${selected.connection.source_key}: ${selected.problem ?? "state missing"}; reconnect it`,
     );
   }
+  const telegram = selected.connection.connector_id === "kizuki.telegram";
+  if (telegram && db === undefined) throw new ConnectionError("Telegram requires a durable host state persister");
   const connector = factory(
     selected.connection.connector_id,
     selected.state.config,
+    telegram ? { persist: createStatePersister(db!, store, selected.connection).persist } : undefined,
   );
   const config = selected.state.config;
-  const ref = "token_secret_ref" in config
+  const ref = "state_ref" in config ? config.state_ref : "token_secret_ref" in config
     ? config.token_secret_ref
     : "secret_ref" in config
       ? config.secret_ref
       : undefined;
-  if (selected.connection.connector_id === "kizuki.imap") {
+  if (telegram || selected.connection.connector_id === "kizuki.imap") {
     const state = store.read(selected.connection);
-    if (state === null) throw new ConnectionError("IMAP connection state is missing");
-    await connector.connect(async (wanted) => {
-      if (wanted !== ref) {
-        throw new ConnectionError("unexpected connection state reference");
-      }
-      return new TextDecoder().decode(state);
-    });
+    if (state === null) throw new ConnectionError(`${selected.connection.connector_id} connection state is missing`);
+    try {
+      await connector.connect(async (wanted) => {
+        if (wanted !== ref) throw new ConnectionError("unexpected connection state reference");
+        return new TextDecoder().decode(state);
+      });
+    } catch (error) {
+      await closeHostConnector(connector).catch(() => {});
+      throw error;
+    }
   } else {
     await connector.connect(ref === undefined ? refuseSecrets : tokenResolver(ref, env));
   }
   return connector;
+}
+
+/** Concrete Telegram transport cleanup never revokes a provider session. */
+export async function closeHostConnector(connector: Connector): Promise<void> {
+  if (connector instanceof TelegramConnector) await connector.close();
 }

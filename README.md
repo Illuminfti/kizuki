@@ -179,8 +179,8 @@ password is masked while typed and is not accepted as a command-line flag.
 Kizuki keeps connection state in the owner-only local store. It does not send,
 delete, move, or mark mail read.
 
-**Source limits are part of the contract.** Telegram's package exists, but
-Telegram sign-in is not enrollable through this CLI. Dedicated Gmail, Google
+**Source limits are part of the contract.** Native Telegram CLI sign-in is
+wired, but requires project app credentials and has no real-account qualification receipt. Dedicated Gmail, Google
 Calendar, WHOOP, and X account flows are not advertised as available here.
 Screenpipe is neither a live screen recorder nor a media importer; its adapter
 requires a compatible, stopped database and does not emit source-deletion
@@ -480,7 +480,7 @@ packages/
 ├── core/                  # contracts, ledger, claims, canon, policy, serving
 ├── cli/                   # public commands and local loop composition
 ├── connectors/            # curated registry, importers, conformance tests
-├── connector-telegram/    # implementation; not CLI-enrollable
+├── connector-telegram/    # native sign-in; project credentials required
 ├── connector-imap/        # read-only email and terminal enrollment
 ├── connector-ics/         # calendar-file ingestion
 ├── connector-screenpipe/  # offline screen text and transcription ingestion

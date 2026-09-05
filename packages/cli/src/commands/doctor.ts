@@ -1,3 +1,4 @@
+import { closeHostConnector } from "../connections";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -232,8 +233,13 @@ async function collect(
       continue;
     }
     try {
+<<<<<<< HEAD
       const connector = await loadConnector(host, ctx.store, ctx.db);
       const health = await withDeadline(HEALTH_DEADLINE_MS, () => connector.health());
+=======
+      const connector = await loadConnector(host, ctx.store, process.env, undefined, ctx.db);
+      const health = await withDeadline(HEALTH_DEADLINE_MS, () => connector.health()).finally(() => closeHostConnector(connector));
+>>>>>>> 7c9422e (Wire native Telegram enrollment with durable authenticated cooldowns)
       connections.push({
         ...base,
         path: host.state.config.path ?? host.state.config.base_url ?? "managed local state",

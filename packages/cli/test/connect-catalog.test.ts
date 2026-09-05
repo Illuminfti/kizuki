@@ -12,6 +12,7 @@ describe("connect catalog", () => {
     const sources = JSON.parse(result.stdout).data.sources as Array<{ id: string; available: boolean }>;
     expect(sources.some((source) => source.id === "kizuki.markdown-folder" && source.available)).toBe(true);
     expect(sources.some((source) => source.id === "kizuki.telegram" && !source.available)).toBe(true);
+    expect(result.stdout).toContain("CLI wired; project app credentials missing");
   });
 
   test("status starts empty and names an enrolled local source without reading secrets", () => {

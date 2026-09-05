@@ -3,7 +3,7 @@ import { TelegramConnectorError } from "./api";
 import type { AppCredentials, TelegramApi, TelegramApiFactory, TelegramUser } from "./api";
 import { requireAppCredentials } from "./app-credentials";
 import { notSignedIn } from "./refusals";
-import { parseState } from "./state";
+import { parseState, assertTelegramRetryAllowed, type TelegramState } from "./state";
 
 /** What opening a session needs: a client to build and the credentials for it. */
 export interface SessionDeps {
@@ -29,6 +29,7 @@ export async function openSession(
   deps: SessionDeps,
   ref: string,
   resolve: SecretResolver,
+  options: { now?: () => number; onState?: (state: TelegramState) => void; onFlood?: (seconds: number) => Promise<void> } = {},
 ): Promise<{ api: TelegramApi; self: TelegramUser }> {
   let text: string;
   try {
@@ -39,6 +40,8 @@ export async function openSession(
     throw notSignedIn(error);
   }
   const state = parseState(text);
+  options.onState?.(state);
+  assertTelegramRetryAllowed(text, options.now?.() ?? Date.now());
   const credentials = requireAppCredentials(deps.credentials);
   const api = deps.api(state.session, credentials);
   try {
@@ -58,6 +61,10 @@ export async function openSession(
     }
     return { api, self };
   } catch (error) {
+    if (error instanceof TelegramConnectorError && error.code === "flood_wait" && Number.isSafeInteger(error.retry_after) && error.retry_after! > 0) {
+      try { await options.onFlood?.(error.retry_after!); } finally { await disconnectQuietly(api); }
+      throw error;
+    }
     await disconnectQuietly(api);
     throw error;
   }

@@ -13,7 +13,7 @@ exception: the posts may be published, but which channels you read is not.
 Subjects are the sender, the other party, and the chat itself, so a later
 purge can be aimed at one correspondent.
 
-This is the only package in the repository with a runtime dependency. It uses
+This package uses
 `telegram` (GramJS) to speak MTProto, and the library is loaded lazily inside
 the client factory, so nothing in the registry, the offline fixture or the
 conformance suite pulls transport code into the process.
@@ -67,12 +67,12 @@ uses would otherwise register one under a placeholder name and accept
 Telegram's terms of service on your behalf; both are outbound actions, and
 this connector takes none.
 
-The terminal verb that drives this flow is not part of this package. On this
-revision `kizuki connect` enrolls `none`-mode sources only, so
-`kizuki connect telegram --source …` answers
-`sign-in for kizuki.telegram is not wired yet`. Until that lands, the sign-in
-above is reachable from library callers through `enrollConnection` in
-`@kizuki/core`.
+Use `kizuki connect telegram [--source KEY] [--json]` in an interactive
+terminal. Phone, code and password prompts are masked. Enrollment uses the
+native MTProto connector and writes no captured messages. Missing project app
+credentials refuse before prompting or opening transport. Re-sign-in compares
+the previous and candidate account IDs before atomic state replacement, so a
+different account cannot inherit this source's history or checkpoint.
 
 ## Where the session lives
 
@@ -99,11 +99,8 @@ row are the host's part.
 
 ## What it does not do
 
-It cannot yet declare its own sensitivity floor. The connector manifest in
-`@kizuki/core` carries no `default_sensitivity` or `sensitivity_floor` field,
-so the per-event hint is the only label anything downstream can read. Until
-that contract lands, this connector labels everything `private`, which is what
-the policy for a messaging source resolves to anyway.
+The manifest declares the messaging source's private sensitivity floor;
+per-event hints cannot lower it.
 
 Deletions are invisible to it. Telegram publishes them on the update stream,
 which this connector does not consume, so the manifest declares
@@ -177,10 +174,34 @@ It signs in interactively and lists one dialog.
 
 ## Provider facts
 
-Checked 2026-09-02 against `core.telegram.org/api/auth` and
-`core.telegram.org/api/obtaining_api_id`. A person signs in with
+Checked 2026-09-05 against [user authorization](https://core.telegram.org/api/auth)
+and [project credentials](https://core.telegram.org/api/obtaining_api_id). A person signs in with
 `auth.sendCode`, then `auth.signIn` with the code, and `auth.checkPassword`
 when two-step verification returns `SESSION_PASSWORD_NEEDED`. The app id and
 hash are registered once per application and belong to whoever ships the
 build. Authentication rules and quotas change; re-check before relying on any
 of this.
+
+
+## Native host lifecycle and qualification boundary
+
+The CLI binds core's `createStatePersister` to the exact authenticated connection.
+FloodWait from reconnect, health or history stores a content-free
+`retry_not_before` timestamp in that same opaque state before returning. A new
+process checks it before opening transport; re-sign-in cannot clear an active
+cooldown. Legacy state without that field remains readable. A persistence failure
+is reported as a failure requiring state repair, never as a saved cooldown.
+Initial authentication before a confirmed session has bounded attempts/waits but
+no restart-persistent throttle; no unauthenticated side store is created.
+
+`close()` seals a connector and disconnects transport without logging out.
+The native CLI closes it after backfill, sync and health, including errors.
+Provider `revoke()` logs out; local source-consent revoke denies retained-evidence
+use and is a separate authority operation. Neither means remote message deletion.
+
+Tests use synthetic accounts and scripted transport through the native connector
+and CLI command handlers. No real Telegram account, code delivery, project app
+credentials or complete provider history has been qualified. Telegram controls
+code delivery, and some delivery modes are restricted to official applications;
+this implementation does not promise every account can authenticate. Beeper
+bridge tests supply no native Telegram qualification credit.

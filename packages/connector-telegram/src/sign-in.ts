@@ -166,9 +166,9 @@ export async function enroll(
     );
   }
   const api = deps.api("", credentials);
-  await api.connect();
   let me: TelegramUser;
   try {
+    await api.connect();
     await runSignIn(api, io, phone, deps.sleep);
     // Only once the account is known: a state blob without a confirmed
     // identity could not be checked against the session on the next connect.

@@ -1,3 +1,4 @@
+import { appCredentials } from "@kizuki/connector-telegram";
 import { REGISTRY } from "@kizuki/connectors";
 import { inspectSourceGrant, getCheckpoint, getConnectorSensitivity } from "@kizuki/core";
 import { listEnrollableConnectorIds, listHostConnections } from "./connections";
@@ -27,10 +28,11 @@ export function printConnectorCatalog(io: CliIo, json: boolean): number {
   const sources = Object.keys(REGISTRY).sort().map((id) => ({
     id,
     name: TITLES[id] ?? id,
-    mode: id === "kizuki.beeper" ? "local app" : id.includes("import-") ? "export import" :
+    mode: id === "kizuki.telegram" ? "native account sign-in" : id === "kizuki.beeper" ? "local app" : id.includes("import-") ? "export import" :
       enrollable.has(id) ? "local source" : "account sign-in",
-    available: enrollable.has(id),
-    detail: enrollable.has(id) ? "ready to connect" : "not yet available from this CLI",
+    available: enrollable.has(id) && (id !== "kizuki.telegram" || appCredentials() !== null),
+    cli_enrollable: enrollable.has(id),
+    detail: id === "kizuki.telegram" && appCredentials() === null ? "CLI wired; project app credentials missing" : enrollable.has(id) ? "ready to connect" : "not yet available from this CLI",
   }));
   if (json) {
     io.out(jsonEnvelope("connect", "ok", { sources }));
