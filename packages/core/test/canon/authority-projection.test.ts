@@ -93,7 +93,7 @@ test("public correction, page and context preserve owner correction through purg
   expectAuthority(f, receipt.page_path, "owner_correction");
   const ctx = { db: f.db, vaultPath: f.vault, principal: OWNER };
   expect(serveGetPage(ctx, { path: receipt.page_path }).canon[0]?.authority).toBe("owner_correction");
-  expect(serveContextPacket(ctx, { query: "Grace", budget_tokens: 1000 }).canon.find(page => page.path === receipt.page_path)?.authority).toBe("owner_correction");
+  expect((await serveContextPacket(ctx, { query: "Grace", budget_tokens: 1000 })).canon.find(page => page.path === receipt.page_path)?.authority).toBe("owner_correction");
   const purge = applyPurgeRewrite(f.io, { rel_path: receipt.page_path, purged_event_ids: [], purged_claim_ids: [], purged_claim_bodies: ["Northwind"] });
   expect(purge.authority).toBe("owner_correction");
   rebuildDerived(f.db, f.vault);
@@ -215,6 +215,22 @@ test("a revert must begin at the after-hash of the write it names", async () => 
   f.db.query("UPDATE canon_receipts SET reverts=?,after_hash=? WHERE receipt_id=?")
     .run(target.receipt_id, first.after_hash, revert.receipt_id);
   writeFileSync(join(f.vault, first.page_path), originalBytes);
+  rebuildDerived(f.db, f.vault);
+  expectAuthority(f, first.page_path, "model_inference");
+});
+
+
+test("equal corrupt revert hashes cannot recover owner authority", async () => {
+  const f = fixture();
+  const event = putEvent(f.db);
+  const first = write(f.io, await storeClaim(f.db, event, { producer: "owner", intent: "correct" }));
+  const target = write(f.io, await storeClaim(f.db, event, {
+    kind: "edit", predicate: null, object: null, frontmatter: {}, body: "Grace has a model update.",
+    producer: "model", model_ref: "fixture:model",
+  }));
+  const reverted = await undoReceipt(f.io, target.receipt_id);
+  f.db.query("UPDATE canon_receipts SET after_hash=? WHERE receipt_id=?").run("not-a-sha256", target.receipt_id);
+  f.db.query("UPDATE canon_receipts SET before_hash=? WHERE receipt_id=?").run("not-a-sha256", reverted.receipt_id);
   rebuildDerived(f.db, f.vault);
   expectAuthority(f, first.page_path, "model_inference");
 });

@@ -86,7 +86,7 @@ export class CanonAuthorityResolver {
         const target = receipt.reverts === null ? undefined : this.byId.get(receipt.reverts);
         if (
           target === undefined || target.page_path !== path || !earlier(target, receipt) ||
-          target.before_hash === null || receipt.before_hash !== target.after_hash ||
+          target.before_hash === null || !HASH.test(target.after_hash) || receipt.before_hash !== target.after_hash ||
           receipt.after_hash !== target.before_hash || !isAuthorityTier(target.authority) ||
           seen.has(target.receipt_id)
         ) {
