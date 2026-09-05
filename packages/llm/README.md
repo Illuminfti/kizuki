@@ -25,8 +25,9 @@ port; the receipted writer owns canon. Tests use a loopback fake endpoint.
 ## Fail-closed rules
 
 - No tools or function schema are sent.
-- A response with `tool_calls`, `function_call`, or a non-text content part
-  is discarded as `rejected: tool_call_in_response`.
+- A response with `tool_calls`, `function_call`, `function_calls`,
+  `tool_call_id`, audio, image, file, attachment or data fields, or a
+  non-text content part is discarded as `rejected: tool_call_in_response`.
 - Network, timeout, and schema failures throw `PortError`. They are not an
   empty completion.
 - Provider bodies and secret values never appear in errors.
