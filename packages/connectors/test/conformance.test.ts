@@ -47,6 +47,8 @@ import type { ConformanceResult } from "../src/testkit";
 import { fixtureJsonl as jsonlFixture } from "../src/import-legacy-events/fixture";
 import { encodeState } from "@kizuki/connector-telegram";
 import { BEEPER_CONNECTOR_ID, createBeeperConnector } from "@kizuki/connector-beeper";
+import { GMAIL_CONNECTOR_ID, createGmailConnector } from "@kizuki/connector-gmail";
+import { GmailFixture } from "@kizuki/connector-gmail/testing";
 import type { Connector } from "@kizuki/core";
 import {
   FakeImapServer,
@@ -270,6 +272,17 @@ function batteryFor(
       return runConformance(telegram, {
         unavailable: {
           connector: new TelegramConnector({}, scriptedDeps()),
+        },
+      });
+    },
+    [GMAIL_CONNECTOR_ID]: async () => {
+      const fixture = new GmailFixture(2);
+      const gmail = await fixture.connected();
+      return runConformance(gmail, {
+        unavailable: { connector: createGmailConnector({}) },
+        tombstone: {
+          prepare: async () => (await gmail.backfill(null)).cursor,
+          mutate: async () => { fixture.change("m1", "messagesDeleted"); },
         },
       });
     },

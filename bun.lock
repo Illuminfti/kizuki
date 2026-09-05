@@ -32,6 +32,12 @@
         "@kizuki/core": "workspace:*",
       },
     },
+    "packages/connector-gmail": {
+      "name": "@kizuki/connector-gmail",
+      "dependencies": {
+        "@kizuki/core": "workspace:*",
+      },
+    },
     "packages/connector-ics": {
       "name": "@kizuki/connector-ics",
       "dependencies": {
@@ -67,6 +73,7 @@
       "name": "@kizuki/connectors",
       "dependencies": {
         "@kizuki/connector-beeper": "workspace:*",
+        "@kizuki/connector-gmail": "workspace:*",
         "@kizuki/connector-ics": "workspace:*",
         "@kizuki/connector-imap": "workspace:*",
         "@kizuki/connector-screenpipe": "workspace:*",
@@ -131,6 +138,8 @@
     "@kizuki/cli": ["@kizuki/cli@workspace:packages/cli"],
 
     "@kizuki/connector-beeper": ["@kizuki/connector-beeper@workspace:packages/connector-beeper"],
+
+    "@kizuki/connector-gmail": ["@kizuki/connector-gmail@workspace:packages/connector-gmail"],
 
     "@kizuki/connector-ics": ["@kizuki/connector-ics@workspace:packages/connector-ics"],
 

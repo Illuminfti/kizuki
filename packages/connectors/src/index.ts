@@ -211,3 +211,6 @@ export type {
   RowSkip,
   RowSkipReason,
 } from "./import-legacy-events";
+
+export { GMAIL_CONNECTOR_ID, GMAIL_CURSOR_SCHEMA, GMAIL_SCOPES, GmailConnector, createGmailConnector } from "@kizuki/connector-gmail";
+export type { GmailConnectorConfig, GmailConnectorDeps, GmailField } from "@kizuki/connector-gmail";

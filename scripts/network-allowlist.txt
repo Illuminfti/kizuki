@@ -16,3 +16,4 @@ packages/core/src/auth/loopback.ts:OAuth sign-in loopback listener on 127.0.0.1 
 packages/core/src/serve/http.ts:standing loopback MCP endpoint under kizuki serve
 packages/core/test/serve/http.test.ts:loopback fetch against the standing serve endpoint
 packages/core/test/serve/http-retrieval.test.ts:synthetic loopback HTTP reads against the host-bound retrieval surface
+packages/connector-gmail/src/api.ts:explicitly enrolled Gmail read-only capture and OIDC identity; fixed Google HTTPS endpoints, no redirects, bounded GET requests

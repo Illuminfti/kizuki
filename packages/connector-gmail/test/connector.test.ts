@@ -1,0 +1,85 @@
+import { describe, expect, test } from "bun:test";
+import { MAX_CURSOR_BYTES, MAX_CONNECTION_STATE_BYTES, validateEventInput } from "@kizuki/core";
+import { createGmailConnector, GMAIL_SCOPES } from "../src/index";
+import { GmailFixture } from "../src/testing";
+describe("Gmail public connector", () => {
+    test("missing registered application refuses before browser, resolver or state write", async () => {
+        const connector = createGmailConnector({});
+        let calls = 0;
+        const touch = async () => { calls++; return ""; };
+        await expect(connector.connect(touch)).rejects.toMatchObject({ code: "misconfigured" });
+        await expect(connector.signIn!({ prompt: touch, notify: () => { calls++; }, openUrl: async () => { calls++; } }, { write: async () => { calls++; } })).rejects.toMatchObject({ code: "misconfigured" });
+        expect(calls).toBe(0);
+        expect((await connector.health()).state).toBe("misconfigured");
+        expect(GMAIL_SCOPES).toEqual(["openid", "email", "https://www.googleapis.com/auth/gmail.readonly"]);
+    });
+    test("bounded snapshots replay stably and never download attachments", async () => {
+        const fixture = new GmailFixture(45);
+        const connector = await fixture.connected();
+        const first = await connector.backfill(null);
+        expect(first.events).toHaveLength(20);
+        expect(first.events.every(event => validateEventInput(event).ok)).toBe(true);
+        expect((await connector.backfill(null)).events).toEqual(first.events);
+        expect(Buffer.byteLength(first.cursor!)).toBeLessThanOrEqual(MAX_CURSOR_BYTES);
+        expect(fixture.state.byteLength).toBeLessThan(MAX_CONNECTION_STATE_BYTES);
+        expect(new TextDecoder().decode(fixture.state)).not.toContain("Synthetic message body");
+        const resumed = await fixture.connected();
+        const second = await resumed.backfill(first.cursor);
+        expect(second.events).toHaveLength(20);
+        expect(new Set([...first.events, ...second.events].map(e => e.source_record_id)).size).toBe(40);
+        expect(fixture.requests.every(url => !url.includes("/attachments/"))).toBe(true);
+    });
+    test("only explicit history deletion emits an observation-time tombstone", async () => {
+        const fixture = new GmailFixture(2);
+        const connector = await fixture.connected();
+        const snapshot = await connector.backfill(null);
+        fixture.change("m1", "labelsRemoved");
+        fixture.change("m2", "messagesDeleted");
+        const changes = await connector.sync(snapshot.cursor);
+        expect(changes.events).toHaveLength(2);
+        const tombstone = changes.events.find(event => event.deleted)!;
+        expect(tombstone.source_record_id).toBe(snapshot.events[1]!.source_record_id);
+        expect(tombstone.text).toBe("");
+        expect(tombstone.metadata.provider_deleted_at).toBeNull();
+        expect(tombstone.metadata.occurred_at_semantics).toBe("deletion_observed");
+        expect(tombstone.occurred_at).toBe(tombstone.observed_at);
+        fixture.advanceDay();
+        const reopened = await fixture.connected();
+        expect((await reopened.sync(snapshot.cursor)).events).toEqual(changes.events);
+    });
+    test("lost message GET and expired history never infer deletion from absence", async () => {
+        const fixture = new GmailFixture(1);
+        const connector = await fixture.connected();
+        const before = await connector.backfill(null);
+        fixture.change("m1", "labelsAdded");
+        fixture.missing.add("m1");
+        const missing = await connector.sync(before.cursor);
+        expect(missing.events).toEqual([]);
+        expect(missing.detail).toContain("message_unavailable");
+        fixture.expired = true;
+        const gap = await connector.sync(missing.cursor);
+        expect(gap.events.every(event => !event.deleted)).toBe(true);
+        expect(gap.detail).toContain("history_gap");
+    });
+    test("account mismatch and revoked session refuse without captured output", async () => {
+        const fixture = new GmailFixture(1);
+        fixture.account = "different-account";
+        await expect(fixture.connected()).rejects.toMatchObject({ code: "unauthenticated" });
+        fixture.account = "fixture-account";
+        const connector = await fixture.connected();
+        await connector.revoke();
+        await expect(connector.sync(null)).rejects.toMatchObject({ code: "unauthenticated" });
+        expect((await connector.health()).state).toBe("disabled");
+    });
+    test("provider error text and malformed cursors never escape or move checkpoint", async () => {
+        const fixture = new GmailFixture(1);
+        const connector = await fixture.connected();
+        const cursor = (await connector.backfill(null)).cursor;
+        fixture.failStatus = 429;
+        const failed = await connector.sync(cursor);
+        expect(failed.status).toBe("unavailable");
+        expect(failed.cursor).toBe(cursor);
+        expect(JSON.stringify(failed)).not.toContain("SECRET_SENTINEL");
+        await expect(connector.sync(" ".repeat(MAX_CURSOR_BYTES + 1))).rejects.toMatchObject({ code: "source_schema" });
+    });
+});
