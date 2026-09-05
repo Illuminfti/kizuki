@@ -161,23 +161,23 @@ export async function createServeRuntime(options: {
   }
   const registry = new PortRegistry();
   registerLlmPorts(registry);
-  const llm = registry.bindFromConfig<LlmPort>(
+  const llm = (await registry.bindFromConfig<LlmPort>(
     "llm",
     { llm: selected.id },
     portContext(options.vaultPath, "llm", selected.id, selected.config, selected.secret_ref, options.env, options.err),
-  ).port;
+  )).port;
   let producer: ProducerPort | undefined;
   try {
     if (llm.model_ref !== null) {
       registerModelProducerPort(() => llm, registry);
-      producer = registry.bindFromConfig<ProducerPort>(
+      producer = (await registry.bindFromConfig<ProducerPort>(
         "producer",
         { producer: MODEL_PRODUCER_ID },
         portContext(options.vaultPath, "producer", MODEL_PRODUCER_ID, {}, null, options.env, options.err),
-      ).port;
+      )).port;
     }
   } catch (error) {
-    void llm.close();
+    await llm.close();
     throw error;
   }
   const claims: ClaimsIo | undefined = producer === undefined ? undefined : { db: options.db };
