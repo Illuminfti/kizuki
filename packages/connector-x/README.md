@@ -20,7 +20,7 @@ These commands import owner posts only. Enrollment validates every supported
 post in the bounded snapshot, so a malformed post refuses before connection
 state is persisted.
 
-The connector does not inspect likes and does not support bookmarks, direct
+The archive connector does not inspect likes and does not support bookmarks, direct
 messages, deletion inference, ZIP input, live X sync, or the paid X API. Missing
 posts never produce tombstones. Health output reports this coverage explicitly.
 
@@ -28,3 +28,8 @@ Input is bounded to 16 MiB per tweet part, 64 MiB of selected JSON, 64 parts,
 100,000 posts, 10,000 media directory entries, and 1,024 data directory entries.
 Unzip larger exports into smaller independently enrolled snapshots or wait for a
 future streaming importer.
+
+An additional, explicitly constructed owned-post API connector is available at
+[`@kizuki/connector-x/api`](./API.md). It has separate state and a separate
+connector identity. Its provider enrollment and deletion coverage remain
+unqualified; it is not registered as a native CLI connection.

@@ -4,7 +4,9 @@
   "module": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./testkit": "./src/testkit.ts"
+    "./testkit": "./src/testkit.ts",
+    "./api": "./src/api/index.ts",
+    "./api/testkit": "./src/api/testkit.ts"
   },
   "dependencies": {
     "@kizuki/core": "workspace:*"

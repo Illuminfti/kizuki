@@ -23,3 +23,4 @@ packages/cli/src/app/ui/client.js:bundled local browser client; same-origin fixe
 
 packages/core/test/serve/app-http.test.ts:synthetic loopback app-session authentication and bounded-body tests
 packages/cli/test/app-host.test.ts:synthetic loopback asset and authenticated local app host tests
+packages/connector-x/src/api/client.ts:explicitly configured X own-post API fixed-origin GET transport; bounded requests and response body, no redirects or media downloads
