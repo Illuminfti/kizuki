@@ -568,21 +568,29 @@ export function fileProposal(
       .get(contentHash) as ProposalRow | null;
     if (existing !== null) {
       const current = rowToProposal(db, existing);
-      if (sourceDeletion) requireSourceTombstoneProposal(db, current, context);
-      const merged = uniqueStrings([...current.provenance, ...provenance]);
-      if (merged.length === current.provenance.length) {
-        return { outcome: "duplicate", proposal: current };
+      if (signatureOf(current) === contentHash) {
+        if (sourceDeletion) requireSourceTombstoneProposal(db, current, context);
+        const merged = uniqueStrings([...current.provenance, ...provenance]);
+        if (merged.length === current.provenance.length) {
+          return { outcome: "duplicate", proposal: current };
+        }
+        const at = nowRfc3339();
+        db.query(
+          "UPDATE proposals SET provenance = ? WHERE proposal_id = ?",
+        ).run(JSON.stringify(merged), current.proposal_id);
+        const updated: StagedProposal = { ...current, provenance: merged };
+        corroborateCompatClaim(db, updated, provenance, at);
+        return { outcome: "duplicate", proposal: rowToProposal(db, {
+          ...existing,
+          provenance: JSON.stringify(merged),
+        }) };
       }
-      const at = nowRfc3339();
-      db.query(
-        "UPDATE proposals SET provenance = ? WHERE proposal_id = ?",
-      ).run(JSON.stringify(merged), current.proposal_id);
-      const updated: StagedProposal = { ...current, provenance: merged };
-      corroborateCompatClaim(db, updated, provenance, at);
-      return { outcome: "duplicate", proposal: rowToProposal(db, {
-        ...existing,
-        provenance: JSON.stringify(merged),
-      }) };
+      // The unique slot is the live signature. A pending row whose stored
+      // fields no longer hash to this content_hash does not occupy it.
+      db.query("UPDATE proposals SET content_hash = ? WHERE proposal_id = ?").run(
+        signatureOf(current),
+        current.proposal_id,
+      );
     }
 
     const proposal: StagedProposal = {

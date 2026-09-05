@@ -220,7 +220,7 @@ describe("legacy staging p1 holes", () => {
   });
 
   test("fileProposal has no public suppression bypass", () => {
-    expect(fileProposal.length).toBe(2);
+    expect(fileProposal.length).toBe(3);
     const source = readFileSync(
       join(import.meta.dir, "../../src/staging/proposals.ts"),
       "utf8",

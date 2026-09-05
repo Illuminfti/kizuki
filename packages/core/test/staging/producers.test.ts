@@ -7,7 +7,7 @@ import {
 } from "../../src/staging/producers";
 import { fileProposal, getProposal } from "../../src/staging/proposals";
 import { namespacedSubjectId } from "../../src/staging/subjects";
-import { event, memoryDb, seedEvent } from "./helpers";
+import { event, memoryDb } from "./helpers";
 
 describe("proposalsForEvent", () => {
   test("emits an entity candidate per subject plus one capture note", () => {
@@ -68,8 +68,6 @@ describe("proposalsForEvent", () => {
   });
 
   test("the same subject seen twice dedupes onto one staged candidate", () => {
-    const db = memoryDb([event(), event({ event_id: "01ARZ3NDEKTSV4RRFFQ69G5FB0", text: "later" })]);
-    const first = proposalsForEvent(event())[0];
     const later = event({
       event_id: "01ARZ3NDEKTSV4RRFFQ69G5FB0",
       text: "later",
@@ -77,7 +75,8 @@ describe("proposalsForEvent", () => {
         { subject_id: "person:ada", role: "from", display_name: "Ada King" },
       ],
     });
-    seedEvent(db, later);
+    const db = memoryDb([event(), later]);
+    const first = proposalsForEvent(event())[0];
     const second = proposalsForEvent(later)[0];
     if (first === undefined || second === undefined) {
       throw new Error("expected entity proposals");
