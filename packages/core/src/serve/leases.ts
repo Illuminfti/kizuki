@@ -98,6 +98,10 @@ function isBusy(lease: LeaseRow, process: LeaseProcess, now: string): boolean {
   }
   // RFC 0002 §11.3: a live holder PID is BUSY. boot_id distinguishes a
   // post-reboot reuse of the same number; a still-alive PID is never stolen.
+  // A holder recorded under a different boot cannot be alive, whatever the
+  // PID says: the machine it ran on is gone, so reclaim instead of trusting
+  // PID liveness against the current boot's process table.
+  if (lease.holder_boot_id !== process.boot_id) return false;
   if (process.isAlive(lease.holder_pid)) return true;
   const staleAfter = HEARTBEAT_SECONDS * LEASE_RECLAIM_HEARTBEATS;
   return ageSeconds(lease.heartbeat_at, now) < staleAfter;
