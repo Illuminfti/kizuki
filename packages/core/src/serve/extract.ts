@@ -622,8 +622,8 @@ export async function mineLiveDrafts(
     const known = [...subjects].sort().flatMap(subject => {
       let claims = knownBySubject.get(subject);
       if (claims === undefined) {
-        claims = listClaims(db, { status: "live", keyed: true, subject, limit: 32 })
-          .filter(claim => sourceEventsAllowed(db, claim.provenance, scope));
+        claims = listClaims(db, { status: "live", keyed: true, subject, limit: 32,
+          filter: claim => sourceEventsAllowed(db, claim.provenance, scope) });
         knownBySubject.set(subject, claims);
       }
       return claims;

@@ -62,14 +62,15 @@ const deferred = (f: Fixture) => f.db.query<{ event_id: string }, []>("SELECT ev
 const scan = (f: Fixture) => readCheckpoint(f.db, MODEL_PRODUCER_ID, "extract-deferred-scan");
 
 function model(f: Fixture, options: { abstain?: boolean; beforeComplete?: () => void; malformed?: boolean } = {}) {
-  const requests: { ids: string[]; input_tokens: number; output_tokens: number }[] = [];
+  const requests: { ids: string[]; input_tokens: number; output_tokens: number; content: string }[] = [];
   const inputs: ProduceInput[] = [];
   const llm: LlmPort = { descriptor: { id: "kizuki.llm.synthetic", kind: "llm", contract: "kizuki.llm/v1", contract_minor: 0,
     supports: ["chat"], requires_lease: false, optional_package: null }, model_ref: modelRef,
     health: async () => ({ status: "ready", detail: {} }), close: async () => {},
     async complete(request: LlmRequest) {
       const ids = [...request.messages[1]!.content.matchAll(/<<<KZ-QUOTE [0-9a-f]{32} event:([A-Za-z0-9:_.-]+)>>>/g)].map(match => match[1]!);
-      requests.push({ ids, input_tokens: Math.ceil(request.messages.reduce((sum, message) => sum + message.content.length, 0) / 4), output_tokens: request.max_output_tokens });
+      requests.push({ ids, input_tokens: Math.ceil(request.messages.reduce((sum, message) => sum + message.content.length, 0) / 4), output_tokens: request.max_output_tokens,
+        content: request.messages.map(message => message.content).join("\n") });
       options.beforeComplete?.();
       const claims: ClaimDraft[] = options.abstain ? [] : ids.map(id => {
         const event = f.events.find(item => item.event_id === id)!;
@@ -184,6 +185,27 @@ test("a source revision change during a prefix call cannot file or advance its i
   expect((await runner.run()).errors).toEqual([]);
   expect(runner.requests.map(request => request.ids)).toEqual([events.slice(0, 4).map(event => event.event_id), events.slice(0, 4).map(event => event.event_id)]);
   expect(cursor(f)?.endsWith(events[3]!.event_id)).toBe(true);
+});
+
+test("denied claims cannot fill the subject limit ahead of an authorized claim in the actual prompt", async () => {
+  const f = fixture(), held = source(f, false), owned = source(f);
+  const denied = capture(f, held, 200, 1, 12, "fixture:shared-member");
+  const allowed = capture(f, owned, 200, 1, 12, "fixture:shared-member");
+  for (let index = 0; index < 33; index++) {
+    const event = index < 32 ? denied : allowed;
+    const object = index < 32 ? `Denied-tool-${index}` : "Authorized-tool";
+    const stored = await insertClaim({ db: f.db, now: () => new Date(Date.UTC(2026, 8, 5, 0, 0, index)).toISOString() }, {
+      kind: "claim", subject: "fixture:shared-member", predicate: "tool.uses", object,
+      body: `The synthetic shared member uses ${object}.`, provenance: [event.event_id], subjects: ["fixture:shared-member"],
+      producer: "model", model_ref: modelRef, confidence: 0.8, sensitivity: "private", taint: "quoted" });
+    expect(stored.outcome).toBe("stored");
+  }
+  const runner = model(f, { abstain: true });
+  expect((await mineLiveDrafts(f.db, runner.producer)).mined.status).toBe("empty");
+  expect(runner.requests[0]!.ids).toEqual([allowed.event_id]);
+  expect(runner.inputs[0]!.context.known_claims.map(claim => claim.object)).toEqual(["Authorized-tool"]);
+  expect(runner.requests[0]!.content).toContain("Authorized-tool");
+  expect(runner.requests[0]!.content).not.toContain("Denied-tool-");
 });
 
 test("every candidate prefix reselects authorized known claims before the shared context cap", async () => {

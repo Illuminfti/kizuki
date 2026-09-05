@@ -13,6 +13,12 @@ fences and record text. Context is selected for each prefix before its
 32-claim cap, so a later record cannot cause the earlier prefix to lose its
 context during planning.
 
+Source authorization is applied before both the per-subject and shared
+known-claim limits. The claim reader streams candidates in deterministic
+order and retains at most the requested accepted count. A subject with many
+denied claims can require a longer local database scan; there is no silent
+scan cutoff that presents incomplete authorized context as complete.
+
 The current budget estimate is the full message character count divided by
 four, rounded up. It is not a measurement of provider token usage. Usage
 returned by the provider remains separate from these preflight reservations.
