@@ -11,6 +11,9 @@ let noticeTimer;
 let refreshSequence = 0;
 let searchSequence = 0;
 let pulseRunning = false;
+let privacyGeneration = 0;
+let activitySequence = 0;
+let privateViewValid = true;
 const icons = {
   memory: ['M7 3.5h10a2 2 0 0 1 2 2v15l-7-3-7 3v-15a2 2 0 0 1 2-2Z', 'M9 8h6M9 11.5h4'],
   sources: ['M5 4h4v4H5zM15 16h4v4h-4zM4 16h5v4H4z', 'M7 8v3a3 3 0 0 0 3 3h4a3 3 0 0 1 3 3M7 14v2M15 4h5v5h-5zM15 7h-3a5 5 0 0 0-5 5'],
@@ -60,6 +63,23 @@ function resultTitle(hit) {
   }
   return hit.title || 'Saved information';
 }
+function sourceLabel(source) {
+  const name = source.connector_id.includes('markdown') ? 'Local notes' : source.connector_id.includes('google-calendar') ? 'Google Calendar' : source.connector_id.includes('gmail') ? 'Gmail' : source.display_name;
+  const key = source.source_key;
+  let length = Math.min(8, key.length);
+  while (length < key.length && state.sources.some(other => other.source_key !== key && other.source_key.slice(-length) === key.slice(-length))) length++;
+  return `${name} · ${key.slice(-length)}`;
+}
+function staleResponse() { return Object.assign(new Error('Response superseded.'), { code: 'stale_response' }); }
+function invalidatePrivateView() {
+  privacyGeneration++; refreshSequence++; searchSequence++; activitySequence++;
+  privateViewValid = false;
+  state.busy = false; state.hits = null; state.query = ''; state.degraded = []; state.sources = []; state.receipts = [];
+  if (dialog.open) dialog.close();
+  dialog.replaceChildren();
+  clearTimeout(noticeTimer); notice.textContent = ''; notice.hidden = true;
+  main.replaceChildren();
+}
 function safeCount(value) { return Number.isSafeInteger(value) && value >= 0 ? value.toLocaleString() : '—'; }
 function humanError(code) {
   if (code === 'unauthorized') return 'This app session has ended. Open Kizuki again on this device to reconnect.';
@@ -72,19 +92,25 @@ function humanError(code) {
 }
 async function api(route, payload = {}) {
   if (!bearer) throw Object.assign(new Error(humanError('unauthorized')), { code: 'unauthorized' });
+  const session = bearer, generation = privacyGeneration;
+  const current = () => session === bearer && generation === privacyGeneration;
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 15000);
   try {
-    const response = await fetch(`/app/v1/${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bearer}` }, body: JSON.stringify(payload), cache: 'no-store', credentials: 'omit', redirect: 'error', signal: controller.signal });
+    const response = await fetch(`/app/v1/${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session}` }, body: JSON.stringify(payload), cache: 'no-store', credentials: 'omit', redirect: 'error', signal: controller.signal });
+    if (!current()) throw staleResponse();
     if (response.status === 401) { disconnect(); throw Object.assign(new Error(humanError('unauthorized')), { code: 'unauthorized' }); }
     const result = await response.json();
+    if (!current()) throw staleResponse();
     if (!result.ok) throw Object.assign(new Error(humanError(result.error?.code || 'error')), { code: result.error?.code || 'error' });
     return result.data;
   } catch (error) {
+    if (!current()) throw staleResponse();
     if (error?.code) throw error;
     throw Object.assign(new Error('Kizuki is not responding. Your operation may still be running; reopen or refresh to check its state.'), { code: 'transport' });
   } finally { clearTimeout(timer); }
 }
 function disconnect() {
+  invalidatePrivateView();
   bearer = null;
   try { sessionStorage.removeItem(SESSION_KEY); } catch {}
   state.hits = null; state.sources = []; state.receipts = []; state.status = null; state.operation = null;
@@ -152,13 +178,13 @@ function renderMemory() {
   return section;
 }
 async function search(text) {
-  const query = text.trim(); if (!query || state.busy) return;
+  const query = text.trim(); if (!query || state.busy || !privateViewValid || !bearer) return;
   state.busy = true; state.query = query; state.hits = null;
   const sequence = ++searchSequence, epoch = state.status?.visibility_epoch;
   render();
   try { const data = await api('query', { text: query, limit: 20 }); if (sequence === searchSequence && epoch === state.status?.visibility_epoch) { state.hits = data.hits; state.degraded = data.degraded || []; } }
-  catch (error) { message(error.message); }
-  finally { state.busy = false; if (bearer) render(); }
+  catch (error) { if (sequence === searchSequence && error.code !== 'stale_response') message(error.message); }
+  finally { if (sequence === searchSequence) { state.busy = false; if (bearer) render(); } }
 }
 function renderSources() {
   if (!state.status?.vault.ready) return renderWelcome();
@@ -169,7 +195,7 @@ function renderSources() {
       const active = source.consent === 'active';
       const removing = source.consent === 'denied';
       const status = active ? 'Permission granted' : source.consent === 'purged' ? 'Removed' : removing ? 'Removal pending' : 'Needs permission';
-      const row = el('div', { class: 'source-row' }, el('div', { class: 'source-icon' }, icon(providerIcon(source.connector_id))), el('div', { class: 'source-info' }, el('h3', {}, source.connector_id.includes('markdown') ? 'Local notes' : source.connector_id.includes('google-calendar') ? 'Google Calendar' : source.connector_id.includes('gmail') ? 'Gmail' : source.display_name), el('p', {}, el('span', { class: `badge${active ? ' badge-active' : ''}` }, status)), el('p', {}, `${safeCount(source.stored)} new in the last check · ${dateText(source.last_run)}`), source.errors > 0 && el('p', {}, 'The last capture reported a problem. Check before relying on complete coverage.')));
+      const row = el('div', { class: 'source-row' }, el('div', { class: 'source-icon' }, icon(providerIcon(source.connector_id))), el('div', { class: 'source-info' }, el('h3', {}, sourceLabel(source)), el('p', {}, el('span', { class: `badge${active ? ' badge-active' : ''}` }, status)), el('p', {}, `${safeCount(source.stored)} new in the last check · ${dateText(source.last_run)}`), source.errors > 0 && el('p', {}, 'The last capture reported a problem. Check before relying on complete coverage.')));
       const actions = el('div', { class: 'source-actions' });
       if (active) actions.append(button('Import history', () => capture(source)), button('Privacy', () => privacy(source)));
       else if (removing) actions.append(button('Check removal', () => resumeRemoval(source)));
@@ -224,7 +250,7 @@ function enrollment(provider) {
   });
 }
 function consent(source) {
-  const content = openDialog('Choose what Kizuki can use.', `Give ${source.display_name} permission to store selected information and make it available in your private memory.`, 'lock');
+  const content = openDialog('Choose what Kizuki can use.', `Give ${sourceLabel(source)} permission to store selected information and make it available in your private memory.`, 'lock');
   content.append(el('div', { class: 'consent-summary' }, ...[['Use', 'Save, find and organise this source'], ['Fields', source.required_fields.join(', ')], ['Privacy', 'Private, on this device'], ['Retention', 'Kept until you remove this source'], ['Backups', 'Included in exports you choose to create']].map(([label, value]) => el('div', {}, el('span', {}, label), el('strong', {}, value)))));
   content.append(el('p', { class: 'dialog-description' }, 'This permission does not send source data to an external model. Removing this source stops further use and begins removal from Kizuki’s owned stores. Your original files and provider account remain yours.'));
   const request = { source_key: source.source_key, expected_revision: source.revision, operation_id: crypto.randomUUID(), policy: { purposes: ['capture','recall','session','correction','audit','derive','extract','export'], allowed_fields: source.required_fields, retention: 'persistent_owned_until_revoked', egress: 'local_only', sensitivity_floor: 'private' } };
@@ -238,15 +264,16 @@ function consent(source) {
 }
 async function capture(source) { await launchOperation('capture', { source_key: source.source_key, mode: 'backfill' }, 'Importing your history', async operation => { await refresh(); navigate('memory'); message(operation.counts ? `${safeCount(operation.counts.stored)} saved · ${safeCount(operation.counts.duplicates)} already present${operation.counts.errors ? ` · ${safeCount(operation.counts.errors)} problems reported` : ''}` : 'Capture completed. Check Sources for its latest coverage.'); }); }
 function privacy(source) {
-  const content = openDialog('This source stays under your control.', source.display_name, 'lock');
+  const content = openDialog('This source stays under your control.', sourceLabel(source), 'lock');
   content.append(el('div', { class: 'consent-summary' }, ...[['Current permission', source.consent], ['Fields needed by this connection', source.required_fields.join(', ')], ['Last capture', dateText(source.last_run)]].map(([label,value]) => el('div', {}, el('span', {}, label), el('strong', {}, value)))), el('p', { class: 'dialog-description' }, 'Remove this source to stop capture and start deleting its information from Kizuki. Removal may wait for another operation to release a store. The source stops being used immediately; original files and the provider account are unaffected.'), el('div', { class: 'form-actions' }, button('Keep source', () => dialog.close()), button('Remove source', async () => {
-    state.hits = null; state.query = ''; state.receipts = [];
-    await launchOperation('revoke', { source_key: source.source_key, expected_revision: source.revision, operation_id: crypto.randomUUID() }, 'Removing this source', async () => { await refresh(); navigate('sources'); message('The source is excluded. Check its status for any removal still pending.'); });
+    const label = sourceLabel(source);
+    invalidatePrivateView();
+    await launchOperation('revoke', { source_key: source.source_key, expected_revision: source.revision, operation_id: crypto.randomUUID() }, `Removing ${label}`, async () => { await refresh(); navigate('sources'); message('The source is excluded. Check its status for any removal still pending.'); });
   }, 'danger')));
 }
 async function resumeRemoval(source) {
   if (!source.revoke_operation) { await refresh(); message('Refresh the source status before continuing removal.'); return; }
-  await launchOperation('resume_revocation', { source_key: source.source_key, operation_id: source.revoke_operation }, 'Checking source removal', async () => { await refresh(); navigate('sources'); });
+  await launchOperation('resume_revocation', { source_key: source.source_key, operation_id: source.revoke_operation }, `Checking removal · ${sourceLabel(source)}`, async () => { await refresh(); navigate('sources'); });
 }
 function renderActivity() {
   const section = el('section', {}, heading('A clear history.', 'See receipted changes to your memory. Undo restores the previous state when its receipt still applies.'));
@@ -255,7 +282,17 @@ function renderActivity() {
   for (const receipt of state.receipts) list.append(el('li', { class: 'activity-item' }, el('div', { class: 'activity-top' }, el('div', {}, el('h3', {}, receipt.page || 'Memory change'), el('p', {}, `${dateText(receipt.at)} · ${receipt.reverted ? 'Undone' : receipt.action}`)), !receipt.reverted && button('Undo', () => undo(receipt))), el('details', { class: 'result-details' }, el('summary', {}, 'Receipt reference'), el('code', {}, receipt.id))));
   section.append(list); return section;
 }
-async function loadActivity() { try { const result = await api('activity', { limit: 30 }); state.receipts = result.receipts; if (state.view === 'activity') render(); } catch (error) { message(error.message); } }
+async function loadActivity() {
+  if (!bearer || !privateViewValid) return;
+  const sequence = ++activitySequence, session = bearer, generation = privacyGeneration, epoch = state.status?.visibility_epoch;
+  const current = () => sequence === activitySequence && session === bearer && generation === privacyGeneration && epoch === state.status?.visibility_epoch && privateViewValid;
+  try {
+    const result = await api('activity', { limit: 30 });
+    if (!current()) return;
+    state.receipts = result.receipts;
+    if (state.view === 'activity') render();
+  } catch (error) { if (current() && error.code !== 'stale_response') message(error.message); }
+}
 function undo(receipt) {
   const content = openDialog('Undo this change?', 'Kizuki will use the saved receipt to restore the previous state. If the page or a dependent change has moved on, the undo will refuse safely.', 'activity');
   content.append(el('div', { class: 'status-note' }, el('p', {}, receipt.page)), el('div', { class: 'form-actions' }, button('Keep change', () => dialog.close()), button('Undo change', () => launchOperation('undo', { receipt_id: receipt.id, cascade: false }, 'Undoing this change', async () => { state.hits = null; await refresh(); await loadActivity(); message('Change undone.'); }), 'primary')));
@@ -279,32 +316,52 @@ function renderOperation() {
 function render() {
   renderNavigation();
   if (!bearer) { renderDisconnected(); return; }
+  if (!privateViewValid) { main.replaceChildren(empty('Refreshing your workspace.', 'Checking current permissions before showing saved information.')); return; }
   if (!state.status) return;
   const content = !state.status.vault.ready ? renderWelcome() : state.view === 'memory' ? renderMemory() : state.view === 'sources' ? renderSources() : state.view === 'activity' ? renderActivity() : renderSettings();
   const operation = renderOperation(); if (operation) content.prepend(operation);
   main.replaceChildren(content);
 }
+function reconcileOperation(operations) {
+  if (state.operation) {
+    state.operation = operations.find(job => job.id === state.operation.id) || { ...state.operation, state: 'unknown', error: null };
+  } else {
+    state.operation = operations.find(job => job.state === 'running') || operations.at(-1) || null;
+  }
+}
+function updateOperationBanner() {
+  if (!bearer || !privateViewValid) return;
+  const existing = main.querySelector('.job-status'), next = renderOperation();
+  if (existing) { if (next) existing.replaceWith(next); else existing.remove(); }
+  else if (next) main.querySelector('section')?.prepend(next);
+}
 async function refresh() {
-  const sequence = ++refreshSequence;
+  let sequence = ++refreshSequence;
   try {
     const status = await api('status');
+    if (sequence !== refreshSequence || !bearer) return;
+    if (state.status && status.visibility_epoch !== state.status.visibility_epoch) { invalidatePrivateView(); sequence = ++refreshSequence; }
     const [catalog, sources] = await Promise.all([api('catalog'), status.vault.ready ? api('sources') : Promise.resolve({ sources: [] })]);
     if (sequence !== refreshSequence || !bearer) return;
-    state.status = status; state.catalog = catalog.sources; state.sources = sources.sources;
+    state.status = status; state.catalog = catalog.sources; state.sources = sources.sources; privateViewValid = true;
     searchSequence++; state.busy = false; state.hits = null; state.degraded = [];
-    const pending = status.operations.find(op => op.state === 'running');
-    if (pending) state.operation = pending;
+    reconcileOperation(status.operations);
     render();
-  } catch (error) { if (bearer) { main.replaceChildren(empty('Let’s reconnect.', error.message, button('Try again', refresh, 'primary'))); } }
+  } catch (error) { if (bearer && sequence === refreshSequence && error.code !== 'stale_response') { invalidatePrivateView(); main.replaceChildren(empty('Let’s reconnect.', error.message, button('Try again', refresh, 'primary'))); } }
 }
 async function launchOperation(route, payload, title, done) {
+  const session = bearer, generation = privacyGeneration;
+  const current = () => session === bearer && generation === privacyGeneration;
   const content = openDialog(title, route === 'enroll' && payload.provider !== 'markdown' ? 'Continue in the Google sign-in window. Kizuki will show the result here when sign-in and local enrollment finish.' : 'Kizuki will confirm the result here. Closing this panel does not cancel an operation that has already started.', 'clock');
   const progress = el('div', { class: 'opening', 'aria-busy': 'true' }, el('div', { class: 'skeleton skeleton-line' }), el('p', {}, 'Starting…'));
   content.append(progress, el('div', { class: 'form-actions' }, button('Close panel', () => dialog.close())));
   try {
     const { operation_id } = await api(route, payload);
     for (let attempt = 0; attempt < 180; attempt++) {
-      const operation = await api('operation', { id: operation_id }); state.operation = operation;
+      if (!current()) return;
+      const operation = await api('operation', { id: operation_id });
+      if (!current()) return;
+      state.operation = operation; updateOperationBanner();
       if (operation.state !== 'running') {
         progress.setAttribute('aria-busy', 'false');
         if (operation.state !== 'succeeded') throw Object.assign(new Error(operation.error ? humanError(operation.error.code) : 'Completion is not confirmed. Check the source state before trying again.'), { code: operation.error?.code || 'unknown' });
@@ -316,6 +373,7 @@ async function launchOperation(route, payload, title, done) {
     }
     throw new Error('This is taking longer than expected. Close this panel and refresh to check its current state.');
   } catch (error) {
+    if (!current() || error.code === 'stale_response') return;
     progress.setAttribute('aria-busy', 'false'); progress.replaceChildren(el('p', { class: 'form-error', role: 'alert' }, error.message));
     if (!dialog.open || !dialog.contains(content)) message(error.message);
   }
@@ -341,15 +399,15 @@ async function checkVisibility() {
   try {
     const current = await api('status');
     if (current.visibility_epoch !== state.status.visibility_epoch) {
-      searchSequence++; state.hits = null; state.receipts = [];
+      invalidatePrivateView();
       await refresh();
       if (state.view === 'activity') await loadActivity();
-      message('Your memory view was refreshed to match current permissions.');
-    }
-  } catch { if (bearer) { searchSequence++; state.hits = null; state.receipts = []; main.replaceChildren(empty('Let’s reconnect.', 'Kizuki could not confirm current permissions. Refresh before viewing saved information.', button('Refresh', refresh, 'primary'))); } }
+      if (bearer && privateViewValid) message('Your memory view was refreshed to match current permissions.');
+    } else { reconcileOperation(current.operations); updateOperationBanner(); }
+  } catch (error) { if (bearer && error.code !== 'stale_response') { invalidatePrivateView(); main.replaceChildren(empty('Let’s reconnect.', 'Kizuki could not confirm current permissions. Refresh before viewing saved information.', button('Refresh', refresh, 'primary'))); } }
   finally { pulseRunning = false; }
 }
 setInterval(checkVisibility, 5000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) checkVisibility(); });
-window.addEventListener('pagehide', () => { searchSequence++; state.hits = null; state.sources = []; state.receipts = []; main.replaceChildren(); });
+window.addEventListener('pagehide', invalidatePrivateView);
 window.addEventListener('pageshow', event => { if (event.persisted && bearer) refresh(); });
