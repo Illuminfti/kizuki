@@ -1,4 +1,4 @@
-import { HealthReport, KizukiError, OAuthSession, freezeManifest, loopbackTransport, parseOAuthState, signInWithBrowser, withDeadline, type Connector, type ConnectionStateWriter, type OAuthProvider, type OAuthTransport, type SecretResolver, type SignInIo, type StatePersister, type SyncBatch, } from "@kizuki/core";
+import { DeadlineError, HealthReport, KizukiError, OAuthSession, freezeManifest, loopbackTransport, parseOAuthState, signInWithBrowser, withDeadline, type Connector, type ConnectionStateWriter, type OAuthProvider, type OAuthTransport, type SecretResolver, type SignInIo, type StatePersister, type SyncBatch, } from "@kizuki/core";
 import { Budget, GMAIL_API, USERINFO, HttpFailure, getJson, type GmailFetch } from "./api";
 import { messageEvent, messageProjection, tombstoneEvent } from "./events";
 import { GMAIL_CONNECTOR_ID, GMAIL_CURSOR_SCHEMA, GMAIL_SCOPES, decodeCursor, digest, encodeCursor, encodeState, failure, fields, historyId, id, object, pageToken, parseState, planIdentity, type Change, type Field, type GmailCursor, type GmailState, type Plan, } from "./state";
@@ -29,6 +29,8 @@ export class GmailConnector implements Connector {
     private disabled = false;
     private busy = false;
     private reloadRequired = false;
+    private generation = 0;
+    private pendingWrites = 0;
     private last: "ok" | "misconfigured" | "unauthenticated" | "degraded" | "rate_limited" = "misconfigured";
     private readonly now: () => Date;
     private readonly config: GmailConnectorConfig;
@@ -59,33 +61,49 @@ export class GmailConnector implements Connector {
             throw failure("unauthenticated");
         return this.state;
     }
-    private async persist(next: GmailState): Promise<void> {
+    private assertGeneration(generation: number): void {
         this.live();
-        if (!this.deps.persist)
-            throw failure("misconfigured");
+        if (generation !== this.generation) throw failure("unavailable");
+    }
+    private invalidate(generation: number): void {
+        if (generation !== this.generation) return;
+        this.generation++;
+        this.reloadRequired = true;
+        this.session?.forget();
+        this.session = null;
+        this.state = null;
+    }
+    private async persist(next: GmailState, generation = this.generation, timeoutMs = 5000): Promise<void> {
+        this.assertGeneration(generation);
+        if (!this.deps.persist) throw failure("misconfigured");
         const bytes = encodeState(next);
+        this.pendingWrites++;
+        // The host write cannot be canceled. Keep custody fenced after timeout
+        // until it actually settles, even though the caller's wait is bounded.
+        const write = Promise.resolve().then(() => {
+            this.assertGeneration(generation);
+            return this.deps.persist!(bytes);
+        }).finally(() => { this.pendingWrites--; });
         try {
-            await this.deps.persist(bytes);
+            await withDeadline(write, timeoutMs, "Gmail state persistence deadline");
+            this.assertGeneration(generation);
+            this.state = next;
         }
-        catch {
-            // A failed response cannot tell us whether the native state write committed.
-            // Reload through the trusted resolver before exposing any later snapshot.
-            this.reloadRequired = true;
-            this.session?.forget();
-            this.session = null;
-            this.state = null;
-            throw failure("unavailable");
+        catch (error) {
+            this.invalidate(generation);
+            throw failure(error instanceof DeadlineError ? "timeout" : "unavailable");
         }
-        this.live();
-        this.state = next;
     }
     async connect(resolve: SecretResolver): Promise<void> {
         this.live();
         const provider = this.provider();
         const selected = this.selected();
+        if (this.pendingWrites > 0) throw failure("unavailable");
         if (!this.config.secret_ref || !this.deps.persist || this.busy)
             throw failure("misconfigured");
         this.busy = true;
+        this.session?.forget();
+        const generation = ++this.generation;
         try {
             const raw = await resolve(this.config.secret_ref);
             this.live();
@@ -95,8 +113,11 @@ export class GmailConnector implements Connector {
             this.state = state;
             this.reloadRequired = false;
             this.session = new OAuthSession({ provider, state: state.oauth, transport: this.deps.oauth ?? loopbackTransport({ postTimeoutMs: 5000 }), now: this.now, persist: async (bytes) => {
+                    this.assertGeneration(generation);
                     const current = this.require();
-                    await this.persist({ ...current, oauth: parseOAuthState(bytes, GMAIL_CONNECTOR_ID) });
+                    const oauth = parseOAuthState(bytes, GMAIL_CONNECTOR_ID);
+                    if (oauth.account.id !== state.oauth.account.id || current.oauth.account.id !== state.oauth.account.id) throw failure("unauthenticated");
+                    await this.persist({ ...current, oauth }, generation);
                 } });
             const identity = await this.request(new URL(USERINFO), new Budget());
             if (id(identity.sub) !== state.oauth.account.id)
@@ -104,9 +125,7 @@ export class GmailConnector implements Connector {
             this.last = "ok";
         }
         catch (error) {
-            this.session?.forget();
-            this.session = null;
-            this.state = null;
+            this.invalidate(generation);
             this.last = "unauthenticated";
             throw failure(error instanceof KizukiError ? error.code : "unauthenticated");
         }
@@ -117,7 +136,7 @@ export class GmailConnector implements Connector {
     async signIn(io: SignInIo, writer: ConnectionStateWriter) {
         this.live();
         const provider = this.provider(), selected = this.selected();
-        if (this.busy)
+        if (this.busy || this.pendingWrites > 0)
             throw failure("unavailable");
         this.busy = true;
         try {
@@ -143,19 +162,21 @@ export class GmailConnector implements Connector {
             this.busy = false;
         }
     }
-    private async tokenWait<T>(pending: Promise<T>, budget: Budget): Promise<T> {
+    private async tokenWait<T>(pending: Promise<T>, budget: Budget, generation: number): Promise<T> {
         try {
-            return await withDeadline(pending, Math.min(5000, budget.remaining()), "Gmail token deadline");
+            const result = await withDeadline(pending, Math.min(5000, budget.remaining()), "Gmail token deadline");
+            this.assertGeneration(generation);
+            return result;
         }
-        catch {
-            this.session?.forget();
-            throw failure("unauthenticated");
+        catch (error) {
+            this.invalidate(generation);
+            throw failure(error instanceof DeadlineError || error instanceof KizukiError && error.code === "timeout" ? "timeout" : "unauthenticated");
         }
     }
     private async request(url: URL, budget: Budget): Promise<Record<string, unknown>> {
         this.require();
-        const session = this.session!;
-        let token = await this.tokenWait(session.accessToken(), budget);
+        const session = this.session!, generation = this.generation;
+        let token = await this.tokenWait(session.accessToken(), budget, generation);
         this.live();
         budget.remaining();
         try {
@@ -166,10 +187,10 @@ export class GmailConnector implements Connector {
         catch (error) {
             if (!(error instanceof HttpFailure) || error.status !== 401)
                 throw error;
-            await this.tokenWait(session.refresh(), budget);
+            await this.tokenWait(session.refresh(), budget, generation);
             this.live();
             budget.remaining();
-            token = await this.tokenWait(session.accessToken(), budget);
+            token = await this.tokenWait(session.accessToken(), budget, generation);
             const result = await getJson(url, token, budget, this.deps.fetch);
             this.live();
             return result;
@@ -237,7 +258,7 @@ export class GmailConnector implements Connector {
             next = { ...base, page, anchor: page === null ? anchor : base.anchor };
         }
         const plan: Plan = { input: digest(input), base, next, observed_at, items, fence: null };
-        await this.persist({ ...this.require(), pending: plan });
+        await this.persist({ ...this.require(), pending: plan }, this.generation, Math.min(5000, budget.remaining()));
         return plan;
     }
     private async capture(input: string | null): Promise<SyncBatch> {
@@ -302,7 +323,7 @@ export class GmailConnector implements Connector {
             }
             else if (fingerprints.length > 0) {
                 plan = { ...plan, fence: { offset, fingerprints } };
-                await this.persist({ ...this.require(), pending: plan });
+                await this.persist({ ...this.require(), pending: plan }, this.generation, Math.min(5000, budget.remaining()));
             }
             this.live();
             budget.remaining();
@@ -322,7 +343,7 @@ export class GmailConnector implements Connector {
     }
     backfill(cursor: string | null) { return this.capture(cursor); }
     sync(cursor: string | null) { return this.capture(cursor); }
-    async revoke() { this.disabled = true; this.session?.forget(); this.session = null; this.state = null; }
+    async revoke() { this.generation++; this.disabled = true; this.session?.forget(); this.session = null; this.state = null; }
     async purgeSource(_subject: string): Promise<never> { throw failure("not_supported"); }
     async fixture() { return [messageEvent("fixture-account", { id: "fixture-message", threadId: "fixture-thread", historyId: "100", internalDate: "1704067200000", payload: { mimeType: "text/plain", body: { data: Buffer.from("Synthetic Gmail fixture").toString("base64url") } } }, "2024-01-01T00:00:00.000Z", ["text"])]; }
 }
