@@ -76,7 +76,7 @@ export const importCommand: Command = {
     const revision = hasPolicy ? expectedRevision(parsed.options.get("--expected-revision")) : undefined;
     const policy = hasPolicy ? readSourcePolicy(parsed.options.get("--policy")!) : undefined;
     const absolute = resolve(source);
-    const connectorId = resolveConnectorId(rawId, absolute);
+    const connectorId = resolveConnectorId(rawId);
 
     return withVault(io, async (ctx) => {
       const hosts = listHostConnections(ctx.db, ctx.store, connectorId);

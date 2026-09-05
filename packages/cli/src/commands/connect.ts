@@ -249,7 +249,7 @@ export const connectCommand: Command = {
       throw new UsageError(this.usage);
     }
     const absolute = resolve(source);
-    const connectorId = resolveConnectorId(rawId, absolute);
+    const connectorId = resolveConnectorId(rawId);
     const requested = parseSensitivityFlag(parsed.options.get("--sensitivity"));
 
     return withVault(io, async (ctx) => {
