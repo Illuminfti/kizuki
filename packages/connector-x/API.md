@@ -143,6 +143,10 @@ partial failure or late pending write leaves a fence that a restored connector
 can load without egress; only another explicit `revokeProviderAccess` call may
 retry the provider revocations. Already revoked tokens are handled idempotently
 by the core OAuth helper. Local instances always close after an attempted revoke.
+Sign-in refuses before browser or provider work while loaded revocation is
+pending, preserving the old credentials needed for retry. After terminal
+revocation, a new explicit sign-in may establish fresh authorization through the
+normal PKCE and host-writer flow; it cannot undo either completed remote revoke.
 Native CAS prevents a stale refresh, cooldown, or competing revoke from replacing
 a newer enrollment or revocation fence. This flow does not delete provider
 content. Missing posts and HTTP 404 never imply deletion. The manifest declares

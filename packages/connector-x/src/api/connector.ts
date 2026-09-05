@@ -132,7 +132,9 @@ export class XApiConnector implements Connector {
     finally { this.operationBudget = null; this.busy = false; }
   }
   async signIn(io: SignInIo, writer: ConnectionStateWriter) {
-    this.idle(); const provider = this.provider(), selected = this.selected();
+    this.idle();
+    if (this.state?.revocation === "pending") throw failure("unavailable");
+    const provider = this.provider(), selected = this.selected();
     // The native registered callback is a separate qualification gate. Only
     // a trusted explicitly supplied transport may attempt interactive enrollment.
     if (this.deps.oauth === undefined) throw failure("misconfigured");
