@@ -7,7 +7,7 @@ import { claimReader } from "./claims";
 import type { Sensitivity } from "../agents";
 import { insertClaim, getClaim } from "../claims/store";
 import type { AuthorityTier, Claim } from "../contracts/proposal";
-import { accept } from "../ledger/ledger";
+import { recordNativeCorrection } from "../correction/evidence";
 import { text } from "./arguments";
 import { auditArguments, claimsIo, gateAsync, principalName } from "./gate";
 import type { Served } from "./gate";
@@ -91,59 +91,12 @@ function recordStatement(
   at: string,
   requestDigest: string,
 ): string {
-  return ctx.db
-    .transaction(() => {
-      // A replay of the same sentence at the same target is the same evidence
-      // (RFC 0002 §6.3): the ledger keeps one row for it, and the accepted
-      // instant would otherwise make every replay a new record.
-      const existing = ctx.db
-        .query<{ event_id: string }, [string, string]>(
-          `SELECT event_id FROM events
-         WHERE connector_id = ? AND source_record_id = ?
-         ORDER BY accepted_at LIMIT 1`,
-        )
-        .get(CORRECTION_CONNECTOR, sourceRecordId);
-      if (existing !== null) {
-        const marker = ctx.db
-          .query<{ request_digest: string }, [string]>(
-            "SELECT request_digest FROM native_owner_evidence WHERE event_id=?",
-          )
-          .get(existing.event_id);
-        if (marker === null || marker.request_digest !== requestDigest)
-          throw new ServeError(
-            "invalid_arguments",
-            "correction recording conflicts with existing evidence",
-          );
-        return existing.event_id;
-      }
-
-      const stored = accept(ctx.db, {
-        schema: "kizuki.event/v1",
-        connector_id: CORRECTION_CONNECTOR,
-        source_record_id: sourceRecordId,
-        kind: CORRECTION_KIND,
-        occurred_at: at,
-        observed_at: at,
-        text: statement,
-        subjects: [],
-        sensitivity_hint: "private",
-        deleted: false,
-        attachments: [],
-        metadata: {},
-      });
-      if (stored.status === "stored") {
-        ctx.db
-          .query(
-            "INSERT INTO native_owner_evidence VALUES (?, 'correction', ?, ?, 'recorded')",
-          )
-          .run(stored.event.event_id, requestDigest, at);
-        return stored.event.event_id;
-      }
-      throw new ServeError("error", "serving failed", {
-        cause: stored.status === "error" ? stored.error : "duplicate statement",
-      });
-    })
-    .immediate();
+  return recordNativeCorrection(ctx.db, {
+    schema: "kizuki.event/v1", connector_id: CORRECTION_CONNECTOR,
+    source_record_id: sourceRecordId, kind: CORRECTION_KIND,
+    occurred_at: at, observed_at: at, text: statement, subjects: [],
+    sensitivity_hint: "private", deleted: false, attachments: [], metadata: {},
+  }, requestDigest).event_id;
 }
 
 function ambiguousAnswer(groups: Map<string, Claim[]>): CorrectData {

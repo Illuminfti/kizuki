@@ -12,7 +12,7 @@ import { validatePage } from "../../src/vault/schema";
 import { readPage, CanonPageUnreadable } from "../../src/canon/store";
 import { isAuthorityTier } from "../../src/contracts/proposal";
 import type { AuthorityTier } from "../../src/contracts/proposal";
-import { corroboratedFacts } from "../claims/helpers";
+import { corroboratedFacts, nativeOwnerEvent } from "../claims/helpers";
 import { afterEach, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -200,7 +200,7 @@ test("prototype property names are never authority tiers in any projection", asy
 
 test("a revert must begin at the after-hash of the write it names", async () => {
   const f = fixture();
-  const event = putEvent(f.db);
+  const event = nativeOwnerEvent(f.db, "Grace runs partnerships at Acme.");
   const first = write(f.io, await storeClaim(f.db, event, { producer: "owner", intent: "correct" }));
   expect(first.authority).toBe("owner_correction");
   const originalBytes = readFileSync(join(f.vault, first.page_path));

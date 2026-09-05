@@ -9,9 +9,9 @@ import { CanonWriteError } from "../canon/errors";
 import type { CanonIo } from "../canon";
 import { getCanonReceipt } from "../canon/receipts";
 import { getClaim, insertClaim, listClaims, supersedeLiveGroup } from "../claims/store";
-import { retrievalDocId } from "../retrieval/ids";
 import type { Claim, FrontmatterValue, Producer } from "../contracts/proposal";
-import { accept } from "../ledger/ledger";
+import { recordNativeCorrection } from "./evidence";
+import { requireSourceEvents } from "../ledger/source-grants";
 import type { CaptureEventInput, SubjectRef } from "../contracts/event";
 import { tableExists } from "../ledger/schema";
 import { isRfc3339 } from "../util/time";
@@ -314,9 +314,6 @@ function acceptOwnerEvent(
 ): { event_id: string; duplicate: boolean } {
   const sourceId = sourceRecordId(input.statement, input.target);
   const existing = findOwnerEvent(io.db, sourceId);
-  if (existing !== null) {
-    return { event_id: existing, duplicate: true };
-  }
   const event: CaptureEventInput = {
     schema: "kizuki.event/v1",
     connector_id: OWNER_CONNECTOR_ID,
@@ -338,18 +335,8 @@ function acceptOwnerEvent(
   if (input.dry_run === true) {
     return { event_id: existing ?? mintId(io), duplicate: existing !== null };
   }
-  const accepted = accept(io.db, event);
-  if (accepted.status === "stored") {
-    return { event_id: accepted.event.event_id, duplicate: false };
-  }
-  if (accepted.status === "duplicate") {
-    const eventId = findOwnerEvent(io.db, sourceId);
-    if (eventId === null) {
-      throw new CorrectError("ledger_rejected", "duplicate owner event could not be read back");
-    }
-    return { event_id: eventId, duplicate: true };
-  }
-  throw new CorrectError("ledger_rejected", "owner event was not accepted");
+  try { return recordNativeCorrection(io.db, event, sourceId); }
+  catch { throw new CorrectError("ledger_rejected", "owner correction conflicts with existing evidence or could not be recorded"); }
 }
 
 async function insertCorrection(
@@ -358,6 +345,7 @@ async function insertCorrection(
   live: Claim,
   eventId: string,
   at: string,
+  provenance: readonly string[],
 ): Promise<Claim> {
   const parsed = objectFromStatement(input.statement, live);
   const producer: Producer = io.producer ?? "owner";
@@ -374,7 +362,7 @@ async function insertCorrection(
       polarity: parsed.polarity,
       body: input.statement,
       frontmatter: portableFrontmatter(live),
-      provenance: [eventId],
+      provenance: [...new Set([eventId, ...provenance])],
       subjects: live.subject !== null ? [live.subject] : [],
       producer,
       confidence: 1,
@@ -483,27 +471,10 @@ function affectedPages(io: CorrectIo, group: Claim[], winner: Claim): AffectedPa
   });
 }
 
-async function refreshRetrieval(io: CorrectIo, winner: Claim, at: string): Promise<void> {
-  if (io.retrieval === undefined) return;
-  await io.retrieval.upsert([
-    {
-      doc_id: retrievalDocId("claim", winner.claim_id),
-      kind: "claim",
-      title: winner.predicate ?? winner.kind,
-      text: winner.body,
-      sensitivity: winner.sensitivity,
-      taint: winner.taint,
-      authority: winner.authority,
-      subjects: winner.subject !== null ? [winner.subject, ...winner.subjects] : winner.subjects,
-      provenance: winner.provenance,
-      occurred_at: winner.valid_from,
-      updated_at: at,
-    },
-  ]);
-}
 
 /**
- * RFC 0002 §6. One function behind `kizuki tell` and MCP `correct`.
+ * RFC 0002 §6. Native targeted correction used by `kizuki tell`.
+ * Shared evidence recording also serves MCP correction.
  * `--claim` / `claim_key` resolve without a model.
  */
 export async function correct(io: CorrectIo, input: CorrectInput): Promise<CorrectResult> {
@@ -520,6 +491,8 @@ export async function correct(io: CorrectIo, input: CorrectInput): Promise<Corre
   if (group.length === 0) {
     throw new CorrectError("claim_unknown", "no live claims matched the target and scope");
   }
+  const provenance = [...new Set(group.flatMap(claim => claim.provenance))];
+  requireSourceEvents(io.db, provenance, { owner: !(io.producer ?? "owner").startsWith("agent:"), purpose: "correction" });
   const seed = seedClaim(group, input.target as CorrectTarget);
   const at = nowOf(io);
   const accepted = acceptOwnerEvent(io, input, seed, at);
@@ -571,7 +544,7 @@ export async function correct(io: CorrectIo, input: CorrectInput): Promise<Corre
     };
   }
 
-  const winner = await insertCorrection(io, input, seed, accepted.event_id, at);
+  const winner = await insertCorrection(io, input, seed, accepted.event_id, at, provenance);
   supersedeLiveGroup(io.db, winner, at);
   const superseded = io.db
     .query<{ loser: string }, [string]>(
@@ -616,7 +589,7 @@ export async function correct(io: CorrectIo, input: CorrectInput): Promise<Corre
           object: null,
           body: input.statement,
           frontmatter: portableFrontmatter(winner),
-          provenance: [accepted.event_id],
+          provenance: winner.provenance,
           subjects: winner.subjects,
           producer: winner.producer,
           confidence: 1,
@@ -678,7 +651,8 @@ export async function correct(io: CorrectIo, input: CorrectInput): Promise<Corre
   }
 
   bumpClaimsEpoch(io.db);
-  await refreshRetrieval(io, winner, at);
+  // insertClaim already owns the durable, source-authorized retrieval update.
+  io.db.query("UPDATE native_owner_evidence SET filing_state='filed' WHERE event_id=?").run(accepted.event_id);
 
   return {
     receipt_id: receiptId,
