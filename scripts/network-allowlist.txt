@@ -13,10 +13,13 @@ packages/connector-imap/src/transport.ts:owner-configured IMAP server over TLS; 
 packages/connector-imap/test/transport.test.ts:loopback TLS server bound by the IMAP transport tests
 packages/core/test/auth/loopback.test.ts:loopback fake authorization server and client for the OAuth sign-in tests
 packages/core/src/auth/loopback.ts:OAuth sign-in loopback listener on 127.0.0.1 and the single token-endpoint fetch of the owner-configured provider
-packages/core/src/serve/http.ts:standing loopback MCP endpoint under kizuki serve
+packages/core/src/serve/http.ts:standing loopback MCP endpoint and authenticated ephemeral local app session in the same HTTP implementation
 packages/core/test/serve/http.test.ts:loopback fetch against the standing serve endpoint
 packages/core/test/serve/http-retrieval.test.ts:synthetic loopback HTTP reads against the host-bound retrieval surface
 packages/connector-gmail/src/api.ts:explicitly enrolled Gmail read-only capture and OIDC identity; fixed Google HTTPS endpoints, no redirects, bounded GET requests
 packages/connector-google-calendar/src/api.ts:explicitly configured read-only Google Calendar fixed-host GET transport
 packages/connector-whoop/src/api.ts:explicitly configured WHOOP fixed-origin and exact-route transport; bounded read-only capture and separately invoked provider-access revocation, no redirects
 packages/cli/src/app/ui/client.js:bundled local browser client; same-origin fixed app API paths only, bearer authentication, no credentials or redirects, bounded request time
+
+packages/core/test/serve/app-http.test.ts:synthetic loopback app-session authentication and bounded-body tests
+packages/cli/test/app-host.test.ts:synthetic loopback asset and authenticated local app host tests
