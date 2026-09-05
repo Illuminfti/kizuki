@@ -2131,11 +2131,11 @@ proved.
 
 ### 13.2 Identity and purge
 
-Purge is keyed on **raw subject refs**, never on merged identity. An
-identity merge is a claim like any other and can be wrong; keying deletion
-on it would make a wrong merge a data-loss event. `kizuki purge --subject
-<ref>` expands through `identity_links` only with `--include-aliases`,
-which prints the alias set for confirmation and records it in the receipt.
+Purge is keyed on **raw subject refs**. A0 retires `identity_links` as an
+authority source: `--include-aliases` refuses before planning or mutation,
+and ordinary raw-subject purge remains available. The retained table is inert
+compatibility history only; it is removed when an endpoint or durable support
+is erased. Absence is publicly provable only when the legacy table is empty.
 
 ### 13.3 What the ledger must never hold
 
@@ -2157,7 +2157,7 @@ that a review queue would consume it. With no queue, each item resolves:
 | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `wm_claims` — atomic claims                  | **Shipped as `claims`** (§4.3). The working model _is_ the write journal; there is no separate staging vocabulary. `contracts/proposal.ts`'s unused `Proposal`, `PROPOSAL_STATUSES` and `validateProposal` are **deleted** — two contracts for one record was already a defect.                                                                             |
 | normalized event envelopes, activities       | Deferred still, and now clearly optional: extraction reads `kizuki.event/v1` directly and the normalization the deep model needs is expressed as predicates, not as a second envelope. Revisit only if a connector class demands it.                                                                                                                        |
-| entity + identity candidates                 | `entities` and `identity_links(subject_a, subject_b, score, evidence, status, decided_by, at)`. Autonomous merge at `score ≥ IDENTITY_MERGE_MIN = 0.9` **and** corroboration from two independent connectors; otherwise `candidate`. Candidates influence ranking as soft aliases and never purge keying (§13.2). Every merge is a receipt and is undoable. |
+| entity + identity candidates                 | Historical `identity_links(subject_a, subject_b, score, evidence, status, decided_by, at)` rows remain inert compatibility state during A0. They grant no alias, ranking, merge, or purge authority; mutation and alias APIs refuse with `identity_unsupported`. |
 | bi-temporal validity                         | Shipped on `claims`: `valid_from` / `valid_to` (valid time) and `asserted_at` / `retracted_at` (transaction time). Query parameters `as_of_valid` / `as_of_transaction` remain deferred as read-only surface (§17).                                                                                                                                         |
 | claim groups                                 | Superseded by `claim_key` grouping plus `claim_supersessions`. No separate table.                                                                                                                                                                                                                                                                           |
 | review packets                               | Become **audit packets**: the same grouping code (by kind, then subject, then time, with diffs) renders receipts read-only in `kizuki audit`. No accept/reject effect exists.                                                                                                                                                                               |
@@ -2635,7 +2635,8 @@ CREATE TABLE retrieval_ops (op_id TEXT PRIMARY KEY, store TEXT NOT NULL,
   created_at TEXT NOT NULL, done_at TEXT) STRICT;
 ```
 
-**v6 — ports, identity, sensitivity.**
+**v6 — ports, historical identity storage, sensitivity.** `identity_links`
+below is inert compatibility state under A0 and grants no authority.
 
 ```sql
 CREATE TABLE port_state (kind TEXT PRIMARY KEY, port_id TEXT NOT NULL,

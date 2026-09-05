@@ -244,7 +244,7 @@ function utf8BodyOnChunkBoundary(): string {
 }
 
 describe("exportVault", () => {
-  test("writes a complete kizuki.backup/v2 manifest with matching hashes", () => {
+  test("writes a complete kizuki.backup/v3 manifest with matching hashes", () => {
     const { db, vaultPath } = populated();
     const outDir = join(temporary("kizuki-export-parent-"), "dump");
     const manifest = exportVault(db, vaultPath, outDir);
@@ -636,7 +636,12 @@ describe("restoreVault", () => {
     );
     const backup = join(temporary("kizuki-export-parent-"), "dump");
     const manifest = exportVault(db, vaultPath, backup);
+    expect(manifest.schema).toBe("kizuki.backup/v3");
     expect(manifest.files["claims/identity_links.jsonl"]?.count).toBe(1);
+    expect(JSON.parse(readFileSync(join(backup, "claims", "identity_links.jsonl"), "utf8")).evidence).toEqual({
+      encoding: "kizuki.identity-evidence/raw-v1",
+      raw: '["evt-1"]',
+    });
     expect(manifest.files["ledger/connector_sensitivity.jsonl"]?.count).toBe(1);
 
     const target = join(temporary("kizuki-restore-parent-"), "vault");

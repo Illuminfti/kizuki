@@ -479,5 +479,33 @@ describe("RFC 0002 purge totality", () => {
       .toThrow("identity link evidence is malformed or unresolved");
     expect(db.query<{ event_id: string }, [string]>("SELECT event_id FROM events WHERE event_id=?").get(untouched.event_id)?.event_id)
       .toBe(untouched.event_id);
+    db.query("DELETE FROM identity_links").run();
+    db.query(
+      `INSERT INTO identity_links
+       (subject_a, subject_b, score, evidence, status, decided_by, receipt_id, at)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`,
+    ).run("person:dangling-a", "person:dangling-b", 1, JSON.stringify(["event:does-not-exist"]), "candidate", "legacy", AT);
+    expect(() => purgeEvents(db, vaultPath, { event_id: untouched.event_id }, "must resolve support", { now: () => AT }))
+      .toThrow("purge retained erased identity support");
+  });
+
+  test("public verification is unprovable while unrelated inert identity history remains", async () => {
+    const { db, vaultPath } = vault();
+    const erased = storeEvent(db, { source_record_id: "erased-proof.md" });
+    const surviving = storeEvent(db, { source_record_id: "surviving-proof.md" });
+    db.query(
+      `INSERT INTO identity_links
+       (subject_a, subject_b, score, evidence, status, decided_by, receipt_id, at)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`,
+    ).run("person:unrelated-a", "person:unrelated-b", 1, JSON.stringify([`event:${surviving.event_id}`]), "candidate", "legacy", AT);
+    const outcome = purgeEvents(db, vaultPath, { event_id: erased.event_id }, "remove one", { now: () => AT });
+    expect(outcome.receipts).toHaveLength(1);
+    const report = await verifyPurge(db, vaultPath, outcome.receipts[0]!.receipt_id, { now: () => AT });
+    expect(report.ok).toBe(false);
+  });
+
+  test("verification never certifies an arbitrary receipt id", async () => {
+    const { db, vaultPath } = vault();
+    expect((await verifyPurge(db, vaultPath, "not-a-purge-receipt", { now: () => AT })).ok).toBe(false);
   });
 });

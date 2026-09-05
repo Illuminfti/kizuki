@@ -322,31 +322,17 @@ export async function collectPieces(
     const aliasRoots = wanted ?? live.map((claim) => claim.subject).filter(
       (subject): subject is string => subject !== null,
     );
-    const seenAlias = new Set<string>();
     let identityUnavailable = false;
     try {
-      listSubjectAliases(ctx.db, aliasRoots[0] ?? "", 8, reader.canReadAlias, reader.invalidAlias);
+      // A0 deliberately retires identity authority. Keep the only capability
+      // call at its real consumer seam, so a future implementation cannot
+      // double-read the first subject through a discarded probe.
+      for (const root of aliasRoots.slice(0, 8)) {
+        listSubjectAliases(ctx.db, root, 8, reader.canReadAlias, reader.invalidAlias);
+      }
     } catch (error) {
       if (!(error instanceof ClaimError) || error.code !== "identity_unsupported") throw error;
       identityUnavailable = true;
-    }
-    if (!identityUnavailable) {
-      for (const root of aliasRoots.slice(0, 8)) {
-        for (const alias of listSubjectAliases(ctx.db, root, 8, reader.canReadAlias, reader.invalidAlias)) {
-        const key = JSON.stringify([root, alias.subject].sort());
-        if (seenAlias.has(key)) continue;
-        seenAlias.add(key);
-        const audit = reader.auditAlias(root, alias.subject);
-        pieces.push({
-          section: "claims",
-          heading: "## working knowledge",
-          block:
-            `- alias ${inline(root)} ~ ${inline(alias.subject)} s=${audit[0]?.sensitivity} taint=clean score=${confidenceLabel(alias.score)}` +
-            ` status=${alias.status}\n`,
-          audit,
-        });
-        }
-      }
     }
     if (identityUnavailable) nominated.degraded.push("identity-authority-unavailable");
     withheld.push(...reader.denied.values());

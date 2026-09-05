@@ -24,7 +24,7 @@ import { isPlainObject } from "../util/validate";
 import { getConnectorSensitivity } from "../sensitivity/store";
 import { getConnection } from "./connections";
 import { tableExists } from "./schema";
-import { parseLegacyIdentityEvidence } from "../claims/identity";
+import { scanLegacyIdentityRows } from "../claims/identity";
 
 export const SOURCE_PURPOSES = [
   "capture",
@@ -872,18 +872,11 @@ function sourcePurgeBlockers(
       ).all(sourceKey).map((row) => row.event_id),
     );
     const claimIds = new Set(retainedClaims.map((row) => row.claim_id));
-    const links = db.query<{ evidence: string }, []>(
-      "SELECT evidence FROM identity_links LIMIT 10001",
-    ).all();
-    if (
-      links.length > 10000 ||
-      links.some((row) => {
-        const parsed = parseLegacyIdentityEvidence(row.evidence);
-        return !parsed.ok || parsed.refs.some((ref) =>
-          ref.kind === "event" ? eventIds.has(ref.id) : claimIds.has(ref.id),
-        );
-      })
-    ) {
+    let links;
+    try { links = scanLegacyIdentityRows(db); } catch { links = null; }
+    // With no retained raw subject dictionary, final source completion can
+    // prove identity absence only after every inert legacy row is gone.
+    if (links === null || links.length > 0) {
       blockers.push("identity_payload_retained");
     }
   }

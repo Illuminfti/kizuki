@@ -315,8 +315,11 @@ writes a completion receipt. `--dry-run` prints a bounded plan and writes
 nothing. Connector selectors use ledger identity, including retired ids.
 Broad subject or connector-only deletes require `--confirm`. Exact `--event`
 and `--connector --record` paths stay noninteractive. Purged events are not
-resurrected by undo; canon rewrites stay reversible. `--verify` prints
-per-store absence proofs and `pending`/`done`/`failed` operation state.
+resurrected by undo; canon rewrites stay reversible. `--include-aliases` is
+retired and refuses before planning or deletion. `--verify` prints per-store
+absence proofs and `pending`/`done`/`failed` operation state. While any inert
+legacy identity row remains, identity absence is unprovable rather than
+successful.
 
 ## export
 

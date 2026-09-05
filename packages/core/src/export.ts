@@ -27,7 +27,7 @@ import {
   rowToReceipt,
 } from "./canon/receipts";
 import { CLAIMS_SCHEMA_VERSION, syncCompatProposals } from "./claims/schema";
-import { parseLegacyIdentityEvidence } from "./claims/identity";
+import { LEGACY_IDENTITY_EVIDENCE_MAX_BYTES, parseLegacyIdentityEvidence } from "./claims/identity";
 import { rebuildDerived } from "./derived";
 import { EVENT_LIMITS, type CaptureEvent } from "./contracts/event";
 import { isUlid, ulid } from "./util/ulid";
@@ -43,9 +43,10 @@ import { readVaultId, vaultIdPath } from "./serve/vault-id";
 import { doctorVault } from "./vault/doctor";
 import { initVault } from "./vault/init";
 
-export const BACKUP_SCHEMA = "kizuki.backup/v2" as const;
+export const BACKUP_SCHEMA = "kizuki.backup/v3" as const;
+export const V2_BACKUP_SCHEMA = "kizuki.backup/v2" as const;
 export const LEGACY_BACKUP_SCHEMA = "kizuki.backup/v1" as const;
-type BackupSchema = typeof BACKUP_SCHEMA | typeof LEGACY_BACKUP_SCHEMA;
+type BackupSchema = typeof BACKUP_SCHEMA | typeof V2_BACKUP_SCHEMA | typeof LEGACY_BACKUP_SCHEMA;
 const FILE_MODE = 0o600;
 const DIR_MODE = 0o700;
 const PAGE = 256;
@@ -793,17 +794,12 @@ function* pageIdentityLinks(db: Database): Generator<Record<string, unknown>> {
     }
     if (rows.length === 0) break;
     for (const row of rows) {
-      const parsed = parseLegacyIdentityEvidence(row.evidence);
       yield {
         subject_a: row.subject_a,
         subject_b: row.subject_b,
         score: row.score,
-        // A0 preserves legacy history without treating malformed support as
-        // authority. Valid typed references are serialized canonically; other
-        // legacy payload remains inert and byte-preserved for later cleanup.
-        evidence: parsed.ok
-          ? parsed.refs.map((ref) => `${ref.kind}:${ref.id}`)
-          : row.evidence,
+        // v3 makes opaque legacy text explicit. It stays inert and exact.
+        evidence: { encoding: "kizuki.identity-evidence/raw-v1", raw: row.evidence },
         status: row.status,
         decided_by: row.decided_by,
         receipt_id: row.receipt_id,
@@ -1296,7 +1292,7 @@ function verifyFiles(root: string, manifest: ExportManifest): void {
     }
   }
   const intents = manifest.files[MACHINE_BYTE_INTENTS_BACKUP];
-  if (manifest.schema === BACKUP_SCHEMA && intents === undefined) {
+  if (manifest.schema !== LEGACY_BACKUP_SCHEMA && intents === undefined) {
     throw new Error("backup machine-byte intent stream is missing");
   }
   if (manifest.schema === LEGACY_BACKUP_SCHEMA && intents !== undefined) {
@@ -1357,14 +1353,14 @@ function readManifest(backupDir: string): ExportManifest {
 }
 
 function assertBackupFormat(manifest: ExportManifest): void {
-  if (manifest.schema !== BACKUP_SCHEMA && manifest.schema !== LEGACY_BACKUP_SCHEMA) {
+  if (manifest.schema !== BACKUP_SCHEMA && manifest.schema !== V2_BACKUP_SCHEMA && manifest.schema !== LEGACY_BACKUP_SCHEMA) {
     throw new Error("backup schema is unsupported");
   }
   const versions = manifest.schema_versions;
   if (typeof versions !== "object" || versions === null || !Number.isSafeInteger(versions.ledger)) {
     throw new Error("backup schema versions are invalid");
   }
-  if (manifest.schema === BACKUP_SCHEMA && versions.ledger !== LEDGER_SCHEMA_VERSION) {
+  if ((manifest.schema === BACKUP_SCHEMA || manifest.schema === V2_BACKUP_SCHEMA) && versions.ledger !== LEDGER_SCHEMA_VERSION) {
     throw new Error("current backup ledger schema is invalid");
   }
   if (manifest.schema === LEGACY_BACKUP_SCHEMA && (versions.ledger < 1 || versions.ledger > 15)) {
@@ -1511,11 +1507,18 @@ function insertBinding(db: Database, raw: Record<string, unknown>): void {
   );
 }
 
-function insertIdentityLink(db: Database, raw: Record<string, unknown>): void {
+function insertIdentityLink(db: Database, raw: Record<string, unknown>, schema: BackupSchema): void {
   const rawEvidence = raw.evidence;
-  const evidence = typeof rawEvidence === "string"
-    ? rawEvidence
-    : JSON.stringify(rawEvidence ?? []);
+  const evidence = schema === BACKUP_SCHEMA
+    ? (() => {
+      const tagged = typeof rawEvidence === "object" && rawEvidence !== null && !Array.isArray(rawEvidence)
+        ? rawEvidence as { encoding?: unknown; raw?: unknown } : null;
+      if (tagged === null || tagged.encoding !== "kizuki.identity-evidence/raw-v1" || typeof tagged.raw !== "string" ||
+        Buffer.byteLength(tagged.raw, "utf8") > LEGACY_IDENTITY_EVIDENCE_MAX_BYTES) throw new Error("identity evidence is invalid");
+      return tagged.raw;
+    })()
+    : typeof rawEvidence === "string" ? rawEvidence : JSON.stringify(rawEvidence ?? []);
+  if (Buffer.byteLength(evidence, "utf8") > LEGACY_IDENTITY_EVIDENCE_MAX_BYTES) throw new Error("identity evidence is too large");
   const parsed = parseLegacyIdentityEvidence(evidence);
   db.query(
     `INSERT INTO identity_links
@@ -1839,7 +1842,7 @@ export function restoreVault(
           insertBinding(db, row);
         }
         for (const row of streamRows(source, "claims/identity_links.jsonl", false)) {
-          insertIdentityLink(db, row);
+          insertIdentityLink(db, row, manifest.schema);
         }
         for (const row of streamRows(source, "canon/receipts.jsonl", true)) {
           insertReceipt(db, row);

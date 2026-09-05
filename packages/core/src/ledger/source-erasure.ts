@@ -6,7 +6,7 @@ import { parseFrontmatter } from "../vault/frontmatter";
 import { listCanonPagesReport, stringArray } from "../vault/pages";
 import { sha256Hex } from "../util/hash";
 import { rebuildDerived } from "../derived";
-import { parseLegacyIdentityEvidence } from "../claims/identity";
+import { collectLegacyPurgeSubjects, parseLegacyIdentityEvidence, resolveLegacyIdentityRef, scanLegacyIdentityRows } from "../claims/identity";
 
 /** Unique schema-compatible tombstone derived only from opaque identity, never old content. */
 export function sourceBodyTombstoneHash(table: "claims" | "proposals", id: string): string {
@@ -31,30 +31,11 @@ interface LegacyIdentityRow {
 }
 
 function sourceSubjectRefs(db: Database, source: string): Set<string> {
-  const refs = new Set<string>();
-  const rows = db.query<{ subjects: string }, [string]>(
-    "SELECT e.subjects FROM events e JOIN source_event_bindings b ON b.event_id=e.event_id WHERE b.source_key=?",
-  ).all(source);
-  for (const row of rows) {
-    let subjects: unknown;
-    try { subjects = JSON.parse(row.subjects); } catch { continue; }
-    if (!Array.isArray(subjects)) continue;
-    for (const subject of subjects) {
-      if (typeof subject !== "object" || subject === null) continue;
-      const id = (subject as { subject_id?: unknown }).subject_id;
-      if (typeof id === "string") refs.add(id);
-    }
-  }
-  return refs;
+  const ids = db.query<{ event_id: string }, [string]>("SELECT e.event_id FROM events e JOIN source_event_bindings b ON b.event_id=e.event_id WHERE b.source_key=?").all(source).map((row) => row.event_id);
+  return collectLegacyPurgeSubjects(db, ids);
 }
 
-function allLegacyIdentityRows(db: Database): LegacyIdentityRow[] {
-  const rows = db.query<LegacyIdentityRow, []>(
-    "SELECT subject_a, subject_b, evidence FROM identity_links LIMIT 10001",
-  ).all();
-  if (rows.length > 10000) throw new Error("identity link verification exceeded its bounded row limit");
-  return rows;
-}
+function allLegacyIdentityRows(db: Database): LegacyIdentityRow[] { return scanLegacyIdentityRows(db); }
 export function sourceErasureReport(
   db: Database,
   source: string,
@@ -177,9 +158,7 @@ export function eraseSourcePayload(
   const erasedLinks = links.filter((row) => {
     if (subjectRefs.has(row.subject_a) || subjectRefs.has(row.subject_b)) return true;
     const parsed = parseLegacyIdentityEvidence(row.evidence);
-    return parsed.ok && parsed.refs.some((ref) =>
-      ref.kind === "event" ? ids.has(ref.id) : claimIds.has(ref.id),
-    );
+    return parsed.ok && parsed.refs.some((ref) => resolveLegacyIdentityRef(db, ref, ids, claimIds) === "erased");
   });
   const report: SourceErasureReport = {
     logical_absence: false,
@@ -257,7 +236,7 @@ export function eraseSourcePayload(
       report.retained_reasons.push("identity_evidence_unresolved");
       break;
     }
-    if (subjectRefs.has(row.subject_a) || subjectRefs.has(row.subject_b) || parsed.refs.some((ref) => ref.kind === "event" ? ids.has(ref.id) : claimIds.has(ref.id))) {
+    if (subjectRefs.has(row.subject_a) || subjectRefs.has(row.subject_b) || parsed.refs.some((ref) => resolveLegacyIdentityRef(db, ref, ids, claimIds) !== "current")) {
       report.retained_reasons.push("identity_payload_retained");
       break;
     }
