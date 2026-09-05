@@ -1184,3 +1184,202 @@ test("SQLite readers keep physical source completion pending until checkpoint ca
   expect(done.erasure?.owned_file_maintenance).toBe("complete");
   db.close();
 });
+
+test("source erasure removes receipted canon and its archive without making another preimage", async () => {
+  const { db, dir, a } = setup();
+  grant(db, a);
+  const accepted = accept(
+    db,
+    { ...event(), text: "CANON_ERASURE_SYNTHETIC_713" },
+    { source: { source_key: a, expected_revision: 1 } },
+  );
+  if (accepted.status !== "stored") throw new Error("fixture failed");
+  const io = { db, vault_path: dir };
+  const first = write(
+    io,
+    await storeClaim(db, accepted.event.event_id, {
+      body: "CANON_ERASURE_SYNTHETIC_713",
+      frontmatter: { type: "person", title: "CANON_ERASURE_SYNTHETIC_713" },
+    }),
+  );
+  const second = write(
+    io,
+    await storeClaim(db, accepted.event.event_id, {
+      kind: "edit",
+      predicate: null,
+      object: null,
+      body: "CANON_ERASURE_SYNTHETIC_713 revised",
+      frontmatter: { title: "CANON_ERASURE_SYNTHETIC_713" },
+    }),
+  );
+  expect(second.archive_path).not.toBeNull();
+  revokeSourceGrant(db, {
+    source_key: a,
+    expected_revision: 1,
+    operation_id: "canon-erase",
+  });
+  const done = await resumeSourceRevocation(db, dir, "canon-erase", {
+    ownedRetrieval: {
+      stores: async () => ({ stores: [], absent_store_ids: [] }),
+    },
+  });
+  expect(done.status).toBe("purged");
+  const { existsSync, readFileSync, readdirSync } = await import("node:fs");
+  expect(existsSync(join(dir, first.page_path))).toBe(false);
+  expect(existsSync(join(dir, second.archive_path!))).toBe(false);
+  expect(readdirSync(join(dir, "archive"))).toEqual([]);
+  expect(
+    readFileSync(join(dir, ".kizuki", "receipts", "promotions.jsonl"), "utf8"),
+  ).not.toContain("CANON_ERASURE_SYNTHETIC_713");
+  await expect(undoReceipt(io, first.receipt_id)).rejects.toThrow();
+  const roundtrip=mkdtempSync(join(tmpdir(),"erased-canon-roundtrip-"));dirs.push(roundtrip);
+  exportVault(db,dir,join(roundtrip,"backup"));restoreVault(join(roundtrip,"backup"),join(roundtrip,"restored"));
+  const restoredDb=openLedger(join(roundtrip,"restored",".kizuki","kizuki.db"));
+  expect(inspectSourceGrant(restoredDb,a)?.status).toBe("purged");
+  expect(restoredDb.query("SELECT body FROM claims").all().every(row=>(row as {body:string}).body==="")).toBe(true);
+  restoredDb.close();
+  db.close();
+});
+
+test("receipted mixed canon preserves independently supported B text and owner edits remain held", async () => {
+  const { db, dir, a, b } = setup();
+  grant(db, a);
+  setSourceGrant(db, {
+    source_key: b,
+    expected_revision: 0,
+    operation_id: "mixed-physical-b",
+    policy: policy(),
+  });
+  const aa = accept(
+    db,
+    { ...event(), source_record_id: "mixed-physical-a" },
+    { source: { source_key: a, expected_revision: 1 } },
+  );
+  const bb = accept(
+    db,
+    { ...event(), source_record_id: "mixed-physical-b" },
+    { source: { source_key: b, expected_revision: 1 } },
+  );
+  if (aa.status !== "stored" || bb.status !== "stored")
+    throw new Error("fixture failed");
+  const io = { db, vault_path: dir };
+  const first = write(
+    io,
+    await storeClaim(db, aa.event.event_id, {
+      body: "A_ONLY_CANON_FRAGMENT_442",
+      frontmatter: { type: "person", title: "Shared person" },
+    }),
+  );
+  write(
+    io,
+    await storeClaim(db, bb.event.event_id, {
+      kind: "merge",
+      predicate: null,
+      object: null,
+      body: "B independently supported paragraph.",
+      frontmatter: { type: "person", title: "Shared person" },
+    }),
+  );
+  revokeSourceGrant(db, {
+    source_key: a,
+    expected_revision: 1,
+    operation_id: "mixed-physical-erase",
+  });
+  const done = await resumeSourceRevocation(db, dir, "mixed-physical-erase", {
+    ownedRetrieval: {
+      stores: async () => ({ stores: [], absent_store_ids: [] }),
+    },
+  });
+  expect(done.status).toBe("purged");
+  const { readFileSync } = await import("node:fs");
+  const text = readFileSync(join(dir, first.page_path), "utf8");
+  expect(text).toContain("B independently supported paragraph.");
+  expect(text).not.toContain("A_ONLY_CANON_FRAGMENT_442");
+  expect(text).not.toContain(aa.event.event_id);
+  const { parseFrontmatter } = await import("../src/vault/frontmatter");
+  const surviving = serveGetPage(
+    { db, vaultPath: dir, principal: OWNER },
+    { id: String(parseFrontmatter(text).data["id"]) },
+  );
+  expect(surviving.canon).toHaveLength(1);
+  db.close();
+});
+
+test("owner-edited source canon remains byte-identical and held through revocation", async () => {
+  const { db, dir, a } = setup();
+  grant(db, a);
+  const accepted = accept(db, event(), {
+    source: { source_key: a, expected_revision: 1 },
+  });
+  if (accepted.status !== "stored") throw new Error("fixture failed");
+  const receipt = write(
+    { db, vault_path: dir },
+    await storeClaim(db, accepted.event.event_id),
+  );
+  const { readFileSync, writeFileSync } = await import("node:fs");
+  const path = join(dir, receipt.page_path);
+  const edited =
+    readFileSync(path, "utf8") + "\nOwner-authored unrelated paragraph.\n";
+  writeFileSync(path, edited);
+  revokeSourceGrant(db, {
+    source_key: a,
+    expected_revision: 1,
+    operation_id: "owner-edited-revoke",
+  });
+  const pending = await resumeSourceRevocation(db, dir, "owner-edited-revoke", {
+    ownedRetrieval: {
+      stores: async () => ({ stores: [], absent_store_ids: [] }),
+    },
+  });
+  expect(pending.status).toBe("denied");
+  expect(pending.erasure?.retained_reasons).toContain(
+    "canon_or_archive_payload_retained",
+  );
+  expect(readFileSync(path, "utf8")).toBe(edited);
+  db.close();
+});
+
+test("interrupted canon metadata erasure resumes without restoring a deleted preimage", async () => {
+  const { db, dir, a } = setup();
+  grant(db, a);
+  const accepted = accept(db, event(), {
+    source: { source_key: a, expected_revision: 1 },
+  });
+  if (accepted.status !== "stored") throw new Error("fixture failed");
+  const receipt = write(
+    { db, vault_path: dir },
+    await storeClaim(db, accepted.event.event_id),
+  );
+  revokeSourceGrant(db, {
+    source_key: a,
+    expected_revision: 1,
+    operation_id: "interrupt-canon",
+  });
+  db.exec(
+    "CREATE TRIGGER interrupt_source_metadata BEFORE UPDATE OF page_path ON canon_receipts WHEN NEW.page_path='' BEGIN SELECT RAISE(FAIL,'synthetic interruption'); END",
+  );
+  const options = {
+    ownedRetrieval: {
+      stores: async () => ({ stores: [], absent_store_ids: [] }),
+    },
+  };
+  await expect(
+    resumeSourceRevocation(db, dir, "interrupt-canon", options),
+  ).rejects.toThrow("synthetic interruption");
+  const { existsSync } = await import("node:fs");
+  expect(existsSync(join(dir, receipt.page_path))).toBe(false);
+  expect(inspectSourceGrant(db, a)?.status).toBe("denied");
+  db.close();
+  const reopened = openLedger(join(dir, ".kizuki", "kizuki.db"));
+  reopened.exec("DROP TRIGGER interrupt_source_metadata");
+  const done = await resumeSourceRevocation(
+    reopened,
+    dir,
+    "interrupt-canon",
+    options,
+  );
+  expect(done.status).toBe("purged");
+  expect(done.erasure?.affected_receipt_ids).toContain(receipt.receipt_id);
+  expect(existsSync(join(dir, receipt.page_path))).toBe(false);
+  reopened.close();
+});

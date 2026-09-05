@@ -585,6 +585,12 @@ export interface PurgeRewriteInput {
   purged_event_ids: readonly string[];
   purged_claim_ids: readonly string[];
   purged_claim_bodies: readonly string[];
+  /** Internal, hash-qualified native source erasure. Null deletes an entirely attributed page. */
+  source_erasure?: {
+    expected_hash: string;
+    page: VaultPage | null;
+    retained_claim_ids: readonly string[];
+  };
 }
 
 function redactBody(body: string, fragments: readonly string[]): string {
@@ -594,7 +600,10 @@ function redactBody(body: string, fragments: readonly string[]): string {
     if (trimmed.length === 0) continue;
     next = next.split(trimmed).join("");
   }
-  const cleaned = next.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  const cleaned = next
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
   return cleaned.length === 0 ? "" : `${cleaned}\n`;
 }
 
@@ -613,34 +622,110 @@ export function applyPurgeRewrite(
     throw new CanonWriteError("page_missing", `page ${input.rel_path} is gone`);
   }
 
-  const authority = new CanonAuthorityResolver(io.db, [input.rel_path]).resolve(input.rel_path, existing.hash);
+  if (input.source_erasure !== undefined) {
+    if (
+      existing.hash !== input.source_erasure.expected_hash ||
+      input.purged_event_ids.length === 0 ||
+      input.purged_event_ids.some(
+        (id) =>
+          io.db
+            .query(
+              "SELECT 1 FROM source_event_bindings b JOIN source_grants g ON g.source_key=b.source_key WHERE b.event_id=? AND g.status!='active'",
+            )
+            .get(id) === null,
+      )
+    )
+      throw new CanonWriteError(
+        "decision_stale",
+        "source erasure is not authorized for this revision",
+      );
+  }
+  let authority = new CanonAuthorityResolver(io.db, [input.rel_path]).resolve(
+    input.rel_path,
+    existing.hash,
+  );
+  if (
+    input.source_erasure?.page !== undefined &&
+    input.source_erasure.page !== null
+  ) {
+    const retained = input.source_erasure.retained_claim_ids.map((id) =>
+      getClaim(io.db, id),
+    );
+    if (
+      retained.length === 0 ||
+      retained.some(
+        (claim) =>
+          claim === null || input.purged_claim_ids.includes(claim.claim_id),
+      )
+    )
+      throw new CanonWriteError(
+        "decision_stale",
+        "retained source claims are unavailable",
+      );
+    authority = retained.reduce(
+      (tier, claim) =>
+        AUTHORITY_TIERS[claim!.authority] < AUTHORITY_TIERS[tier]
+          ? claim!.authority
+          : tier,
+      retained[0]!.authority,
+    );
+    requireSourceEvents(io.db, existingSources(input.source_erasure.page), {
+      owner: true,
+      purpose: "derive",
+    });
+  }
   const prior = existingSources(existing.page);
   const remainingSources = prior.filter(
     (source) => !input.purged_event_ids.includes(source),
   );
-  const body = redactBody(existing.page.body, input.purged_claim_bodies);
-  const nothingRemains = remainingSources.length === 0 && body.trim().length === 0;
+  const body =
+    input.source_erasure === undefined
+      ? redactBody(existing.page.body, input.purged_claim_bodies)
+      : (input.source_erasure.page?.body ?? "");
+  const nothingRemains =
+    input.source_erasure === undefined
+      ? remainingSources.length === 0 && body.trim().length === 0
+      : input.source_erasure.page === null;
   const action: PageAction = nothingRemains ? "archive" : "edit";
-  const data: Record<string, unknown> = { ...existing.page.data };
-  data["sources"] = remainingSources;
+  const data: Record<string, unknown> = {
+    ...(input.source_erasure === undefined
+      ? existing.page.data
+      : (input.source_erasure.page?.data ?? existing.page.data)),
+  };
+  data["sources"] =
+    input.source_erasure === undefined
+      ? remainingSources
+      : (input.source_erasure.page?.data["sources"] ?? []);
   if (nothingRemains) data["status"] = "archived";
 
   const priorSensitivity = existing.page.data["sensitivity"];
-  const sensitivity = isSensitivity(priorSensitivity) ? priorSensitivity : "private";
-  const taint: ClaimTaint = existing.page.data["taint"] === "quoted" ? "quoted" : "clean";
+  const sensitivity = isSensitivity(priorSensitivity)
+    ? priorSensitivity
+    : "private";
+  const taint: ClaimTaint =
+    existing.page.data["taint"] === "quoted" ? "quoted" : "clean";
   data["sensitivity"] = sensitivity;
   data["taint"] = taint;
 
   const receiptId = mintId(io);
   const cap = grantCanonWrite("loop", receiptId);
   const path = join(io.vault_path, input.rel_path);
-  const outcome = writePage(cap, path, { data, body: body.length === 0 ? "\n" : body }, {
-    revision: true,
-    expected_hash: existing.hash,
-  });
+  const outcome = writePage(
+    cap,
+    path,
+    { data, body: body.length === 0 ? "\n" : body },
+    {
+      revision: true,
+      expected_hash: existing.hash,
+      ...(input.source_erasure === undefined
+        ? {}
+        : { erase_prior: true, delete: nothingRemains }),
+    },
+  );
 
   const pageIdRaw = existing.page.data["id"];
-  const pageId = typeof pageIdRaw === "string" && pageIdRaw.length > 0 ? pageIdRaw : null;
+  const pageId =
+    typeof pageIdRaw === "string" && pageIdRaw.length > 0 ? pageIdRaw : null;
   const retrievalOps: RetrievalOpRef[] =
     io.retrieval_store === undefined || pageId === null
       ? []
@@ -649,7 +734,9 @@ export function applyPurgeRewrite(
   const receipt: CanonReceipt = {
     receipt_id: receiptId,
     kind: "purge_rewrite",
-    claim_ids: [...input.purged_claim_ids],
+    claim_ids: input.source_erasure?.page
+      ? [...input.source_erasure.retained_claim_ids]
+      : [...input.purged_claim_ids],
     page_path: input.rel_path,
     page_action: action,
     before_hash: existing.hash,
@@ -662,7 +749,9 @@ export function applyPurgeRewrite(
     confidence: 1,
     sensitivity,
     taint,
-    provenance: [...input.purged_event_ids],
+    provenance: input.source_erasure?.page
+      ? existingSources(input.source_erasure.page)
+      : [...input.purged_event_ids],
     superseded: [],
     candidates: [],
     retrieval_ops: retrievalOps,
@@ -676,28 +765,39 @@ export function applyPurgeRewrite(
   io.db.transaction((): void => {
     insertReceiptRow(io.db, receipt, "purge_review");
     if (tableExists(io.db, "canon_holds")) {
-      io.db.query("DELETE FROM canon_holds WHERE page_path = ?").run(input.rel_path);
+      io.db
+        .query("DELETE FROM canon_holds WHERE page_path = ?")
+        .run(input.rel_path);
     }
-    if (pageId !== null) {
-      upsertPageIndex(io.db, {
-        page_id: pageId,
-        rel_path: input.rel_path,
-        subject_key: typeof priorSubject === "string" ? priorSubject : null,
-        last_receipt: receipt.receipt_id,
-        last_hash: receipt.after_hash,
-      });
+    if (pageId !== null && !input.rel_path.startsWith("archive/")) {
+      if (input.source_erasure !== undefined && nothingRemains)
+        io.db.query("DELETE FROM page_index WHERE page_id=?").run(pageId);
+      else
+        upsertPageIndex(io.db, {
+          page_id: pageId,
+          rel_path: input.rel_path,
+          subject_key: typeof priorSubject === "string" ? priorSubject : null,
+          last_receipt: receipt.receipt_id,
+          last_hash: receipt.after_hash,
+        });
     }
   })();
-  if (pageId !== null) {
+  if (pageId !== null && !input.rel_path.startsWith("archive/")) {
     if (nothingRemains) {
       removeDerivedPage(io.db, pageId, io.vault_path);
     } else {
       refreshDerivedPage(
         io.db,
-        canonPageFromWrite(io.vault_path, input.rel_path, pageId, {
-          data,
-          body: body.length === 0 ? "\n" : body,
-        }, outcome.after_hash),
+        canonPageFromWrite(
+          io.vault_path,
+          input.rel_path,
+          pageId,
+          {
+            data,
+            body: body.length === 0 ? "\n" : body,
+          },
+          outcome.after_hash,
+        ),
         io.vault_path,
       );
     }

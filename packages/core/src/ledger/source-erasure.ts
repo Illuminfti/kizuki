@@ -1,3 +1,4 @@
+import { eraseSourceCanon } from "./source-canon-erasure";
 import type { Database } from "bun:sqlite";
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -11,6 +12,7 @@ export interface SourceErasureReport {
   owned_file_maintenance: "pending" | "complete";
   external_copies: "out_of_scope";
   affected_claim_ids: string[];
+  affected_receipt_ids: string[];
   affected_identity_hashes: string[];
   retained_reasons: string[];
 }
@@ -25,12 +27,14 @@ export function sourceErasureReport(
     .get(source);
   if (row?.erasure_report == null) return null;
   const report = JSON.parse(row.erasure_report) as SourceErasureReport;
+  report.affected_receipt_ids ??= [];
   if (
     typeof report.logical_absence !== "boolean" ||
     !["pending", "complete"].includes(report.owned_file_maintenance) ||
     report.external_copies !== "out_of_scope" ||
     ![
       report.affected_claim_ids,
+      report.affected_receipt_ids,
       report.affected_identity_hashes,
       report.retained_reasons,
     ].every(
@@ -64,7 +68,7 @@ function retainedCanon(
   // Receipts also bind preimages that no longer appear in current canon.
   const receipt = db
     .query(
-      "SELECT 1 FROM canon_receipts c JOIN json_each(c.provenance) p JOIN source_event_bindings b ON b.event_id=p.value WHERE b.source_key=? LIMIT 1",
+      "SELECT 1 FROM canon_receipts c JOIN json_each(c.provenance) p JOIN source_event_bindings b ON b.event_id=p.value WHERE b.source_key=? AND c.page_path!='' LIMIT 1",
     )
     .get(source);
   if (receipt !== null) return true;
@@ -132,6 +136,17 @@ export function eraseSourcePayload(
     logical_absence: false,
     owned_file_maintenance: "pending",
     external_copies: "out_of_scope",
+    affected_receipt_ids: [
+      ...new Set([
+        ...(prior?.affected_receipt_ids ?? []),
+        ...db
+          .query<{ receipt_id: string }, [string]>(
+            "SELECT receipt_id FROM canon_receipts WHERE page_path!='' AND page_path IN (SELECT c.page_path FROM canon_receipts c JOIN json_each(c.provenance) p JOIN source_event_bindings b ON b.event_id=p.value WHERE b.source_key=?)",
+          )
+          .all(source)
+          .map((row) => row.receipt_id),
+      ]),
+    ],
     affected_claim_ids: [
       ...new Set([
         ...(prior?.affected_claim_ids ?? []),
@@ -150,7 +165,11 @@ export function eraseSourcePayload(
   };
   if (claims.length > 10000 || links.length > 10000)
     report.retained_reasons.push("bounded_record_limit");
-  if (retainedCanon(db, vault, source, ids))
+  save(db, source, report);
+  if (
+    !eraseSourceCanon(db, vault, source) ||
+    retainedCanon(db, vault, source, ids)
+  )
     report.retained_reasons.push("canon_or_archive_payload_retained");
   if (
     db
