@@ -8,7 +8,7 @@ interface AttributionFailure {
 }
 
 const delimiter = /[\s<>"'()[\]{}|]/;
-const tokenCharacter = /[\p{L}\p{N}\p{M}_]/u;
+const tokenCharacter = /[\p{L}\p{N}\p{M}\p{Pc}\u200C\u200D]/u;
 const urlContinuation = /[\p{L}\p{N}\p{M}._~:/?#@%&=+,;$!-]/u;
 
 function requiredEnvironment(name: string): string {
@@ -26,17 +26,21 @@ function location(text: string, offset: number): { line: number; column: number 
   return { line, column: offset - lastNewline };
 }
 
-function schemeStart(text: string, lower: string, offset: number): number | null {
+function schemeStart(text: string, offset: number): number | null {
   let tokenStart = offset;
   while (tokenStart > 0 && !delimiter.test(text[tokenStart - 1] ?? "")) {
     tokenStart -= 1;
   }
-  const tokenPrefix = lower.slice(tokenStart, offset);
+  const tokenPrefix = text.slice(tokenStart, offset);
   const relative = Math.max(
     tokenPrefix.lastIndexOf("https://"),
     tokenPrefix.lastIndexOf("http://"),
   );
   return relative < 0 ? null : tokenStart + relative;
+}
+
+function literalPattern(text: string): RegExp {
+  return new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "giu");
 }
 
 function characterBefore(text: string, offset: number): string | undefined {
@@ -72,13 +76,13 @@ export function validateAttributionText(
     throw new Error("canonical URL must end with the attribution identifier");
   }
 
-  const lower = text.toLowerCase();
   const failures: AttributionFailure[] = [];
   let hasExactCredit = false;
   let hasCanonicalUrl = false;
-  let offset = 0;
-  while ((offset = lower.indexOf(identifier, offset)) >= 0) {
-    const urlStart = schemeStart(text, lower, offset);
+  for (const match of text.matchAll(literalPattern(exactSpelling))) {
+    const offset = match.index;
+    if (offset === undefined) continue;
+    const urlStart = schemeStart(text, offset);
     let valid = false;
 
     if (urlStart === null) {
@@ -89,8 +93,8 @@ export function validateAttributionText(
     } else {
       const expectedOffset = urlStart + canonicalUrl.length - identifier.length;
       const candidate = text.slice(urlStart, urlStart + canonicalUrl.length);
-      const before = text[urlStart - 1];
-      const after = text[urlStart + canonicalUrl.length];
+      const before = characterBefore(text, urlStart);
+      const after = characterAt(text, urlStart + canonicalUrl.length);
       valid =
         offset === expectedOffset &&
         candidate === canonicalUrl &&
@@ -109,7 +113,6 @@ export function validateAttributionText(
           : "public attribution URL is not the exact delimited canonical URL",
       });
     }
-    offset += identifier.length;
   }
   if (!hasExactCredit) {
     failures.push({
