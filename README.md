@@ -387,8 +387,9 @@ serving keeps quoted capture distinct from canon and carries trust metadata.
 
 **A readable exit.** `export` writes a `kizuki.backup/v1` directory;
 `restore` verifies hashes and completeness before restoring into an empty
-target. `purge` removes selected data with a receipt, and `purge --verify`
-reports per-store absence and operation state. Local purge is not a promise
+target. Current backups preserve bounded pending extraction recovery state;
+older formats disclose that they did not. `purge` removes selected data with a
+receipt, and `purge --verify` reports per-store absence and operation state. Local purge is not a promise
 to erase provider history, independent backups, or forensic traces on disk.
 
 **An honest threat model.** The current vault and canon are not encrypted by

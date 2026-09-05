@@ -213,7 +213,7 @@ async function runWritePassLocked(
       pendingBatch = null;
     }
     if (stopped === null && pendingBatch !== null) {
-      const filed = await fileProducedDrafts(options.claims, pendingBatch.drafts, "model", pendingBatch.model_ref);
+      const filed = await fileProducedDrafts(options.claims, pendingBatch.drafts, "model", pendingBatch.model_ref, pendingBatch.historical_source_write);
       // Replay files an existing decision; it is not another extraction.
       extracted = 0;
       deduped += filed.deduped;
@@ -269,6 +269,7 @@ async function runWritePassLocked(
           durable.drafts,
           "model",
           durable.model_ref,
+          durable.historical_source_write,
         );
         extracted = mined.mined.count;
         deduped += filed.deduped;
@@ -363,11 +364,12 @@ async function fileProducedDrafts(
   drafts: readonly ClaimDraft[],
   producer: Claim["producer"],
   modelRef: string | null,
+  historicalSourceWrite?: object,
 ): Promise<{ deduped: number; superseded: number }> {
   let deduped = 0;
   let superseded = 0;
   for (const draft of drafts) {
-    const result = await insertClaim(io, {
+    const result = await insertClaim(historicalSourceWrite === undefined ? io : { ...io, historical_source_write: historicalSourceWrite }, {
       kind: draft.kind,
       subject: draft.subject,
       predicate: draft.predicate,

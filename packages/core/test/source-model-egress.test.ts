@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Database } from "bun:sqlite";
@@ -29,7 +29,7 @@ import {
 import { initVault } from "../src/vault/init";
 import { validEvent } from "./fixtures";
 import { ulid } from "../src/util/ulid";
-import { exportVault, restoreVault, verifyBackup } from "../src/export";
+import { exportVault, restoreVault, verifyBackup, type ExportManifest } from "../src/export";
 import { purgeEvents } from "../src/ledger/purge";
 import { runWritePass } from "../src/serve/write-pass";
 
@@ -143,6 +143,48 @@ function durableIntegrity(row: {
       item.event_ids,
     ]),
   ])).digest("hex");
+}
+
+function legacyDurableIntegrity(row: {
+  previous_cursor: string;
+  cursor: string;
+  model_ref: string | null;
+  input_ids: string;
+  outcome: string;
+  drafts: string;
+}): string {
+  const drafts = JSON.parse(row.drafts) as ClaimDraft[];
+  return createHash("sha256").update(JSON.stringify([
+    row.previous_cursor || null,
+    row.cursor,
+    row.model_ref,
+    JSON.parse(row.input_ids),
+    row.outcome,
+    drafts.map(item => [
+      item.kind, item.subject, item.predicate, item.object, item.polarity,
+      item.body, item.valid_from, item.valid_to, item.confidence,
+      item.sensitivity, item.event_ids,
+    ]),
+  ])).digest("hex");
+}
+
+function resignBackupFile(backup: string, relativePath: string, contents: string): void {
+  const file = join(backup, relativePath);
+  writeFileSync(file, contents, { mode: 0o600 });
+  chmodSync(file, 0o600);
+  const manifestPath = join(backup, "manifest.json");
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as ExportManifest;
+  manifest.files[relativePath] = {
+    count: contents.length === 0 ? 0 : contents.split("\n").filter(Boolean).length,
+    sha256: new Bun.CryptoHasher("sha256").update(readFileSync(file)).digest("hex"),
+    size: Buffer.byteLength(contents),
+    mode: 0o600,
+  };
+  const { manifest_sha256: _old, ...unsigned } = manifest;
+  manifest.manifest_sha256 = new Bun.CryptoHasher("sha256")
+    .update(`${JSON.stringify(unsigned, null, 2)}\n`).digest("hex");
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(manifestPath, 0o600);
 }
 
 describe("source model egress policy", () => {
@@ -604,6 +646,320 @@ test("a deferred journal refuses when its exact sent input is no longer queued",
     expect(() => readDurableExtractBatch(db, bound))
       .toThrow("durable extraction input partition is corrupt");
     expect(readExtractCursor(db)).not.toBeNull();
+  } finally { db.close(); }
+});
+
+test("a managed journal cannot be downgraded to the null legacy manifest", async () => {
+  const { db, source } = setup();
+  try {
+    grant(db, source);
+    const held = ulid();
+    registerConnection(db, "kizuki.fixture", held);
+    grant(db, held, "local_only", "grant-held-for-downgrade");
+    const allowed = capture(db, source, "managed-downgrade-allowed");
+    capture(db, held, "managed-downgrade-held");
+    const bound = bindSourceModelPort(producer({
+      status: "ok",
+      claims: [draft(allowed.event_id)],
+      usage: { calls: 1, input_tokens: 1, output_tokens: 1 },
+    }), { model_endpoint: endpoint, model: "fixture-model" });
+    const mined = await mineLiveDrafts(db, bound);
+    journalExtractBatch(db, mined, "fixture-managed-model", bound);
+    const row = db.query<any, []>("SELECT * FROM extract_batches").get()!;
+    db.query("UPDATE extract_batches SET model_inputs=NULL,deferred_inputs=NULL,integrity=?")
+      .run(legacyDurableIntegrity(row));
+    expect(() => readDurableExtractBatch(db, bound))
+      .toThrow("durable extraction legacy input authority is corrupt");
+    expect(readExtractCursor(db)).toBeNull();
+    expect(db.query("SELECT 1 FROM extract_batches").get()).not.toBeNull();
+  } finally { db.close(); }
+});
+
+test("an unbound historical null-manifest journal replays without a provider resend", async () => {
+  const { vault, db, source } = setup();
+  try {
+    const accepted = accept(db, { ...validEvent(), source_record_id: "historical-unbound" });
+    if (accepted.status !== "stored") throw new Error("historical fixture capture failed");
+    let calls = 0;
+    const bound = bindSourceModelPort(producer({
+      status: "ok",
+      claims: [draft(accepted.event.event_id)],
+      usage: { calls: 1, input_tokens: 1, output_tokens: 1 },
+    }, () => { calls += 1; }), { model_endpoint: endpoint, model: "fixture-model" });
+    const mined = await mineLiveDrafts(db, bound);
+    journalExtractBatch(db, mined, "historical-model-ref", bound);
+    db.query("UPDATE extract_batches SET model_inputs=NULL,deferred_inputs=NULL,input_ids=NULL,integrity=NULL").run();
+
+    db.query("INSERT INTO native_owner_evidence(event_id,origin,request_digest,recorded_at,filing_state) VALUES (?,'correction',?,?,'recorded')")
+      .run(accepted.event.event_id, "a".repeat(64), new Date().toISOString());
+    expect(() => readDurableExtractBatch(db, bound))
+      .toThrow("durable extraction legacy input authority is corrupt");
+    db.query("DELETE FROM native_owner_evidence WHERE event_id=?").run(accepted.event.event_id);
+
+    // A later, unrelated grant changes the global epoch. It cannot relabel the
+    // historical input or cause the already-sent decision to be regenerated.
+    grant(db, source, remoteEgress(), "unrelated-later-grant");
+    const pending = readDurableExtractBatch(db, bound)!;
+    expect(pending.model_ref).toBe("historical-model-ref");
+    const replayAuthorization = pending.historical_source_write;
+    if (replayAuthorization === undefined) throw new Error("historical replay authorization missing");
+    expect(db.query<{ model_inputs: string | null; deferred_inputs: string | null; input_ids: string | null; integrity: string | null }, []>(
+      "SELECT model_inputs,deferred_inputs,input_ids,integrity FROM extract_batches",
+    ).get()).toMatchObject({ model_inputs: null, deferred_inputs: null });
+    expect(db.query<{ input_ids: string | null; integrity: string | null }, []>(
+      "SELECT input_ids,integrity FROM extract_batches",
+    ).get()).toMatchObject({ input_ids: expect.any(String), integrity: expect.any(String) });
+    await expect(insertClaim({ db, historical_source_write: replayAuthorization }, {
+      kind: "claim",
+      subject: "person:fixture",
+      predicate: "employment.role",
+      object: "fixture role",
+      polarity: "positive",
+      body: "Different text must not reuse the replay capability.",
+      provenance: [accepted.event.event_id],
+      subjects: ["person:fixture"],
+      producer: "model",
+      model_ref: "historical-model-ref",
+      confidence: 0.7,
+      taint: "quoted",
+      sensitivity: "private",
+    })).rejects.toThrow("source_access_denied");
+    let changedEpoch = false;
+    await expect(insertClaim({
+      db,
+      historical_source_write: replayAuthorization,
+      now: () => {
+        if (!changedEpoch) {
+          changedEpoch = true;
+          setSourceGrant(db, {
+            source_key: source,
+            expected_revision: 1,
+            operation_id: "change-epoch-during-legacy-filing",
+            policy: { ...policy(), purposes: [...policy().purposes, "audit"] },
+          });
+        }
+        return new Date().toISOString();
+      },
+    }, {
+      kind: "claim",
+      subject: "person:fixture",
+      predicate: "employment.role",
+      object: "fixture role",
+      polarity: "positive",
+      body: "Synthetic model interpretation.",
+      provenance: [accepted.event.event_id],
+      subjects: ["person:fixture"],
+      producer: "model",
+      model_ref: "historical-model-ref",
+      confidence: 0.7,
+      taint: "quoted",
+      sensitivity: "private",
+    })).rejects.toThrow("source_access_denied");
+    expect(listClaims(db, { status: "live", limit: 20 }).filter(claim => claim.producer === "model")).toEqual([]);
+
+    const replayed = await runWritePass(db, vault, {
+      budget: createBudgetTracker({ canon_writes_per_run: 8 }),
+      model_ref: "current-model-ref",
+      claims: { db },
+      producer: bound,
+    });
+    expect(replayed.errors).toEqual([]);
+    expect(calls).toBe(1);
+    expect(listClaims(db, { status: "live", limit: 20 }).filter(claim => claim.producer === "model"))
+      .toMatchObject([{ model_ref: "historical-model-ref" }]);
+    expect(db.query("SELECT 1 FROM extract_batches").get()).toBeNull();
+  } finally { db.close(); }
+});
+
+test("a historical null-manifest draft cannot cite outside its authoritative interval", async () => {
+  const { db } = setup();
+  try {
+    const inside = accept(db, { ...validEvent(), source_record_id: "legacy-inside" });
+    if (inside.status !== "stored") throw new Error("legacy inside fixture failed");
+    const bound = bindSourceModelPort(producer({
+      status: "ok", claims: [draft(inside.event.event_id)], usage: { calls: 1, input_tokens: 1, output_tokens: 1 },
+    }), { model_endpoint: endpoint, model: "fixture-model" });
+    journalExtractBatch(db, await mineLiveDrafts(db, bound), "historical-provenance-model", bound);
+    const outside = accept(db, { ...validEvent(), source_record_id: "legacy-outside" });
+    if (outside.status !== "stored") throw new Error("legacy outside fixture failed");
+    const row = db.query<any, []>("SELECT * FROM extract_batches").get()!;
+    row.drafts = JSON.stringify([draft(outside.event.event_id)]);
+    db.query("UPDATE extract_batches SET drafts=?,model_inputs=NULL,deferred_inputs=NULL,integrity=?")
+      .run(row.drafts, legacyDurableIntegrity(row));
+    expect(() => readDurableExtractBatch(db, bound)).toThrow("durable extraction provenance is invalid");
+    expect(readExtractCursor(db)).toBeNull();
+  } finally { db.close(); }
+});
+
+test("purge keeps a surviving historical journal in its null-manifest form", async () => {
+  const { vault, db } = setup();
+  try {
+    const first = accept(db, { ...validEvent(), source_record_id: "legacy-purge-first" });
+    const second = accept(db, { ...validEvent(), source_record_id: "legacy-purge-second" });
+    if (first.status !== "stored" || second.status !== "stored") throw new Error("legacy purge fixture failed");
+    const bound = bindSourceModelPort(producer({
+      status: "ok",
+      claims: [draft(first.event.event_id)],
+      usage: { calls: 1, input_tokens: 1, output_tokens: 1 },
+    }), { model_endpoint: endpoint, model: "fixture-model" });
+    const mined = await mineLiveDrafts(db, bound);
+    journalExtractBatch(db, mined, "historical-purge-model", bound);
+    const row = db.query<any, []>("SELECT * FROM extract_batches").get()!;
+    db.query("UPDATE extract_batches SET model_inputs=NULL,deferred_inputs=NULL,integrity=?")
+      .run(legacyDurableIntegrity(row));
+    purgeEvents(db, vault, { event_id: second.event.event_id }, "remove second historical input");
+    expect(db.query("SELECT model_inputs,deferred_inputs,outcome FROM extract_batches").get())
+      .toEqual({ model_inputs: null, deferred_inputs: null, outcome: "purged" });
+    expect(readDurableExtractBatch(db, bound)?.drafts).toEqual([draft(first.event.event_id)]);
+  } finally { db.close(); }
+});
+
+test("backup restores an exact pending mixed-permission decision without another model call", async () => {
+  const { vault, db, source } = setup();
+  const held = ulid();
+  registerConnection(db, "kizuki.fixture", held);
+  grant(db, source);
+  grant(db, held, "local_only", "grant-backup-held");
+  const allowed = capture(db, source, "backup-pending-allowed");
+  const deferred = capture(db, held, "backup-pending-held");
+  let calls = 0;
+  const original = bindSourceModelPort(producer({
+    status: "ok",
+    claims: [draft(allowed.event_id)],
+    usage: { calls: 1, input_tokens: 1, output_tokens: 1 },
+  }, () => { calls += 1; }), { model_endpoint: endpoint, model: "fixture-model" });
+  const mined = await mineLiveDrafts(db, original);
+  journalExtractBatch(db, mined, "backup-original-model", original);
+  expect(calls).toBe(1);
+
+  const backup = `${vault}-pending-backup`;
+  const target = `${vault}-pending-restored`;
+  dirs.push(backup, target);
+  exportVault(db, vault, backup);
+  expect(verifyBackup(backup).files["serve/extract-batches.jsonl"]?.count).toBe(1);
+  restoreVault(backup, target);
+  db.close();
+
+  const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
+  try {
+    let replayCalls = 0;
+    const replayPort = bindSourceModelPort(producer({
+      status: "ok", claims: [], usage: { calls: 1, input_tokens: 1, output_tokens: 1 },
+    }, () => { replayCalls += 1; }), { model_endpoint: endpoint, model: "fixture-model" });
+    const result = await runWritePass(restored, target, {
+      budget: createBudgetTracker({ canon_writes_per_run: 8 }),
+      model_ref: "different-current-model",
+      claims: { db: restored },
+      producer: replayPort,
+    });
+    expect(result.errors).toEqual([]);
+    expect(replayCalls).toBe(0);
+    expect(listClaims(restored, { status: "live", limit: 20 }).filter(claim => claim.producer === "model"))
+      .toMatchObject([{ body: "Synthetic model interpretation.", model_ref: "backup-original-model" }]);
+    expect(restored.query("SELECT 1 FROM extract_batches").get()).toBeNull();
+    expect(restored.query("SELECT 1 FROM extract_deferred_inputs WHERE event_id=?").get(deferred.event_id)).not.toBeNull();
+    purgeEvents(restored, target, { event_id: deferred.event_id }, "remove deferred restored source");
+    expect(restored.query("SELECT 1 FROM extract_deferred_inputs WHERE event_id=?").get(deferred.event_id)).toBeNull();
+  } finally { restored.close(); }
+});
+
+test("backup retains and replays the null representation of a historical journal", async () => {
+  const { vault, db, source } = setup();
+  const accepted = accept(db, { ...validEvent(), source_record_id: "legacy-backup-input" });
+  if (accepted.status !== "stored") throw new Error("legacy backup fixture failed");
+  let calls = 0;
+  const original = bindSourceModelPort(producer({
+    status: "ok", claims: [draft(accepted.event.event_id)], usage: { calls: 1, input_tokens: 1, output_tokens: 1 },
+  }, () => { calls += 1; }), { model_endpoint: endpoint, model: "fixture-model" });
+  journalExtractBatch(db, await mineLiveDrafts(db, original), "legacy-backup-model", original);
+  db.query("UPDATE extract_batches SET model_inputs=NULL,deferred_inputs=NULL,input_ids=NULL,integrity=NULL").run();
+  grant(db, source, remoteEgress(), "unrelated-export-grant");
+
+  const backup = `${vault}-legacy-pending-backup`;
+  const target = `${vault}-legacy-pending-restored`;
+  dirs.push(backup, target);
+  try {
+    exportVault(db, vault, backup);
+    restoreVault(backup, target);
+  } finally { db.close(); }
+  const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
+  try {
+    expect(restored.query("SELECT model_inputs,deferred_inputs FROM extract_batches").get())
+      .toEqual({ model_inputs: null, deferred_inputs: null });
+    let replayCalls = 0;
+    const replay = bindSourceModelPort(producer({
+      status: "ok", claims: [], usage: { calls: 1, input_tokens: 1, output_tokens: 1 },
+    }, () => { replayCalls += 1; }), { model_endpoint: endpoint, model: "fixture-model" });
+    await runWritePass(restored, target, {
+      budget: createBudgetTracker({ canon_writes_per_run: 8 }),
+      model_ref: "current-model",
+      claims: { db: restored },
+      producer: replay,
+    });
+    expect(calls).toBe(1);
+    expect(replayCalls).toBe(0);
+    expect(listClaims(restored, { status: "live", limit: 20 }).filter(claim => claim.producer === "model"))
+      .toMatchObject([{ model_ref: "legacy-backup-model" }]);
+  } finally { restored.close(); }
+});
+
+test("restore refuses a malformed or missing required durable journal stream transactionally", async () => {
+  const { vault, db, source } = setup();
+  try {
+    grant(db, source);
+    const event = capture(db, source, "backup-invalid-journal");
+    const bound = bindSourceModelPort(producer({
+      status: "ok", claims: [draft(event.event_id)], usage: { calls: 1, input_tokens: 1, output_tokens: 1 },
+    }), { model_endpoint: endpoint, model: "fixture-model" });
+    journalExtractBatch(db, await mineLiveDrafts(db, bound), "backup-invalid-model", bound);
+
+    const malformed = `${vault}-malformed-journal`;
+    const malformedTarget = `${vault}-malformed-target`;
+    const missing = `${vault}-missing-journal`;
+    dirs.push(malformed, malformedTarget, missing);
+    exportVault(db, vault, malformed);
+    const path = "serve/extract-batches.jsonl";
+    const row = JSON.parse(readFileSync(join(malformed, path), "utf8")) as Record<string, unknown>;
+    row.deferred_inputs = null;
+    resignBackupFile(malformed, path, `${JSON.stringify(row)}\n`);
+    expect(() => restoreVault(malformed, malformedTarget)).toThrow("durable extraction batch is corrupt");
+    expect(existsSync(malformedTarget)).toBe(false);
+
+    exportVault(db, vault, missing);
+    const manifestPath = join(missing, "manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as ExportManifest;
+    delete manifest.files[path];
+    const { manifest_sha256: _old, ...unsigned } = manifest;
+    manifest.manifest_sha256 = new Bun.CryptoHasher("sha256")
+      .update(`${JSON.stringify(unsigned, null, 2)}\n`).digest("hex");
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
+    unlinkSync(join(missing, path));
+    expect(() => verifyBackup(missing)).toThrow("backup durable extraction stream is missing");
+  } finally { db.close(); }
+});
+
+test("restore explicitly reports the recovery limit of a pre-v8 backup", () => {
+  const { vault, db } = setup();
+  const backup = `${vault}-legacy-backup`;
+  const target = `${vault}-legacy-restored`;
+  dirs.push(backup, target);
+  try {
+    exportVault(db, vault, backup);
+    const manifestPath = join(backup, "manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as ExportManifest;
+    for (const path of ["serve/extract-deferred-inputs.jsonl", "serve/extract-batches.jsonl"]) {
+      delete manifest.files[path];
+      unlinkSync(join(backup, path));
+    }
+    manifest.schema_versions.serve = 7;
+    const { manifest_sha256: _old, ...unsigned } = manifest;
+    manifest.manifest_sha256 = new Bun.CryptoHasher("sha256")
+      .update(`${JSON.stringify(unsigned, null, 2)}\n`).digest("hex");
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
+    const report = restoreVault(backup, target);
+    expect(report.recovery_warnings).toEqual([
+      "backup predates durable extraction recovery; an interrupted model decision was not preserved",
+    ]);
   } finally { db.close(); }
 });
 

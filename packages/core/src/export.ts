@@ -36,6 +36,7 @@ import { PURGE_SCHEMA_VERSION } from "./ledger/purge-schema";
 import { tableExists } from "./ledger/schema";
 import { SENSITIVITY_SCHEMA_VERSION } from "./sensitivity/schema";
 import { SERVE_SCHEMA_VERSION } from "./serve/types";
+import { validateDurableExtractStorage } from "./serve/extract";
 import { readVaultId, vaultIdPath } from "./serve/vault-id";
 import { doctorVault } from "./vault/doctor";
 import { initVault } from "./vault/init";
@@ -48,6 +49,8 @@ const CHUNK = 65_536;
 const STAGING_MARK = ".kizuki-backup-";
 const INCOMPLETE = ".kizuki-backup-incomplete";
 const CONTROL_DIR = ".kizuki";
+const EXTRACT_BATCH_BACKUP = "serve/extract-batches.jsonl";
+const MAX_EXTRACT_BATCH_BACKUP_BYTES = 2_000_000;
 const FORBIDDEN_KEYS = new Set([
   "resolved_secret",
   "client_secret",
@@ -102,6 +105,8 @@ export interface RestoreReport {
   receipts: number;
   vault_files: number;
   doctor: { total: number; valid: number; invalid: number };
+  /** Older backup formats did not preserve an interrupted model decision. */
+  recovery_warnings: readonly string[];
 }
 
 interface EventRow {
@@ -186,6 +191,20 @@ interface DeferredInputRow {
   source_key: string | null;
   checked_revision: number;
   checked_binding_digest: string;
+}
+
+interface ExtractBatchRow {
+  previous_cursor: string;
+  cursor: string;
+  drafts: string;
+  model_ref: string | null;
+  created_at: string;
+  input_ids: string | null;
+  integrity: string | null;
+  outcome: string;
+  batch_mode: string;
+  model_inputs: string | null;
+  deferred_inputs: string | null;
 }
 
 interface SupersessionRow {
@@ -876,6 +895,17 @@ function* pageDeferredInputs(db: Database): Generator<DeferredInputRow> {
   }
 }
 
+function* pendingExtractBatch(db: Database): Generator<ExtractBatchRow> {
+  validateDurableExtractStorage(db);
+  const rows = db.query<ExtractBatchRow, []>(`SELECT previous_cursor,cursor,drafts,model_ref,created_at,input_ids,integrity,outcome,batch_mode,model_inputs,deferred_inputs
+    FROM extract_batches ORDER BY created_at,previous_cursor LIMIT 2`).all();
+  if (rows.length > 1) throw new Error("durable extraction batch is corrupt");
+  for (const row of rows) {
+    extractBatchValues({ ...row });
+    yield row;
+  }
+}
+
 function writeJsonl(
   path: string,
   rows: Iterable<unknown>,
@@ -1056,61 +1086,69 @@ export function exportVault(
     }
 
     options.onProgress?.("ledger");
-    const snapshot = snapshotOf(db);
-    writeStream(
-      staging,
-      "ledger/events.jsonl",
-      pageEvents(db, snapshot),
-      files,
-      options.signal,
-    );
-    writeStream(staging, "ledger/event_purges.jsonl", pagePurges(db), files, options.signal);
-    for (const table of SOURCE_BACKUP_TABLES) writeStream(staging, `ledger/${table}.jsonl`, sourcePolicyRows(db, table), files, options.signal);
-    options.onProgress?.("claims");
-    writeStream(staging, "claims/claims.jsonl", pageClaims(db), files, options.signal);
-    writeStream(
-      staging,
-      "claims/supersessions.jsonl",
-      pageSupersessions(db),
-      files,
-      options.signal,
-    );
-    writeStream(staging, "claims/bindings.jsonl", pageBindings(db), files, options.signal);
-    writeStream(
-      staging,
-      "claims/identity_links.jsonl",
-      pageIdentityLinks(db),
-      files,
-      options.signal,
-    );
-    writeStream(
-      staging,
-      "ledger/connector_sensitivity.jsonl",
-      pageConnectorSensitivity(db),
-      files,
-      options.signal,
-    );
-    options.onProgress?.("receipts");
-    writeStream(staging, "canon/receipts.jsonl", pageReceipts(db), files, options.signal);
-    writeStream(
-      staging,
-      "connections.jsonl",
-      pageConnections(db),
-      files,
-      options.signal,
-    );
-    writeStream(
-      staging,
-      "checkpoints.jsonl",
-      pageCheckpoints(db),
-      files,
-      options.signal,
-    );
-    writeStream(staging, "serve/extract-deferred-inputs.jsonl", pageDeferredInputs(db), files, options.signal);
+    let snapshot!: BackupSnapshot;
+    // Keep ledger, authority, queue, checkpoint, and pending-decision streams
+    // on one SQLite snapshot. A concurrent completion must not produce a
+    // backup whose checkpoint and journal describe different moments.
+    db.transaction(() => {
+      snapshot = snapshotOf(db);
+      writeStream(
+        staging,
+        "ledger/events.jsonl",
+        pageEvents(db, snapshot),
+        files,
+        options.signal,
+      );
+      writeStream(staging, "ledger/event_purges.jsonl", pagePurges(db), files, options.signal);
+      for (const table of SOURCE_BACKUP_TABLES) writeStream(staging, `ledger/${table}.jsonl`, sourcePolicyRows(db, table), files, options.signal);
+      options.onProgress?.("claims");
+      writeStream(staging, "claims/claims.jsonl", pageClaims(db), files, options.signal);
+      writeStream(
+        staging,
+        "claims/supersessions.jsonl",
+        pageSupersessions(db),
+        files,
+        options.signal,
+      );
+      writeStream(staging, "claims/bindings.jsonl", pageBindings(db), files, options.signal);
+      writeStream(
+        staging,
+        "claims/identity_links.jsonl",
+        pageIdentityLinks(db),
+        files,
+        options.signal,
+      );
+      writeStream(
+        staging,
+        "ledger/connector_sensitivity.jsonl",
+        pageConnectorSensitivity(db),
+        files,
+        options.signal,
+      );
+      options.onProgress?.("receipts");
+      writeStream(staging, "canon/receipts.jsonl", pageReceipts(db), files, options.signal);
+      writeStream(
+        staging,
+        "connections.jsonl",
+        pageConnections(db),
+        files,
+        options.signal,
+      );
+      writeStream(
+        staging,
+        "checkpoints.jsonl",
+        pageCheckpoints(db),
+        files,
+        options.signal,
+      );
+      writeStream(staging, "serve/extract-deferred-inputs.jsonl", pageDeferredInputs(db), files, options.signal);
+      writeStream(staging, EXTRACT_BATCH_BACKUP, pendingExtractBatch(db), files, options.signal);
 
-    if ((files["ledger/events.jsonl"]?.count ?? 0) !== snapshot.event_count) {
-      throw new Error("export event stream drifted from the snapshot");
-    }
+      if ((files["ledger/events.jsonl"]?.count ?? 0) !== snapshot.event_count) {
+        throw new Error("export event stream drifted from the snapshot");
+      }
+      if (sourcePolicyEpoch(db) !== sourceEpoch) throw new Error("source authorization changed during export");
+    })();
     if (sourcePolicyEpoch(db) !== sourceEpoch) throw new Error("source authorization changed during export");
     const manifest = signManifest({
       schema: BACKUP_SCHEMA,
@@ -1155,8 +1193,16 @@ function verifyFiles(root: string, manifest: ExportManifest): void {
   if (manifest.manifest_sha256 !== expectedHash) {
     throw new Error("backup manifest hash does not match");
   }
-  if (manifest.schema_versions.serve >= 8 && manifest.files["serve/extract-deferred-inputs.jsonl"] === undefined) {
-    throw new Error("backup deferred extraction stream is missing");
+  if (manifest.schema_versions.serve >= 8) {
+    if (manifest.files["serve/extract-deferred-inputs.jsonl"] === undefined) {
+      throw new Error("backup deferred extraction stream is missing");
+    }
+    const batches = manifest.files[EXTRACT_BATCH_BACKUP];
+    if (batches === undefined) throw new Error("backup durable extraction stream is missing");
+    if (!Number.isSafeInteger(batches.count) || batches.count < 0 || batches.count > 1 ||
+        !Number.isSafeInteger(batches.size) || batches.size < 0 || batches.size > MAX_EXTRACT_BATCH_BACKUP_BYTES) {
+      throw new Error("backup durable extraction stream exceeds its bound");
+    }
   }
   for (const key of Object.keys(manifest.files).sort(compareCodeUnits)) {
     const entry = manifest.files[key];
@@ -1499,6 +1545,45 @@ function insertDeferredInput(db: Database, raw: Record<string, unknown>): void {
     (event_id,source_key,checked_revision,checked_binding_digest) VALUES (?,?,?,?)`).run(eventId, sourceKey, revision, digest);
 }
 
+function boundedStoredString(value: unknown, field: string, maxBytes: number, nullable = false): string | null {
+  if (value === null && nullable) return null;
+  if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > maxBytes) {
+    throw new Error(`invalid durable extraction backup ${field}`);
+  }
+  return value;
+}
+
+function extractBatchValues(raw: Record<string, unknown>): readonly [
+  string, string, string, string | null, string, string | null, string | null,
+  string, string, string | null, string | null,
+] {
+  const expected = "batch_mode,created_at,cursor,deferred_inputs,drafts,input_ids,integrity,model_inputs,model_ref,outcome,previous_cursor";
+  if (Object.keys(raw).sort().join(",") !== expected) throw new Error("invalid durable extraction backup row");
+  const previous = boundedStoredString(raw.previous_cursor, "previous_cursor", 256)!;
+  const cursor = boundedStoredString(raw.cursor, "cursor", 256)!;
+  const drafts = boundedStoredString(raw.drafts, "drafts", 1_600_000)!;
+  const modelRef = boundedStoredString(raw.model_ref, "model_ref", 2_048, true);
+  const createdAt = boundedStoredString(raw.created_at, "created_at", 64)!;
+  const inputIds = boundedStoredString(raw.input_ids, "input_ids", 4_096, true);
+  const digest = boundedStoredString(raw.integrity, "integrity", 64, true);
+  const outcome = boundedStoredString(raw.outcome, "outcome", 16)!;
+  const mode = boundedStoredString(raw.batch_mode, "batch_mode", 16)!;
+  const modelInputs = boundedStoredString(raw.model_inputs, "model_inputs", 8_192, true);
+  const deferredInputs = boundedStoredString(raw.deferred_inputs, "deferred_inputs", 8_192, true);
+  if (!isRfc3339(createdAt) || (digest !== null && !/^[a-f0-9]{64}$/.test(digest)) ||
+      !["ok", "purged"].includes(outcome) || !["frontier", "deferred"].includes(mode)) {
+    throw new Error("invalid durable extraction backup value");
+  }
+  return [previous, cursor, drafts, modelRef, createdAt, inputIds, digest, outcome, mode, modelInputs, deferredInputs];
+}
+
+function insertExtractBatch(db: Database, raw: Record<string, unknown>): void {
+  const values = extractBatchValues(raw);
+  db.query(`INSERT INTO extract_batches
+    (previous_cursor,cursor,drafts,model_ref,created_at,input_ids,integrity,outcome,batch_mode,model_inputs,deferred_inputs)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(...values);
+}
+
 function* streamRows(
   backupDir: string,
   relativePath: string,
@@ -1621,6 +1706,15 @@ export function restoreVault(
         if (deferredRequired && deferredCount !== manifest.files[deferredPath]!.count) {
           throw new Error("backup deferred extraction count mismatch");
         }
+        let batchCount = 0;
+        for (const row of streamRows(source, EXTRACT_BATCH_BACKUP, deferredRequired)) {
+          insertExtractBatch(db, row);
+          batchCount += 1;
+        }
+        if (deferredRequired && batchCount !== manifest.files[EXTRACT_BATCH_BACKUP]!.count) {
+          throw new Error("backup durable extraction count mismatch");
+        }
+        validateDurableExtractStorage(db);
       })();
 
       const events =
@@ -1648,6 +1742,9 @@ export function restoreVault(
           key.startsWith("vault/"),
         ).length,
         doctor: doctor.counts,
+        recovery_warnings: manifest.schema_versions.serve < 8
+          ? ["backup predates durable extraction recovery; an interrupted model decision was not preserved"]
+          : [],
       };
       db.close();
       unlinkSync(join(staging, INCOMPLETE));

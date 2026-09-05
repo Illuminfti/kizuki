@@ -216,6 +216,48 @@ export function sourcePolicyEpoch(db: Database): number {
     )
     .get()!.n;
 }
+interface HistoricalSourceWrite {
+  db: Database;
+  event_ids: ReadonlySet<string>;
+  claim_signatures: ReadonlySet<string>;
+  epoch: number;
+}
+const historicalSourceWrites = new WeakMap<object, HistoricalSourceWrite>();
+
+/** Internal capability for filing an already-sent, pre-source-policy journal. */
+export function bindHistoricalSourceWrite(
+  db: Database,
+  eventIds: readonly string[],
+  claimSignatures: readonly string[],
+  epoch: number,
+): object {
+  const capability = Object.freeze({});
+  historicalSourceWrites.set(capability, {
+    db,
+    event_ids: new Set(eventIds),
+    claim_signatures: new Set(claimSignatures),
+    epoch,
+  });
+  return capability;
+}
+
+/** Revalidate the exact historical provenance at each local filing operation. */
+export function historicalSourceWriteAllowed(
+  capability: object | undefined,
+  db: Database,
+  eventIds: readonly string[],
+  claimSignature: string,
+): boolean {
+  if (capability === undefined) return false;
+  const authorization = historicalSourceWrites.get(capability);
+  if (authorization === undefined || authorization.db !== db || authorization.epoch !== sourcePolicyEpoch(db) ||
+      eventIds.length === 0 || eventIds.some(id => !authorization.event_ids.has(id)) ||
+      !authorization.claim_signatures.has(claimSignature)) return false;
+  return eventIds.every(id =>
+    db.query("SELECT 1 FROM events WHERE event_id=?").get(id) !== null &&
+    db.query("SELECT 1 FROM source_event_bindings WHERE event_id=?").get(id) === null &&
+    db.query("SELECT 1 FROM native_owner_evidence WHERE event_id=?").get(id) === null);
+}
 export function inspectSourceGrant(
   db: Database,
   sourceKey: string,

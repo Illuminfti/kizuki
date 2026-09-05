@@ -1,5 +1,5 @@
 import { recordSourceStoreWrite } from "../ledger/source-stores";
-import { sourceEventsAllowed, requireSourceEvents, sourcePolicyEpoch, isLocalSourcePort, sourceSensitivity } from "../ledger/source-grants";
+import { historicalSourceWriteAllowed, sourceEventsAllowed, requireSourceEvents, sourcePolicyEpoch, isLocalSourcePort, sourceSensitivity } from "../ledger/source-grants";
 import type { Database } from "bun:sqlite";
 import type { Sensitivity } from "../agents/types";
 import type { RetrievalDoc, RetrievalPort, RetrievalQuery } from "../contracts/retrieval";
@@ -50,6 +50,8 @@ export interface ClaimsIo {
   readonly db: Database;
   readonly retrieval?: RetrievalPort;
   readonly now?: () => string;
+  /** Internal exact-provenance capability for a pre-policy durable replay. */
+  readonly historical_source_write?: object;
 }
 
 export interface InsertClaimInput {
@@ -75,6 +77,17 @@ export interface InsertClaimInput {
   /** RFC 0002 §6.4: caps the tier a relayed correction is filed at. */
   relay_ceiling?: AuthorityTier;
   events?: EventFacts[];
+}
+
+/** Exact internal identity of a claim produced by a historical durable decision. */
+export function historicalClaimReplaySignature(input: InsertClaimInput): string {
+  return JSON.stringify([
+    input.kind, input.target ?? null, input.subject ?? null, input.predicate ?? null,
+    input.object ?? null, input.polarity ?? "positive", input.body, input.frontmatter ?? {},
+    input.provenance, input.subjects ?? [], input.producer, input.model_ref ?? null,
+    input.confidence, input.taint ?? "clean", input.sensitivity ?? null,
+    input.valid_from ?? null, input.valid_to ?? null, input.intent ?? null,
+  ]);
 }
 
 export type InsertClaimResult =
@@ -875,7 +888,16 @@ export async function insertClaim(
   assertInput(input);
   initClaims(io.db);
   const sourceScope = { owner: canonicalizeProducer(input.producer) !== "model" && !input.producer.startsWith("agent:"), model: canonicalizeProducer(input.producer) === "model", purpose: input.intent === "correct" ? "correction" as const : "derive" as const };
-  requireSourceEvents(io.db, input.provenance, sourceScope);
+  const historicalSignature = historicalClaimReplaySignature(input);
+  const historicalInputAllowed = (): boolean => historicalSourceWriteAllowed(
+    io.historical_source_write,
+    io.db,
+    input.provenance,
+    historicalSignature,
+  );
+  if (!historicalInputAllowed() && !sourceEventsAllowed(io.db, input.provenance, sourceScope)) {
+    requireSourceEvents(io.db, input.provenance, sourceScope);
+  }
   resolveProvenance(io.db, input.provenance);
 
   if (sourcePolicyEpoch(io.db) > 0 && (!isLocalSourcePort(io.retrieval) || !sourceEventsAllowed(io.db, input.provenance, { ...sourceScope, ...(io.retrieval === undefined ? {} : { port: io.retrieval }) }))) { const { retrieval: _retrieval, ...local } = io; io = local; }
@@ -984,11 +1006,15 @@ export async function insertClaim(
 
   let opId: string | null = null;
   const apply = io.db.transaction((): InsertClaimResult => {
-    requireSourceEvents(io.db, input.provenance, sourceScope);
+    if (!historicalInputAllowed() && !sourceEventsAllowed(io.db, input.provenance, sourceScope)) {
+      requireSourceEvents(io.db, input.provenance, sourceScope);
+    }
     resolveProvenance(io.db, input.provenance);
 
     const exact = findExact(io.db, claim.kind, claim.target, claim.body_hash);
-    if (exact !== null && sourceEventsAllowed(io.db, exact.provenance, sourceScope)) {
+    if (exact !== null && (sourceEventsAllowed(io.db, exact.provenance, sourceScope) ||
+        (historicalInputAllowed() && exact.model_ref === (input.model_ref ?? null) &&
+         JSON.stringify(exact.provenance) === JSON.stringify(input.provenance)))) {
       return { outcome: "duplicate", claim: exact, dedup: mode };
     }
 

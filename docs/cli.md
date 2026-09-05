@@ -335,6 +335,12 @@ Verifies a `kizuki.backup/v1` directory. With `--into` it restores into an
 empty target after that verification. `--from DIR` alone, or with `--verify`,
 checks hashes and completeness without writing.
 
+Current backups include the bounded deferred-input queue and any one pending
+model decision, so a restore can resume without sending the source text to the
+model again. Backups whose serve schema predates version 8 did not carry this
+recovery state; restore reports that limitation instead of inventing a pending
+decision.
+
 ## rebuild
 
 ```text

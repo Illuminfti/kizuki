@@ -1,4 +1,4 @@
-import { sourcePolicyEpoch, sourceEventsAllowed, isLocalSourcePort, sourcePortBindingDigest } from "../ledger/source-grants";
+import { bindHistoricalSourceWrite, sourcePolicyEpoch, sourceEventsAllowed, isLocalSourcePort, sourcePortBindingDigest } from "../ledger/source-grants";
 import { createHash } from "node:crypto";
 import { parseExtractResponse } from "../producer/schema";
 import { tableExists } from "../ledger/schema";
@@ -6,7 +6,7 @@ import type { Database } from "bun:sqlite";
 import type { CaptureEvent } from "../contracts/event";
 import type { ClaimDraft, ProducerPort, QuotedEvent } from "../contracts/producer";
 import { predicateIds } from "../claims/predicates";
-import { listClaims } from "../claims/store";
+import { historicalClaimReplaySignature, listClaims } from "../claims/store";
 import { readCheckpoint, writeCheckpoint } from "../ledger/checkpoints";
 import { readEvent, readSince } from "../ledger/ledger";
 import type { LedgerCursor } from "../ledger/ledger";
@@ -65,6 +65,8 @@ export interface DurableExtractBatch {
   readonly outcome: "ok" | "purged";
   /** Current authorization epoch captured immediately before a replay filing attempt. */
   readonly authorization_epoch: number | null;
+  /** Opaque, process-local authority for a validated pre-policy replay. */
+  readonly historical_source_write?: object;
 }
 
 export interface DeferredInput {
@@ -90,6 +92,31 @@ function integrity(batch: DurableExtractBatch): string {
     batch.model_inputs, batch.deferred_inputs, batch.outcome,
     batch.drafts.map(d => [d.kind,d.subject,d.predicate,d.object,d.polarity,d.body,d.valid_from,d.valid_to,d.confidence,d.sensitivity,d.event_ids]),
   ])).digest("hex");
+}
+function legacyIntegrity(batch: DurableExtractBatch): string {
+  return createHash("sha256").update(JSON.stringify([
+    batch.previous_cursor, encodeCursor(batch.cursor), batch.model_ref, batch.input_ids, batch.outcome,
+    batch.drafts.map(d => [d.kind,d.subject,d.predicate,d.object,d.polarity,d.body,d.valid_from,d.valid_to,d.confidence,d.sensitivity,d.event_ids]),
+  ])).digest("hex");
+}
+function historicalClaimSignatures(drafts: readonly ClaimDraft[], modelRef: string | null): string[] {
+  return drafts.map(draft => historicalClaimReplaySignature({
+    kind: draft.kind,
+    subject: draft.subject,
+    predicate: draft.predicate,
+    object: draft.object,
+    polarity: draft.polarity,
+    body: draft.body,
+    provenance: [...draft.event_ids],
+    subjects: [draft.subject],
+    producer: "model",
+    model_ref: modelRef,
+    confidence: draft.confidence,
+    taint: "quoted",
+    sensitivity: draft.sensitivity,
+    ...(draft.valid_from === null ? {} : { valid_from: draft.valid_from }),
+    ...(draft.valid_to === null ? {} : { valid_to: draft.valid_to }),
+  }));
 }
 function interval(db: Database, previous: string | null, boundary: LedgerCursor): CaptureEvent[] {
   const events = readSince(db, parseCursor(previous), EXTRACT_BATCH).events;
@@ -173,6 +200,26 @@ function validateInputPartition(
     throw new Error("durable extraction input partition is corrupt");
   }
 }
+function validateLegacyInputPartition(
+  db: Database,
+  events: readonly CaptureEvent[],
+  drafts: readonly ClaimDraft[],
+): void {
+  const eligibleIds = events.filter(extractEligible).map(event => event.event_id);
+  const eligible = new Set(eligibleIds);
+  // A null manifest is compatible only with journals written before source
+  // authority existed. A managed source or native-owner marker anywhere in
+  // the bounded frontier proves that this is not such a journal.
+  for (const id of eligibleIds) {
+    if (db.query("SELECT 1 FROM source_event_bindings WHERE event_id=?").get(id) !== null ||
+        db.query("SELECT 1 FROM native_owner_evidence WHERE event_id=?").get(id) !== null) {
+      throw new Error("durable extraction legacy input authority is corrupt");
+    }
+  }
+  if (drafts.some(draft => draft.event_ids.some(id => !eligible.has(id)))) {
+    throw new Error("durable extraction provenance is invalid");
+  }
+}
 function validInput(value: unknown): value is DeferredInput {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const row = value as Record<string, unknown>;
@@ -220,14 +267,14 @@ function queuedEvents(db: Database): CaptureEvent[] {
     return event;
   });
 }
-function saveBatch(db: Database, batch: DurableExtractBatch): void {
+function saveBatch(db: Database, batch: DurableExtractBatch, legacyManifest = false): void {
   db.query(`INSERT INTO extract_batches (previous_cursor,cursor,drafts,model_ref,created_at,input_ids,integrity,outcome,batch_mode,model_inputs,deferred_inputs)
     VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(previous_cursor) DO UPDATE SET
     cursor=excluded.cursor,drafts=excluded.drafts,model_ref=excluded.model_ref,input_ids=excluded.input_ids,integrity=excluded.integrity,outcome=excluded.outcome,
     batch_mode=excluded.batch_mode,model_inputs=excluded.model_inputs,deferred_inputs=excluded.deferred_inputs`).run(
     batch.previous_cursor ?? NULL_CURSOR, encodeCursor(batch.cursor), JSON.stringify(batch.drafts), batch.model_ref,
-    new Date().toISOString(), JSON.stringify(batch.input_ids), integrity(batch), batch.outcome, batch.mode,
-    JSON.stringify(batch.model_inputs), JSON.stringify(batch.deferred_inputs),
+    new Date().toISOString(), JSON.stringify(batch.input_ids), legacyManifest ? legacyIntegrity(batch) : integrity(batch), batch.outcome, batch.mode,
+    legacyManifest ? null : JSON.stringify(batch.model_inputs), legacyManifest ? null : JSON.stringify(batch.deferred_inputs),
   );
 }
 /** Persist the entire decision before filing; no model is called again on replay. */
@@ -289,35 +336,51 @@ function readStoredExtractBatch(db: Database, enforceConsent: boolean, producer?
   });
   const ids = events.map(event => event.event_id);
   if (row.input_ids !== null && row.input_ids !== JSON.stringify(ids)) throw new Error("durable extraction inputs changed");
-  if (!legacyManifest) validateInputPartition(db, mode, cursor, events, modelInputs, deferredInputs);
+  if (legacyManifest) validateLegacyInputPartition(db, events, parsed.claims);
+  else validateInputPartition(db, mode, cursor, events, modelInputs, deferredInputs);
   const sent = modelInputs.length === 0 ? [...new Set(parsed.claims.flatMap(draft => [...draft.event_ids]))] : modelInputs.map(input => input.event_id);
   if (parsed.claims.some(draft => draft.event_ids.some(id => !sent.includes(id)))) throw new Error("durable extraction provenance is invalid");
   const authorizationEpoch = enforceConsent ? sourcePolicyEpoch(db) : null;
   if (enforceConsent) {
-    if (!sourceEventsAllowed(db, sent, {
+    if (!legacyManifest && !sourceEventsAllowed(db, sent, {
       owner: false,
       purpose: "extract",
       model: true,
       ...(producer === undefined ? {} : { port: producer }),
     })) throw new DurableExtractAuthorizationError();
     const bindingDigest = sourcePortBindingDigest(producer);
-    if (modelInputs.some(input => input.checked_binding_digest !== bindingDigest)) {
+    if (!legacyManifest && modelInputs.some(input => input.checked_binding_digest !== bindingDigest)) {
       throw new DurableExtractAuthorizationError();
     }
     if (authorizationEpoch !== sourcePolicyEpoch(db)) throw new DurableExtractAuthorizationError();
   }
   const batch: DurableExtractBatch = { previous_cursor: row.previous_cursor || null, cursor, drafts: parsed.claims,
     model_ref: row.model_ref, input_ids: ids, mode, model_inputs: modelInputs, deferred_inputs: deferredInputs,
-    outcome: row.outcome as DurableExtractBatch["outcome"], authorization_epoch: authorizationEpoch };
-  const legacyIntegrity = createHash("sha256").update(JSON.stringify([
-    batch.previous_cursor, encodeCursor(batch.cursor), batch.model_ref, batch.input_ids, batch.outcome,
-    batch.drafts.map(d => [d.kind,d.subject,d.predicate,d.object,d.polarity,d.body,d.valid_from,d.valid_to,d.confidence,d.sensitivity,d.event_ids]),
-  ])).digest("hex");
-  if (row.integrity !== null && row.integrity !== (row.model_inputs === null && row.deferred_inputs === null ? legacyIntegrity : integrity(batch))) throw new Error("durable extraction integrity mismatch");
+    outcome: row.outcome as DurableExtractBatch["outcome"], authorization_epoch: authorizationEpoch,
+    ...(enforceConsent && legacyManifest ? {
+      historical_source_write: bindHistoricalSourceWrite(
+        db,
+        sent,
+        historicalClaimSignatures(parsed.claims, row.model_ref),
+        authorizationEpoch!,
+      ),
+    } : {}) };
+  if (row.integrity !== null && row.integrity !== (legacyManifest ? legacyIntegrity(batch) : integrity(batch))) throw new Error("durable extraction integrity mismatch");
   // Compatible journals predate the input manifest. Validate against the live
-  // ledger before upgrading them; never infer a boundary from draft text.
-  if (row.integrity === null || row.input_ids === null) saveBatch(db, batch);
+  // ledger before filling only their original metadata. Keeping both manifest
+  // columns null prevents an old row from becoming an empty modern partition.
+  if (row.integrity === null || row.input_ids === null) {
+    if (legacyManifest) {
+      db.query("UPDATE extract_batches SET input_ids=?,integrity=? WHERE previous_cursor=? AND model_inputs IS NULL AND deferred_inputs IS NULL")
+        .run(JSON.stringify(batch.input_ids), legacyIntegrity(batch), row.previous_cursor);
+    } else saveBatch(db, batch);
+  }
   return batch;
+}
+
+/** Validate persisted extraction recovery state without invoking a producer or filing canon. */
+export function validateDurableExtractStorage(db: Database): void {
+  readStoredExtractBatch(db, false);
 }
 
 /** Validate again after asynchronous filing, then advance and delete atomically. */
@@ -341,7 +404,12 @@ export function purgeExtractInputs(db: Database, eventIds: ReadonlySet<string>, 
   if (tableExists(db, "extract_deferred_inputs")) deleteDeferred(db, [...eventIds]);
   if (!tableExists(db, "extract_batches")) return;
   let batch: DurableExtractBatch | null;
+  let legacyManifest = false;
   try {
+    const stored = db.query<{ model_inputs: string | null; deferred_inputs: string | null }, []>(
+      "SELECT model_inputs,deferred_inputs FROM extract_batches ORDER BY created_at,previous_cursor LIMIT 1",
+    ).get();
+    legacyManifest = stored !== null && stored.model_inputs === null && stored.deferred_inputs === null;
     batch = readStoredExtractBatch(db, false);
   } catch {
     // Derived decisions cannot veto an owner purge. Do not parse or preserve
@@ -373,7 +441,7 @@ export function purgeExtractInputs(db: Database, eventIds: ReadonlySet<string>, 
     model_inputs: batch.model_inputs.filter(input => !eventIds.has(input.event_id)),
     deferred_inputs: batch.deferred_inputs.filter(input => !eventIds.has(input.event_id)),
     drafts: batch.drafts.filter(draft => !draft.event_ids.some(id => eventIds.has(id))), outcome: "purged",
-    authorization_epoch: null });
+    authorization_epoch: null }, legacyManifest);
 }
 
 function parseCursor(raw: string | null): LedgerCursor | null {
