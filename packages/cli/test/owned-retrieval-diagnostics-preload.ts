@@ -19,7 +19,10 @@ export function failureDiagnostic(phase: Phase, error: unknown): string {
   }
   return JSON.stringify({ schema: "kizuki.synthetic-erasure-diagnostic/v1", phase, code });
 }
+let emitted = 0;
 function report(phase: Phase, error: unknown): void {
+  if (emitted >= 32) return;
+  emitted++;
   // Diagnostic failure must not replace the operation's original exception.
   try { process.stderr.write(failureDiagnostic(phase, error) + "\n"); } catch {}
 }
