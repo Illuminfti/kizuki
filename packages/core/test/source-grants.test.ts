@@ -1066,7 +1066,7 @@ test("native source erasure removes whole joint claims and SQLite payload while 
     operation_id: "grant-b-physical",
     policy: policy(),
   });
-  const secret = "SOURCE_ERASURE_UNIQUE_SYNTHETIC_5817";
+  const secret = "qzxsourceeraseuniquesyntheticpayload5817";
   const aa = accept(
     db,
     { ...event(), source_record_id: "a-physical", text: secret },
@@ -1106,6 +1106,20 @@ test("native source erasure removes whole joint claims and SQLite payload while 
   );
   if (!("claim" in joint) || !("claim" in independent))
     throw new Error("fixture claim failed");
+  await rebuildRetrieval(db, dir);
+  expect(
+    db
+      .query<{ n: number }, [string]>(
+        "SELECT count(*) AS n FROM search_docs WHERE search_docs MATCH ?",
+      )
+      .get(secret)?.n,
+  ).toBeGreaterThan(0);
+  expect(
+    db
+      .query<{ block: Uint8Array }, []>("SELECT block FROM search_docs_data")
+      .all()
+      .some((row) => Buffer.from(row.block).includes(Buffer.from(secret))),
+  ).toBe(true);
   revokeSourceGrant(db, {
     source_key: a,
     expected_revision: 1,
@@ -1232,11 +1246,20 @@ test("source erasure removes receipted canon and its archive without making anot
     readFileSync(join(dir, ".kizuki", "receipts", "promotions.jsonl"), "utf8"),
   ).not.toContain("CANON_ERASURE_SYNTHETIC_713");
   await expect(undoReceipt(io, first.receipt_id)).rejects.toThrow();
-  const roundtrip=mkdtempSync(join(tmpdir(),"erased-canon-roundtrip-"));dirs.push(roundtrip);
-  exportVault(db,dir,join(roundtrip,"backup"));restoreVault(join(roundtrip,"backup"),join(roundtrip,"restored"));
-  const restoredDb=openLedger(join(roundtrip,"restored",".kizuki","kizuki.db"));
-  expect(inspectSourceGrant(restoredDb,a)?.status).toBe("purged");
-  expect(restoredDb.query("SELECT body FROM claims").all().every(row=>(row as {body:string}).body==="")).toBe(true);
+  const roundtrip = mkdtempSync(join(tmpdir(), "erased-canon-roundtrip-"));
+  dirs.push(roundtrip);
+  exportVault(db, dir, join(roundtrip, "backup"));
+  restoreVault(join(roundtrip, "backup"), join(roundtrip, "restored"));
+  const restoredDb = openLedger(
+    join(roundtrip, "restored", ".kizuki", "kizuki.db"),
+  );
+  expect(inspectSourceGrant(restoredDb, a)?.status).toBe("purged");
+  expect(
+    restoredDb
+      .query("SELECT body FROM claims")
+      .all()
+      .every((row) => (row as { body: string }).body === ""),
+  ).toBe(true);
   restoredDb.close();
   db.close();
 });
@@ -1382,4 +1405,111 @@ test("interrupted canon metadata erasure resumes without restoring a deleted pre
   expect(done.erasure?.affected_receipt_ids).toContain(receipt.receipt_id);
   expect(existsSync(join(dir, receipt.page_path))).toBe(false);
   reopened.close();
+});
+
+test("mixed erasure removes A-only page-index subject while B without a subject remains searchable and restorable", async () => {
+  const { db, dir, a, b } = setup();
+  grant(db, a);
+  setSourceGrant(db, {
+    source_key: b,
+    expected_revision: 0,
+    operation_id: "subject-b",
+    policy: policy(),
+  });
+  const subject = "person:qzxsensitivesubject5817";
+  const aa = accept(
+    db,
+    { ...event(), text: subject, source_record_id: "subject-a" },
+    { source: { source_key: a, expected_revision: 1 } },
+  );
+  const bb = accept(
+    db,
+    {
+      ...event(),
+      text: "Independent B survivorship",
+      source_record_id: "subject-b",
+    },
+    { source: { source_key: b, expected_revision: 1 } },
+  );
+  if (aa.status !== "stored" || bb.status !== "stored")
+    throw new Error("fixture failed");
+  const io = { db, vault_path: dir };
+  const original = write(
+    io,
+    await storeClaim(db, aa.event.event_id, {
+      target: "people/shared-source-page",
+      subject,
+      subjects: [subject],
+      body: "A-only source paragraph.",
+      frontmatter: { type: "person", title: "A-only subject" },
+    }),
+  );
+  const filed = await insertClaim(
+    { db },
+    {
+      kind: "merge",
+      target: original.page_path.replace(/\.md$/, ""),
+      body: "Independent B survivorship",
+      subjects: [],
+      frontmatter: { type: "person", title: "Independent B" },
+      provenance: [bb.event.event_id],
+      producer: "deterministic",
+      confidence: 0.8,
+      sensitivity: "private",
+      taint: "clean",
+    },
+  );
+  if (!("claim" in filed)) throw new Error("fixture claim failed");
+  write(io, filed.claim);
+  expect(
+    db
+      .query("SELECT subject_key FROM page_index WHERE rel_path=?")
+      .get(original.page_path),
+  ).toEqual({ subject_key: subject });
+  await rebuildRetrieval(db, dir);
+  revokeSourceGrant(db, {
+    source_key: a,
+    expected_revision: 1,
+    operation_id: "subject-revoke",
+  });
+  const options = {
+    ownedRetrieval: {
+      stores: async () => ({ stores: [], absent_store_ids: [] }),
+    },
+  };
+  const done = await resumeSourceRevocation(db, dir, "subject-revoke", options);
+  expect(done.status).toBe("purged");
+  expect(
+    db
+      .query("SELECT subject_key FROM page_index WHERE rel_path=?")
+      .get(original.page_path),
+  ).toEqual({ subject_key: null });
+  const { serveSearch } = await import("../src/index");
+  const owner = { db, vaultPath: dir, principal: OWNER };
+  expect(
+    (await serveSearch(owner, { query: "qzxsensitivesubject5817" })).canon,
+  ).toEqual([]);
+  expect(
+    (await serveSearch(owner, { query: "survivorship" })).canon,
+  ).toHaveLength(1);
+  const packet = await serveContextPacket(owner, {
+    query: "survivorship",
+    budget_tokens: 2000,
+  });
+  expect(packet.data?.packet_md).toContain("Independent B");
+  expect(packet.data?.packet_md).not.toContain(subject);
+  const roundtrip = mkdtempSync(join(tmpdir(), "subject-erasure-roundtrip-"));
+  dirs.push(roundtrip);
+  exportVault(db, dir, join(roundtrip, "backup"));
+  restoreVault(join(roundtrip, "backup"), join(roundtrip, "restored"));
+  const restored = openLedger(
+    join(roundtrip, "restored", ".kizuki", "kizuki.db"),
+  );
+  expect(
+    restored
+      .query("SELECT subject_key FROM page_index WHERE rel_path=?")
+      .get(original.page_path),
+  ).toEqual({ subject_key: null });
+  restored.close();
+  db.close();
 });

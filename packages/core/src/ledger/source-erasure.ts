@@ -196,6 +196,9 @@ export function eraseSourcePayload(
     ).run(source);
   }).immediate();
   rebuildDerived(db, vault);
+  // DELETE plus VACUUM can retain obsolete tokens in live FTS5 segments.
+  // Rebuild from the surviving content before compacting the owned SQLite files.
+  db.exec("INSERT INTO search_docs(search_docs) VALUES ('rebuild')");
   report.logical_absence = true;
   save(db, source, report);
   return report;

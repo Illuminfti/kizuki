@@ -761,7 +761,7 @@ export function applyPurgeRewrite(
   };
 
   appendReceiptLine(io, receipt);
-  const priorSubject = existing.page.data["x-subject-id"];
+  const retainedSubject = data["x-subject-id"];
   io.db.transaction((): void => {
     insertReceiptRow(io.db, receipt, "purge_review");
     if (tableExists(io.db, "canon_holds")) {
@@ -776,10 +776,13 @@ export function applyPurgeRewrite(
         upsertPageIndex(io.db, {
           page_id: pageId,
           rel_path: input.rel_path,
-          subject_key: typeof priorSubject === "string" ? priorSubject : null,
+          subject_key: typeof retainedSubject === "string" ? retainedSubject : null,
           last_receipt: receipt.receipt_id,
           last_hash: receipt.after_hash,
         });
+      // General upserts preserve unknown subjects; erasure must explicitly clear a removed one.
+      if (input.source_erasure !== undefined && !nothingRemains && typeof retainedSubject !== "string")
+        io.db.query("UPDATE page_index SET subject_key=NULL WHERE page_id=?").run(pageId);
     }
   })();
   if (pageId !== null && !input.rel_path.startsWith("archive/")) {
