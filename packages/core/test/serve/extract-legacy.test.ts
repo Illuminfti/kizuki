@@ -66,6 +66,24 @@ function authoritativeRows(db: Database): string {
     .map(table => db.query(`SELECT * FROM ${table} ORDER BY rowid`).all()));
 }
 
+async function runResourceProbe(code: string, timeoutMs = 10_000) {
+  const child = Bun.spawn([process.execPath, "--eval", code], { stdout: "pipe", stderr: "pipe" });
+  const output = Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => { child.kill("SIGKILL"); reject(new Error("resource probe deadline exceeded")); }, timeoutMs);
+  });
+  try {
+    const [exitCode, stdout, stderr] = await Promise.race([output, deadline]);
+    const usage = child.resourceUsage();
+    if (usage === undefined) throw new Error("resource probe usage is unavailable");
+    return { exitCode, stdout, stderr, maxRssKiB: usage.maxRSS };
+  } finally {
+    clearTimeout(timer);
+    if (child.exitCode === null) child.kill("SIGKILL");
+  }
+}
+
 test("upgrade refuses a committed structural prefix without changing any authoritative row", async () => {
   const f = fixture();
   try {
@@ -386,7 +404,7 @@ test("a 128 MiB stored text refuses with bounded memory through guard, writer an
     f.db.query("UPDATE extract_batches SET drafts=CAST(zeroblob(?) AS TEXT)").run(128 * 1024 * 1024);
     f.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     for (const entry of ["guard", "writer", "rail"]) {
-      const child = Bun.spawnSync([process.execPath, "--eval", `
+      const reader = `
         import { Database } from "bun:sqlite";
         import { requireAtomicExtractReplay } from ${JSON.stringify(join(import.meta.dir, "../../src/serve/extract.ts"))};
         import { runWritePass } from ${JSON.stringify(join(import.meta.dir, "../../src/serve/write-pass.ts"))};
@@ -405,17 +423,25 @@ test("a 128 MiB stored text refuses with bounded memory through guard, writer an
         } catch (cause) { error = cause instanceof Error ? cause.message : "unexpected error"; }
         db.close();
         console.log(JSON.stringify({ error, hookCalls }));
-      `], { stdout: "pipe", stderr: "pipe" });
+      `;
+      // A fresh supervisor excludes the test runner's inherited peak (including
+      // fixture construction) from the measured reader's subprocess usage.
+      const child = await runResourceProbe(`
+        const measured = await (${runResourceProbe.toString()})(${JSON.stringify(reader)});
+        console.log(JSON.stringify(measured));
+      `, 20_000);
       expect(child.exitCode).toBe(0);
-      expect(child.stderr.toString()).toBe("");
-      expect(JSON.parse(child.stdout.toString())).toEqual({ error: "durable extraction batch is corrupt", hookCalls: 0 });
+      expect(child.stderr).toBe("");
+      const measured = JSON.parse(child.stdout) as { exitCode: number; stdout: string; stderr: string; maxRssKiB: number };
+      expect(measured.exitCode).toBe(0);
+      expect(measured.stderr).toBe("");
+      expect(JSON.parse(measured.stdout)).toEqual({ error: "durable extraction batch is corrupt", hookCalls: 0 });
       // Includes Bun and all imported modules, with ample room above their
       // normal footprint. The rejected reader exceeded 580 MiB on this input.
       // Pinned Bun reports subprocess maxRSS in KiB on the Linux test runner.
-      const maxRssKiB = child.resourceUsage.maxRSS;
-      expect(maxRssKiB).toBeLessThan(192 * 1024);
+      expect(measured.maxRssKiB).toBeLessThan(192 * 1024);
     }
     expect(existsSync(join(f.vault, ".kizuki", "write-pass.flock"))).toBe(false);
     expect(f.calls.count).toBe(1);
   } finally { f.close(); }
-}, 30_000);
+}, 45_000);
