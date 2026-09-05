@@ -8,6 +8,7 @@ import { createHelpers } from "./helpers";
 const { cleanup, runCli, tempVault } = createHelpers();
 afterEach(cleanup);
 const CANARY = "synthetic-private-provider-canary";
+const MODEL = "deepseek/deepseek-v4-flash-0731";
 const main = resolve(import.meta.dir, "../src/main.ts");
 
 async function cli(env: Record<string, string | undefined>, ...args: string[]) {
@@ -28,7 +29,7 @@ test("native source consent, model canon, rejected responses and doctor compose"
     if (eventId === undefined || subjectJson === undefined) throw new Error("synthetic prompt fixture mismatch");
     const claim = { kind: "claim", subject: JSON.parse(`"${subjectJson}"`), predicate: "employment.role", object: "orchard library collaborator",
       polarity: "positive", body: "Ada contributes to the orchard library.", valid_from: null, valid_to: null, confidence: 0.7, sensitivity: "personal", event_ids: [eventId] };
-    return Response.json({ id: "synthetic", model: "fixture", provider: CANARY,
+    return Response.json({ id: "synthetic", model: MODEL, provider: CANARY,
       choices: [{ index: 0, finish_reason: "stop", native_finish_reason: "stop", logprobs: null,
         message: { role: "assistant", content: JSON.stringify({ claims: [mode === "claims" ? { ...claim, predicate: { [CANARY]: CANARY } } : claim] }), refusal: null,
           reasoning: CANARY, ...(mode === "metadata" ? { [CANARY]: { data: CANARY } } : {}) } }],
@@ -44,10 +45,10 @@ test("native source consent, model canon, rejected responses and doctor compose"
       const source = listConnections(grantDb).find(item => item.connector_id === "kizuki.markdown-folder")!;
       setSourceGrant(grantDb, { source_key: source.source_key, expected_revision: 0, operation_id: "fixture-model-compat-grant",
         policy: { purposes: ["capture", "recall", "session", "derive", "extract", "export"], allowed_fields: ["text", "subjects", "attachments", "metadata"], retention: "persistent_owned_until_revoked",
-          egress: { model_endpoint: `${endpoint.base_url}/chat/completions`, model: "fixture", external_retention: "provider_managed" }, sensitivity_floor: "public" } });
+          egress: { model_endpoint: `${endpoint.base_url}/chat/completions`, model: MODEL, external_retention: "provider_managed" }, sensitivity_floor: "public" } });
     } finally { grantDb.close(); }
     expect(runCli(setup.env, "import", "markdown-folder", "--source", notes).exitCode).toBe(0);
-    writeFileSync(join(setup.vault, ".kizuki/serve.toml"), `[ports.llm]\nid="kizuki.llm.openai-compatible"\nbase_url="${endpoint.base_url}"\nmodel="fixture"\nmax_retries=0\ntimeout_ms=1000\n`);
+    writeFileSync(join(setup.vault, ".kizuki/serve.toml"), `[ports.llm]\nid="kizuki.llm.openai-compatible"\nbase_url="${endpoint.base_url}"\nmodel="${MODEL}"\nmax_retries=0\ntimeout_ms=1000\n`);
     const first = await cli(setup.env, "serve", "run", "sync", "--json");
     expect(first.exitCode).toBe(0);
     const db = openLedger(database);
@@ -56,6 +57,8 @@ test("native source consent, model canon, rejected responses and doctor compose"
     try {
       const receipt = listRunReceipts(db).filter(item => item.rail === "sync").at(-1)!;
       expect(receipt.model).toMatchObject({ calls: 1, input_tokens: 12, output_tokens: 8, unavailable: 0 });
+      expect(receipt.model.model_ref_sha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(JSON.parse(first.stdout).data.model).toEqual(receipt.model);
       expect(receipt.claims_extracted).toBe(1);
       expect(receipt.canon_writes).toBeGreaterThan(0);
       modelClaimIds = listClaims(db, { status: "live", limit: 20 }).filter(claim => claim.producer === "model").map(claim => claim.claim_id).sort();
@@ -84,6 +87,7 @@ test("native source consent, model canon, rejected responses and doctor compose"
       const model = JSON.parse(doctor.stdout).data.serve.model;
       expect(model.last_success_at).not.toBeNull();
       expect(model.last_failure).not.toBeNull();
+      expect(JSON.stringify([model, first])).not.toContain(MODEL);
       expect(JSON.stringify([first, doctor, readFileSync(join(setup.vault, ".kizuki/run-receipts.jsonl"), "utf8")])).not.toContain(CANARY);
     }
     expect(endpoint.requests).toHaveLength(3);

@@ -9,6 +9,7 @@ import {
 import { dirname, join } from "node:path";
 import { tableExists } from "../ledger/schema";
 import { isPlainObject } from "../util/validate";
+import { sha256Hex } from "../util/hash";
 import { readProducerDiagnostic } from "../producer/diagnostics";
 import { loadServeConfig } from "./config";
 import {
@@ -29,15 +30,24 @@ export function runReceiptsPath(vaultPath: string): string {
   return join(vaultPath, RUN_RECEIPTS_PATH);
 }
 
-function redact(text: string): string {
+export function redactReceiptText(text: string): string {
   return text
     .replace(/\/(?:home|Users|tmp|var|workspace|opt)\/[^\s"']+/g, "[path]")
     .replace(/\b[A-Za-z0-9_-]{20,}\b/g, "[redacted]");
 }
 
+/** A display marker cannot recover the original model reference identity. */
+export function isRedactedModelReference(reference: string): boolean {
+  return reference.includes("[redacted]") || reference.includes("[path]");
+}
+
+export function readModelReferenceDigest(value: unknown): string | undefined {
+  return typeof value === "string" && /^[a-f0-9]{64}$/.test(value) ? value : undefined;
+}
+
 export function redactReceiptError(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
-  return redact(text).slice(0, 240);
+  return redactReceiptText(text).slice(0, 240);
 }
 
 export function parseRunExecution(value: unknown): RunExecution | undefined {
@@ -80,6 +90,7 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
   const totals = emptyRunTotals();
   const model = isPlainObject(value["model"]) ? value["model"] : {};
   const diagnostic = readProducerDiagnostic(model["diagnostic"]);
+  const modelRefDigest = readModelReferenceDigest(model["model_ref_sha256"]);
   const retrieval = isPlainObject(value["retrieval"]) ? value["retrieval"] : {};
   const execution = parseRunExecution(value["execution"]);
   const transition = parseTransition(value["schedule_transition"]);
@@ -118,6 +129,7 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
     canon_reverts: numberOr(value["canon_reverts"], totals.canon_reverts),
     model: {
       ...(diagnostic === undefined ? {} : { diagnostic }),
+      ...(modelRefDigest === undefined ? {} : { model_ref_sha256: modelRefDigest }),
       ...(model["usage_unknown"] === true ? { usage_unknown: true } : {}),
       calls: numberOr(model["calls"], 0),
       input_tokens: numberOr(model["input_tokens"], 0),
@@ -148,7 +160,7 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
     errors: Array.isArray(value["errors"])
       ? value["errors"]
           .filter((item): item is string => typeof item === "string")
-          .map(redact)
+          .map(redactReceiptText)
       : [],
   };
 }
@@ -281,16 +293,21 @@ function insertReceiptRow(db: Database, receipt: RunReceipt, vaultPath: string):
 }
 
 function redactReceipt(receipt: RunReceipt): RunReceipt {
-  const { diagnostic: rawDiagnostic, ...model } = receipt.model;
+  const { diagnostic: rawDiagnostic, model_ref_sha256: rawDigest, ...model } = receipt.model;
   const diagnostic = readProducerDiagnostic(rawDiagnostic);
+  const reference = model.model_ref;
+  // Hash the original reference before redaction. Recovered historical display
+  // text cannot invent a stable identity; preserve a prior valid digest only.
+  const modelRefDigest = reference !== null && !isRedactedModelReference(reference)
+    ? sha256Hex(reference) : readModelReferenceDigest(rawDigest);
   return {
     ...receipt,
-    errors: receipt.errors.map(redact),
+    errors: receipt.errors.map(redactReceiptText),
     model: {
       ...model,
       ...(diagnostic === undefined ? {} : { diagnostic }),
-      model_ref:
-        receipt.model.model_ref === null ? null : redact(receipt.model.model_ref),
+      ...(modelRefDigest === undefined ? {} : { model_ref_sha256: modelRefDigest }),
+      model_ref: reference === null ? null : redactReceiptText(reference),
     },
   };
 }

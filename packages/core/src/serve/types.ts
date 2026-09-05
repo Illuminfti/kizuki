@@ -93,6 +93,8 @@ export interface LeaseRow {
 }
 
 export interface RunModelReport {
+  /** Stable identity of the original reference, before display redaction. */
+  readonly model_ref_sha256?: string;
   readonly diagnostic?: ProducerDiagnostic;
   /** An interrupted producer attempt: token counts are lower bounds, not measured totals. */
   readonly usage_unknown?: boolean;
@@ -203,6 +205,7 @@ export interface ModelDoctor {
   readonly model_ref: string | null;
   readonly last_success_at: string | null;
   readonly last_failure: { readonly at: string; readonly detail: string } | null;
+  readonly unattributed_receipts: number;
   readonly unavailable: number;
   readonly budget: Readonly<Record<string, { used: number; limit: number }>>;
   readonly detail: string;

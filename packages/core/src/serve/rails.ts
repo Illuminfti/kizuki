@@ -12,7 +12,7 @@ import { serializePage } from "../vault/frontmatter";
 import { createDurableWriteBudget, budgetDay } from "./budget-ledger";
 import { loadServeConfig } from "./config";
 import { createFileNotifier, briefPath } from "./notifier-file";
-import { recoverRunJournal, persistRunReceipt, pruneRunReceipts, redactReceiptError } from "./receipts";
+import { recoverRunJournal, getRunReceipt, persistRunReceipt, pruneRunReceipts, redactReceiptError } from "./receipts";
 import { initServe, listSchedules } from "./schema";
 import {
   InjectedCrash,
@@ -389,7 +389,9 @@ export async function runRail(
       ...(options.crashAfter === undefined ? {} : { crashAfter: options.crashAfter }),
       ...(rail === "brief" ? { artifactPath: briefPath(vaultPath, dayOf(started)) } : {}),
     });
-    return receipt;
+    const published = getRunReceipt(db, runId);
+    if (published === null) throw new Error("persisted run receipt unavailable");
+    return published;
   } finally { activeRuns.delete(runId); }
 }
 

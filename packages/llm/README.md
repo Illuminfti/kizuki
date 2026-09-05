@@ -52,7 +52,12 @@ compatibility with future provider metadata is claimed.
 Run receipts preserve a content-free `model.diagnostic` when available:
 response/transport class, or claim schema field/rule/type/count, or a budget
 dimension with used/requested/limit. `doctor` distinguishes these outcomes and
-reports the latest failed attempt and last usable success for the current model.
+reports the latest failed attempt and last usable success independently for the
+current model. New receipts bind the original model reference through a
+`model_ref_sha256` digest before display redaction, so long model names cannot
+collide in doctor history. Older receipts whose reference was already redacted
+without a digest remain explicitly unattributed; they do not count as current
+model success or failure. Lossless older references still match exactly.
 Diagnostics contain no provider prose, rejected field names, predicate values
 or raw responses. The claim JSON schema remains exact.
 

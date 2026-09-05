@@ -212,3 +212,11 @@ test("classified model failures are unhealthy evidence and hostile diagnostic fi
    expect(()=>project(diagnostic)).toThrow("invalid receipt model diagnostic");
  }
 });
+
+test("model identity digests are strict semantic evidence without copying the model identity", () => {
+ const receipt={run_id:"01K00000000000000000000005",rail:"sync",started_at:"2026-09-05T00:00:00.000Z",finished_at:"2026-09-05T00:00:01.000Z",status:"ok",model:{unavailable:0,model_ref:"model:[redacted]"},retrieval:{degraded:[]},errors:[]};
+ const project=(model_ref_sha256:unknown)=>strictReceiptProjection(JSON.stringify({...receipt,model:{...receipt.model,model_ref_sha256}})+"\n")[0]!;
+ expect(project("a".repeat(64)).sha256).not.toBe(project("b".repeat(64)).sha256);
+ expect(JSON.stringify(project("a".repeat(64)))).not.toContain("model_ref_sha256");
+ for(const invalid of ["SYNTHETIC_PRIVATE_IDENTITY", "A".repeat(64), "a".repeat(63), null, {}]) expect(()=>project(invalid)).toThrow("invalid receipt model identity");
+});

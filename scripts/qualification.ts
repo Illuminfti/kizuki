@@ -8,7 +8,7 @@ import { evaluateQualification, qualificationDate, type QualificationProfile, ty
 import { loadServeConfig } from "../packages/core/src/serve/config";
 import { readProducerDiagnostic } from "../packages/core/src/producer/diagnostics";
 import { readServeProcessMarker, servePidPath } from "../packages/core/src/serve/daemon";
-import { parseRunExecution, canonicalReceiptContent } from "../packages/core/src/serve/receipts";
+import { parseRunExecution, canonicalReceiptContent, readModelReferenceDigest } from "../packages/core/src/serve/receipts";
 import { RAIL_IDS, RUN_STATUSES } from "../packages/core/src/serve/types";
 
 // Exact native producer spellings, not arbitrary labels carrying source content.
@@ -197,7 +197,8 @@ export function strictReceiptProjection(raw: string): QualificationReceipt[] {
     if (execution?.due_at) qualificationDate(execution.due_at);
     if (!Array.isArray(value.errors) || value.errors.some((e: unknown) => typeof e !== "string")) throw new Error("invalid run errors");
     const model = object(value.model), retrieval = object(value.retrieval);
-    allowed(model,"calls,input_tokens,output_tokens,unavailable,wall_ms,model_ref,usage_unknown,diagnostic");
+    allowed(model,"calls,input_tokens,output_tokens,unavailable,wall_ms,model_ref,model_ref_sha256,usage_unknown,diagnostic");
+    if(model.model_ref_sha256!==undefined && readModelReferenceDigest(model.model_ref_sha256)===undefined)throw new Error("invalid receipt model identity");
     if(model.diagnostic!==undefined && readProducerDiagnostic(model.diagnostic)===undefined)throw new Error("invalid receipt model diagnostic");
     allowed(retrieval,"upserts,removals,pending_ops,degraded");
     for(const key of ["calls","input_tokens","output_tokens","unavailable","wall_ms"])counter(model[key]);
