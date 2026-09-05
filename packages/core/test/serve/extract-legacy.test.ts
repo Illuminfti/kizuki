@@ -80,7 +80,8 @@ async function runResourceProbe(code: string, timeoutMs = 10_000) {
     return { exitCode, stdout, stderr, maxRssKiB: usage.maxRSS };
   } finally {
     clearTimeout(timer);
-    if (child.exitCode === null) child.kill("SIGKILL");
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    await Promise.allSettled([output]);
   }
 }
 
