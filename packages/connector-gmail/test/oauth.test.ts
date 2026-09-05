@@ -35,6 +35,26 @@ test("sanctioned PKCE sign-in writes one scoped opaque state with stable OIDC su
     expect(state.pending).toBeNull();
     expect(state.fields).toEqual([...FIELDS]);
 });
+test("enrollment bounds an unresolved writer and fences another sign-in until reload", async () => {
+    const f = oauthFixture();
+    let release!: () => void, entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const pending = f.connector.signIn(f.io, { write: async bytes => {
+        entered(); await new Promise<void>(resolve => { release = resolve; });
+        await f.writer.write(bytes);
+    } }).then(() => "success", error => error.code);
+    await started;
+    const result = await Promise.race([pending, Bun.sleep(6500).then(() => "still_pending")]);
+    try {
+        expect(result).toBe("timeout");
+        await expect(f.connector.signIn(f.io, f.writer)).rejects.toMatchObject({ code: "unavailable" });
+        expect(f.counts()).toEqual({ posts: 1, writes: 0, gets: 1 });
+    } finally { release(); await pending; }
+    await Bun.sleep(20);
+    expect(f.counts().writes).toBe(1);
+    expect(parseState(f.state()!).oauth.account.id).toBe("fixture-account");
+    await expect(f.connector.signIn(f.io, f.writer)).rejects.toMatchObject({ code: "unavailable" });
+}, 10000);
 test("cancel and missing granted scope write no state; missing scope performs no Gmail read", async () => {
     const cancel = oauthFixture(undefined, true);
     await expect(cancel.connector.signIn(cancel.io, cancel.writer)).rejects.toMatchObject({ code: "unauthenticated" });

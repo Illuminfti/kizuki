@@ -31,6 +31,19 @@ kizuki connect gmail --source KEY --fields text,subjects,headers,labels,attachme
 
 The account must match its stable OIDC subject. Core replacement preserves the source key and checkpoint, while the connector preserves its exact pending history witness. Changed account/fields/history or concurrent state drift refuses rather than orphaning a checkpoint. Changing a source's selected projection through reauthorization is unsupported. Revoked consent stays revoked after reauthorization. Disconnect retains its existing stop-sync meaning; it does not silently revoke upstream Google permission or claim native payload erasure.
 
-Timed-out OAuth callbacks are bound to their original session generation. Started host state writes cannot be canceled: the instance refuses reconnect until actual settlement, then reloads durable state. Changed live Gmail observations on retry remain `snapshot_gap_unresolved` with no history advance. No automatic skip/reset hides that gap.
+An unresolved OAuth exchange or started host write fences reconnect until actual
+settlement. If a successful refresh returns after a timeout or local close, its
+rotated token is offered only to the original host state handle; the native
+store's compare-and-swap refuses any newer enrollment. Saving that token does
+not reactivate the closed session. A timed-out instance must reload durable
+state. Enrollment uses one two-minute authorization budget, including profile
+verification, and at most five seconds waiting for the final state write.
+
+This custody rule cannot recover a provider rotation whose response is lost,
+or save through a host handle after its database or process has closed. Those
+outcomes remain unavailable and may require explicit reauthorization; no
+automatic token reset or retry against a newer account hides the uncertainty.
+Changed live Gmail observations on retry remain `snapshot_gap_unresolved` with
+no history advance. No automatic skip/reset hides that gap.
 
 Primary documentation verified 2026-09-05: [Google installed-app OAuth](https://developers.google.com/identity/protocols/oauth2/native-app), [Gmail authorization scopes](https://developers.google.com/workspace/gmail/api/auth/scopes), and [Gmail synchronization](https://developers.google.com/workspace/gmail/api/guides/sync). Operator app verification and live-account qualification remain outside the synthetic test evidence.

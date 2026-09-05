@@ -8,7 +8,8 @@ export class HttpFailure extends Error {
 }
 /** Per-method wall clock and request budget; one instance is never reused. */
 export class Budget {
-    readonly deadline = Date.now() + 45000;
+    readonly deadline: number;
+    constructor(durationMs = 45000) { this.deadline = Date.now() + durationMs; }
     private calls = 0;
     remaining(): number { const left = this.deadline - Date.now(); if (left <= 0)
         throw failure("timeout"); return left; }
