@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import nodeProcess from "node:process";
 import { loadServeConfig } from "./config";
@@ -14,7 +14,7 @@ import {
 } from "./leases";
 import { recoverRunJournal } from "./receipts";
 import { dueRails, runRail, type RailHooks } from "./rails";
-import { initServe } from "./schema";
+import { initServe, listSchedules } from "./schema";
 import { SERVE_PID_PATH, ServeDaemonError, isRailId, type CrashPoint, type RailId } from "./types";
 
 export interface ServeDaemonOptions {
@@ -41,22 +41,54 @@ export function servePidPath(vaultPath: string): string {
   return join(vaultPath, SERVE_PID_PATH);
 }
 
-export function readServePid(vaultPath: string): number | null {
+export interface ServeProcessMarker { pid: number; boot_id: string; instance_id: string; }
+export function readServeProcessMarker(vaultPath: string): ServeProcessMarker | null {
   const path = servePidPath(vaultPath);
   if (!existsSync(path)) return null;
-  const value = Number.parseInt(readFileSync(path, "utf8").trim(), 10);
-  return Number.isInteger(value) && value > 0 ? value : null;
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    if (!fstatSync(fd).isFile() || fstatSync(fd).size > 4096) return null;
+    const raw = readFileSync(fd, "utf8");
+    if (raw.length > 4096) return null;
+    let value: unknown;
+    try { value = JSON.parse(raw); } catch { return null; }
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const marker = value as Record<string, unknown>;
+    if (Object.keys(marker).sort().join() !== "boot_id,instance_id,pid" || !Number.isSafeInteger(marker.pid) || Number(marker.pid) < 1 || typeof marker.boot_id !== "string" || !marker.boot_id || marker.boot_id.length > 128 || typeof marker.instance_id !== "string" || !marker.instance_id || marker.instance_id.length > 128) return null;
+    return marker as unknown as ServeProcessMarker;
+  } finally { closeSync(fd); }
 }
-
-function writePid(vaultPath: string, pid: number): void {
+export function readServePid(vaultPath: string): number | null {
+  const marker = readServeProcessMarker(vaultPath);
+  if (marker) return marker.pid;
+  const path = servePidPath(vaultPath);
+  if (!existsSync(path)) return null;
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    if (!fstatSync(fd).isFile() || fstatSync(fd).size > 4096) return null;
+    const raw = readFileSync(fd, "utf8").trim();
+    if (!/^[1-9]\d{0,9}$/.test(raw)) return null;
+    const pid = Number(raw);
+    return Number.isSafeInteger(pid) ? pid : null;
+  } finally { closeSync(fd); }
+}
+function syncPidDirectory(path: string): void {
+  const fd = openSync(dirname(path), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  try { fsyncSync(fd); } finally { closeSync(fd); }
+}
+function writePid(vaultPath: string, marker: ServeProcessMarker): void {
   const path = servePidPath(vaultPath);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  writeFileSync(path, `${pid}\n`, { mode: 0o600 });
+  const temporary = `${path}.${crypto.randomUUID()}.tmp`;
+  const fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+  try { writeFileSync(fd, JSON.stringify(marker) + "\n"); fsyncSync(fd); } finally { closeSync(fd); }
+  try { renameSync(temporary, path); syncPidDirectory(path); }
+  finally { if (existsSync(temporary)) unlinkSync(temporary); }
 }
-
-function clearPid(vaultPath: string): void {
+function clearPid(vaultPath: string, instanceId: string): void {
+  if (readServeProcessMarker(vaultPath)?.instance_id !== instanceId) return;
   const path = servePidPath(vaultPath);
-  if (existsSync(path)) unlinkSync(path);
+  unlinkSync(path); syncPidDirectory(path);
 }
 
 export async function runServeDaemon(
@@ -67,6 +99,7 @@ export async function runServeDaemon(
   initServe(db);
   const recovered = recoverRunJournal(db, vaultPath);
   const process = options.process ?? thisProcess(options.now);
+  const instanceId = crypto.randomUUID();
   const acquired = acquireLease(db, process);
   if (!acquired.acquired) {
     throw new ServeDaemonError("lease_busy", "writer lease is held by a live process");
@@ -82,7 +115,7 @@ export async function runServeDaemon(
   nodeProcess.once("SIGTERM", requestStop);
   nodeProcess.once("SIGINT", requestStop);
   try {
-  writePid(vaultPath, process.pid);
+  writePid(vaultPath, { pid: process.pid, boot_id: process.boot_id, instance_id: instanceId });
   const config = loadServeConfig(vaultPath);
   const httpEnabled = options.http ?? config.http;
   if (httpEnabled) {
@@ -116,6 +149,7 @@ export async function runServeDaemon(
         if (!isRailId(rail)) continue;
         await runRail(db, vaultPath, rail, {
           now: process.now,
+          execution: { instance_id: instanceId, pid: process.pid, boot_id: process.boot_id, trigger: "once", due_at: null },
           ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
           ...(options.crashAfter === undefined ? {} : { crashAfter: options.crashAfter }),
         });
@@ -131,6 +165,8 @@ export async function runServeDaemon(
       if (rail !== undefined) {
         await runRail(db, vaultPath, rail, {
           now: process.now,
+          execution: { instance_id: instanceId, pid: process.pid, boot_id: process.boot_id, trigger: "scheduled",
+            due_at: listSchedules(db).find(row => row.rail === rail)?.next_run_at ?? process.now() },
           ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
         });
         receipts += 1;
@@ -145,8 +181,8 @@ export async function runServeDaemon(
     nodeProcess.off("SIGINT", requestStop);
     try { if (http !== null) await http.stop(); }
     finally {
-      try { releaseLease(db, process); }
-      finally { clearPid(vaultPath); }
+      try { clearPid(vaultPath, instanceId); }
+      finally { releaseLease(db, process); }
     }
   }
 }
