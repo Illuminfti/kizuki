@@ -98,12 +98,14 @@ export function evaluateQualification(profile: QualificationProfile, samples: re
     elapsed = Math.max(0, Math.min(now - start, sample.monotonic_ms - profile.monotonic_ms));
     wall = now; mono = sample.monotonic_ms;
   }
+  const pendingBoundaryRails = profile.rails.filter(spec => due.get(spec.rail)! <= start + QUALIFICATION_WINDOW_MS).map(spec => spec.rail).sort();
   const valid = issues.size === 0;
   return {
     schema: "kizuki.qualification-status/v1" as const, scope: profile.scope,
-    status: !valid ? "interrupted" : elapsed >= QUALIFICATION_WINDOW_MS ? "fixture-window-complete" : "awaiting-observation",
+    status: !valid ? "interrupted" : elapsed >= QUALIFICATION_WINDOW_MS && pendingBoundaryRails.length === 0 ? "fixture-window-complete" : "awaiting-observation",
     observed_ms: elapsed, credited_ms: valid ? elapsed : 0,
     remaining_ms: Math.max(0, QUALIFICATION_WINDOW_MS - (valid ? elapsed : 0)),
+    pending_boundary_rails: pendingBoundaryRails,
     automatic_runs: automatic, unqualified_runs: unqualified, process_restarts: restarts,
     issues: [...issues].sort(), release_qualified: false as const,
     estate: "not-observed" as const, human: "not-observed" as const,

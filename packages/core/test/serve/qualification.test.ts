@@ -25,9 +25,9 @@ test("uncaptured intervals and backward time interrupt", () => {
   expect(evaluateQualification(profile, [sample(1000), sample(0)]).issues).toContain("clock-discontinuity");
 });
 import { DEFAULT_RAILS, RAIL_IDS } from "../../src/serve/types";
-function trace(duration: number) {
-  const p: QualificationProfile = {...profile, rails:DEFAULT_RAILS.map(spec=>({...spec,next_run_at:new Date(start).toISOString()}))};
-  const due = new Map<string,number>(RAIL_IDS.map(rail=>[rail,0]));
+function trace(duration: number, firstAfterPeriod = false) {
+  const p: QualificationProfile = {...profile, rails:DEFAULT_RAILS.map(spec=>({...spec,next_run_at:new Date(start + (firstAfterPeriod ? spec.period_s * 1000 : 0)).toISOString()}))};
+  const due = new Map<string,number>(DEFAULT_RAILS.map(spec=>[spec.rail,firstAfterPeriod ? spec.period_s*1000 : 0]));
   const samples: QualificationSample[] = [];
   for(let ms=0;ms<=duration;ms+=60_000) {
     const s=sample(ms); s.process={pid:12,boot_id:"boot",start_ticks:"1",binary_sha256:"a".repeat(64),instance_id:"instance"};
@@ -108,4 +108,29 @@ test("seven days with no runs cannot qualify from future initial due dates or un
     altered[0]![field] += 604_800;
     expect(() => evaluateQualification({ ...profile, rails: altered }, samples)).toThrow("rail profile");
   }
+});
+
+
+test("seven-day completion waits for genuine receipts for slots due exactly at the boundary", () => {
+  const end = 604_800_000;
+  const { p, samples } = trace(end, true);
+  const boundaryRuns = samples.at(-1)!.receipts.splice(0);
+  expect(boundaryRuns).toHaveLength(6);
+  expect(samples.flatMap(s => s.receipts).filter(r => r.rail === "journal-prune")).toHaveLength(6);
+  const waiting = evaluateQualification(p, samples);
+  expect(waiting.status).toBe("awaiting-observation");
+  expect(waiting.issues).toEqual([]);
+  expect(waiting.pending_boundary_rails).toEqual(boundaryRuns.map(r => r.rail).sort());
+  const completed = sample(end + 30_000);
+  completed.process = samples[0]!.process;
+  completed.receipts = boundaryRuns.map(r => ({ ...r, finished_at: completed.at }));
+  const done = evaluateQualification(p, [...samples, completed]);
+  expect(done.status).toBe("fixture-window-complete");
+  expect(done.release_qualified).toBe(false);
+  expect(done.pending_boundary_rails).toEqual([]);
+  const expired = sample(end + 30_001);
+  expired.process = samples[0]!.process;
+  const missed = evaluateQualification(p, [...samples, expired]);
+  expect(missed.status).toBe("interrupted");
+  expect(missed.issues).toContain("missed-rail-slot");
 });

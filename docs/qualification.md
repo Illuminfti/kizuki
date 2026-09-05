@@ -123,3 +123,10 @@ identifier values and extra execution fields are refused without copying them
 into samples. Operational readers retain their historical compatibility.
 Recovery refuses a malformed existing same-ID receipt inside the receipt/schedule
 transaction, preserving both its original row and due boundary for investigation.
+
+At the exact seven-day boundary, completion also requires receipts for every
+slot due on or before that boundary. `pending_boundary_rails` names obligations
+still outstanding. Time remaining can be zero while status remains
+`awaiting-observation`: receipts may arrive within the existing lateness allowance.
+Missing that allowance interrupts credit; a clock boundary alone is never a
+completed rail run.
