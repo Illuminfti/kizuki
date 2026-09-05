@@ -18,3 +18,4 @@ packages/core/test/serve/http.test.ts:loopback fetch against the standing serve 
 packages/core/test/serve/http-retrieval.test.ts:synthetic loopback HTTP reads against the host-bound retrieval surface
 packages/connector-gmail/src/api.ts:explicitly enrolled Gmail read-only capture and OIDC identity; fixed Google HTTPS endpoints, no redirects, bounded GET requests
 packages/connector-google-calendar/src/api.ts:explicitly configured read-only Google Calendar fixed-host GET transport
+packages/connector-whoop/src/api.ts:explicitly configured WHOOP fixed-origin and exact-route transport; bounded read-only capture and separately invoked provider-access revocation, no redirects

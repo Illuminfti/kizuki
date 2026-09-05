@@ -37,3 +37,16 @@ test('operation request budget refuses its forty-ninth call', () => {
         expect(budget.requestMs()).toBeGreaterThan(0);
     expect(() => budget.requestMs()).toThrow('request_limit');
 });
+
+test('exhausted operation refuses before constructing bearer transport', async () => {
+    const budget = new Budget();
+    for (let n = 0; n < 48; n++) budget.requestMs();
+    let calls = 0;
+    for (let attempt = 0; attempt < 2; attempt++) {
+        await expect(request(new URL('https://api.prod.whoop.com/developer/v2/cycle'), 'synthetic', budget, async () => {
+            calls++;
+            return Response.json({});
+        })).rejects.toThrow('request_limit');
+    }
+    expect(calls).toBe(0);
+});

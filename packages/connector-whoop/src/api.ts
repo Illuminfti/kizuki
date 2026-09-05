@@ -83,6 +83,7 @@ async function read(response: Response): Promise<unknown> {
 export async function request(url: URL, token: string, budget: Budget, fetcher: WhoopFetch = (r) => fetch(r), method: 'GET' | 'DELETE' = 'GET'): Promise<Record<string, unknown>> {
     if (url.origin !== ORIGIN || url.username || url.password || url.hash || !ROUTES.has(url.pathname) || (method === 'DELETE') !== (url.pathname === '/developer/v2/user/access') || url.href.length > 4096)
         throw failure('misconfigured');
+    const requestMs = budget.requestMs();
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -90,7 +91,7 @@ export async function request(url: URL, token: string, budget: Budget, fetcher: 
                 timer = setTimeout(() => {
                     controller.abort();
                     reject(failure('timeout'));
-                }, budget.requestMs());
+                }, requestMs);
             }), (async () => {
                 const response = await fetcher(new Request(url, {
                     method, redirect: 'error', headers: {
