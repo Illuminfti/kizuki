@@ -410,15 +410,66 @@ nothing is bound to the box's own host network — see `deploy/box/README.md`
 for the full command contract and every API fact this script relies on).
 
 Finish line, `deploy/proof/box.sh` (not CI-runnable; provisions and deletes
-real boxes; run against `https://ascii.dev/api/box/v1` on 2026-09-05, exact
-head in this PR):
+real boxes; first run against `https://ascii.dev/api/box/v1` on 2026-09-05,
+re-run below on 2026-09-05 on the merged head that carries the `isBusy`
+fix):
 
 | # | Assertion | Result | How it is decided |
 | --- | --- | --- | --- |
-| 3.1 | One command, five minutes. | **PASS**, measured 49–85s across four runs. | Wall clock from `bootstrap.sh`'s own box creation to its own health check passing, asserted ≤ 300s. |
-| 3.2 | Stop and start keep the vault. | **FAIL**, reproduced on every attempt, root cause now understood — see the correction below. | Import 3 fixtures (`events=3`), `POST /stop`, wait for `state=archived`, `POST /resume`, wait usable, bring the compose stack back up, re-read `events=`. |
-| 3.3 | Fork is a fresh identity. | **FAIL/BLOCKED** (never reached a clean comparison, cascading from 3.2's cause). | `POST /boxes/{id}/fork` is a real endpoint (confirmed: a fork against a nonexistent box id returns a distinct `not_found` shape from a genuine unrouted path) and does return a second box id, but reading `/vault/.kizuki/vault-id` from either box requires the kizuki container to actually start, which 3.2's finding shows it does not reliably do after a resume or fork. |
+| 3.1 | One command, five minutes. | **PASS**, measured 49–91s across every run on both heads. | Wall clock from `bootstrap.sh`'s own box creation to its own health check passing, asserted ≤ 300s. |
+| 3.2 | Stop and start keep the vault. | **Lease bug fixed, but the row is not a reliable PASS: an unrelated race makes it nondeterministic.** See the 2026-09-05 finding below. | Import 3 fixtures (`events=3`), `POST /stop`, wait for `state=archived`, `POST /resume`, wait usable, bring the compose stack back up, re-read `events=`. |
+| 3.3 | Fork is a fresh identity. | **FAIL, reproducibly, for a real and distinct cause** — a fork clones the vault-id file along with everything else, and nothing regenerates it. See the finding below. | `POST /boxes/{id}/fork` is a real endpoint and does return a second box id; once both boxes' compose stacks are up, `/vault/.kizuki/vault-id` reads back identical on both. |
 | 3.4 | Stranger proof runs against it. | **BLOCKED** (correctly — `scripts/stranger-proof.sh` does not exist in this tree; see `docs/CURRENT.md`). | `[ -x scripts/stranger-proof.sh ]`. |
+
+Finding (2026-09-05, lane `agent/fix-lease-bootid-20260905` merged with
+`agent/deploy-m2-tailnet-20260903`): re-ran `deploy/proof/box.sh` on the
+merged head (four full box lifecycles, plus one hand-run replay of the
+stop/resume sequence for direct log inspection; every box this work created
+was deleted, `GET /boxes` confirmed empty after each run) now that
+`isBusy` (`packages/core/src/serve/leases.ts`) checks `boot_id` before
+trusting PID liveness. Two independent, unrelated things are true at once:
+
+- **The lease bug is fixed and directly confirmed, not inferred.** A
+  hand-run replay of 3.2's own steps read `events=3` back immediately (0s
+  wait) after `POST /resume` plus `docker compose up -d`, with
+  `/proc/sys/kernel/random/boot_id` on the box reading a different value
+  than before the stop (`cb360dae-...` on this run), the same genuine
+  guest-kernel-reboot evidence the original finding used. `docker logs
+  deploy-kizuki-1` after a successful resume shows the writer starting
+  clean, not the `writer lease is held by a live process` error the
+  original finding reproduced on every attempt. Of two full `box.sh` runs
+  after the merge, one showed a clean `PASS 3.2`.
+- **Row 3.2 is still not a reliable PASS, for a second, different, real
+  reason: a race in `bring_up_compose`'s own retry, not the lease.** The
+  other post-merge run FAILed 3.2 again, and `docker logs` at the moment of
+  failure showed no lease error at all — instead `deploy-tailscale-1`
+  exited immediately with `tailscale entrypoint: missing secret file
+  /run/secrets/ts_authkey`, and `docker ps -a` showed `deploy-kizuki-1`
+  stuck in `Created`, never started. The raw (non-retried) `docker compose
+  up -d` output shows why: `Error response from daemon: Conflict. The
+  container name "/deploy-tailscale-1" is already in use by container
+  <id>` — the same post-resume reconciliation race `bring_up_compose`'s
+  retry already exists to handle (see the earlier finding above) — but this
+  time the container dockerd raced into existence first came up without
+  its secret mounted, and `bring_up_compose`'s three-attempt retry budget
+  was not always enough to converge on a working pair of containers within
+  the 120s `box.sh` allows. This is a `deploy/box.sh`/`bootstrap.sh`
+  robustness gap in a race against dockerd's own reconciliation, downstream
+  of and unrelated to the lease fix; it is out of scope for this lane
+  (`packages/core`, not `deploy/`) to fix, and is named here as a
+  dependency for a fully reliable 3.2 rather than fixed in this merge.
+- **Row 3.3's failure is real, reproducible, and has nothing to do with
+  either bug above.** `ensureVaultId`
+  (`packages/core/src/serve/vault-id.ts`) only mints a fresh id when the
+  file does not already exist. A fork clones the entire vault, including
+  that file, byte for byte, so the forked box's container never sees an
+  absent file to mint a new id for — `POST /boxes/{id}/fork` and the vault
+  clone it performs work exactly as designed; "distinct identity" was
+  never something `packages/core` gives for free from a disk-level clone,
+  and neither `deploy/box/bootstrap.sh` nor `deploy/proof/box.sh` resets
+  the vault-id file after a fork before bringing the stack up. This is a
+  real gap in the M3 deployment path, not a `packages/core` defect, and is
+  not fixed here.
 
 Finding (2026-09-05): **stop/resume and fork do not restart the compose
 stack, and only images and named volumes reliably survive them — running
