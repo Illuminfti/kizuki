@@ -828,7 +828,11 @@ test("oversized record shapes and invalid metadata return bounded errors", () =>
 
 
 test("identifiers reject controls, invisible values and edge whitespace without normalization", () => {
-  for (const value of [" ", "\t", "\n", " leading", "trailing ", "a\u0000b", "a\u001bb", "\u200b", "a\u202eb"]) {
+  for (const value of [
+    " ", "\t", "\n", "\r", "\u0085", "\u2028", "\u2029",
+    " leading", "trailing ", "a\u0000b", "a\u001bb", "\u200b", "a\u202eb",
+    "\u034f", "a\u034fb", "\ufe0f", "a\ufe0fb",
+  ]) {
     for (const field of ["connector_id", "source_record_id", "kind", "subject_id", "attachment_id", "media_type"]) {
       const event = rawEvent();
       if (field === "subject_id") event["subjects"] = [{ subject_id: value, role: "about" }];
@@ -842,4 +846,25 @@ test("identifiers reject controls, invisible values and edge whitespace without 
   expect(result.ok).toBe(true);
   if (!result.ok) throw new Error("unreachable");
   expect(result.value.source_record_id).toBe(event.source_record_id);
+});
+
+test("visible identifier grammar accepts contextual joins and preserves opaque source bytes", () => {
+  const identifiers = [
+    "👨‍👩‍👧‍👦.md",
+    "❤️.md",
+    "क्‍ष.md",
+    "می‌رویم.md",
+  ];
+  for (const sourceRecordId of identifiers) {
+    const event = {
+      ...rawEvent(),
+      source_record_id: sourceRecordId,
+      attachments: [{ attachment_id: "attachment", media_type: "text/plain", filename: sourceRecordId }],
+    };
+    const result = validateEventInput(event);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.value.source_record_id).toBe(sourceRecordId);
+    expect(result.value.attachments[0]?.filename).toBe(sourceRecordId);
+  }
 });

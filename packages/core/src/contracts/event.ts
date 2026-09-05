@@ -119,12 +119,67 @@ function rejectUnknownKeys(
   }
 }
 
+const identifierSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+const CONTROL_OR_LINE_SEPARATOR = /[\p{Cc}\p{Zl}\p{Zp}]/u;
+const MARK = /\p{M}/u;
+const FORMAT = /\p{Cf}/u;
+const EXTENDED_PICTOGRAPHIC = /\p{Extended_Pictographic}/u;
+const JOINER = new Set(["\u200c", "\u200d"]);
+const VARIATION_SELECTOR = new Set(["\ufe0e", "\ufe0f"]);
+
+function visibleBaseBefore(chars: readonly string[], index: number): string | null {
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    const ch = chars[cursor] ?? "";
+    if (MARK.test(ch) || VARIATION_SELECTOR.has(ch)) continue;
+    return FORMAT.test(ch) ? null : ch;
+  }
+  return null;
+}
+
+function visibleBaseAfter(chars: readonly string[], index: number): string | null {
+  for (let cursor = index + 1; cursor < chars.length; cursor += 1) {
+    const ch = chars[cursor] ?? "";
+    if (MARK.test(ch) || VARIATION_SELECTOR.has(ch)) continue;
+    return FORMAT.test(ch) ? null : ch;
+  }
+  return null;
+}
+
+/**
+ * Identifiers keep their opaque source spelling. This only decides whether
+ * that spelling has visible grapheme content that is safe to display and use
+ * as an identity; it never normalizes or replaces source bytes.
+ */
+function isVisibleIdentifier(value: string): boolean {
+  if (value.trim() !== value || CONTROL_OR_LINE_SEPARATOR.test(value)) return false;
+  const chars = [...value];
+  for (let index = 0; index < chars.length; index += 1) {
+    const ch = chars[index] ?? "";
+    // CGJ is a default-ignorable mark with no visible role in identifiers.
+    if (ch === "\u034f") return false;
+    if (VARIATION_SELECTOR.has(ch)) {
+      const base = visibleBaseBefore(chars, index);
+      if (base === null || !EXTENDED_PICTOGRAPHIC.test(base)) return false;
+      continue;
+    }
+    if (JOINER.has(ch)) {
+      if (visibleBaseBefore(chars, index) === null || visibleBaseAfter(chars, index) === null) return false;
+      continue;
+    }
+    if (FORMAT.test(ch)) return false;
+  }
+  // A grapheme made only of marks/selectors/joiners has no visible identity.
+  return [...identifierSegmenter.segment(value)].every(({ segment }) =>
+    [...segment].some((ch) => !MARK.test(ch) && !FORMAT.test(ch)),
+  );
+}
+
 function checkString(
   value: unknown,
   path: string,
   errors: string[],
   maxBytes: number,
-  opts: { required: boolean; allowEmpty: boolean },
+  opts: { required: boolean; allowEmpty: boolean; identifier?: boolean },
 ): value is string {
   if (value === undefined) {
     if (opts.required) {
@@ -146,7 +201,7 @@ function checkString(
     errors.push(`${path}: must be a non-empty string`);
     return false;
   }
-  if (!opts.allowEmpty && (value.trim() !== value || /[\p{Cc}\p{Cf}]/u.test(value))) {
+  if ((opts.identifier ?? !opts.allowEmpty) && value.length > 0 && !isVisibleIdentifier(value)) {
     errors.push(`${path}: must be a visible identifier without controls or edge whitespace`);
     return false;
   }
@@ -260,6 +315,7 @@ function validateAttachment(
     !checkString(filename, `${path}.filename`, errors, EVENT_LIMITS.filenameBytes, {
       required: false,
       allowEmpty: true,
+      identifier: true,
     })
   ) {
     failed = true;
