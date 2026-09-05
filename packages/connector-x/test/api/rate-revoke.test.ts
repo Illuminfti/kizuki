@@ -84,7 +84,7 @@ test("a late pending-revoke write permits explicit retry after restore and never
 test("pending revocation refuses sign-in before browser, token exchange, or replacement of retry custody", async () => {
   const f = new XApiFixture(1), state = parseState(f.state); state.revocation = "pending"; f.state = encodeState(state); f.authorize = true;
   const port = await f.connected(), before = f.state.slice(); let writes = 0;
-  await expect(port.signIn(f.io, { write: async bytes => { writes++; await f.persist(bytes); } })).rejects.toThrow("unavailable");
+  await expect(port.signIn(f.io, { write: async bytes => { writes++; await f.persist(bytes); } }, { mode: "new" })).rejects.toThrow("unavailable");
   expect(writes).toBe(0); expect(f.state).toEqual(before); expect(f.authorizations).toEqual([]); expect(f.forms).toEqual([]); expect(f.requests).toEqual([]);
   await port.revokeProviderAccess(); expect(parseState(f.state).revocation).toBe("revoked");
 });
@@ -93,7 +93,7 @@ test("explicit sign-in after terminal provider revocation creates new authorizat
   const f = new XApiFixture(1), originalRefresh = f.refresh, originalAccess = f.access, first = await f.connected();
   await first.revokeProviderAccess(); expect([...f.revokedTokens]).toEqual([originalRefresh, originalAccess]);
   const port = await f.connected(); f.authorize = true;
-  await port.signIn(f.io, { write: f.persist });
+  await port.signIn(f.io, { write: f.persist }, { mode: "replace", previous_state: f.state.slice() });
   expect(parseState(f.state).revocation).toBe("active"); expect(parseState(f.state).oauth.tokens.refresh_token).not.toBe(originalRefresh);
   expect(f.authorizations).toHaveLength(1); expect(f.forms.filter(form => form.form.grant_type === "authorization_code")).toHaveLength(1);
   await port.connect(async () => new TextDecoder().decode(f.state)); expect((await port.sync(null)).events).toHaveLength(1); await port.close();

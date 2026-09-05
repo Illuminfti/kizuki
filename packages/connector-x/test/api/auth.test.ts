@@ -9,7 +9,7 @@ function deferred<T>() { let resolve!: (value: T) => void; return { promise: new
 test("explicit native transport runs real PKCE and persists app/account/scopes through the host writer", async () => {
   const f = new XApiFixture(); f.authorize = true;
   const port = createXApiConnector(f.config(), f.deps()); let saved: Uint8Array | undefined;
-  expect(await port.signIn(f.io, { write: async bytes => { saved = bytes.slice(); } })).toEqual({ display: "X account" });
+  expect(await port.signIn(f.io, { write: async bytes => { saved = bytes.slice(); } }, { mode: "new" })).toEqual({ display: "X account" });
   const url = f.authorizations[0]!, form = f.forms[0]!.form;
   expect(url.origin).toBe("https://x.com"); expect(url.pathname).toBe("/i/oauth2/authorize");
   expect(url.searchParams.get("code_challenge_method")).toBe("S256");
@@ -32,7 +32,7 @@ test("missing native callback, state mismatch, scope loss and wrong account neve
     if (fault === "account") f.before = async () => Response.json({ data: { id: "8" } });
     const deps = f.deps(); if (fault === "native") delete deps.oauth;
     const port = createXApiConnector(f.config(), deps);
-    await expect(port.signIn(f.io, { write: async () => { writes++; } })).rejects.toThrow();
+    await expect(port.signIn(f.io, { write: async () => { writes++; } }, { mode: "new" })).rejects.toThrow();
     expect(writes).toBe(0);
     if (fault === "native") { expect(f.authorizations).toEqual([]); expect(f.forms).toEqual([]); expect(f.requests).toEqual([]); }
     if (fault === "state") { expect(f.forms).toEqual([]); expect(f.requests).toEqual([]); }

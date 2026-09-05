@@ -15,7 +15,7 @@ export async function enrollConnection(
   store.recover(db);
   const pending = store.begin();
   try {
-    await runGuardedSignIn(connector, io, pending.writer);
+    await runGuardedSignIn(connector, io, pending.writer, { mode: "new" });
     return store.save(
       db,
       connector.manifest().connector_id,

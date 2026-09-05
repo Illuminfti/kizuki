@@ -41,6 +41,15 @@ injected trusted `OAuthTransport`: the default core ephemeral loopback listener
 has not been qualified against the provider's exact registered callback rule.
 A failed sign-in cannot silently register an application or obtain paid access.
 
+This connector advertises contract minor 2 and requires the trusted host's
+explicit third `signIn` argument. Core `enrollConnection` supplies `{ mode: "new" }`;
+`ConnectionStateStore.replace` supplies `{ mode: "replace", previous_state }`
+with copied prior bytes. Direct context-less calls refuse before any egress.
+The connector validates saved app, account, selection, and revocation before
+starting replacement sign-in. Allowed active or terminal reauthentication keeps
+the previous capture checkpoint, pending page plan, and cooldown. Legacy
+two-argument connectors retain their host behavior through the additive argument.
+
 The host must approve the source capture grant before calling its ingestion
 runner. Event sensitivity defaults to `private` and has a `private` floor.
 Configuration, saved scopes, client identity, and selected fields are checked
@@ -143,8 +152,9 @@ partial failure or late pending write leaves a fence that a restored connector
 can load without egress; only another explicit `revokeProviderAccess` call may
 retry the provider revocations. Already revoked tokens are handled idempotently
 by the core OAuth helper. Local instances always close after an attempted revoke.
-Sign-in refuses before browser or provider work while loaded revocation is
-pending, preserving the old credentials needed for retry. After terminal
+Sign-in refuses before browser or provider work while saved or loaded revocation
+is pending, including a fresh connector in the actual host replacement path,
+preserving the old credentials needed for retry. After terminal
 revocation, a new explicit sign-in may establish fresh authorization through the
 normal PKCE and host-writer flow; it cannot undo either completed remote revoke.
 Native CAS prevents a stale refresh, cooldown, or competing revoke from replacing

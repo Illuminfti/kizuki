@@ -111,7 +111,7 @@ test("rate limits survive restart, while health and local revoke consume no prov
 test("source configuration and saved authorization refuse before provider work", async () => {
   const f = new XApiFixture();
   await expect(createXApiConnector({}, f.deps()).connect(async () => "")).rejects.toThrow("misconfigured");
-  await expect(createXApiConnector(f.config(), { persist: f.persist }).signIn(f.io, { write: f.persist })).rejects.toThrow("misconfigured");
+  await expect(createXApiConnector(f.config(), { persist: f.persist }).signIn(f.io, { write: f.persist }, { mode: "new" })).rejects.toThrow("misconfigured");
   expect(() => createXApiConnector({ secret_ref: "SYNTHETIC_X_ACCESS_CANARY_0" })).toThrow("misconfigured");
   for (const transform of [
     (raw: ReturnType<typeof parseState>) => { raw.app = digest("another-app"); },

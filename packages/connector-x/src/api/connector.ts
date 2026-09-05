@@ -1,5 +1,6 @@
 import { DeadlineError, HealthReport, OAuthSession, freezeManifest, isSecretRef, loopbackTransport, parseOAuthState, revokeToken, signInWithBrowser, withDeadline,
   type Connector, type ConnectionStateWriter, type HealthState, type OAuthProvider, type OAuthTransport, type SecretResolver, type SignInIo, type StatePersister, type SyncBatch } from "@kizuki/core";
+import type { SignInContext } from "@kizuki/core/contracts";
 import { ApiBudget, HttpFailure, X_API_ORIGIN, X_API_REQUEST_MS, fieldsQuery, request, type XApiFetch } from "./client";
 import { parseAccount, parsePage, type XApiPage } from "./parse";
 import { MAX_WALK_PAGES, X_API_CONNECTOR_ID, X_API_CURSOR_SCHEMA, X_API_SCOPES, X_API_STATE_SCHEMA, compareInstants, digest, encodeCursor, encodeState, failure, failureRule, id, normalizedFailure,
@@ -9,7 +10,7 @@ export interface XApiConfig { client_id?: string; secret_ref?: string; selection
 export interface XApiDeps { persist?: StatePersister; fetch?: XApiFetch; oauth?: OAuthTransport; now?: () => Date; clock?: () => number }
 const COVERAGE = "X own-post API window; history capped; provider deletion coverage and native enrollment unqualified";
 function coverageDetail(cursor: string): string { return `${COVERAGE}; ${parseCursor(cursor).phase === "idle" ? "available window drained" : "continuation pending"}`; }
-const MANIFEST = freezeManifest({ schema: "kizuki.connector/v1", connector_id: X_API_CONNECTOR_ID, version: "0.1.0", contract_minor: 1,
+const MANIFEST = freezeManifest({ schema: "kizuki.connector/v1", connector_id: X_API_CONNECTOR_ID, version: "0.1.0", contract_minor: 2,
   implementation: "@kizuki/connector-x/api", allowed_egress: ["api.x.com", "x.com"], cursor_schema: X_API_CURSOR_SCHEMA, kinds: ["post"],
   capabilities: { backfill: true, sync: true, tombstones: false, purge: false, fixture: true }, required_secrets: [],
   emits_sensitivity_hint: true, default_sensitivity: "private", sensitivity_floor: "private", auth_modes: ["oauth", "secret_ref"] });
@@ -131,15 +132,23 @@ export class XApiConnector implements Connector {
     }
     finally { this.operationBudget = null; this.busy = false; }
   }
-  async signIn(io: SignInIo, writer: ConnectionStateWriter) {
+  async signIn(io: SignInIo, writer: ConnectionStateWriter, context?: SignInContext) {
     this.idle();
     if (this.state?.revocation === "pending") throw failure("unavailable");
+    if (context?.mode !== "new" && context?.mode !== "replace") throw failure("misconfigured");
     const provider = this.provider(), selected = this.selected();
+    let previous: XApiState | null = null;
+    if (context.mode === "replace") {
+      previous = parseState(context.previous_state);
+      if (previous.revocation === "pending") throw failure("unavailable");
+      if (previous.app !== digest(provider.client_id) || digest(previous.selection) !== digest(selected) ||
+        this.config.expected_account !== undefined && previous.oauth.account.id !== this.config.expected_account) throw failure("identity_mismatch");
+    } else if (this.state !== null) throw failure("unavailable");
     // The native registered callback is a separate qualification gate. Only
     // a trusted explicitly supplied transport may attempt interactive enrollment.
     if (this.deps.oauth === undefined) throw failure("misconfigured");
     this.busy = true;
-    const generation = this.generation, budget = this.budget(120_000), previous = this.state;
+    const generation = this.generation, budget = this.budget(120_000);
     let active = true;
     let listener: Awaited<ReturnType<OAuthTransport["listen"]>> | null = null;
     const transport: OAuthTransport = {

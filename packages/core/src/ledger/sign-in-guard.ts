@@ -1,6 +1,7 @@
 import type {
   ConnectionStateWriter,
   Connector,
+  SignInContext,
   SignInDisplay,
   SignInIo,
 } from "../contracts/connector";
@@ -47,13 +48,16 @@ export function runGuardedSignIn(
   connector: Connector,
   io: SignInIo,
   writer: ConnectionStateWriter,
+  context: SignInContext,
 ): Promise<SignInDisplay> {
   const signIn = connector.signIn;
   if (typeof signIn !== "function") {
     throw new LedgerError("connector does not implement interactive sign-in");
   }
   return withDeadline(
-    signIn.call(connector, guardedSignInIo(io), writer),
+    signIn.call(connector, guardedSignInIo(io), writer, context.mode === "replace"
+      ? { mode: "replace", previous_state: context.previous_state.slice() }
+      : { mode: "new" }),
     CONNECTOR_SIGN_IN_DEADLINE_MS,
     "sign-in timed out",
   );
