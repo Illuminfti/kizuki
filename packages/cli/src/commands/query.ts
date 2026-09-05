@@ -28,7 +28,7 @@ function formatHit(hit: SearchHit): string {
 
 export const queryCommand: Command = {
   name: "query",
-  usage: "query <text> [--scope canon|ledger|all] [--limit N] [--json] [--degraded]",
+  usage: "query <text> [--scope canon|ledger|all] [--limit 1..50] [--json] [--degraded]",
   summary: "search current authorized evidence through configured retrieval and the lexical floor",
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, {
@@ -58,13 +58,13 @@ export const queryCommand: Command = {
       initAgents(ctx.db);
       const envelope = await serveSearch({
         db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER,
-        ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }),
+        ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }), ...(ctx.retrievalUnavailable ? { retrievalUnavailable: true as const } : {}),
       }, { query: text, scope: rawScope as SearchScope, limit });
       const hits: SearchHit[] = [
         ...envelope.canon.map((chunk, index): SearchHit => ({
           doc_id: retrievalDocId("page", chunk.page_id), scope: "canon", title: chunk.title,
           path: chunk.path, page_type: chunk.type, sensitivity: chunk.sensitivity,
-          taint: chunk.taint, authority: chunk.authority ?? "owner_authored", occurred_at: "",
+          taint: chunk.taint, authority: chunk.authority ?? "model_inference", occurred_at: "",
           connector_id: "", subjects: chunk.subjects, snippet: chunk.excerpt, rank: index,
         })),
         ...envelope.quoted.map((chunk, index): SearchHit => ({
@@ -95,6 +95,6 @@ export const queryCommand: Command = {
       }
       for (const hit of hits) io.out(formatHit(hit));
       return 0;
-    });
+    }, { retrieval: "optional" });
   },
 };

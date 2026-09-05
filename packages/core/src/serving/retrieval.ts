@@ -14,7 +14,7 @@ export async function retrievalCandidates(
   query: string,
   options: SearchOptions,
 ): Promise<RetrievalCandidates> {
-  if (ctx.retrieval === undefined) return { ids: [], degraded: [] };
+  if (ctx.retrieval === undefined) return { ids: [], degraded: ctx.retrievalUnavailable ? ["retrieval-unavailable"] : [] };
   // The v1 port has no page-type predicate. Keep that request on the scoped
   // deterministic index rather than spending its window on excluded types.
   if (options.types !== undefined) {

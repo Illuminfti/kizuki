@@ -42,7 +42,7 @@ export const contextCommand: Command = {
     return withVault(io, async (ctx) => {
       initAgents(ctx.db);
       const envelope = await serveContextPacket(
-        { db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER, ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }) },
+        { db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER, ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }), ...(ctx.retrievalUnavailable ? { retrievalUnavailable: true as const } : {}) },
         {
           purpose: rawPurpose as PacketPurpose,
           ...(budget === undefined ? {} : { budget_tokens: budget }),
@@ -67,6 +67,6 @@ export const contextCommand: Command = {
         io.out(envelope.data.packet_md);
       }
       return incomplete ? 1 : 0;
-    });
+    }, { retrieval: "optional" });
   },
 };

@@ -96,7 +96,7 @@ export const doctorCommand: Command = {
       }
       printHuman(io, report);
       return report.ok ? 0 : 1;
-    });
+    }, { retrieval: "none" });
   },
 };
 

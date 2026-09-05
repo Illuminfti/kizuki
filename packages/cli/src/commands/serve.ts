@@ -166,6 +166,6 @@ export const serveCommand: Command = {
       }
       if (result.http !== null) await result.http.stop();
       return 0;
-    });
+    }, { retrieval: verb === "status" || verb === "stop" || parsed.flags.has("--install") || parsed.flags.has("--uninstall") ? "none" : "required" });
   },
 };
