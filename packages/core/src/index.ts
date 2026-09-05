@@ -962,3 +962,5 @@ export type {
 
 export { loadConfiguredRetrieval } from "./retrieval/config";
 export type { ConfiguredRetrieval } from "./retrieval/config";
+export { tryAdvisoryFileLock } from "./util/advisory-file-lock";
+export type { AdvisoryFileLock } from "./util/advisory-file-lock";
