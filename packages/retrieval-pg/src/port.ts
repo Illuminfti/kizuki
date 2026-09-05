@@ -1,3 +1,4 @@
+import { removeOwnedGeneration, validateOwnedGeneration } from "./owned-generation";
 import { existsSync, lstatSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { PortError, validatePortDescriptor, validateRetrievalDoc, validateRetrievalQuery, SENSITIVITY_ORDER } from "@kizuki/core";
@@ -25,6 +26,8 @@ export interface EmbeddedRetrievalOptions {
 export class EmbeddedRetrievalPort implements RetrievalPort {
   readonly descriptor: PortDescriptor;
   private closed = false;
+  private readonly ownedDataDir: string;
+  private readonly ownedVaultPath: string;
   private closing:Promise<void>|undefined;
   private rebuilding = false;
   private embeddingWork: Promise<void> | undefined;
@@ -33,6 +36,8 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
   private checkpoint: EmbedCheckpoint | null = null;
   lastRefreshPass = 0;
   constructor(private readonly ctx: PortContext, private readonly store: SqlStore, private readonly lease: WriterLease, readonly leaseReceipt: LeaseReceipt, private readonly options: EmbeddedRetrievalOptions) {
+    this.ownedDataDir = ctx.data_dir;
+    this.ownedVaultPath = ctx.vault_path;
     // The catalog names implementation capabilities; callers use the bound
     // descriptor to decide whether vector nomination is actually available.
     this.descriptor = validatePortDescriptor({
@@ -213,12 +218,26 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
     });
   }
   async close(): Promise<void> {
-    if(this.closing!==undefined)return this.closing;
-    this.closed=true;
+    if (this.closing !== undefined) return this.closing;
+    this.closed = true;
     this.watcher?.close();
-    // Model output checks closed before touching SQL; pending rows remain durable.
-    // Keep the lease if the engine cannot confirm that its connection closed.
-    this.closing=this.store.close().then(()=>{this.lease.release();});
+    this.closing = this.store.close().then(() => { this.lease.release(); });
+    return this.closing;
+  }
+  /** Final native maintenance call. The old object stays closed after disposal. */
+  eraseOwnedGeneration(): Promise<void> {
+    if (this.closed) return Promise.reject(new PortError("unavailable", "retrieval port is already closing or closed", false));
+    validateOwnedGeneration(this.ownedVaultPath, this.ownedDataDir);
+    this.closed = true;
+    this.watcher?.close();
+    this.selfWrites.clear(); this.checkpoint = null;
+    this.closing = (async () => {
+      // No lease release if SQL shutdown cannot be confirmed. After shutdown,
+      // failed deletion remains pending and a native no-SQL retry can finish it.
+      await this.store.close();
+      try { removeOwnedGeneration(this.ownedVaultPath, this.ownedDataDir); }
+      finally { this.lease.release(); }
+    })();
     return this.closing;
   }
   embedCheckpoint(): EmbedCheckpoint | null { return this.checkpoint; }
@@ -313,9 +332,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
     const space = this.embedding === undefined ? null : this.effectiveSpace();
     this.rebuilding = true;
     try {
-      if (space === null && await this.store.run(() => this.store.meta("space")) !== null) {
-        throw new PortError("unavailable", "rebuilding an embedded index requires its embedding port", false);
-      }
+      const requiresEmbedding = space === null && await this.store.run(() => this.store.meta("space")) !== null;
       if (space !== null && (!Number.isInteger(space.dims) || space.dims < 1 || space.dims > 2000)) {
         throw new PortError("config_invalid", "embedding dimensions must be 1..2000 for HNSW", false);
       }
@@ -324,6 +341,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
         CREATE TEMP TABLE rebuild_vectors (chunk_id text PRIMARY KEY,embedding vector NOT NULL);`));
       for await (const raw of docs) {
         this.assertOpen();
+        if (requiresEmbedding) throw new PortError("unavailable", "rebuilding an embedded index requires its embedding port", false);
         const doc = validateRetrievalDoc(raw);
         await this.store.run(() => this.store.db.query("INSERT INTO rebuild_docs VALUES($1,$2::jsonb) ON CONFLICT(doc_id) DO UPDATE SET doc=excluded.doc", [doc.doc_id, JSON.stringify(doc)]));
       }
@@ -440,4 +458,14 @@ async function withDeadline<T>(work: Promise<T>, milliseconds: number): Promise<
       clearTimeout(timer);
     }
   }
+}
+
+/** Retry physical erasure of a partial/broken owned generation without opening SQL. */
+export async function eraseOwnedEmbeddedGeneration(ctx: PortContext): Promise<void> {
+  const vaultPath = ctx.vault_path, dataDir = ctx.data_dir;
+  validateOwnedGeneration(vaultPath, dataDir);
+  const lease = new WriterLease(dataDir, { clock: ctx.clock });
+  lease.tryAcquire(`pid:${process.pid}`);
+  try { removeOwnedGeneration(vaultPath, dataDir); }
+  finally { lease.release(); }
 }
