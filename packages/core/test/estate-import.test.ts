@@ -141,3 +141,37 @@ describe("estate slice dry-run", () => {
     expect(() => plan(fixture(), { access_token: "synthetic-canary" })).toThrow("invalid_authorization");
   });
 });
+
+for (const field of ["source", "record", "subject"] as const) {
+  test(`estate ${field} IDs reject deceptive spelling even with exact authorization`, () => {
+    for (const value of [" source-a", "source-a ", "source\u200b-a", "person:\u200bada", "a\u034fb", "\u0301a", "a\u2028b"]) {
+      const input = JSON.parse(JSON.stringify(fixture()));
+      if (field === "source") input.sources[0].source_id = value;
+      else if (field === "record") input.sources[0].records[0].record_id = value;
+      else input.sources[0].records[0].subjects = [value];
+      const source = JSON.stringify(input);
+      const authorization = JSON.stringify(auth(source, [input.sources[0].source_id]));
+      expect(() => buildEstatePlan(source, authorization)).toThrow(field === "source" ? "invalid_authorization" : "invalid_record");
+    }
+  });
+}
+
+test("estate IDs preserve visible Unicode and interior whitespace without normalizing identity", () => {
+  const spellings = ["source intérieur", "日本語", "e\u0301", "é", "👩‍💻", "record\u00a0inside"];
+  const mapped = new Set<string>();
+  for (const value of spellings) {
+    const input = JSON.parse(JSON.stringify(fixture()));
+    input.sources[0].source_id = value;
+    input.sources[0].records[0].record_id = value;
+    input.sources[0].records[0].subjects = [value];
+    const source = JSON.stringify(input);
+    const result = buildEstatePlan(source, JSON.stringify(auth(source, [value])));
+    expect(result.report.status).toBe("compatible");
+    expect(result.report.source_sha256).toBe(sha256Hex(source));
+    const metadata = result.templates[0]!.metadata;
+    expect(metadata.estate).toMatchObject({ source_id: value, record_id: value, subject_ids: [value] });
+    mapped.add(result.templates[0]!.source_record_id);
+    expect(JSON.stringify(input)).toBe(source);
+  }
+  expect(mapped.size).toBe(spellings.length);
+});

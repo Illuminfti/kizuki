@@ -1,5 +1,6 @@
 import { ESTATE_IMPORT_LIMITS, type EstateImportIssue, type EstateImportReport, type EstateIssueCode } from "../contracts/estate-import";
 import { EVENT_SCHEMA, raiseSensitivity, validateEventInput, type CaptureEventInput, type SensitivityHint } from "../contracts/event";
+import { isVisibleIdentifier } from "../util/opaque-identifier";
 import { sha256Hex } from "../util/hash";
 import { isRfc3339 } from "../util/time";
 
@@ -30,8 +31,9 @@ function text(value: unknown, max: number, code: string): string {
   return value;
 }
 function id(value: unknown, code: string): string {
+  // Keep the planner's stricter 256 UTF-8 byte cap before Unicode segmentation.
   const result = text(value, 256, code);
-  if (result.length === 0 || /[\u0000-\u001f\u007f]/.test(result)) fail(code);
+  if (result.length === 0 || !isVisibleIdentifier(result)) fail(code);
   return result;
 }
 function integer(value: unknown, code: string): number {
