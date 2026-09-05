@@ -15,6 +15,7 @@ import { machineOriginPath } from "../canon/origin";
 import type { Claim } from "../contracts/proposal";
 import type { ClaimDraft, ProduceResult, ProducerDiagnostic, ProducerPort } from "../contracts/producer";
 import { formatProducerDiagnostic, readProducerDiagnostic } from "../producer/diagnostics";
+import { invokeProducer } from "../producer/result";
 import type { RunModelReport } from "./types";
 import {
   insertClaim,
@@ -54,6 +55,7 @@ export interface WritePassResult {
 
 interface ProduceMetrics {
   diagnostic?: ProducerDiagnostic;
+  usage_unknown?: true;
   calls: number;
   input_tokens: number;
   output_tokens: number;
@@ -107,9 +109,15 @@ function observedProducer(producer: ProducerPort, metrics: ProduceMetrics, recor
       const started = performance.now();
       // Commit intent before crossing the asynchronous external-effect boundary.
       record();
-      const result = await producer.produce(input);
+      const validated = await invokeProducer(producer, input);
+      const result = validated.result;
       observe(metrics, result, Math.max(0, Math.round(performance.now() - started)));
-      record(result);
+      if (validated.usage_known) record(result);
+      else {
+        metrics.usage_unknown = true;
+        metrics.calls = Math.max(1, metrics.calls);
+        // Keep the original durable intent: failed validation cannot refund a call.
+      }
       return result;
     },
   };
@@ -121,6 +129,7 @@ function metricResult(metrics: ProduceMetrics): Pick<WritePassResult, "claims_re
     claims_rejected: metrics.rejected,
     model: {
       ...(metrics.diagnostic === undefined ? {} : { diagnostic: metrics.diagnostic }),
+      ...(metrics.usage_unknown === undefined ? {} : { usage_unknown: true }),
       calls: metrics.calls,
       input_tokens: metrics.input_tokens,
       output_tokens: metrics.output_tokens,

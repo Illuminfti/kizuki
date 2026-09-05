@@ -1,6 +1,7 @@
 import { bindHistoricalSourceWrite, sourcePolicyEpoch, sourceEventsAllowed, isLocalSourcePort, sourcePortBindingDigest } from "../ledger/source-grants";
 import { createHash } from "node:crypto";
 import { parseExtractResponse } from "../producer/schema";
+import { invokeProducer } from "../producer/result";
 import { tableExists } from "../ledger/schema";
 import type { Database } from "bun:sqlite";
 import type { CaptureEvent } from "../contracts/event";
@@ -707,7 +708,7 @@ export async function mineLiveDrafts(
   selectedInput = inputFor(usable);
   const selectedIds = new Set(usable.map(event => event.event_id));
   if (source_epoch !== sourcePolicyEpoch(db)) return denied();
-  const produced = await producer.produce(selectedInput);
+  const { result: produced } = await invokeProducer(producer, selectedInput);
 
   if (source_epoch !== sourcePolicyEpoch(db)) return denied();
   usable = db.transaction(() => usable.filter(event => extractEligible(db, event))).immediate();
