@@ -151,10 +151,17 @@ function resolveRegisteredId(input: string): string | null {
   return null;
 }
 
-export function resolveConnectorId(input: string): string {
+export function resolveConnectorId(input: string, sourcePath?: string): string {
   const registered = resolveRegisteredId(input);
   const enrollable = listEnrollableConnectorIds();
   if (registered !== null && enrollable.includes(registered)) return registered;
+  // Mapped file importers cannot expose their instance-derived manifest until
+  // the owner supplies a source and its mapping. Validate that real instance;
+  // dummy discovery shapes are not evidence that its CLI path is unsupported.
+  if (registered !== null && sourcePath !== undefined &&
+      getConnector(registered, { path: sourcePath }).manifest().auth_modes.includes("none")) {
+    return registered;
+  }
   if (registered !== null) {
     throw new ConnectionError(
       `sign-in for ${registered} is not enrollable through this CLI`,

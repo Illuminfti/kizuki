@@ -75,8 +75,8 @@ export const importCommand: Command = {
     if (hasPolicy && !CONSENT_OPTIONS.every((key) => parsed.options.has(key))) throw new UsageError("import policy requires --policy FILE --expected-revision N --operation-id ID");
     const revision = hasPolicy ? expectedRevision(parsed.options.get("--expected-revision")) : undefined;
     const policy = hasPolicy ? readSourcePolicy(parsed.options.get("--policy")!) : undefined;
-    const connectorId = resolveConnectorId(rawId);
     const absolute = resolve(source);
+    const connectorId = resolveConnectorId(rawId, absolute);
 
     return withVault(io, async (ctx) => {
       const hosts = listHostConnections(ctx.db, ctx.store, connectorId);
