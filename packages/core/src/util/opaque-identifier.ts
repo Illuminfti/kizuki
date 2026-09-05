@@ -35,4 +35,3 @@ export function isVisibleIdentifier(value: string): boolean {
   }
   return true;
 }
-
