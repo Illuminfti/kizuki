@@ -1,0 +1,50 @@
+import { expect, test } from 'bun:test';
+import { CalendarFixture } from '../src/testing';
+import { createGoogleCalendarConnector } from '../src/index';
+test('explicit calendar, app, fields and account are required without transport', async () => {
+    const f = new CalendarFixture();
+    let calls = 0;
+    const c = createGoogleCalendarConnector({}, { fetch: async () => { calls++; throw Error('unexpected'); } });
+    await expect(c.connect(async () => new TextDecoder().decode(f.state))).rejects.toThrow();
+    expect(calls).toBe(0);
+});
+test('durable page replay is exact and refuses changed provider snapshots', async () => {
+    const f = new CalendarFixture();
+    const c = await f.connected();
+    const first = await c.backfill(null);
+    expect(first.events).toHaveLength(2);
+    const reopened = await f.connected();
+    expect((await reopened.backfill(null)).events).toEqual(first.events);
+    f.rows[0]!.summary = 'changed synthetic';
+    const refused = await reopened.backfill(null);
+    expect(refused.status).toBe('unavailable');
+    expect(refused.detail).toContain('snapshot_gap_unresolved');
+    expect(refused.events).toEqual([]);
+    expect(refused.cursor).toBeNull();
+});
+test('all-day and recurrence validity remain typed without invented times', async () => {
+    const f = new CalendarFixture();
+    const batch = await (await f.connected()).backfill(null);
+    const event = batch.events[0]!;
+    expect(event.kind).toBe('calendar_event');
+    expect(event.occurred_at).toBe('2024-01-02T12:00:00Z');
+    expect(event.metadata.occurred_at_semantics).toBe('provider_updated');
+    expect((event.metadata.schedule as any).start).toEqual({ date: '2024-02-01' });
+    expect((event.metadata.schedule as any).end).toEqual({ date: '2024-02-02' });
+});
+test('explicit cancelled observation survives rescan and never infers absence', async () => {
+    const f = new CalendarFixture();
+    f.rows = [{ id: 'deleted1', status: 'cancelled' }];
+    const first = await (await f.connected()).backfill(null);
+    expect(first.events[0]!.deleted).toBe(true);
+    expect(first.events[0]!.metadata.provider_deleted_at).toBeNull();
+    f.advance();
+    f.expired = true;
+    const second = await (await f.connected()).sync(first.cursor);
+    expect(second.detail).toContain('history_gap');
+    expect(second.events[0]!.occurred_at).toBe(first.events[0]!.occurred_at);
+    f.rows = [];
+    const empty = await (await f.connected()).sync(second.cursor);
+    expect(empty.events).toEqual([]);
+});
+test('revocation refuses subsequent provider calls', async () => { const f = new CalendarFixture(); const c = await f.connected(); await c.revoke(); const count = f.calls.length; await expect(c.sync(null)).rejects.toThrow(); expect(f.calls).toHaveLength(count); });
