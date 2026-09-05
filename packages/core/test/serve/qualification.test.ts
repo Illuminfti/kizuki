@@ -1,8 +1,9 @@
+import { nextScheduleSlot } from "../../src/serve/receipts";
 import { expect, test } from "bun:test";
 import { evaluateQualification, type QualificationProfile, type QualificationSample } from "../../src/serve/qualification";
 const start = Date.parse("2026-09-05T00:00:00.000Z");
-const profile: QualificationProfile = { scope: "fixture", start_at: new Date(start).toISOString(), boot_id: "boot", monotonic_ms: 100, rails: [], brief_hour: 7, max_gap_ms: 60_000, lateness_ms: 30_000 };
-function sample(ms: number): QualificationSample { return { at: new Date(start + ms).toISOString(), monotonic_ms: 100 + ms, boot_id: "boot", receipts: [], process: null, issues: [] }; }
+const profile: QualificationProfile = { scope: "fixture", start_at: new Date(start).toISOString(), boot_id: "boot", monotonic_ms: 100, rails: [], brief_hour: 7, timezone:"UTC", supervisor:"none", sampling_interval_ms:30_000, max_gap_ms: 60_000, lateness_ms: 30_000 };
+function sample(ms: number): QualificationSample { return { at: new Date(start + ms).toISOString(), monotonic_ms: 100 + ms, boot_id: "boot", receipts: [], supervisor:"not-observed", process: null, issues: [] }; }
 test("empty/fixture observations never qualify an estate or human gate", () => {
   const result = evaluateQualification(profile, [sample(0)]);
   expect(result.release_qualified).toBe(false);
@@ -61,4 +62,35 @@ test("duplicate hashes dedupe, conflicting run ids and unbound processes interru
   samples[0]!.receipts.push({...first});expect(evaluateQualification(p,samples).automatic_runs).toBe(7);
   samples[0]!.receipts.push({...first,sha256:"c".repeat(64)});expect(evaluateQualification(p,samples).issues).toContain("conflicting-run-id");
   first.execution={...first.execution!,pid:99};expect(evaluateQualification(p,samples).issues).toContain("run-process-unbound");
+});
+
+test("repeated maximum lateness cannot shift the frozen seven-day due grid", () => {
+  const { p, samples } = trace(604_800_000);
+  // Reproduce the old completion-relative scheduler: six rails run every 90s,
+  // claiming a new slot after their previous 30s-late completion.
+  const drifted = samples.map(s => ({ ...s, receipts: s.receipts.filter(r => r.rail === "brief") }));
+  for (let due = 0; due + 30_000 <= 604_800_000; due += 90_000) {
+    const ended = due + 30_000;
+    const bucket = drifted[Math.ceil(ended / 60_000)]!;
+    for (const rail of RAIL_IDS.filter(r => r !== "brief")) bucket.receipts.push({
+      run_id: `${rail}-drift-${due}`, sha256: "d".repeat(64), rail,
+      started_at: new Date(start + due).toISOString(), finished_at: new Date(start + ended).toISOString(), status: "ok", healthy: true,
+      execution: { instance_id: "instance", pid: 12, boot_id: "boot", trigger: "scheduled", due_at: new Date(start + due).toISOString() },
+    });
+  }
+  const result = evaluateQualification(p, drifted);
+  expect(result.status).toBe("interrupted");
+  expect(result.issues).toContain("due-slot-mismatch");
+  expect(result.credited_ms).toBe(0);
+});
+
+
+test("UTC fixture timing does not claim local morning or supervisor qualification across DST", () => {
+ const {p,samples}=trace(0);
+ for(const day of ["2026-03-08T07:00:00.000Z","2026-11-01T07:00:00.000Z"]){
+  expect(nextScheduleSlot(day,86400,7)).toBe(new Date(Date.parse(day)+86_400_000).toISOString());
+ }
+ const result=evaluateQualification(p,samples);
+ expect(result.owner_morning).toBe("unqualified");expect(result.supervised_pilot).toBe("unqualified");
+ for(const state of ["masked","disabled"] as const){samples[0]!.supervisor=state;expect(evaluateQualification(p,samples).issues).toContain("supervisor-policy-unqualified");}
 });

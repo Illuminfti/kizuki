@@ -1,3 +1,4 @@
+import { nextScheduleSlot } from "./receipts";
 import { RAIL_IDS, type RunExecution } from "./types";
 
 export const QUALIFICATION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -9,6 +10,9 @@ export interface QualificationProfile {
   monotonic_ms: number;
   rails: QualificationRail[];
   brief_hour: number;
+  timezone: "UTC";
+  supervisor: "none";
+  sampling_interval_ms: 30_000;
   max_gap_ms: number;
   lateness_ms: number;
 }
@@ -20,6 +24,7 @@ export interface QualificationReceipt {
 export interface QualificationProcess { pid: number; boot_id: string; start_ticks: string; binary_sha256: string; instance_id: string; }
 export interface QualificationSample {
   at: string; monotonic_ms: number; boot_id: string;
+  supervisor: "not-observed" | "masked" | "disabled" | "active" | "unknown";
   process: QualificationProcess | null;
   receipts: QualificationReceipt[];
   issues: string[];
@@ -30,16 +35,12 @@ export function qualificationDate(value: unknown): number {
   if (!Number.isFinite(time) || new Date(time).toISOString() !== value) throw new Error("invalid evidence timestamp");
   return time;
 }
-function nextBrief(time: number, hour: number): number {
-  const next = new Date(time); next.setUTCHours(hour, 0, 0, 0);
-  if (next.getTime() <= time) next.setUTCDate(next.getUTCDate() + 1);
-  return next.getTime();
-}
 /** Pure evidence evaluator. Its fixture result is deliberately never release acceptance. */
 export function evaluateQualification(profile: QualificationProfile, samples: readonly QualificationSample[]) {
   const issues = new Set<string>();
   const start = qualificationDate(profile.start_at);
   if (profile.scope !== "fixture") throw new Error("unsupported observation scope");
+  if (profile.timezone !== "UTC" || profile.supervisor !== "none" || profile.sampling_interval_ms !== 30_000) throw new Error("only UTC fixture timing and supervisor-none policy are supported");
   if (!Number.isFinite(profile.monotonic_ms) || profile.monotonic_ms < 0 || !Number.isSafeInteger(profile.max_gap_ms) || profile.max_gap_ms <= 0 || profile.max_gap_ms > 60_000 || profile.lateness_ms !== 30_000 || !Number.isInteger(profile.brief_hour) || profile.brief_hour < 0 || profile.brief_hour > 23) throw new Error("invalid qualification profile");
   if (profile.rails.map((r) => r.rail).sort().join() !== [...RAIL_IDS].sort().join()) issues.add("required-rails-missing");
   const due = new Map<string, number>();
@@ -59,6 +60,7 @@ export function evaluateQualification(profile: QualificationProfile, samples: re
     if (delta > profile.max_gap_ms) issues.add("collection-gap");
     if (sample.boot_id !== profile.boot_id) issues.add("boot-changed");
     sample.issues.forEach((issue) => issues.add(issue));
+    if (sample.supervisor !== "not-observed") issues.add("supervisor-policy-unqualified");
     const process = sample.process;
     const processKey = process === null ? null : `${process.boot_id}:${process.pid}:${process.start_ticks}:${process.instance_id}`;
     if (!process || process.boot_id !== sample.boot_id) issues.add("process-unverified");
@@ -84,7 +86,7 @@ export function evaluateQualification(profile: QualificationProfile, samples: re
       if (began < expected || ended > expected + profile.lateness_ms + spec.jitter_s * 1000) issues.add("missed-rail-slot");
       if (receipt.status !== "ok" || !receipt.healthy) issues.add("rail-not-ok");
       automatic++;
-      due.set(receipt.rail, receipt.rail === "brief" ? nextBrief(ended, profile.brief_hour) : ended + spec.period_s * 1000);
+      due.set(receipt.rail, Date.parse(nextScheduleSlot(new Date(expected).toISOString(), spec.period_s, receipt.rail === "brief" ? profile.brief_hour : null)));
     }
     for (const spec of profile.rails) if (now > due.get(spec.rail)! + profile.lateness_ms + spec.jitter_s * 1000) issues.add("missed-rail-slot");
     elapsed = Math.max(0, Math.min(now - start, sample.monotonic_ms - profile.monotonic_ms));
@@ -100,5 +102,7 @@ export function evaluateQualification(profile: QualificationProfile, samples: re
     issues: [...issues].sort(), release_qualified: false as const,
     estate: "not-observed" as const, human: "not-observed" as const,
     brief_usefulness: "not-observed" as const,
+    owner_morning: "unqualified" as const, supervised_pilot: "unqualified" as const,
+    rail_qualification: "fixture-only" as const, timezone: profile.timezone, supervisor: profile.supervisor,
   };
 }

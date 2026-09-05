@@ -115,7 +115,16 @@ export interface RunExecution {
   readonly due_at: string | null;
 }
 
+export interface RunScheduleTransition {
+  readonly previous_due_at: string | null;
+  readonly next_run_at: string;
+  readonly period_s: number;
+  readonly brief_hour: number | null;
+}
+
 export interface RunReceipt {
+  /** Durable scheduler compare-and-advance intent, replayed with the receipt row. */
+  readonly schedule_transition?: RunScheduleTransition;
   /** Legacy receipts omit this and cannot prove automatic artifact-bound execution. */
   readonly execution?: RunExecution;
   readonly run_id: string;

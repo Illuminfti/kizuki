@@ -10,11 +10,16 @@ estate shadow, owner review, normal-week usefulness, or retirement inventory gat
 Create a scope file for a synthetic vault only:
 
 ```json
-{"scope":"fixture","vault":"/absolute/synthetic-vault","brief_hour":7}
+{"scope":"fixture","vault":"/absolute/synthetic-vault","brief_hour":7,"timezone":"UTC","supervisor":"none"}
 ```
 
 The vault must already have all seven enabled rails with initialized due dates.
-Its configured `brief_hour` must match the scope. The artifact directory must
+Its configured `brief_hour` must match the scope. This harness accepts only
+explicit UTC fixture timing and a supervisor-none policy. It does not interpret
+UTC as the owner's local morning, implement DST scheduling, or collect evidence
+from a real supervisor. Non-UTC and supervised scopes are refused. Status always
+reports `owner_morning: unqualified`, `supervised_pilot: unqualified`, and
+`rail_qualification: fixture-only`; this is not full issue #403 qualification. The artifact directory must
 contain `kizuki`, `kizuki-mcp`, `README.txt`, `BUILD.json`, and `SHA256SUMS`; the
 proof must be a passing `kizuki.artifact-proof/v1` receipt for that exact source
 SHA, target, and binary hash with all fourteen required proof steps. Artifact
@@ -31,13 +36,15 @@ bun scripts/qualification.ts status --run /absolute/new-report
 Every command emits JSON. There are no clock, elapsed-time, or backdate flags.
 `init` creates a new private report directory; it refuses an existing destination.
 `sample` is a single read-only collection from the explicitly selected vault plus
-an append to the report. Invoke samples more frequently than sixty seconds; the
-collector does not run itself. Its fixed profile allows thirty seconds of rail
+an append to the report. The frozen sampling cadence is thirty seconds, with a maximum collection gap
+of sixty seconds; the collector does not run itself. Its fixed profile allows thirty seconds of rail
 lateness plus that rail's configured jitter. Those bounds are fixture observation
 policy, not a redefinition of production SLA or acceptance tolerances.
 
-The report binds each automatic run ID and raw receipt hash to a daemon instance,
-PID and boot ID. The current structured `serve.pid` marker and writer lease must
+The report binds each automatic run ID and canonical receipt-content hash to a daemon instance,
+PID and boot ID. Scheduled non-brief due slots advance from the previous intended slot
+plus its period, never from a late finish. Brief slots advance to the next
+declared UTC hour from the original due time. Missed slots remain failures. The current structured `serve.pid` marker and writer lease must
 agree. On Linux the collector hashes `/proc/PID/exe` and checks the kernel process
 start ticks before and after that read against the pinned artifact. Manual,
 `serve --once`, legacy, unknown-usage, failed and degraded receipts cannot fill
@@ -54,10 +61,22 @@ is current; it never advances credited time. Only 604800000 milliseconds with
 complete recorded coverage can produce `fixture-window-complete`. Synthetic
 boundary tests exercise this calculation without supplying observation credit.
 
-`manifest.json` is the immutable profile and identity anchor. `samples.jsonl` is
+`manifest.json` contains a random qualification ID, frozen canonical policy
+digest, start clock anchors, artifact identity, and the closed fixture policy.
+Init exclusively writes and fsyncs `genesis.json`, binding that ID, policy digest,
+canonical manifest hash, and manifest file device/inode before any sample.
+Every load validates schema keys and that binding. An edited or replaced
+manifest cannot silently become a new root before sample one. The sample chain
+starts at the genesis hash. Earlier unanchored reports are retained as historical
+artifacts; continuing them requires a new observation, without carried credit.
+
+`samples.jsonl` is
 an fsynced hash chain containing only timestamps, run hashes/IDs, rail health and
 process identity. Raw errors, model references, prompts and source content are
-not copied. This preserves already captured receipt evidence when the existing
+not copied. Receipt digests normalize known omitted defaults and JSON object key order;
+semantic counters, health, timestamps, execution identity, schedule intent and
+errors remain bound. Unknown execution fields and malformed counters are refused.
+This preserves already captured receipt evidence when the existing
 seven-day operational journal prunes it. Uncaptured intervals receive no credit.
 Corrupt source evidence leaves a durable `collection-rejected` interruption.
 Torn or conflicting report evidence is refused. Start a new report after an
@@ -69,13 +88,19 @@ serializes sample writers; a lock left by a crashed collector is not automatical
 reclaimed. The existing report can still be inspected, but continuing that
 observation requires explicit operator investigation rather than silent repair.
 The threat model trusts the local host/operator: the hash chain is not protection
-against an administrator rewriting all evidence. SQLite, JSONL and process reads
+against an administrator rewriting all evidence, including both the manifest
+and genesis before sample one. SQLite, JSONL and process reads
 are not one atomic snapshot; racing or missing evidence conservatively interrupts.
 
 Limits are explicit: 64 MiB and 100000 rows for each journal, 256 MiB per artifact,
 1 MiB for the proof, and 16 KiB for the scope. Oversized evidence is refused before
 it can supply credit. No performance claim is made for repeated artifact hashing.
-Existing operational retention and services are unchanged. Artifact observations
+Operational retention and service configuration are unchanged. New operational
+receipts journal a content-free schedule transition before receipt append. The
+receipt row and expected-due compare-and-advance commit in one SQLite transaction;
+JSONL recovery applies missing transitions exactly once and rejects conflicting
+policy or due boundaries. Legacy receipts without transition intent remain
+readable but cannot reconstruct missing schedule changes. Artifact observations
 must use a reviewed build containing the execution identity and daemon marker
 changes; older receipts remain operationally readable but cannot qualify here.
 

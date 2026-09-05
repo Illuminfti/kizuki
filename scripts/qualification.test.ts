@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, appendFileSync, symlinkSync, statSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, appendFileSync, symlinkSync, statSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -20,7 +20,7 @@ function fixture(){
  writeFileSync(join(artifact,"SHA256SUMS"),checksumManifest(artifact,["kizuki","kizuki-mcp","README.txt","BUILD.json"]));
  const ids=["help","init","import","query","query-result","context","context-result","export","restore-verify","restore","restored-query","restored-query-result","restored-context","restored-context-result"];
  writeFileSync(proof,JSON.stringify({schema:"kizuki.artifact-proof/v1",source_sha:"a".repeat(40),target:"bun-linux-x64-baseline",binary_sha256:createHash("sha256").update(readFileSync(join(artifact,"kizuki"))).digest("hex"),failures:[],steps:ids.map(id=>({id,passed:true,exit_code:0}))}));
- writeFileSync(scope,JSON.stringify({scope:"fixture",vault,brief_hour:7}));
+ writeFileSync(scope,JSON.stringify({scope:"fixture",vault,brief_hour:7,timezone:"UTC",supervisor:"none"}));
  return{root,artifact,vault,proof,scope,out};
 }
 test("init binds proof/build/checksums, uses private files and refuses overwrite",()=>{
@@ -33,7 +33,7 @@ test("mismatched proof, owner scope and symlink paths are refused before report 
  const f=fixture();const original=readFileSync(f.proof,"utf8");writeFileSync(f.proof,original.replace('"source_sha":"'+"a".repeat(40),'"source_sha":"'+"b".repeat(40)));
  expect(()=>initQualification(f.artifact,f.proof,f.scope,f.out)).toThrow("proof");writeFileSync(f.proof,original);
  writeFileSync(f.scope,JSON.stringify({scope:"owner-estate",vault:f.vault,brief_hour:7}));expect(()=>initQualification(f.artifact,f.proof,f.scope,f.out)).toThrow("fixture");
- writeFileSync(f.scope,JSON.stringify({scope:"fixture",vault:f.vault,brief_hour:7}));const alias=join(f.root,"alias");symlinkSync(f.artifact,alias);expect(()=>initQualification(alias,f.proof,f.scope,f.out)).toThrow("symlink");
+ writeFileSync(f.scope,JSON.stringify({scope:"fixture",vault:f.vault,brief_hour:7,timezone:"UTC",supervisor:"none"}));const alias=join(f.root,"alias");symlinkSync(f.artifact,alias);expect(()=>initQualification(alias,f.proof,f.scope,f.out)).toThrow("symlink");
 });
 test("separate real subprocess samples preserve actual time and never turn fixtures into qualification",async()=>{
  const f=fixture();initQualification(f.artifact,f.proof,f.scope,f.out);
@@ -63,4 +63,65 @@ test("captured receipt hashes survive operational prune and a conflict stays dur
  expect(readFileSync(join(f.out,"samples.jsonl"),"utf8")).toContain('"run_id":"retained"');
  writeFileSync(journal,JSON.stringify({...receipt,status:"failed"})+"\n");expect(()=>sampleQualification(f.out)).toThrow("durable interruption");
  writeFileSync(journal,"");expect(sampleQualification(f.out).issues).toContain("collection-rejected");
+});
+
+test("extra execution fields cannot enter content-minimal evidence", () => {
+ const receipt={run_id:"one",rail:"sync",started_at:"2026-09-05T00:00:00.000Z",finished_at:"2026-09-05T00:00:01.000Z",status:"ok",model:{unavailable:0},retrieval:{degraded:[]},errors:[],execution:{instance_id:"i",pid:1,boot_id:"b",trigger:"scheduled",due_at:"2026-09-05T00:00:00.000Z",private_note:"SECRET_SENTINEL"}};
+ expect(()=>strictReceiptProjection(JSON.stringify(receipt)+"\n")).toThrow("execution");
+});
+
+test("actual retained receipt prune preserves canonical evidence; semantic changes conflict", async () => {
+ const {persistRunReceipt,pruneRunReceipts}=await import("../packages/core/src/serve/receipts");
+ const {emptyRunTotals}=await import("../packages/core/src/serve/types");
+ const f=fixture();initQualification(f.artifact,f.proof,f.scope,f.out);
+ const now=new Date().toISOString(), db=openLedger(join(f.vault,".kizuki/kizuki.db"));
+ try {
+  persistRunReceipt(db,f.vault,{...emptyRunTotals(),run_id:"retained-real",rail:"doctor-sweep",started_at:now,finished_at:now,status:"ok",stopped:null});
+  sampleQualification(f.out);
+  pruneRunReceipts(db,f.vault,now);
+  expect(()=>sampleQualification(f.out)).not.toThrow();
+  const journal=join(f.vault,".kizuki/run-receipts.jsonl");
+  const row=JSON.parse(readFileSync(journal,"utf8")); row.events_stored=1;
+  writeFileSync(journal,JSON.stringify(row)+"\n");
+  expect(()=>sampleQualification(f.out)).toThrow("durable interruption");
+ } finally {db.close();}
+});
+
+test("init anchors manifest before sample one and rejects in-place policy edits", () => {
+ const f=fixture();initQualification(f.artifact,f.proof,f.scope,f.out);
+ const path=join(f.out,"manifest.json");const manifest=JSON.parse(readFileSync(path,"utf8"));
+ manifest.profile.brief_hour=8;writeFileSync(path,JSON.stringify(manifest)+"\n");
+ expect(()=>statusQualification(f.out)).toThrow("manifest");
+});
+
+
+test("genesis freezes qualification ID, policy digest, manifest schema and file identity at init", () => {
+ const f=fixture();const initial=initQualification(f.artifact,f.proof,f.scope,f.out);
+ const path=join(f.out,"manifest.json"),original=readFileSync(path,"utf8"),manifest=JSON.parse(original);
+ const genesis=JSON.parse(readFileSync(join(f.out,"genesis.json"),"utf8"));
+ expect(initial.qualification_id).toBe(genesis.qualification_id);
+ expect(initial.policy_sha256).toBe(genesis.policy_sha256);
+ expect(manifest.profile).toMatchObject({timezone:"UTC",supervisor:"none",sampling_interval_ms:30_000});
+ expect(statusQualification(f.out)).toMatchObject({owner_morning:"unqualified",supervised_pilot:"unqualified",rail_qualification:"fixture-only",samples:0});
+ writeFileSync(path,JSON.stringify({...manifest,extra:"PRIVATE_SENTINEL"}));expect(()=>statusQualification(f.out)).toThrow("schema");
+ writeFileSync(path,original);
+ // Keep old inode allocated so replacement identity cannot be reused.
+ const previous=join(f.out,"old-manifest.json");renameSync(path,previous);writeFileSync(path,original);
+ expect(()=>statusQualification(f.out)).toThrow("manifest genesis");
+});
+
+test("non-UTC and supervised scopes are refused rather than credited as fixture morning", () => {
+ for(const change of [{timezone:"America/New_York"},{supervisor:"systemd"}]) {
+  const f=fixture();const scope=JSON.parse(readFileSync(f.scope,"utf8"));writeFileSync(f.scope,JSON.stringify({...scope,...change}));
+  expect(()=>initQualification(f.artifact,f.proof,f.scope,f.out)).toThrow("UTC fixture");
+ }
+});
+
+test("canonical receipt digest preserves semantic counters and ignores JSON key ordering only", () => {
+ const receipt={run_id:"semantic",rail:"sync",started_at:"2026-09-05T00:00:00.000Z",finished_at:"2026-09-05T00:00:01.000Z",status:"ok",model:{unavailable:0},retrieval:{degraded:[]},errors:[],claims_rejected:{b:2,a:1}};
+ const projection=(value:unknown)=>strictReceiptProjection(JSON.stringify(value)+"\n")[0]!;
+ expect(projection(receipt).sha256).toBe(projection({...receipt,claims_rejected:{a:1,b:2}}).sha256);
+ expect(projection(receipt).sha256).not.toBe(projection({...receipt,events_stored:1}).sha256);
+ expect(()=>projection({...receipt,events_stored:"1"})).toThrow("counter");
+ expect(projection(receipt).sha256).not.toBe(projection({...receipt,model:{...receipt.model,usage_unknown:true}}).sha256);
 });

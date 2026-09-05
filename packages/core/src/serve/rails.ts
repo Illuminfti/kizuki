@@ -386,7 +386,6 @@ export async function runRail(
       ),
     };
     persistRunReceipt(db, vaultPath, receipt, {
-      ...(rail === "brief" ? { nextRunAt: nextBriefAt(finished, config.brief_hour) } : {}),
       ...(options.crashAfter === undefined ? {} : { crashAfter: options.crashAfter }),
       ...(rail === "brief" ? { artifactPath: briefPath(vaultPath, dayOf(started)) } : {}),
     });
