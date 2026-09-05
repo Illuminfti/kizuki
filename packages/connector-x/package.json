@@ -1,0 +1,12 @@
+{
+  "name": "@kizuki/connector-x",
+  "type": "module",
+  "module": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testkit": "./src/testkit.ts"
+  },
+  "dependencies": {
+    "@kizuki/core": "workspace:*"
+  }
+}

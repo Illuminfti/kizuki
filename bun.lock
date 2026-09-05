@@ -56,6 +56,12 @@
         "telegram": "2.26.22",
       },
     },
+    "packages/connector-x": {
+      "name": "@kizuki/connector-x",
+      "dependencies": {
+        "@kizuki/core": "workspace:*",
+      },
+    },
     "packages/connectors": {
       "name": "@kizuki/connectors",
       "dependencies": {
@@ -64,6 +70,7 @@
         "@kizuki/connector-imap": "workspace:*",
         "@kizuki/connector-screenpipe": "workspace:*",
         "@kizuki/connector-telegram": "workspace:*",
+        "@kizuki/connector-x": "workspace:*",
         "@kizuki/core": "workspace:*",
       },
     },
@@ -131,6 +138,8 @@
     "@kizuki/connector-screenpipe": ["@kizuki/connector-screenpipe@workspace:packages/connector-screenpipe"],
 
     "@kizuki/connector-telegram": ["@kizuki/connector-telegram@workspace:packages/connector-telegram"],
+
+    "@kizuki/connector-x": ["@kizuki/connector-x@workspace:packages/connector-x"],
 
     "@kizuki/connectors": ["@kizuki/connectors@workspace:packages/connectors"],
 
