@@ -5,9 +5,10 @@ import type { Sensitivity } from "../agents/types";
 import { diagnosticShape } from "./diagnostics";
 
 /**
- * Strict `ExtractResponse` validation (RFC 0002 §4.2, §12.1). The provider
- * response is attacker-controlled input: exact key sets, closed enums, size
- * caps, no coercion. Any deviation is `schema_invalid` for the whole call.
+ * Strict `ExtractResponse` validation (RFC 0002 §4.2, §12.1). The extracted
+ * claim payload is attacker-controlled input: exact key sets, closed enums,
+ * size caps, no coercion. Any deviation is `schema_invalid` for the whole
+ * call. Provider envelope metadata is projected by the LLM port, not here.
  */
 
 export const MAX_RESPONSE_CHARS = 400_000;

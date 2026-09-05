@@ -17,9 +17,17 @@ function message(extra: Record<string, unknown>) {
 }
 
 describe("documented response metadata", () => {
-  test("OpenRouter and DeepSeek metadata never enters the projected result", () => {
+  test("OpenRouter-shaped envelopes and unread keys never enter the projected result", () => {
     const body: Record<string, unknown> = {
-      ...message({ reasoning: CANARY, reasoning_content: CANARY, reasoning_details: reasoning, annotations: [] }),
+      ...message({
+        reasoning: CANARY,
+        reasoning_content: CANARY,
+        reasoning_details: reasoning,
+        annotations: [],
+        name: CANARY,
+        parsed: { tool: CANARY },
+        [CANARY]: { tool_calls: [CANARY] },
+      }),
       provider: CANARY,
       system_fingerprint: CANARY,
     };
@@ -48,7 +56,8 @@ describe("documented response metadata", () => {
       { reasoning_details: [{ type: "tool_call", arguments: CANARY }] },
       { reasoning_details: [{ type: "reasoning.text", text: CANARY, unexpected: CANARY }] },
       { reasoning_details: Array.from({ length: 129 }, () => reasoning[0]) },
-      { reasoning: "x".repeat(262_145) }, { annotations: [{ text: CANARY }] },
+      { reasoning: "x".repeat(262_145) },
+      { annotations: [{ text: CANARY }] },
     ]) {
       expect(() => parseChatCompletion(message(extra), "synthetic")).toThrow("rejected: unsupported_metadata");
       try { parseChatCompletion(message(extra), "synthetic"); } catch (error) {
@@ -105,6 +114,7 @@ describe("documented response metadata", () => {
         reasoning_details: reasoning,
         annotations: [],
         unknown_object: { nested: { value: CANARY } },
+        name: CANARY, parsed: { tool: CANARY }, [CANARY]: { data: CANARY },
       }),
       provider: CANARY,
       system_fingerprint: CANARY,
@@ -124,7 +134,7 @@ describe("documented response metadata", () => {
   });
 
   test("a real fake endpoint refuses deterministic response failures once", async () => {
-    const responses = [message({ refusal: CANARY }), message({ tool_calls: [] }),
+    const responses = [message({ annotations: [{ text: CANARY }] }), message({ refusal: CANARY }), message({ tool_calls: [] }),
       completionBody("{}", { finish_reason: "length" }), { ...completionBody("{}"), usage: { prompt_tokens: CANARY, completion_tokens: 1 } }]
       .map(body => () => Response.json(body));
     responses.push(() => new Response("{invalid JSON"), () => new Response("x".repeat(2_097_153)));

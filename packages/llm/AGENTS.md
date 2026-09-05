@@ -29,8 +29,9 @@ does not write claims or canon, and does not own extraction prompts.
 - Unavailable is not empty. `complete` returns a response or throws
   `PortError`. A missing, dead, or rejected model call must never look like
   a successful empty completion.
-- Reject `tool_calls`, `function_call`, and any non-text content part as
-  `rejected: tool_call_in_response`. Send no tool or function schema.
+- Reject `tool_calls`, `function_call`, `function_calls`, `tool_call_id`,
+  audio, image, file, attachment and data fields, and any non-text content
+  part as `rejected: tool_call_in_response`. Send no tool or function schema.
 - Secrets are `secret_ref` URIs resolved at call time. A plaintext key in
   config is a construction failure. Never put a key, provider body, or
   captured text into an error or log line.
