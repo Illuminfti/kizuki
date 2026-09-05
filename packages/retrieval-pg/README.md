@@ -115,3 +115,10 @@ pending, and is not verified erasure or support for live vault moves. The pinned
 PGlite build uses awaited durability and has no separate NodeFS background sync
 timer; that does not make already-started SQL safe under external path changes.
 Stronger runtime containment remains a gate before live estate use.
+
+SQL-free erasure recovery acquires the existing `lease/writer.lock` through
+its captured directory descriptor. It neither creates a missing lock nor
+writes holder, heartbeat or receipt files. Legacy live owners and fresh
+ownership diagnostics still block maintenance. A missing compatible lock
+leaves erasure pending. The separate FTS recovery path uses the same
+existing-inode rule; ordinary engine startup retains its existing protocol.

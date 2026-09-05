@@ -9,6 +9,7 @@ import {
   statSync,
   rmSync,
 } from "node:fs";
+import type { OwnedDirectory } from "@kizuki/core";
 import { PortError, isPlainObject, isRfc3339, tryAdvisoryFileLock } from "@kizuki/core";
 import { ensureDir, writeAtomic } from "./atomic";
 import {
@@ -155,6 +156,33 @@ export class WriterLease {
       try { if (this.holder !== null && this.readHolder()?.ownership_token === this.holder.ownership_token) this.forceRemoveHeld(); }
       finally { this.holder = null; unlock(); }
       throw error;
+    }
+  }
+
+  /** Existing-inode maintenance ownership: never creates or rewrites diagnostics. */
+  acquireMaintenance(root: OwnedDirectory): () => void {
+    const lock = root.tryLock(["lease", "writer.lock"]);
+    if (lock === null) throw new PortError("lease_required", "writer lease is held", true);
+    try {
+      const bytes = root.readFile(["lease", "held", "holder.json"], 16_384);
+      const existing = bytes === null ? null : parseHolder(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
+      if (bytes !== null && existing === null) throw new PortError("unavailable", "writer lease metadata is invalid", false);
+      const now = Date.parse(this.now());
+      if (existing !== null) {
+        if (existing.ownership_token === undefined && isProcessAlive(existing.pid)) throw new PortError("lease_required", "writer lease is held by a live legacy owner", true);
+        if (heartbeatAgeMs(existing.heartbeat_at, now) <= STALE_HEARTBEAT_MULTIPLIER * this.heartbeatMs) throw new PortError("lease_required", "writer lease heartbeat is still fresh", true);
+      } else {
+        const held = root.inspect(["lease", "held"]);
+        if (held !== null && (!held.isDirectory() || now - Number(held.mtimeMs) <= STALE_HEARTBEAT_MULTIPLIER * this.heartbeatMs)) {
+          throw new PortError("lease_required", "ownerless writer acquisition is still fresh", true);
+        }
+      }
+      root.assertCurrent();
+      return () => lock.release();
+    } catch (error) {
+      lock.release();
+      if (error instanceof PortError) throw error;
+      throw new PortError("unavailable", "writer maintenance ownership could not be verified", false);
     }
   }
 

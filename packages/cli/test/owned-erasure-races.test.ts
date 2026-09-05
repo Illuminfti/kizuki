@@ -31,6 +31,7 @@ for (const engine of ["fts", "pg"] as const) for (const mode of ["active", "rest
           const movedRoot = replacement === "root" ? moved : join(moved, id);
           if (existsSync(join(movedRoot, "lease"))) {
             cpSync(join(movedRoot, "lease"), join(outsideRoot, "lease"), { recursive: true });
+            mkdirSync(join(outsideRoot, "lease/held"), { recursive: true });
             writeFileSync(join(outsideRoot, "lease/held/canary"), "SYNTHETIC_UNRELATED_KEEP");
           }
           symlinkSync(outside, old);
@@ -78,5 +79,36 @@ console.log('pending-process-restart-no-queued-or-cleanup-io');process.exit(0);`
       expect(child.stdout.toString()).toContain("pending-process-restart-no-queued-or-cleanup-io");
       expect(readFileSync(join(base, "outside/store/canary"), "utf8")).toBe("KEEP");
     } finally { rmSync(base, { recursive: true, force: true }); }
+  }, 15_000);
+}
+
+for (const engine of ["pg", "fts"] as const) {
+  test(`${engine} SQL-free maintenance never writes ownership through a replaced root`, async () => {
+    const base = mkdtempSync(join(tmpdir(), "native-acquire-race-"));
+    const id = engine === "fts" ? FTS5_RETRIEVAL_ID : EMBEDDED_RETRIEVAL_ID;
+    const ctx: PortContext = { vault_path: base, data_dir: join(base, ".kizuki/retrieval", id), config: {}, clock: () => new Date(Date.now() + 120_000).toISOString(), logger: () => {}, secrets: async () => "" };
+    const port = engine === "fts" ? createFts5RetrievalPort(ctx) : await openEmbeddedRetrievalPort(ctx);
+    await port.close();
+    const outside = join(base, "outside"); cpSync(ctx.data_dir, outside, { recursive: true });
+    const lockName = engine === "pg" ? "lease/writer.lock" : "writer.lock";
+    rmSync(join(outside, lockName));
+    writeFileSync(join(outside, "CANARY"), "KEEP");
+    const receipts = engine === "pg" ? readFileSync(join(outside, "lease/receipts.jsonl"), "utf8") : "";
+    const original = OwnedDirectory.prototype.childIdentity; let swapped = false;
+    const hook = spyOn(OwnedDirectory.prototype, "childIdentity").mockImplementation(function(this: OwnedDirectory, name: string) {
+      const value = original.call(this, name);
+      if (!swapped) { swapped = true; renameSync(ctx.data_dir, join(base, "moved")); symlinkSync(outside, ctx.data_dir); }
+      return value;
+    });
+    try {
+      await expect(engine === "pg" ? eraseOwnedEmbeddedGeneration(ctx) : eraseOwnedFts5Generation(ctx)).rejects.toThrow();
+      expect(swapped).toBe(true);
+      expect(readFileSync(join(outside, "CANARY"), "utf8")).toBe("KEEP");
+      expect(existsSync(join(outside, lockName))).toBe(false);
+      if (engine === "pg") {
+        expect(readFileSync(join(outside, "lease/receipts.jsonl"), "utf8")).toBe(receipts);
+        expect(existsSync(join(outside, "lease/held/holder.json"))).toBe(false);
+      }
+    } finally { hook.mockRestore(); rmSync(base, { recursive: true, force: true }); }
   }, 15_000);
 }

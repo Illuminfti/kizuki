@@ -1,5 +1,7 @@
 import { dlopen, FFIType, ptr, toArrayBuffer } from "bun:ffi";
-import { closeSync, constants, fstatSync, fsyncSync, openSync } from "node:fs";
+import type { Stats } from "node:fs";
+import { closeSync, constants, fstatSync, fsyncSync, openSync, readSync } from "node:fs";
+import { tryAdvisoryFileLockFd, type AdvisoryFileLock } from "./advisory-file-lock";
 import { resolve } from "node:path";
 
 // Qualified Linux x86_64 glibc ABI: bits/dirent.h has u64 ino/off,
@@ -84,6 +86,48 @@ export class OwnedDirectory {
     this.assertCurrent(); const fd = childFd(this.fd, name, true);
     if (fd === null) return null;
     try { return identity(fd); } finally { closeSync(fd); }
+  }
+  private relativeFd(parts: readonly string[]): number | null {
+    if (this.closed) fail("closed");
+    if (parts.length < 1 || parts.length > 64) fail("bounds");
+    let parent = this.fd, owned = false;
+    try {
+      for (const [index, part] of parts.entries()) {
+        const next = childFd(parent, part, index < parts.length - 1);
+        if (owned) { closeSync(parent); owned = false; }
+        if (next === null) return null;
+        parent = next; owned = true;
+      }
+      owned = false; return parent;
+    } finally { if (owned) closeSync(parent); }
+  }
+  /** Bounded descriptor-relative metadata inspection; no pathname side effects. */
+  inspect(parts: readonly string[]): Stats | null {
+    const fd = this.relativeFd(parts); if (fd === null) return null;
+    try { return fstatSync(fd); } finally { closeSync(fd); }
+  }
+  readFile(parts: readonly string[], maxBytes: number): Uint8Array | null {
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 1_048_576) fail("bounds");
+    const fd = this.relativeFd(parts); if (fd === null) return null;
+    try {
+      const before = fstatSync(fd);
+      if (!before.isFile() || before.nlink !== 1 || before.size > maxBytes) fail();
+      const bytes = Buffer.alloc(before.size); let offset = 0;
+      while (offset < bytes.length) { const read = readSync(fd, bytes, offset, bytes.length - offset, offset); if (!read) fail(); offset += read; }
+      const after = fstatSync(fd);
+      if (before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) fail("identity_changed");
+      return bytes;
+    } finally { closeSync(fd); }
+  }
+  /** Maintenance locks only an existing inode, using the ordinary flock owner. */
+  tryLock(parts: readonly string[]): AdvisoryFileLock | null {
+    this.assertCurrent();
+    const fd = this.relativeFd(parts); if (fd === null) fail("lock_missing");
+    return tryAdvisoryFileLockFd(fd, () => {
+      this.assertCurrent();
+      const current = this.inspect(parts); if (current === null) fail("identity_changed");
+      return current;
+    });
   }
   removeTree(name: string, expected: OwnedDirectoryIdentity | null): void {
     this.assertCurrent();

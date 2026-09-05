@@ -563,7 +563,8 @@ export async function eraseOwnedFts5Generation(ctx: PortContext): Promise<void> 
   let lock: AdvisoryFileLock | undefined;
   try {
     const expectedStore = root.childIdentity("store");
-    lock = lockFtsGeneration(ctx.data_dir);
+    lock = root.tryLock(["writer.lock"]) ?? undefined;
+    if (lock === undefined) throw new PortError("lease_required", "owned FTS generation is busy", true);
     removeFtsGeneration(ctx, root, expectedStore);
   } finally { root.close(); lock?.release(); }
 }

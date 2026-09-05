@@ -490,8 +490,7 @@ export async function eraseOwnedEmbeddedGeneration(ctx: PortContext): Promise<vo
   try {
     const expectedStore = root.childIdentity("store");
     const lease = new WriterLease(dataDir, { clock: ctx.clock });
-    lease.tryAcquire(`pid:${process.pid}`);
-    releaseNative = lease.suspendForErasure();
+    releaseNative = lease.acquireMaintenance(root);
     removeOwnedGeneration(vaultPath, dataDir, root, expectedStore);
   } finally { root.close(); releaseNative?.(); }
 }

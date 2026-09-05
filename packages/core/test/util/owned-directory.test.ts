@@ -38,3 +38,34 @@ test("depth bounds and replaced store identity refuse completion", () => {
     expect(readFileSync(join(path, "canary"), "utf8")).toBe("KEEP_DEPTH_BOUND");
   } finally { cap.close(); }
 });
+
+test("maintenance lock shares ordinary ownership and never creates a missing lock", async () => {
+  const { tryAdvisoryFileLock } = await import("../../src/util/advisory-file-lock");
+  const f = fixture(), cap = openOwnedDirectory(f.owned);
+  try {
+    expect(() => cap.tryLock(["writer.lock"])).toThrow("lock_missing");
+    expect(existsSync(join(f.owned, "writer.lock"))).toBe(false);
+    const ordinary = tryAdvisoryFileLock(join(f.owned, "writer.lock"))!;
+    expect(cap.tryLock(["writer.lock"])).toBeNull(); ordinary.release();
+    const maintenance = cap.tryLock(["writer.lock"])!;
+    expect(tryAdvisoryFileLock(join(f.owned, "writer.lock"))).toBeNull();
+    maintenance.release(); maintenance.release();
+    const reopened = tryAdvisoryFileLock(join(f.owned, "writer.lock")); expect(reopened).not.toBeNull(); reopened?.release();
+  } finally { cap.close(); }
+});
+
+test("root replacement after maintenance precheck cannot create or lock outside files", () => {
+  const f = fixture(), cap = openOwnedDirectory(f.owned);
+  writeFileSync(join(f.owned, "writer.lock"), "");
+  const original = cap.assertCurrent.bind(cap); let swapped = false;
+  cap.assertCurrent = () => {
+    original();
+    if (!swapped) { swapped = true; renameSync(f.owned, join(f.root, "moved")); symlinkSync(f.outside, f.owned); }
+  };
+  try {
+    expect(() => cap.tryLock(["writer.lock"])).toThrow();
+    expect(swapped).toBe(true);
+    expect(existsSync(join(f.outside, "writer.lock"))).toBe(false);
+    expect(readFileSync(join(f.outside, "store/canary"), "utf8")).toBe("SYNTHETIC_UNOWNED");
+  } finally { cap.close(); }
+});
