@@ -13,7 +13,7 @@ import {
 import { collectPieces } from "./candidates";
 import type { Piece } from "./candidates";
 import { claimsEpoch } from "./epoch";
-import { auditArguments, gate, principalName } from "./gate";
+import { auditArguments, gateAsync, principalName } from "./gate";
 import type { Served } from "./gate";
 import {
   PACKET_PURPOSES,
@@ -72,6 +72,7 @@ export interface ContextPacketArgs {
 
 export interface ContextPacketData {
   packet_md: string;
+  retrieval_degraded: string[];
   tokens_estimate: number;
   budget_tokens: number;
   sections: { canon: number; graph: number; timeline: number; claims: number };
@@ -159,15 +160,15 @@ function sectionList(
  * gathering the packet degrades to the header instead of failing the
  * session; refusals and argument errors still throw.
  */
-export function serveContextPacket(
+export async function serveContextPacket(
   ctx: ServeContext,
   args: ContextPacketArgs,
-): Envelope<ContextPacketData> {
-  return gate(
+): Promise<Envelope<ContextPacketData>> {
+  return gateAsync(
     ctx,
     "context_packet",
     auditArguments(args),
-    ({ ctx, at }): Served<ContextPacketData> => {
+    async ({ ctx, at }): Promise<Served<ContextPacketData>> => {
       const grant = ctx.principal.grant;
       const budget = range(
         "budget_tokens",
@@ -249,6 +250,7 @@ export function serveContextPacket(
         withheld: [{ id: "tool:context_packet", reason: "error" }],
         data: {
           packet_md: header,
+          retrieval_degraded: ["context-unavailable"],
           tokens_estimate: tokens(header),
           budget_tokens: budget,
           sections: emptySections,
@@ -265,8 +267,9 @@ export function serveContextPacket(
 
       let pieces: Piece[];
       let withheld: AuditDenial[];
+      let degraded: string[];
       try {
-        ({ pieces, withheld } = collectPieces(ctx, {
+        ({ pieces, withheld, degraded } = await collectPieces(ctx, {
           include,
           ...(query === undefined ? {} : { query }),
           ...(subjects === undefined ? {} : { subjects }),
@@ -323,6 +326,7 @@ export function serveContextPacket(
         audit_served: unchanged ? [] : [...audit.values()],
         data: {
           packet_md: packet,
+          retrieval_degraded: degraded,
           tokens_estimate: tokens(packet),
           budget_tokens: budget,
           sections: unchanged ? emptySections : sections,

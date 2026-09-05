@@ -12,6 +12,7 @@ import type {
   Tool,
 } from "../agents";
 import type { ClaimsIo } from "../claims/store";
+import { claimsEpoch } from "./epoch";
 import { compareText } from "../util/order";
 import { isPlainObject } from "../util/validate";
 import { ServeError, ENVELOPE_SCHEMA } from "./types";
@@ -319,9 +320,21 @@ export async function gateAsync<T>(
 ): Promise<Envelope<T>> {
   const at = new Date().toISOString();
   const { live, audit_id } = enter(ctx, tool, args, at);
+  const readEpoch = tool === "search" || tool === "context_packet" ? claimsEpoch(live.db) : null;
   let served: Served<T>;
   try {
     served = await run({ ctx: live, at });
+    // Async reads may overlap grant changes. Refuse the entire result rather
+    // than returning a packet assembled under withdrawn authority.
+    if (readEpoch !== null && readEpoch !== claimsEpoch(live.db)) {
+      throw new ServeError("error", "memory changed during request; retry");
+    }
+    const current = liveContext(ctx);
+    if (current === null) throw new ServeError("unknown_agent", "unknown agent");
+    if (live.principal.kind === "agent" && current.principal.kind === "agent" &&
+        live.principal.grant_epoch !== current.principal.grant_epoch) {
+      throw new ServeError("error", "authority changed during request; retry");
+    }
   } catch (error) {
     failed(live, tool, args, audit_id, error);
   }

@@ -26,9 +26,9 @@ function eventIds(envelope: Envelope<SearchData>): string[] {
   return envelope.quoted.map((chunk) => chunk.event_id).sort();
 }
 
-function refusal(run: () => unknown): ServeError {
+async function refusal(run: () => unknown): Promise<ServeError> {
   try {
-    run();
+    await run();
   } catch (error) {
     if (error instanceof ServeError) return error;
     throw error;
@@ -37,30 +37,30 @@ function refusal(run: () => unknown): ServeError {
 }
 
 describe("serveSearch enforces the grant below the prompt layer", () => {
-  test("the sensitivity ceiling decides which canon pages exist", () => {
-    const personal = serveSearch(fixture.agent("reader-personal"), {
+  test("the sensitivity ceiling decides which canon pages exist", async () => {
+    const personal = (await serveSearch(fixture.agent("reader-personal"), {
       query: "kettle",
-    });
+    }));
     expect(pageIds(personal)).not.toContain("fact:kettle");
     expect(personal.denied).toContainEqual({
       reason: "above_ceiling",
       count: 1,
     });
 
-    const priv = serveSearch(fixture.agent("reader-private"), {
+    const priv = (await serveSearch(fixture.agent("reader-private"), {
       query: "kettle",
-    });
+    }));
     expect(pageIds(priv)).toContain("fact:kettle");
     expect(priv.data).toBeUndefined();
   });
 
-  test("an unlabeled page is withheld from every principal, owner included", () => {
+  test("an unlabeled page is withheld from every principal, owner included", async () => {
     for (const ctx of [
       fixture.owner(),
       fixture.agent("reader-private"),
       fixture.agent("reader-public"),
     ]) {
-      const envelope = serveSearch(ctx, { query: "kettle" });
+      const envelope = (await serveSearch(ctx, { query: "kettle" }));
       expect(pageIds(envelope)).not.toContain("fact:unlabeled");
       expect(envelope.denied).toContainEqual({
         reason: "missing_sensitivity",
@@ -69,89 +69,89 @@ describe("serveSearch enforces the grant below the prompt layer", () => {
     }
   });
 
-  test("held and archived pages are never served", () => {
-    const envelope = serveSearch(fixture.owner(), { query: "kettle" });
+  test("held and archived pages are never served", async () => {
+    const envelope = (await serveSearch(fixture.owner(), { query: "kettle" }));
     expect(pageIds(envelope)).not.toContain("fact:archived");
     expect(
       envelope.canon.some((chunk) => chunk.path === fixture.heldPath),
     ).toBe(false);
   });
 
-  test("a withheld page leaks neither its id nor its title", () => {
-    const envelope = serveSearch(fixture.agent("reader-personal"), {
+  test("a withheld page leaks neither its id nor its title", async () => {
+    const envelope = (await serveSearch(fixture.agent("reader-personal"), {
       query: "kettle",
-    });
+    }));
     const json = JSON.stringify(envelope);
     expect(json).not.toContain("fact:kettle");
     expect(json).not.toContain("Kettle protocol");
     expect(envelope.denied.every((entry) => entry.count > 0)).toBe(true);
   });
 
-  test("ledger hits arrive as quoted capture stamped tainted", () => {
-    const envelope = serveSearch(fixture.agent("reader-private"), {
+  test("ledger hits arrive as quoted capture stamped tainted", async () => {
+    const envelope = (await serveSearch(fixture.agent("reader-private"), {
       query: "kettle",
       scope: "ledger",
-    });
+    }));
     expect(envelope.quoted.length).toBeGreaterThan(0);
     expect(envelope.quoted.every((chunk) => chunk.tainted === true)).toBe(true);
     expect(envelope.canon).toEqual([]);
     expect(eventIds(envelope)).toContain(fixture.events["public"] as string);
   });
 
-  test("a tombstoned record is never quoted", () => {
-    const envelope = serveSearch(fixture.owner(), {
+  test("a tombstoned record is never quoted", async () => {
+    const envelope = (await serveSearch(fixture.owner(), {
       query: "retracted",
       scope: "all",
-    });
+    }));
     expect(eventIds(envelope)).not.toContain(
       fixture.events["tombstoned"] as string,
     );
   });
 
-  test("an unhinted event is counted as missing_sensitivity", () => {
-    const envelope = serveSearch(fixture.agent("reader-private"), {
+  test("an unhinted event is counted as missing_sensitivity", async () => {
+    const envelope = (await serveSearch(fixture.agent("reader-private"), {
       query: "unhinted",
       scope: "ledger",
-    });
+    }));
     expect(envelope.quoted).toEqual([]);
     expect(envelope.denied).toEqual([
       { reason: "missing_sensitivity", count: 1 },
     ]);
   });
 
-  test("a types-scoped grant sees only its own page type", () => {
+  test("a types-scoped grant sees only its own page type", async () => {
     const ctx = fixture.agent("typed");
-    const envelope = serveSearch(ctx, { query: "kettle" });
+    const envelope = (await serveSearch(ctx, { query: "kettle" }));
     expect(envelope.canon.every((chunk) => chunk.type === "person")).toBe(true);
     expect(
-      refusal(() => serveSearch(ctx, { query: "kettle", types: ["fact"] }))
+      (await refusal(async () => (await serveSearch(ctx, { query: "kettle", types: ["fact"] }))))
         .code,
     ).toBe("type_out_of_scope");
   });
 
-  test("a subjects-scoped grant only sees pages about its subject", () => {
-    const envelope = serveSearch(fixture.agent("subjected"), {
+  test("a subjects-scoped grant only sees pages about its subject", async () => {
+    const envelope = (await serveSearch(fixture.agent("subjected"), {
       query: "kettle",
-    });
+    }));
     expect(
       envelope.canon.every((chunk) => chunk.subjects.includes("person:ada")),
     ).toBe(true);
     expect(pageIds(envelope)).not.toContain("person:grace");
     expect(
-      refusal(() =>
-        serveSearch(fixture.agent("subjected"), {
+      (await refusal(async () =>
+        (await serveSearch(fixture.agent("subjected"), {
           query: "kettle",
           subjects: ["person:grace"],
-        }),
-      ).code,
+        })),
+      )).code,
     ).toBe("subject_out_of_scope");
   });
 
-  test("the served window is the intersection of grant and request", () => {
-    const envelope = serveSearch(fixture.agent("windowed"), {
+  test("the served window is the intersection of grant and request", async () => {
+    const envelope = (await serveSearch(fixture.agent("windowed"), {
       query: "kettle",
       scope: "ledger",
-    });
+    }));
     expect(eventIds(envelope)).toEqual(
       [
         fixture.events["personal"] as string,
@@ -160,27 +160,27 @@ describe("serveSearch enforces the grant below the prompt layer", () => {
     );
   });
 
-  test("out-of-range arguments are refused before any read", () => {
+  test("out-of-range arguments are refused before any read", async () => {
     const ctx = fixture.agent("reader-private");
     expect(
-      refusal(() => serveSearch(ctx, { query: "kettle", limit: 51 })).code,
+      (await refusal(async () => (await serveSearch(ctx, { query: "kettle", limit: 51 })))).code,
     ).toBe("invalid_arguments");
     expect(
-      refusal(() => serveSearch(ctx, { query: "k".repeat(513) })).code,
+      (await refusal(async () => (await serveSearch(ctx, { query: "k".repeat(513) })))).code,
     ).toBe("invalid_arguments");
   });
 
-  test("a query with no usable token is an empty answer, not an error", () => {
-    const envelope = serveSearch(fixture.agent("reader-private"), {
+  test("a query with no usable token is an empty answer, not an error", async () => {
+    const envelope = (await serveSearch(fixture.agent("reader-private"), {
       query: "***",
-    });
+    }));
     expect(envelope.canon).toEqual([]);
     expect(envelope.quoted).toEqual([]);
     expect(envelope.denied).toEqual([]);
     expect(envelope.data).toEqual({ degraded: ["query-empty"] });
   });
 
-  test("a degraded search index is named on the envelope", () => {
+  test("a degraded search index is named on the envelope", async () => {
     const isolated = serveFixture();
     try {
       isolated.db.exec("DROP TABLE search_docs");
@@ -193,7 +193,7 @@ describe("serveSearch enforces the grant below the prompt layer", () => {
         skipped_count: 0,
         status: "degraded",
       });
-      const envelope = serveSearch(isolated.owner(), { query: "kettle" });
+      const envelope = (await serveSearch(isolated.owner(), { query: "kettle" }));
       expect(envelope.canon).toEqual([]);
       expect(envelope.quoted).toEqual([]);
       expect(envelope.data).toEqual({
@@ -204,26 +204,26 @@ describe("serveSearch enforces the grant below the prompt layer", () => {
     }
   });
 
-  test("a page carrying capture is served as canon, stamped as capture", () => {
-    const envelope = serveSearch(fixture.agent("reader-public"), {
+  test("a page carrying capture is served as canon, stamped as capture", async () => {
+    const envelope = (await serveSearch(fixture.agent("reader-public"), {
       query: "disregard",
-    });
+    }));
     // The page is produced canon that quotes a record, so it stays in the
     // canon field; the stamp is what tells a reader the body holds capture.
     expect(pageIds(envelope)).toEqual(["fact:quoted"]);
     expect(envelope.canon[0]?.taint).toBe("quoted");
     expect(envelope.quoted).toEqual([]);
 
-    const prose = serveSearch(fixture.agent("reader-public"), {
+    const prose = (await serveSearch(fixture.agent("reader-public"), {
       query: "kettles",
-    });
+    }));
     expect(pageIds(prose)).toEqual(["org:acme"]);
     expect(prose.canon[0]?.taint).toBe("clean");
   });
 
-  test("a page with no taint stamp is served to nobody, the owner included", () => {
+  test("a page with no taint stamp is served to nobody, the owner included", async () => {
     for (const ctx of [fixture.owner(), fixture.agent("reader-private")]) {
-      const envelope = serveSearch(ctx, { query: "nobody stamped" });
+      const envelope = (await serveSearch(ctx, { query: "nobody stamped" }));
       expect(pageIds(envelope)).toEqual([]);
       expect(envelope.denied).toEqual([{ reason: "missing_taint", count: 1 }]);
     }
