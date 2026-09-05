@@ -197,7 +197,7 @@ export class WhoopConnector implements Connector {
         }
         catch (error) {
             this.invalidate(g);
-            throw failure(budget.exhausted ? 'request_limit' : error instanceof DeadlineError ? 'timeout' : 'unauthenticated');
+            throw failure(budget.exceeded ? 'request_limit' : error instanceof DeadlineError ? 'timeout' : 'unauthenticated');
         }
     }
     private async call(path: string, budget: Budget, query?: URLSearchParams, method: 'GET' | 'DELETE' = 'GET') {

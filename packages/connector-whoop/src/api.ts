@@ -11,6 +11,9 @@ export class Budget {
     private readonly deadline = Date.now() + 45000;
     private calls = 0;
     get exhausted(): boolean {
+        return this.calls >= 48;
+    }
+    get exceeded(): boolean {
         return this.calls > 48;
     }
     remaining(): number {
