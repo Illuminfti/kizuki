@@ -41,6 +41,11 @@ export class WhoopConnector implements Connector {
     private readonly deps: WhoopDeps;
     private readonly now: () => Date;
     constructor(config: WhoopConfig, deps: WhoopDeps) {
+        // The manifest is callable before connect. Never retain a malformed
+        // reference that could publish pasted credentials as required secrets.
+        if (typeof config.secret_ref !== 'string' || Buffer.byteLength(config.secret_ref) > 4096 ||
+            !/^(env:[A-Za-z_][A-Za-z0-9_]*|file:\/[^\x00-\x1f\x7f]+)$/.test(config.secret_ref))
+            throw failure('misconfigured');
         this.config = {
             ...config, client: {
                 ...config.client
@@ -115,8 +120,6 @@ export class WhoopConnector implements Connector {
         if (this.disabled || this.busy || this.writes > 0 || this.pendingTokens > 0)
             throw failure('unavailable');
         const provider = this.provider();
-        if (typeof this.config.secret_ref !== 'string' || !/^(env:[A-Za-z_][A-Za-z0-9_]*|file:\/[^\x00-\x1f]+)$/.test(this.config.secret_ref))
-            throw failure('misconfigured');
         const g = ++this.generation;
         this.session?.forget();
         this.state = null;
