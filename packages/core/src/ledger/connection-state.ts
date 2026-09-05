@@ -321,6 +321,22 @@ export class ConnectionStateStore implements ConnectionStateReader {
     return connection;
   }
 
+  private readStatePath(path: string): Uint8Array {
+    const stats = assertRegularStateFile(path, this.directory);
+    if (stats.size > MAX_CONNECTION_STATE_BYTES) throw new LedgerError("connection state exceeds maximum size");
+    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      const bytes = new Uint8Array(stats.size);
+      let offset = 0;
+      while (offset < bytes.byteLength) {
+        const read = readSync(fd, bytes, offset, bytes.byteLength - offset, offset);
+        if (read <= 0) throw new LedgerError("connection state read made no progress");
+        offset += read;
+      }
+      return bytes;
+    } finally { closeSync(fd); }
+  }
+
   read(connection: Connection): Uint8Array | null {
     if (connection.secret_refs.length === 0) return null;
     if (connection.config.state_ref_index !== 0) {
@@ -337,25 +353,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
       throw new LedgerError("connection state journal is unresolved");
     }
     const path = connectionStatePath(this.directory, ref);
-    const stats = assertRegularStateFile(path, this.directory);
-    if (stats.size > MAX_CONNECTION_STATE_BYTES) {
-      throw new LedgerError("connection state exceeds maximum size");
-    }
-    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-    try {
-      const bytes = new Uint8Array(stats.size);
-      let offset = 0;
-      while (offset < bytes.byteLength) {
-        const read = readSync(fd, bytes, offset, bytes.byteLength - offset, offset);
-        if (read <= 0) {
-          throw new LedgerError("connection state read made no progress");
-        }
-        offset += read;
-      }
-      return bytes;
-    } finally {
-      closeSync(fd);
-    }
+    return this.readStatePath(path);
   }
 
   /**
@@ -371,6 +369,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
       missingStateMessage: string;
       refuseDisconnected: boolean;
       implementationVersion: string;
+      verifyReplacement?: (previous: Uint8Array, candidate: Uint8Array) => void;
     },
   ): Promise<Connection> {
     this.recover(db);
@@ -403,12 +402,18 @@ export class ConnectionStateStore implements ConnectionStateReader {
     if (options.refuseDisconnected && persisted.disconnected_at !== null) {
       throw new LedgerError("connection is disconnected");
     }
-    this.read(persisted);
+    const previous = this.read(persisted);
+    if (previous === null) throw new LedgerError("connection state is missing");
     const pending = this.beginFor(persisted.source_key);
     try {
       await update(pending.writer);
       if (!pending.pending.written) {
         throw new LedgerError(options.missingStateMessage);
+      }
+      if (options.verifyReplacement !== undefined) {
+        const path = pending.pending.temporaryPath;
+        if (path === null) throw new LedgerError(options.missingStateMessage);
+        options.verifyReplacement(previous, this.readStatePath(path));
       }
       return this.save(
         db,
@@ -436,6 +441,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
     connection: Connection,
     connector: Connector,
     io: SignInIo,
+    verifyReplacement?: (previous: Uint8Array, candidate: Uint8Array) => void,
   ): Promise<Connection> {
     if (connector.manifest().connector_id !== connection.connector_id) {
       throw new LedgerError("replacement connector does not match the connection");
@@ -452,6 +458,7 @@ export class ConnectionStateStore implements ConnectionStateReader {
         // A re-sign-in is the owner reconnecting a source on purpose.
         refuseDisconnected: false,
         implementationVersion: connector.manifest().version,
+        ...(verifyReplacement === undefined ? {} : { verifyReplacement }),
       },
     );
   }

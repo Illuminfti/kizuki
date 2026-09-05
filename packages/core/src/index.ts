@@ -1,4 +1,5 @@
 export {
+  EVENT_LIMITS,
   EVENT_SCHEMA,
   SENSITIVITY_HINTS,
   SUBJECT_ROLES,
@@ -558,7 +559,7 @@ export type {
 
 export { canonicalSerialize, computeContentHash } from "./util/hash";
 export { isRfc3339 } from "./util/time";
-export { ulid } from "./util/ulid";
+export { isUlid, ulid } from "./util/ulid";
 export { isNonEmptyString, isPlainObject } from "./util/validate";
 export type { ValidationResult } from "./util/validate";
 
@@ -942,6 +943,7 @@ export type {
   RailSyncResult,
   RunRailOptions,
   RunReceipt,
+  RunExecution,
   RunStatus,
   ScheduleRow,
   ServeConfig,
@@ -962,3 +964,17 @@ export type {
   WritePassOptions,
   WritePassResult,
 } from "./serve";
+
+export { loadConfiguredRetrieval } from "./retrieval/config";
+export type { ConfiguredRetrieval } from "./retrieval/config";
+export { tryAdvisoryFileLock } from "./util/advisory-file-lock";
+export type { AdvisoryFileLock } from "./util/advisory-file-lock";
+
+export { readRetrievalDocuments, rebuildRetrieval, MAX_REBUILD_RECORDS } from "./retrieval/rebuild";
+export { claimRetrievalDoc } from "./claims/store";
+
+export { ESTATE_IMPORT_LIMITS } from "./contracts/estate-import";
+export type { EstateIssueCode, EstateImportIssue, EstateImportMapping, EstateImportReport, EstateSlice, EstateRecord, EstateAuthorization } from "./contracts/estate-import";
+export { EstateImportError, planEstateImport } from "./import/estate";
+export { evaluateQualification, QUALIFICATION_WINDOW_MS } from "./serve/qualification";
+export type { QualificationProfile, QualificationRail, QualificationReceipt, QualificationProcess, QualificationSample } from "./serve/qualification";

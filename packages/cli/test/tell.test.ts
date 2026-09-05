@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   accept,
@@ -111,6 +111,36 @@ describe("kizuki tell", () => {
       "grace is at initech now, not acme",
     );
   });
+
+  test("configured lexical-only SQL retrieval preserves offline correction, retry and undo", async () => {
+    const setup = tempVault();
+    const claimId = await writeGraceClaim(setup.vault);
+    const pagePath = join(setup.vault, "people/grace.md");
+    const before = readFileSync(pagePath, "utf8");
+    writeFileSync(join(setup.vault, ".kizuki/serve.toml"), '[ports]\nretrieval="kizuki.retrieval.embedded-pg"\n');
+    expect(runCli(setup.env, "rebuild", "--json").exitCode).toBe(0);
+    const args = ["tell", "grace is at initech now, not acme", "--claim", claimId, "--json"];
+    const correction = runCli(setup.env, ...args);
+    expect(correction.stderr).toBe("");
+    expect(correction.exitCode).toBe(0);
+    const receipt = JSON.parse(correction.stdout).data.receipt_id as string;
+    expect(receipt).toBeString();
+    const read = runCli(setup.env, "query", "initech", "--json");
+    expect(read.exitCode).toBe(0);
+    expect(JSON.parse(read.stdout).data.hits.some((hit: { authority: string; scope: string }) =>
+      hit.scope === "canon" && hit.authority === "owner_correction")).toBe(true);
+    const retry = runCli(setup.env, ...args);
+    expect(retry.exitCode).toBe(0);
+    expect(JSON.parse(retry.stdout).data.receipt_id).toBe(receipt);
+    expect(runCli(setup.env, "undo", receipt).exitCode).toBe(0);
+    expect(readFileSync(pagePath, "utf8")).toBe(before);
+    expect(runCli(setup.env, "rebuild", "--json").exitCode).toBe(0);
+    const restored = runCli(setup.env, "query", "grace", "--json");
+    expect(restored.exitCode).toBe(0);
+    const canon = JSON.parse(restored.stdout).data.hits.filter((hit: { scope: string }) => hit.scope === "canon");
+    expect(canon).toHaveLength(1);
+    expect(canon[0].authority).toBe("model_inference");
+  }, 60_000);
 
   test("tell without --claim fails closed and prints the resolving flags", () => {
     const setup = tempVault();

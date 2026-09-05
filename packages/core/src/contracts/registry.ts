@@ -6,6 +6,7 @@ import {
   validatePortDescriptor,
 } from "./ports";
 import type {
+  Port,
   PortContext,
   PortDescriptor,
   PortFactory,
@@ -136,11 +137,11 @@ export class PortRegistry {
       .sort((left, right) => left.id.localeCompare(right.id));
   }
 
-  bindFromConfig<T>(
+  async bindFromConfig<T>(
     kind: PortKind,
     config: PortsConfig,
     context: PortContext,
-  ): { port: T; d: PortDescriptor } {
+  ): Promise<{ port: T; d: PortDescriptor }> {
     const selected = config[kind];
     if (typeof selected !== "string" || selected.length === 0) {
       throw new PortError(
@@ -154,16 +155,16 @@ export class PortRegistry {
     assertPortContract(registration.d, kind);
     const validatedContext = validateContext(kind, selected, context);
     return {
-      port: registration.factory(validatedContext),
+      port: await registration.factory(validatedContext),
       d: registration.d,
     };
   }
 
-  bindManyFromConfig<T>(
+  async bindManyFromConfig<T extends Port>(
     kind: PortKind,
     config: PortsConfig,
     contextFor: (id: string) => PortContext,
-  ): { port: T; d: PortDescriptor }[] {
+  ): Promise<{ port: T; d: PortDescriptor }[]> {
     const selected = config[kind];
     if (!Array.isArray(selected)) {
       throw new PortError(
@@ -185,16 +186,38 @@ export class PortRegistry {
       );
     }
 
-    return selected.map((id) => {
+    // Resolve and validate every selection before any factory acquires resources.
+    const prepared = selected.map((id) => {
       const registration = this.resolvePort<T>(kind, id);
       assertPortContract(registration.d, kind);
       return {
-        port: registration.factory(
-          validateContext(kind, id, contextFor(id)),
-        ),
-        d: registration.d,
+        registration,
+        context: validateContext(kind, id, contextFor(id)),
       };
     });
+    const bound: { port: T; d: PortDescriptor }[] = [];
+    try {
+      for (const { registration, context } of prepared) {
+        bound.push({
+          port: await registration.factory(context),
+          d: registration.d,
+        });
+      }
+      return bound;
+    } catch (error) {
+      const failures: unknown[] = [error];
+      for (const { port } of bound.reverse()) {
+        try {
+          await port.close();
+        } catch (closeError) {
+          failures.push(closeError);
+        }
+      }
+      if (failures.length > 1) {
+        throw new AggregateError(failures, "port startup and rollback failed");
+      }
+      throw error;
+    }
   }
 }
 
@@ -222,14 +245,14 @@ export function bindFromConfig<T>(
   kind: PortKind,
   config: PortsConfig,
   context: PortContext,
-): { port: T; d: PortDescriptor } {
+): Promise<{ port: T; d: PortDescriptor }> {
   return defaultRegistry.bindFromConfig(kind, config, context);
 }
 
-export function bindManyFromConfig<T>(
+export function bindManyFromConfig<T extends Port>(
   kind: PortKind,
   config: PortsConfig,
   contextFor: (id: string) => PortContext,
-): { port: T; d: PortDescriptor }[] {
+): Promise<{ port: T; d: PortDescriptor }[]> {
   return defaultRegistry.bindManyFromConfig(kind, config, contextFor);
 }

@@ -76,6 +76,24 @@ describe("audit reducer", () => {
     expect(refused.state.notice?.text).toContain("type yes");
   });
 
+  test("bracketed paste cannot invoke list shortcuts or authorize undo", () => {
+    const start = state([item()]);
+    expect(reduce(start, { name: "paste", text: "uyes\r" }, VIEWPORT).effects).toEqual([]);
+    const confirm = reduce(start, { name: "char", ch: "u" }, VIEWPORT).state;
+    if (confirm.mode.name !== "confirm") throw new Error("expected undo confirmation");
+    const pasted = reduce(confirm, { name: "paste", text: "yes" }, VIEWPORT);
+    expect(pasted.state.mode).toEqual({ ...confirm.mode, text: "" });
+    expect(reduce(pasted.state, { name: "enter" }, VIEWPORT).effects).toEqual([]);
+    expect(reduce(start, { name: "unknown" }, VIEWPORT).effects).toEqual([]);
+  });
+
+  test("bracketed paste is filter text only and cannot synthesize submit", () => {
+    const start = reduce(state([item()]), { name: "char", ch: "/" }, VIEWPORT).state;
+    const result = reduce(start, { name: "paste", text: "grace\n" }, VIEWPORT);
+    expect(result.effects).toEqual([]);
+    expect(result.state.mode).toEqual({ name: "filter", text: "grace" });
+  });
+
   test("o and enter emit open; q emits quit; slash emits filter", () => {
     const start = state([item({ page_path: "people/grace.md" })]);
     expect(press(start, chars("o")).effects).toEqual([
@@ -146,11 +164,49 @@ describe("audit reducer", () => {
     expect(joined).not.toContain("kizuki review");
     expect(joined.toLowerCase()).not.toContain("promote");
     expect(joined.toLowerCase()).not.toContain("nothing here is undoable");
+    expect(joined).toContain("personal");
+    expect(joined).toContain("clean");
+    expect(joined).toContain("confidence 0.8");
+    expect(joined).toContain("d details");
+    expect(joined).not.toContain("connector_evidence");
+    const detailed = press(start, chars("d")).state;
+    const detailFrame = render(detailed, { cols: 100, rows: 24, paint: paint(false) }).join("\n");
     const eventId = hostile.receipt.provenance[0];
     if (eventId === undefined) throw new Error("expected provenance");
-    expect(joined).toContain(eventId);
-    expect(joined).toContain("authority");
-    expect(joined).toContain("connector_evidence");
+    expect(detailFrame).toContain(eventId);
+    expect(detailFrame).toContain("authority");
+    expect(detailFrame).toContain("connector_evidence");
+  });
+
+  test("the initial standard-terminal frame puts the change before receipt detail", () => {
+    const start = state([
+      item(
+        { page_action: "edit", before_hash: "b".repeat(64), after_hash: "a".repeat(64) },
+        { priorBody: "Grace runs partnerships.\n", currentBody: "Grace leads partnerships.\n" },
+      ),
+    ]);
+    for (const viewport of [{ cols: 80, rows: 24 }, { cols: 120, rows: 30 }]) {
+      const frame = render(start, { ...viewport, paint: paint(false) }).join("\n");
+      expect(frame).toContain("- Grace runs partnerships.");
+      expect(frame).toContain("+ Grace leads partnerships.");
+      expect(frame).toContain("personal");
+      expect(frame).toContain("clean");
+      expect(frame).not.toContain("before bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    }
+  });
+
+  test("d reveals bounded provenance and long hashes without adding an effect", () => {
+    const start = state([item({ before_hash: "b".repeat(64), after_hash: "a".repeat(64) })]);
+    const result = press(start, chars("d"));
+    expect(result.effects).toEqual([]);
+    expect(result.state.showDetails).toBe(true);
+    const frame = render(result.state, { cols: 120, rows: 30, paint: paint(false) }).join("\n");
+    expect(frame).toContain("before");
+    expect(frame).toContain("after");
+    expect(frame).toContain("b".repeat(64));
+    expect(frame).toContain("a".repeat(64));
+    expect(frame).toContain("events 1");
+    expect(frame).toContain("claims 1");
   });
 
   test("help and empty-list paths stay on the four effects", () => {
@@ -291,6 +347,15 @@ describe("audit reducer", () => {
       expect(stringWidth(line)).toBe(50);
       expect(line).not.toContain("\x1b");
     }
+  });
+
+  test("split layouts keep every grapheme-rendered line at 97 cells", () => {
+    const frame = render(state([item({}, { title: "👩‍💻👩‍💻" })]), {
+      cols: 97,
+      rows: 30,
+      paint: paint(false),
+    });
+    for (const line of frame) expect(stringWidth(line)).toBe(97);
   });
 
   test("a loadError blocks undo from the list", () => {

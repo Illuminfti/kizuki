@@ -47,6 +47,8 @@ export {
   mapTranscription,
   siteHost,
   slug,
+  sourceIdentity,
+  subjectId,
 } from "./map";
 export type { MapOptions } from "./map";
 export { BUSY_TIMEOUT_MS, openReadOnly } from "./open";

@@ -7,7 +7,6 @@ import {
   countClaims,
   countUnwrittenLiveClaims,
   countWrittenLiveClaims,
-  detectSupervisorKind,
   doctorVault,
   getCanonReceipt,
   getCheckpoint,
@@ -18,7 +17,6 @@ import {
   listCanonPages,
   readHolds,
   readVaultId,
-  realSupervisorHost,
 } from "@kizuki/core";
 import type { ClaimStatus } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
@@ -28,6 +26,8 @@ import type { VaultContext } from "../context";
 import { countCanonReceiptRows, indexFreshness, walkCanonReceipts } from "../derived";
 import { clean, errorText, jsonEnvelope } from "../output";
 import { effectiveVaultConfig, loadVaultConfig } from "../vault-config";
+import { createServeRuntime } from "../serve-runtime";
+import { serveSupervisorHost } from "../service-host";
 import type { CliIo, Command } from "./index";
 
 const HEALTH_DEADLINE_MS = 3_000;
@@ -95,7 +95,7 @@ export const doctorCommand: Command = {
       }
       printHuman(io, report);
       return report.ok ? 0 : 1;
-    });
+    }, { retrieval: "none" });
   },
 };
 
@@ -232,11 +232,11 @@ async function collect(
       continue;
     }
     try {
-      const connector = await loadConnector(host);
+      const connector = await loadConnector(host, ctx.store);
       const health = await withDeadline(HEALTH_DEADLINE_MS, () => connector.health());
       connections.push({
         ...base,
-        path: host.state.config.path,
+        path: host.state.config.path ?? host.state.config.base_url ?? "managed local state",
         state: "present",
         health: health.state,
         problem: health.state === "ok" ? null : scrubDetail(health.detail ?? null),
@@ -245,7 +245,7 @@ async function collect(
       const message = errorText(error);
       connections.push({
         ...base,
-        path: host.state.config.path,
+        path: host.state.config.path ?? host.state.config.base_url ?? "managed local state",
         state: "present",
         health: message.includes("timed out") ? "timeout" : "misconfigured",
         problem: scrubDetail(message),
@@ -295,14 +295,22 @@ async function collect(
   }
 
   const unhealthy = connections.some((item) => item.health !== "ok");
-  const kind = detectSupervisorKind(env);
-  const host = realSupervisorHost(
-    kind,
-    env.HOME ?? env.XDG_CONFIG_HOME ?? "",
-    `kizuki serve --vault ${vaultPath}`,
-  );
+  const host = serveSupervisorHost(env, vaultPath);
+  let boundModelRef: string | null = null;
+  try {
+    const runtime = await createServeRuntime({ ...ctx, env, err: () => {} });
+    try {
+      boundModelRef = runtime.hooks.model_ref ?? null;
+    } finally {
+      await runtime.close();
+    }
+  } catch {
+    // Doctor reports raw configuration as unverified below. Binding errors
+    // never make a string configuration look like an enabled writer.
+  }
   const serve = inspectServeDoctor(ctx.db, vaultPath, {
     supervisor: host,
+    model_ref: boundModelRef,
   });
   const ok =
     vault.counts.invalid === 0 &&

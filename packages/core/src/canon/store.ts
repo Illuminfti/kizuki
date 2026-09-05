@@ -2,7 +2,6 @@ import type { Database } from "bun:sqlite";
 import {
   appendFileSync,
   closeSync,
-  existsSync,
   fsyncSync,
   mkdirSync,
   openSync,
@@ -15,7 +14,7 @@ import { parseFrontmatter } from "../vault/frontmatter";
 import type { VaultPage } from "../vault/frontmatter";
 import { listCanonPagesReport } from "../vault/pages";
 import type { RetrievalPort } from "../contracts/retrieval";
-import { hashBytes, hashFile } from "../vault/write";
+import { hashBytes } from "../vault/write";
 import { RECEIPTS_PATH, latestReceiptForPage } from "./receipts";
 import type { CanonReceipt } from "./receipts";
 import { initCanon } from "./schema";
@@ -61,10 +60,25 @@ export interface ExistingPage {
   page: VaultPage;
 }
 
+/** Reconstructed from PR427: only an actual ENOENT means the page is absent. */
+export class CanonPageUnreadable extends Error {
+  override readonly name = "CanonPageUnreadable";
+  constructor(readonly relPath: string, readonly code: string) {
+    super("canon page is unreadable");
+  }
+}
 export function readPage(io: CanonIo, relPath: string): ExistingPage | null {
   const path = join(io.vault_path, relPath);
-  if (!existsSync(path)) return null;
-  const bytes = readFileSync(path);
+  let bytes: Buffer;
+  try {
+    bytes = readFileSync(path);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return null;
+    throw new CanonPageUnreadable(
+      relPath, typeof code === "string" && /^[A-Z][A-Z0-9_]+$/.test(code) ? code : "EIO",
+    );
+  }
   const content = bytes.toString("utf8");
   return {
     path,
@@ -217,7 +231,7 @@ export function rebuildPageIndex(io: CanonIo): { pages: number; skipped: number 
         rel_path: page.relPath,
         subject_key: subjectKeyOf(page.data),
         last_receipt: latestReceiptForPage(io.db, page.relPath)?.receipt_id ?? null,
-        last_hash: hashFile(page.path),
+        last_hash: page.contentHash,
       });
       count += 1;
     }

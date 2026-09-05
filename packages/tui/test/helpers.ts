@@ -65,7 +65,7 @@ export function chars(text: string): Key[] {
   return [...text].map((ch) => ({ name: "char", ch }));
 }
 
-export function named(name: Exclude<Key["name"], "char">): Key {
+export function named(name: Exclude<Key["name"], "char" | "paste">): Key {
   return { name } as Key;
 }
 

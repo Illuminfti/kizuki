@@ -169,6 +169,7 @@ export function inspectSchema(db: Database): SchemaReport {
     migrationsTable &&
     floorApplied &&
     !invalidMaxMigration &&
+    !newerThanVerified &&
     missing.length === 0 &&
     incompatible.length === 0 &&
     missingIndexes.length === 0;
@@ -309,8 +310,8 @@ function schemaDetail(state: {
   }
   if (state.newerThanVerified) {
     return (
-      `screenpipe schema newer than verified: max migration ${state.maxMigration} > ` +
-      `${SCREENPIPE_SCHEMA_VERIFIED}; required columns present`
+      `screenpipe schema too new: max migration ${state.maxMigration} > ` +
+      `${SCREENPIPE_SCHEMA_VERIFIED}; update kizuki before reading this database`
     );
   }
   return `screenpipe schema verified (max migration ${state.maxMigration})`;

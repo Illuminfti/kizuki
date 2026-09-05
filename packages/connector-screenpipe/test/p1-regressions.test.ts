@@ -58,7 +58,7 @@ describe("screenpipe P1 regressions", () => {
     await connector.revoke();
   });
 
-  test("timezone-less source rows are quarantined unless a zone is configured", async () => {
+  test("timezone-less source rows fail without advancing a checkpoint", async () => {
     const fixture = createFixtureDatabase({ rows: false });
     insertFrame(fixture.writer, {
       id: 1,
@@ -74,12 +74,7 @@ describe("screenpipe P1 regressions", () => {
       { path: fixture.path, settle_seconds: 0 },
       fixtureDeps("2026-01-09T00:00:00.000Z"),
     );
-    const skipped = await connector.backfill(null);
-    expect(skipped.events.map(({ source_record_id }) => source_record_id)).toEqual(
-      ["frame:2"],
-    );
-    if (skipped.cursor === null) throw new Error("expected a cursor");
-    expect(parseCursor(skipped.cursor).skipped.frames_offset_unknown).toBe(1);
+    await expect(connector.backfill(null)).rejects.toMatchObject({ code: "parse_error" });
     await connector.revoke();
 
     const zoned = new ScreenpipeConnector(
@@ -93,7 +88,7 @@ describe("screenpipe P1 regressions", () => {
     await zoned.revoke();
   });
 
-  test("invalid audio offsets are quarantined instead of collapsing to the base time", async () => {
+  test("invalid audio offsets fail without advancing a checkpoint", async () => {
     const fixture = createFixtureDatabase({ rows: false });
     insertTranscription(fixture.writer, {
       id: 1,
@@ -111,17 +106,7 @@ describe("screenpipe P1 regressions", () => {
       { path: fixture.path, settle_seconds: 0 },
       fixtureDeps("2026-01-09T00:00:00.000Z"),
     );
-    const batch = await connector.backfill(null);
-    expect(batch.events.map(({ source_record_id, occurred_at }) => [
-      source_record_id,
-      occurred_at,
-    ])).toEqual([["transcription:1", "2026-01-06T10:00:01.500Z"]]);
-    if (batch.cursor === null) throw new Error("expected a cursor");
-    expect(parseCursor(batch.cursor).skipped.transcriptions_bad_offset).toBe(1);
-    const health = await connector.health();
-    expect(health.state).toBe("degraded");
-    expect(health.detail).toContain("transcriptions_bad_offset=1");
-    expect(health.detail).toContain("oldest_skipped_transcription=2");
+    await expect(connector.backfill(null)).rejects.toMatchObject({ code: "parse_error" });
     await connector.revoke();
   });
 
@@ -217,7 +202,7 @@ describe("screenpipe P1 regressions", () => {
     await connector.revoke();
   });
 
-  test("a compatible additive migration does not reset an existing cursor", async () => {
+  test("an additive migration above the verified maximum fails closed", async () => {
     const fixture = createFixtureDatabase({ rows: false });
     insertFrame(fixture.writer, {
       id: 1,
@@ -241,11 +226,10 @@ describe("screenpipe P1 regressions", () => {
       )
       .run(20260904000000, "2026-09-04T00:00:00Z");
 
-    const continued = await connector.sync(first.cursor);
-    expect(continued.events).toEqual([]);
+    await expect(connector.sync(first.cursor)).rejects.toMatchObject({ code: "schema_mismatch" });
     const health = await connector.health();
-    expect(health.state).toBe("ok");
-    expect(health.detail).toContain("newer than verified");
+    expect(health.state).toBe("misconfigured");
+    expect(health.detail).toContain("schema too new");
     await connector.revoke();
   });
 

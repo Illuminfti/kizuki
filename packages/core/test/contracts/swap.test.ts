@@ -94,16 +94,16 @@ describe("port swap invariance", () => {
       );
       registry.registerPort(remote.descriptor, () => remotePort!);
 
-      directPort = registry.bindFromConfig<RetrievalPort>(
+      directPort = (await registry.bindFromConfig<RetrievalPort>(
         "retrieval",
         { retrieval: DIRECT_RETRIEVAL_DESCRIPTOR.id },
         directContext.ctx,
-      ).port;
-      const selectedRemote = registry.bindFromConfig<RetrievalPort>(
+      )).port;
+      const selectedRemote = (await registry.bindFromConfig<RetrievalPort>(
         "retrieval",
         { retrieval: remote.descriptor.id },
         remoteContext.ctx,
-      ).port;
+      )).port;
 
       return [
         await workedExample(directPort),

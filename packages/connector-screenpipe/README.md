@@ -57,8 +57,8 @@ on 2026-09-01.
 
 Health fails closed unless required columns match the declared affinity and
 nullability contract and the timestamp indexes used by cursor queries exist.
-Newer databases remain readable when that contract holds; health reports the
-newer migration. Older databases are refused.
+Databases newer than the verified maximum and databases below the supported
+floor are refused.
 
 ## Privacy
 
@@ -73,27 +73,38 @@ private floor.
 - Screenpipe does not expose a per-row deletion log. The manifest declares
   `tombstones: false` and `purge: false`. `purgeSource()` throws
   `not_supported`. `planUnreachableSourceRecords()` is a read-only planning
-  helper: it returns `{ ids, truncated }`, is capped at 10,000 ids and a
-  two-second deadline, and never deletes source rows. `truncated: true` means
-  the id list may be incomplete. Ledger purge is the path that removes
-  imported evidence.
+  helper: it returns `{ ids, complete, continuation? }`, is capped at 10,000
+  ids and a two-second work budget, and never deletes source rows. The budget
+  is checked between primary-key pages of at most 256 source rows, with each
+  SQLite lock wait capped at the remaining budget. Lock contention reports
+  retryable `locked`; the caller's busy timeout is restored. An incomplete
+  page has an opaque continuation bound to the exact subject and the same open
+  SQLite connection. Each page runs in a read transaction and checks bounded
+  file-instance metadata plus SQLite's `data_version` and same-connection
+  `total_changes()` before and after the
+  query. Reopening the source or changing it rejects continuation and requires
+  a fresh enumeration rather than claiming completeness. It is never proof of
+  complete source erasure. Ledger purge is the
+  path that removes imported evidence.
 - This package must not attach to screenpipe's live database.
 - Timezone-less source timestamps are not assigned UTC. They are quarantined
   unless `timezone` is set to an IANA name or `±HH:MM` offset. Invalid or
   overflowing audio `start_time` values are quarantined, not collapsed onto
   the chunk base time.
 - Frames are emitted only after they are at least `settle_seconds` old
-  (default 300). A settled frame that still has no text is skipped
-  permanently. Skip and parse-error counters live on the cursor and in
-  health; parse errors degrade health. `replayFrom(cursor, { frame, transcription })`
-  rewinds a stream id without dropping database identity.
+  (default 300). A malformed settled row fails the batch before a new
+  checkpoint is returned, so it can be corrected or retried without silent
+  loss. Health remains degraded with a safe row-kind/id/field failure receipt
+  until a successful batch clears it; captured text is never retained there.
+  `replayFrom(cursor, { frame, transcription })` rewinds a stream id
+  without dropping database identity.
 - Cursors bind to the resolved path, the first successful migration
   (version and `installed_on`), and source high-water marks. Compatible
   additive upgrades keep the existing cursor. Replacing, rewinding, or
   rebinding the database fails with `reset_detected`. Re-enroll and
   rebackfill.
 - Screen text and transcripts longer than 65,536 JavaScript code units are
-  cut and marked with `metadata.text_truncated: true`.
+  cut on Unicode code-point boundaries and marked with `metadata.text_truncated: true`.
 - The optional `since` setting compares normalized instants, not lexical
   timestamp text. Unparseable and offset-unknown boundary rows do not move
   the seed watermark.

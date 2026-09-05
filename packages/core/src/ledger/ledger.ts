@@ -9,7 +9,7 @@ import type {
   SubjectRef,
 } from "../contracts/event";
 import { computeContentHash } from "../util/hash";
-import { ulid } from "../util/ulid";
+import { isUlid, ulid } from "../util/ulid";
 
 export type AcceptErrorKind = "validation" | "infrastructure";
 
@@ -132,6 +132,13 @@ export function accept(
     const normalized = validation.value;
     const contentHash = computeContentHash(normalized);
     const eventId = (deps.generateId ?? ulid)();
+    if (!isUlid(eventId)) {
+      return {
+        status: "error",
+        error: "event_id: generated id is not a canonical ULID",
+        kind: "validation",
+      };
+    }
     const acceptedAt = new Date().toISOString();
 
     return db.transaction((): AcceptResult => {

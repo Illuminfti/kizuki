@@ -33,7 +33,9 @@ type RawInput = NodeJS.ReadStream & {
 };
 
 const ENTER = `${CSI}?1049h${CSI}?25l${CSI}2J${CSI}H`;
-const LEAVE = `${CSI}?25h${CSI}?1049l`;
+const BRACKETED_PASTE_ON = `${CSI}?2004h`;
+const BRACKETED_PASTE_OFF = `${CSI}?2004l`;
+const LEAVE = `${BRACKETED_PASTE_OFF}${CSI}?25h${CSI}?1049l`;
 const SYNC_START = `${CSI}?2026h`;
 const SYNC_END = `${CSI}?2026l`;
 
@@ -143,13 +145,22 @@ export function createTerminal(
     },
     onKeys(handler) {
       const stream = createKeyStream();
+      let flushTimer: ReturnType<typeof setTimeout> | undefined;
+      const flush = (): void => {
+        flushTimer = undefined;
+        const keys = stream.flush();
+        if (keys.length > 0) handler(keys);
+      };
       const listener = (chunk: Uint8Array | string): void => {
+        if (flushTimer !== undefined) clearTimeout(flushTimer);
         const keys = stream.push(chunk);
         if (keys.length > 0) handler(keys);
+        if (stream.needsFlush()) flushTimer = setTimeout(flush, 25);
       };
       stdin.on("data", listener);
       return () => {
         stdin.off("data", listener);
+        if (flushTimer !== undefined) clearTimeout(flushTimer);
         stream.end();
       };
     },
@@ -180,7 +191,7 @@ export function createTerminal(
       priorRaw = typeof input.isRaw === "boolean" ? input.isRaw : false;
       input.setRawMode?.(true);
       stdin.resume();
-      stdout.write(ENTER);
+      stdout.write(`${ENTER}${BRACKETED_PASTE_ON}`);
       installSignals();
     },
     leave() {

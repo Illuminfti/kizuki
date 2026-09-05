@@ -1,3 +1,9 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+const ROOT = resolve(import.meta.dir, "..");
+const BUN_VERSION = readFileSync(resolve(ROOT, ".bun-version"), "utf8").trim();
+
 export interface WorkflowFailure {
   path: string;
   reason: string;
@@ -89,6 +95,21 @@ function validateJobs(
         reason: `job "${name}" runs the repository gate without checkout fetch-depth 0`,
       });
     }
+    if ((path.endsWith("/ci.yml") || path.endsWith("/macos-native.yml")) && Array.isArray(steps)) {
+      const checkouts = steps.filter(step => isRecord(step) && typeof step["uses"] === "string" && step["uses"].startsWith("actions/checkout@"));
+      const exact = (checkout: unknown): boolean => {
+        const settings = isRecord(checkout) ? checkout["with"] : undefined;
+        return isRecord(settings) && settings["ref"] === "${{ github.event.pull_request.head.sha || github.sha }}" &&
+          (!jobRunsHistoryScan(rawJob) || settings["fetch-depth"] === 0);
+      };
+      if (((name === "test" || jobRunsHistoryScan(rawJob)) && checkouts.length === 0) || !checkouts.every(exact)) {
+        failures.push({ path, reason: `job "${name}" must check out the immutable event head` });
+      }
+      if (name === "test" && (rawJob["if"] !== undefined || !steps.some(step =>
+        isRecord(step) && step["if"] === undefined && step["run"] === "bun scripts/ci-diff-check.ts"))) {
+        failures.push({ path, reason: "ci test must run the unconditional event-bound diff checker" });
+      }
+    }
   }
 
   if (path.endsWith("/ci.yml") || path.endsWith(".github/workflows/ci.yml")) {
@@ -100,6 +121,40 @@ function validateJobs(
     }
   }
   return failures;
+}
+
+// This bounded manual proof has an ordered, closed execution contract. Names are
+// cosmetic; run bodies, action configuration and failure propagation are not.
+function hasMacNativeProof(document: Record<string, unknown>, job: Record<string, unknown>): boolean {
+  const steps = job["steps"];
+  if (!Array.isArray(steps) || steps.length !== 8 || document["env"] !== undefined || document["defaults"] !== undefined ||
+      job["defaults"] !== undefined || !isRecord(job["env"]) ||
+      Object.keys(job["env"]).join() !== "KIZUKI_TARGET" || job["env"]["KIZUKI_TARGET"] !== "bun-darwin-arm64") return false;
+  const lines = (value: unknown): string => typeof value === "string" ? value.trim().split("\n").map(line => line.trim()).join("\n") : "";
+  const run = (index: number, command: string): boolean => {
+    const step = steps[index];
+    return isRecord(step) && Object.keys(step).every(key => ["name", "run"].includes(key)) && lines(step["run"]) === command;
+  };
+  const action = (index: number, prefix: string, settings: Record<string, unknown>, condition?: string): boolean => {
+    const step = steps[index];
+    if (!isRecord(step) || !Object.keys(step).every(key => ["name", "uses", "with", "if"].includes(key)) ||
+        typeof step["uses"] !== "string" || !step["uses"].startsWith(prefix + "@") || step["if"] !== condition || !isRecord(step["with"])) return false;
+    const actual = step["with"];
+    return Object.keys(actual).length === Object.keys(settings).length && Object.entries(settings).every(([key, value]) =>
+      typeof value === "string" ? lines(actual[key]) === value : actual[key] === value);
+  };
+  return action(0, "actions/checkout", { "fetch-depth": 0, ref: "${{ github.event.pull_request.head.sha || github.sha }}" }) &&
+    run(1, "bash scripts/ci-restrict-origin-refs.sh") &&
+    action(2, "oven-sh/setup-bun", { "bun-version": BUN_VERSION }) &&
+    run(3, "bun scripts/ci-diff-check.ts") &&
+    run(4, 'test "$(uname -s)" = Darwin\ntest "$(uname -m)" = arm64\nbun install --frozen-lockfile') &&
+    run(5, "bun run typecheck\nbun test scripts/release-targets.test.ts scripts/release-artifacts.test.ts scripts/stranger-proof.test.ts packages/core/test/serve/advisory-file-lock.test.ts packages/core/test/serve/flock.test.ts packages/core/test/serve/leases.test.ts packages/core/test/serve/units.test.ts packages/core/test/serve/service-arguments.test.ts packages/cli/test/config.test.ts packages/cli/test/terminal-prompt.test.ts packages/tui/test/terminal.test.ts packages/retrieval-pg/test/contention.test.ts scripts/native-platform.test.ts") &&
+    run(6, 'bun run build:release\nbun run smoke:release\nbun run proof:artifact -- --report "$RUNNER_TEMP/kizuki-macos-artifact-proof"') &&
+    action(7, "actions/upload-artifact", {
+      name: "macos-arm64-${{ github.sha }}",
+      path: "dist/kizuki-*/bun-darwin-arm64/\n${{ runner.temp }}/kizuki-macos-artifact-proof/receipt.json",
+      "retention-days": 7, "if-no-files-found": "error",
+    }, "${{ always() }}");
 }
 
 export function validateWorkflowText(path: string, text: string): WorkflowFailure[] {
@@ -129,6 +184,26 @@ export function validateWorkflowText(path: string, text: string): WorkflowFailur
     }
   }
 
+  if (path.endsWith("/macos-native.yml")) {
+    const trigger = document["on"];
+    const dispatch = isRecord(trigger) ? trigger["workflow_dispatch"] : undefined;
+    const inputs = isRecord(dispatch) ? dispatch["inputs"] : undefined;
+    const allowance = isRecord(inputs) ? inputs["existing_allowance_verified"] : undefined;
+    const base = isRecord(inputs) ? inputs["base_sha"] : undefined;
+    const jobs = document["jobs"];
+    const job = isRecord(jobs) ? jobs["native-arm64"] : undefined;
+    const steps = isRecord(job) ? job["steps"] : undefined;
+    if (!isRecord(trigger) || Object.keys(trigger).join() !== "workflow_dispatch" ||
+        !isRecord(allowance) || allowance["type"] !== "boolean" || allowance["default"] !== false || allowance["required"] !== true ||
+        !isRecord(base) || base["type"] !== "string" || base["required"] !== true ||
+        !isRecord(jobs) || Object.keys(jobs).join() !== "native-arm64" || !isRecord(job) ||
+        job["if"] !== "${{ inputs.existing_allowance_verified == true }}" || job["runs-on"] !== "macos-15" || job["timeout-minutes"] !== 15 || job["strategy"] !== undefined ||
+        !hasMacNativeProof(document, job) || !Array.isArray(steps) || !steps.some(step => isRecord(step) && step["if"] === undefined && step["run"] === "bun scripts/ci-diff-check.ts") ||
+        !steps.some(step => isRecord(step) && typeof step["uses"] === "string" && step["uses"].startsWith("actions/checkout@"))) {
+      failures.push({ path, reason: "macOS proof must retain its manual allowance gate, native tests, immutable build and retained artifact proof" });
+    }
+  }
+
   const jobs = document["jobs"];
   if (!isRecord(jobs)) {
     failures.push({ path, reason: "workflow has no jobs" });
@@ -150,10 +225,10 @@ export function validateWorkflowText(path: string, text: string): WorkflowFailur
     if (typeof uses === "string" && SETUP_BUN.test(uses)) {
       const withField = record["with"];
       const bunVersion = isRecord(withField) ? withField["bun-version"] : undefined;
-      if (bunVersion !== "1.3.10") {
+      if (bunVersion !== BUN_VERSION) {
         failures.push({
           path,
-          reason: "setup-bun must pin bun-version to 1.3.10",
+          reason: `setup-bun must pin bun-version to ${BUN_VERSION}`,
         });
       }
     }
@@ -199,8 +274,41 @@ export async function validateTrackedWorkflows(opts?: {
   return failures;
 }
 
+export function validateToolchain(root = ROOT, runtime = Bun.version): WorkflowFailure[] {
+  try {
+    const version = readFileSync(resolve(root, ".bun-version"), "utf8").trim();
+    if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error("invalid .bun-version");
+    const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
+    const parsedLock = Bun.JSON5.parse(readFileSync(resolve(root, "bun.lock"), "utf8"));
+    const requireRecord = (value: unknown): Record<string, unknown> => {
+      if (!isRecord(value)) throw new Error("invalid toolchain metadata");
+      return value;
+    };
+    const lock = requireRecord(parsedLock);
+    const workspace = requireRecord(requireRecord(lock["workspaces"])[""]);
+    const packages = requireRecord(lock["packages"]);
+    const types = packages["@types/bun"];
+    const runtimeTypes = packages["bun-types"];
+    const failures: WorkflowFailure[] = [];
+    const check = (ok: boolean, path: string, reason: string) => { if (!ok) failures.push({ path, reason }); };
+    check(runtime === version, ".bun-version", `verification requires Bun ${version}`);
+    check(pkg?.packageManager === `bun@${version}`, "package.json", "packageManager must match .bun-version exactly");
+    check(pkg?.engines?.bun === version, "package.json", "engines.bun must match .bun-version exactly");
+    check(pkg?.devDependencies?.["@types/bun"] === version, "package.json", "Bun runtime types must match .bun-version exactly");
+    check(requireRecord(workspace["devDependencies"])["@types/bun"] === version,
+      "bun.lock", "locked workspace runtime types must match .bun-version");
+    check(Array.isArray(types) && types[0] === `@types/bun@${version}` &&
+      requireRecord(requireRecord(types[2])["dependencies"])["bun-types"] === version &&
+      Array.isArray(runtimeTypes) && runtimeTypes[0] === `bun-types@${version}`,
+      "bun.lock", "resolved Bun runtime types must match .bun-version exactly");
+    return failures;
+  } catch {
+    return [{ path: root, reason: "toolchain metadata is missing or malformed" }];
+  }
+}
+
 async function main(): Promise<void> {
-  const failures = await validateTrackedWorkflows();
+  const failures = [...validateToolchain(), ...await validateTrackedWorkflows()];
   for (const failure of failures) {
     console.error(`${failure.path}: ${failure.reason}`);
   }

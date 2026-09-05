@@ -16,7 +16,7 @@ export const undoCommand: Command = {
     return withVault(io, async (ctx) => {
       try {
         const revert = await undoReceipt(
-          { db: ctx.db, vault_path: ctx.vaultPath },
+          { db: ctx.db, vault_path: ctx.vaultPath, ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }) },
           receiptId,
           { cascade: parsed.flags.has("--cascade") },
         );

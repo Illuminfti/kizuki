@@ -3,10 +3,11 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createBudgetTracker } from "../../src/canon/budget";
-import { getClaim, reviveUncontestedSkipped } from "../../src/claims/store";
+import { getClaim, listClaims, reviveUncontestedSkipped } from "../../src/claims/store";
 import type { ProduceResult, ProducerPort } from "../../src/contracts/producer";
 import { openLedger } from "../../src/ledger/db";
 import { runRail } from "../../src/serve/rails";
+import { readExtractCursor } from "../../src/serve/extract";
 import { runWritePass } from "../../src/serve/write-pass";
 import { fileProposal } from "../../src/staging/proposals";
 import { initVault } from "../../src/vault/init";
@@ -26,6 +27,20 @@ function stubProducer(result: ProduceResult): ProducerPort {
     health: async () => ({ status: "ready", detail: {} }),
     close: async () => undefined,
     produce: async () => result,
+  };
+}
+
+function boundWriteOptions(db: ReturnType<typeof openLedger>, budget: ReturnType<typeof createBudgetTracker>) {
+  return {
+    budget,
+    model_ref: "kizuki.llm.openai-compatible:synthetic@local",
+    claims: { db },
+    producer: stubProducer({
+      status: "ok",
+      claims: [],
+      usage: { calls: 0, input_tokens: 0, output_tokens: 0 },
+      dropped: [],
+    }),
   };
 }
 
@@ -83,7 +98,16 @@ describe("write pass", () => {
     if (filed.outcome !== "stored") throw new Error("expected stored");
 
     const receipt = await runRail(db, path, "sync", {
-      hooks: { model_ref: "kizuki.llm.openai-compatible:synthetic@local" },
+      hooks: {
+        model_ref: "kizuki.llm.openai-compatible:synthetic@local",
+        producer: stubProducer({
+          status: "ok",
+          claims: [],
+          usage: { calls: 0, input_tokens: 0, output_tokens: 0 },
+          dropped: [],
+        }),
+        claims: { db },
+      },
     });
     expect(receipt.canon_writes).toBe(1);
     expect(receipt.claims_written).toBe(1);
@@ -96,7 +120,28 @@ describe("write pass", () => {
     db.close();
   });
 
-  test("serve.toml model_ref is enough for the sync rail to write", async () => {
+  test("a derived refresh failure retains the receipted canon-write count and charges its daily budget", async () => {
+    const { path, db } = vault();
+    const eventId = putEvent(db);
+    fileProposal(db, {
+      kind: "claim", target: "people/grace", body: "Grace runs partnerships at Acme.",
+      frontmatter: { type: "person", title: "Grace" }, provenance: [eventId], subjects: ["person:grace"],
+      producer: "deterministic", confidence: 0.8,
+    });
+    const { budget: _budget, ...hooks } = boundWriteOptions(db, createBudgetTracker({ canon_writes_per_run: 8 }));
+    const receipt = await runRail(db, path, "sync", {
+      hooks: {
+        ...hooks,
+        refresh: async () => { throw new Error("synthetic derived failure"); },
+      },
+    });
+    expect(receipt.status).toBe("degraded");
+    expect(receipt.canon_writes).toBe(1);
+    expect(db.query<{ used: number }, []>("SELECT used FROM budget_ledger WHERE name = 'canon_writes_per_day'").get()?.used).toBe(1);
+    db.close();
+  });
+
+  test("a raw serve.toml model string never enables standalone canon writes", async () => {
     const { path, db } = vault();
     const eventId = putEvent(db);
     fileProposal(db, {
@@ -115,11 +160,9 @@ describe("write pass", () => {
       '[ports.llm]\nid = "kizuki.llm.openai-compatible"\nmodel = "synthetic@local"\n',
     );
     const receipt = await runRail(db, path, "sync");
-    expect(receipt.canon_writes).toBe(1);
-    expect(receipt.model.model_ref).toBe(
-      "kizuki.llm.openai-compatible:synthetic@local",
-    );
-    expect(existsSync(join(path, "auto", "people", "grace.md"))).toBe(true);
+    expect(receipt.canon_writes).toBe(0);
+    expect(receipt.model.model_ref).toBeNull();
+    expect(existsSync(join(path, "auto", "people", "grace.md"))).toBe(false);
     db.close();
   });
 
@@ -148,10 +191,10 @@ describe("write pass", () => {
       confidence: 0.8,
     });
 
-    const result = await runWritePass(db, path, {
-      budget: createBudgetTracker({ canon_writes_per_run: 1 }),
-      model_ref: "kizuki.llm.openai-compatible:synthetic@local",
-    });
+    const result = await runWritePass(db, path, boundWriteOptions(
+      db,
+      createBudgetTracker({ canon_writes_per_run: 1 }),
+    ));
     expect(result.canon_writes).toBe(1);
     expect(result.stopped).toBe("budget:canon_writes_per_run");
     db.close();
@@ -210,10 +253,10 @@ describe("write pass", () => {
       producer: "deterministic",
       confidence: 0.8,
     });
-    const result = await runWritePass(db, path, {
-      budget: createBudgetTracker({ canon_writes_per_run: 8 }),
-      model_ref: "kizuki.llm.openai-compatible:synthetic@local",
-    });
+    const result = await runWritePass(db, path, boundWriteOptions(
+      db,
+      createBudgetTracker({ canon_writes_per_run: 8 }),
+    ));
     // A page with no receipt is owner prose: the loop skips it and
     // does not open a parallel auto/ copy.
     expect(result.canon_writes).toBe(0);
@@ -237,10 +280,10 @@ describe("write pass", () => {
       producer: "deterministic",
       confidence: 0.8,
     });
-    const result = await runWritePass(db, path, {
-      budget: createBudgetTracker({ canon_writes_per_run: 8 }),
-      model_ref: "kizuki.llm.openai-compatible:synthetic@local",
-    });
+    const result = await runWritePass(db, path, boundWriteOptions(
+      db,
+      createBudgetTracker({ canon_writes_per_run: 8 }),
+    ));
     expect(result.stopped).toBe("lock:busy");
     expect(result.canon_writes).toBe(0);
     expect(existsSync(join(path, "auto", "people", "grace.md"))).toBe(false);
@@ -289,10 +332,10 @@ describe("write pass", () => {
       producer: "deterministic",
       confidence: 0.8,
     });
-    const result = await runWritePass(db, path, {
-      budget: createBudgetTracker({ canon_writes_per_run: 8 }),
-      model_ref: "kizuki.llm.openai-compatible:synthetic@local",
-    });
+    const result = await runWritePass(db, path, boundWriteOptions(
+      db,
+      createBudgetTracker({ canon_writes_per_run: 8 }),
+    ));
     expect(result.canon_writes).toBe(1);
     expect(existsSync(join(path, "auto", "people", "ada.md"))).toBe(true);
     db.close();
@@ -311,10 +354,10 @@ describe("write pass", () => {
       producer: "deterministic",
       confidence: 0.8,
     });
-    const seeded = await runWritePass(db, path, {
-      budget: createBudgetTracker({ canon_writes_per_run: 8 }),
-      model_ref: "kizuki.llm.openai-compatible:synthetic@local",
-    });
+    const seeded = await runWritePass(db, path, boundWriteOptions(
+      db,
+      createBudgetTracker({ canon_writes_per_run: 8 }),
+    ));
     expect(seeded.canon_writes).toBe(1);
 
     const eventId = putEvent(db, { source_record_id: "extract" });
@@ -350,7 +393,9 @@ describe("write pass", () => {
       input_tokens: 10,
       output_tokens: 4,
       unavailable: 0,
+      wall_ms: expect.any(Number),
     });
+    expect(result.claims_rejected).toEqual({});
     db.close();
   });
 
@@ -379,6 +424,7 @@ describe("write pass", () => {
       input_tokens: 9_000,
       output_tokens: 0,
       unavailable: 0,
+      wall_ms: expect.any(Number),
     });
 
     putEvent(db, { source_record_id: "unavailable" });
@@ -399,7 +445,120 @@ describe("write pass", () => {
       input_tokens: 0,
       output_tokens: 0,
       unavailable: 1,
+      wall_ms: expect.any(Number),
     });
+    db.close();
+  });
+
+  test("write-pass receipts preserve rejected and dropped model outcomes", async () => {
+    const { path, db } = vault();
+    putEvent(db, { source_record_id: "metrics" });
+    const rejected = await runWritePass(db, path, {
+      budget: createBudgetTracker({ canon_writes_per_run: 8 }),
+      model_ref: "kizuki.llm.openai-compatible:synthetic@local",
+      claims: { db },
+      producer: stubProducer({
+        status: "rejected",
+        reason: "schema_invalid",
+        usage: { calls: 1, input_tokens: 7, output_tokens: 0 },
+      }),
+    });
+    expect(rejected.model).toEqual({
+      calls: 1, input_tokens: 7, output_tokens: 0, unavailable: 0, wall_ms: expect.any(Number),
+    });
+    expect(rejected.claims_rejected).toEqual({ schema_invalid: 1 });
+
+    const dropped = await runWritePass(db, path, {
+      budget: createBudgetTracker({ canon_writes_per_run: 8 }),
+      model_ref: "kizuki.llm.openai-compatible:synthetic@local",
+      claims: { db },
+      producer: stubProducer({
+        status: "ok",
+        claims: [],
+        usage: { calls: 1, input_tokens: 3, output_tokens: 0 },
+        dropped: [{ reason: "unknown_predicate", predicate: "employment.secret", event_ids: [putEvent(db, { source_record_id: "drop" })] }],
+      }),
+    });
+    expect(dropped.claims_rejected).toEqual({ unknown_predicate: 1 });
+    db.close();
+  });
+
+  test("draft durability converges across insertion and cursor-commit failures", async () => {
+    for (const point of ["first", "between", "cursor"] as const) {
+      const { path, db } = vault();
+      putEvent(db, { source_record_id: `seed-${point}` });
+      await runWritePass(db, path, boundWriteOptions(
+        db,
+        createBudgetTracker({ canon_writes_per_run: 8 }),
+      ));
+      const before = readExtractCursor(db);
+      const grace = putEvent(db, { source_record_id: `grace-${point}` });
+      const ada = putEvent(db, { source_record_id: `ada-${point}` });
+      const producer = stubProducer({
+        status: "ok",
+        claims: [
+          {
+            kind: "claim", subject: "person:grace", predicate: "employment.works_at", object: "Acme",
+            polarity: "positive", body: "Grace works at Acme.", valid_from: null, valid_to: null,
+            confidence: 0.8, sensitivity: "personal", event_ids: [grace],
+          },
+          {
+            kind: "claim", subject: "person:ada", predicate: "employment.works_at", object: "Acme",
+            polarity: "positive", body: "Ada works at Acme.", valid_from: null, valid_to: null,
+            confidence: 0.8, sensitivity: "personal", event_ids: [ada],
+          },
+        ],
+        usage: { calls: 1, input_tokens: 10, output_tokens: 4 },
+      });
+      const options = {
+        budget: createBudgetTracker({ canon_writes_per_run: 8 }),
+        model_ref: "kizuki.llm.openai-compatible:synthetic@local",
+        claims: { db }, producer,
+      };
+      const trigger = point === "first"
+        ? "BEFORE INSERT ON claims WHEN NEW.subject = 'person:grace'"
+        : point === "between"
+          ? "BEFORE INSERT ON claims WHEN NEW.subject = 'person:ada'"
+          : "BEFORE UPDATE ON checkpoints WHEN NEW.connector_id = 'kizuki.producer.model' AND NEW.source_key = 'extract'";
+      db.exec(`CREATE TRIGGER fail_${point} ${trigger} BEGIN SELECT RAISE(ABORT, 'injected'); END`);
+      await expect(runWritePass(db, path, options)).rejects.toThrow("injected");
+      expect(readExtractCursor(db)).toBe(before);
+      db.exec(`DROP TRIGGER fail_${point}`);
+      await runWritePass(db, path, options);
+      expect(readExtractCursor(db)).not.toBe(before);
+      expect(db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM claims WHERE producer = 'model'").get()?.count).toBe(2);
+      db.close();
+    }
+  });
+
+  test("a partial filing retry replays the durable model output, never a new model decision", async () => {
+    const { path, db } = vault();
+    const grace = putEvent(db, { source_record_id: "journal-grace" });
+    const ada = putEvent(db, { source_record_id: "journal-ada" });
+    let calls = 0;
+    const producer: ProducerPort = {
+      ...stubProducer({ status: "ok", claims: [], usage: { calls: 0, input_tokens: 0, output_tokens: 0 } }),
+      produce: async () => {
+        calls += 1;
+        return {
+          status: "ok" as const,
+          claims: calls === 1 ? [
+            { kind: "claim" as const, subject: "person:grace", predicate: "employment.works_at", object: "Acme", polarity: "positive" as const, body: "Grace works at Acme.", valid_from: null, valid_to: null, confidence: 0.8, sensitivity: "personal" as const, event_ids: [grace] },
+            { kind: "claim" as const, subject: "person:ada", predicate: "employment.works_at", object: "Acme", polarity: "positive" as const, body: "Ada works at Acme.", valid_from: null, valid_to: null, confidence: 0.8, sensitivity: "personal" as const, event_ids: [ada] },
+          ] : [
+            { kind: "claim" as const, subject: "person:grace", predicate: "employment.works_at", object: "Acme", polarity: "positive" as const, body: "Grace works at Acme.", valid_from: null, valid_to: null, confidence: 0.8, sensitivity: "personal" as const, event_ids: [grace] },
+          ],
+          usage: { calls: 1, input_tokens: 1, output_tokens: 1 },
+        };
+      },
+    };
+    const options = { budget: createBudgetTracker({ canon_writes_per_run: 8 }), model_ref: "kizuki.llm.openai-compatible:synthetic@local", claims: { db }, producer };
+    db.exec("CREATE TRIGGER fail_ada BEFORE INSERT ON claims WHEN NEW.subject = 'person:ada' BEGIN SELECT RAISE(ABORT, 'injected'); END");
+    await expect(runWritePass(db, path, options)).rejects.toThrow("injected");
+    db.exec("DROP TRIGGER fail_ada");
+    await runWritePass(db, path, options);
+    expect(calls).toBe(1);
+    expect(listClaims(db, { status: "live", limit: 20 }).map((claim) => claim.subject)).toEqual(expect.arrayContaining(["person:grace", "person:ada"]));
     db.close();
   });
 });

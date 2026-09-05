@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { createHelpers } from "./helpers";
@@ -37,4 +38,16 @@ describe("sync selectors", () => {
     expect(synced.stdout).toContain("kizuki.markdown-folder");
     expect((synced.stdout.match(/events_stored=/g) ?? []).length).toBe(2);
   });
+});
+
+for (const args of [["sync", "--once"], ["serve", "run", "sync"]]) test(`${args.join(" ")} initializes the journal on an existing current-schema vault`, () => {
+  const setup = tempVault();
+  const path = join(setup.vault, ".kizuki/kizuki.db");
+  const old = new Database(path);
+  old.exec("DROP TABLE extract_batches"); old.close();
+  const result = runCli(setup.env, ...args);
+  expect(result.exitCode).toBe(0);
+  const reopened = new Database(path, { readonly: true });
+  expect(reopened.query("SELECT name FROM sqlite_master WHERE name='extract_batches'").all()).toHaveLength(1);
+  reopened.close();
 });

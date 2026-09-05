@@ -177,6 +177,94 @@ describe("fetchTransport", () => {
     });
   });
 
+  test("cancels an announced oversized body before reading it", async () => {
+    let cancelled = false;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(new ReadableStream({
+      cancel() { cancelled = true; },
+    }), { headers: { "content-length": "64" } })) as unknown as typeof fetch;
+    try {
+      const result = await fetchTransport({
+        url: "http://127.0.0.1:9/v1/chat/completions", api_key: null,
+        timeout_ms: 1_000, max_response_bytes: 16, body: BODY,
+      });
+      expect(result).toMatchObject({ ok: false, kind: "transport", failure: "too_large" });
+      expect(cancelled).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("counts split UTF-8 chunks by bytes across the full body", async () => {
+    const text = JSON.stringify({ text: "😀" });
+    const bytes = new TextEncoder().encode(text);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(bytes.slice(0, 10));
+        controller.enqueue(bytes.slice(10, 12));
+        controller.enqueue(bytes.slice(12));
+        controller.close();
+      },
+    }))) as unknown as typeof fetch;
+    try {
+      const result = await fetchTransport({
+        url: "http://127.0.0.1:9/v1/chat/completions", api_key: null,
+        timeout_ms: 1_000, max_response_bytes: bytes.byteLength, body: BODY,
+      });
+      expect(result).toEqual({ ok: true, kind: "ok", status: 200, body: { text: "😀" } });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("bounds a chunked multibyte loopback response without exposing its content", async () => {
+    const responseCanary = "response-private-canary";
+    const keyCanary = "credential-private-canary";
+    fake = startFakeEndpoint(() => new Response(new ReadableStream({
+      async start(controller) {
+        controller.enqueue(new TextEncoder().encode(`{\"x\":\"${responseCanary}😀`));
+        await Bun.sleep(25);
+        controller.enqueue(new TextEncoder().encode("😀😀\"}"));
+      },
+    })));
+    const result = await fetchTransport({
+      url: `${fake.base_url}/chat/completions`,
+      api_key: keyCanary,
+      timeout_ms: 1_000,
+      max_response_bytes: 32,
+      body: BODY,
+    });
+    expect(result).toMatchObject({ ok: false, kind: "transport", failure: "too_large" });
+    expect(JSON.stringify(result)).not.toContain(responseCanary);
+    expect(JSON.stringify(result)).not.toContain(keyCanary);
+  });
+
+  test("cancels the response reader immediately after crossing the byte bound", async () => {
+    let cancelled = false;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("1234"));
+        controller.enqueue(new TextEncoder().encode("5678"));
+      },
+      cancel() { cancelled = true; },
+    }))) as unknown as typeof fetch;
+    try {
+      const result = await fetchTransport({
+        url: "http://127.0.0.1:9/v1/chat/completions",
+        api_key: null,
+        timeout_ms: 1_000,
+        max_response_bytes: 7,
+        body: BODY,
+      });
+      expect(result).toMatchObject({ ok: false, kind: "transport", failure: "too_large" });
+      expect(cancelled).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("rejects a non-json 200", async () => {
     fake = startFakeEndpoint(() => new Response("not-json", { status: 200 }));
     const result = await fetchTransport({

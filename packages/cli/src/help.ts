@@ -1,12 +1,12 @@
 import type { Command } from "./commands/index";
 import { UsageError } from "./args";
 import { RETIRED_OWNER_GATE_VERBS } from "./retired";
-
-/** Honest invocation from this checkout. Nothing is packaged. */
-export const INVOCATION = "bun packages/cli/src/main.ts";
+import { INVOCATION, IS_COMPILED } from "./runtime";
+export { INVOCATION } from "./runtime";
 
 const GROUPS: readonly { title: string; names: readonly string[] }[] = [
-  { title: "Start", names: ["init", "import", "query", "doctor"] },
+  { title: "Start", names: ["init", "import", "doctor"] },
+  { title: "Recall", names: ["query", "context"] },
   { title: "Sources", names: ["connect", "backfill", "sync"] },
   { title: "Correct", names: ["tell", "undo", "audit"] },
   { title: "Run", names: ["serve", "models"] },
@@ -22,8 +22,19 @@ const EXAMPLES: Readonly<Record<string, readonly string[]>> = {
     `${INVOCATION} query acme --scope canon`,
     `${INVOCATION} query acme --degraded`,
   ],
+  context: [
+    `${INVOCATION} context --purpose session --query "acme"`,
+    `${INVOCATION} context --purpose recall --query "acme" --budget 1200`,
+    `${INVOCATION} context --json`,
+  ],
   doctor: [`${INVOCATION} doctor`, `${INVOCATION} doctor --json`],
-  connect: [`${INVOCATION} connect markdown-folder --source ./notes`],
+  connect: [
+    `${INVOCATION} connect`,
+    `${INVOCATION} connect beeper --token-ref env:BEEPER_TOKEN`,
+    `${INVOCATION} connect imap`,
+    `${INVOCATION} connect markdown-folder --source ./notes`,
+    `${INVOCATION} connect status --json`,
+  ],
   backfill: [`${INVOCATION} backfill markdown-folder`],
   sync: [`${INVOCATION} sync`, `${INVOCATION} sync markdown-folder`],
   tell: [
@@ -57,12 +68,12 @@ export function printRootHelp(
   const width = Math.max(...commands.map((command) => command.name.length));
 
   write(
-    "Kizuki — local-first LifeOS. Source-linked claims become receipted Markdown canon.",
+    "Kizuki — local-first LifeOS. Your context, ready when you need it.",
   );
   write("");
   write("usage: kizuki <verb> [options]");
   write("");
-  write("Invoke from this checkout:");
+  write(IS_COMPILED ? "Run:" : "Invoke from this checkout:");
   write(`  ${INVOCATION} <verb> [options]`);
   write("");
   write("Global options");
@@ -90,9 +101,12 @@ export function printRootHelp(
   write(`  ${INVOCATION} init ./vault`);
   write(`  ${INVOCATION} import markdown-folder --source ./notes`);
   write(`  ${INVOCATION} query acme`);
+  write(`  ${INVOCATION} context --purpose session --query "acme"`);
   write(`  ${INVOCATION} doctor`);
   write("");
-  write("connect enrolls none-mode file sources only.");
+  write("Give your agent a focused context packet, with sources, using context.");
+  write("Capture and recall work without a model. Automatic canon writing needs one.");
+  write("Use connect to browse local files, exports, and Beeper messaging. Direct account sign-in is not available here.");
   write(
     `${RETIRED_OWNER_GATE_VERBS.join(", ")} are retired. Use audit, undo, and tell.`,
   );

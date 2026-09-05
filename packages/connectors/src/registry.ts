@@ -14,6 +14,12 @@ import {
 } from "@kizuki/connector-ics";
 import type { IcsConnectorConfig } from "@kizuki/connector-ics";
 import {
+  BEEPER_CONNECTOR_ID,
+  BEEPER_CURSOR_SCHEMA,
+  createBeeperConnector,
+} from "@kizuki/connector-beeper";
+import type { BeeperConnectorConfig } from "@kizuki/connector-beeper";
+import {
   IMAP_CONNECTOR_ID,
   IMAP_CURSOR_SCHEMA,
   createImapConnector,
@@ -31,6 +37,12 @@ import {
   createTelegramConnector,
 } from "@kizuki/connector-telegram";
 import type { TelegramConnectorConfig } from "@kizuki/connector-telegram";
+import {
+  X_ARCHIVE_CONNECTOR_ID,
+  X_ARCHIVE_CURSOR_SCHEMA,
+  createXArchiveConnector,
+} from "@kizuki/connector-x";
+import type { XArchiveConnectorConfig } from "@kizuki/connector-x";
 import {
   CHATGPT_IMPORT_CONNECTOR_ID,
   createChatGptImportConnector,
@@ -256,6 +268,20 @@ const LOCAL: ManifestOverlay = {
 };
 
 enroll(
+  BEEPER_CONNECTOR_ID,
+  ["backfill", "sync", "tombstones", "fixture"],
+  "@kizuki/connector-beeper",
+  (config) => createBeeperConnector(config as BeeperConnectorConfig),
+  {
+    contract_minor: 1,
+    implementation: "@kizuki/connector-beeper",
+    allowed_egress: ["127.0.0.1"],
+    cursor_schema: BEEPER_CURSOR_SCHEMA,
+    default_sensitivity: "private",
+    sensitivity_floor: "personal",
+  },
+);
+enroll(
   SCREENPIPE_CONNECTOR_ID,
   ["backfill", "sync", "fixture"],
   "@kizuki/connector-screenpipe",
@@ -354,6 +380,20 @@ enroll(
   LOCAL,
 );
 enroll(
+  X_ARCHIVE_CONNECTOR_ID,
+  ["backfill", "sync", "fixture"],
+  "@kizuki/connector-x",
+  (config) => createXArchiveConnector(config as XArchiveConnectorConfig),
+  {
+    contract_minor: 1,
+    implementation: "@kizuki/connector-x",
+    allowed_egress: [],
+    cursor_schema: X_ARCHIVE_CURSOR_SCHEMA,
+    default_sensitivity: "personal",
+    sensitivity_floor: "personal",
+  },
+);
+enroll(
   LEGACY_WIKI_CONNECTOR_ID,
   ["backfill", "sync", "tombstones", "fixture"],
   IN_TREE,
@@ -375,6 +415,10 @@ export function listConnectorDescriptors(): readonly PortDescriptor[] {
   return defaultConnectorRegistry.list();
 }
 
+export function getConnector(
+  id: typeof BEEPER_CONNECTOR_ID,
+  config: BeeperConnectorConfig,
+): Connector;
 export function getConnector(
   id: typeof SCREENPIPE_CONNECTOR_ID,
   config: ScreenpipeConfig,
@@ -414,6 +458,10 @@ export function getConnector(
 export function getConnector(
   id: typeof OMNIVORE_IMPORT_CONNECTOR_ID,
   config: OmnivoreImportConfig,
+): Connector;
+export function getConnector(
+  id: typeof X_ARCHIVE_CONNECTOR_ID,
+  config: XArchiveConnectorConfig,
 ): Connector;
 export function getConnector(
   id: typeof LEGACY_WIKI_CONNECTOR_ID,

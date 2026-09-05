@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { ProduceResult, ProducerPort } from "../../src/contracts/producer";
 import { openLedger } from "../../src/ledger/db";
 import {
+  commitExtractCursor,
   mineLiveDrafts,
   readExtractCursor,
   shouldAdvanceExtractCursor,
@@ -50,7 +51,7 @@ describe("extract tri-state cursor", () => {
     expect(readExtractCursor(db)).toBeNull();
     const mined = await mineLiveDrafts(
       db,
-      stubProducer({ status: "unavailable", reason: "llm unavailable" }),
+      stubProducer({ status: "unavailable", reason: "llm unavailable", usage: { calls: 0, input_tokens: 0, output_tokens: 0 } }),
     );
     expect(mined.mined.status).toBe("unavailable");
     expect(readExtractCursor(db)).toBeNull();
@@ -73,6 +74,7 @@ describe("extract tri-state cursor", () => {
       }),
     );
     expect(mined.mined.status).toBe("empty");
+    expect(commitExtractCursor(db, mined)).toBe(true);
     expect(readExtractCursor(db)).not.toBeNull();
     db.close();
     rmSync(directory, { recursive: true, force: true });
@@ -86,7 +88,7 @@ describe("extract tri-state cursor", () => {
     putEvent(db, { source_record_id: "one" });
     const unavailable = await mineLiveDrafts(
       db,
-      stubProducer({ status: "unavailable", reason: "llm unavailable" }),
+      stubProducer({ status: "unavailable", reason: "llm unavailable", usage: { calls: 0, input_tokens: 0, output_tokens: 0 } }),
     );
     const empty = await mineLiveDrafts(
       db,
@@ -128,7 +130,53 @@ describe("extract tri-state cursor", () => {
     const mined = await mineLiveDrafts(db, wrapped);
     expect(mined.mined.status).toBe("empty");
     expect(called).toBe(0);
+    expect(commitExtractCursor(db, mined)).toBe(true);
     expect(readExtractCursor(db)).not.toBeNull();
+    db.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  test("deleted and context packets never reach the model input", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-tri-state-"));
+    const path = join(directory, "vault");
+    initVault(path);
+    const db = openLedger(join(path, ".kizuki", "kizuki.db"));
+    const deleted = putEvent(db, { source_record_id: "deleted", text: "deleted source" });
+    db.query("UPDATE events SET deleted = 1 WHERE event_id = ?").run(deleted);
+    putEvent(db, { source_record_id: "context", text: "KIZUKI CONTEXT v1\nprincipal=owner" });
+    putEvent(db, { source_record_id: "live", text: "live source" });
+    let seen = [] as readonly string[];
+    const producer = stubProducer({ status: "ok", claims: [], usage: { calls: 1, input_tokens: 1, output_tokens: 1 } });
+    const mined = await mineLiveDrafts(db, {
+      ...producer,
+      produce: async (input) => {
+        seen = input.events.map((event) => event.text);
+        return producer.produce(input);
+      },
+    });
+    expect(mined.mined.status).toBe("empty");
+    expect(seen).toEqual(["live source"]);
+    expect(commitExtractCursor(db, mined)).toBe(true);
+    db.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  test("a stale extraction result cannot overwrite a newer checkpoint", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-tri-state-"));
+    const path = join(directory, "vault");
+    initVault(path);
+    const db = openLedger(join(path, ".kizuki", "kizuki.db"));
+    putEvent(db, { source_record_id: "one" });
+    const mined = await mineLiveDrafts(
+      db,
+      stubProducer({ status: "ok", claims: [], usage: { calls: 1, input_tokens: 1, output_tokens: 1 } }),
+    );
+    expect(mined.cursor).not.toBeNull();
+    const newer = "2026-09-05T00:00:00.000Z\t01JNEWERCURSOR00000000000000";
+    const { writeCheckpoint } = await import("../../src/ledger/checkpoints");
+    writeCheckpoint(db, "kizuki.producer.model", "extract", newer);
+    expect(commitExtractCursor(db, mined)).toBe(false);
+    expect(readExtractCursor(db)).toBe(newer);
     db.close();
     rmSync(directory, { recursive: true, force: true });
   });

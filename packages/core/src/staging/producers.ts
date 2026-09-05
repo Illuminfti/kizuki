@@ -1,3 +1,4 @@
+import { subjectPageType } from "../vault/subject-type";
 import type { Database } from "bun:sqlite";
 import type { CaptureEvent, SubjectRef } from "../contracts/event";
 import { tableExists } from "../ledger/schema";
@@ -5,7 +6,6 @@ import { validatePageCandidate } from "../contracts/page-candidate";
 import { pageCandidateProposal } from "./page-candidate";
 import { fileProposal, setProposalStatus } from "./proposals";
 import type { ProposalInput } from "./proposals";
-import type { PageType } from "../vault/schema";
 
 /**
  * The deterministic floor: claims derivable from an event with no model.
@@ -13,7 +13,7 @@ import type { PageType } from "../vault/schema";
  * queue — the receipted writer acts on the claims later.
  */
 
-/** Identity is a candidate, never a fact: the owner confirms a subject is a person. */
+/** A source identifier establishes identity, not a personal entity type. */
 const ENTITY_CONFIDENCE = 0.5;
 /** A verbatim quote of captured text is as certain as the ledger row it cites. */
 const CAPTURE_CONFIDENCE = 1;
@@ -37,23 +37,6 @@ function blockquote(text: string): string {
     .join("\n");
 }
 
-/**
- * `SubjectRef` carries only an id, a role and a display name (`kizuki.event/v1`
- * is frozen — see #430), so the only honest signal for what kind of thing a
- * subject is is the namespace prefix a connector chose for its id. `email:` is
- * the sole prefix that genuinely denotes a person by convention; every other
- * shipped namespace (`screenpipe:app:`, `screenpipe:site:`,
- * `screenpipe:speaker:`, `screenpipe:audio-device:`, `calendar:`, and anything
- * unrecognized) defaults to `topic` rather than asserting an identity the
- * deterministic producer has no basis to claim. A `screenpipe:speaker:` id
- * names an unconfirmed diarization cluster, not a verified individual — it can
- * be silent, misattributed, or shared by more than one voice — so it stays
- * `topic` until the owner or the model confirms it names a person.
- */
-export function pageTypeForSubject(subjectId: string): PageType {
-  return subjectId.startsWith("email:") ? "person" : "topic";
-}
-
 function entityProposal(
   event: CaptureEvent,
   subject: SubjectRef,
@@ -63,10 +46,10 @@ function entityProposal(
     kind: "entity",
     target: subject.subject_id,
     // Stable per subject, so a second sighting dedupes onto this candidate
-    // instead of forking a second stub page for the same person.
+    // instead of forking a second stub page for the same subject.
     body: `Stub entity page for \`${subject.subject_id}\`.`,
     frontmatter: {
-      type: pageTypeForSubject(subject.subject_id),
+      type: subjectPageType(subject.subject_id),
       title: subject.display_name ?? handle,
       "x-handle": handle,
       "x-subject-id": subject.subject_id,

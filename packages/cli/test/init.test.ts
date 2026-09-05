@@ -1,12 +1,45 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { createHelpers } from "./helpers";
 
 const { cleanup, isolatedEnv, runCli, tempDir } = createHelpers();
 afterEach(cleanup);
 
 describe("init", () => {
+  test("permission repair cannot follow a root replaced after its ownership check", () => {
+    const root = tempDir();
+    const source = resolve(import.meta.dir, "../../core/src/vault/init.ts");
+    const probe = `
+      import * as fs from "node:fs";
+      import { join } from "node:path";
+      import { mock } from "bun:test";
+      const root = ${JSON.stringify(root)};
+      const vault = join(root, "vault"), moved = join(root, "moved"), outside = join(root, "outside");
+      fs.mkdirSync(vault); fs.chmodSync(vault, 0o775);
+      fs.mkdirSync(outside); fs.chmodSync(outside, 0o755);
+      fs.writeFileSync(join(vault, "note.md"), "synthetic note");
+      const nativeFchmod = fs.fchmodSync;
+      let swapped = false;
+      mock.module("node:fs", () => ({ ...fs, fchmodSync(fd, mode) {
+        if (!swapped) { swapped = true; fs.renameSync(vault, moved); fs.symlinkSync(outside, vault); }
+        nativeFchmod(fd, mode);
+      } }));
+      const { initVault } = await import(${JSON.stringify(source)});
+      let refused = false;
+      try { initVault(vault, { adopt: true }); } catch { refused = true; }
+      process.stdout.write(JSON.stringify({ refused, swapped,
+        outside_mode: fs.statSync(outside).mode & 0o777,
+        original_mode: fs.statSync(moved).mode & 0o777,
+        outside_control: fs.existsSync(join(outside, ".kizuki")),
+        original_control: fs.existsSync(join(moved, ".kizuki")) }));
+    `;
+    const result = Bun.spawnSync([process.execPath, "-e", probe], { stdout: "pipe", stderr: "pipe" });
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    expect(JSON.parse(result.stdout.toString())).toEqual({ refused: true, swapped: true,
+      outside_mode: 0o755, original_mode: 0o700, outside_control: false, original_control: false });
+  });
+
   test("writes owner-only control files and a ready journal", () => {
     const env = isolatedEnv();
     const vault = join(tempDir(), "vault");
@@ -32,6 +65,7 @@ describe("init", () => {
     const env = isolatedEnv();
     const vault = join(tempDir(), "notes");
     mkdirSync(vault);
+    chmodSync(vault, 0o775);
     writeFileSync(join(vault, "inbox.md"), "a personal note\n");
 
     const refused = runCli(env, "init", vault, "--no-service");
@@ -39,16 +73,19 @@ describe("init", () => {
     expect(refused.stderr).toContain("pass --adopt to take ownership");
     expect(refused.stderr).toContain("entry inbox.md");
     expect(existsSync(join(vault, ".kizuki"))).toBe(false);
+    expect(statSync(vault).mode & 0o777).toBe(0o775);
 
     const dry = runCli(env, "init", vault, "--adopt", "--dry-run", "--no-service");
     expect(dry.exitCode).toBe(0);
     expect(dry.stdout).toContain("dry-run");
     expect(dry.stdout).toContain("entry inbox.md");
     expect(existsSync(join(vault, ".kizuki"))).toBe(false);
+    expect(statSync(vault).mode & 0o777).toBe(0o775);
 
     const adopted = runCli(env, "init", vault, "--adopt", "--no-service");
     expect(adopted.exitCode).toBe(0);
     expect(adopted.stdout).toContain("adopt entries=1");
+    expect(statSync(vault).mode & 0o777).toBe(0o700);
     expect(existsSync(join(vault, ".kizuki", "kizuki.db"))).toBe(true);
     expect(readFileSync(join(vault, "inbox.md"), "utf8")).toBe("a personal note\n");
     expect(JSON.parse(readFileSync(join(vault, ".kizuki", "init.json"), "utf8")).adopt.policy).toBe(

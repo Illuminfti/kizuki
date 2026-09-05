@@ -11,6 +11,7 @@ import { inspectPurgeHealth } from "../ledger/purge";
 import { listCanonPagesReport } from "../vault/pages";
 import { loadConfiguredModelRef, loadServeConfig } from "./config";
 import { readServeIntent } from "./intent";
+import { serviceFile } from "./service-files";
 import { listRunReceipts, orphanJournalReceipts } from "./receipts";
 import { listSchedules } from "./schema";
 import type { SupervisorHost } from "./supervisor";
@@ -37,6 +38,8 @@ export interface ServeDoctorOptions {
   readonly now?: string;
   readonly supervisor?: SupervisorHost;
   readonly model_ref?: string | null;
+  /** Raw config intent is shown as unverified until a host binds its port. */
+  readonly configured_model_ref?: string | null;
 }
 
 function ageSeconds(from: string | null, now: string): number | null {
@@ -190,6 +193,7 @@ function modelSucceeded(receipt: RunReceipt): boolean {
   return (
     receipt.model.calls > 0 &&
     receipt.model.unavailable === 0 &&
+    receipt.model.usage_unknown !== true &&
     producerRejection(receipt) === null
   );
 }
@@ -212,10 +216,12 @@ function lastModelStop(
 function modelDoctor(
   receipts: RunReceipt[],
   modelRef: string | null | undefined,
+  configuredModelRef: string | null | undefined,
   configCanonDay: number,
   usedToday: number,
 ): ModelDoctor {
   const on = typeof modelRef === "string" && modelRef.length > 0;
+  const unverified = !on && typeof configuredModelRef === "string" && configuredModelRef.length > 0;
   const lastOk = [...receipts].reverse().find(modelSucceeded);
   const unavailable = receipts.reduce((sum, receipt) => sum + receipt.model.unavailable, 0);
   // A silent refusal never gets to look identical to "canon writing: on"
@@ -223,7 +229,7 @@ function modelDoctor(
   // stop or rejection is named here too, not just buried in a receipt.
   const lastStop = lastOk === undefined ? lastModelStop(receipts) : null;
   return {
-    canon_writing: on ? "on" : "off",
+    canon_writing: on ? "on" : unverified ? "unverified" : "off",
     model_ref: on ? modelRef : null,
     last_success_at: lastOk?.finished_at ?? null,
     unavailable,
@@ -231,7 +237,9 @@ function modelDoctor(
       canon_writes_per_day: { used: usedToday, limit: configCanonDay },
     },
     detail: on
-      ? `canon writing: on (${modelRef})`
+      ? `canon writing: on (${modelRef}); last_success=${lastOk?.finished_at ?? "never"} unavailable=${unavailable}`
+      : unverified
+        ? "canon writing: unverified (model configured but not bound by the running host)"
       : "canon writing: off (no model configured — connectors, ledger, search, timeline and undo still work)",
     last_stop: lastStop,
   };
@@ -340,7 +348,7 @@ function storeDoctor(
   };
 }
 
-function expectRailLiveness(intent: ServeIntent, supervisor: SupervisorStatus): boolean {
+function expectRailLiveness(intent: ServeIntent | "unknown", supervisor: SupervisorStatus): boolean {
   return intent === "installed" && supervisor.state === "active";
 }
 
@@ -350,7 +358,9 @@ export function inspectServeDoctor(
   options: ServeDoctorOptions = {},
 ): ServeDoctorReport {
   const now = options.now ?? new Date().toISOString();
-  const intent = readServeIntent(vaultPath);
+  let intent: ServeIntent | "unknown";
+  try { intent = readServeIntent(vaultPath); }
+  catch { intent = "unknown"; }
   const supervisor = options.supervisor
     ? queryServeService(vaultPath, options.supervisor)
     : {
@@ -378,17 +388,21 @@ export function inspectServeDoctor(
   const usedToday = receipts
     .filter((receipt) => receipt.finished_at.startsWith(now.slice(0, 10)))
     .reduce((sum, receipt) => sum + receipt.canon_writes, 0);
-  const modelRef = options.model_ref ?? loadConfiguredModelRef(vaultPath);
-  const model = modelDoctor(receipts, modelRef, config.canon_writes_per_day, usedToday);
+  const modelRef = options.model_ref ?? null;
+  const configuredModelRef = options.configured_model_ref ?? loadConfiguredModelRef(vaultPath);
+  const model = modelDoctor(receipts, modelRef, configuredModelRef, config.canon_writes_per_day, usedToday);
   const stores = storeDoctor(db, vaultPath, now);
   const cal = calibration(db, receipts, now);
   const failures: string[] = [];
-  if (intent === "installed") {
-    if (supervisor.state === "masked") {
-      failures.push("supervisor masked");
-    } else if (supervisor.state === "absent") {
-      failures.push("supervisor absent");
-    }
+  if (intent === "unknown") failures.push("service intent unavailable or invalid");
+  else if (intent !== "installed" && (supervisor.enabled || supervisor.state === "active")) {
+    failures.push("supervisor active or enabled without installed intent");
+  }
+  try {
+    if (serviceFile(join(vaultPath, ".kizuki", "service-change.json")) !== null) failures.push("service change recovery pending");
+  } catch { failures.push("service recovery state unavailable"); }
+  if (intent === "installed" && (supervisor.state !== "active" || !supervisor.enabled)) {
+    failures.push(`supervisor ${supervisor.state}${supervisor.state === "active" ? " but not enabled" : ""}`);
   }
   for (const rail of rails) {
     if (rail.status === "down" && rail.reason !== null) {

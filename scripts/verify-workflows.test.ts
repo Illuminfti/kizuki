@@ -1,9 +1,37 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import {
+  validateToolchain,
   validateTrackedWorkflows,
   validateWorkflowText,
 } from "./verify-workflows";
 
+test("runtime, package metadata and resolved types share the checked-in Bun pin", () => {
+  expect(validateToolchain()).toEqual([]);
+  expect(validateToolchain(undefined, "1.4.0")).toEqual([
+    expect.objectContaining({ reason: "verification requires Bun 1.3.10" }),
+  ]);
+  const root = mkdtempSync(join(tmpdir(), "kizuki-toolchain-"));
+  try {
+    for (const name of [".bun-version", "package.json", "bun.lock"]) {
+      writeFileSync(join(root, name), readFileSync(resolve(import.meta.dir, "..", name)));
+    }
+    expect(validateToolchain(root)).toEqual([]);
+    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+    pkg.devDependencies["@types/bun"] = "^1.3.0";
+    writeFileSync(join(root, "package.json"), JSON.stringify(pkg));
+    expect(validateToolchain(root).some(failure => failure.reason.includes("runtime types"))).toBe(true);
+    const lock = readFileSync(join(root, "bun.lock"), "utf8").replace('"bun-types@1.3.10"', '"bun-types@1.4.0"');
+    writeFileSync(join(root, "bun.lock"), lock);
+    expect(validateToolchain(root).some(failure => failure.reason.includes("resolved Bun"))).toBe(true);
+    writeFileSync(join(root, "package.json"), "{");
+    expect(validateToolchain(root)).toEqual([expect.objectContaining({ reason: "toolchain metadata is missing or malformed" })]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+const pinnedRef = '${{ github.event.pull_request.head.sha || github.sha }}';
 const pinnedCheckout = "actions/checkout@11d5960a326750d5838078e36cf38b85af677262";
 const pinnedBun = "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6";
 
@@ -15,7 +43,7 @@ function ciWorkflow(overrides?: {
   const name = overrides?.name ?? "ci";
   const testSteps = overrides?.testSteps ??
     `      - uses: ${pinnedCheckout}
-        with: { fetch-depth: 0 }
+        with: { fetch-depth: 0, ref: "${pinnedRef}" }
       - uses: ${pinnedBun}
         with: { bun-version: 1.3.10 }
       - run: bun run verify`;
@@ -31,10 +59,24 @@ jobs:
     timeout-minutes: 10
     steps:
 ${testSteps}
+      - run: bun scripts/ci-diff-check.ts
 ${overrides?.extraJob ?? ""}`;
 }
 
 describe("workflow validation", () => {
+  test("the real workflow cannot disconnect the event-bound gate or restore mutable checkout refs", () => {
+    const path = ".github/workflows/ci.yml";
+    const current = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
+    const old = current.replaceAll("          ref: ${{ github.event.pull_request.head.sha || github.sha }}\n", "")
+      .replace("run: bun scripts/ci-diff-check.ts", "run: |\n          git fetch --no-tags origin main\n          git diff --check FETCH_HEAD...HEAD");
+    expect(validateWorkflowText(path, old).some(failure => failure.reason.includes("event head"))).toBe(true);
+    expect(validateWorkflowText(path, old).some(failure => failure.reason.includes("event-bound diff"))).toBe(true);
+    const skipped = current.replace("      - name: exact-head diff integrity", "      - if: false\n        name: exact-head diff integrity");
+    expect(validateWorkflowText(path, skipped).some(failure => failure.reason.includes("event-bound diff"))).toBe(true);
+    const secondCheckout = current.replace("      - name: secret patterns", `      - uses: ${pinnedCheckout}\n        with: { fetch-depth: 0, ref: main }\n      - name: secret patterns`);
+    expect(validateWorkflowText(path, secondCheckout).some(failure => failure.reason.includes("event head"))).toBe(true);
+  });
+
   test("accepts a SHA-pinned ci workflow with fetch-depth 0", () => {
     expect(validateWorkflowText(".github/workflows/ci.yml", ciWorkflow())).toEqual([]);
   });
@@ -81,7 +123,7 @@ describe("workflow validation", () => {
   test("rejects an unpinned action", () => {
     const text = ciWorkflow({
       testSteps: `      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with: { fetch-depth: 0, ref: "${pinnedRef}" }
       - run: bun run verify`,
     });
     expect(validateWorkflowText(".github/workflows/ci.yml", text)).toEqual([
@@ -92,7 +134,7 @@ describe("workflow validation", () => {
   test("rejects a verify job without fetch-depth 0", () => {
     const text = ciWorkflow({
       testSteps: `      - uses: ${pinnedCheckout}
-        with: { fetch-depth: 1 }
+        with: { fetch-depth: 1, ref: "${pinnedRef}" }
       - uses: ${pinnedBun}
         with: { bun-version: 1.3.10 }
       - run: bun run verify`,
@@ -101,6 +143,7 @@ describe("workflow validation", () => {
       expect.objectContaining({
         reason: expect.stringContaining("fetch-depth"),
       }),
+      expect.objectContaining({ reason: expect.stringContaining("event head") }),
     ]);
   });
 
@@ -119,7 +162,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: ${pinnedCheckout}
-        with: { fetch-depth: 0 }
+        with: { fetch-depth: 0, ref: "${pinnedRef}" }
       - run: bun test
 `;
     expect(validateWorkflowText(".github/workflows/ci.yml", withoutTest)).toEqual([
@@ -130,7 +173,7 @@ jobs:
   test("rejects skip-on-missing hashFiles conditions", () => {
     const text = ciWorkflow({
       testSteps: `      - uses: ${pinnedCheckout}
-        with: { fetch-depth: 0 }
+        with: { fetch-depth: 0, ref: "${pinnedRef}" }
       - uses: ${pinnedBun}
         with: { bun-version: 1.3.10 }
       - if: hashFiles('scripts/verify.sh') == ''
@@ -144,7 +187,7 @@ jobs:
   test("rejects bun-version latest", () => {
     const text = ciWorkflow({
       testSteps: `      - uses: ${pinnedCheckout}
-        with: { fetch-depth: 0 }
+        with: { fetch-depth: 0, ref: "${pinnedRef}" }
       - uses: ${pinnedBun}
         with: { bun-version: latest }
       - run: bun run verify`,
@@ -157,4 +200,38 @@ jobs:
   test("the tracked workflow files pass the same rules CI runs", async () => {
     expect(await validateTrackedWorkflows()).toEqual([]);
   });
+});
+
+
+test("manual macOS proof refuses automatic triggers, unbounded cost, and mutable checkouts", () => {
+  const path = ".github/workflows/macos-native.yml";
+  const text = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
+  expect(validateWorkflowText(path, text)).toEqual([]);
+  for (const bad of [text.replace("  workflow_dispatch:", "  push: {}\n  workflow_dispatch:"), text.replace("default: false", "default: true"), text.replace("timeout-minutes: 15", "timeout-minutes: 60"), text.replace("${{ github.event.pull_request.head.sha || github.sha }}", "main"), text.replace("bun scripts/ci-diff-check.ts", "echo skipped")]) {
+    expect(validateWorkflowText(path, bad).length).toBeGreaterThan(0);
+  }
+});
+
+test("macOS validator rejects removal or bypass of each native proof obligation", () => {
+  const path = ".github/workflows/macos-native.yml";
+  const text = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
+  const mutations: [string, (doc: any) => void][] = [
+    ["shallow checkout", d => { d.jobs["native-arm64"].steps[0].with["fetch-depth"] = 1; }],
+    ["platform tests removed", d => { d.jobs["native-arm64"].steps.splice(5, 1); }],
+    ["build proof removed", d => { d.jobs["native-arm64"].steps.splice(6, 1); }],
+    ["wrong target", d => { d.jobs["native-arm64"].env.KIZUKI_TARGET = "bun-linux-x64-baseline"; }],
+    ["host assertions removed", d => { d.jobs["native-arm64"].steps[4].run = "bun install --frozen-lockfile"; }],
+    ["upload removed", d => { d.jobs["native-arm64"].steps.pop(); }],
+    ["retention removed", d => { delete d.jobs["native-arm64"].steps[7].with["retention-days"]; }],
+    ["receipt omitted", d => { d.jobs["native-arm64"].steps[7].with.path = "dist/kizuki-*/bun-darwin-arm64/"; }],
+    ["Bun setup removed", d => { d.jobs["native-arm64"].steps.splice(2, 1); }],
+    ["conditional tests", d => { d.jobs["native-arm64"].steps[5].if = "false"; }],
+    ["conditional build", d => { d.jobs["native-arm64"].steps[6].if = "false"; }],
+    ["masked proof failure", d => { d.jobs["native-arm64"].steps[6].run += "\ntrue"; }],
+    ["target overridden in step", d => { d.jobs["native-arm64"].steps[6].env = { KIZUKI_TARGET: "bun-linux-x64-baseline" }; }],
+  ];
+  for (const [name, mutate] of mutations) {
+    const doc = Bun.YAML.parse(text); mutate(doc);
+    expect(validateWorkflowText(path, JSON.stringify(doc)).length, name).toBeGreaterThan(0);
+  }
 });

@@ -1,4 +1,12 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -74,7 +82,16 @@ export function editInEditor(editor: EditorArgv, body: string, id: string): stri
   const dir = mkdtempSync(join(tmpdir(), "kizuki-audit-"));
   const file = join(dir, `${id}.md`);
   try {
-    writeFileSync(file, body, "utf8");
+    // mkdtemp is normally private, but make both modes an explicit contract
+    // and create the body file exclusively so a permissive umask cannot leak it.
+    chmodSync(dir, 0o700);
+    const fd = openSync(file, "wx", 0o600);
+    try {
+      writeFileSync(fd, body, "utf8");
+    } finally {
+      closeSync(fd);
+    }
+    chmodSync(file, 0o600);
     const argv = [...editorArgv(editor), file];
     const result = Bun.spawnSync(argv, {
       stdin: "inherit",

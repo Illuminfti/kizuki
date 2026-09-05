@@ -82,3 +82,16 @@ describe("serve http", () => {
     db.close();
   });
 });
+
+test("HTTP startup failure releases PID and writer lease for immediate restart", async () => {
+  const { runServeDaemon, readServePid } = await import("../../src/serve/daemon");
+  const directory = mkdtempSync(join(tmpdir(), "kizuki-http-startup-")); dirs.push(directory);
+  initVault(directory); const db = openLedger(join(directory, ".kizuki/kizuki.db"));
+  const occupied = startServeHttp({ db, vaultPath: directory, host: "127.0.0.1", port: 0 });
+  try {
+    await expect(runServeDaemon(db, directory, { once: true, rails: [], port: occupied.port })).rejects.toThrow();
+    expect(readServePid(directory)).toBeNull();
+    expect(db.query("SELECT * FROM leases").all()).toHaveLength(0);
+    await expect(runServeDaemon(db, directory, { once: true, rails: [], http: false })).resolves.toMatchObject({ receipts: 0 });
+  } finally { await occupied.stop(); db.close(); }
+});

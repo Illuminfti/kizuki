@@ -1,3 +1,4 @@
+import { canonAuthorities } from "./canon/authority";
 import type { Database } from "bun:sqlite";
 import {
   derivedMetaNeedsRebuild,
@@ -75,11 +76,13 @@ export function rebuildDerived(
   vaultPath: string,
 ): DerivedRebuildResult {
   const report = listCanonPagesReport(vaultPath);
+  if (report.skipped.length > 0) throw new Error("canon is unreadable; derived rebuild refused");
   const live = report.pages.filter(isLiveCanonPage);
   const generation = ulid();
   const rebuiltAt = new Date().toISOString();
   const input = {
     generation,
+    authorities:canonAuthorities(db,live),
     pages: live,
     skipped: report.skipped,
     rebuilt_at: rebuiltAt,
@@ -104,8 +107,9 @@ export function refreshDerivedPage(
   initGraph(db);
   const report = listCanonPagesReport(vaultPath);
   db.transaction(() => {
-    replacePage(db, page);
-    refreshPageEdges(db, page, report.pages, report.skipped.length);
+    const authorities=canonAuthorities(db,report.pages);
+    replacePage(db, page,authorities.get(page.relPath)??"model_inference");
+    refreshPageEdges(db, page, report.pages, report.skipped.length,authorities);
   }).immediate();
 }
 

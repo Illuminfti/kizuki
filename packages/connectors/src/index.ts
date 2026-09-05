@@ -11,6 +11,16 @@ export {
 } from "./registry";
 export type { ConnectorFactory, ConnectorId, ManifestOverlay } from "./registry";
 export {
+  BEEPER_CONNECTOR_ID,
+  BeeperConnector,
+  createBeeperConnector,
+} from "@kizuki/connector-beeper";
+export type {
+  BeeperConnectorConfig,
+  BeeperConnectorDeps,
+  BeeperCursor,
+} from "@kizuki/connector-beeper";
+export {
   SCREENPIPE_CONNECTOR_ID,
   ScreenpipeConnector,
   ScreenpipeConnectorError,
@@ -42,6 +52,21 @@ export type {
   TelegramState,
   TelegramUser,
 } from "@kizuki/connector-telegram";
+export {
+  X_ARCHIVE_CONNECTOR_ID,
+  X_ARCHIVE_IMPORT_CONNECTOR_ID,
+  X_ARCHIVE_CURSOR_SCHEMA,
+  XArchiveConnector,
+  XArchiveImportConnector,
+  createXArchiveConnector,
+  createXArchiveImportConnector,
+} from "@kizuki/connector-x";
+export type {
+  XArchiveConnectorConfig,
+  XArchiveConnectorDeps,
+  XArchiveCursor,
+  XArchiveImportConfig,
+} from "@kizuki/connector-x";
 export {
   MARKDOWN_FOLDER_CONNECTOR_ID,
   MarkdownFolderConnector,

@@ -46,6 +46,7 @@ export const SUPERVISOR_KINDS = ["systemd", "launchd", "none"] as const;
 export type SupervisorKind = (typeof SUPERVISOR_KINDS)[number];
 
 export const SUPERVISOR_STATES = [
+  "unknown",
   "active",
   "disabled",
   "masked",
@@ -90,6 +91,8 @@ export interface LeaseRow {
 }
 
 export interface RunModelReport {
+  /** An interrupted producer attempt: token counts are lower bounds, not measured totals. */
+  readonly usage_unknown?: boolean;
   readonly calls: number;
   readonly input_tokens: number;
   readonly output_tokens: number;
@@ -105,7 +108,26 @@ export interface RunRetrievalReport {
   readonly degraded: readonly string[];
 }
 
+export interface RunExecution {
+  readonly instance_id: string;
+  readonly pid: number;
+  readonly boot_id: string;
+  readonly trigger: "scheduled" | "manual" | "once";
+  readonly due_at: string | null;
+}
+
+export interface RunScheduleTransition {
+  readonly previous_due_at: string | null;
+  readonly next_run_at: string;
+  readonly period_s: number;
+  readonly brief_hour: number | null;
+}
+
 export interface RunReceipt {
+  /** Durable scheduler compare-and-advance intent, replayed with the receipt row. */
+  readonly schedule_transition?: RunScheduleTransition;
+  /** Legacy receipts omit this and cannot prove automatic artifact-bound execution. */
+  readonly execution?: RunExecution;
   readonly run_id: string;
   readonly rail: string;
   readonly started_at: string;
@@ -174,7 +196,7 @@ export interface RailDoctor {
 }
 
 export interface ModelDoctor {
-  readonly canon_writing: "on" | "off";
+  readonly canon_writing: "on" | "off" | "unverified";
   readonly model_ref: string | null;
   readonly last_success_at: string | null;
   readonly unavailable: number;
@@ -223,7 +245,7 @@ export interface CalibrationDoctor {
 
 export interface ServeDoctorReport {
   readonly supervisor: SupervisorStatus;
-  readonly intent: ServeIntent;
+  readonly intent: ServeIntent | "unknown";
   readonly rails: RailDoctor[];
   readonly model: ModelDoctor;
   readonly stores: StoreDoctor;

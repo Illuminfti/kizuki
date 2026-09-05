@@ -354,15 +354,15 @@ describe("authority is re-read on every served call", () => {
     ).toBe("tool_not_granted");
   });
 
-  test("a ceiling narrowed mid-session narrows what the same context reads", () => {
+  test("a ceiling narrowed mid-session narrows what the same context reads", async () => {
     const ctx = live.agent("reader-private");
-    const ids = (): string[] =>
-      serveSearch(ctx, { query: "kettle" }).canon.map((chunk) => chunk.page_id);
-    expect(ids()).toContain("fact:kettle");
+    const ids = async (): Promise<string[]> =>
+      (await serveSearch(ctx, { query: "kettle" })).canon.map((chunk) => chunk.page_id);
+    expect((await ids())).toContain("fact:kettle");
 
     setGrant(live.db, "reader-private", { ceiling: "public" });
 
-    expect(ids()).not.toContain("fact:kettle");
+    expect((await ids())).not.toContain("fact:kettle");
   });
 
   test("a refused call cannot grow its audit row without bound", () => {

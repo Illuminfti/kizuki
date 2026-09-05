@@ -20,14 +20,20 @@ MCP `correct`) is the update path a person actually uses.
 
 ## What this revision ships
 
-The public CLI, file ingest, FTS query, doctor, tell/undo/audit, serve
-loopback, context packets, and MCP stdio adapter. Capture never writes
-canon. Sign-in connectors are not enrollable through this CLI. After
+The public CLI, a Linux x64 baseline local native package, file ingest, FTS
+query, doctor, tell/undo/audit, serve loopback, context packets, and MCP stdio
+adapter. Capture never writes canon. Local files and exports are enrollable;
+an opt-in Beeper Desktop connection reads local history through an approved
+token reference. IMAP supports local sign-in and re-enrollment that preserves
+the existing mailbox identity and checkpoint. Other sign-in connectors are not
+enrollable through this CLI.
+After
 `import`, claims are live and `tell --claim` can name them. Canon writing
 still requires a configured model; without one the sync rail leaves live
 claims unwritten and doctor says so. 1.0 is still stranger proof plus
-estate cutover (C1, RFC 0002 §1.3). Neither proof is in this tree. There
-is no `scripts/stranger-proof.sh`.
+estate cutover (C1, RFC 0002 §1.3). Neither proof is in this tree. The
+automated `scripts/stranger-proof.ts` artifact isolation check is a
+deterministic release prerequisite, not a human stranger proof.
 
 ## What is stale
 
@@ -36,6 +42,13 @@ Owner-only promote, `kizuki review` as the 1.0 daily surface, and
 `docs/wave1/specs/llm-producer.md`, `docs/wave1/specs/serve-daemon.md`,
 `docs/wave1/specs/stranger-proof.md`, and
 `docs/wave1/specs/security-docs.md` are VOID as written.
+
+## What this does not prove
+
+The native package is a local Linux x64 baseline build, not a signed or
+published installer. The Beeper connector has synthetic coverage only; this
+tree makes no claim that a live account was tested. Stranger proof, estate
+cutover, and 1.0 are not complete.
 
 ## What still holds
 

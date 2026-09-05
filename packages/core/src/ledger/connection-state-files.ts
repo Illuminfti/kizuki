@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { LedgerError } from "./connections";
+import { isUlid, ULID_PATTERN } from "../util/ulid";
 
 export const MAX_CONNECTION_STATE_BYTES = 1024 * 1024;
 export const MAX_JOURNAL_BYTES = 16 * 1024;
@@ -28,12 +29,11 @@ type ChunkWriter = (
 const writeChunk: ChunkWriter = (fd, bytes, offset, length) =>
   writeSync(fd, bytes, offset, length);
 
-const CORE_ULID_PATTERN = "[0-9A-HJKMNPQRSTVWXYZ]{26}";
 const STAGING_NAME = new RegExp(
-  `^${CORE_ULID_PATTERN}\\.state\\.${CORE_ULID_PATTERN}\\.tmp$`,
+  `^${ULID_PATTERN}\\.state\\.${ULID_PATTERN}\\.tmp$`,
 );
 const JOURNAL_NAME = new RegExp(
-  `^(${CORE_ULID_PATTERN})\\.state\\.${CORE_ULID_PATTERN}\\.journal$`,
+  `^(${ULID_PATTERN})\\.state\\.${ULID_PATTERN}\\.journal$`,
 );
 /**
  * A staging file younger than this may belong to a writer another process is
@@ -43,10 +43,8 @@ const JOURNAL_NAME = new RegExp(
  */
 const ABANDONED_STAGING_MS = 1_800_000;
 
-const CORE_ULID = new RegExp(`^${CORE_ULID_PATTERN}$`);
-
 export function isCoreUlid(value: string): boolean {
-  return CORE_ULID.test(value);
+  return isUlid(value);
 }
 
 /** Source key a swap journal filename locks, or null when it cannot bind one. */

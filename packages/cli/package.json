@@ -8,9 +8,11 @@
   },
   "dependencies": {
     "@kizuki/connectors": "workspace:*",
+    "@kizuki/connector-imap": "workspace:*",
     "@kizuki/core": "workspace:*",
     "@kizuki/embed-gguf": "workspace:*",
-    "@kizuki/llm": "workspace:*",
-    "@kizuki/tui": "workspace:*"
+    "@kizuki/tui": "workspace:*",
+    "@kizuki/retrieval-pg": "workspace:*",
+    "@kizuki/llm": "workspace:*"
   }
 }

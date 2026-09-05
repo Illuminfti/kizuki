@@ -1,4 +1,7 @@
+import { subjectPageType } from "../vault/subject-type";
+import { CanonAuthorityResolver } from "./authority";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import type { Sensitivity } from "../agents/types";
 import { SENSITIVITY_ORDER } from "../agents/types";
 import { getClaim } from "../claims/store";
@@ -163,13 +166,22 @@ function existingSources(page: VaultPage): string[] {
   return raw;
 }
 
-function assertPersisted(io: CanonIo, claims: readonly Claim[]): void {
-  for (const claim of claims) {
+/** Ignore lifecycle updates while binding every producer-supplied field to storage. */
+function claimContent(claim: Claim): Omit<Claim,
+  "status" | "receipt_id" | "superseded_by" | "retracted_at" | "valid_to" |
+  "corroboration" | "last_confirmed_at"> {
+  const { status, receipt_id, superseded_by, retracted_at, valid_to,
+    corroboration, last_confirmed_at, ...content } = claim;
+  return content;
+}
+
+function persistedClaims(io: CanonIo, claims: readonly Claim[]): Claim[] {
+  return claims.map((claim) => {
     const stored = getClaim(io.db, claim.claim_id);
     if (stored === null) {
       throw new CanonWriteError("claim_unknown", `claim ${claim.claim_id} is not in the claims table`);
     }
-    if (stored.body_hash !== claim.body_hash || stored.kind !== claim.kind) {
+    if (!isDeepStrictEqual(claimContent(stored), claimContent(claim))) {
       throw new CanonWriteError("claim_mismatch", `claim ${claim.claim_id} differs from its stored row`);
     }
     if (stored.status !== "live") {
@@ -178,7 +190,8 @@ function assertPersisted(io: CanonIo, claims: readonly Claim[]): void {
     if (stored.receipt_id !== null) {
       throw new CanonWriteError("decision_stale", `claim ${claim.claim_id} was already written`);
     }
-  }
+    return stored;
+  });
 }
 
 function assertProvenance(io: CanonIo, provenance: readonly string[]): void {
@@ -248,9 +261,12 @@ function prepareCreate(
   const extra = mergedFrontmatter(claims);
   const sensitivity = strictest(claims.map((claim) => claim.sensitivity));
   const taint: ClaimTaint = claims.some((claim) => claim.taint === "quoted") ? "quoted" : "clean";
+  const subject = claims[0]?.subject ?? null;
   const data: Record<string, unknown> = {
     id: pageId,
-    type: extra["type"],
+    type: extra["type"] ?? (subject === null ? undefined : subjectPageType(subject)),
+    ...(extra["title"] === undefined && subject !== null
+      ? { title: subject.slice(subject.indexOf(":") + 1) } : {}),
     status: "active",
     sensitivity,
     taint,
@@ -261,6 +277,7 @@ function prepareCreate(
     if (key === "type") continue;
     data[key] = extra[key];
   }
+  if (subject !== null && !("x-subject-id" in extra)) data["x-subject-id"] = subject;
   if (ambiguous) data["x-ambiguous"] = true;
   return { page: { data, body: composeBody(claims) }, action: "create", taint, sensitivity };
 }
@@ -407,18 +424,20 @@ export function applyCanonWrite(
   if (!isWriter(opts.writer)) {
     throw new CanonWriteError("writer_invalid", "writer must be loop, correction, revert or import");
   }
-  const claims: Claim[] = Array.isArray(claim) ? [...(claim as readonly Claim[])] : [claim as Claim];
-  const primary = assertBatch(claims);
+  const supplied: Claim[] = Array.isArray(claim) ? [...(claim as readonly Claim[])] : [claim as Claim];
+  assertBatch(supplied);
   const target = targetOf(decision);
+  const claims = persistedClaims(io, supplied);
+  const primary = assertBatch(claims);
 
-  opts.budget.chargeWrite();
-
+  const existing = readPage(io, target.rel_path);
+  const pageId = target.page_id ?? mintId(io);
+  const receiptId = mintId(io);
+  opts.budget.chargeWrite({ receipt_id: receiptId, page_path: target.rel_path, before_hash: existing?.hash ?? null });
   initCanon(io.db);
-  assertPersisted(io, claims);
   const provenance = union(claims.map((item) => item.provenance));
   assertProvenance(io, provenance);
 
-  const existing = readPage(io, target.rel_path);
   if (decision.action === "create" && existing !== null) {
     throw new CanonWriteError("page_exists", `page ${target.rel_path} already exists`);
   }
@@ -431,8 +450,6 @@ export function applyCanonWrite(
     }
   }
 
-  const pageId = target.page_id ?? mintId(io);
-  const receiptId = mintId(io);
   const prepared =
     existing === null
       ? prepareCreate(claims, pageId, provenance, decision.action === "conflict")
@@ -487,7 +504,7 @@ export function applyCanonWrite(
   );
   refreshDerivedPage(
     io.db,
-    canonPageFromWrite(io.vault_path, target.rel_path, pageId, prepared.page),
+    canonPageFromWrite(io.vault_path, target.rel_path, pageId, prepared.page, outcome.after_hash),
     io.vault_path,
   );
   return receipt;
@@ -498,6 +515,7 @@ function canonPageFromWrite(
   relPath: string,
   pageId: string,
   page: VaultPage,
+  contentHash: string,
 ): CanonPage {
   return {
     id: pageId,
@@ -505,6 +523,7 @@ function canonPageFromWrite(
     relPath,
     data: page.data,
     body: page.body,
+    contentHash,
   };
 }
 
@@ -552,14 +571,7 @@ export function applyRevertWrite(
           revision: true,
           expected_hash: input.expected_hash,
         });
-  const pageId = input.page.data["id"];
-  if (typeof pageId === "string") {
-    refreshDerivedPage(
-      io.db,
-      canonPageFromWrite(io.vault_path, input.rel_path, pageId, input.page),
-      io.vault_path,
-    );
-  }
+  // Undo refreshes derived rows only after its receipt is durable.
   return outcome;
 }
 
@@ -596,6 +608,7 @@ export function applyPurgeRewrite(
     throw new CanonWriteError("page_missing", `page ${input.rel_path} is gone`);
   }
 
+  const authority = new CanonAuthorityResolver(io.db, [input.rel_path]).resolve(input.rel_path, existing.hash);
   const prior = existingSources(existing.page);
   const remainingSources = prior.filter(
     (source) => !input.purged_event_ids.includes(source),
@@ -640,7 +653,7 @@ export function applyPurgeRewrite(
     writer: "loop",
     producer: "deterministic",
     model_ref: null,
-    authority: "connector_evidence",
+    authority,
     confidence: 1,
     sensitivity,
     taint,
@@ -679,7 +692,7 @@ export function applyPurgeRewrite(
         canonPageFromWrite(io.vault_path, input.rel_path, pageId, {
           data,
           body: body.length === 0 ? "\n" : body,
-        }),
+        }, outcome.after_hash),
         io.vault_path,
       );
     }

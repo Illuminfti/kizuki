@@ -111,6 +111,54 @@ describe("accept", () => {
     expect(count(db)).toBe(0);
     db.close();
   });
+
+  test("rejects accessor metadata before creating any ledger row", () => {
+    const db = openLedger(":memory:");
+    let reads = 0;
+    const metadata = { get token() { reads += 1; return "secret"; } };
+    const result = accept(db, { ...validEvent(), metadata });
+    expect(result.status).toBe("error");
+    expect(reads).toBe(0);
+    expect(count(db)).toBe(0);
+    db.close();
+  });
+
+  test("hashes and persists one snapshot even if the caller later mutates input", () => {
+    const db = openLedger(":memory:");
+    const input = { ...validEvent(), metadata: { token: "first" } };
+    const expectedHash = computeContentHash(input);
+    const result = accept(db, input, { generateId() {
+      input.text = "changed";
+      input.metadata.token = "changed";
+      return "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    } });
+    expect(result.status).toBe("stored");
+    if (result.status !== "stored") throw new Error("unreachable");
+    expect(result.event.metadata).toEqual({ token: "first" });
+    expect(result.event.text).not.toBe("changed");
+    expect(result.event.content_hash).toBe(expectedHash);
+    expect(readSince(db, null, 1).events[0]).toEqual(result.event);
+    db.close();
+  });
+
+  test("rejects a generated id that is not a canonical ULID before insert", () => {
+    const db = openLedger(":memory:");
+    for (const id of [
+      "not-a-ulid",
+      "01ARZ3NDEKTSV4RRFFQ69G5FA",
+      "01arz3ndektsv4rrffq69g5fav",
+      "81ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "01ARZ3NDEKTSV4RRFFQ69G5FAI",
+    ]) {
+      const result = accept(db, event(`rec-${id}`), { generateId: () => id });
+      expect(result.status).toBe("error");
+      if (result.status !== "error") throw new Error("unreachable");
+      expect(result.error).toContain("event_id");
+      expect(result.kind).toBe("validation");
+    }
+    expect(count(db)).toBe(0);
+    db.close();
+  });
 });
 describe("readSince", () => {
   test("paginates 250 events without duplicates or gaps", () => {

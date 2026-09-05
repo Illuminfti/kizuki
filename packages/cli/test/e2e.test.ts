@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { listConnections, openLedger } from "@kizuki/core";
+import { listClaims, listConnections, openLedger } from "@kizuki/core";
 import { createHelpers } from "./helpers";
 
 const { cleanup, runCli, tempVault } = createHelpers();
@@ -25,8 +25,8 @@ describe("kizuki CLI stranger loop", () => {
     expect(imported).toMatchObject({
       exitCode: 0,
       // 3 files each stage two proposals: one entity candidate for the
-      // file's own `markdown:<relpath>` subject (#431) plus one capture
-      // note quoting its text.
+      // file's own `markdown-folder:<digest>` subject (#431) plus one
+      // capture note quoting its text.
       stdout:
         "events_stored=3 duplicates=0 proposals_created=6 withdrawn=0 retractions_filed=0 errors=0\n",
     });
@@ -34,6 +34,16 @@ describe("kizuki CLI stranger loop", () => {
     const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
     let key = "";
     try {
+      const entities = listClaims(db).filter((claim) => claim.kind === "entity");
+      expect(entities).toHaveLength(3);
+      expect(new Set(entities.flatMap((claim) => claim.subjects)).size).toBe(3);
+      for (const entity of entities) {
+        expect(entity.frontmatter["type"]).toBe("topic");
+        expect(entity.subjects[0]).toMatch(/^markdown-folder:[a-f0-9]{64}$/);
+        expect(entity.frontmatter["x-subject-id"]).toBe(entity.subjects[0]);
+        expect(entity.authority).toBe("connector_evidence");
+        expect(entity.provenance).toHaveLength(1);
+      }
       const rows = listConnections(db);
       expect(rows).toHaveLength(1);
       const connection = rows[0];
@@ -55,10 +65,11 @@ describe("kizuki CLI stranger loop", () => {
     );
     expect(statSync(statePath).mode & 0o777).toBe(0o600);
 
-    const unlabeled = runCli(setup.env, "query", "acme");
-    expect(unlabeled.exitCode).toBe(0);
-    expect(unlabeled.stdout).toBe("");
-    expect(unlabeled.stderr).toBe("withheld=1 (no sensitivity label)\n");
+    const recalled = runCli(setup.env, "query", "acme");
+    expect(recalled.exitCode).toBe(0);
+    expect(recalled.stdout).toMatch(/^event /);
+    expect(recalled.stdout).toContain("acme");
+    expect(recalled.stderr).toBe("");
 
     const doctor = runCli(setup.env, "doctor");
     expect(doctor.exitCode).toBe(0);
@@ -72,7 +83,7 @@ describe("kizuki CLI stranger loop", () => {
     expect(doctor.stdout).toContain("claims live=");
     expect(doctor.stdout).toContain("filed=");
     // 6, not 3: each file now stages both an entity claim for its own
-    // `markdown:<relpath>` subject (#431) and its capture note.
+    // `markdown-folder:<digest>` subject (#431) and its capture note.
     expect(doctor.stdout).toMatch(
       /claims live=6 filed=0 written=0 unwritten=6 superseded=0 skipped=0/,
     );

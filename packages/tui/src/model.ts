@@ -52,10 +52,13 @@ export interface AuditState {
   listScroll: number;
   detailScroll: number;
   focus: "list" | "detail";
+  showDetails: boolean;
   mode: Mode;
   notice: Notice | null;
   /** Persistent vault/load failure; not cleared by navigation. */
   health: Notice | null;
+  /** Command-level scope, distinct from the transient local `/` search. */
+  commandFilter: string;
   filter: string;
   pageOffset: number;
   pageSize: number;
@@ -130,6 +133,7 @@ export interface InitialStateInput {
   today: string;
   items: AuditItem[];
   health?: Notice | null;
+  commandFilter?: string;
   pageOffset?: number;
   pageSize?: number;
   pageTruncated?: boolean;
@@ -147,9 +151,11 @@ export function initialState(input: InitialStateInput): AuditState {
     listScroll: 0,
     detailScroll: 0,
     focus: "list",
+    showDetails: false,
     mode: { name: "list" },
     notice: null,
     health: input.health ?? null,
+    commandFilter: input.commandFilter ?? "",
     filter: "",
     pageOffset: input.pageOffset ?? 0,
     pageSize: input.pageSize ?? input.items.length,
@@ -239,9 +245,20 @@ function listMode(state: AuditState): AuditState {
 function reduceText(
   text: string,
   key: Key,
+  allowPaste = true,
 ): { text: string; submit: boolean; cancel: boolean } {
-  if (key.name === "char") {
-    const next = text + key.ch;
+  if (key.name === "paste" && !allowPaste) {
+    return { text, submit: false, cancel: false };
+  }
+  if (key.name === "char" || key.name === "paste") {
+    // Control bytes cannot synthesize submit/cancel keys.
+    const addition = key.name === "char"
+      ? key.ch
+      : [...key.text].filter((ch) => {
+          const cp = ch.codePointAt(0) ?? 0;
+          return cp >= 0x20 && cp !== 0x7f;
+        }).join("");
+    const next = text + addition;
     return {
       text: next.length > MAX_FILTER_NEEDLE ? next.slice(0, MAX_FILTER_NEEDLE) : next,
       submit: false,
@@ -266,6 +283,9 @@ function reduceList(state: AuditState, key: Key, viewport: Viewport): Step {
   if (key.name === "ctrl-c" || ch === "q") return step(state, [{ type: "quit" }]);
   if (key.name === "tab") {
     return step({ ...state, focus: state.focus === "list" ? "detail" : "list" });
+  }
+  if (ch === "d") {
+    return step({ ...state, showDetails: !state.showDetails, detailScroll: 0 });
   }
   if (ch === "?") return step({ ...state, mode: { name: "help" } });
   if (ch === "/") return step({ ...state, mode: { name: "filter", text: state.filter } });
@@ -412,7 +432,8 @@ export function reduce(state: AuditState, key: Key, viewport: Viewport): Step {
   }
 
   if (mode.name === "confirm") {
-    const r = reduceText(mode.text, key);
+    // Undo confirmation requires live keystrokes; paste must not authorize it.
+    const r = reduceText(mode.text, key, false);
     if (r.cancel) return step(listMode(state));
     if (r.submit) {
       if (r.text.trim() !== "yes") {

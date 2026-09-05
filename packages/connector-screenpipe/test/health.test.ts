@@ -15,6 +15,7 @@ import {
   cleanupFixtureDatabases,
   createFixtureDatabase,
   fixtureDeps,
+  insertFrame,
 } from "./helpers";
 
 afterEach(cleanupFixtureDatabases);
@@ -150,7 +151,7 @@ describe("ScreenpipeConnector health and lifecycle", () => {
     await connector.revoke();
   });
 
-  test("the last successful batch and skip deltas appear in health", async () => {
+  test("the last successful batch appears in health", async () => {
     const fixture = createFixtureDatabase();
     const connector = new ScreenpipeConnector(
       { path: fixture.path, settle_seconds: 0 },
@@ -160,11 +161,26 @@ describe("ScreenpipeConnector health and lifecycle", () => {
 
     const health = await connector.health();
 
-    expect(health.state).toBe("degraded");
+    expect(health.state).toBe("ok");
     expect(health.last_success_at).toBe(FIXTURE_NOW);
     expect(health.detail).toBe(
-      `screenpipe schema verified (max migration ${SCREENPIPE_SCHEMA_VERIFIED}); skipped frames_without_text=2 frames_bad_timestamp=1 frames_offset_unknown=0 transcriptions_bad_timestamp=0 transcriptions_bad_offset=0 transcriptions_offset_unknown=0; oldest_skipped_frame=4`,
+      `screenpipe schema verified (max migration ${SCREENPIPE_SCHEMA_VERIFIED})`,
     );
+    await connector.revoke();
+  });
+
+  test("a malformed row degrades health without retaining captured text and a successful retry recovers", async () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    insertFrame(fixture.writer, { id: 1, timestamp: "bad", fullText: "private words must not appear" });
+    const connector = new ScreenpipeConnector({ path: fixture.path, settle_seconds: 0 }, fixtureDeps(FIXTURE_NOW));
+    await expect(connector.backfill(null)).rejects.toMatchObject({ code: "parse_error" });
+    const failed = await connector.health();
+    expect(failed.state).toBe("degraded");
+    expect(failed.detail).toContain("last_failure=kizuki.screenpipe: malformed frame:1 timestamp");
+    expect(failed.detail).not.toContain("private words");
+    fixture.writer.query("UPDATE frames SET timestamp = ? WHERE id = 1").run("2026-01-01T00:00:00Z");
+    await connector.backfill(null);
+    expect((await connector.health()).state).toBe("ok");
     await connector.revoke();
   });
 

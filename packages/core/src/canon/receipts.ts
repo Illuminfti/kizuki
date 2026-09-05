@@ -197,6 +197,9 @@ export interface ListCanonReceiptsOptions {
   since?: string;
   newest_first?: boolean;
   include_reverted?: boolean;
+  only_reverted?: boolean;
+  only_ambiguous?: boolean;
+  only_contested?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -224,6 +227,22 @@ export function listCanonReceipts(
   }
   if (opts.include_reverted === false) {
     clauses.push("reverted_by IS NULL");
+  }
+  if (opts.only_reverted === true) clauses.push("reverted_by IS NOT NULL");
+  if (opts.only_ambiguous === true) clauses.push("json_array_length(candidates) > 0");
+  if (opts.only_contested === true) {
+    if (!tableExists(db, "claims")) return [];
+    clauses.push(`EXISTS (
+      SELECT 1 FROM claims receipt_claim
+      JOIN claims sibling_claim
+        ON sibling_claim.claim_key = receipt_claim.claim_key
+       AND sibling_claim.status = 'live'
+      WHERE receipt_claim.receipt_id = canon_receipts.receipt_id
+        AND receipt_claim.claim_key IS NOT NULL
+        AND receipt_claim.status = 'live'
+      GROUP BY receipt_claim.claim_key
+      HAVING count(*) > 1
+    )`);
   }
   const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
   const order = opts.newest_first === true ? "at DESC, receipt_id DESC" : "at, receipt_id";

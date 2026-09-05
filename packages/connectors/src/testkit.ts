@@ -34,6 +34,9 @@ export {
   OMNIVORE_FIXTURE_FILES,
 } from "./import-omnivore";
 export {
+  writeFixtureArchive as writeXArchiveFixture,
+} from "@kizuki/connector-x/testkit";
+export {
   WHATSAPP_FIXTURE_FILES,
   WHATSAPP_FIXTURE_TIMEZONE,
 } from "./import-whatsapp";

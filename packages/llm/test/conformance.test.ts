@@ -117,7 +117,7 @@ describe("llm conformance", () => {
       { base_url: fake.base_url, model: "synthetic" },
     );
     try {
-      const noneBound = registry.bindFromConfig<LlmPort>(
+      const noneBound = await registry.bindFromConfig<LlmPort>(
         "llm",
         { llm: "kizuki.llm.none" },
         noneCtx.ctx,
@@ -125,7 +125,7 @@ describe("llm conformance", () => {
       expect(noneBound.d.id).toBe("kizuki.llm.none");
       expect(noneBound.port.model_ref).toBeNull();
 
-      const bound = registry.bindFromConfig<LlmPort>(
+      const bound = await registry.bindFromConfig<LlmPort>(
         "llm",
         { llm: "kizuki.llm.openai-compatible" },
         compatibleCtx.ctx,

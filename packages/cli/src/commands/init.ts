@@ -8,7 +8,6 @@ import {
   initVault,
   installServeService,
   openLedger,
-  realSupervisorHost,
   serveExecHint,
   writeServeIntent,
 } from "@kizuki/core";
@@ -21,6 +20,7 @@ import {
   writeConfig,
 } from "../config";
 import type { CliIo, Command } from "./index";
+import { serveSupervisorHost } from "../service-host";
 
 export const initCommand: Command = {
   name: "init",
@@ -90,17 +90,7 @@ export const initCommand: Command = {
       io.out("supervisor: none (loop runs only while you run it)");
       io.out(`run: ${serveExecHint(vaultPath)}`);
     } else {
-      const bun = process.execPath;
-      const entry = resolve(import.meta.dir, "../main.ts");
-      const host = realSupervisorHost(
-        kind,
-        io.env.HOME && io.env.HOME.length > 0
-          ? io.env.HOME
-          : io.env.XDG_CONFIG_HOME && io.env.XDG_CONFIG_HOME.length > 0
-            ? io.env.XDG_CONFIG_HOME
-            : "",
-        `${bun} ${entry} serve --vault ${vaultPath}`,
-      );
+      const host = serveSupervisorHost(io.env, vaultPath);
       const installed = installServeService(vaultPath, host);
       io.out(vaultPath);
       io.out(`supervisor=${installed.status.kind} state=${installed.status.state}`);

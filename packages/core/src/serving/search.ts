@@ -13,17 +13,18 @@ import {
   scopedWindow,
   text,
 } from "./arguments";
-import { canonChunk, eligible, loadCanon, pageDecision } from "./canon";
+import { canonChunk, eligible, excerptOf, loadCanon, pageDecision } from "./canon";
 import type { CanonIndex } from "./canon";
-import { auditArguments, gate } from "./gate";
+import { auditArguments, gateAsync } from "./gate";
 import type { Served } from "./gate";
 import {
   eventDecision,
-  ledgerHitSource,
   liveEventIds,
   quotedChunk,
 } from "./ledger";
 import type { CanonChunk, Envelope, QuotedChunk, ServeContext } from "./types";
+import { retrievalCandidates } from "./retrieval";
+import { currentQuotedSource } from "./ledger";
 
 const SEARCH_SCOPES = ["canon", "ledger", "all"] as const;
 
@@ -58,7 +59,7 @@ function classify(
   db: Database,
   index: CanonIndex,
   grant: Grant,
-  hits: SearchHit[],
+  hits: Pick<SearchHit, "doc_id" | "scope">[],
   seen: Set<string>,
   collect: boolean,
 ): Classification {
@@ -83,14 +84,15 @@ function classify(
       }
       if (collect) {
         result.canon.push(
-          canonChunk(index, page, decision, hit.snippet, false),
+          canonChunk(index, page, decision, excerptOf(page.body, 600).excerpt, page.body.length > 600),
         );
       }
       continue;
     }
 
     if (!live.has(bareRetrievalId(hit.doc_id))) continue;
-    const source = ledgerHitSource(hit);
+    const source = currentQuotedSource(db, bareRetrievalId(hit.doc_id));
+    if (source === null) continue;
     const decision = eventDecision(grant, source);
     if (!decision.allow) {
       result.withheld.push({ id: source.event_id, reason: decision.reason });
@@ -106,11 +108,11 @@ export interface SearchData {
   degraded: string[];
 }
 
-export function serveSearch(
+export async function serveSearch(
   ctx: ServeContext,
   args: SearchArgs,
-): Envelope<SearchData> {
-  return gate(ctx, "search", auditArguments(args), ({ ctx }): Served<SearchData> => {
+): Promise<Envelope<SearchData>> {
+  return gateAsync(ctx, "search", auditArguments(args), async ({ ctx }): Promise<Served<SearchData>> => {
     const grant = ctx.principal.grant;
     const query = text("query", args.query, MAX_QUERY_CHARS);
     const scope =
@@ -136,16 +138,18 @@ export function serveSearch(
       args.until === undefined ? undefined : rfc3339("until", args.until),
     );
 
-    const index = loadCanon(ctx);
     const base: SearchOptions = {
       scope,
       limit: rows,
-      excludePaths: [...index.holds],
       ...(types === undefined ? {} : { types }),
       ...(subjects === undefined ? {} : { subjects }),
       ...window,
     };
 
+    const nominated = await retrievalCandidates(ctx, query, { ...base, ceiling: grant.ceiling });
+    // Re-read current canon and evidence only after the engine finishes.
+    const index = loadCanon(ctx);
+    base.excludePaths = [...index.holds];
     const seen = new Set<string>();
     const servedHits = searchResult(ctx.db, query, {
       ...base,
@@ -155,8 +159,8 @@ export function serveSearch(
     const served = classify(
       ctx.db,
       index,
-      grant,
-      servedHits.hits,
+      { ...grant, ...(types === undefined ? {} : { types }), ...(subjects === undefined ? {} : { subjects }), ...(window.since === undefined ? {} : { since: window.since }), ...(window.until === undefined ? {} : { until: window.until }) },
+      [...nominated.ids.map((doc_id) => ({ doc_id, scope: doc_id.startsWith("page:") ? "canon" : "ledger" } as const)), ...servedHits.hits],
       seen,
       true,
     );
@@ -168,11 +172,11 @@ export function serveSearch(
       seen,
       false,
     );
-    const degraded = [...new Set([...servedHits.degraded, ...hiddenHits.degraded])];
+    const degraded = [...new Set([...servedHits.degraded, ...hiddenHits.degraded, ...nominated.degraded])];
 
     return {
-      canon: served.canon,
-      quoted: served.quoted,
+      canon: served.canon.slice(0, rows),
+      quoted: served.quoted.slice(0, Math.max(0, rows - served.canon.length)),
       withheld: [...served.withheld, ...hidden.withheld],
       ...(degraded.length === 0 ? {} : { data: { degraded } }),
     };

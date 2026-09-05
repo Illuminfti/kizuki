@@ -25,6 +25,15 @@ export function slug(name: string): string {
     .slice(0, 64);
 }
 
+/** A reversible, exact source identity. Slugs are display-only. */
+export function sourceIdentity(value: string): string {
+  return Buffer.from(value, "utf8").toString("base64url");
+}
+
+export function subjectId(kind: "app" | "audio-device", value: string): string {
+  return `screenpipe:${kind}:v2:${sourceIdentity(value)}`;
+}
+
 export function siteHost(browserUrl: string | null): string | null {
   if (browserUrl === null) return null;
   try {
@@ -55,10 +64,9 @@ export function mapFrame(
   const truncated = text.length > MAX_TEXT_CHARS;
   const subjects: SubjectRef[] = [];
   if (row.app_name !== null && row.app_name.length > 0) {
-    const appSlug = slug(row.app_name);
-    if (appSlug.length > 0) {
+    if (sourceIdentity(row.app_name).length > 0) {
       subjects.push({
-        subject_id: `screenpipe:app:${appSlug}`,
+        subject_id: subjectId("app", row.app_name),
         role: "about",
         display_name: row.app_name,
       });
@@ -81,7 +89,7 @@ export function mapFrame(
     kind: "screen_text",
     occurred_at: occurredAt,
     observed_at: observedAt,
-    text: truncated ? text.slice(0, MAX_TEXT_CHARS) : text,
+    text: truncateText(text),
     subjects,
     sensitivity_hint: "private",
     deleted: false,
@@ -143,10 +151,9 @@ export function mapTranscription(
     });
   }
   if (row.device.length > 0) {
-    const deviceSlug = slug(row.device);
-    if (deviceSlug.length > 0) {
+    if (sourceIdentity(row.device).length > 0) {
       subjects.push({
-        subject_id: `screenpipe:audio-device:${deviceSlug}`,
+        subject_id: subjectId("audio-device", row.device),
         role: "about",
         display_name: row.device,
       });
@@ -160,9 +167,7 @@ export function mapTranscription(
     kind: "audio_transcription",
     occurred_at: occurredAt,
     observed_at: observedAt,
-    text: truncated
-      ? row.transcription.slice(0, MAX_TEXT_CHARS)
-      : row.transcription,
+    text: truncateText(row.transcription),
     subjects,
     sensitivity_hint: "private",
     deleted: false,
@@ -180,6 +185,13 @@ export function mapTranscription(
       text_truncated: truncated,
     },
   };
+}
+
+function truncateText(text: string): string {
+  if (text.length <= MAX_TEXT_CHARS) return text;
+  const cut = text.slice(0, MAX_TEXT_CHARS);
+  const last = cut.charCodeAt(cut.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
 }
 
 function requiredTimestamp(

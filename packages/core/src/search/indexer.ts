@@ -1,3 +1,4 @@
+import { canonAuthorities } from "../canon/authority";
 import type { Database } from "bun:sqlite";
 import type { CaptureEvent } from "../contracts/event";
 import type { RetrievalAuthority } from "../contracts/retrieval";
@@ -34,6 +35,7 @@ export interface SearchDocument {
 }
 
 export interface SearchRebuildInput {
+  authorities?: ReadonlyMap<string,RetrievalAuthority>;
   generation: string;
   pages: readonly CanonPage[];
   skipped: readonly SkippedPage[];
@@ -68,7 +70,7 @@ function namespaced(scope: DocScope, rawId: string): string {
   return retrievalDocId(scope === "canon" ? "page" : "event", rawId);
 }
 
-export function pageDocument(page: CanonPage): SearchDocument {
+export function pageDocument(page: CanonPage, authority: RetrievalAuthority): SearchDocument {
   return {
     docId: retrievalDocId("page", page.id),
     scope: "canon",
@@ -78,7 +80,7 @@ export function pageDocument(page: CanonPage): SearchDocument {
     pageType: text(page.data["type"]),
     sensitivity: pageSensitivity(page.data["sensitivity"]),
     taint: pageTaint(page.data["taint"]),
-    authority: "owner_authored",
+    authority,
     occurredAt: "",
     connectorId: "",
     subjects: stringArray(page.data["subjects"]),
@@ -202,10 +204,10 @@ export function deleteDoc(db: Database, scope: DocScope, docId: string): void {
   db.query<never, [string]>("DELETE FROM search_docs WHERE doc_id = ?").run(id);
 }
 
-export function replacePage(db: Database, page: CanonPage): void {
+export function replacePage(db: Database, page: CanonPage, authority = canonAuthorities(db,[page]).get(page.relPath) ?? "model_inference"): void {
   deleteDoc(db, "canon", page.id);
   if (!isLiveCanonPage(page)) return;
-  insertDoc(db, pageDocument(page));
+  insertDoc(db, pageDocument(page,authority));
 }
 
 function replaceEvent(db: Database, event: CaptureEvent): void {
@@ -287,7 +289,8 @@ export function rebuildSearchLayer(
 ): SearchRebuildResult {
   const livePages = input.pages.filter(isLiveCanonPage);
   db.exec("DELETE FROM search_documents");
-  for (const page of livePages) insertDocument(db, pageDocument(page));
+  const authorities=input.authorities??canonAuthorities(db,livePages);
+  for (const page of livePages) insertDocument(db, pageDocument(page,authorities.get(page.relPath)??"model_inference"));
   for (const event of replayLive(db, {})) {
     insertDocument(db, eventDocument(event));
   }

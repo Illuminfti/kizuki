@@ -118,7 +118,7 @@ export function canonicalizeProducer(v: Producer): CanonicalProducer {
 }
 
 export function isAuthorityTier(v: unknown): v is AuthorityTier {
-  return typeof v === "string" && v in AUTHORITY_TIERS;
+  return typeof v === "string" && Object.hasOwn(AUTHORITY_TIERS, v);
 }
 
 export function isClaimKind(v: unknown): v is ClaimKind {

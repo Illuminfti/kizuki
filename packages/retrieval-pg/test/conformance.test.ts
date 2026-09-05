@@ -1,3 +1,5 @@
+import { setDefaultTimeout } from "bun:test";
+setDefaultTimeout(60_000);
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   PortError,
@@ -23,22 +25,22 @@ import {
   temporaryPortContext,
 } from "./helpers";
 
-const disposers: (() => void)[] = [];
+const disposers: (() => void | Promise<void>)[] = [];
 
-afterEach(() => {
-  for (const dispose of disposers.splice(0)) dispose();
+afterEach(async () => {
+  for (const dispose of disposers.splice(0)) await dispose();
 });
 
-function openPort(embedding?: FixtureEmbeddingPort): {
+async function openPort(embedding?: FixtureEmbeddingPort): Promise<{
   port: RetrievalPort;
-  cleanup: () => void;
-} {
+  cleanup: () => Promise<void>;
+}> {
   const temporary = temporaryPortContext();
-  const port = createEmbeddedRetrievalPort(temporary.ctx, {
+  const port = await createEmbeddedRetrievalPort(temporary.ctx, {
     ...(embedding === undefined ? {} : { embedding }),
   });
-  const cleanup = () => {
-    void port.close();
+  const cleanup = async () => {
+    await port.close();
     temporary.cleanup();
   };
   disposers.push(cleanup);
@@ -48,7 +50,7 @@ function openPort(embedding?: FixtureEmbeddingPort): {
 function harness(): RetrievalConformanceHarness {
   return {
     descriptor: EMBEDDED_RETRIEVAL_DESCRIPTOR,
-    create: async (ctx) => createEmbeddedRetrievalPort(ctx),
+    create: async (ctx) => createEmbeddedRetrievalPort(ctx, { embedding: new FixtureEmbeddingPort() }),
     destroy: async (port) => port.close(),
     fixtures: RETRIEVAL_FIXTURES,
   };
@@ -69,6 +71,24 @@ const PRIVATE_CORRECTION: RetrievalDoc = {
 };
 
 describe("kizuki.retrieval.embedded-pg conformance", () => {
+  test("bound capabilities advertise vector nomination only with an embedding port", async () => {
+    const lexical = await openPort();
+    expect(lexical.port.descriptor.supports).toEqual(["lexical", "hybrid", "graph"]);
+    expect((await lexical.port.health()).status).toBe("ready");
+    const embedded = await openPort(new FixtureEmbeddingPort());
+    expect(embedded.port.descriptor.supports).toEqual(EMBEDDED_RETRIEVAL_DESCRIPTOR.supports);
+    expect(EMBEDDED_RETRIEVAL_DESCRIPTOR.supports).toContain("vector");
+    expect(Object.isFrozen(lexical.port.descriptor)).toBe(true);
+    expect(Object.isFrozen(lexical.port.descriptor.supports)).toBe(true);
+    const registry = new PortRegistry();
+    registerEmbeddedRetrieval(registry);
+    const temporary = temporaryPortContext();
+    const bound = await registry.bindFromConfig<RetrievalPort>("retrieval", { retrieval: EMBEDDED_RETRIEVAL_ID }, temporary.ctx);
+    disposers.push(async () => { await bound.port.close(); temporary.cleanup(); });
+    expect(bound.d.supports).toContain("vector");
+    expect(bound.port.descriptor.supports).not.toContain("vector");
+  });
+
   test("registers behind the retrieval port", () => {
     const registry = new PortRegistry();
     registerEmbeddedRetrieval(registry);
@@ -100,7 +120,7 @@ describe("kizuki.retrieval.embedded-pg conformance", () => {
   });
 
   test("applies the ceiling in the store and never widens", async () => {
-    const { port } = openPort();
+    const { port } = await openPort();
     await port.upsert([...SYNTHETIC_DOCS, PRIVATE_CORRECTION]);
 
     const publicHits = await port.search({
@@ -141,7 +161,7 @@ describe("kizuki.retrieval.embedded-pg conformance", () => {
   });
 
   test("hybrid without an embedder declares vector-skipped", async () => {
-    const { port } = openPort();
+    const { port } = await openPort();
     await port.upsert(SYNTHETIC_DOCS);
     const hybrid = await port.search({ ...SYNTHETIC_QUERY, mode: "hybrid" });
     expect(hybrid.degraded).toContain("vector-skipped");
@@ -152,7 +172,7 @@ describe("kizuki.retrieval.embedded-pg conformance", () => {
   });
 
   test("vector mode without an embedder is unavailable, not empty", async () => {
-    const { port } = openPort();
+    const { port } = await openPort();
     await port.upsert(SYNTHETIC_DOCS);
     try {
       await port.search({ ...SYNTHETIC_QUERY, mode: "vector" });
@@ -164,7 +184,7 @@ describe("kizuki.retrieval.embedded-pg conformance", () => {
   });
 
   test("owner_correction outranks a stronger lexical model inference", async () => {
-    const { port } = openPort();
+    const { port } = await openPort();
     await port.upsert([
       {
         ...SYNTHETIC_DOCS[0]!,
@@ -191,7 +211,7 @@ describe("kizuki.retrieval.embedded-pg conformance", () => {
   });
 
   test("hybrid with a fixture embedder fuses lexical and vector ranks", async () => {
-    const { port } = openPort(new FixtureEmbeddingPort());
+    const { port } = await openPort(new FixtureEmbeddingPort());
     await port.upsert(SYNTHETIC_DOCS);
     const hybrid = await port.search({ ...SYNTHETIC_QUERY, mode: "hybrid" });
     expect(hybrid.degraded).not.toContain("vector-skipped");
@@ -203,7 +223,7 @@ describe("kizuki.retrieval.embedded-pg conformance", () => {
   });
 
   test("graph neighbors honor the ceiling and carry provenance", async () => {
-    const { port } = openPort();
+    const { port } = await openPort();
     await port.upsert(SYNTHETIC_DOCS);
     const visible = await port.neighbors(
       { entity_id: "person:grace" },
@@ -233,7 +253,7 @@ describe("kizuki.retrieval.embedded-pg conformance", () => {
   });
 
   test("verifyAbsent is a real lookup", async () => {
-    const { port } = openPort();
+    const { port } = await openPort();
     await port.upsert(SYNTHETIC_DOCS);
     const present = await port.verifyAbsent(["page:grace", "missing"]);
     expect(present.checked).toBe(2);

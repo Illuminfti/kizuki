@@ -6,8 +6,11 @@ import {
   assertVaultControl,
   initSearch,
   openLedger,
+  PortError,
   readVaultId,
 } from "@kizuki/core";
+import type { RetrievalPort } from "@kizuki/core";
+import { openConfiguredRetrieval } from "./retrieval-runtime";
 import type { CliIo } from "./commands/index";
 import {
   type KizukiConfig,
@@ -113,11 +116,14 @@ export interface VaultContext {
   vaultPath: string;
   db: Database;
   store: ConnectionStateStore;
+  retrieval?: RetrievalPort;
+  retrievalUnavailable?: true;
 }
 
 export async function withVault<T>(
   io: CliIo,
   fn: (ctx: VaultContext) => Promise<T>,
+  options: { retrieval?: "required" | "optional" | "none" } = {},
 ): Promise<T> {
   const path = configPath(io.env);
   const config = readConfig(path);
@@ -126,9 +132,24 @@ export async function withVault<T>(
   );
   const db = openVaultDb(vaultPath);
   const store = new ConnectionStateStore(join(vaultPath, ".kizuki"));
+  let retrieval: RetrievalPort | undefined;
   try {
-    return await fn({ configPath: path, vaultPath, db, store });
+    let retrievalUnavailable: true | undefined;
+    if (options.retrieval !== "none") {
+      try { retrieval = await openConfiguredRetrieval(vaultPath); }
+      catch (error) {
+        // A live host may hold the optional engine. Reads still use the ledger floor;
+        // configuration errors and required mutation/rebuild bindings remain failures.
+        if (options.retrieval !== "optional" || !(error instanceof PortError) ||
+            !error.retryable || !["lease_required", "timeout", "unavailable"].includes(error.code)) throw error;
+        retrievalUnavailable = true;
+      }
+    }
+    return await fn({ configPath: path, vaultPath, db, store,
+      ...(retrieval === undefined ? {} : { retrieval }),
+      ...(retrievalUnavailable === undefined ? {} : { retrievalUnavailable }),
+    });
   } finally {
-    db.close();
+    try { await retrieval?.close(); } finally { db.close(); }
   }
 }

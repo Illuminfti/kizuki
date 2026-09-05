@@ -23,7 +23,7 @@ export const contextCommand: Command = {
   name: "context",
   usage:
     "context [--purpose session|recall|correction|audit] [--budget N] [--query TEXT] [--json]",
-  summary: "compile a purpose-scoped context packet with provenance stamps",
+  summary: "give your agent relevant context, with sources and a token budget",
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, {
       options: ["--purpose", "--budget", "--query"],
@@ -36,24 +36,37 @@ export const contextCommand: Command = {
       throw new UsageError(this.usage);
     }
     const rawBudget = parsed.options.get("--budget");
+    const budget = rawBudget === undefined ? undefined : parseBudget(rawBudget);
     const query = parsed.options.get("--query");
 
     return withVault(io, async (ctx) => {
       initAgents(ctx.db);
-      const envelope = serveContextPacket(
-        { db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER },
+      const envelope = await serveContextPacket(
+        { db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER, ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }), ...(ctx.retrievalUnavailable ? { retrievalUnavailable: true as const } : {}) },
         {
           purpose: rawPurpose as PacketPurpose,
-          ...(rawBudget === undefined ? {} : { budget_tokens: parseBudget(rawBudget) }),
+          ...(budget === undefined ? {} : { budget_tokens: budget }),
           ...(query === undefined ? {} : { query }),
         },
       );
-      if (parsed.flags.has("--json")) {
-        io.out(jsonEnvelope("context", "ok", envelope));
-        return 0;
+      const retrievalDegraded = envelope.data?.retrieval_degraded ?? [];
+      if (retrievalDegraded.length > 0) io.err(`degraded=${retrievalDegraded.join(",")}`);
+      const incomplete = envelope.data === undefined || envelope.denied.some(
+        (entry) => entry.reason === "error",
+      );
+      if (incomplete) {
+        io.err("Context could not be gathered completely. Run kizuki doctor to check the vault.");
+      } else if (envelope.data !== undefined && Object.values(envelope.data.sections).every((count) => count === 0)) {
+        io.err("No matching context fits this packet. Try a broader --query or a larger --budget; use kizuki doctor to check your sources.");
       }
-      io.out(envelope.data?.packet_md ?? "KIZUKI CONTEXT v1");
-      return 0;
-    });
+      if (parsed.flags.has("--json")) {
+        io.out(jsonEnvelope("context", incomplete || retrievalDegraded.length > 0 ? "degraded" : "ok", envelope, {
+          degraded: incomplete ? ["context-unavailable", ...retrievalDegraded] : retrievalDegraded,
+        }));
+      } else if (envelope.data !== undefined) {
+        io.out(envelope.data.packet_md);
+      }
+      return incomplete ? 1 : 0;
+    }, { retrieval: "optional" });
   },
 };

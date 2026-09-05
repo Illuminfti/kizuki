@@ -13,7 +13,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with: { fetch-depth: 0 }
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: keep origin/main only
         run: bash scripts/ci-restrict-origin-refs.sh
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -22,10 +24,13 @@ jobs:
         run: test "$(git rev-parse --is-shallow-repository)" = "false"
       - name: verify
         run: bun run verify
-      - name: exact-head diff integrity
+      - name: native package smoke
         run: |
-          git fetch --no-tags origin main
-          git diff --check FETCH_HEAD...HEAD
+          bun run build:release
+          bun run smoke:release
+          bun run proof:artifact -- --report "$RUNNER_TEMP/kizuki-artifact-proof"
+      - name: exact-head diff integrity
+        run: bun scripts/ci-diff-check.ts
   secrets:
     permissions:
       contents: read
@@ -34,7 +39,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with: { fetch-depth: 0 }
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: keep origin/main only
         run: bash scripts/ci-restrict-origin-refs.sh
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0

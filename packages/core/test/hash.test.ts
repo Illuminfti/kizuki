@@ -34,6 +34,33 @@ describe("canonicalSerialize", () => {
     event.metadata = { list: [3, 1, 2] };
     expect(canonicalSerialize(event)).toContain('"list":[3,1,2]');
   });
+
+  test("keeps __proto__ as a data key instead of polluting the accumulator", () => {
+    const event = validEvent();
+    event.metadata = protoBag("__proto__", { x: 1 });
+    const serialized = canonicalSerialize(event);
+    expect(serialized).toContain('"__proto__":{"x":1}');
+    expect(
+      Object.prototype.hasOwnProperty.call(Object.prototype, "x"),
+    ).toBe(false);
+    const empty = validEvent();
+    empty.metadata = {};
+    expect(computeContentHash(event)).not.toBe(computeContentHash(empty));
+  });
+
+  test("keeps constructor and prototype as data keys", () => {
+    const event = validEvent();
+    event.metadata = protoBag("constructor", { y: 2 });
+    Object.defineProperty(event.metadata, "prototype", {
+      value: { z: 3 },
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+    const serialized = canonicalSerialize(event);
+    expect(serialized).toContain('"constructor":{"y":2}');
+    expect(serialized).toContain('"prototype":{"z":3}');
+  });
 });
 
 describe("computeContentHash", () => {
@@ -221,3 +248,14 @@ describe("computeContentHash", () => {
     );
   });
 });
+
+function protoBag(key: string, value: unknown): Record<string, unknown> {
+  const bag = Object.create(null) as Record<string, unknown>;
+  Object.defineProperty(bag, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+  return bag;
+}

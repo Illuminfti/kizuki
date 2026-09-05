@@ -1,23 +1,26 @@
+import { tryWriteFlock } from "./flock";
+import { pidAlive, readBootId } from "./leases";
 import type { Database } from "bun:sqlite";
 import { pendingRetrievalOps, retryRetrievalOps } from "../claims/store";
 import type { ClaimsIo } from "../claims/store";
-import { createBudgetTracker } from "../canon/budget";
+import type { BudgetTracker } from "../canon/budget";
 import type { ProducerPort } from "../contracts/producer";
 import { inspectPurgeHealth, verifyPurge } from "../ledger/purge";
 import { tableExists } from "../ledger/schema";
 import { ulid } from "../util/ulid";
 import { serializePage } from "../vault/frontmatter";
-import { addDailyBudget, budgetDay, readDailyBudget } from "./budget-ledger";
-import { loadConfiguredModelRef, loadServeConfig } from "./config";
+import { createDurableWriteBudget, budgetDay } from "./budget-ledger";
+import { loadServeConfig } from "./config";
 import { createFileNotifier, briefPath } from "./notifier-file";
-import { persistRunReceipt, pruneRunReceipts, redactReceiptError } from "./receipts";
-import { listSchedules } from "./schema";
+import { recoverRunJournal, persistRunReceipt, pruneRunReceipts, redactReceiptError } from "./receipts";
+import { initServe, listSchedules } from "./schema";
 import {
   InjectedCrash,
   emptyRunTotals,
   type CrashPoint,
   type RailId,
   type RunReceipt,
+  type RunExecution,
 } from "./types";
 import { runWritePass } from "./write-pass";
 
@@ -31,13 +34,18 @@ export interface RailSyncResult {
 
 export interface RailHooks {
   readonly sync?: () => Promise<RailSyncResult>;
+  /** Host-owned derived stores refresh after a successful or partial write pass. */
+  readonly refresh?: () => Promise<readonly string[]>;
   readonly claims?: ClaimsIo;
   readonly model_ref?: string | null;
   readonly producer?: ProducerPort;
   readonly embedding_backlog?: number;
 }
 
+const processInstance = crypto.randomUUID();
+
 export interface RunRailOptions {
+  readonly execution?: RunExecution;
   readonly now?: () => string;
   readonly hooks?: RailHooks;
   readonly crashAfter?: CrashPoint;
@@ -48,26 +56,12 @@ function dayOf(at: string): string {
 }
 
 /**
- * Hooks may pin a model_ref (including explicit null). Otherwise the
- * vault's serve.toml decides, so `kizuki serve` writes without host wiring.
+ * A host must bind a model port and hand its capability to the rail. Raw
+ * serve.toml values are configuration intent, never permission to write.
  */
-function resolveModelRef(
-  vaultPath: string,
-  hooks: RailHooks | undefined,
-): string | null {
-  if (hooks !== undefined && Object.hasOwn(hooks, "model_ref")) {
-    return hooks.model_ref ?? null;
-  }
-  return loadConfiguredModelRef(vaultPath);
-}
-
-function withResolvedModel(
-  vaultPath: string,
-  hooks: RailHooks | undefined,
-): RailHooks | undefined {
-  const model_ref = resolveModelRef(vaultPath, hooks);
-  if (hooks === undefined && model_ref === null) return undefined;
-  return { ...hooks, model_ref };
+function withResolvedModel(hooks: RailHooks | undefined): RailHooks | undefined {
+  if (hooks === undefined) return undefined;
+  return { ...hooks, model_ref: hooks.model_ref ?? null };
 }
 
 function nextHourUtc(now: string, hour: number): string {
@@ -95,8 +89,9 @@ export function dueRails(db: Database, now: string): RailId[] {
 async function runSyncRail(
   db: Database,
   vaultPath: string,
-  budget: ReturnType<typeof createBudgetTracker>,
+  budget: BudgetTracker,
   hooks: RailHooks | undefined,
+  runId: string,
 ): Promise<Partial<RunReceipt>> {
   const synced =
     hooks?.sync === undefined
@@ -110,11 +105,21 @@ async function runSyncRail(
       : await hooks.sync();
   const written = await runWritePass(db, vaultPath, {
     budget,
+    run_id: runId,
     ...(hooks?.model_ref === undefined ? {} : { model_ref: hooks.model_ref }),
     ...(hooks?.producer === undefined ? {} : { producer: hooks.producer }),
     ...(hooks?.claims === undefined ? {} : { claims: hooks.claims }),
   });
-  const errors = [...synced.errors, ...written.errors];
+  // Derived stores are rebuildable and run after the canon receipt.  Preserve
+  // the completed write-pass report when their refresh fails; replacing it
+  // with a zeroed failed rail would hide a real write and understate budget.
+  let refreshed: readonly string[];
+  try {
+    refreshed = hooks?.refresh === undefined ? [] : await hooks.refresh();
+  } catch (error) {
+    refreshed = [redactReceiptError(error)];
+  }
+  const errors = [...synced.errors, ...written.errors, ...refreshed];
   let status: RunReceipt["status"] = "ok";
   if (written.stopped !== null) status = "stopped";
   else if (errors.length > 0) status = "degraded";
@@ -128,7 +133,9 @@ async function runSyncRail(
     claims_written: written.claims_written,
     claims_deduped: written.claims_deduped,
     claims_superseded: written.claims_superseded,
+    claims_rejected: written.claims_rejected,
     canon_writes: written.canon_writes,
+    model: { ...written.model, model_ref: hooks?.model_ref ?? null },
     stopped: written.stopped,
     errors,
     // model_ref is filled in by runRail from the resolved hook, not here.
@@ -153,13 +160,17 @@ async function runRetrievalSweep(
     };
   }
   const result = await retryRetrievalOps(hooks.claims);
+  let refreshed: readonly string[] = [];
+  try { refreshed = await hooks.refresh?.() ?? []; }
+  catch { refreshed = ["retrieval refresh unavailable"]; }
+  const degraded = [...(result.pending === 0 ? [] : ["retrieval-ops-pending"]), ...refreshed];
   return {
-    status: result.pending === 0 ? "ok" : "degraded",
+    status: degraded.length === 0 ? "ok" : "degraded",
     retrieval: {
       upserts: result.retried,
       removals: 0,
       pending_ops: result.pending,
-      degraded: result.pending === 0 ? [] : ["retrieval-ops-pending"],
+      degraded,
     },
   };
 }
@@ -279,91 +290,109 @@ function runJournalPrune(
   return { status: "ok" };
 }
 
+const activeRuns = new Set<string>();
+
 export async function runRail(
   db: Database,
   vaultPath: string,
   rail: RailId,
   options: RunRailOptions = {},
 ): Promise<RunReceipt> {
-  const now = options.now ?? (() => new Date().toISOString());
-  const started = now();
-  const hooks = withResolvedModel(vaultPath, options.hooks);
-  const config = loadServeConfig(vaultPath);
-  const day = budgetDay(started);
-  const usedToday = readDailyBudget(db, day, "canon_writes_per_day");
-  const budget = createBudgetTracker({
-    canon_writes_per_run: config.canon_writes_per_run,
-    canon_writes_per_day: {
-      limit: config.canon_writes_per_day,
-      used: usedToday,
-    },
-  });
-
-  const totals = emptyRunTotals();
-  let partial: Partial<RunReceipt> = {};
+  initServe(db);
+  recoverRunJournal(db, vaultPath);
+  const recoveryLock = tryWriteFlock(vaultPath);
+  if (recoveryLock !== null) {
+    try {
+      for (const orphan of db.query<{ run_id: string; holder_pid: number; model_ref: string | null; metrics: string; created_at: string }, []>("SELECT * FROM extract_usage").all()) {
+        if (activeRuns.has(orphan.run_id) || (orphan.holder_pid !== process.pid && pidAlive(orphan.holder_pid))) continue;
+        const usage = JSON.parse(orphan.metrics) as Pick<RunReceipt, "model" | "claims_rejected" | "claims_extracted">;
+        persistRunReceipt(db, vaultPath, { ...emptyRunTotals(), ...usage, run_id: orphan.run_id, rail: "sync",
+          started_at: orphan.created_at, finished_at: orphan.created_at, status: "failed", stopped: null,
+          model: { ...usage.model, model_ref: orphan.model_ref }, errors: [usage.model.usage_unknown === true ? "model attempt interrupted; token usage unknown" : "extraction interrupted after model decision"] });
+      }
+    } finally { recoveryLock.release(); }
+  }
+  const runId = ulid();
+  activeRuns.add(runId);
   try {
-    switch (rail) {
-      case "sync":
-        partial = await runSyncRail(db, vaultPath, budget, hooks);
-        break;
-      case "retrieval-sweep":
-        partial = await runRetrievalSweep(db, hooks);
-        break;
-      case "purge-sweep":
-        partial = await runPurgeSweep(db, vaultPath, hooks, started);
-        break;
-      case "embed-backfill":
-        partial = await runEmbedBackfill(hooks);
-        break;
-      case "brief":
-        partial = await runBrief(vaultPath, started, [
-          `canon writing: ${hooks?.model_ref ? `on (${hooks.model_ref})` : "off (no model configured — connectors, ledger, search, timeline and undo still work)"}`,
-        ]);
-        break;
-      case "doctor-sweep":
-        partial = await runDoctorSweep(db, started);
-        break;
-      case "journal-prune":
-        partial = runJournalPrune(db, vaultPath, started, config.journal_retention_days);
-        break;
-    }
-  } catch (error) {
-    if (error instanceof InjectedCrash) throw error;
-    partial = { status: "failed", errors: [redactReceiptError(error)] };
-  }
+    const now = options.now ?? (() => new Date().toISOString());
+    const started = now();
+    const hooks = withResolvedModel(options.hooks);
+    const config = loadServeConfig(vaultPath);
+    const budget = createDurableWriteBudget(db, vaultPath, () => budgetDay(now()), config);
 
-  const finished = now();
-  const receipt: RunReceipt = {
-    ...totals,
-    ...partial,
-    run_id: ulid(),
-    rail,
-    started_at: started,
-    finished_at: finished,
-    status: partial.status ?? "ok",
-    stopped: partial.stopped ?? null,
-    model: {
-      ...totals.model,
-      ...partial.model,
-      model_ref: hooks?.model_ref ?? partial.model?.model_ref ?? null,
-    },
-    retrieval: {
-      ...totals.retrieval,
-      ...partial.retrieval,
-    },
-    budget: partial.budget ?? budget.usage(),
-    errors: [...(partial.errors ?? [])].map((item) =>
-      typeof item === "string" ? item : redactReceiptError(item),
-    ),
-  };
-  if (receipt.canon_writes > 0) {
-    addDailyBudget(db, day, "canon_writes_per_day", receipt.canon_writes);
-  }
-  persistRunReceipt(db, vaultPath, receipt, {
-    ...(options.crashAfter === undefined ? {} : { crashAfter: options.crashAfter }),
-    ...(rail === "brief" ? { artifactPath: briefPath(vaultPath, dayOf(started)) } : {}),
-  });
-  return receipt;
+    const totals = emptyRunTotals();
+    let partial: Partial<RunReceipt> = {};
+    try {
+      switch (rail) {
+        case "sync":
+          partial = await runSyncRail(db, vaultPath, budget, hooks, runId);
+          break;
+        case "retrieval-sweep":
+          partial = await runRetrievalSweep(db, hooks);
+          break;
+        case "purge-sweep":
+          partial = await runPurgeSweep(db, vaultPath, hooks, started);
+          break;
+        case "embed-backfill":
+          partial = await runEmbedBackfill(hooks);
+          break;
+        case "brief":
+          partial = await runBrief(vaultPath, started, [
+            `canon writing: ${hooks?.model_ref ? `on (${hooks.model_ref})` : "off (no model configured — connectors, ledger, search, timeline and undo still work)"}`,
+          ]);
+          break;
+        case "doctor-sweep":
+          partial = await runDoctorSweep(db, started);
+          break;
+        case "journal-prune":
+          partial = runJournalPrune(db, vaultPath, started, config.journal_retention_days);
+          break;
+      }
+    } catch (error) {
+      if (error instanceof InjectedCrash) throw error;
+      partial = { status: "failed", errors: [redactReceiptError(error)] };
+    }
+
+    const usage = db.query<{ model_ref: string | null; metrics: string }, [string]>("SELECT model_ref,metrics FROM extract_usage WHERE run_id=?").get(runId);
+    if (usage !== null) {
+      const metrics = JSON.parse(usage.metrics) as Pick<RunReceipt, "model" | "claims_rejected" | "claims_extracted">;
+      partial = { ...partial, ...metrics, model: { ...metrics.model, model_ref: usage.model_ref } };
+      if (metrics.model.usage_unknown === true) partial = { ...partial, status: "failed", errors: [...(partial.errors ?? []), "model attempt interrupted; token usage unknown"] };
+    }
+    const finished = now();
+    const receipt: RunReceipt = {
+      ...totals,
+      ...partial,
+      run_id: runId,
+      execution: options.execution ?? {
+        instance_id: processInstance, pid: process.pid, boot_id: readBootId(), trigger: "manual", due_at: null,
+      },
+      rail,
+      started_at: started,
+      finished_at: finished,
+      status: partial.status ?? "ok",
+      stopped: partial.stopped ?? null,
+      model: {
+        ...totals.model,
+        ...partial.model,
+        model_ref: partial.model?.model_ref ?? hooks?.model_ref ?? null,
+      },
+      retrieval: {
+        ...totals.retrieval,
+        ...partial.retrieval,
+      },
+      budget: partial.budget ?? budget.usage(),
+      errors: [...(partial.errors ?? [])].map((item) =>
+        typeof item === "string" ? item : redactReceiptError(item),
+      ),
+    };
+    persistRunReceipt(db, vaultPath, receipt, {
+      ...(options.crashAfter === undefined ? {} : { crashAfter: options.crashAfter }),
+      ...(rail === "brief" ? { artifactPath: briefPath(vaultPath, dayOf(started)) } : {}),
+    });
+    return receipt;
+  } finally { activeRuns.delete(runId); }
 }
 
 export async function runServeOnce(

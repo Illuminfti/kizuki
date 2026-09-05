@@ -8,9 +8,16 @@ const ENCODING = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"; // Crockford base32: no I, 
 const TIME_LEN = 10;
 const RANDOM_LEN = 16;
 const MAX_TIME = 281474976710655; // 2^48 - 1
+// 48-bit time fits 10 Crockford chars only when the first digit is 0-7.
+export const ULID_PATTERN = "[0-7][0-9A-HJKMNPQRSTVWXYZ]{25}";
+const CANONICAL = new RegExp(`^${ULID_PATTERN}$`);
+
+export function isUlid(value: unknown): value is string {
+  return typeof value === "string" && CANONICAL.test(value);
+}
 
 let lastTime = -1;
-const lastRandom: number[] = new Array<number>(RANDOM_LEN).fill(0);
+let lastRandom: number[] = new Array<number>(RANDOM_LEN).fill(0);
 
 function encodeTime(time: number): string {
   let out = "";
@@ -49,14 +56,20 @@ export function ulid(): string {
     throw new RangeError("ulid: timestamp exceeds the 48-bit ULID range");
   }
 
+  if (!Number.isSafeInteger(now) || now < 0) {
+    throw new RangeError("ulid: timestamp must be a non-negative integer");
+  }
+  const nextRandom = [...lastRandom];
   if (now > lastTime) {
-    lastTime = now;
-    fillRandom(lastRandom);
+    fillRandom(nextRandom);
   } else {
     // Same millisecond, or a clock that stepped backwards: keep the previous
     // timestamp and step the random field so ordering never regresses.
-    incrementRandom(lastRandom);
+    incrementRandom(nextRandom);
   }
+  // Commit monotonic state only after random generation/increment succeeds.
+  lastRandom = nextRandom;
+  lastTime = Math.max(now, lastTime);
 
   let out = encodeTime(lastTime);
   for (let i = 0; i < RANDOM_LEN; i++) {

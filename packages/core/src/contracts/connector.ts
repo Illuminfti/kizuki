@@ -219,6 +219,10 @@ export interface PurgePlan {
   source_record_ids: string[];
   /** Records the connector can see but cannot remove at the source. */
   unreachable_source_record_ids: string[];
+  /** Absent on legacy plans, which are unknown rather than complete. */
+  complete?: boolean;
+  /** Opaque connector-bound continuation for an incomplete plan page. */
+  continuation?: string;
 }
 
 export interface Connector {
