@@ -29,10 +29,23 @@ Effectful extraction and write-pass entry points therefore raise
 
 The sync rail records the same code in `stopped` and the same safe message in
 `errors`. It records failure rather than successful replay. It can still record
-ordinary rail bookkeeping and prior connector sync results. Refusal does not
+one new failed-run audit receipt and that receipt's normal schedule transition.
+It does not recover earlier receipts or usage records, settle reservations or
+invoke connector, model or retrieval hooks. Refusal does not
 change claims, corroboration, supersessions, the pending decision, extraction
 frontiers, deferred inputs or the retrieval outbox. It does not call the
 producer, file the remaining drafts, publish retrieval or write canon.
+
+Current envelopes also undergo full row-shape and digest validation before
+write-pass or sync-rail maintenance, including a pass with no model configured.
+One pure parser validates bounded scalar fields, timestamps, cursors, draft and
+input shapes, stored input relationships and the domain-bound digest. The same
+parser supplies the later durable reader, whose separate live checks own event
+existence, source authorization, origin and the current input partition. The
+early parser reads no events, refreshes no origin annotations and calls no port.
+Malformed current rows refuse before old claims can revive or reservations can
+settle. Non-RFC timestamps and scalar fields exceeding the existing archive
+bounds are treated as corrupt.
 
 ## Preserve the recovery evidence
 

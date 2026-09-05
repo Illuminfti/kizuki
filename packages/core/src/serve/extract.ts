@@ -2,6 +2,8 @@ import { sourcePolicyEpoch, sourceEventsAllowed, isLocalSourcePort, sourcePortBi
 import { createHash } from "node:crypto";
 import { parseExtractResponse } from "../producer/schema";
 import { tableExists } from "../ledger/schema";
+import { isRfc3339 } from "../util/time";
+import { isUlid } from "../util/ulid";
 import type { Database } from "bun:sqlite";
 import type { CaptureEvent } from "../contracts/event";
 import type { ClaimDraft, ProduceInput, ProducerPort, QuotedEvent } from "../contracts/producer";
@@ -106,10 +108,12 @@ export function extractBatchFilingVersion(value: string | null): 1 | null {
 
 /** Refuse before any writer maintenance, claim effect, or external publication. */
 export function requireAtomicExtractReplay(db: Database): void {
-  const rows = db.query<{ integrity: string | null }, []>("SELECT integrity FROM extract_batches LIMIT 2").all();
+  if (!tableExists(db, "extract_batches")) return;
+  const rows = storedExtractRows(db);
   if (rows.length > 1) throw new Error("durable extraction batch is corrupt");
   for (const row of rows) {
     if (extractBatchFilingVersion(row.integrity) === null) throw new LegacyExtractReconciliationError();
+    parseStoredExtractBatch(row);
   }
 }
 
@@ -398,48 +402,112 @@ export function journalExtractBatch(db: Database, mined: MineResult, modelRef: s
 export function readDurableExtractBatch(db: Database, producer?: ProducerPort): DurableExtractBatch | null {
   return db.transaction(() => readStoredExtractBatch(db, true, producer)).immediate();
 }
-function readStoredExtractBatch(db: Database, enforceConsent: boolean, producer?: ProducerPort): DurableExtractBatch | null {
-  const rows = db.query<{ previous_cursor: string; cursor: string; drafts: string; model_ref: string | null; input_ids: string | null; integrity: string | null; outcome: string; batch_mode: string; model_inputs: string | null; deferred_inputs: string | null }, []>(
-    "SELECT * FROM extract_batches ORDER BY created_at, previous_cursor LIMIT 2",
-  ).all();
-  if (rows.length === 0) return null;
-  const row = rows[0]!;
+interface StoredExtractRow {
+  previous_cursor: string;
+  cursor: string;
+  drafts: string;
+  model_ref: string | null;
+  created_at: string;
+  input_ids: string | null;
+  integrity: string | null;
+  outcome: string;
+  batch_mode: string;
+  model_inputs: string | null;
+  deferred_inputs: string | null;
+}
+
+function storedExtractRows(db: Database): StoredExtractRow[] {
+  return db.query<StoredExtractRow, []>("SELECT * FROM extract_batches ORDER BY created_at, previous_cursor LIMIT 2").all();
+}
+
+function boundedStoredText(value: unknown, maxBytes: number, nullable = false): boolean {
+  return (nullable && value === null) || (typeof value === "string" && Buffer.byteLength(value, "utf8") <= maxBytes);
+}
+
+/** Only row bytes enter this parser: it cannot read or refresh events, sources, or ports. */
+function parseStoredExtractBatch(row: StoredExtractRow): DurableExtractBatch {
+  if (Object.keys(row).sort().join(",") !== "batch_mode,created_at,cursor,deferred_inputs,drafts,input_ids,integrity,model_inputs,model_ref,outcome,previous_cursor" ||
+      !boundedStoredText(row.previous_cursor, 256) || !boundedStoredText(row.cursor, 256) ||
+      !boundedStoredText(row.drafts, 1_600_000) || !boundedStoredText(row.model_ref, 2_048, true) ||
+      !boundedStoredText(row.created_at, 64) || !isRfc3339(row.created_at) ||
+      !boundedStoredText(row.input_ids, 4_096, true) || !boundedStoredText(row.integrity, 74, true)) {
+    throw new Error("durable extraction batch is corrupt");
+  }
   const filingVersion = extractBatchFilingVersion(row.integrity);
-  if (enforceConsent && filingVersion === null) throw new LegacyExtractReconciliationError();
   const cursor = parseCursor(row.cursor);
+  const previous = row.previous_cursor === NULL_CURSOR ? null : parseCursor(row.previous_cursor);
+  const validCursor = (value: LedgerCursor | null): value is LedgerCursor => value !== null && isUlid(value.event_id) && isRfc3339(value.accepted_at);
   const parsed = parseExtractResponse(`{"claims":${row.drafts}}`);
   const legacyManifest = row.model_inputs === null && row.deferred_inputs === null;
-  if (rows.length !== 1 || cursor === null || !parsed.ok || row.previous_cursor !== (readExtractCursor(db) ?? NULL_CURSOR) ||
-      ((row.integrity === null || row.input_ids === null) && (row.integrity !== null || row.input_ids !== null)) ||
+  if (!validCursor(cursor) || (row.previous_cursor !== NULL_CURSOR && !validCursor(previous)) || !parsed.ok ||
+      ((row.integrity === null) !== (row.input_ids === null)) ||
       ((row.model_inputs === null || row.deferred_inputs === null) && !legacyManifest) ||
       !["ok", "purged"].includes(row.outcome) || !["frontier", "deferred"].includes(row.batch_mode) ||
       (legacyManifest && (row.batch_mode !== "frontier" || filingVersion === 1)) || (row.outcome === "ok" && parsed.claims.length === 0)) {
     throw new Error("durable extraction batch is corrupt");
   }
-  const mode = row.batch_mode as DurableExtractBatch["mode"];
   const modelInputs = inputList(row.model_inputs, "model inputs");
   const deferredInputs = inputList(row.deferred_inputs, "deferred inputs");
-  if ((!legacyManifest && row.outcome === "ok" && modelInputs.length === 0) || (mode === "deferred" && deferredInputs.length > 0)) {
+  if ((!legacyManifest && row.outcome === "ok" && modelInputs.length === 0) || (row.batch_mode === "deferred" && deferredInputs.length > 0)) {
     throw new Error("durable extraction batch is corrupt");
   }
-  const events = mode === "frontier" ? interval(db, row.previous_cursor || null, cursor) : modelInputs.map(input => {
+  let ids: string[] = [];
+  if (row.input_ids !== null) {
+    let decoded: unknown;
+    try { decoded = JSON.parse(row.input_ids); } catch { throw new Error("durable extraction inputs changed"); }
+    if (!Array.isArray(decoded) || decoded.length === 0 || decoded.length > EXTRACT_BATCH || !decoded.every(isUlid) ||
+        new Set(decoded).size !== decoded.length || row.input_ids !== JSON.stringify(decoded)) {
+      throw new Error("durable extraction inputs changed");
+    }
+    ids = decoded;
+  }
+  const original: DurableExtractBatch = { filing_version: filingVersion, previous_cursor: row.previous_cursor || null, cursor,
+    drafts: parsed.claims, filing_drafts: [], model_ref: row.model_ref, input_ids: ids,
+    mode: row.batch_mode as DurableExtractBatch["mode"], model_inputs: modelInputs, deferred_inputs: deferredInputs,
+    outcome: row.outcome as DurableExtractBatch["outcome"], authorization_epoch: null };
+  if (row.integrity !== null && row.integrity !== (legacyManifest ? legacyIntegrity(original) : integrity(original))) {
+    throw new Error("durable extraction integrity mismatch");
+  }
+  if (!legacyManifest) {
+    const modelIds = modelInputs.map(input => input.event_id);
+    const deferredIds = deferredInputs.map(input => input.event_id);
+    if (parsed.claims.some(draft => draft.event_ids.some(id => !modelIds.includes(id)))) {
+      throw new Error("durable extraction provenance is invalid");
+    }
+    const order = new Map(ids.map((id, index) => [id, index]));
+    if (row.input_ids !== null && (ids.at(-1) !== cursor.event_id ||
+        new Set([...modelIds, ...deferredIds]).size !== modelIds.length + deferredIds.length ||
+        !orderedSubset(modelIds, order) || !orderedSubset(deferredIds, order) ||
+        (row.batch_mode === "deferred" && JSON.stringify(modelIds) !== JSON.stringify(ids)))) {
+      throw new Error("durable extraction input partition is corrupt");
+    }
+  }
+  return original;
+}
+
+function readStoredExtractBatch(db: Database, enforceConsent: boolean, producer?: ProducerPort): DurableExtractBatch | null {
+  const rows = storedExtractRows(db);
+  if (rows.length === 0) return null;
+  if (rows.length !== 1) throw new Error("durable extraction batch is corrupt");
+  const row = rows[0]!;
+  if (enforceConsent && extractBatchFilingVersion(row.integrity) === null) throw new LegacyExtractReconciliationError();
+  const stored = parseStoredExtractBatch(row);
+  if (row.previous_cursor !== (readExtractCursor(db) ?? NULL_CURSOR)) throw new Error("durable extraction batch is corrupt");
+  const { mode, cursor, model_inputs: modelInputs, deferred_inputs: deferredInputs } = stored;
+  const legacyManifest = row.model_inputs === null && row.deferred_inputs === null;
+  const events = mode === "frontier" ? interval(db, stored.previous_cursor, cursor) : modelInputs.map(input => {
     const event = readEvent(db, input.event_id);
     if (event === null) throw new Error("durable extraction input is missing");
     return event;
   });
   const ids = events.map(event => event.event_id);
   if (row.input_ids !== null && row.input_ids !== JSON.stringify(ids)) throw new Error("durable extraction inputs changed");
-  if (legacyManifest) validateLegacyInputPartition(db, events, parsed.claims);
+  if (legacyManifest) validateLegacyInputPartition(db, events, stored.drafts);
   else validateInputPartition(db, mode, cursor, events, modelInputs, deferredInputs);
-  const sent = modelInputs.length === 0 ? [...new Set(parsed.claims.flatMap(draft => [...draft.event_ids]))] : modelInputs.map(input => input.event_id);
-  if (parsed.claims.some(draft => draft.event_ids.some(id => !sent.includes(id)))) throw new Error("durable extraction provenance is invalid");
-  const original: DurableExtractBatch = { filing_version: filingVersion, previous_cursor: row.previous_cursor || null, cursor, drafts: parsed.claims,
-    filing_drafts: [], model_ref: row.model_ref, input_ids: ids, mode, model_inputs: modelInputs,
-    deferred_inputs: deferredInputs, outcome: row.outcome as DurableExtractBatch["outcome"], authorization_epoch: null };
-  if (row.integrity !== null && row.integrity !== (legacyManifest ? legacyIntegrity(original) : integrity(original))) {
-    throw new Error("durable extraction integrity mismatch");
-  }
-  const view = filingDrafts(db, parsed.claims);
+  const sent = modelInputs.length === 0 ? [...new Set(stored.drafts.flatMap(draft => [...draft.event_ids]))] : modelInputs.map(input => input.event_id);
+  if (stored.drafts.some(draft => draft.event_ids.some(id => !sent.includes(id)))) throw new Error("durable extraction provenance is invalid");
+  const original = { ...stored, input_ids: ids };
+  const view = filingDrafts(db, stored.drafts);
   const externalSent = sent.filter(id => {
     const event = readEvent(db, id);
     if (event === null) throw new Error("durable extraction input is missing");

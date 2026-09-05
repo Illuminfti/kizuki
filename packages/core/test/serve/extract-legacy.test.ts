@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Database } from "bun:sqlite";
@@ -12,12 +12,16 @@ import { purgeEvents } from "../../src/ledger/purge";
 import { exportVault, restoreVault } from "../../src/export";
 import { commitExtractCursor, completeDurableExtractBatch, fileAndCompleteDurableExtractBatch,
   journalExtractBatch, LegacyExtractReconciliationError, mineLiveDrafts, producedClaimInput,
-  readDurableExtractBatch, validateDurableExtractStorage } from "../../src/serve/extract";
+  readDurableExtractBatch, requireAtomicExtractReplay, validateDurableExtractStorage } from "../../src/serve/extract";
 import { runRail } from "../../src/serve/rails";
-import { listRunReceipts } from "../../src/serve/receipts";
+import { listRunReceipts, persistRunReceipt, runReceiptsPath } from "../../src/serve/receipts";
+import { emptyRunTotals } from "../../src/serve/types";
 import { runWritePass } from "../../src/serve/write-pass";
 import { initVault } from "../../src/vault/init";
 import { claimInput, FixtureVectorPort, putEvent } from "../claims/helpers";
+import { commitMachineByteIntent } from "../../src/ledger/event-origin";
+import { sha256Hex } from "../../src/util/hash";
+import { ulid } from "../../src/util/ulid";
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "kizuki-legacy-extract-"));
@@ -216,5 +220,97 @@ test("authorized purge preserves the unhashed legacy format and cannot enable th
       .toEqual({ integrity: null, input_ids: null, model_inputs: null, deferred_inputs: null });
     validateDurableExtractStorage(f.db);
     expect(() => readDurableExtractBatch(f.db, f.model)).toThrow(LegacyExtractReconciliationError);
+  } finally { f.close(); }
+});
+
+for (const corruption of ["digest", "created_at"] as const) for (const rail of [false, true]) for (const configured of [false, true]) {
+  test(`full corrupt-${corruption} preflight precedes all maintenance, rail=${rail}, ports=${configured}`, async () => {
+    const f = fixture();
+    try {
+      journalExtractBatch(f.db, await mineLiveDrafts(f.db, f.model), "fixture:preflight", f.model);
+      const batch = readDurableExtractBatch(f.db, f.model)!;
+      const claim = await insertClaim({ db: f.db }, claimInput(f.event, { subject: "person:unrelated", body: "Unrelated claim." }));
+      if (claim.outcome !== "stored") throw new Error("fixture claim was not stored");
+      f.db.query("UPDATE claims SET status='skipped' WHERE claim_id=?").run(claim.claim.claim_id);
+      const at = "2026-09-05T12:00:00.000Z";
+      const canon = join(f.vault, "people", "preflight.md");
+      mkdirSync(join(f.vault, "people"), { recursive: true });
+      writeFileSync(canon, "# Preserved synthetic canon\n");
+      const hash = sha256Hex(readFileSync(canon));
+      f.db.query("INSERT INTO canon_receipts(receipt_id,provenance,sensitivity,page_path,after_hash,at) VALUES ('old-canon',?,'personal','people/preflight.md',?,?)")
+        .run(JSON.stringify([f.event]), hash, at);
+      f.db.query("INSERT INTO canon_write_reservations(receipt_id,day,page_path,before_hash) VALUES ('old-reservation','2026-09-05','people/preflight.md',?)").run(hash);
+      const later = putEvent(f.db, { source_record_id: "preflight-deferred" });
+      f.db.query("INSERT INTO extract_deferred_inputs(event_id,source_key,checked_revision,checked_binding_digest) VALUES (?,NULL,0,?)")
+        .run(later, batch.model_inputs[0]!.checked_binding_digest);
+      const retrieval = new FixtureVectorPort();
+      f.db.query("INSERT INTO retrieval_ops(op_id,store,op,doc_id,state,created_at) VALUES ('old-outbox',?,'upsert',?,'pending',?)")
+        .run(retrieval.descriptor.id, claim.claim.claim_id, at);
+      const oldReceipt = { ...emptyRunTotals(), run_id: "preflight-old-run", rail: "sync" as const,
+        started_at: at, finished_at: at, status: "ok" as const, stopped: null, errors: [] };
+      persistRunReceipt(f.db, f.vault, oldReceipt);
+      // A pending JSONL import and orphan usage make premature rail recovery observable.
+      expect(() => persistRunReceipt(f.db, f.vault, { ...oldReceipt, run_id: "preflight-unimported-run" }, { crashAfter: "after-jsonl" })).toThrow();
+      f.db.query("INSERT INTO extract_usage(run_id,model_ref,metrics,holder_pid,created_at) VALUES ('preflight-orphan','fixture:old',?,?,?)")
+        .run(JSON.stringify({ ...emptyRunTotals(), claims_rejected: {}, claims_extracted: 0 }), process.pid, at);
+      commitMachineByteIntent(f.db, { receipt_id: ulid(), before_hash: null,
+        after_hash: sha256Hex("Grace runs partnerships at Acme.") }, () => {});
+      if (corruption === "digest") f.db.query("UPDATE extract_batches SET integrity=?").run(`atomic-v1:${"a".repeat(64)}`);
+      else f.db.query("UPDATE extract_batches SET created_at='not-a-timestamp'").run();
+      const expectedError = corruption === "digest" ? "durable extraction integrity mismatch" : "durable extraction batch is corrupt";
+      const rows = () => JSON.stringify([authoritativeRows(f.db), ...["canon_write_reservations", "budget_ledger", "canon_receipts", "events", "extract_usage",
+        "source_grants", "source_event_bindings", "source_grant_receipts", "canon_machine_byte_intents"]
+        .map(table => f.db.query(`SELECT * FROM ${table} ORDER BY rowid`).all())]);
+      const before = rows();
+      const receipts = f.db.query("SELECT * FROM run_receipts ORDER BY rowid").all();
+      const receiptBytes = readFileSync(runReceiptsPath(f.vault), "utf8");
+      const canonBytes = readFileSync(canon);
+      const flockBefore = existsSync(join(f.vault, ".kizuki", "write-pass.flock"));
+      const schedules = f.db.query<{ rail: string }, []>("SELECT * FROM schedules ORDER BY rail").all();
+      let portCalls = 0;
+      let syncCalls = 0;
+      retrieval.search = async () => { portCalls++; throw new Error("unexpected retrieval call"); };
+      retrieval.upsert = async () => { portCalls++; throw new Error("unexpected retrieval call"); };
+      retrieval.remove = async () => { portCalls++; throw new Error("unexpected retrieval call"); };
+      const hooks = configured ? { producer: f.model, claims: { db: f.db, retrieval }, model_ref: "fixture:current" } : {};
+      if (rail) {
+        const failed = await runRail(f.db, f.vault, "sync", { hooks: { ...hooks,
+          sync: async () => { syncCalls++; throw new Error("unexpected connector call"); } }, now: () => at });
+        expect(failed.status).toBe("failed");
+        expect(failed.errors).toEqual([expectedError]);
+        expect(f.db.query("SELECT * FROM run_receipts WHERE run_id<>? ORDER BY rowid").all(failed.run_id)).toEqual(receipts);
+        const afterBytes = readFileSync(runReceiptsPath(f.vault), "utf8");
+        expect(afterBytes.startsWith(receiptBytes)).toBe(true);
+        expect(afterBytes.slice(receiptBytes.length).trim().split("\n")).toHaveLength(1);
+        // Only this new failure receipt's normal schedule transition is permitted.
+        expect(f.db.query("SELECT * FROM schedules WHERE rail<>'sync' ORDER BY rail").all())
+          .toEqual(schedules.filter(row => row.rail !== "sync"));
+      } else {
+        await expect(runWritePass(f.db, f.vault, { ...hooks, budget: createBudgetTracker({ canon_writes_per_run: 8 }) }))
+          .rejects.toThrow(expectedError);
+        expect(f.db.query("SELECT * FROM run_receipts ORDER BY rowid").all()).toEqual(receipts);
+        expect(readFileSync(runReceiptsPath(f.vault), "utf8")).toBe(receiptBytes);
+        expect(f.db.query("SELECT * FROM schedules ORDER BY rail").all()).toEqual(schedules);
+      }
+      expect(rows()).toBe(before);
+      expect(readFileSync(canon)).toEqual(canonBytes);
+      expect(f.calls.count).toBe(1);
+      expect(portCalls).toBe(0);
+      expect(syncCalls).toBe(0);
+      expect(existsSync(join(f.vault, ".kizuki", "write-pass.flock"))).toBe(flockBefore);
+    } finally { f.close(); }
+  });
+}
+
+test("full valid-row preflight is pure even when a later intent would refresh origin", async () => {
+  const f = fixture();
+  try {
+    journalExtractBatch(f.db, await mineLiveDrafts(f.db, f.model), "fixture:pure-preflight", f.model);
+    commitMachineByteIntent(f.db, { receipt_id: ulid(), before_hash: null,
+      after_hash: sha256Hex("Grace runs partnerships at Acme.") }, () => {});
+    const before = f.db.query("SELECT * FROM events ORDER BY rowid").all();
+    requireAtomicExtractReplay(f.db);
+    expect(f.db.query("SELECT * FROM events ORDER BY rowid").all()).toEqual(before);
+    expect(f.calls.count).toBe(1);
   } finally { f.close(); }
 });
