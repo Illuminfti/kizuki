@@ -24,6 +24,7 @@ import {
 import { saveCheckpoint } from "../src/ledger/connections";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "../src/ledger/db";
 import { accept } from "../src/ledger/ledger";
+import { revokeSourceGrant, resumeSourceRevocation, setSourceGrant } from "../src/ledger/source-grants";
 import { purgeEvents } from "../src/ledger/purge";
 import { listSubjectAliases } from "../src/claims/identity";
 import { readVaultId } from "../src/serve/vault-id";
@@ -133,6 +134,34 @@ function insertFixtureClaim(
     1,
     null,
   );
+}
+
+function grantExport(db: ReturnType<typeof openLedger>, sourceKey: string): void {
+  setSourceGrant(db, {
+    source_key: sourceKey,
+    expected_revision: 0,
+    operation_id: `export-grant-${sourceKey}`,
+    policy: {
+      purposes: ["capture", "recall", "session", "derive", "extract", "export"],
+      allowed_fields: ["text", "subjects", "attachments", "metadata"],
+      retention: "persistent_owned_until_revoked",
+      egress: "local_only",
+      sensitivity_floor: "private",
+    },
+  });
+}
+
+function erasureReport(hashes: unknown = []): string {
+  return JSON.stringify({
+    logical_absence: true,
+    owned_file_maintenance: "complete",
+    external_copies: "out_of_scope",
+    affected_claim_ids: [],
+    affected_proposal_ids: [],
+    affected_receipt_ids: [],
+    affected_identity_hashes: hashes,
+    retained_reasons: [],
+  });
 }
 
 function writeSignedManifest(
@@ -772,6 +801,100 @@ describe("restoreVault", () => {
     }
   });
 
+  test.each(["terminated", "unterminated"])("v3 restore refuses invalid UTF-8 JSONL before target publication (%s)", (ending) => {
+    const { db, vaultPath } = populated();
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    const manifest = exportVault(db, vaultPath, backup);
+    const key = "claims/identity_links.jsonl";
+    const payload = Buffer.concat([
+      Buffer.from('{"subject_a":"person:a","subject_b":"person:b","score":1,"evidence":{"encoding":"kizuki.identity-evidence/raw-v1","raw":"'),
+      Buffer.from([0xc3, 0x28]),
+      Buffer.from('"},"status":"candidate","decided_by":"legacy","receipt_id":null,"at":"2026-01-01T00:00:00.000Z"}' + (ending === "terminated" ? "\n" : "")),
+    ]);
+    writeFileSync(join(backup, "claims", "identity_links.jsonl"), payload);
+    writeSignedManifest(backup, {
+      ...manifest,
+      files: {
+        ...manifest.files,
+        [key]: {
+          count: 1, size: payload.byteLength, mode: 0o600,
+          sha256: new Bun.CryptoHasher("sha256").update(payload).digest("hex"),
+        },
+      },
+    });
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    expect(() => restoreVault(backup, target)).toThrow();
+    expect(existsSync(target)).toBe(false);
+    db.close();
+  });
+
+  test("refuses retained identity hashes until resumed source erasure scrubs them", async () => {
+    const { db, vaultPath, sourceKey } = populated();
+    grantExport(db, sourceKey);
+    revokeSourceGrant(db, {
+      source_key: sourceKey,
+      expected_revision: 1,
+      operation_id: "scrub-legacy-identity-hash",
+    });
+    const options = { ownedRetrieval: { stores: async () => ({ stores: [], absent_store_ids: [] }) } };
+    expect((await resumeSourceRevocation(db, vaultPath, "scrub-legacy-identity-hash", options)).status).toBe("purged");
+    // An upgraded old purged report can still contain retired endpoint hashes.
+    // Stored status must not bypass the current export guard.
+    db.query("UPDATE source_store_inventory SET erasure_report=? WHERE source_key=?")
+      .run(erasureReport(["legacy-endpoint-hash"]), sourceKey);
+    const refused = join(temporary("kizuki-export-parent-"), "refused");
+    expect(() => exportVault(db, vaultPath, refused)).toThrow(
+      "legacy_identity_erasure_reconciliation_required",
+    );
+    expect(existsSync(refused)).toBe(false);
+    const resumed = await resumeSourceRevocation(db, vaultPath, "scrub-legacy-identity-hash", options);
+    expect(resumed.status).toBe("purged");
+    expect(JSON.parse(db.query<{ erasure_report: string }, [string]>(
+      "SELECT erasure_report FROM source_store_inventory WHERE source_key=?",
+    ).get(sourceKey)?.erasure_report ?? "null")).toMatchObject({
+      affected_identity_hashes: [],
+    });
+    const unsafeBackup = join(temporary("kizuki-export-parent-"), "unsafe");
+    const unsafeManifest = exportVault(db, vaultPath, unsafeBackup);
+    const inventoryPath = join(unsafeBackup, "ledger", "source_store_inventory.jsonl");
+    const unsafeRow = JSON.parse(readFileSync(inventoryPath, "utf8"));
+    unsafeRow.erasure_report = erasureReport(["restored-legacy-hash"]);
+    const unsafePayload = Buffer.from(`${JSON.stringify(unsafeRow)}\n`);
+    writeFileSync(inventoryPath, unsafePayload);
+    writeSignedManifest(unsafeBackup, {
+      ...unsafeManifest,
+      files: {
+        ...unsafeManifest.files,
+        ["ledger/source_store_inventory.jsonl"]: {
+          count: 1, size: unsafePayload.byteLength, mode: 0o600,
+          sha256: new Bun.CryptoHasher("sha256").update(unsafePayload).digest("hex"),
+        },
+      },
+    });
+    const unsafeTarget = join(temporary("kizuki-restore-parent-"), "unsafe");
+    expect(() => restoreVault(unsafeBackup, unsafeTarget)).toThrow(
+      "legacy_identity_erasure_reconciliation_required",
+    );
+    expect(existsSync(unsafeTarget)).toBe(false);
+
+    const backup = join(temporary("kizuki-export-parent-"), "clean");
+    exportVault(db, vaultPath, backup);
+    expect(JSON.parse(
+      JSON.parse(readFileSync(join(backup, "ledger", "source_store_inventory.jsonl"), "utf8"))
+        .erasure_report,
+    )).toMatchObject({ affected_identity_hashes: [] });
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    restoreVault(backup, target);
+    const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
+    expect(JSON.parse(restored.query<{ erasure_report: string }, [string]>(
+      "SELECT erasure_report FROM source_store_inventory WHERE source_key=?",
+    ).get(sourceKey)?.erasure_report ?? "null")).toMatchObject({
+      affected_identity_hashes: [],
+    });
+    restored.close();
+    db.close();
+  });
+
   test("refuses malformed SQLite UTF-8 identity evidence before export publication", () => {
     const { db, vaultPath } = populated();
     db.exec("DROP TABLE identity_links");
@@ -785,6 +908,56 @@ describe("restoreVault", () => {
     const backup = join(temporary("kizuki-export-parent-"), "dump");
     expect(() => exportVault(db, vaultPath, backup)).toThrow(/identity|UTF-8/i);
     expect(existsSync(backup)).toBe(false);
+    db.close();
+  });
+
+  test("refuses oversized source erasure reports before backup publication", () => {
+    const { db, vaultPath, sourceKey } = populated();
+    grantExport(db, sourceKey);
+    const report = JSON.stringify({ affected_identity_hashes: [], padding: "x".repeat(2_000_000) });
+    db.query(`INSERT INTO source_store_inventory
+      (source_key,checked,payload_complete,erasure_report) VALUES (?,1,1,?)`).run(sourceKey, report);
+    const target = join(temporary("kizuki-export-parent-"), "oversized");
+    expect(() => exportVault(db, vaultPath, target)).toThrow("legacy_identity_erasure_reconciliation_required");
+    expect(existsSync(target)).toBe(false);
+    db.close();
+  });
+
+  test("normalizes a missing legacy identity-hash compatibility field on restore", () => {
+    const { db, vaultPath, sourceKey } = populated();
+    grantExport(db, sourceKey);
+    db.query(`INSERT INTO source_store_inventory
+      (source_key,checked,payload_complete,erasure_report) VALUES (?,1,1,?)`)
+      .run(sourceKey, erasureReport());
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    const manifest = exportVault(db, vaultPath, backup);
+    const inventoryPath = join(backup, "ledger", "source_store_inventory.jsonl");
+    const inventory = JSON.parse(readFileSync(inventoryPath, "utf8"));
+    const report = JSON.parse(inventory.erasure_report);
+    delete report.affected_identity_hashes;
+    inventory.erasure_report = JSON.stringify(report);
+    const payload = Buffer.from(`${JSON.stringify(inventory)}\n`);
+    writeFileSync(inventoryPath, payload);
+    writeSignedManifest(backup, {
+      ...manifest,
+      schema: "kizuki.backup/v2",
+      files: {
+        ...manifest.files,
+        ["ledger/source_store_inventory.jsonl"]: {
+          count: 1, size: payload.byteLength, mode: 0o600,
+          sha256: new Bun.CryptoHasher("sha256").update(payload).digest("hex"),
+        },
+      },
+    });
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    restoreVault(backup, target);
+    const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
+    expect(JSON.parse(restored.query<{ erasure_report: string }, [string]>(
+      "SELECT erasure_report FROM source_store_inventory WHERE source_key=?",
+    ).get(sourceKey)?.erasure_report ?? "null")).toMatchObject({
+      affected_identity_hashes: [],
+    });
+    restored.close();
     db.close();
   });
 
@@ -959,6 +1132,23 @@ describe("restoreVault", () => {
     expect(manifest.snapshot.event_count).toBe(1);
     const target = join(temporary("kizuki-restore-parent-"), "vault");
     expect(restoreVault(backup, target).events).toBe(1);
+    db.close();
+  });
+
+  test("rechecks source erasure reports after progress callbacks", () => {
+    const { db, vaultPath, sourceKey } = populated();
+    grantExport(db, sourceKey);
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    expect(() => exportVault(db, vaultPath, backup, {
+      onProgress: (label) => {
+        if (label === "claims") {
+          db.query(`INSERT INTO source_store_inventory
+            (source_key,checked,payload_complete,erasure_report) VALUES (?,1,1,?)`)
+            .run(sourceKey, erasureReport(["reinserted-legacy-hash"]));
+        }
+      },
+    })).toThrow("legacy_identity_erasure_reconciliation_required");
+    expect(existsSync(backup)).toBe(false);
     db.close();
   });
 

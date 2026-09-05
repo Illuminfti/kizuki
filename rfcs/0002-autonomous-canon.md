@@ -2158,7 +2158,13 @@ malformed historical JSON, and grants no authority. Current restore rejects
 unknown/missing tag fields, oversized rows or streams, and scanner-budget
 violations before publishing the target. V1/V2 retain their original JSON-value
 import semantics and optional identity stream; older readers reject v3. This
-format adds no purge-proof stream or identity authority.
+format adds no purge-proof stream or identity authority. Backup and restore also
+refuse known erased endpoint hashes retained in legacy source-erasure reports,
+even when an old grant says `purged`; resume source erasure before exporting.
+V1/V2 may normalize an absent compatibility hash field to `[]`, but every
+version refuses a present malformed or nonempty field. Current v3 requires the
+empty field explicitly. The exact inventory row is bounded and validated before
+serialization; restore decodes JSONL with fatal UTF-8 validation before parsing.
 
 ### 13.3 What the ledger must never hold
 
@@ -2304,7 +2310,7 @@ structural protection of the vault):
 - `verifyAbsent proves the ids are gone from every configured store`
 - `a pending purge op older than the SLA is a doctor failure`
 - `the canon rewrite lands in the same loop pass and lifts the hold`
-- `purge keyed on a subject does not follow identity links without the flag`
+- `purge keyed on a raw subject succeeds while alias expansion always refuses`
 
 **`packages/core/test/contracts/conformance.test.ts`**
 

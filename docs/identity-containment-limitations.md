@@ -39,6 +39,16 @@ apply the same limits; restore additionally caps each JSONL row and the complete
 stream before publishing the target. Oversized legacy state requires a separately
 reviewed migration, never silent truncation.
 
+Known erased endpoint hashes in a legacy source-erasure report block both new
+exports and restore publication with
+`legacy_identity_erasure_reconciliation_required`. Resume source erasure on the
+original vault before exporting. All supported archive versions refuse a
+present nonempty or malformed hash field. V1/V2 alone may normalize a missing
+compatibility field to an empty array; current v3 requires that explicit empty
+field. Source-erasure reports are limited to 2,000,000 UTF-8 bytes, checked
+before decoding or parsing, and their JSONL transport has a corresponding
+bounded row size. Invalid UTF-8 JSONL is rejected before JSON parsing.
+
 ## Verification
 
 Use the repository-pinned Bun version to run the public containment, purge,
