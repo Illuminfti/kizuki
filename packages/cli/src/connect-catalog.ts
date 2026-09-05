@@ -19,6 +19,7 @@ const TITLES: Record<string, string> = {
   "kizuki.import-legacy-events": "Event history migration",
   "kizuki.screenpipe": "Screenpipe",
   "kizuki.ics": "Calendar (ICS)",
+  "kizuki.gmail": "Gmail read-only browser sign-in",
   "kizuki.imap": "Email (IMAP)",
   "kizuki.telegram": "Telegram sign-in",
 };
@@ -30,9 +31,9 @@ export function printConnectorCatalog(io: CliIo, json: boolean): number {
     name: TITLES[id] ?? id,
     mode: id === "kizuki.telegram" ? "native account sign-in" : id === "kizuki.beeper" ? "local app" : id.includes("import-") ? "export import" :
       enrollable.has(id) ? "local source" : "account sign-in",
-    available: enrollable.has(id) && (id !== "kizuki.telegram" || appCredentials() !== null),
+    available: enrollable.has(id) && (id !== "kizuki.telegram" || appCredentials() !== null) && (id !== "kizuki.gmail" || /^[A-Za-z0-9._-]{1,512}$/.test(io.env.KIZUKI_GMAIL_CLIENT_ID ?? "")),
     cli_enrollable: enrollable.has(id),
-    detail: id === "kizuki.telegram" && appCredentials() === null ? "CLI wired; project app credentials missing" : enrollable.has(id) ? "ready to connect" : "not yet available from this CLI",
+    detail: id === "kizuki.gmail" ? "CLI wired; operator desktop-client configuration, explicit fields, browser sign-in and separate source consent required" : id === "kizuki.telegram" && appCredentials() === null ? "CLI wired; project app credentials missing" : enrollable.has(id) ? "ready to connect" : "not yet available from this CLI",
   }));
   if (json) {
     io.out(jsonEnvelope("connect", "ok", { sources }));

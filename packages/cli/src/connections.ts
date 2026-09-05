@@ -1,3 +1,5 @@
+import { createGmailConnector, inspectGmailState, type GmailConnectorConfig } from "@kizuki/connector-gmail";
+import { gmailClient, gmailRequiredFields, gmailStateConfig } from "./gmail";
 import type { Database } from "bun:sqlite";
 import { isAbsolute, resolve } from "node:path";
 import type {
@@ -14,6 +16,7 @@ import {
   isPlainObject,
   listConnections,
   sourceCaptureAdmission,
+  inspectSourceGrant,
 } from "@kizuki/core";
 import { REGISTRY, getConnector } from "@kizuki/connectors";
 import { TelegramConnector, type TelegramConnectorConfig, type TelegramDeps } from "@kizuki/connector-telegram";
@@ -136,7 +139,7 @@ export function listEnrollableConnectorIds(): string[] {
     .sort()
     .filter((id) => connectorAuthModes(id)?.includes("none") === true ||
       (id === "kizuki.beeper" && connectorAuthModes(id)?.includes("secret_ref") === true) ||
-      (["kizuki.imap", "kizuki.telegram"].includes(id) && connectorAuthModes(id)?.includes("sign_in") === true));
+      (["kizuki.imap", "kizuki.telegram", "kizuki.gmail"].includes(id) && connectorAuthModes(id)?.includes("sign_in") === true));
 }
 
 function resolveRegisteredId(input: string): string | null {
@@ -228,7 +231,7 @@ function inspectConnection(
   connection: Connection,
 ): HostConnection {
   try {
-    if (["kizuki.imap", "kizuki.telegram"].includes(connection.connector_id)) {
+    if (["kizuki.imap", "kizuki.telegram", "kizuki.gmail"].includes(connection.connector_id)) {
       const ref = connection.secret_refs[0];
       if (connection.secret_refs.length !== 1 || ref === undefined) throw new ConnectionError(`${connection.connector_id} connection state is missing`);
       if (store.read(connection) === null) throw new ConnectionError(`${connection.connector_id} connection state is missing`);
@@ -345,7 +348,7 @@ export async function loadConnector(
   store: ConnectionStateStore,
   db: Database,
   env: Record<string, string | undefined> = process.env,
-  factory: (id: string, config?: unknown, telegramDeps?: Partial<TelegramDeps>) => Connector = (id, config, deps) => id === "kizuki.telegram" ? new TelegramConnector(config as TelegramConnectorConfig, deps) : getConnector(id, config),
+  factory: (id: string, config?: unknown, telegramDeps?: Partial<TelegramDeps>) => Connector = (id, config, deps) => id === "kizuki.telegram" ? new TelegramConnector(config as TelegramConnectorConfig, deps) : id === "kizuki.gmail" ? createGmailConnector(config as GmailConnectorConfig, deps?.persist ? {persist:deps.persist} : {}) : getConnector(id, config),
 ): Promise<Connector> {
   try { sourceCaptureAdmission(db, selected.connection.connector_id, selected.connection.source_key); }
   catch (error) {
@@ -358,6 +361,33 @@ export async function loadConnector(
     throw new ConnectionError(
       `${selected.connection.connector_id} source=${selected.connection.source_key}: ${selected.problem ?? "state missing"}; reconnect it`,
     );
+  }
+  if (selected.connection.connector_id === "kizuki.gmail") {
+    const bytes = store.read(selected.connection);
+    if (bytes === null) throw new ConnectionError("Gmail protected state is unavailable.");
+    const identity = inspectGmailState(bytes);
+    const grant = inspectSourceGrant(db, selected.connection.source_key);
+    if (!grant || gmailRequiredFields(identity.fields).some(field => !grant.policy.allowed_fields.includes(field as "text" | "subjects" | "attachments" | "metadata"))) {
+      throw new ConnectionError("source_field_denied; Gmail selected fields are incompatible with this grant. Inspect the source policy and explicitly reconcile consent; projection changes through reauthorization are unsupported.");
+    }
+    const client = await gmailClient(env);
+    if (sourceCaptureAdmission(db, selected.connection.connector_id, selected.connection.source_key)?.expected_revision !== grant.revision) {
+      throw new ConnectionError("source_capture_denied; source consent changed during host composition; retry with current policy.");
+    }
+    const ref = selected.connection.secret_refs[0]!;
+    const connector = factory("kizuki.gmail", gmailStateConfig(bytes, ref, client), {
+      persist: createStatePersister(db, store, selected.connection).persist,
+    });
+    try {
+      await connector.connect(async wanted => {
+        if (wanted !== ref) throw new ConnectionError("unexpected Gmail state reference");
+        return new TextDecoder().decode(bytes);
+      });
+    } catch {
+      await connector.revoke();
+      throw new ConnectionError("Gmail connection unavailable; check operator configuration and reauthorize the existing source.");
+    }
+    return connector;
   }
   const telegram = selected.connection.connector_id === "kizuki.telegram";
   const connector = factory(

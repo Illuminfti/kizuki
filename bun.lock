@@ -16,6 +16,7 @@
         "kizuki": "src/main.ts",
       },
       "dependencies": {
+        "@kizuki/connector-gmail": "workspace:*",
         "@kizuki/connector-imap": "workspace:*",
         "@kizuki/connector-telegram": "workspace:*",
         "@kizuki/connectors": "workspace:*",
