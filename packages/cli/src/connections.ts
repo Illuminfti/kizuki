@@ -12,10 +12,12 @@ import {
   enrollConnection,
   isPlainObject,
   listConnections,
+  sourceCaptureAdmission,
 } from "@kizuki/core";
 import { REGISTRY, getConnector } from "@kizuki/connectors";
 import { errorText } from "./output";
 import { tokenResolver, validTokenRef } from "./secrets";
+import { consentHint } from "./source-consent";
 
 export const HOST_STATE_SCHEMA = "kizuki.cli.connection-state/v1" as const;
 
@@ -338,9 +340,17 @@ export function blocksEnrollment(state: HealthState): boolean {
 export async function loadConnector(
   selected: HostConnection,
   store: ConnectionStateStore,
+  db: Database,
   env: Record<string, string | undefined> = process.env,
   factory: (id: string, config?: unknown) => Connector = getConnector,
 ): Promise<Connector> {
+  try { sourceCaptureAdmission(db, selected.connection.connector_id, selected.connection.source_key); }
+  catch (error) {
+    if (error instanceof Error && error.message === "source_capture_denied") {
+      throw new ConnectionError(`source_capture_denied; ${consentHint(db, selected.connection.source_key)}`);
+    }
+    throw error;
+  }
   if (selected.state === null) {
     throw new ConnectionError(
       `${selected.connection.connector_id} source=${selected.connection.source_key}: ${selected.problem ?? "state missing"}; reconnect it`,

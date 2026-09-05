@@ -124,7 +124,7 @@ export const importCommand: Command = {
       }
 
       if (hasPolicy) setSourceGrant(ctx.db, { source_key: selected.connection.source_key, expected_revision: revision!, operation_id: parsed.options.get("--operation-id")!, policy });
-      const connector = await loadConnector(selected, ctx.store);
+      const connector = await loadConnector(selected, ctx.store, ctx.db);
       const result = await runToCompletion(
         ctx.db,
         connector,

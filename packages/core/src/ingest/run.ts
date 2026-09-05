@@ -1,4 +1,4 @@
-import { inspectSourceGrant, sourcePolicyEpoch, type SourceAdmission } from "../ledger/source-grants";
+import { sourceCaptureAdmission, type SourceAdmission } from "../ledger/source-grants";
 import type { Database } from "bun:sqlite";
 import type { Connector, Manifest, SyncBatch } from "../contracts/connector";
 import { validateEventInput } from "../contracts/event";
@@ -311,14 +311,14 @@ async function runConnector(
   mode: "backfill" | "sync",
 ): Promise<RunResult> {
   const previous = getCheckpoint(db, connector_id, source_key)?.cursor ?? null;
+  let admission: SourceAdmission | null;
   try {
     requireActiveConnection(db, connector_id, source_key);
+    admission = sourceCaptureAdmission(db, connector_id, source_key);
   } catch (error) {
     return refusedRun(errorText(error), previous);
   }
 
-  const consent = inspectSourceGrant(db, source_key);
-  if ((sourcePolicyEpoch(db) > 0 || db.query<{ consent_required: number }, [string]>("SELECT consent_required FROM connections WHERE source_key=?").get(source_key)?.consent_required === 1) && (consent === null || consent.status !== "active" || !consent.policy.purposes.includes("capture"))) return refusedRun("source_capture_denied", previous);
   const manifest = connector.manifest();
   if (manifest.connector_id !== connector_id) {
     const result = refusedRun(
@@ -384,7 +384,7 @@ async function runConnector(
     db,
     labelBatch(db, connector_id, source_key, batch),
     sourceGrants(manifest),
-    consent === null ? undefined : { source_key, expected_revision: consent.revision },
+    admission ?? undefined,
   );
   const status: ConnectionRunStatus = processed.errors.length === 0 ? "ok" : "failed";
   return persistRun(

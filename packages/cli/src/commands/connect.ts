@@ -28,7 +28,6 @@ import {
   enrollHostConnection,
   encodeHostState,
   listHostConnections,
-  loadConnector,
   refuseSecrets,
   resolveConnectorId,
 } from "../connections";
@@ -242,7 +241,11 @@ export const connectCommand: Command = {
         (item) => item.state?.config.path === absolute,
       );
       if (existing !== undefined && existing.state !== null) {
-        const connector = await loadConnector(existing, ctx.store);
+        // An explicit reconnect may validate the selected local source before
+        // capture consent. Background loads use the gated loadConnector path.
+        const connector = getConnector(connectorId, existing.state.config);
+        if (!connector.manifest().auth_modes.includes("none")) throw new ConnectionError(`sign-in for ${connectorId} is not wired yet`);
+        await connector.connect(refuseSecrets);
         checkRequestedSensitivity(ctx.db, connector.manifest(), requested, existing.connection);
         const health = await connector.health();
         if (blocksEnrollment(health.state)) {

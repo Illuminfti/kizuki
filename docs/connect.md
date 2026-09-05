@@ -106,3 +106,10 @@ After enrollment, grant the intended policy with `kizuki connect grant --source 
 --policy POLICY.json --expected-revision 0 --operation-id imap-grant`, then run
 `kizuki backfill imap`. The connector uses TLS and reads
 mail without sending, deleting, moving, or marking messages read.
+
+Background sync, backfill and doctor check source capture permission before
+opening provider transport. An explicit enrollment or reconnect can validate
+the selected account before a capture grant exists; it does not grant access
+to ingest history. Revocation blocks subsequent background opens immediately.
+Already in-flight provider work remains bounded by its operation deadline;
+capture checks permission again before storing results.

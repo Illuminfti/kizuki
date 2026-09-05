@@ -46,7 +46,12 @@ try {
     throw new Error("Beeper is missing from the compiled connection catalog");
   }
   run(cli, ["init", vault, "--no-service"], env);
-  run(cli, ["import", "markdown-folder", "--source", notes, "--vault", vault], env);
+  const policy = join(rootTemp, "source-policy.json");
+  writeFileSync(policy, JSON.stringify({ purposes: ["capture", "recall", "session", "derive", "extract", "export"],
+    allowed_fields: ["text", "subjects", "attachments", "metadata"], retention: "persistent_owned_until_revoked",
+    egress: "local_only", sensitivity_floor: "private" }), { mode: 0o600 });
+  run(cli, ["import", "markdown-folder", "--source", notes, "--vault", vault,
+    "--policy", policy, "--expected-revision", "0", "--operation-id", "release-smoke-consent"], env);
   const query = run(cli, ["query", "Ada", "--vault", vault], env);
   if (!query.includes("Ada")) {
     throw new Error(`imported note was not queryable: ${query}`);

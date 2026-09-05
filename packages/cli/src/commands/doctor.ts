@@ -233,7 +233,7 @@ async function collect(
       continue;
     }
     try {
-      const connector = await loadConnector(host, ctx.store);
+      const connector = await loadConnector(host, ctx.store, ctx.db);
       const health = await withDeadline(HEALTH_DEADLINE_MS, () => connector.health());
       connections.push({
         ...base,

@@ -37,7 +37,7 @@ export const syncCommand: Command = {
         try {
           const receipt = await runRail(ctx.db, ctx.vaultPath, "sync", { hooks: runtime.hooks });
           io.out(`sync events_stored=${receipt.events_stored} duplicates=${receipt.events_duplicate} errors=${receipt.errors.length}`);
-          return receipt.status === "failed" ? 1 : 0;
+          return receipt.status === "failed" || receipt.errors.length > 0 ? 1 : 0;
         } finally {
           await runtime.close();
         }
@@ -67,7 +67,7 @@ export const syncCommand: Command = {
             failed = true;
             continue;
           }
-          const connector = await loadConnector(selected, ctx.store);
+          const connector = await loadConnector(selected, ctx.store, ctx.db);
           const result = await runToCompletion(
             ctx.db,
             connector,

@@ -24,7 +24,7 @@ export const backfillCommand: Command = {
         connectorId,
         parsed.options.get("--source"),
       );
-      const connector = await loadConnector(selected, ctx.store);
+      const connector = await loadConnector(selected, ctx.store, ctx.db);
       const result = await runToCompletion(
         ctx.db,
         connector,

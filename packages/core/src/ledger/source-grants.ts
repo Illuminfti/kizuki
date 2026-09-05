@@ -500,6 +500,27 @@ export interface SourceAdmission {
   source_key: string;
   expected_revision: number;
 }
+/** Check consent before a host opens provider transport; capture rechecks it. */
+export function sourceCaptureAdmission(
+  db: Database,
+  connectorId: string,
+  sourceKey: string,
+): SourceAdmission | null {
+  const connection = getConnection(db, connectorId, sourceKey);
+  if (connection === null || connection.disconnected_at !== null) fail("source_capture_denied");
+  const grant = inspectSourceGrant(db, sourceKey);
+  const managed = sourcePolicyEpoch(db) > 0 || db.query<{ consent_required: number }, [string]>(
+    "SELECT consent_required FROM connections WHERE source_key=?",
+  ).get(sourceKey)?.consent_required === 1;
+  if (grant === null) {
+    if (managed) fail("source_capture_denied");
+    return null; // Explicitly grandfathered, pre-policy owner connection.
+  }
+  if (grant.status !== "active" || grant.connector_id !== connectorId || !grant.policy.purposes.includes("capture")) {
+    fail("source_capture_denied");
+  }
+  return { source_key: sourceKey, expected_revision: grant.revision };
+}
 export function authorizeSourceCapture(
   db: Database,
   event: CaptureEventInput,
