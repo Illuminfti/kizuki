@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ConnectionStateStore, createStatePersister, getConnection, getCheckpoint, openLedger, replayLive, runToCompletion, setSourceGrant } from "@kizuki/core";
+import { ConnectionStateStore, createStatePersister, getConnection, getCheckpoint, replayLive, runToCompletion, setSourceGrant } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { XApiFixture } from "../../src/api/testkit";
 import { X_API_CONNECTOR_ID, X_API_SCOPES, encodeState, parseState } from "../../src/api/state";
 
@@ -50,7 +51,8 @@ test("actual child exit after a durable pending plan replays before any host acc
     const f = new XApiFixture(2), store = new ConnectionStateStore(root), pending = store.begin();
     await pending.writer.write(f.state); const saved = store.save(db, ID, pending.pending), source = saved.source_key; grant(db, source); db.close();
     const script = join(root, "crash.ts");
-    writeFileSync(script, `import {openLedger,ConnectionStateStore,getConnection,createStatePersister,runToCompletion} from ${JSON.stringify(join(import.meta.dir, "../../../core/src/index.ts"))};
+    writeFileSync(script, `import {ConnectionStateStore,getConnection,createStatePersister,runToCompletion} from ${JSON.stringify(join(import.meta.dir, "../../../core/src/index.ts"))};
+import {openLedger} from ${JSON.stringify(join(import.meta.dir, "../../../core/src/ledger/db.ts"))};
 import {XApiFixture} from ${JSON.stringify(join(import.meta.dir, "../../src/api/testkit.ts"))};
 const db=openLedger(${JSON.stringify(join(root, "ledger.db"))}),store=new ConnectionStateStore(${JSON.stringify(root)}),saved=getConnection(db,${JSON.stringify(ID)},${JSON.stringify(source)}),handle=createStatePersister(db,store,saved),f=new XApiFixture(2);
 f.state=store.read(saved);const port=await f.connected({persist:async bytes=>{await handle.persist(bytes);if(JSON.parse(new TextDecoder().decode(bytes)).pending!==null)process.exit(17)}});
