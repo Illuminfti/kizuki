@@ -94,7 +94,7 @@ describe("screenpipe schema inspection", () => {
     await connector.revoke();
   });
 
-  test("a newer migration is read and reported", async () => {
+  test("a newer migration fails closed with its supported range", async () => {
     const fixture = createFixtureDatabase({
       migrations: [
         20240703111257,
@@ -116,13 +116,13 @@ describe("screenpipe schema inspection", () => {
     });
     const report = inspectSchema(db);
     db.close();
-    expect(report.ok).toBe(true);
+    expect(report.ok).toBe(false);
     expect(report.newer_than_verified).toBe(true);
     expect(report.detail).toBe(
-      `screenpipe schema newer than verified: max migration 20260901000000 > ${SCREENPIPE_SCHEMA_VERIFIED}; required columns present`,
+      `screenpipe schema too new: max migration 20260901000000 > ${SCREENPIPE_SCHEMA_VERIFIED}; update kizuki before reading this database`,
     );
     const health = await connector.health();
-    expect(health.state).toBe("ok");
+    expect(health.state).toBe("misconfigured");
     expect(health.detail).toBe(report.detail);
     await connector.revoke();
   });

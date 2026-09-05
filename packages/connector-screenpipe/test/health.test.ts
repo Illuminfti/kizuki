@@ -150,7 +150,7 @@ describe("ScreenpipeConnector health and lifecycle", () => {
     await connector.revoke();
   });
 
-  test("the last successful batch and skip deltas appear in health", async () => {
+  test("the last successful batch appears in health", async () => {
     const fixture = createFixtureDatabase();
     const connector = new ScreenpipeConnector(
       { path: fixture.path, settle_seconds: 0 },
@@ -160,10 +160,10 @@ describe("ScreenpipeConnector health and lifecycle", () => {
 
     const health = await connector.health();
 
-    expect(health.state).toBe("degraded");
+    expect(health.state).toBe("ok");
     expect(health.last_success_at).toBe(FIXTURE_NOW);
     expect(health.detail).toBe(
-      `screenpipe schema verified (max migration ${SCREENPIPE_SCHEMA_VERIFIED}); skipped frames_without_text=2 frames_bad_timestamp=1 frames_offset_unknown=0 transcriptions_bad_timestamp=0 transcriptions_bad_offset=0 transcriptions_offset_unknown=0; oldest_skipped_frame=4`,
+      `screenpipe schema verified (max migration ${SCREENPIPE_SCHEMA_VERIFIED})`,
     );
     await connector.revoke();
   });

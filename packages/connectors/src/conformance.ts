@@ -188,7 +188,8 @@ async function runConformanceChecks(
         !isPlainObject(plan) ||
         plan["subject_id"] !== "conformance:subject" ||
         !Array.isArray(plan["source_record_ids"]) ||
-        !Array.isArray(plan["unreachable_source_record_ids"])
+        !Array.isArray(plan["unreachable_source_record_ids"]) ||
+        !validPurgeCompleteness(plan)
       ) {
         failures.push(
           "purge capability declared but purgeSource() returned an invalid plan",
@@ -319,6 +320,15 @@ async function runConformanceChecks(
   await checkRevoke(connector, manifest, timed, failures);
 
   return result(failures);
+}
+
+function validPurgeCompleteness(plan: Record<string, unknown>): boolean {
+  const complete = plan["complete"];
+  const continuation = plan["continuation"];
+  if (complete === undefined && continuation === undefined) return true;
+  if (typeof complete !== "boolean") return false;
+  if (complete) return continuation === undefined;
+  return typeof continuation === "string" && continuation.length > 0;
 }
 
 function parseManifest(raw: unknown, failures: string[]): Manifest | undefined {
