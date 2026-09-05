@@ -76,6 +76,7 @@ export function rebuildDerived(
   vaultPath: string,
 ): DerivedRebuildResult {
   const report = listCanonPagesReport(vaultPath);
+  if (report.skipped.length > 0) throw new Error("canon is unreadable; derived rebuild refused");
   const live = report.pages.filter(isLiveCanonPage);
   const generation = ulid();
   const rebuiltAt = new Date().toISOString();

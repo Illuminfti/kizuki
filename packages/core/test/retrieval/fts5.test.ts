@@ -333,3 +333,18 @@ describe("kizuki.retrieval.fts5", () => {
     expect(result.hits.map(({ doc_id }) => doc_id)).toEqual(["page:grace"]);
   });
 });
+
+test("FTS atomic rebuild preserves old documents on source failure and accepts unknown update dates", async () => {
+  const { port } = openPort();
+  const original = { ...SYNTHETIC_DOCS[0]!, updated_at: null };
+  await port.upsert([original]);
+  const before = (await port.search(SYNTHETIC_QUERY)).hits;
+  async function* failing() {
+    yield { ...original, doc_id: "page:replacement" };
+    throw new Error("synthetic source failure");
+  }
+  await expect(port.rebuildFromDocuments!(failing())).rejects.toThrow("synthetic source failure");
+  expect((await port.search(SYNTHETIC_QUERY)).hits).toEqual(before);
+  await port.rebuildFromDocuments!([original]);
+  expect((await port.search(SYNTHETIC_QUERY)).hits).toEqual(before);
+});

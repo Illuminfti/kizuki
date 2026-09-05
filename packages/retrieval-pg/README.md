@@ -68,3 +68,10 @@ legacy migration refusal, rebuild rollback, deletion during embedding, and
 space mismatch behavior. `test/compiled-engine-smoke.ts` can be compiled with
 Bun and run after the checkout dependencies are moved aside; it disables
 `fetch` and checks persistent reopen, retrieval, and deletion.
+
+SQL migration 2 preserves existing documents while permitting unknown
+`updated_at` values. Unknown dates sort last in the pending embedding queue.
+The public `kizuki rebuild --layer all` path supplies authoritative documents;
+partial public layers remain explicitly unsupported. See
+[`RETRIEVAL-REBUILD.md`](../core/RETRIEVAL-REBUILD.md) for source bounds and the
+per-store atomicity and concurrent-writer limitations.

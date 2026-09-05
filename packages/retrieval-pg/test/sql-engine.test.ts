@@ -134,3 +134,25 @@ describe("real embedded SQL engine", () => {
     }
   });
 });
+
+test("schema v1 migrates to nullable update dates without losing documents; unknown dates queue last", async () => {
+  const fixture = temporaryPortContext();
+  try {
+    const first = await openEmbeddedRetrievalPort(fixture.ctx);
+    await first.upsert([doc("page:known", { updated_at: "2026-01-01T00:00:00Z" })]);
+    await first.close();
+    const v1 = await SqlStore.open(fixture.ctx.data_dir);
+    await v1.db.exec("DELETE FROM schema_migrations WHERE version=2; ALTER TABLE retrieval_docs ALTER COLUMN updated_at SET NOT NULL");
+    await v1.close();
+    const reopened = await openEmbeddedRetrievalPort(fixture.ctx);
+    await reopened.upsert([doc("page:unknown", { updated_at: null })]);
+    await reopened.close();
+    const migrated = await SqlStore.open(fixture.ctx.data_dir);
+    try {
+      expect((await migrated.db.query("SELECT version FROM schema_migrations ORDER BY version")).rows).toEqual([{ version: 1 }, { version: 2 }]);
+      expect((await migrated.db.query("SELECT updated_at FROM retrieval_docs WHERE doc_id='page:unknown'")).rows).toEqual([{ updated_at: null }]);
+      expect((await migrated.pending())?.doc_id).toBe("page:known");
+      expect((await migrated.db.query("SELECT count(*)::integer AS n FROM retrieval_docs")).rows).toEqual([{ n: 2 }]);
+    } finally { await migrated.close(); }
+  } finally { fixture.cleanup(); }
+});

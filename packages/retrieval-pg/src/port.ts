@@ -376,7 +376,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
     };
     engineMismatch(metadata, metadata);
     const path = join(this.ctx.data_dir, "engine.json");
-    const content = JSON.stringify({...metadata, engine: "pglite", schema: 1}) + "\n";
+    const content = JSON.stringify({...metadata, engine: "pglite", schema: 2}) + "\n";
     if (!existsSync(path) || readFileSync(path, "utf8") !== content) writeAtomic(path, content);
   }
 

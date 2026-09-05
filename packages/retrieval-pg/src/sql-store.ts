@@ -64,9 +64,16 @@ export class SqlStore {
       const versionTable=(await resource.db.query<{name:string|null}>("SELECT to_regclass('public.schema_migrations')::text AS name")).rows[0]?.name;
       if(versionTable!==null && versionTable!==undefined){
         const versions=(await resource.db.query<{version:number}>("SELECT version FROM schema_migrations")).rows;
-        if(versions.some(row=>row.version!==1))throw new PortError("config_invalid","unsupported retrieval SQL schema version",false);
+        if(versions.some(row=>row.version!==1 && row.version!==2))throw new PortError("config_invalid","unsupported retrieval SQL schema version",false);
       }
       await resource.db.exec(SCHEMA);
+      await resource.db.transaction(async tx => {
+        const applied = await tx.query("SELECT version FROM schema_migrations WHERE version=2");
+        if (applied.rows.length === 0) {
+          await tx.exec("ALTER TABLE retrieval_docs ALTER COLUMN updated_at DROP NOT NULL; INSERT INTO schema_migrations VALUES(2)");
+          await tx.query("UPDATE retrieval_meta SET value='2'::jsonb WHERE key='schema'");
+        }
+      });
       const legacy = ["docs.json", "graph.json"].some(name => existsSync(join(dataDir, "store", name)));
       if (legacy && await store.meta("rebuilt") === null) {
         await store.setMeta("migration_required", true);
@@ -196,7 +203,7 @@ export class SqlStore {
   }
   async pending(): Promise<PendingRow | undefined> {
     return (await this.db.query<PendingRow>(`SELECT c.chunk_id,c.doc_id,c.body,c.chunk_index,c.revision FROM retrieval_chunks c
-   JOIN retrieval_docs d USING(doc_id) WHERE c.embedding IS NULL ORDER BY d.updated_at DESC,c.doc_id,c.chunk_index LIMIT 1`)).rows[0];
+   JOIN retrieval_docs d USING(doc_id) WHERE c.embedding IS NULL ORDER BY d.updated_at DESC NULLS LAST,c.doc_id,c.chunk_index LIMIT 1`)).rows[0];
   }
   async edges(ceiling: Sensitivity, query?: RetrievalQuery, candidateIds?: readonly string[]): Promise<StoredEdge[]> {
     const args: unknown[] = [];
