@@ -217,7 +217,12 @@ read with 32-row keyset pages. Once all events have been validated and bound,
 
    `CROSS JOIN` fixes history-before-JSON-before-candidate iteration, so the
    indexed candidate lookup cannot turn into a repeated global history scan.
-   Size, total-budget and string-array checks precede these reference queries.
+   A metadata-only SQLite iterator reads at most 1,000,001 rows and stops as
+   soon as a field or cumulative byte limit is exceeded. No JSON query starts
+   until this preflight has proved the whole table fits those bounds. There is
+   no unbounded aggregate scan before refusal. String-array checks then precede
+   these reference queries. Pending decisions use the same preflight with a
+   two-row read limit and permit at most one bounded row.
 
 2. The `kizuki.producer.model` / `extract` checkpoint must contain a bounded
    RFC3339 time, a tab, and a canonical ULID. A candidate at or behind that

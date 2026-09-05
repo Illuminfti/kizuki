@@ -17,14 +17,22 @@ function refuse(): never { throw new LegacyOriginRebuildRequired(); }
 
 /** Validate a bounded JSON column once before passing it to SQLite JSON walkers. */
 function validateHistory(db: Database, table: "claims" | "canon_receipts" | "extract_batches", column: "provenance" | "drafts", maxBytes: number): void {
-  using invalid = db.prepare(`SELECT 1 FROM ${table} WHERE
-    typeof(${column})!='text' OR length(CAST(${column} AS BLOB))>${maxBytes}
-    OR NOT json_valid(${column}) LIMIT 1`);
+  const maxRows = table === "extract_batches" ? 1 : MAX_HISTORY_ROWS;
+  // Do not parse JSON or aggregate the whole table before knowing it is small
+  // enough. SQLite yields only metadata, stops at the row cap, and the iterator
+  // is finalized immediately on the first excessive field or cumulative byte.
+  using metadata = db.prepare<{ type: string; bytes: number | null }, []>(`SELECT
+    typeof(${column}) AS type,length(CAST(${column} AS BLOB)) AS bytes
+    FROM ${table} LIMIT ${maxRows + 1}`);
+  let rows = 0;
+  let bytes = 0;
+  for (const row of metadata.iterate()) {
+    if (++rows > maxRows || row.type !== "text" || row.bytes === null || row.bytes > maxBytes) refuse();
+    bytes += row.bytes;
+    if (bytes > MAX_HISTORY_BYTES) refuse();
+  }
+  using invalid = db.prepare(`SELECT 1 FROM ${table} WHERE NOT json_valid(${column}) LIMIT 1`);
   if (invalid.get() !== null) refuse();
-  using budget = db.prepare<{ rows: number; bytes: number }, []>(`SELECT count(*) AS rows,
-    coalesce(sum(length(CAST(${column} AS BLOB))),0) AS bytes FROM ${table}`);
-  const total = budget.get()!;
-  if (total.rows > (table === "extract_batches" ? 1 : MAX_HISTORY_ROWS) || total.bytes > MAX_HISTORY_BYTES) refuse();
 }
 
 /**
