@@ -57,7 +57,7 @@ test('app launcher embeds offline assets and never prints its session capability
     const setup = h.tempVault(), output: string[] = [];
     let launched = '';
     const io: CliIo = { env: setup.env, vaultOverride: setup.vault, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false, out: line => output.push(line), err: line => output.push(line), prompt: async () => { throw Error(); } };
-    const app = await startApp(io, {}, async (url) => { launched = url; });
+    const app = await startApp(io, { noService: true }, async (url) => { launched = url; });
     try {
         const token = new URL(launched).hash.slice('#token='.length);
         expect(token).toHaveLength(43);
@@ -70,12 +70,13 @@ test('app launcher embeds offline assets and never prints its session capability
         }
         const response = await fetch(app.url + '/app/v1/status', { method: 'POST', headers: { origin: app.url, authorization: 'Bearer ' + token, 'content-type': 'application/json' }, body: '{}' });
         expect(response.status).toBe(200);
+        expect((await response.json() as any).data.setup_no_service).toBe(true);
     }
     finally {
         await app.close();
     }
 });
-test('first setup uses the visible default path, opts out of service and refuses unmarked adoption', async () => {
+test('first setup uses the visible default path without a supported supervisor and refuses unmarked adoption', async () => {
     const env = h.isolatedEnv(), io: CliIo = { env, vaultOverride: null, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false, out: () => { }, err: () => { }, prompt: async () => { throw Error(); } }, host = createAppHost(io);
     const call = async (route: string, body: unknown = {}) => (await host.handle(new Request('http://127.0.0.1/app/v1/' + route, { method: 'POST', body: JSON.stringify(body) }))).json() as Promise<any>;
     try {

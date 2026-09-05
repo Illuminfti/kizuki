@@ -5,7 +5,7 @@ const SESSION_KEY = 'kizuki.app.session';
 const main = document.getElementById('main');
 const dialog = document.getElementById('dialog');
 const notice = document.getElementById('notification');
-const state = { view: 'memory', status: null, sources: [], catalog: [], receipts: [], hits: null, query: '', degraded: [], busy: false, operation: null };
+const state = { view: 'memory', status: null, service: null, sources: [], catalog: [], receipts: [], hits: null, query: '', degraded: [], busy: false, operation: null };
 let bearer = null;
 let noticeTimer;
 let refreshSequence = 0;
@@ -13,6 +13,7 @@ let searchSequence = 0;
 let pulseRunning = false;
 let privacyGeneration = 0;
 let activitySequence = 0;
+let serviceSequence = 0;
 let privateViewValid = true;
 const icons = {
   memory: ['M7 3.5h10a2 2 0 0 1 2 2v15l-7-3-7 3v-15a2 2 0 0 1 2-2Z', 'M9 8h6M9 11.5h4'],
@@ -72,9 +73,9 @@ function sourceLabel(source) {
 }
 function staleResponse() { return Object.assign(new Error('Response superseded.'), { code: 'stale_response' }); }
 function invalidatePrivateView() {
-  privacyGeneration++; refreshSequence++; searchSequence++; activitySequence++;
+  privacyGeneration++; refreshSequence++; searchSequence++; activitySequence++; serviceSequence++;
   privateViewValid = false;
-  state.busy = false; state.hits = null; state.query = ''; state.degraded = []; state.sources = []; state.receipts = [];
+  state.busy = false; state.hits = null; state.query = ''; state.degraded = []; state.sources = []; state.receipts = []; state.service = null;
   if (dialog.open) dialog.close();
   dialog.replaceChildren();
   clearTimeout(noticeTimer); notice.textContent = ''; notice.hidden = true;
@@ -82,6 +83,8 @@ function invalidatePrivateView() {
 }
 function safeCount(value) { return Number.isSafeInteger(value) && value >= 0 ? value.toLocaleString() : '—'; }
 function humanError(code) {
+  if (code === 'service_unavailable') return 'Your workspace is saved, but background activity needs attention. Open Settings to check it and retry.';
+  if (code === 'invalid_request') return 'Check the selected fields and entered details, then try again.';
   if (code === 'unauthorized') return 'This app session has ended. Open Kizuki again on this device to reconnect.';
   if (/revision|conflict|stale|busy/.test(code)) return 'Something changed while you were working. Refresh to check the current state, then try again.';
   if (/consent|grant|source_capture_denied/.test(code)) return 'This source needs your permission before Kizuki can use it. Review its privacy settings to continue.';
@@ -126,6 +129,7 @@ function navigate(view, focus = true) {
   render();
   if (focus) main.focus({ preventScroll: true });
   if (view === 'activity' && state.status?.vault.ready) loadActivity();
+  if (view === 'settings' && state.status?.vault.ready) loadService();
 }
 function renderNavigation() {
   document.getElementById('navigation').replaceChildren(...[['memory', 'Memory'], ['sources', 'Sources'], ['activity', 'Activity'], ['settings', 'Settings']].map(([id, title]) => el('a', { class: 'nav-link', href: `#${id}`, 'aria-current': state.view === id ? 'page' : undefined, onclick: event => { event.preventDefault(); navigate(id); } }, icon(id), title)));
@@ -150,12 +154,14 @@ function renderWelcome() {
   const ready = state.status?.vault.ready;
   return el('section', { class: 'welcome' }, el('div', { class: 'eyebrow' }, 'A little less to remember'), el('h1', {}, 'Make room for', el('br'), 'what matters.'), el('p', {}, 'Bring your notes and everyday information into one private place. Find the original, see what changed, and stay in control.'), welcomeIllustration(),
     el('div', { class: 'setup-card' }, el('div', { class: 'setup-card-body' }, el('div', {}, el('h2', {}, ready ? 'Start with one source.' : 'Your memory starts here.'), el('p', {}, ready ? 'Choose a folder or an account. You decide what Kizuki can keep before anything is imported.' : 'Create a private workspace on this device. You can connect your first source when you’re ready.')), button(ready ? 'Connect a source' : 'Create my Kizuki', () => ready ? navigate('sources') : initialize(), 'primary')), el('div', { class: 'setup-card-footer' }, icon('lock'), ready ? 'Your files stay yours. No model is needed to capture and search.' : `Saved on this device${state.status?.setup_location ? ` · ${state.status.setup_location}` : ''}`)),
-    !ready && el('details', { class: 'result-details' }, el('summary', {}, 'Choose a different location'), el('div', { class: 'form-field' }, el('label', { for: 'setup-path' }, 'Workspace folder'), el('input', { id: 'setup-path', type: 'text', placeholder: state.status?.setup_location || 'Full folder path', autocomplete: 'off', spellcheck: 'false' }), el('small', {}, 'Use a new empty folder. Existing folders are never adopted automatically.'))),
+    !ready && el('p', {}, state.status?.setup_no_service ? 'Background activity is turned off for this setup. You can enable it later in Settings.' : 'Kizuki will keep your permitted sources up to date in the background, even after you close the app.'),
+    !ready && el('details', { class: 'result-details' }, el('summary', {}, 'Setup options'), el('div', { class: 'form-field' }, el('label', { for: 'setup-path' }, 'Workspace folder'), el('input', { id: 'setup-path', type: 'text', placeholder: state.status?.setup_location || 'Full folder path', autocomplete: 'off', spellcheck: 'false' }), el('small', {}, 'Use a new empty folder. Existing folders are never adopted automatically.')), el('label', { class: 'check-row', for: 'setup-no-service' }, el('input', { id: 'setup-no-service', type: 'checkbox', checked: state.status?.setup_no_service, disabled: state.status?.setup_no_service }), 'Turn off background activity for now')),
     el('div', { class: 'getting-started' }, ...[['01', 'Connect once', 'Choose the information you want to bring along.'], ['02', 'Find it again', 'Search your saved sources, even without a model.'], ['03', 'Keep control', 'Inspect changes, undo them, or remove a source.']].map(([n,t,d]) => el('div', {}, el('span', { class: 'step-number' }, n), el('h3', {}, t), el('p', {}, d)))));
 }
 async function initialize() {
   const path = document.getElementById('setup-path')?.value.trim();
-  await launchOperation('initialize', path ? { path } : {}, 'Creating your workspace', async () => { await refresh(); message('Your Kizuki is ready. Choose your first source.'); navigate('sources'); });
+  const no_service = document.getElementById('setup-no-service')?.checked === true;
+  await launchOperation('initialize', { ...(path ? { path } : {}), no_service }, 'Creating your workspace', async () => { await refresh(); message('Your Kizuki is ready. Choose your first source. Background activity is shown in Settings.'); navigate('sources'); });
 }
 function renderMemory() {
   if (!state.status?.vault.ready || state.sources.length === 0) return renderWelcome();
@@ -240,6 +246,7 @@ function enrollment(provider) {
     event.preventDefault();
     if (path && !path.value.trim()) { errorLine.textContent = 'Enter the full path to your notes folder.'; path.focus(); return; }
     if (calendar && !calendar.value.trim()) { errorLine.textContent = 'Enter the exact calendar ID to continue.'; calendar.focus(); return; }
+    if (provider.id === 'gmail' && !selected.some(x => x.checked)) { errorLine.textContent = 'Choose at least one kind of information to keep.'; selected[0]?.focus(); return; }
     const payload = { provider: provider.id, ...(provider.id !== 'markdown' ? { new_source: true } : {}), ...(path ? { path: path.value.trim() } : {}), ...(calendar ? { calendar_id: calendar.value.trim() } : {}), ...(selected.length ? { fields: selected.filter(x => x.checked).map(x => x.value) } : {}) };
     submit.disabled = true;
     await launchOperation('enroll', payload, provider.id === 'markdown' ? 'Connecting your folder' : 'Waiting for Google sign-in', async operation => {
@@ -297,10 +304,23 @@ function undo(receipt) {
   const content = openDialog('Undo this change?', 'Kizuki will use the saved receipt to restore the previous state. If the page or a dependent change has moved on, the undo will refuse safely.', 'activity');
   content.append(el('div', { class: 'status-note' }, el('p', {}, receipt.page)), el('div', { class: 'form-actions' }, button('Keep change', () => dialog.close()), button('Undo change', () => launchOperation('undo', { receipt_id: receipt.id, cascade: false }, 'Undoing this change', async () => { state.hits = null; await refresh(); await loadActivity(); message('Change undone.'); }), 'primary')));
 }
+async function loadService() {
+  const sequence = ++serviceSequence;
+  state.service = null;
+  if (state.view === 'settings') render();
+  try {
+    const service = await api('service_status');
+    if (sequence !== serviceSequence || !bearer || !privateViewValid) return;
+    state.service = service;
+    if (state.view === 'settings') render();
+  } catch (error) {
+    if (sequence === serviceSequence && bearer && error.code !== 'stale_response') message(error.message);
+  }
+}
 function renderSettings() {
   return el('section', {}, heading('Simply yours.', 'A local workspace, clear permissions, and room to grow when you need it.'), el('div', { class: 'settings-list' },
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Workspace'), el('p', {}, 'Your memory stays in a local folder you control.')), el('span', { class: 'settings-value' }, state.status?.vault.name || 'Not created')),
-    el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Background activity'), el('p', {}, state.status?.service.detail || 'Status unavailable.')), el('span', { class: 'settings-value' }, state.status?.service.state || 'Unavailable')),
+    el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Background activity'), el('p', {}, state.service?.detail || 'Refresh to check background activity.'), state.service && el('small', {}, `Checked ${dateText(state.service.checked_at)}`)), el('div', { class: 'form-actions' }, button('Refresh', loadService), state.service && state.service.state !== 'active' && state.service.kind !== 'none' && button('Enable background activity', () => launchOperation('install_service', {}, 'Setting up background activity', async () => { await refresh(); await loadService(); }), 'primary'))),
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Source privacy'), el('p', {}, 'Each source has its own permission. Sources connected here default to private storage and no external model egress.')), button('Manage sources', () => navigate('sources'))),
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'App session'), el('p', {}, 'This tab remembers only its local app capability. Search results and source content are not stored in browser storage.')), button('Disconnect tab', disconnect))),
     el('div', { class: 'status-note' }, icon('info'), el('p', {}, 'Search works without a model. Automatic organisation needs a working model and your permission to use each source.')));

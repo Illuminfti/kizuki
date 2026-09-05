@@ -1,5 +1,13 @@
 /** Local browser protocol. Only the app bearer belongs in sessionStorage. */
 import type { SourceGrantPolicy } from '@kizuki/core';
+import type { ServeIntent, SupervisorKind, SupervisorState } from '@kizuki/core';
+export interface AppServiceStatus {
+    intent: ServeIntent | 'unknown';
+    kind: SupervisorKind;
+    state: SupervisorState;
+    detail: string;
+    checked_at: string;
+}
 export const APP_API_PREFIX = '/app/v1/';
 export interface AppError {
     code: string;
@@ -74,10 +82,7 @@ export interface AppProtocol {
                 ready: boolean;
                 name: string;
             };
-            service: {
-                state: string;
-                detail: string;
-            };
+            setup_no_service: boolean;
             setup_location: string;
             visibility_epoch: string;
             operations: AppOperation[];
@@ -92,11 +97,14 @@ export interface AppProtocol {
     initialize: {
         request: {
             path?: string;
+            no_service?: boolean;
         };
         response: {
             operation_id: string;
         };
     };
+    service_status: { request: {}; response: AppServiceStatus };
+    install_service: { request: {}; response: { operation_id: string } };
     sources: {
         request: {};
         response: {

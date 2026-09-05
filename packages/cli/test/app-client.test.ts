@@ -61,6 +61,35 @@ function fixture() {
 }
 const status = (operations: unknown[] = [], epoch = '1') => ({ vault: { ready: true }, visibility_epoch: epoch, operations });
 
+test('Gmail form requires one selected field before requesting enrollment', async () => {
+    const f = fixture();
+    f.evaluate(`enrollment({id:'gmail',title:'Gmail',detail:'Synthetic',available:true,fields:['text']}); dialog.querySelector('input').checked=false;`);
+    await f.evaluate(`dialog.querySelector('form').listeners.submit[0]({preventDefault(){}})`);
+    expect(f.dialog.textContent).toContain('Choose at least one kind of information');
+    expect(f.requests).toHaveLength(0);
+});
+
+test('setup exposes an explicit opt-out and honors launcher preference', () => {
+    for (const optedOut of [false, true]) {
+        const f = fixture();
+        f.evaluate(`state.status={vault:{ready:false},setup_no_service:${optedOut}}; render();`);
+        expect(f.main.querySelector('#setup-no-service')?.checked).toBe(optedOut);
+        expect(f.main.querySelector('#setup-no-service')?.disabled).toBe(optedOut);
+        expect(f.main.textContent).toContain('Turn off background activity for now');
+    }
+});
+
+test('service observations cannot restore the settings view after session invalidation', async () => {
+    const f = fixture();
+    f.evaluate(`state.view='settings';`);
+    const work = f.evaluate<Promise<void>>('loadService()');
+    f.evaluate('disconnect()');
+    f.reply('service_status', {state:'active',kind:'systemd',intent:'installed',detail:'STALE_SERVICE',checked_at:'2026-09-05T00:00:00Z'});
+    await work;
+    expect(f.evaluate('state.service')).toBeNull();
+    expect(f.main.textContent).not.toContain('STALE_SERVICE');
+});
+
 test('changed epoch immediately removes private DOM and dialogs while refresh is held; late activity cannot restore it', async () => {
     const f = fixture();
     f.evaluate(`state.view='activity'; state.receipts=[{id:'old',page:'PRIVATE_PAGE'}]; render(); privacy(state.sources[0]);`);

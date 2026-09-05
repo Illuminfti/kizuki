@@ -2,7 +2,7 @@ import { basename, join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { OWNER, getClaimsEpoch, sourcePolicyEpoch, getCheckpoint, initAgents, inspectSourceGrant, listAuditReceipts, listConnections, resumeSourceRevocation, revokeSourceGrant, runBackfill, runSync, serveSearch, setSourceGrant, undoReceipt, withDeadline } from '@kizuki/core';
+import { OWNER, getClaimsEpoch, sourcePolicyEpoch, getCheckpoint, initAgents, inspectSourceGrant, installServeService, readServeIntent, readVaultId, listAuditReceipts, listConnections, resumeSourceRevocation, revokeSourceGrant, runBackfill, runSync, serveSearch, setSourceGrant, undoReceipt, withDeadline } from '@kizuki/core';
 import type { Connector, SourceGrantPolicy } from '@kizuki/core';
 import { createGmailConnector, inspectGmailState, assertSameGmailIdentity } from '@kizuki/connector-gmail';
 import { createGoogleCalendarConnector, inspectGoogleCalendarState, assertSameGoogleCalendarIdentity } from '@kizuki/connector-google-calendar';
@@ -13,19 +13,21 @@ import { gmailClient, gmailFields, gmailRequiredFields, openGmailBrowser, type G
 import { googleCalendarClient, googleCalendarFields, googleCalendarRequiredFields, googleCalendarId, openGoogleCalendarBrowser, type GoogleCalendarFactory } from '../google-calendar';
 import { createOwnedRetrievalInventory } from '../owned-retrieval-inventory';
 import { tryRefreshDerived } from '../derived';
-import { initCommand } from '../commands/init';
+import { createInitCommand } from '../commands/init';
+import { serveSupervisorHost } from '../service-host';
 import type { CliIo } from '../commands';
-import type { AppCatalogEntry, AppError, AppOperation, AppRoute, AppSource } from './protocol';
+import type { AppCatalogEntry, AppError, AppOperation, AppRoute, AppSource, AppServiceStatus } from './protocol';
 export interface AppHostDeps {
     gmail?: GmailFactory;
     calendar?: GoogleCalendarFactory;
     openGoogleUrl?: (url: string) => Promise<void>;
+    supervisor?: typeof serveSupervisorHost;
 }
 class AppFailure extends Error {
     constructor(readonly code: string) { super(code); }
 }
 const ROUTES: Record<AppRoute, readonly string[]> = {
-    status: [], catalog: [], initialize: ['path'], sources: [], enroll: ['provider', 'path', 'fields', 'calendar_id', 'source_key', 'new_source'],
+    status: [], catalog: [], initialize: ['path', 'no_service'], service_status: [], install_service: [], sources: [], enroll: ['provider', 'path', 'fields', 'calendar_id', 'source_key', 'new_source'],
     consent: ['source_key', 'expected_revision', 'operation_id', 'policy'], capture: ['source_key', 'mode'], query: ['text', 'limit'], activity: ['limit'], undo: ['receipt_id', 'cascade'], operation: ['id'],
     revoke: ['source_key', 'expected_revision', 'operation_id'], resume_revocation: ['source_key', 'operation_id'],
 };
@@ -46,11 +48,12 @@ function sourceKey(value: unknown): string { const key = string(value, 26); if (
 function failure(error: unknown): AppError {
     if (error instanceof DuplicateSourceError) return { code: 'duplicate_identity', retryable: false };
     const code = error instanceof AppFailure ? error.code : error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
-    const allowed = ['invalid_request', 'no_vault', 'busy', 'unauthorized', 'consent_required', 'source_capture_denied', 'source_field_denied', 'revision_conflict', 'source_not_enrolled', 'misconfigured', 'identity_conflict', 'custody_unknown'];
-    return { code: allowed.includes(code) ? code : 'unavailable', retryable: ['busy', 'unavailable'].includes(code) };
+    const allowed = ['invalid_request', 'no_vault', 'busy', 'unauthorized', 'consent_required', 'source_capture_denied', 'source_field_denied', 'revision_conflict', 'source_not_enrolled', 'misconfigured', 'identity_conflict', 'custody_unknown', 'service_unavailable'];
+    return { code: allowed.includes(code) ? code : 'unavailable', retryable: ['busy', 'unavailable', 'service_unavailable'].includes(code) };
 }
 const fullFields = ['text', 'subjects', 'metadata', 'attachments'];
-export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}) {
+export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { noService?: boolean } = {}) {
+    const supervisor = deps.supervisor ?? serveSupervisorHost;
     const config = readConfig(configPath(baseIo.env));
     const hasSelection = baseIo.vaultOverride !== null || Boolean(baseIo.env.KIZUKI_VAULT) || Boolean(config.default_vault);
     let selected = hasSelection ? resolveVault(baseIo.env, config, baseIo.vaultOverride) : join(baseIo.env.HOME ?? homedir(), 'Kizuki');
@@ -90,7 +93,34 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}) {
             return { sources: catalog() };
         if (route === 'status') {
             const epoch = ready() ? await context(async (ctx) => `${sourcePolicyEpoch(ctx.db)}:${getClaimsEpoch(ctx.db)}`) : 'uninitialized';
-            return { visibility_epoch: epoch, vault: { ready: ready(), name: basename(selected) }, setup_location: selected, service: { state: 'not_verified', detail: 'This app is a local client. It does not start a writer daemon.' }, operations: [...jobs.values()] };
+            return { visibility_epoch: epoch, vault: { ready: ready(), name: basename(selected) }, setup_location: selected, setup_no_service: options.noService === true, operations: [...jobs.values()] };
+        }
+        if (route === 'service_status') {
+            if (!ready()) throw new AppFailure('no_vault');
+            // Keep synchronous supervisor queries off the privacy-epoch polling route.
+            const host = supervisor(baseIo.env, selected);
+            const status: AppServiceStatus = { intent: 'unknown', kind: host.kind, state: 'unknown', detail: 'Background activity could not be confirmed. Refresh to check again.', checked_at: new Date().toISOString() };
+            try {
+                status.intent = readServeIntent(selected);
+                const id = readVaultId(selected);
+                if (!id) return status;
+                const observed = host.query(id);
+                status.state = observed.state === 'active' && !observed.enabled ? 'unknown' : observed.state;
+                status.detail = status.state === 'active' ? 'The native background service is active. Each source still needs permission; automatic organisation also needs a working model.'
+                    : status.state === 'none' ? 'This device has no supported background supervisor. Capture and search remain available in the app.'
+                    : status.state === 'unknown' ? status.detail
+                    : status.intent === 'opted-out' ? 'Background activity was explicitly turned off during setup. You can enable it here.'
+                    : 'The background service is not active. Enable it here to install or repair the existing native service.';
+            } catch { /* A failed read or supervisor probe is unknown, never healthy. */ }
+            return status;
+        }
+        if (route === 'install_service') {
+            return operation('install_service', async () => {
+                if (!ready()) throw new AppFailure('no_vault');
+                try { installServeService(selected, supervisor(baseIo.env, selected)); }
+                catch { throw new AppFailure('service_unavailable'); }
+                return { message: 'Background setup finished. Check Settings for the observed service state.' };
+            });
         }
         if (route === 'operation') {
             const id = string(input.id, 128);
@@ -98,14 +128,25 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}) {
         }
         if (route === 'initialize') {
             const path = input.path === undefined ? selected : resolve(string(input.path));
+            const noService = boolean(input.no_service) || options.noService === true;
             return operation('initialize', async () => {
                 if (ready())
                     throw new AppFailure('invalid_request');
-                const code = await initCommand.run({ ...io(), vaultOverride: null }, [path, '--default', '--no-service']);
+                let code;
+                try { code = await createInitCommand(supervisor).run({ ...io(), vaultOverride: null }, [path, '--default', ...(noService ? ['--no-service'] : [])]); }
+                catch (error) {
+                    // Init writes the selected default before installing the native service.
+                    // Retain that newly created vault on activation failure so repair never reinitializes it.
+                    if (readConfig(configPath(baseIo.env)).default_vault === path && existsSync(join(path, '.kizuki', 'kizuki.db'))) {
+                        selected = path;
+                        throw new AppFailure('service_unavailable');
+                    }
+                    throw error;
+                }
                 if (code !== 0)
                     throw new AppFailure('unavailable');
                 selected = path;
-                return { message: 'Vault created. Background service was not installed.' };
+                return { message: 'Workspace created. Check Settings for background activity.' };
             });
         }
         if (route === 'sources')
@@ -243,6 +284,9 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}) {
             if (provider !== 'gmail' && provider !== 'google-calendar' || input.path !== undefined)
                 throw new AppFailure('invalid_request');
             if (!Array.isArray(input.fields) || input.fields.some(field => typeof field !== 'string'))
+                throw new AppFailure('invalid_request');
+            const supported = catalog().find(item => item.id === provider)!.fields;
+            if (input.fields.some(field => !supported.includes(field)) || new Set(input.fields).size !== input.fields.length || provider === 'gmail' && input.fields.length === 0)
                 throw new AppFailure('invalid_request');
             const fields = provider === 'gmail' ? gmailFields(input.fields.join(',')) : googleCalendarFields(input.fields.length ? input.fields.join(',') : 'none');
             const calendar = provider === 'google-calendar' ? googleCalendarId(input.calendar_id === undefined ? undefined : string(input.calendar_id, 1024)) : undefined;
