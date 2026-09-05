@@ -55,6 +55,7 @@ test("every public query ceiling withholds null, unknown and unlabeled rows in t
       if (result.status !== "stored") throw Error("synthetic event must be accepted");
       core.indexEvent(db, result.event);
       // Corrupt/missing labels are confined to this synthetic fixture.
+      db.exec("PRAGMA ignore_check_constraints = ON");
       db.query("UPDATE events SET sensitivity_hint = ? WHERE event_id = ?").run(label, result.event.event_id);
       db.query("UPDATE search_docs SET sensitivity = ? WHERE doc_id = ?").run(label, `event:${result.event.event_id}`);
     }

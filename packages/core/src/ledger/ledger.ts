@@ -15,7 +15,7 @@ import { classifySqliteFailure, LedgerStoreError } from "./errors";
 import { LEDGER_ID_MAX, LEDGER_KIND_MAX, MAX_READ_SINCE, REPLAY_PAGE_SIZE } from "./limits";
 import { tableExists } from "./schema";
 
-export type AcceptErrorKind = "validation";
+export type AcceptErrorKind = "validation" | "infrastructure";
 
 export type AcceptResult =
   | { status: "stored"; event: CaptureEvent }
@@ -178,6 +178,13 @@ export function accept(
     const infra = classifySqliteFailure(error);
     if (infra !== null) throw infra;
     if (error instanceof LedgerStoreError) throw error;
+    if (error instanceof EventRecordError || error instanceof EventOriginError) {
+      return {
+        status: "error",
+        error: error.message,
+        kind: "infrastructure",
+      };
+    }
     return {
       status: "error",
       error: error instanceof Error ? error.message : String(error),

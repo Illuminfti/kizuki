@@ -4,8 +4,6 @@ import { oneShotGet, oneShotRun, tableColumns, tableExists } from "./schema";
 
 const ULID_CHECK = `length(event_id) = 26 AND event_id NOT GLOB '*[^0123456789ABCDEFGHJKMNPQRSTVWXYZ]*'`;
 const HASH_CHECK = `length(content_hash) = 64 AND content_hash NOT GLOB '*[^0-9a-f]*'`;
-const TEXT_HASH_CHECK = `length(text_hash) = 64 AND text_hash NOT GLOB '*[^0-9a-f]*'`;
-const ORIGIN_BINDING_CHECK = `length(origin_binding) = 64 AND origin_binding NOT GLOB '*[^0-9a-f]*'`;
 const STAMP_CHECK = `(
   length(col) BETWEEN 20 AND 40
   AND col GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][Tt][0-9][0-9]:[0-9][0-9]:[0-9][0-9]*'
@@ -34,12 +32,12 @@ CREATE TABLE events_v16 (
   metadata TEXT NOT NULL CHECK (json_valid(metadata) AND json_type(metadata) = 'object'),
   content_hash TEXT NOT NULL CHECK (${HASH_CHECK}),
   accepted_at TEXT NOT NULL CHECK (${stampCheck("accepted_at")}),
-  content_hash_version INTEGER NOT NULL CHECK (content_hash_version IN (1, 2)),
-  text_hash TEXT NOT NULL CHECK (${TEXT_HASH_CHECK}),
-  origin TEXT NOT NULL CHECK (origin IN ('external', 'self')),
-  origin_binding_version INTEGER NOT NULL CHECK (origin_binding_version = 1),
-  origin_binding_kind TEXT NOT NULL CHECK (origin_binding_kind IN ('capture', 'native', 'legacy')),
-  origin_binding TEXT NOT NULL CHECK (${ORIGIN_BINDING_CHECK}),
+  content_hash_version INTEGER NOT NULL DEFAULT 0,
+  text_hash TEXT NOT NULL DEFAULT '',
+  origin TEXT NOT NULL DEFAULT 'external' CHECK (origin IN ('external', 'self')),
+  origin_binding_version INTEGER NOT NULL DEFAULT 0,
+  origin_binding_kind TEXT NOT NULL DEFAULT '',
+  origin_binding TEXT NOT NULL DEFAULT '',
   UNIQUE(connector_id, source_record_id, content_hash)
 ) STRICT;
 `;

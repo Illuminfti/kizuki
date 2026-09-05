@@ -538,6 +538,7 @@ describe("RFC 0002 purge totality", () => {
       subjects: [{ subject_id: "person:erased", role: "about" }],
     });
     const surviving = storeEvent(db, { source_record_id: "bad-subjects-surviving.md" });
+    db.exec("PRAGMA ignore_check_constraints = ON");
     db.query("UPDATE events SET subjects=? WHERE event_id=?").run("{", erased.event_id);
     db.query(
       `INSERT INTO identity_links

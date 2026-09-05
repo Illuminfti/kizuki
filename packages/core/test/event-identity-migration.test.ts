@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openLedger } from "../src/ledger/db";
+import { LEDGER_SCHEMA_VERSION, openLedger } from "../src/ledger/db";
 import { accept, count, readSince } from "../src/ledger/ledger";
 import { computeLegacyContentHash, sha256Hex } from "../src/util/hash";
 import { validEvent } from "./fixtures";
@@ -37,6 +37,49 @@ function legacyFixture(size = 1) {
     ALTER TABLE events DROP COLUMN origin_binding_version;
     ALTER TABLE events DROP COLUMN origin_binding_kind;
     ALTER TABLE events DROP COLUMN origin_binding;
+    CREATE TABLE events_v15 (
+      event_id TEXT PRIMARY KEY,
+      connector_id TEXT NOT NULL,
+      source_record_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      occurred_at TEXT NOT NULL,
+      observed_at TEXT NOT NULL,
+      text TEXT NOT NULL,
+      subjects TEXT NOT NULL,
+      sensitivity_hint TEXT,
+      deleted INTEGER NOT NULL,
+      attachments TEXT NOT NULL,
+      metadata TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      accepted_at TEXT NOT NULL,
+      UNIQUE(connector_id, source_record_id, content_hash)
+    );
+    INSERT INTO events_v15
+      SELECT event_id, connector_id, source_record_id, kind,
+             occurred_at, observed_at, text, subjects, sensitivity_hint,
+             deleted, attachments, metadata, content_hash, accepted_at
+        FROM events;
+    DROP TABLE events;
+    ALTER TABLE events_v15 RENAME TO events;
+    CREATE INDEX events_accepted_order_idx ON events(accepted_at, event_id);
+    CREATE INDEX events_connector_idx ON events(connector_id);
+    CREATE INDEX events_kind_idx ON events(kind);
+    CREATE TABLE checkpoints_v15 (
+      connector_id TEXT NOT NULL,
+      source_key TEXT NOT NULL,
+      cursor TEXT,
+      mode TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_run_at TEXT NOT NULL,
+      last_result TEXT NOT NULL,
+      PRIMARY KEY (connector_id, source_key)
+    );
+    INSERT INTO checkpoints_v15
+      SELECT connector_id, source_key, cursor, mode, updated_at, last_run_at, last_result
+        FROM checkpoints;
+    DROP TABLE checkpoints;
+    ALTER TABLE checkpoints_v15 RENAME TO checkpoints;
+    DROP TABLE IF EXISTS rail_cursors;
     UPDATE schema_version SET version=15;
   `);
   return { root, path, db };
@@ -50,7 +93,7 @@ describe("event identity migration", () => {
     try {
       const db = openLedger(f.path);
       try {
-        expect(db.query("SELECT version FROM schema_version").get()).toEqual({ version: 16 });
+        expect(db.query("SELECT version FROM schema_version").get()).toEqual({ version: LEDGER_SCHEMA_VERSION });
         const rows = db.query<Record<string, unknown>, []>("SELECT * FROM events ORDER BY event_id").all();
         expect(rows.map(({ content_hash_version, text_hash, origin, origin_binding_version, origin_binding_kind, origin_binding, ...row }) => row)).toEqual(old);
         expect(rows.every(row => row["content_hash_version"] === 1 && row["origin"] === "external" && row["text_hash"] === sha256Hex(validEvent().text))).toBe(true);

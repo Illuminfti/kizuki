@@ -39,6 +39,7 @@ import {
 import { rebuildDerived } from "./derived";
 import { EVENT_LIMITS, type CaptureEvent } from "./contracts/event";
 import { isUlid, ulid } from "./util/ulid";
+import { writeResumeCursor } from "./ledger/connections";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "./ledger/db";
 import { eventFromRow, parseEventRecord, type LegacyEventRecord } from "./ledger/event-record";
 import { bindLegacyEventOrigins, installEventIdentityGuards } from "./ledger/event-identity-schema";
@@ -1676,14 +1677,24 @@ function validateRestoredEventOrigins(db: Database): void {
 }
 
 function insertCheckpointRow(db: Database, raw: Record<string, unknown>): void {
+  const connectorId = asString(raw.connector_id, "connector_id");
+  const sourceKey = asString(raw.source_key, "source_key");
+  const cursor = asStringOrNull(raw.cursor, "cursor");
+  if (
+    connectorId === "kizuki.producer.model" &&
+    (sourceKey === "extract" || sourceKey === "extract-deferred-scan")
+  ) {
+    if (cursor !== null) writeResumeCursor(db, connectorId, sourceKey, cursor);
+    return;
+  }
   db.query(
     `INSERT INTO checkpoints
        (connector_id, source_key, cursor, mode, updated_at, last_run_at, last_result)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    asString(raw.connector_id, "connector_id"),
-    asString(raw.source_key, "source_key"),
-    asStringOrNull(raw.cursor, "cursor"),
+    connectorId,
+    sourceKey,
+    cursor,
     asString(raw.mode, "mode"),
     asString(raw.updated_at, "updated_at"),
     asString(raw.last_run_at, "last_run_at"),
