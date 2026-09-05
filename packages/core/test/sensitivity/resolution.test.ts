@@ -232,10 +232,11 @@ describe("insertClaim labels at write time", () => {
 });
 
 describe("OWNER_AGENT_GRANT", () => {
-  test("the owner-agent preset is private while the default stays personal", () => {
-    expect(DEFAULT_GRANT.ceiling).toBe("personal");
+  test("the explicit owner-agent preset is private while the default is inert", () => {
+    expect(DEFAULT_GRANT.ceiling).toBe("public");
     expect(OWNER_AGENT_GRANT.ceiling).toBe("private");
-    expect(OWNER_AGENT_GRANT.tools).toEqual(DEFAULT_GRANT.tools);
+    expect(OWNER_AGENT_GRANT.tools).toContain("propose");
+    expect(DEFAULT_GRANT.tools).toEqual([]);
 
     const db = agentsDb();
     const created = addAgent(db, "home-harness", OWNER_AGENT_GRANT);

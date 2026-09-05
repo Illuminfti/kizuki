@@ -351,6 +351,7 @@ test("native serving denies legacy agent access, honors purpose and invalidates 
     const principal = authenticate(
       db,
       addAgent(db, "synthetic-reader", {
+        types: null, subjects: null,
         ceiling: "private",
         tools: ["timeline", "context_packet"],
       }).token,
@@ -896,6 +897,7 @@ test("native relayed corrections preserve owner origin and source closure across
   const principal = authenticate(
     db,
     addAgent(db, "source-relay", {
+      types: null, subjects: null,
       ceiling: "private",
       tools: ["correct"],
       relay_owner_corrections: true,

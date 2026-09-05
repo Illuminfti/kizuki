@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   OWNER,
+  OWNER_AGENT_GRANT,
   addAgent,
   authenticate,
   initAgents,
@@ -41,33 +42,38 @@ export interface Fixture {
 /** `correct` is not in the default grant, so a relay agent asks for it. */
 const RELAY_TOOLS: Tool[] = [...TOOLS];
 
+const EXPLICIT_GRANT: Grant = { ...OWNER_AGENT_GRANT, tools: [...OWNER_AGENT_GRANT.tools] };
+
 const AGENTS: Record<string, Partial<Grant>> = {
-  "reader-public": { ceiling: "public", tools: RELAY_TOOLS },
-  "reader-personal": { ceiling: "personal", tools: RELAY_TOOLS },
-  "reader-private": { ceiling: "private", tools: RELAY_TOOLS },
-  typed: { ceiling: "private", types: ["person"], tools: RELAY_TOOLS },
+  "reader-public": { ...EXPLICIT_GRANT, ceiling: "public", tools: RELAY_TOOLS },
+  "reader-personal": { ...EXPLICIT_GRANT, ceiling: "personal", tools: RELAY_TOOLS },
+  "reader-private": { ...EXPLICIT_GRANT, ceiling: "private", tools: RELAY_TOOLS },
+  typed: { ...EXPLICIT_GRANT, ceiling: "private", types: ["person"], tools: RELAY_TOOLS },
   subjected: {
+    ...EXPLICIT_GRANT,
     ceiling: "private",
     subjects: ["person:ada"],
     tools: RELAY_TOOLS,
   },
-  "search-only": { ceiling: "private", tools: ["search"] },
-  slow: { ceiling: "private", rate_limit_per_minute: 2 },
+  "search-only": { ...EXPLICIT_GRANT, ceiling: "private", tools: ["search"] },
+  slow: { ...EXPLICIT_GRANT, ceiling: "private", rate_limit_per_minute: 2 },
   windowed: {
+    ...EXPLICIT_GRANT,
     ceiling: "private",
     since: "2026-02-28T10:30:00Z",
     until: "2026-02-28T13:30:00Z",
     tools: RELAY_TOOLS,
   },
   /** Nothing but the defaults: what an agent gets when nobody chose. */
-  plain: { ceiling: "private" },
+  plain: {},
   /** May relay, but not at the tier a correction from the owner carries. */
   downgraded: {
+    ...EXPLICIT_GRANT,
     ceiling: "private",
     tools: RELAY_TOOLS,
     relay_owner_corrections: false,
   },
-  gone: { ceiling: "private" },
+  gone: { ...EXPLICIT_GRANT, ceiling: "private" },
 };
 
 export function page(
