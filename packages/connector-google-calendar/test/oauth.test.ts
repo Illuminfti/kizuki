@@ -55,3 +55,25 @@ test('reauthorization retains the exact pending history witness instead of orpha
     await connector.signIn(f.io, { write: async (bytes) => { candidate = bytes; } });
     expect(parseState(candidate!).pending).toEqual(previous.pending);
 });
+test('timed-out enrollment write fences retries until durable state is reloaded', async () => {
+    const f = oauthFixture();
+    let release!: () => void, entered = 0, durable: Uint8Array | undefined;
+    const result = f.connector.signIn(f.io, { write: async (bytes) => { entered++; await new Promise<void>(resolve => { release = resolve; }); durable = bytes; } });
+    const bounded = await Promise.race([result.then(() => ({ code: 'success' }), error => error), Bun.sleep(5500).then(() => ({ code: 'still_pending' }))]);
+    expect(bounded.code).toBe('timeout');
+    expect(entered).toBe(1);
+    const counts = f.counts();
+    await expect(f.connector.signIn(f.io, f.writer)).rejects.toMatchObject({ code: 'unavailable' });
+    expect(f.counts()).toEqual(counts);
+    release();
+    await result.catch(() => { });
+    await Bun.sleep(20);
+    expect(durable).toBeDefined();
+    // A late success is not permission to sign in again over possibly committed state.
+    await expect(f.connector.signIn(f.io, f.writer)).rejects.toMatchObject({ code: 'unavailable' });
+    expect(f.counts()).toEqual(counts);
+    expect(entered).toBe(1);
+    const restored = createGoogleCalendarConnector({ client: { id: 'synthetic-desktop-client' }, calendar_id: 'fixture-calendar', fields: FIELDS, secret_ref: 'file:synthetic', expected_account: 'fixture-account' }, { ...f.deps, persist: async () => { }, previousState: durable! });
+    await restored.connect(async () => new TextDecoder().decode(durable));
+    expect((await restored.health()).state).toBe('ok');
+}, 9000);

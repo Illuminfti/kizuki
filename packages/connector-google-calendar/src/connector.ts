@@ -37,6 +37,11 @@ export class GoogleCalendarConnector implements Connector {
     private reloadRequired = false;
     private generation = 0;
     private pendingWrites = 0;
+    private pendingTokens = 0;
+    private origin: {
+        state: GoogleCalendarState;
+        persist: StatePersister;
+    } | null = null;
     private last: "ok" | "misconfigured" | "unauthenticated" | "degraded" | "rate_limited" = "misconfigured";
     private readonly now: () => Date;
     private readonly config: GoogleCalendarConnectorConfig;
@@ -63,7 +68,7 @@ export class GoogleCalendarConnector implements Connector {
     }
     private require(): GoogleCalendarState {
         this.live();
-        if (this.reloadRequired)
+        if (this.reloadRequired || this.pendingTokens > 0)
             throw failure("unavailable");
         if (!this.state || !this.session)
             throw failure("unauthenticated");
@@ -82,35 +87,40 @@ export class GoogleCalendarConnector implements Connector {
         this.session?.forget();
         this.session = null;
         this.state = null;
+        this.origin = null;
     }
-    private async persist(next: GoogleCalendarState, generation = this.generation, timeoutMs = 5000): Promise<void> {
+    /** Bound the wait, but retain custody until an uncancellable host write settles. */
+    private async writeState(bytes: Uint8Array, write: StatePersister, generation: number, timeoutMs: number): Promise<void> {
         this.assertGeneration(generation);
-        if (!this.deps.persist)
-            throw failure("misconfigured");
-        const bytes = encodeState(next);
         this.pendingWrites++;
-        // The host write cannot be canceled. Keep custody fenced after timeout
-        // until it actually settles, even though the caller's wait is bounded.
-        const write = Promise.resolve().then(() => {
+        const pending = Promise.resolve().then(() => {
             this.assertGeneration(generation);
-            return this.deps.persist!(bytes);
+            return write(bytes);
         }).finally(() => { this.pendingWrites--; });
         try {
-            await withDeadline(write, timeoutMs, "Google Calendar state persistence deadline");
+            await withDeadline(pending, timeoutMs, "Google Calendar state persistence deadline");
             this.assertGeneration(generation);
-            this.state = next;
         }
         catch (error) {
             this.invalidate(generation);
             throw failure(error instanceof DeadlineError ? "timeout" : "unavailable");
         }
     }
+    private async persist(next: GoogleCalendarState, generation = this.generation, timeoutMs = 5000): Promise<void> {
+        if (!this.deps.persist)
+            throw failure("misconfigured");
+        await this.writeState(encodeState(next), this.deps.persist, generation, timeoutMs);
+        this.assertGeneration(generation);
+        this.state = next;
+        if (this.origin !== null)
+            this.origin.state = next;
+    }
     async connect(resolve: SecretResolver): Promise<void> {
         this.live();
         const provider = this.provider();
         const selected = this.selected();
         const selectedCalendar = calendar(this.config.calendar_id);
-        if (this.pendingWrites > 0)
+        if (this.pendingWrites > 0 || this.pendingTokens > 0)
             throw failure("unavailable");
         if (!this.config.secret_ref || !this.deps.persist || this.busy)
             throw failure("misconfigured");
@@ -125,13 +135,28 @@ export class GoogleCalendarConnector implements Connector {
                 throw failure("unauthenticated");
             this.state = state;
             this.reloadRequired = false;
+            const origin = { state, persist: this.deps.persist };
+            this.origin = origin;
             this.session = new OAuthSession({ provider, state: state.oauth, transport: this.deps.oauth ?? loopbackTransport({ postTimeoutMs: 5000 }), now: this.now, persist: async (bytes) => {
-                    this.assertGeneration(generation);
-                    const current = this.require();
+                    // Core must persist a successful rotation even after forget().
+                    // This original CAS handle never adopts a replacement connection.
                     const oauth = parseOAuthState(bytes, ID);
-                    if (oauth.account.id !== state.oauth.account.id || current.oauth.account.id !== state.oauth.account.id)
+                    if (oauth.account.id !== origin.state.oauth.account.id)
                         throw failure("unauthenticated");
-                    await this.persist({ ...current, oauth }, generation);
+                    const next = { ...origin.state, oauth };
+                    this.pendingWrites++;
+                    const pending = Promise.resolve().then(() => origin.persist(encodeState(next))).then(() => {
+                        origin.state = next;
+                    }).finally(() => { this.pendingWrites--; });
+                    try {
+                        await withDeadline(pending, 5000, "Google Calendar rotation persistence deadline");
+                        if (!this.disabled && generation === this.generation && !this.reloadRequired)
+                            this.state = next;
+                    }
+                    catch (error) {
+                        this.invalidate(generation);
+                        throw failure(error instanceof DeadlineError ? "timeout" : "unavailable");
+                    }
                 } });
             const identity = await this.request(new URL(USERINFO), new Budget());
             if (id(identity.sub) !== state.oauth.account.id)
@@ -150,16 +175,18 @@ export class GoogleCalendarConnector implements Connector {
     async signIn(io: SignInIo, writer: ConnectionStateWriter) {
         this.live();
         const provider = this.provider(), selected = this.selected(), selectedCalendar = calendar(this.config.calendar_id);
-        if (this.busy || this.pendingWrites > 0)
+        if (this.busy || this.pendingWrites > 0 || this.pendingTokens > 0 || this.reloadRequired)
             throw failure("unavailable");
         this.busy = true;
+        const generation = this.generation;
+        const authorization = new Budget(120000);
         try {
-            const tokens = await signInWithBrowser(provider, io, this.deps.oauth ?? loopbackTransport({ postTimeoutMs: 5000 }), { timeoutMs: 120000, now: this.now });
-            this.live();
+            const tokens = await signInWithBrowser(provider, io, this.deps.oauth ?? loopbackTransport({ postTimeoutMs: 5000 }), { timeoutMs: authorization.remaining(), now: this.now });
+            this.assertGeneration(generation);
             if (!SCOPES.every(scope => tokens.scope.split(/\s+/).includes(scope)))
                 throw failure("unauthenticated");
-            const identity = await getJson(new URL(USERINFO), tokens.access_token, new Budget(), this.deps.fetch);
-            this.live();
+            const identity = await getJson(new URL(USERINFO), tokens.access_token, authorization, this.deps.fetch);
+            this.assertGeneration(generation);
             const account = id(identity.sub);
             if (this.config.expected_account !== undefined && account !== this.config.expected_account)
                 throw failure("unauthenticated");
@@ -167,8 +194,9 @@ export class GoogleCalendarConnector implements Connector {
             if (this.previousState !== null && (this.previousState.calendar !== selectedCalendar || this.previousState.oauth.account.id !== account || digest(this.previousState.fields) !== digest(selected)))
                 throw failure("unauthenticated");
             const state: GoogleCalendarState = { schema: "kizuki.google-calendar-state/v1", oauth, calendar: selectedCalendar, fields: selected, pending: this.previousState?.pending ?? null, anchors: this.previousState?.anchors ?? {}, retry_not_before: this.previousState?.retry_not_before ?? null };
-            await writer.write(encodeState(state));
-            this.live();
+            await this.writeState(encodeState(state), bytes => writer.write(bytes), generation, Math.min(5000, authorization.remaining()));
+            this.assertGeneration(generation);
+            this.invalidate(generation);
             return { display: "Google Calendar account" };
         }
         catch (error) {
@@ -178,7 +206,14 @@ export class GoogleCalendarConnector implements Connector {
             this.busy = false;
         }
     }
-    private async tokenWait<T>(pending: Promise<T>, budget: Budget, generation: number): Promise<T> {
+    private async tokenWait<T>(operation: () => Promise<T>, budget: Budget, generation: number): Promise<T> {
+        this.pendingTokens++;
+        // Track the whole exchange, including mandatory late rotated-token custody.
+        // withDeadline attaches a rejection handler even after its outer wait ends.
+        const pending = Promise.resolve().then(() => {
+            this.assertGeneration(generation);
+            return operation();
+        }).finally(() => { this.pendingTokens--; });
         try {
             const result = await withDeadline(pending, Math.min(5000, budget.remaining()), "Google Calendar token deadline");
             this.assertGeneration(generation);
@@ -195,7 +230,7 @@ export class GoogleCalendarConnector implements Connector {
             throw failure("rate_limited");
         const session = this.session!, generation = this.generation;
         for (let attempt = 0; attempt < 2; attempt++) {
-            const token = await this.tokenWait(session.accessToken(), budget, generation);
+            const token = await this.tokenWait(() => session.accessToken(), budget, generation);
             this.assertGeneration(generation);
             budget.remaining();
             try {
@@ -210,7 +245,7 @@ export class GoogleCalendarConnector implements Connector {
                 }
                 if (!(error instanceof HttpFailure) || error.status !== 401 || attempt !== 0)
                     throw error;
-                await this.tokenWait(session.refresh(), budget, generation);
+                await this.tokenWait(() => session.refresh(), budget, generation);
             }
         }
         throw failure("unauthenticated");
@@ -314,7 +349,7 @@ export class GoogleCalendarConnector implements Connector {
     }
     backfill(cursor: string | null) { return this.capture(cursor); }
     sync(cursor: string | null) { return this.capture(cursor); }
-    async revoke() { this.generation++; this.disabled = true; this.session?.forget(); this.session = null; this.state = null; }
+    async revoke() { this.generation++; this.disabled = true; this.session?.forget(); this.session = null; this.state = null; this.origin = null; }
     async purgeSource(_subject: string): Promise<never> { throw failure('not_supported'); }
     async fixture() { return [event('fixture-account', 'fixture-calendar', { id: 'fixture1', status: 'confirmed', updated: '2024-01-02T12:00:00Z', start: { date: '2024-02-01' }, end: { date: '2024-02-02' } }, '2024-01-03T00:00:00Z', [], '2024-01-03T00:00:00Z')]; }
 }

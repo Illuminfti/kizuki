@@ -48,3 +48,27 @@ test('explicit cancelled observation survives rescan and never infers absence', 
     expect(empty.events).toEqual([]);
 });
 test('revocation refuses subsequent provider calls', async () => { const f = new CalendarFixture(); const c = await f.connected(); await c.revoke(); const count = f.calls.length; await expect(c.sync(null)).rejects.toThrow(); expect(f.calls).toHaveLength(count); });
+test('resource about identity grounds summary-only evidence and survives edit and cancellation', async () => {
+    const f = new CalendarFixture();
+    const first = await (await f.connected()).backfill(null);
+    const subject = first.events[0]!.subjects.find(s => s.subject_id.startsWith('google-calendar-event:'));
+    expect(subject).toBeDefined();
+    expect(subject!.role).toBe('about');
+    expect(subject!.display_name).toBe('Google Calendar event');
+    f.rows[0]!.summary = 'Changed synthetic summary';
+    f.rows[0]!.updated = '2024-01-04T00:00:00Z';
+    f.version++;
+    const edited = await (await f.connected()).sync(first.cursor);
+    expect(edited.events[0]!.subjects[0]).toEqual(subject);
+    f.rows = [{ id: 'allday1', status: 'cancelled' }];
+    f.version++;
+    const cancelled = await (await f.connected()).sync(edited.cursor);
+    expect(cancelled.events[0]!.subjects).toEqual([subject!]);
+    const other = new CalendarFixture();
+    other.account = 'different-synthetic-account';
+    const { parseState, encodeState } = await import('../src/state');
+    const state = parseState(other.state);
+    state.oauth.account.id = other.account;
+    other.state = encodeState(state);
+    expect((await (await other.connected()).backfill(null)).events[0]!.subjects[0]!.subject_id).not.toBe(subject!.subject_id);
+});

@@ -1,5 +1,5 @@
 import { isRfc3339, validateEventInput, type CaptureEventInput } from '@kizuki/core';
-import { ID, id, object, failure, type Field } from './state';
+import { ID, id, object, failure, digest, type Field } from './state';
 function text(value: unknown, max = 16384): string { if (value === undefined)
     return ''; if (typeof value !== 'string' || Buffer.byteLength(value) > max)
     throw failure(); return value; }
@@ -39,7 +39,8 @@ export function event(account: string, calendar: string, raw: Record<string, unk
     if (!Array.isArray(recurrence) || recurrence.length > 32 || recurrence.some(v => typeof v !== 'string' || Buffer.byteLength(v) > 2048))
         throw failure();
     const metadata: Record<string, unknown> = { provider: 'google-calendar', calendar_id: calendar, event_id: eventId, status: raw.status, provider_etag: raw.etag === undefined ? null : text(raw.etag, 1024), provider_updated_at: updated, occurred_at_semantics: updated === null ? 'cancellation_first_observed' : 'provider_updated', provider_deleted_at: null, recurrence_expanded: false, schedule: { start: time(raw.start), end: time(raw.end), end_semantics: 'exclusive', recurrence, recurring_event_id: raw.recurringEventId === undefined ? null : id(raw.recurringEventId), original_start: time(raw.originalStartTime) } };
-    const subjects: CaptureEventInput['subjects'] = [], attachments: CaptureEventInput['attachments'] = [];
+    // This is the source resource, never an inferred owner or attendee identity.
+    const subjects: CaptureEventInput['subjects'] = [{subject_id: 'google-calendar-event:' + digest([account, calendar, eventId]), role: 'about', display_name: 'Google Calendar event'}], attachments: CaptureEventInput['attachments'] = [];
     const lines: string[] = [];
     if (!deleted) {
         for (const field of ['summary', 'description', 'location'] as const)

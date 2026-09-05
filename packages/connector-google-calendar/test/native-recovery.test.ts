@@ -166,3 +166,88 @@ test('native grant denial and revocation stop provider acquisition and retain so
         rmSync(root, { recursive: true, force: true });
     }
 });
+for (const otherAccount of [false, true])
+    test(`late rotation cannot overwrite native CAS ${otherAccount ? 'different-account' : 'same-account'} replacement`, async () => {
+        const root = mkdtempSync(join(tmpdir(), 'calendar-rotation-cas-')), db = openLedger(join(root, 'ledger.db'));
+        try {
+            const { createGoogleCalendarConnector, GOOGLE_CALENDAR_SCOPES } = await import('../src');
+            const { parseState, encodeState, FIELDS } = await import('../src/state');
+            const f = new CalendarFixture(), old = parseState(f.state);
+            old.oauth.tokens.expires_at = '2020-01-01T00:00:00Z';
+            f.state = encodeState(old);
+            const store = new ConnectionStateStore(root), pending = store.begin();
+            await pending.writer.write(f.state);
+            const connection = store.save(db, GOOGLE_CALENDAR_CONNECTOR_ID, pending.pending), handle = createStatePersister(db, store, connection);
+            let entered!: () => void, release!: (value: any) => void;
+            const started = new Promise<void>(resolve => { entered = resolve; });
+            const c = createGoogleCalendarConnector({ client: { id: 'synthetic' }, secret_ref: connection.secret_refs[0]!, calendar_id: f.calendar, fields: FIELDS }, { fetch: f.fetch, now: f.now, persist: handle.persist, oauth: { listen: async () => { throw Error('unused'); }, postForm: async () => new Promise(resolve => { release = resolve; entered(); }) } });
+            const connecting = c.connect(async () => new TextDecoder().decode(store.read(connection)!));
+            const failure = connecting.catch(() => { });
+            await started;
+            const replacement = parseState(f.state);
+            if (otherAccount)
+                replacement.oauth.account.id = 'synthetic-replacement-account';
+            replacement.oauth.tokens.access_token = 'synthetic-owner-new-access';
+            replacement.oauth.tokens.refresh_token = 'synthetic-owner-new-refresh';
+            replacement.oauth.tokens.expires_at = '2099-01-01T00:00:00Z';
+            const newer = await store.rewrite(db, connection, writer => writer.write(encodeState(replacement)));
+            const authoritative = store.read(newer)!;
+            release({ status: 200, body: { access_token: 'synthetic-old-late-access', refresh_token: 'synthetic-old-late-refresh', expires_in: 3600, scope: GOOGLE_CALENDAR_SCOPES.join(' '), token_type: 'Bearer' } });
+            await failure;
+            expect(store.read(newer)).toEqual(authoritative);
+            expect(parseState(store.read(newer)!).oauth.tokens.refresh_token).toBe('synthetic-owner-new-refresh');
+            await expect(c.backfill(null)).rejects.toThrow();
+        }
+        finally {
+            db.close();
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+test('native late rotation survives reopen and later token expiry without losing page witness', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'calendar-rotation-reopen-')), database = join(root, 'ledger.db');
+    let db = openLedger(database);
+    try {
+        const { createGoogleCalendarConnector, GOOGLE_CALENDAR_SCOPES } = await import('../src');
+        const { parseState, encodeState, FIELDS } = await import('../src/state');
+        const f = new CalendarFixture();
+        await (await f.connected()).backfill(null);
+        const state = parseState(f.state), witness = state.pending;
+        state.oauth.tokens.expires_at = '2020-01-01T00:00:00Z';
+        f.state = encodeState(state);
+        let store = new ConnectionStateStore(root);
+        const pending = store.begin();
+        await pending.writer.write(f.state);
+        let connection = store.save(db, GOOGLE_CALENDAR_CONNECTOR_ID, pending.pending), handle = createStatePersister(db, store, connection);
+        let entered!: () => void, release!: (value: any) => void;
+        const started = new Promise<void>(resolve => { entered = resolve; });
+        const config = { client: { id: 'synthetic' }, secret_ref: connection.secret_refs[0]!, calendar_id: f.calendar, fields: FIELDS };
+        const c = createGoogleCalendarConnector(config, { fetch: f.fetch, now: f.now, persist: handle.persist, oauth: { listen: async () => { throw Error('unused'); }, postForm: async () => new Promise(resolve => { release = resolve; entered(); }) } });
+        const connecting = c.connect(async () => new TextDecoder().decode(store.read(connection)!));
+        const refusal = connecting.catch(() => { });
+        await started;
+        await c.revoke();
+        release({ status: 200, body: { access_token: 'synthetic-custody-access', refresh_token: 'synthetic-custody-refresh', expires_in: 3600, scope: GOOGLE_CALENDAR_SCOPES.join(' '), token_type: 'Bearer' } });
+        await refusal;
+        expect(parseState(store.read(handle.current())!).pending).toEqual(witness);
+        expect(parseState(store.read(handle.current())!).oauth.tokens.refresh_token).toBe('synthetic-custody-refresh');
+        const source = connection.source_key;
+        db.close();
+        db = openLedger(database);
+        store = new ConnectionStateStore(root);
+        expect(store.recover(db).unresolved).toEqual([]);
+        connection = getConnection(db, GOOGLE_CALENDAR_CONNECTOR_ID, source)!;
+        handle = createStatePersister(db, store, connection);
+        f.advance();
+        let refreshed = 0;
+        const reopened = createGoogleCalendarConnector(config, { fetch: f.fetch, now: f.now, persist: handle.persist, oauth: { listen: async () => { throw Error('unused'); }, postForm: async (_url, form) => { expect(form.refresh_token).toBe('synthetic-custody-refresh'); refreshed++; return { status: 200, body: { access_token: 'synthetic-reopened-access', refresh_token: 'synthetic-reopened-refresh', expires_in: 3600, scope: GOOGLE_CALENDAR_SCOPES.join(' '), token_type: 'Bearer' } }; } } });
+        await reopened.connect(async () => new TextDecoder().decode(store.read(connection)!));
+        expect(refreshed).toBe(1);
+        expect((await reopened.backfill(null)).events).toHaveLength(2);
+        expect(parseState(store.read(handle.current())!).pending).toEqual(witness);
+        await expect(c.backfill(null)).rejects.toThrow();
+    }
+    finally {
+        db.close();
+        rmSync(root, { recursive: true, force: true });
+    }
+});
