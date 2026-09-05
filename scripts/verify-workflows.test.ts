@@ -211,3 +211,27 @@ test("manual macOS proof refuses automatic triggers, unbounded cost, and mutable
     expect(validateWorkflowText(path, bad).length).toBeGreaterThan(0);
   }
 });
+
+test("macOS validator rejects removal or bypass of each native proof obligation", () => {
+  const path = ".github/workflows/macos-native.yml";
+  const text = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
+  const mutations: [string, (doc: any) => void][] = [
+    ["shallow checkout", d => { d.jobs["native-arm64"].steps[0].with["fetch-depth"] = 1; }],
+    ["platform tests removed", d => { d.jobs["native-arm64"].steps.splice(5, 1); }],
+    ["build proof removed", d => { d.jobs["native-arm64"].steps.splice(6, 1); }],
+    ["wrong target", d => { d.jobs["native-arm64"].env.KIZUKI_TARGET = "bun-linux-x64-baseline"; }],
+    ["host assertions removed", d => { d.jobs["native-arm64"].steps[4].run = "bun install --frozen-lockfile"; }],
+    ["upload removed", d => { d.jobs["native-arm64"].steps.pop(); }],
+    ["retention removed", d => { delete d.jobs["native-arm64"].steps[7].with["retention-days"]; }],
+    ["receipt omitted", d => { d.jobs["native-arm64"].steps[7].with.path = "dist/kizuki-*/bun-darwin-arm64/"; }],
+    ["Bun setup removed", d => { d.jobs["native-arm64"].steps.splice(2, 1); }],
+    ["conditional tests", d => { d.jobs["native-arm64"].steps[5].if = "false"; }],
+    ["conditional build", d => { d.jobs["native-arm64"].steps[6].if = "false"; }],
+    ["masked proof failure", d => { d.jobs["native-arm64"].steps[6].run += "\ntrue"; }],
+    ["target overridden in step", d => { d.jobs["native-arm64"].steps[6].env = { KIZUKI_TARGET: "bun-linux-x64-baseline" }; }],
+  ];
+  for (const [name, mutate] of mutations) {
+    const doc = Bun.YAML.parse(text); mutate(doc);
+    expect(validateWorkflowText(path, JSON.stringify(doc)).length, name).toBeGreaterThan(0);
+  }
+});

@@ -36,15 +36,20 @@ clean-target restore.
 
 ## Support boundary
 
-The target is `bun-linux-x64-baseline`: Linux x86_64, including older baseline
-CPUs. Each executable bundles Kizuki code, workspace dependencies, and the
-Bun runtime. It is not statically linked, signed, published, or tested on
-macOS, Windows, ARM, or a stranger machine.
+The closed native registry implements `bun-linux-x64-baseline` (Linux x86_64,
+including older baseline CPUs) and `bun-darwin-arm64` (macOS Apple Silicon).
+Linux x64 has local qualification evidence; macOS arm64 remains an unqualified
+candidate until an actual native receipt exists. Intel macOS, Windows and other
+targets are unsupported. Each executable bundles Kizuki code, workspace
+dependencies and the Bun runtime. It is not statically linked, signed, published
+or qualified by an unfamiliar human.
 
 The binaries do not automatically load `.env` or `bunfig.toml`. They do not
 contact a network endpoint by themselves. Network access remains limited to
 explicitly configured connectors and model endpoints. Local GGUF model files
-and optional retrieval engines are not packaged.
+are not packaged. The embedded PostgreSQL/pgvector retrieval implementation
+and tokenizer are bundled; their presence does not configure a model or fetch
+model weights.
 
 Use `bun packages/cli/src/main.ts` and `bun packages/mcp/src/bin.ts` from a
 source checkout. Use `./kizuki` and `./kizuki-mcp` from the native package.

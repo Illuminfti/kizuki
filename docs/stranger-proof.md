@@ -1,7 +1,8 @@
 # Artifact isolation proof
 
 `bun run proof:artifact -- --report DIR` is an automated release prerequisite.
-It copies the checksummed Linux x64 native package out of the checkout, starts
+It copies the checksummed package for the matching supported native host out of
+the checkout, starts
 with a clean home and Kizuki configuration, and records a machine-readable
 receipt at `DIR/receipt.json`.
 
