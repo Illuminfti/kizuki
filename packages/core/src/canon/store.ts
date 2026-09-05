@@ -18,6 +18,7 @@ import { hashBytes } from "../vault/write";
 import { RECEIPTS_PATH, latestReceiptForPage } from "./receipts";
 import type { CanonReceipt } from "./receipts";
 import { initCanon } from "./schema";
+import type { MachineByteIntent } from "../ledger/event-origin";
 
 /**
  * The canon store as the writer sees it: the SQLite ledger that holds
@@ -106,38 +107,51 @@ export function insertReceiptRow(
   receipt: CanonReceipt,
   claimKind: string,
 ): void {
-  db.query(
-    `INSERT INTO canon_receipts
-       (receipt_id, claim_ids, provenance, sensitivity, page_path, kind,
-        before_hash, after_hash, at, receipt_kind, page_action, archive_path,
-        writer, producer, model_ref, authority, confidence, taint,
-        candidates, superseded, retrieval_ops, reverts, reverted_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    receipt.receipt_id,
-    JSON.stringify(receipt.claim_ids),
-    JSON.stringify(receipt.provenance),
-    receipt.sensitivity,
-    receipt.page_path,
-    claimKind,
-    receipt.before_hash,
-    receipt.after_hash,
-    receipt.at,
-    receipt.kind,
-    receipt.page_action,
-    receipt.archive_path,
-    receipt.writer,
-    receipt.producer,
-    receipt.model_ref,
-    receipt.authority,
-    receipt.confidence,
-    receipt.taint,
-    JSON.stringify(receipt.candidates),
-    JSON.stringify(receipt.superseded),
-    JSON.stringify(receipt.retrieval_ops),
-    receipt.reverts,
-    receipt.reverted_by,
-  );
+  db.transaction(() => {
+    using select = db.prepare<MachineByteIntent, [string]>(
+      "SELECT receipt_id,before_hash,after_hash FROM canon_machine_byte_intents WHERE receipt_id=?",
+    );
+    const intent = select.get(receipt.receipt_id);
+    if (intent !== null && (receipt.writer !== "loop" || intent.before_hash !== receipt.before_hash || intent.after_hash !== receipt.after_hash)) {
+      throw new Error("machine byte receipt conflicts with its intent");
+    }
+    db.query(
+      `INSERT INTO canon_receipts
+         (receipt_id, claim_ids, provenance, sensitivity, page_path, kind,
+          before_hash, after_hash, at, receipt_kind, page_action, archive_path,
+          writer, producer, model_ref, authority, confidence, taint,
+          candidates, superseded, retrieval_ops, reverts, reverted_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      receipt.receipt_id,
+      JSON.stringify(receipt.claim_ids),
+      JSON.stringify(receipt.provenance),
+      receipt.sensitivity,
+      receipt.page_path,
+      claimKind,
+      receipt.before_hash,
+      receipt.after_hash,
+      receipt.at,
+      receipt.kind,
+      receipt.page_action,
+      receipt.archive_path,
+      receipt.writer,
+      receipt.producer,
+      receipt.model_ref,
+      receipt.authority,
+      receipt.confidence,
+      receipt.taint,
+      JSON.stringify(receipt.candidates),
+      JSON.stringify(receipt.superseded),
+      JSON.stringify(receipt.retrieval_ops),
+      receipt.reverts,
+      receipt.reverted_by,
+    );
+    if (intent !== null) {
+      using remove = db.prepare("DELETE FROM canon_machine_byte_intents WHERE receipt_id=?");
+      remove.run(receipt.receipt_id);
+    }
+  }).immediate();
 }
 
 export interface PageIndexEntry {

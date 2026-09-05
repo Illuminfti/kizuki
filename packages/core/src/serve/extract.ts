@@ -12,6 +12,7 @@ import { compareRfc3339 } from "../agents/time";
 import { readCheckpoint, writeCheckpoint } from "../ledger/checkpoints";
 import { readEvent, readSince } from "../ledger/ledger";
 import type { LedgerCursor } from "../ledger/ledger";
+import { classifyEventOrigin, refreshEventOrigin } from "../ledger/event-origin";
 import { EXTRACT_BATCH, MODEL_PRODUCER_ID, planModelExtraction } from "../producer";
 
 const EXTRACT_SOURCE_KEY = "extract";
@@ -59,6 +60,8 @@ export interface DurableExtractBatch {
   readonly previous_cursor: string | null;
   readonly cursor: LedgerCursor;
   readonly drafts: readonly ClaimDraft[];
+  /** Current process view; durable drafts and their integrity stay immutable. */
+  readonly filing_drafts: readonly ClaimDraft[];
   readonly model_ref: string | null;
   readonly input_ids: readonly string[];
   readonly mode: "frontier" | "deferred";
@@ -183,8 +186,20 @@ function sourceKey(db: Database, eventId: string): string | null {
 function sourceIdentityMatches(db: Database, input: DeferredInput): boolean {
   return sourceKey(db, input.event_id) === input.source_key;
 }
-function extractEligible(event: CaptureEvent): boolean {
+function historicalEligible(event: CaptureEvent): boolean {
   return !event.deleted && !event.text.includes("KIZUKI CONTEXT v1");
+}
+
+function extractEligible(db: Database, event: CaptureEvent): boolean {
+  return !event.deleted && refreshEventOrigin(db, event).origin === "external";
+}
+
+function filingDrafts(db: Database, drafts: readonly ClaimDraft[]): ClaimDraft[] {
+  return drafts.filter(draft => draft.event_ids.every(eventId => {
+    const event = readEvent(db, eventId);
+    if (event === null) throw new Error("durable extraction input is missing");
+    return refreshEventOrigin(db, event).origin === "external";
+  }));
 }
 function orderedSubset(ids: readonly string[], order: ReadonlyMap<string, number>): boolean {
   let previous = -1;
@@ -225,12 +240,12 @@ function validateInputPartition(
     }
     return;
   }
-  const eligibleIds = events.filter(extractEligible).map(event => event.event_id);
+  const eligible = events.filter(event => !event.deleted);
+  const eligibleIds = eligible.map(event => event.event_id);
   const order = new Map(eligibleIds.map((id, index) => [id, index]));
   const union = new Set([...modelIds, ...deferredIds]);
   if (union.size !== modelIds.length + deferredIds.length ||
-      union.size !== eligibleIds.length ||
-      eligibleIds.some(id => !union.has(id)) ||
+      eligible.some(event => !union.has(event.event_id) && classifyEventOrigin(db, event) !== "self") ||
       !orderedSubset(modelIds, order) ||
       !orderedSubset(deferredIds, order)) {
     throw new Error("durable extraction input partition is corrupt");
@@ -241,7 +256,7 @@ function validateLegacyInputPartition(
   events: readonly CaptureEvent[],
   drafts: readonly ClaimDraft[],
 ): void {
-  const eligibleIds = events.filter(extractEligible).map(event => event.event_id);
+  const eligibleIds = events.filter(historicalEligible).map(event => event.event_id);
   const eligible = new Set(eligibleIds);
   // A null manifest is compatible only with journals written before source
   // authority existed. A managed source or native-owner marker anywhere in
@@ -279,7 +294,13 @@ function inputList(raw: string | null, field: string): DeferredInput[] {
 function insertDeferred(db: Database, inputs: readonly DeferredInput[]): void {
   const insert = db.query(`INSERT OR IGNORE INTO extract_deferred_inputs
     (event_id,source_key,checked_revision,checked_binding_digest) VALUES (?,?,?,?)`);
-  for (const input of inputs) insert.run(input.event_id, input.source_key, input.checked_revision, input.checked_binding_digest);
+  for (const input of inputs) {
+    const event = readEvent(db, input.event_id);
+    if (event === null) throw new Error("deferred extraction input is missing");
+    if (refreshEventOrigin(db, event).origin === "self") {
+      deleteDeferred(db, [input.event_id]);
+    } else insert.run(input.event_id, input.source_key, input.checked_revision, input.checked_binding_digest);
+  }
 }
 function deleteDeferred(db: Database, ids: readonly string[]): void {
   const remove = db.query("DELETE FROM extract_deferred_inputs WHERE event_id=?");
@@ -339,6 +360,7 @@ export function journalExtractBatch(db: Database, mined: MineResult, modelRef: s
     }
     if (db.query("SELECT 1 FROM extract_batches LIMIT 1").get() !== null) throw new Error("extraction decision already pending");
     saveBatch(db, { previous_cursor: mined.previous_cursor, cursor: mined.cursor!, drafts: mined.drafts,
+      filing_drafts: mined.drafts,
       model_ref: modelRef, input_ids: events.map(event => event.event_id), mode, model_inputs: modelInputs,
       deferred_inputs: [...(mined.deferred_inputs ?? [])], outcome: "ok", authorization_epoch: null });
     readDurableExtractBatch(db, producer);
@@ -346,7 +368,7 @@ export function journalExtractBatch(db: Database, mined: MineResult, modelRef: s
 }
 
 export function readDurableExtractBatch(db: Database, producer?: ProducerPort): DurableExtractBatch | null {
-  return readStoredExtractBatch(db, true, producer);
+  return db.transaction(() => readStoredExtractBatch(db, true, producer)).immediate();
 }
 function readStoredExtractBatch(db: Database, enforceConsent: boolean, producer?: ProducerPort): DurableExtractBatch | null {
   const rows = db.query<{ previous_cursor: string; cursor: string; drafts: string; model_ref: string | null; input_ids: string | null; integrity: string | null; outcome: string; batch_mode: string; model_inputs: string | null; deferred_inputs: string | null }, []>(
@@ -381,32 +403,41 @@ function readStoredExtractBatch(db: Database, enforceConsent: boolean, producer?
   else validateInputPartition(db, mode, cursor, events, modelInputs, deferredInputs);
   const sent = modelInputs.length === 0 ? [...new Set(parsed.claims.flatMap(draft => [...draft.event_ids]))] : modelInputs.map(input => input.event_id);
   if (parsed.claims.some(draft => draft.event_ids.some(id => !sent.includes(id)))) throw new Error("durable extraction provenance is invalid");
+  const original: DurableExtractBatch = { previous_cursor: row.previous_cursor || null, cursor, drafts: parsed.claims,
+    filing_drafts: [], model_ref: row.model_ref, input_ids: ids, mode, model_inputs: modelInputs,
+    deferred_inputs: deferredInputs, outcome: row.outcome as DurableExtractBatch["outcome"], authorization_epoch: null };
+  if (row.integrity !== null && row.integrity !== (legacyManifest ? legacyIntegrity(original) : integrity(original))) {
+    throw new Error("durable extraction integrity mismatch");
+  }
+  const view = filingDrafts(db, parsed.claims);
+  const externalSent = sent.filter(id => {
+    const event = readEvent(db, id);
+    if (event === null) throw new Error("durable extraction input is missing");
+    return refreshEventOrigin(db, event).origin === "external";
+  });
   const authorizationEpoch = enforceConsent ? sourcePolicyEpoch(db) : null;
   if (enforceConsent) {
-    if (!legacyManifest && !sourceEventsAllowed(db, sent, {
+    if (!legacyManifest && !sourceEventsAllowed(db, externalSent, {
       owner: false,
       purpose: "extract",
       model: true,
       ...(producer === undefined ? {} : { port: producer }),
     })) throw new DurableExtractAuthorizationError();
     const bindingDigest = sourcePortBindingDigest(producer);
-    if (!legacyManifest && modelInputs.some(input => input.checked_binding_digest !== bindingDigest)) {
+    if (!legacyManifest && modelInputs.some(input => externalSent.includes(input.event_id) && input.checked_binding_digest !== bindingDigest)) {
       throw new DurableExtractAuthorizationError();
     }
     if (authorizationEpoch !== sourcePolicyEpoch(db)) throw new DurableExtractAuthorizationError();
   }
-  const batch: DurableExtractBatch = { previous_cursor: row.previous_cursor || null, cursor, drafts: parsed.claims,
-    model_ref: row.model_ref, input_ids: ids, mode, model_inputs: modelInputs, deferred_inputs: deferredInputs,
-    outcome: row.outcome as DurableExtractBatch["outcome"], authorization_epoch: authorizationEpoch,
+  const batch: DurableExtractBatch = { ...original, filing_drafts: view, authorization_epoch: authorizationEpoch,
     ...(enforceConsent && legacyManifest ? {
       historical_source_write: bindHistoricalSourceWrite(
         db,
-        sent,
-        historicalClaimSignatures(db, parsed.claims, row.model_ref),
+        externalSent,
+        historicalClaimSignatures(db, view, row.model_ref),
         authorizationEpoch!,
       ),
     } : {}) };
-  if (row.integrity !== null && row.integrity !== (legacyManifest ? legacyIntegrity(batch) : integrity(batch))) throw new Error("durable extraction integrity mismatch");
   // Compatible journals predate the input manifest. Validate against the live
   // ledger before filling only their original metadata. Keeping both manifest
   // columns null prevents an old row from becoming an empty modern partition.
@@ -431,7 +462,8 @@ export function completeDurableExtractBatch(db: Database, batch: DurableExtractB
       throw new DurableExtractAuthorizationError();
     }
     const current = readDurableExtractBatch(db, producer);
-    if (current === null || integrity(current) !== integrity(batch)) return false;
+    if (current === null || integrity(current) !== integrity(batch) ||
+        JSON.stringify(current.filing_drafts) !== JSON.stringify(batch.filing_drafts)) return false;
     insertDeferred(db, current.deferred_inputs);
     if (current.mode === "frontier") writeCheckpoint(db, MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY, encodeCursor(batch.cursor));
     else completeDeferredInputs(db, current.model_inputs);
@@ -481,7 +513,8 @@ export function purgeExtractInputs(db: Database, eventIds: ReadonlySet<string>, 
   saveBatch(db, { ...batch, previous_cursor: nextPrevious, input_ids: remaining, cursor: { event_id: last, accepted_at: row.accepted_at },
     model_inputs: batch.model_inputs.filter(input => !eventIds.has(input.event_id)),
     deferred_inputs: batch.deferred_inputs.filter(input => !eventIds.has(input.event_id)),
-    drafts: batch.drafts.filter(draft => !draft.event_ids.some(id => eventIds.has(id))), outcome: "purged",
+    drafts: batch.drafts.filter(draft => !draft.event_ids.some(id => eventIds.has(id))),
+    filing_drafts: [], outcome: "purged",
     authorization_epoch: null }, legacyManifest);
 }
 
@@ -563,7 +596,15 @@ export async function mineLiveDrafts(
   let usable: CaptureEvent[] = [];
   let frontierEvents: readonly CaptureEvent[] = [];
 
-  const queued = queuedEvents(db);
+  const queued = db.transaction(() => {
+    const candidates = queuedEvents(db);
+    const eligible: CaptureEvent[] = [];
+    for (const event of candidates) {
+      if (extractEligible(db, event)) eligible.push(event);
+      else deleteDeferred(db, [event.event_id]);
+    }
+    return eligible;
+  }).immediate();
   if (queued.length > 0) {
     usable = queued.filter(event => sourceEventsAllowed(db, [event.event_id], scope));
     const held = queued.filter(event => !usable.some(candidate => candidate.event_id === event.event_id));
@@ -598,7 +639,9 @@ export async function mineLiveDrafts(
     frontierEvents = batch.events;
     inputIds = batch.events.map(event => event.event_id);
     // Packet text that later lands in the ledger is history, not extract input.
-    const eligible = batch.events.filter(extractEligible);
+    const eligible = db.transaction(() =>
+      batch.events.filter(event => extractEligible(db, event)),
+    ).immediate();
     usable = eligible.filter(event => sourceEventsAllowed(db, [event.event_id], scope));
     modelInputs = usable.map(event => sourceInput(db, event, producer));
     deferredInputs = source_epoch === 0 ? [] : eligible
@@ -657,11 +700,22 @@ export async function mineLiveDrafts(
     const included = new Set(inputIds);
     deferredInputs = deferredInputs.filter(input => included.has(input.event_id));
   }
+  const admitted = db.transaction(() => usable.filter(event => extractEligible(db, event))).immediate();
+  if (admitted.length !== usable.length) {
+    return { mined: { status: "unavailable", reason: "event origin changed before extraction" }, drafts: [], previous_cursor, cursor: null };
+  }
+  selectedInput = inputFor(usable);
+  const selectedIds = new Set(usable.map(event => event.event_id));
   if (source_epoch !== sourcePolicyEpoch(db)) return denied();
   const produced = await producer.produce(selectedInput);
 
   if (source_epoch !== sourcePolicyEpoch(db)) return denied();
-  if (produced.status === "ok" && produced.claims.some(draft => draft.event_ids.some(id => !usable.some(event => event.event_id === id)))) return denied();
+  usable = db.transaction(() => usable.filter(event => extractEligible(db, event))).immediate();
+  if (usable.length === 0) {
+    return { source_epoch, mined: { status: "empty" }, drafts: [], previous_cursor, cursor,
+      input_ids: inputIds, mode, model_inputs: modelInputs, deferred_inputs: deferredInputs };
+  }
+  if (produced.status === "ok" && produced.claims.some(draft => draft.event_ids.some(id => !selectedIds.has(id)))) return denied();
   let mined: ExtractMine;
   let drafts: readonly ClaimDraft[] = [];
   switch (produced.status) {
@@ -672,11 +726,13 @@ export async function mineLiveDrafts(
       mined = { status: "rejected", reason: produced.reason };
       break;
     case "ok":
-      drafts = produced.claims;
+      drafts = produced.claims.filter(draft => draft.event_ids.every(id =>
+        usable.some(event => event.event_id === id),
+      ));
       mined =
-        produced.claims.length === 0
+        drafts.length === 0
           ? { status: "empty" }
-          : { status: "ok", count: produced.claims.length };
+          : { status: "ok", count: drafts.length };
       break;
     default: {
       const _exhaustive: never = produced;

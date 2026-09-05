@@ -15,6 +15,7 @@ Related:
 - [product-context.md](product-context.md) — direction; not a shipping claim
 - [upstream-policy.md](upstream-policy.md) — retrieval credit and dependency rules
 - [legacy-import.md](legacy-import.md) — estate importers
+- [event-identity-origin.md](event-identity-origin.md) — event revisions, machine origin and backup compatibility
 - [stranger-proof.md](stranger-proof.md) — automated native-artifact isolation prerequisite
 - [wave1/](wave1/) — historical lane specs; many are VOID or superseded
 

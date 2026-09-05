@@ -1,16 +1,15 @@
 import type { Database } from "bun:sqlite";
 import { authorizeSourceCapture, bindSourceEvent, type SourceAdmission } from "./source-grants";
-import { EVENT_SCHEMA, validateEventInput } from "../contracts/event";
+import { validateEventInput } from "../contracts/event";
 import { tableExists } from "./schema";
 import type {
-  AttachmentRef,
   CaptureEvent,
   CaptureEventInput,
-  SensitivityHint,
-  SubjectRef,
 } from "../contracts/event";
-import { computeContentHash } from "../util/hash";
+import { canonicalSerialize, computeContentHash, computeLegacyContentHash, sha256Hex } from "../util/hash";
 import { isUlid, ulid } from "../util/ulid";
+import { EventRecordError, eventFromRow as fromRow, type EventRow } from "./event-record";
+import { EventOriginError, classifyEventOrigin, refreshEventOrigin } from "./event-origin";
 
 export type AcceptErrorKind = "validation" | "infrastructure";
 
@@ -35,44 +34,10 @@ export interface ReplayFilter {
   since?: string;
 }
 
-interface EventRow {
-  event_id: string;
-  connector_id: string;
-  source_record_id: string;
-  kind: string;
-  occurred_at: string;
-  observed_at: string;
-  text: string;
-  subjects: string;
-  sensitivity_hint: string | null;
-  deleted: number;
-  attachments: string;
-  metadata: string;
-  content_hash: string;
-  accepted_at: string;
-}
-
 interface ExistingEventRow {
   event_id: string;
   content_hash: string;
 }
-
-type EventInsertBindings = [
-  string,
-  string,
-  string,
-  string,
-  string,
-  string,
-  string,
-  string,
-  string | null,
-  number,
-  string,
-  string,
-  string,
-  string,
-];
 
 const EVENT_COLUMNS = `
   event_id,
@@ -88,29 +53,11 @@ const EVENT_COLUMNS = `
   attachments,
   metadata,
   content_hash,
-  accepted_at
+  accepted_at,
+  content_hash_version,
+  text_hash,
+  origin
 `;
-
-function fromRow(row: EventRow): CaptureEvent {
-  return {
-    schema: EVENT_SCHEMA,
-    event_id: row.event_id,
-    connector_id: row.connector_id,
-    source_record_id: row.source_record_id,
-    kind: row.kind,
-    occurred_at: row.occurred_at,
-    observed_at: row.observed_at,
-    text: row.text,
-    subjects: JSON.parse(row.subjects) as SubjectRef[],
-    ...(row.sensitivity_hint === null
-      ? {}
-      : { sensitivity_hint: row.sensitivity_hint as SensitivityHint }),
-    deleted: row.deleted === 1,
-    attachments: JSON.parse(row.attachments) as AttachmentRef[],
-    metadata: JSON.parse(row.metadata) as Record<string, unknown>,
-    content_hash: row.content_hash,
-  };
-}
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -145,10 +92,12 @@ export function accept(
 
     return db.transaction((): AcceptResult => {
       if (deps.source !== undefined) { normalized = authorizeSourceCapture(db, normalized, deps.source); contentHash = computeContentHash(normalized); }
-      const duplicate = db
-        .query<ExistingEventRow, [string, string, string]>(
+      const textHash = sha256Hex(normalized.text);
+      const origin = classifyEventOrigin(db, { event_id: eventId, text: normalized.text, text_hash: textHash, origin: "external" });
+      let duplicate = db
+        .query<EventRow, [string, string, string]>(
           `
-            SELECT event_id, content_hash
+            SELECT ${EVENT_COLUMNS}
             FROM events
             WHERE connector_id = ?
               AND source_record_id = ?
@@ -161,8 +110,17 @@ export function accept(
           normalized.source_record_id,
           contentHash,
         );
+      if (duplicate !== null && (duplicate.content_hash_version !== 2 ||
+          canonicalSerialize(fromRow(duplicate)) !== canonicalSerialize(normalized))) throw new EventRecordError();
+      if (duplicate === null) {
+        using statement = db.prepare<EventRow, [string, string, string]>(`SELECT ${EVENT_COLUMNS} FROM events
+          WHERE connector_id=? AND source_record_id=? AND content_hash=? AND content_hash_version=1 LIMIT 1`);
+        const legacy = statement.get(normalized.connector_id, normalized.source_record_id, computeLegacyContentHash(normalized));
+        if (legacy !== null && canonicalSerialize(fromRow(legacy)) === canonicalSerialize(normalized)) duplicate = legacy;
+      }
       if (duplicate !== null) {
         if (deps.source !== undefined) bindSourceEvent(db, duplicate.event_id, deps.source, true);
+        refreshEventOrigin(db, fromRow(duplicate));
         return { status: "duplicate" };
       }
 
@@ -183,7 +141,7 @@ export function accept(
         };
       }
 
-      db.query<never, EventInsertBindings>(
+      db.query<never, (string | number | null)[]>(
         `
           INSERT INTO events (
             event_id,
@@ -199,8 +157,11 @@ export function accept(
             attachments,
             metadata,
             content_hash,
-            accepted_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            accepted_at,
+            content_hash_version,
+            text_hash,
+            origin
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
       ).run(
         eventId,
@@ -217,6 +178,9 @@ export function accept(
         JSON.stringify(normalized.metadata),
         contentHash,
         acceptedAt,
+        2,
+        textHash,
+        origin,
       );
 
       if (deps.source !== undefined) bindSourceEvent(db, eventId, deps.source);
@@ -240,6 +204,7 @@ export function accept(
 }
 
 function isInfrastructureError(error: unknown): boolean {
+  if (error instanceof EventRecordError || error instanceof EventOriginError) return true;
   const code =
     error instanceof Error && "code" in error && typeof error.code === "string"
       ? error.code
@@ -295,7 +260,7 @@ export function readSince(
 
   const last = rows.at(-1);
   return {
-    events: rows.map(fromRow),
+    events: rows.map(row => fromRow(row)),
     cursor:
       last === undefined
         ? null
@@ -367,7 +332,7 @@ function replayPage(
     .all(...bindings);
   const last = rows.at(-1);
   return {
-    events: rows.map(fromRow),
+    events: rows.map(row => fromRow(row)),
     cursor:
       last === undefined
         ? null

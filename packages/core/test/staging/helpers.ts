@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import type { CaptureEvent } from "../../src/contracts/event";
 import { openLedger } from "../../src/ledger/db";
+import { sha256Hex } from "../../src/util/hash";
 import { initSearch } from "../../src/search/schema";
 import { initStaging } from "../../src/staging/proposals";
 import type { ProposalInput } from "../../src/staging/proposals";
@@ -28,6 +29,9 @@ export function event(overrides: Partial<CaptureEvent> = {}): CaptureEvent {
     attachments: [],
     metadata: {},
     content_hash: "b".repeat(64),
+    content_hash_version: 2,
+    text_hash: sha256Hex(overrides.text ?? "the kettle is on"),
+    origin: "external",
     ...overrides,
   };
 }

@@ -12,8 +12,12 @@ previously enrolled source becomes a vault, sync refuses it until an independent
 source is selected. This prevents Kizuki's own managed output entering that
 same folder capture as new external evidence.
 
-This folder boundary does not recognize generated text copied into a separate,
-unmarked source, prove every file's authorship, or protect an independently
-exported copy. Machine-origin content matching and hostile concurrent ancestor
-replacement require separate ingress verification. Do not describe those cases
-as qualified by the folder marker checks.
+Core also marks captured text as machine origin when its exact UTF-8 bytes
+match a retained loop-write receipt or a durable intent registered before the
+loop publishes a file. This catches unchanged generated text copied into a
+separate source folder. These events remain in the ledger but cannot support
+model extraction or new model claims. A one-byte change is a different text
+hash; the check does not prove general authorship. See
+[Event identity and origin](event-identity-origin.md) for the separate Core
+check and its limits. Hostile concurrent ancestor replacement remains outside
+the folder marker check.

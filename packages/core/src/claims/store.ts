@@ -1,6 +1,8 @@
 import { recordSourceStoreWrite } from "../ledger/source-stores";
 import { historicalSourceWriteAllowed, sourceEventsAllowed, requireSourceEvents, sourcePolicyEpoch, isLocalSourcePort, sourceSensitivity } from "../ledger/source-grants";
 import type { Database } from "bun:sqlite";
+import { refreshEventOrigin, requireExternalEvents } from "../ledger/event-origin";
+import { eventFromRow, type EventRow } from "../ledger/event-record";
 import type { Sensitivity } from "../agents/types";
 import type { RetrievalDoc, RetrievalPort, RetrievalQuery } from "../contracts/retrieval";
 import { bareRetrievalId, retrievalDocId } from "../retrieval/ids";
@@ -289,14 +291,15 @@ function resolveProvenance(db: Database, ids: readonly string[]): void {
 function loadEventFacts(db: Database, ids: readonly string[]): EventFacts[] {
   const placeholders = ids.map(() => "?").join(", ");
   return db
-    .query<{ event_id: string; connector_id: string; text: string }, string[]>(
-      `SELECT event_id, connector_id, text FROM events WHERE event_id IN (${placeholders})`,
+    .query<EventRow, string[]>(
+      `SELECT * FROM events WHERE event_id IN (${placeholders})`,
     )
     .all(...ids)
     .map((row) => ({
       event_id: row.event_id,
       connector_id: row.connector_id,
       text: row.text,
+      origin: refreshEventOrigin(db, eventFromRow(row)).origin,
       taint: db.query("SELECT 1 FROM native_owner_evidence WHERE event_id=? AND origin='correction'").get(row.event_id) !== null ? "owner" : "untrusted",
     }));
 }
@@ -926,6 +929,7 @@ export async function insertClaim(
   if (sourcePolicyEpoch(io.db) > 0 && (!isLocalSourcePort(io.retrieval) || !sourceEventsAllowed(io.db, input.provenance, { ...sourceScope, ...(io.retrieval === undefined ? {} : { port: io.retrieval }) }))) { const { retrieval: _retrieval, ...local } = io; io = local; }
   const at = nowOf(io);
   const producer = canonicalizeProducer(input.producer);
+  if (producer === "model") requireExternalEvents(io.db, input.provenance);
   const subject = input.subject ?? input.subjects?.[0] ?? null;
   const predicate = input.predicate ?? null;
   const object = input.object ?? null;
@@ -1033,11 +1037,13 @@ export async function insertClaim(
       requireSourceEvents(io.db, input.provenance, sourceScope);
     }
     resolveProvenance(io.db, input.provenance);
+    if (producer === "model") requireExternalEvents(io.db, input.provenance);
 
     const exact = findExact(io.db, claim.kind, claim.target, claim.body_hash);
     if (exact !== null && (sourceEventsAllowed(io.db, exact.provenance, sourceScope) ||
         (historicalInputAllowed() && exact.model_ref === (input.model_ref ?? null) &&
          JSON.stringify(exact.provenance) === JSON.stringify(input.provenance)))) {
+      if (exact.producer === "model") requireExternalEvents(io.db, exact.provenance);
       return { outcome: "duplicate", claim: exact, dedup: mode };
     }
 
@@ -1052,6 +1058,7 @@ export async function insertClaim(
     // owner denial of the same reading. `intent: "correct"` still reaches
     // conflict/R5 when the object or polarity differs (RFC 0002 §5.2, §6.3).
     if (structural !== undefined) {
+      if (structural.producer === "model") requireExternalEvents(io.db, structural.provenance);
       return {
         outcome: "duplicate",
         claim: corroborate(io.db, structural, claim, at),

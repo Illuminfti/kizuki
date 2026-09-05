@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { CaptureEventInput } from "../contracts/event";
 import { accept } from "../ledger/ledger";
 import { OWNER_CONNECTOR_ID } from "./types";
+import { refreshEventOrigin } from "../ledger/event-origin";
 
 /** Internal native correction recording. Connector labels never mint authority. */
 export function recordNativeCorrection(
@@ -24,8 +25,11 @@ export function recordNativeCorrection(
     }
     const stored = accept(db, event);
     if (stored.status !== "stored") throw new Error("native correction recording failed");
-    db.query("INSERT INTO native_owner_evidence VALUES (?, 'correction', ?, ?, 'recorded')")
-      .run(stored.event.event_id, requestDigest, event.observed_at);
+    db.query("INSERT INTO native_owner_evidence(event_id,origin,request_digest,recorded_at,filing_state,event_content_hash) VALUES (?, 'correction', ?, ?, 'recorded', ?)")
+      .run(stored.event.event_id, requestDigest, event.observed_at, stored.event.content_hash);
+    // The proof and native external stamp commit together. Public accept never
+    // takes a caller-supplied exemption, even for the same connector label.
+    refreshEventOrigin(db, stored.event);
     return { event_id: stored.event.event_id, duplicate: false };
   }).immediate();
 }
