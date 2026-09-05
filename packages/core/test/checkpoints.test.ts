@@ -1,3 +1,4 @@
+import { setSourceGrant } from "../src/ledger/source-grants";
 import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
 import { readCheckpoint, writeCheckpoint } from "../src/ledger/checkpoints";
@@ -43,6 +44,7 @@ describe("checkpoints", () => {
     const db = openLedger(":memory:");
     const source = "01JJ0000000000000000000001";
     registerConnection(db, "fixture", source);
+  setSourceGrant(db, { source_key: source, expected_revision: 0, operation_id: "fixture-" + source, policy: { purposes: ["capture", "recall", "derive"], allowed_fields: ["text", "subjects", "attachments", "metadata"], retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "public" } });
     writeCheckpoint(db, "fixture", source, "from-wrapper");
     expect(getCheckpoint(db, "fixture", source)).toMatchObject({
       source_key: source,

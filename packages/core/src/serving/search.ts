@@ -93,7 +93,7 @@ function classify(
     if (!live.has(bareRetrievalId(hit.doc_id))) continue;
     const source = currentQuotedSource(db, bareRetrievalId(hit.doc_id));
     if (source === null) continue;
-    const decision = eventDecision(grant, source);
+    const decision = eventDecision(grant, source, index.sourceContext);
     if (!decision.allow) {
       result.withheld.push({ id: source.event_id, reason: decision.reason });
       continue;

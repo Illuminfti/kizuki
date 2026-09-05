@@ -1,4 +1,6 @@
 import type { Database } from "bun:sqlite";
+import { sourceEventsAllowed, sourceSensitivity } from "../ledger/source-grants";
+import type { ServeContext } from "./types";
 import { authorize } from "../agents";
 import type { DenyReason, Grant, Sensitivity, Servable } from "../agents";
 import type { TimelineEntry } from "../query/timeline";
@@ -119,12 +121,15 @@ export function eventServable(facts: ServableEvent): Servable {
 export function eventDecision(
   grant: Grant,
   facts: ServableEvent,
+  ctx?: ServeContext,
 ):
   | { allow: true; sensitivity: Sensitivity }
   | { allow: false; reason: DenyReason } {
-  const label = asSensitivity(facts.sensitivity);
+  if (ctx !== undefined && !sourceEventsAllowed(ctx.db, [facts.event_id], { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall" })) return { allow: false, reason: "held" };
+  const original = asSensitivity(facts.sensitivity);
+  const label = original === null || ctx === undefined ? original : sourceSensitivity(ctx.db, [facts.event_id], original);
   if (label === null) return { allow: false, reason: "missing_sensitivity" };
-  const decision = authorize(grant, eventServable(facts));
+  const decision = authorize(grant, { ...eventServable(facts), sensitivity: label });
   return decision.allow
     ? { allow: true, sensitivity: label }
     : { allow: false, reason: decision.reason };

@@ -1,3 +1,4 @@
+import { setSourceGrant } from "../src/ledger/source-grants";
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -79,6 +80,7 @@ function database() {
   const db = openLedger(":memory:");
   initStaging(db);
   registerConnection(db, "fixture", SOURCE, { implementation_version: "1.0.0" });
+  setSourceGrant(db, { source_key: SOURCE, expected_revision: 0, operation_id: "fixture", policy: { purposes: ["capture", "recall", "derive"], allowed_fields: ["text", "subjects", "attachments", "metadata"], retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "public" } });
   return db;
 }
 

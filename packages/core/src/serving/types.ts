@@ -15,6 +15,7 @@ export interface ServeContext {
   db: Database;
   vaultPath: string;
   principal: Principal;
+  sourcePurpose?: import("../ledger/source-grants").SourcePurpose;
   /** One host-owned engine nominates IDs; core rechecks current evidence and grants. */
   retrieval?: RetrievalPort;
   /** A configured optional engine could not bind; reads use the deterministic floor. */
@@ -65,6 +66,7 @@ export type Envelope<T = undefined> = {
   canon: CanonChunk[];
   quoted: QuotedChunk[];
   denied: Denied[];
+  source_policy?: { mode: "enforced"; epoch: number; legacy_unbound: "owner_only" };
   data?: T;
 };
 

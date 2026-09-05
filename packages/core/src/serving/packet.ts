@@ -168,6 +168,7 @@ export async function serveContextPacket(
         DEFAULT_BUDGET,
       );
       const purpose = purposeOf(args.purpose);
+      ctx = { ...ctx, sourcePurpose: purpose };
       const profile = purposeProfile(purpose);
       const include = sectionList(args.include, profile.include);
       const advertised = capabilitiesOf(args.capabilities);

@@ -1,3 +1,4 @@
+import { inspectSourceGrant, sourcePolicyEpoch, type SourceAdmission } from "../ledger/source-grants";
 import type { Database } from "bun:sqlite";
 import type { Connector, Manifest, SyncBatch } from "../contracts/connector";
 import { validateEventInput } from "../contracts/event";
@@ -67,6 +68,7 @@ function processEvent(
   db: Database,
   input: unknown,
   grants: ProducerGrants,
+  source?: SourceAdmission,
 ): EventResult {
   return db
     .transaction((): EventResult => {
@@ -78,7 +80,7 @@ function processEvent(
         withdrawn: 0,
         retractions_filed: 0,
       };
-      const accepted = accept(db, input);
+      const accepted = accept(db, input, source === undefined ? {} : { source });
       if (accepted.status === "error") {
         if (accepted.kind === "infrastructure") {
           throw new InfrastructureError(accepted.error);
@@ -135,6 +137,7 @@ export function runBatch(
   db: Database,
   batch: SyncBatch,
   grants: ProducerGrants,
+  source?: SourceAdmission,
 ): RunResult {
   const result: RunResult = {
     stored: 0,
@@ -154,7 +157,7 @@ export function runBatch(
 
   for (const input of batch.events) {
     try {
-      const event = processEvent(db, input, grants);
+      const event = processEvent(db, input, grants, source);
       result.stored += event.stored;
       result.duplicates += event.duplicates;
       result.errors.push(...event.errors);
@@ -314,6 +317,8 @@ async function runConnector(
     return refusedRun(errorText(error), previous);
   }
 
+  const consent = inspectSourceGrant(db, source_key);
+  if ((sourcePolicyEpoch(db) > 0 || db.query<{ consent_required: number }, [string]>("SELECT consent_required FROM connections WHERE source_key=?").get(source_key)?.consent_required === 1) && (consent === null || consent.status !== "active" || !consent.policy.purposes.includes("capture"))) return refusedRun("source_capture_denied", previous);
   const manifest = connector.manifest();
   if (manifest.connector_id !== connector_id) {
     const result = refusedRun(
@@ -379,6 +384,7 @@ async function runConnector(
     db,
     labelBatch(db, connector_id, source_key, batch),
     sourceGrants(manifest),
+    consent === null ? undefined : { source_key, expected_revision: consent.revision },
   );
   const status: ConnectionRunStatus = processed.errors.length === 0 ? "ok" : "failed";
   return persistRun(

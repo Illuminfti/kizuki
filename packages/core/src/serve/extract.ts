@@ -1,3 +1,4 @@
+import { sourcePolicyEpoch, sourceEventsAllowed, requireSourceEvents, isLocalSourcePort } from "../ledger/source-grants";
 import { createHash } from "node:crypto";
 import { parseExtractResponse } from "../producer/schema";
 import { tableExists } from "../ledger/schema";
@@ -36,6 +37,7 @@ export function shouldAdvanceExtractCursor(result: ExtractMine): boolean {
 }
 
 export interface MineResult {
+  readonly source_epoch?: number;
   readonly mined: ExtractMine;
   readonly drafts: readonly ClaimDraft[];
   /** The checkpoint observed before the model call. */
@@ -81,6 +83,7 @@ function saveBatch(db: Database, batch: DurableExtractBatch): void {
 export function journalExtractBatch(db: Database, mined: MineResult, modelRef: string | null): void {
   if (mined.mined.status !== "ok" || mined.cursor === null) return;
   db.transaction(() => {
+    if (mined.source_epoch !== undefined && mined.source_epoch !== sourcePolicyEpoch(db)) throw new Error("source authorization changed during extraction");
     if (readExtractCursor(db) !== mined.previous_cursor) throw new Error("extraction checkpoint changed during model call");
     const events = interval(db, mined.previous_cursor, mined.cursor!);
     if (mined.input_ids !== undefined && JSON.stringify(mined.input_ids) !== JSON.stringify(events.map(event => event.event_id))) throw new Error("extraction inputs changed during model call");
@@ -108,6 +111,7 @@ export function readDurableExtractBatch(db: Database): DurableExtractBatch | nul
   const ids = events.map(event => event.event_id);
   if (row.input_ids !== null && row.input_ids !== JSON.stringify(ids)) throw new Error("durable extraction inputs changed");
   if (parsed.claims.some(draft => draft.event_ids.some(id => !ids.includes(id)))) throw new Error("durable extraction provenance is invalid");
+  for (const draft of parsed.claims) requireSourceEvents(db, draft.event_ids, { owner: false, purpose: "extract", model: true });
   const batch: DurableExtractBatch = { previous_cursor: row.previous_cursor || null, cursor, drafts: parsed.claims,
     model_ref: row.model_ref, input_ids: ids, outcome: row.outcome as DurableExtractBatch["outcome"] };
   if (row.integrity !== null && row.integrity !== integrity(batch)) throw new Error("durable extraction integrity mismatch");
@@ -200,6 +204,7 @@ export function commitExtractCursor(db: Database, mined: MineResult): boolean {
   if (!shouldAdvanceExtractCursor(mined.mined) || mined.cursor === null) return false;
   const cursor = `${mined.cursor.accepted_at}\t${mined.cursor.event_id}`;
   return db.transaction(() => {
+    if (mined.source_epoch !== undefined && mined.source_epoch !== sourcePolicyEpoch(db)) throw new Error("source authorization changed during extraction");
     if (readExtractCursor(db) !== mined.previous_cursor) return false;
     const events = interval(db, mined.previous_cursor, mined.cursor!);
     if (mined.input_ids !== undefined && JSON.stringify(mined.input_ids) !== JSON.stringify(events.map(event => event.event_id))) return false;
@@ -217,6 +222,10 @@ export async function mineLiveDrafts(
   producer: ProducerPort,
 ): Promise<MineResult> {
   const previous_cursor = readExtractCursor(db);
+  const source_epoch = sourcePolicyEpoch(db);
+  const denied = (): MineResult => ({ mined: { status: "unavailable", reason: "source authorization unavailable" }, drafts: [], previous_cursor, cursor: null });
+  if (source_epoch > 0 && !isLocalSourcePort(producer)) return denied();
+  const scope = { owner: false, purpose: "extract" as const, model: true, port: producer };
   const cursor = parseCursor(previous_cursor);
   const batch = readSince(db, cursor, EXTRACT_BATCH);
   if (batch.events.length === 0 || batch.cursor === null) {
@@ -225,8 +234,9 @@ export async function mineLiveDrafts(
 
   // Packet text that later lands in the ledger is history, not extract input.
   const usable = batch.events.filter(
-    (event) => !event.deleted && !event.text.includes("KIZUKI CONTEXT v1"),
+    (event) => !event.deleted && !event.text.includes("KIZUKI CONTEXT v1") && sourceEventsAllowed(db, [event.event_id], scope),
   );
+  if (usable.length === 0 && source_epoch > 0) return denied();
   if (usable.length === 0) {
     return { mined: { status: "empty" }, drafts: [], previous_cursor, cursor: batch.cursor, input_ids: batch.events.map(event => event.event_id) };
   }
@@ -238,6 +248,7 @@ export async function mineLiveDrafts(
   const known = [...subjects]
     .sort()
     .flatMap((subject) => listClaims(db, { status: "live", keyed: true, subject, limit: 32 }))
+    .filter(claim => sourceEventsAllowed(db, claim.provenance, scope))
     .slice(0, 32);
   const produced = await producer.produce({
     events: usable.map(quoted),
@@ -260,6 +271,8 @@ export async function mineLiveDrafts(
     },
   });
 
+  if (source_epoch !== sourcePolicyEpoch(db)) return denied();
+  if (produced.status === "ok" && produced.claims.some(draft => draft.event_ids.some(id => !usable.some(event => event.event_id === id)))) return denied();
   let mined: ExtractMine;
   let drafts: readonly ClaimDraft[] = [];
   switch (produced.status) {
@@ -282,5 +295,5 @@ export async function mineLiveDrafts(
     }
   }
 
-  return { mined, drafts, previous_cursor, cursor: batch.cursor, input_ids: batch.events.map(event => event.event_id) };
+  return { source_epoch, mined, drafts, previous_cursor, cursor: batch.cursor, input_ids: batch.events.map(event => event.event_id) };
 }

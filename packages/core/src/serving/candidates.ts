@@ -271,7 +271,7 @@ export async function collectPieces(
     for (const entry of entries) {
       if (!live.has(entry.event_id)) continue;
       const source = timelineSource(entry);
-      const decision = eventDecision(grant, source);
+      const decision = eventDecision(grant, source, ctx);
       if (!decision.allow) continue;
       const chunk = quotedChunk(source, decision.sensitivity);
       pieces.push({
@@ -285,7 +285,7 @@ export async function collectPieces(
 
   if (request.include.includes("claims")) {
     const wanted = request.subjects;
-    const reader = claimReader(ctx.db, grant);
+    const reader = claimReader(ctx.db, grant, { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall" });
     const live = loadWorkingClaims(ctx.db, wanted, reader.canRead);
     for (const claim of live) {
       const object = claim.object ?? "";

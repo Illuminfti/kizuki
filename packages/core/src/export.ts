@@ -1,3 +1,4 @@
+import { sourcePolicyEpoch, inspectSourceGrant, sourceEventsAllowed } from "./ledger/source-grants";
 import type { Database } from "bun:sqlite";
 import {
   chmodSync,
@@ -777,7 +778,7 @@ function* pageConnections(db: Database): Generator<Record<string, unknown>> {
       rows = db
         .query<ConnectionRow, [number]>(
           `SELECT connector_id, source_key, config, secret_refs,
-                  connected_at, disconnected_at, implementation_version
+                  connected_at, disconnected_at, implementation_version, consent_required
            FROM connections
            ORDER BY connector_id, source_key LIMIT ?`,
         )
@@ -786,7 +787,7 @@ function* pageConnections(db: Database): Generator<Record<string, unknown>> {
       rows = db
         .query<ConnectionRow, [string, string, string, number]>(
           `SELECT connector_id, source_key, config, secret_refs,
-                  connected_at, disconnected_at, implementation_version
+                  connected_at, disconnected_at, implementation_version, consent_required
            FROM connections
            WHERE connector_id > ?
               OR (connector_id = ? AND source_key > ?)
@@ -804,6 +805,7 @@ function* pageConnections(db: Database): Generator<Record<string, unknown>> {
         connected_at: row.connected_at,
         disconnected_at: row.disconnected_at,
         implementation_version: row.implementation_version,
+        consent_required: (row as ConnectionRow & { consent_required: number }).consent_required,
       };
     }
     const last: ConnectionRow | undefined = rows.at(-1);
@@ -1006,6 +1008,8 @@ export function exportVault(
   options: ExportOptions = {},
 ): ExportManifest {
   throwIfAborted(options.signal);
+  const sourceEpoch = sourcePolicyEpoch(db);
+  assertSourceExport(db);
   const source = resolve(vaultPath);
   const destination = resolve(outDir);
   assertSeparated(source, destination);
@@ -1038,6 +1042,7 @@ export function exportVault(
       options.signal,
     );
     writeStream(staging, "ledger/event_purges.jsonl", pagePurges(db), files, options.signal);
+    for (const table of SOURCE_BACKUP_TABLES) writeStream(staging, `ledger/${table}.jsonl`, sourcePolicyRows(db, table), files, options.signal);
     options.onProgress?.("claims");
     writeStream(staging, "claims/claims.jsonl", pageClaims(db), files, options.signal);
     writeStream(
@@ -1082,6 +1087,7 @@ export function exportVault(
     if ((files["ledger/events.jsonl"]?.count ?? 0) !== snapshot.event_count) {
       throw new Error("export event stream drifted from the snapshot");
     }
+    if (sourcePolicyEpoch(db) !== sourceEpoch) throw new Error("source authorization changed during export");
     const manifest = signManifest({
       schema: BACKUP_SCHEMA,
       vault_id: readVaultId(source),
@@ -1383,8 +1389,8 @@ function insertConnectionRow(db: Database, raw: Record<string, unknown>): void {
   db.query(
     `INSERT INTO connections
        (connector_id, source_key, config, secret_refs, connected_at, disconnected_at,
-        implementation_version)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        implementation_version, consent_required)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     asString(raw.connector_id, "connector_id"),
     asString(raw.source_key, "source_key"),
@@ -1393,6 +1399,7 @@ function insertConnectionRow(db: Database, raw: Record<string, unknown>): void {
     asString(raw.connected_at, "connected_at"),
     asStringOrNull(raw.disconnected_at, "disconnected_at"),
     asString(raw.implementation_version ?? "", "implementation_version"),
+    raw.consent_required === undefined ? 0 : raw.consent_required === 0 || raw.consent_required === 1 ? raw.consent_required : (() => { throw new Error("invalid consent requirement"); })(),
   );
 }
 
@@ -1555,6 +1562,7 @@ export function restoreVault(
         for (const row of streamRows(source, "ledger/connector_sensitivity.jsonl", false)) {
           insertConnectorSensitivity(db, row);
         }
+        restoreSourcePolicy(db, source, manifest);
       })();
 
       const events =
@@ -1596,5 +1604,64 @@ export function restoreVault(
   } catch (error) {
     rmSync(staging, { recursive: true, force: true });
     throw error;
+  }
+}
+
+const SOURCE_BACKUP_TABLES = ["source_grants", "source_event_bindings", "source_grant_receipts"] as const;
+type SourceBackupTable = typeof SOURCE_BACKUP_TABLES[number];
+const SOURCE_COLUMNS: Record<SourceBackupTable, readonly string[]> = {
+  source_grants: ["source_key", "connector_id", "revision", "status", "policy", "policy_digest", "updated_at", "revoke_operation", "purge_receipt_id"],
+  source_event_bindings: ["event_id", "source_key", "grant_revision", "policy_digest"],
+  source_grant_receipts: ["sequence", "operation_id", "request_digest", "receipt"],
+};
+function* sourcePolicyRows(db: Database, table: SourceBackupTable): Generator<Record<string, unknown>> {
+  // Fixed identifiers only; SQLite's iterator keeps the backup memory bounded.
+  for (const row of db.query<Record<string, unknown>, []>(`SELECT * FROM ${table} ORDER BY ${SOURCE_COLUMNS[table][0]}`).iterate()) yield row;
+}
+function assertSourceExport(db: Database): void {
+  if (sourcePolicyEpoch(db) === 0) return;
+  for (const row of db.query<{ source_key: string }, []>("SELECT source_key FROM source_grants").iterate()) {
+    const grant = inspectSourceGrant(db, row.source_key)!;
+    if (grant.status === "denied" || (grant.status === "active" && !grant.policy.purposes.includes("export"))) throw new Error("source_export_denied");
+  }
+  // Native purge currently retains derived claim rows. Status alone cannot
+  // authorize copying their payload after a source denial.
+  for (const row of db.query<{ provenance: string }, []>("SELECT provenance FROM claims").iterate()) {
+    const ids = JSON.parse(row.provenance) as string[];
+    const managed = ids.filter(id => db.query("SELECT 1 FROM source_event_bindings WHERE event_id=?").get(id) !== null);
+    if (!sourceEventsAllowed(db, managed, { owner: true, purpose: "export" })) throw new Error("source_export_denied");
+  }
+  for (const row of db.query<{ event_id: string }, []>("SELECT event_id FROM source_event_bindings WHERE event_id IN (SELECT event_id FROM events)").iterate()) {
+    if (!sourceEventsAllowed(db, [row.event_id], { owner: true, purpose: "export" })) throw new Error("source_export_denied");
+  }
+}
+function restoreSourcePolicy(db: Database, backup: string, manifest: ExportManifest): void {
+  const required = manifest.schema_versions.ledger >= 11;
+  for (const table of SOURCE_BACKUP_TABLES) {
+    const path = `ledger/${table}.jsonl`;
+    if (required && manifest.files[path] === undefined) throw new Error("backup source policy stream missing");
+    for (const row of streamRows(backup, path, required)) {
+      const columns = SOURCE_COLUMNS[table];
+      if (Object.keys(row).sort().join() !== [...columns].sort().join()) throw new Error("invalid source policy backup row");
+      const values = columns.map(column => {
+        const value = row[column];
+        if (value !== null && typeof value !== "string" && !(typeof value === "number" && Number.isSafeInteger(value))) throw new Error("invalid source policy backup value");
+        return value as string | number | null;
+      });
+      db.query(`INSERT INTO ${table} (${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`).run(...values);
+    }
+  }
+  for (const row of db.query<{ source_key: string }, []>("SELECT source_key FROM source_grants").iterate()) {
+    const grant = inspectSourceGrant(db, row.source_key)!;
+    const connection = db.query<{ connector_id: string }, [string]>("SELECT connector_id FROM connections WHERE source_key=?").get(grant.source_key);
+    if (connection?.connector_id !== grant.connector_id) throw new Error("backup source enrollment mismatch");
+    const latest = db.query<{ receipt: string }, [string]>("SELECT receipt FROM source_grant_receipts WHERE json_extract(receipt,'$.source_key')=? ORDER BY sequence DESC LIMIT 1").get(grant.source_key);
+    if (latest === null) throw new Error("backup source receipt missing");
+    const receipt = JSON.parse(latest.receipt) as Record<string, unknown>;
+    if (receipt.revision !== grant.revision || receipt.status !== grant.status || receipt.policy_digest !== grant.policy_digest) throw new Error("backup source receipt mismatch");
+  }
+  for (const row of db.query<{ event_id: string; connector_id: string; source_key: string; grant_revision: number }, []>("SELECT b.*,e.connector_id FROM source_event_bindings b LEFT JOIN events e ON e.event_id=b.event_id").iterate()) {
+    const grant = inspectSourceGrant(db, row.source_key);
+    if (grant === null || row.grant_revision < 1 || row.grant_revision > grant.revision || (row.connector_id !== null && row.connector_id !== grant.connector_id)) throw new Error("backup source binding mismatch");
   }
 }

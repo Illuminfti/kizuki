@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { authorizeSourceCapture, bindSourceEvent, type SourceAdmission } from "./source-grants";
 import { EVENT_SCHEMA, validateEventInput } from "../contracts/event";
 import { tableExists } from "./schema";
 import type {
@@ -20,6 +21,7 @@ export type AcceptResult =
 
 export interface AcceptDependencies {
   generateId?: () => string;
+  source?: SourceAdmission;
 }
 
 export interface LedgerCursor {
@@ -129,8 +131,8 @@ export function accept(
   }
 
   try {
-    const normalized = validation.value;
-    const contentHash = computeContentHash(normalized);
+    let normalized = validation.value;
+    let contentHash = computeContentHash(normalized);
     const eventId = (deps.generateId ?? ulid)();
     if (!isUlid(eventId)) {
       return {
@@ -142,6 +144,7 @@ export function accept(
     const acceptedAt = new Date().toISOString();
 
     return db.transaction((): AcceptResult => {
+      if (deps.source !== undefined) { normalized = authorizeSourceCapture(db, normalized, deps.source); contentHash = computeContentHash(normalized); }
       const duplicate = db
         .query<ExistingEventRow, [string, string, string]>(
           `
@@ -158,7 +161,10 @@ export function accept(
           normalized.source_record_id,
           contentHash,
         );
-      if (duplicate !== null) return { status: "duplicate" };
+      if (duplicate !== null) {
+        if (deps.source !== undefined) bindSourceEvent(db, duplicate.event_id, deps.source, true);
+        return { status: "duplicate" };
+      }
 
       const idCollision = db
         .query<ExistingEventRow, [string]>(
@@ -213,6 +219,7 @@ export function accept(
         acceptedAt,
       );
 
+      if (deps.source !== undefined) bindSourceEvent(db, eventId, deps.source);
       const stored = db
         .query<EventRow, [string]>(
           `SELECT ${EVENT_COLUMNS} FROM events WHERE event_id = ?`,

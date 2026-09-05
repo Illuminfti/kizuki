@@ -1,3 +1,5 @@
+import { sourcePolicyEpoch } from "../ledger/source-grants";
+import { claimReader } from "./claims";
 import type { Sensitivity } from "../agents";
 import { insertClaim } from "../claims/store";
 import type { AuthorityTier, Claim } from "../contracts/proposal";
@@ -186,6 +188,8 @@ export async function serveCorrect(
           ? undefined
           : text("object", args.object, MAX_OBJECT_CHARS);
       const resolved = resolve(ctx, args.target);
+      const sourceReader = claimReader(ctx.db, grant, { owner: ctx.principal.kind === "owner", purpose: "correction" });
+      if (sourcePolicyEpoch(ctx.db) > 0 && resolved.claims.some(claim => !sourceReader.canRead(claim))) throw new ServeError("held", "source authorization does not permit this correction");
       readable(grant, resolved.claims);
 
       const groups = groupByKey(resolved.claims);

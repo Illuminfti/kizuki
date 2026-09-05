@@ -107,6 +107,7 @@ export interface PurgeOutcome {
 }
 
 export interface PurgeFilter {
+  source_key?: string;
   event_id?: string;
   connector_id?: string;
   subject_handle?: string;
@@ -196,6 +197,7 @@ function describeFilter(filter: PurgeFilter): string {
   if (filter.subject_handle !== undefined) {
     parts.push(`subject_handle=${filter.subject_handle}`);
   }
+  if (filter.source_key !== undefined) parts.push(`source_key=${filter.source_key}`);
   if (filter.source_record_id !== undefined) {
     parts.push(`source_record_id=${filter.source_record_id}`);
   }
@@ -327,6 +329,10 @@ function selector(
 ): { where: string; bindings: string[] } {
   const conditions: string[] = [];
   const bindings: string[] = [];
+  if (filter.source_key !== undefined) {
+    conditions.push("EXISTS (SELECT 1 FROM source_event_bindings b WHERE b.event_id=events.event_id AND b.source_key=?)");
+    bindings.push(filter.source_key);
+  }
   if (filter.event_id !== undefined) {
     conditions.push("events.event_id = ?");
     bindings.push(filter.event_id);
@@ -1164,4 +1170,12 @@ export async function verifyPurge(
     hold_lifted: holdLifted,
     ok,
   };
+}
+
+/** Resume existing persisted purge work without creating another deletion path. */
+export async function resumePurge(db: Database, vaultPath: string, receiptId: string, options: PurgeRunOptions = {}): Promise<PurgeVerifyReport> {
+  const clock = options.now ?? (() => new Date().toISOString());
+  await reconcileOps(db, receiptId, bindRetrieval(vaultPath, options.retrieval, clock), clock);
+  rewriteHolds(db, vaultPath, options);
+  return verifyPurge(db, vaultPath, receiptId, options);
 }

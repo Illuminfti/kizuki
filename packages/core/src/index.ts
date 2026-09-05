@@ -974,3 +974,6 @@ export type { EstateIssueCode, EstateImportIssue, EstateImportMapping, EstateImp
 export { EstateImportError, planEstateImport } from "./import/estate";
 export { evaluateQualification, QUALIFICATION_WINDOW_MS } from "./serve/qualification";
 export type { QualificationProfile, QualificationRail, QualificationReceipt, QualificationProcess, QualificationSample } from "./serve/qualification";
+
+export { SOURCE_PURPOSES, SOURCE_FIELDS, SourceGrantError, sourcePolicyEpoch, inspectSourceGrant, setSourceGrant, revokeSourceGrant, resumeSourceRevocation, bindLocalSourcePort } from "./ledger/source-grants";
+export type { SourcePurpose, SourceGrantPolicy, SourceGrant, SourceGrantRequest, SourceGrantReceipt, SourceAdmission } from "./ledger/source-grants";

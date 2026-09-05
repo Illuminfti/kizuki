@@ -121,8 +121,8 @@ export function commitConnectionRow(
   if (write.expect === undefined) {
     db.query(
       `INSERT INTO connections
-         (connector_id, source_key, config, secret_refs, connected_at, disconnected_at, implementation_version)
-       VALUES (?, ?, ?, ?, ?, NULL, ?)
+         (connector_id, source_key, config, secret_refs, connected_at, disconnected_at, implementation_version, consent_required)
+       VALUES (?, ?, ?, ?, ?, NULL, ?, 1)
        ON CONFLICT (connector_id, source_key) DO UPDATE SET
          config = excluded.config, secret_refs = excluded.secret_refs,
          connected_at = excluded.connected_at, disconnected_at = NULL,

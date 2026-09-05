@@ -1,3 +1,4 @@
+import { sourcePolicyEpoch } from "../ledger/source-grants";
 import type { Database } from "bun:sqlite";
 import { tableExists } from "../ledger/schema";
 
@@ -13,7 +14,7 @@ function countOf(db: Database, sql: string): number {
  * counter is one more thing that can disagree with the rows it summarizes.
  */
 export function claimsEpoch(db: Database): number {
-  let epoch = 0;
+  let epoch = sourcePolicyEpoch(db);
   if (tableExists(db, "claims")) {
     epoch += countOf(
       db,

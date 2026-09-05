@@ -1,3 +1,4 @@
+import { bindLocalSourcePort, isLocalSourcePort } from "../ledger/source-grants";
 import { readReceiptsLog } from "../canon/receipts";
 import { settleWriteReservations } from "./budget-ledger";
 import { ulid } from "../util/ulid";
@@ -89,7 +90,7 @@ function observe(metrics: ProduceMetrics, result: ProduceResult, wallMs: number)
 }
 
 function observedProducer(producer: ProducerPort, metrics: ProduceMetrics, record: (result?: ProduceResult) => void): ProducerPort {
-  return {
+  const observed: ProducerPort = {
     descriptor: producer.descriptor,
     health: () => producer.health(),
     close: () => producer.close(),
@@ -103,6 +104,7 @@ function observedProducer(producer: ProducerPort, metrics: ProduceMetrics, recor
       return result;
     },
   };
+  return isLocalSourcePort(producer) ? bindLocalSourcePort(observed) : observed;
 }
 
 function metricResult(metrics: ProduceMetrics): Pick<WritePassResult, "claims_rejected" | "model"> {

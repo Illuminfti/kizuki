@@ -1,3 +1,4 @@
+import { sourcePolicyEpoch, isLocalSourcePort } from "../ledger/source-grants";
 import { validateRetrievalResult } from "../contracts/retrieval";
 import type { RetrievalDocKind, RetrievalQuery } from "../contracts/retrieval";
 import type { SearchOptions } from "../search/query";
@@ -15,6 +16,7 @@ export async function retrievalCandidates(
   options: SearchOptions,
 ): Promise<RetrievalCandidates> {
   if (ctx.retrieval === undefined) return { ids: [], degraded: ctx.retrievalUnavailable ? ["retrieval-unavailable"] : [] };
+  if (sourcePolicyEpoch(ctx.db) > 0 && !isLocalSourcePort(ctx.retrieval)) return { ids: [], degraded: ["retrieval-source-egress-denied"] };
   // The v1 port has no page-type predicate. Keep that request on the scoped
   // deterministic index rather than spending its window on excluded types.
   if (options.types !== undefined) {

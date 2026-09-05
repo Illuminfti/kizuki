@@ -1,3 +1,4 @@
+import { sourcePolicyEpoch } from "../ledger/source-grants";
 import {
   reserveAudit,
   resolvePrincipal,
@@ -230,7 +231,7 @@ function enter(
     ]);
     throw new ServeError("tool_not_granted", "tool not granted");
   }
-  return { live, audit_id: reserved.audit_id };
+  return { live: { ...live, sourcePurpose: tool === "correct" ? "correction" : tool === "propose" ? "derive" : live.sourcePurpose ?? "recall" }, audit_id: reserved.audit_id };
 }
 
 /** Whatever `run` threw becomes an audited refusal with a stable message. */
@@ -286,6 +287,7 @@ function envelopeOf<T>(
     canon: served.canon,
     quoted: served.quoted,
     denied: collapse(served.withheld),
+    ...(sourcePolicyEpoch(live.db) === 0 ? {} : { source_policy: { mode: "enforced" as const, epoch: sourcePolicyEpoch(live.db), legacy_unbound: "owner_only" as const } }),
     ...(data === undefined ? {} : { data }),
   };
 }
@@ -298,9 +300,11 @@ export function gate<T>(
 ): Envelope<T> {
   const at = new Date().toISOString();
   const { live, audit_id } = enter(ctx, tool, args, at);
+  const sourceEpoch = sourcePolicyEpoch(live.db);
   let served: Served<T>;
   try {
     served = run({ ctx: live, at });
+    if (sourcePolicyEpoch(live.db) !== sourceEpoch) throw new ServeError("error", "source authorization changed during serving");
   } catch (error) {
     failed(live, tool, args, audit_id, error);
   }
@@ -320,10 +324,12 @@ export async function gateAsync<T>(
 ): Promise<Envelope<T>> {
   const at = new Date().toISOString();
   const { live, audit_id } = enter(ctx, tool, args, at);
+  const sourceEpoch = sourcePolicyEpoch(live.db);
   const readEpoch = tool === "search" || tool === "context_packet" ? claimsEpoch(live.db) : null;
   let served: Served<T>;
   try {
     served = await run({ ctx: live, at });
+    if (sourceEpoch !== sourcePolicyEpoch(live.db)) throw new ServeError("error", "source authorization changed during request; retry");
     // Async reads may overlap grant changes. Refuse the entire result rather
     // than returning a packet assembled under withdrawn authority.
     if (readEpoch !== null && readEpoch !== claimsEpoch(live.db)) {

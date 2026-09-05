@@ -1,3 +1,4 @@
+import { requireSourceEvents, sourceSensitivity } from "../ledger/source-grants";
 import { subjectPageType } from "../vault/subject-type";
 import { CanonAuthorityResolver } from "./authority";
 import { join } from "node:path";
@@ -195,6 +196,7 @@ function persistedClaims(io: CanonIo, claims: readonly Claim[]): Claim[] {
 }
 
 function assertProvenance(io: CanonIo, provenance: readonly string[]): void {
+  requireSourceEvents(io.db, provenance, { owner: true, purpose: "derive" });
   if (provenance.length === 0 || !tableExists(io.db, "events")) {
     throw new CanonWriteError("provenance_unresolved", "a canon write needs provenance that resolves");
   }
@@ -454,6 +456,8 @@ export function applyCanonWrite(
     existing === null
       ? prepareCreate(claims, pageId, provenance, decision.action === "conflict")
       : prepareRevision(io, claims, primary, existing, decision, provenance);
+  requireSourceEvents(io.db, Array.isArray(prepared.page.data["sources"]) ? prepared.page.data["sources"].filter((id): id is string => typeof id === "string") : [], { owner: true, purpose: "derive" });
+  if (prepared.page.data["sensitivity"] === "public" || prepared.page.data["sensitivity"] === "personal" || prepared.page.data["sensitivity"] === "private") prepared.page.data["sensitivity"] = sourceSensitivity(io.db, provenance, prepared.page.data["sensitivity"]);
   const superseded = supersededRefs(io, decision);
   const retrievalOps: RetrievalOpRef[] =
     io.retrieval_store === undefined

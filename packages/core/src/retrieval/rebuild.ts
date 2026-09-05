@@ -1,3 +1,4 @@
+import { sourcePolicyEpoch, isLocalSourcePort, sourceSensitivity, requireSourceEvents } from "../ledger/source-grants";
 import type { Database } from "bun:sqlite";
 import { lstatSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -80,15 +81,17 @@ export function readRetrievalDocuments(db: Database, vaultPath: string): Retriev
       "SELECT event_id,observed_at FROM events ORDER BY event_id",
     ).all()) {
       const source = currentQuotedSource(db, row.event_id);
-      if (source === null || !eventDecision(OWNER.grant, source).allow) continue;
+      if (source === null) continue;
+      const access = eventDecision(OWNER.grant, source, { db, vaultPath, principal: OWNER });
+      if (!access.allow) continue;
       docs.push({ doc_id: `event:${source.event_id}`, kind: "event", title: source.connector_id,
-        text: source.text, sensitivity: sensitivity(source.sensitivity), taint: "quoted",
+        text: source.text, sensitivity: access.sensitivity, taint: "quoted",
         authority: "connector_evidence", subjects: source.subjects, provenance: [source.event_id],
         occurred_at: source.occurred_at, updated_at: row.observed_at });
     }
     const reader = claimReader(db, OWNER.grant);
     for (const claim of listClaims(db, { status: "live", limit: MAX_REBUILD_RECORDS })) {
-      if (reader.canRead(claim)) docs.push(claimRetrievalDoc(claim));
+      if (reader.canRead(claim)) docs.push({ ...claimRetrievalDoc(claim), sensitivity: sourceSensitivity(db, claim.provenance, claim.sensitivity) });
     }
     return docs.map(validateRetrievalDoc).sort((a, b) => a.doc_id.localeCompare(b.doc_id));
   }).deferred();
@@ -96,8 +99,10 @@ export function readRetrievalDocuments(db: Database, vaultPath: string): Retriev
 
 /** Atomic inside each derived store; the stores do not share a distributed transaction. */
 export async function rebuildRetrieval(db: Database, vaultPath: string, port?: RetrievalPort) {
+  if (port !== undefined && sourcePolicyEpoch(db) > 0 && !isLocalSourcePort(port)) throw new PortError("unavailable", "source egress authorization unavailable", false);
   const docs = readRetrievalDocuments(db, vaultPath);
   if (port !== undefined) {
+    for (const doc of docs) requireSourceEvents(db, doc.provenance, { owner: true, purpose: "derive", port });
     if (port.rebuildFromDocuments === undefined) {
       throw new PortError("not_supported", "configured retrieval does not support atomic authoritative rebuild", false);
     }

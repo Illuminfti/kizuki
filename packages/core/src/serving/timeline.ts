@@ -80,7 +80,7 @@ export function serveTimeline(ctx: ServeContext, args: TimelineArgs): Envelope {
         // not counted, so fewer than `limit` entries may come back.
         if (!live.has(entry.event_id)) continue;
         const source = timelineSource(entry);
-        const decision = eventDecision(grant, source);
+        const decision = eventDecision(grant, source, ctx);
         if (!decision.allow) {
           withheld.push({ id: entry.event_id, reason: decision.reason });
           continue;

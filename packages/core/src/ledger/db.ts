@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { applySourceGrantsV11 } from "./source-grants-schema";
 import { applyAgentsV9 } from "../agents/schema";
 import { applyCanonV4 } from "../canon/schema";
 import { applyClaimsV3 } from "../claims/schema";
@@ -164,6 +165,7 @@ const MIGRATIONS: readonly Migration[] = [
     version: 10,
     apply: applyDerivedV10,
   },
+  { version: 11, apply: applySourceGrantsV11 },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
