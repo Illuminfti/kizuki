@@ -250,6 +250,14 @@ function isInfrastructureError(error: unknown): boolean {
   );
 }
 
+/** Internal authoritative lookup used by bounded deferred extraction replay. */
+export function readEvent(db: Database, eventId: string): CaptureEvent | null {
+  const row = db.query<EventRow, [string]>(
+    `SELECT ${EVENT_COLUMNS} FROM events WHERE event_id = ?`,
+  ).get(eventId);
+  return row === null ? null : fromRow(row);
+}
+
 export function readSince(
   db: Database,
   cursor: LedgerCursor | null,

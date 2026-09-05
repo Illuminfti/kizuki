@@ -656,6 +656,14 @@ export function bindLocalSourcePort<T extends object>(
 export function isLocalSourcePort(port: object | undefined): boolean {
   return port !== undefined && localPorts.has(port);
 }
+/** Content-free scheduling identity for deferred source authorization checks. */
+export function sourcePortBindingDigest(port: object | undefined): string {
+  if (port !== undefined && localPorts.has(port)) return sha256Hex("kizuki.source-port/v1\0local");
+  const model = port === undefined ? undefined : modelPorts.get(port);
+  return sha256Hex(model === undefined
+    ? "kizuki.source-port/v1\0unbound"
+    : `kizuki.source-port/v1\0model\0${model.model_endpoint}\0${model.model}`);
+}
 /** Trusted host capability for one concrete model transport destination. */
 export function bindSourceModelPort<T extends object>(
   port: T,

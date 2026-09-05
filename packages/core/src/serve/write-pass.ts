@@ -233,6 +233,10 @@ async function runWritePassLocked(
         }
         break;
       }
+      case "deferred": {
+        if (!commitExtractCursor(db, mined)) errors.push("extract deferred inputs changed before commit");
+        break;
+      }
       case "ok": {
         // Persist the accepted model output before the first claim write.  A
         // retry must replay this exact decision, never ask a nondeterministic

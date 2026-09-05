@@ -78,7 +78,16 @@ CREATE TABLE IF NOT EXISTS extract_batches (
   created_at TEXT NOT NULL,
   input_ids TEXT,
   integrity TEXT,
-  outcome TEXT NOT NULL DEFAULT 'ok'
+  outcome TEXT NOT NULL DEFAULT 'ok',
+  batch_mode TEXT NOT NULL DEFAULT 'frontier',
+  model_inputs TEXT,
+  deferred_inputs TEXT
+) STRICT;
+CREATE TABLE IF NOT EXISTS extract_deferred_inputs (
+  event_id TEXT PRIMARY KEY REFERENCES events(event_id) ON DELETE CASCADE,
+  source_key TEXT,
+  checked_revision INTEGER NOT NULL,
+  checked_binding_digest TEXT NOT NULL
 ) STRICT;
 `;
 
@@ -91,7 +100,8 @@ export function initServe(db: Database): void {
   db.transaction(() => {
     db.exec(TABLES);
     const columns = new Set(db.query<{ name: string }, []>("PRAGMA table_info(extract_batches)").all().map(row => row.name));
-    for (const [name, definition] of [["input_ids", "TEXT"], ["integrity", "TEXT"], ["outcome", "TEXT NOT NULL DEFAULT 'ok'"]] as const) {
+    for (const [name, definition] of [["input_ids", "TEXT"], ["integrity", "TEXT"], ["outcome", "TEXT NOT NULL DEFAULT 'ok'"],
+      ["batch_mode", "TEXT NOT NULL DEFAULT 'frontier'"], ["model_inputs", "TEXT"], ["deferred_inputs", "TEXT"]] as const) {
       if (!columns.has(name)) db.exec(`ALTER TABLE extract_batches ADD COLUMN ${name} ${definition}`);
     }
     seedSchedules(db);

@@ -1,4 +1,4 @@
-import { sourcePolicyEpoch, sourceEventsAllowed, requireSourceEvents, isLocalSourcePort } from "../ledger/source-grants";
+import { sourcePolicyEpoch, sourceEventsAllowed, requireSourceEvents, isLocalSourcePort, sourcePortBindingDigest } from "../ledger/source-grants";
 import { createHash } from "node:crypto";
 import { parseExtractResponse } from "../producer/schema";
 import { tableExists } from "../ledger/schema";
@@ -8,16 +8,18 @@ import type { ClaimDraft, ProducerPort, QuotedEvent } from "../contracts/produce
 import { predicateIds } from "../claims/predicates";
 import { listClaims } from "../claims/store";
 import { readCheckpoint, writeCheckpoint } from "../ledger/checkpoints";
-import { readSince } from "../ledger/ledger";
+import { readEvent, readSince } from "../ledger/ledger";
 import type { LedgerCursor } from "../ledger/ledger";
 import { EXTRACT_BATCH, MODEL_PRODUCER_ID } from "../producer";
 
 const EXTRACT_SOURCE_KEY = "extract";
+const DEFERRED_SCAN_KEY = "extract-deferred-scan";
 
 /** Unavailable is not empty. Only empty or a successful mine advances the cursor. */
 export type ExtractMine =
   | { status: "ok"; count: number }
   | { status: "empty" }
+  | { status: "deferred"; count: number }
   | { status: "unavailable"; reason: string }
   | { status: "rejected"; reason: string };
 
@@ -25,6 +27,7 @@ export function shouldAdvanceExtractCursor(result: ExtractMine): boolean {
   switch (result.status) {
     case "ok":
     case "empty":
+    case "deferred":
       return true;
     case "unavailable":
     case "rejected":
@@ -43,6 +46,9 @@ export interface MineResult {
   /** The checkpoint observed before the model call. */
   readonly previous_cursor: string | null;
   readonly input_ids?: readonly string[];
+  readonly mode?: "frontier" | "deferred";
+  readonly model_inputs?: readonly DeferredInput[];
+  readonly deferred_inputs?: readonly DeferredInput[];
   /** The batch boundary that may be committed after every draft is durable. */
   readonly cursor: LedgerCursor | null;
 }
@@ -53,14 +59,25 @@ export interface DurableExtractBatch {
   readonly drafts: readonly ClaimDraft[];
   readonly model_ref: string | null;
   readonly input_ids: readonly string[];
+  readonly mode: "frontier" | "deferred";
+  readonly model_inputs: readonly DeferredInput[];
+  readonly deferred_inputs: readonly DeferredInput[];
   readonly outcome: "ok" | "purged";
+}
+
+export interface DeferredInput {
+  readonly event_id: string;
+  readonly source_key: string | null;
+  readonly checked_revision: number;
+  readonly checked_binding_digest: string;
 }
 
 const NULL_CURSOR = "";
 const encodeCursor = (cursor: LedgerCursor): string => `${cursor.accepted_at}\t${cursor.event_id}`;
 function integrity(batch: DurableExtractBatch): string {
   return createHash("sha256").update(JSON.stringify([
-    batch.previous_cursor, encodeCursor(batch.cursor), batch.model_ref, batch.input_ids, batch.outcome,
+    batch.previous_cursor, encodeCursor(batch.cursor), batch.model_ref, batch.input_ids, batch.mode,
+    batch.model_inputs, batch.deferred_inputs, batch.outcome,
     batch.drafts.map(d => [d.kind,d.subject,d.predicate,d.object,d.polarity,d.body,d.valid_from,d.valid_to,d.confidence,d.sensitivity,d.event_ids]),
   ])).digest("hex");
 }
@@ -71,12 +88,75 @@ function interval(db: Database, previous: string | null, boundary: LedgerCursor)
   if (index < 0 || row?.accepted_at !== boundary.accepted_at) throw new Error("durable extraction boundary is invalid");
   return events.slice(0, index + 1);
 }
+function sourceInput(db: Database, event: CaptureEvent, producer: ProducerPort | undefined): DeferredInput {
+  const binding = db.query<{ source_key: string }, [string]>(
+    "SELECT source_key FROM source_event_bindings WHERE event_id=?",
+  ).get(event.event_id);
+  const revision = binding === null ? 0 : (db.query<{ revision: number }, [string]>(
+    "SELECT revision FROM source_grants WHERE source_key=?",
+  ).get(binding.source_key)?.revision ?? 0);
+  return {
+    event_id: event.event_id,
+    source_key: binding?.source_key ?? null,
+    checked_revision: revision,
+    checked_binding_digest: sourcePortBindingDigest(producer),
+  };
+}
+function validInput(value: unknown): value is DeferredInput {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return Object.keys(row).sort().join(",") === "checked_binding_digest,checked_revision,event_id,source_key" &&
+    typeof row.event_id === "string" && /^[0-9A-HJKMNP-TV-Z]{26}$/.test(row.event_id) &&
+    (row.source_key === null || (typeof row.source_key === "string" && /^[0-9A-HJKMNP-TV-Z]{26}$/.test(row.source_key))) &&
+    typeof row.checked_revision === "number" && Number.isSafeInteger(row.checked_revision) && row.checked_revision >= 0 &&
+    typeof row.checked_binding_digest === "string" && /^[a-f0-9]{64}$/.test(row.checked_binding_digest);
+}
+function inputList(raw: string | null, field: string): DeferredInput[] {
+  if (raw === null) return [];
+  if (Buffer.byteLength(raw, "utf8") > 8_192) throw new Error(`durable extraction ${field} is corrupt`);
+  let value: unknown;
+  try { value = JSON.parse(raw); } catch { throw new Error(`durable extraction ${field} is corrupt`); }
+  if (!Array.isArray(value) || value.length > EXTRACT_BATCH || !value.every(validInput) ||
+      new Set(value.map(item => item.event_id)).size !== value.length) {
+    throw new Error(`durable extraction ${field} is corrupt`);
+  }
+  return value;
+}
+function insertDeferred(db: Database, inputs: readonly DeferredInput[]): void {
+  const insert = db.query(`INSERT OR IGNORE INTO extract_deferred_inputs
+    (event_id,source_key,checked_revision,checked_binding_digest) VALUES (?,?,?,?)`);
+  for (const input of inputs) insert.run(input.event_id, input.source_key, input.checked_revision, input.checked_binding_digest);
+}
+function deleteDeferred(db: Database, ids: readonly string[]): void {
+  const remove = db.query("DELETE FROM extract_deferred_inputs WHERE event_id=?");
+  for (const id of ids) remove.run(id);
+}
+function queuedEvents(db: Database): CaptureEvent[] {
+  const after = readCheckpoint(db, MODEL_PRODUCER_ID, DEFERRED_SCAN_KEY);
+  const queryAfter = db.query<DeferredInput, [string, number]>(
+    "SELECT event_id,source_key,checked_revision,checked_binding_digest FROM extract_deferred_inputs WHERE event_id>? ORDER BY event_id LIMIT ?",
+  );
+  const queryFirst = db.query<DeferredInput, [number]>(
+    "SELECT event_id,source_key,checked_revision,checked_binding_digest FROM extract_deferred_inputs ORDER BY event_id LIMIT ?",
+  );
+  let rows = after === null ? queryFirst.all(EXTRACT_BATCH) : queryAfter.all(after, EXTRACT_BATCH);
+  if (rows.length === 0 && after !== null) rows = queryFirst.all(EXTRACT_BATCH);
+  return rows.map(row => {
+    if (!validInput(row)) throw new Error("deferred extraction metadata is corrupt");
+    const event = readEvent(db, row.event_id);
+    if (event === null) throw new Error("deferred extraction event is missing");
+    if (sourceInput(db, event, undefined).source_key !== row.source_key) throw new Error("deferred extraction source binding is corrupt");
+    return event;
+  });
+}
 function saveBatch(db: Database, batch: DurableExtractBatch): void {
-  db.query(`INSERT INTO extract_batches (previous_cursor,cursor,drafts,model_ref,created_at,input_ids,integrity,outcome)
-    VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(previous_cursor) DO UPDATE SET
-    cursor=excluded.cursor,drafts=excluded.drafts,model_ref=excluded.model_ref,input_ids=excluded.input_ids,integrity=excluded.integrity,outcome=excluded.outcome`).run(
+  db.query(`INSERT INTO extract_batches (previous_cursor,cursor,drafts,model_ref,created_at,input_ids,integrity,outcome,batch_mode,model_inputs,deferred_inputs)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(previous_cursor) DO UPDATE SET
+    cursor=excluded.cursor,drafts=excluded.drafts,model_ref=excluded.model_ref,input_ids=excluded.input_ids,integrity=excluded.integrity,outcome=excluded.outcome,
+    batch_mode=excluded.batch_mode,model_inputs=excluded.model_inputs,deferred_inputs=excluded.deferred_inputs`).run(
     batch.previous_cursor ?? NULL_CURSOR, encodeCursor(batch.cursor), JSON.stringify(batch.drafts), batch.model_ref,
-    new Date().toISOString(), JSON.stringify(batch.input_ids), integrity(batch), batch.outcome,
+    new Date().toISOString(), JSON.stringify(batch.input_ids), integrity(batch), batch.outcome, batch.mode,
+    JSON.stringify(batch.model_inputs), JSON.stringify(batch.deferred_inputs),
   );
 }
 /** Persist the entire decision before filing; no model is called again on replay. */
@@ -85,11 +165,23 @@ export function journalExtractBatch(db: Database, mined: MineResult, modelRef: s
   db.transaction(() => {
     if (mined.source_epoch !== undefined && mined.source_epoch !== sourcePolicyEpoch(db)) throw new Error("source authorization changed during extraction");
     if (readExtractCursor(db) !== mined.previous_cursor) throw new Error("extraction checkpoint changed during model call");
-    const events = interval(db, mined.previous_cursor, mined.cursor!);
+    const mode = mined.mode ?? "frontier";
+    const events = mode === "frontier"
+      ? interval(db, mined.previous_cursor, mined.cursor!)
+      : (mined.model_inputs ?? []).map(input => readEvent(db, input.event_id)).filter((event): event is CaptureEvent => event !== null);
     if (mined.input_ids !== undefined && JSON.stringify(mined.input_ids) !== JSON.stringify(events.map(event => event.event_id))) throw new Error("extraction inputs changed during model call");
+    const modelInputs = [...(mined.model_inputs ?? events.map(event => sourceInput(db, event, producer)))];
+    if (modelInputs.length === 0 || modelInputs.length > EXTRACT_BATCH || modelInputs.some(input => {
+      const event = events.find(candidate => candidate.event_id === input.event_id);
+      return event === undefined || JSON.stringify(input) !== JSON.stringify(sourceInput(db, event, producer));
+    })) throw new Error("source authorization changed during extraction");
+    if (mode === "deferred" && modelInputs.some(input => db.query("SELECT 1 FROM extract_deferred_inputs WHERE event_id=?").get(input.event_id) === null)) {
+      throw new Error("deferred extraction inputs changed during model call");
+    }
     if (db.query("SELECT 1 FROM extract_batches LIMIT 1").get() !== null) throw new Error("extraction decision already pending");
     saveBatch(db, { previous_cursor: mined.previous_cursor, cursor: mined.cursor!, drafts: mined.drafts,
-      model_ref: modelRef, input_ids: events.map(event => event.event_id), outcome: "ok" });
+      model_ref: modelRef, input_ids: events.map(event => event.event_id), mode, model_inputs: modelInputs,
+      deferred_inputs: [...(mined.deferred_inputs ?? [])], outcome: "ok" });
     readDurableExtractBatch(db, producer);
   }).immediate();
 }
@@ -98,26 +190,49 @@ export function readDurableExtractBatch(db: Database, producer?: ProducerPort): 
   return readStoredExtractBatch(db, true, producer);
 }
 function readStoredExtractBatch(db: Database, enforceConsent: boolean, producer?: ProducerPort): DurableExtractBatch | null {
-  const rows = db.query<{ previous_cursor: string; cursor: string; drafts: string; model_ref: string | null; input_ids: string | null; integrity: string | null; outcome: string }, []>(
+  const rows = db.query<{ previous_cursor: string; cursor: string; drafts: string; model_ref: string | null; input_ids: string | null; integrity: string | null; outcome: string; batch_mode: string; model_inputs: string | null; deferred_inputs: string | null }, []>(
     "SELECT * FROM extract_batches ORDER BY created_at, previous_cursor LIMIT 2",
   ).all();
   if (rows.length === 0) return null;
   const row = rows[0]!;
   const cursor = parseCursor(row.cursor);
   const parsed = parseExtractResponse(`{"claims":${row.drafts}}`);
+  const legacyManifest = row.model_inputs === null && row.deferred_inputs === null;
   if (rows.length !== 1 || cursor === null || !parsed.ok || row.previous_cursor !== (readExtractCursor(db) ?? NULL_CURSOR) ||
       ((row.integrity === null || row.input_ids === null) && (row.integrity !== null || row.input_ids !== null || row.outcome !== "ok")) ||
-      !["ok", "purged"].includes(row.outcome) || (row.outcome === "ok" && parsed.claims.length === 0)) {
+      ((row.model_inputs === null || row.deferred_inputs === null) && !legacyManifest) ||
+      !["ok", "purged"].includes(row.outcome) || !["frontier", "deferred"].includes(row.batch_mode) ||
+      (legacyManifest && row.batch_mode !== "frontier") || (row.outcome === "ok" && parsed.claims.length === 0)) {
     throw new Error("durable extraction batch is corrupt");
   }
-  const events = interval(db, row.previous_cursor || null, cursor);
+  const mode = row.batch_mode as DurableExtractBatch["mode"];
+  const modelInputs = inputList(row.model_inputs, "model inputs");
+  const deferredInputs = inputList(row.deferred_inputs, "deferred inputs");
+  if ((!legacyManifest && row.outcome === "ok" && modelInputs.length === 0) || (mode === "deferred" && deferredInputs.length > 0)) {
+    throw new Error("durable extraction batch is corrupt");
+  }
+  const events = mode === "frontier" ? interval(db, row.previous_cursor || null, cursor) : modelInputs.map(input => {
+    const event = readEvent(db, input.event_id);
+    if (event === null) throw new Error("durable extraction input is missing");
+    return event;
+  });
   const ids = events.map(event => event.event_id);
   if (row.input_ids !== null && row.input_ids !== JSON.stringify(ids)) throw new Error("durable extraction inputs changed");
-  if (parsed.claims.some(draft => draft.event_ids.some(id => !ids.includes(id)))) throw new Error("durable extraction provenance is invalid");
-  if (enforceConsent) for (const draft of parsed.claims) requireSourceEvents(db, draft.event_ids, { owner: false, purpose: "extract", model: true, ...(producer === undefined ? {} : { port: producer }) });
+  const sent = modelInputs.length === 0 ? [...new Set(parsed.claims.flatMap(draft => [...draft.event_ids]))] : modelInputs.map(input => input.event_id);
+  if (parsed.claims.some(draft => draft.event_ids.some(id => !sent.includes(id)))) throw new Error("durable extraction provenance is invalid");
+  if (enforceConsent) requireSourceEvents(db, sent, { owner: false, purpose: "extract", model: true, ...(producer === undefined ? {} : { port: producer }) });
+  if (enforceConsent && modelInputs.length > 0 && modelInputs.some(input => {
+    const event = readEvent(db, input.event_id);
+    return event === null || JSON.stringify(input) !== JSON.stringify(sourceInput(db, event, producer));
+  })) throw new Error("source authorization changed during extraction");
   const batch: DurableExtractBatch = { previous_cursor: row.previous_cursor || null, cursor, drafts: parsed.claims,
-    model_ref: row.model_ref, input_ids: ids, outcome: row.outcome as DurableExtractBatch["outcome"] };
-  if (row.integrity !== null && row.integrity !== integrity(batch)) throw new Error("durable extraction integrity mismatch");
+    model_ref: row.model_ref, input_ids: ids, mode, model_inputs: modelInputs, deferred_inputs: deferredInputs,
+    outcome: row.outcome as DurableExtractBatch["outcome"] };
+  const legacyIntegrity = createHash("sha256").update(JSON.stringify([
+    batch.previous_cursor, encodeCursor(batch.cursor), batch.model_ref, batch.input_ids, batch.outcome,
+    batch.drafts.map(d => [d.kind,d.subject,d.predicate,d.object,d.polarity,d.body,d.valid_from,d.valid_to,d.confidence,d.sensitivity,d.event_ids]),
+  ])).digest("hex");
+  if (row.integrity !== null && row.integrity !== (row.model_inputs === null && row.deferred_inputs === null ? legacyIntegrity : integrity(batch))) throw new Error("durable extraction integrity mismatch");
   // Compatible journals predate the input manifest. Validate against the live
   // ledger before upgrading them; never infer a boundary from draft text.
   if (row.integrity === null || row.input_ids === null) saveBatch(db, batch);
@@ -129,7 +244,9 @@ export function completeDurableExtractBatch(db: Database, batch: DurableExtractB
   return db.transaction(() => {
     const current = readDurableExtractBatch(db, producer);
     if (current === null || integrity(current) !== integrity(batch)) return false;
-    writeCheckpoint(db, MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY, encodeCursor(batch.cursor));
+    insertDeferred(db, current.deferred_inputs);
+    if (current.mode === "frontier") writeCheckpoint(db, MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY, encodeCursor(batch.cursor));
+    else deleteDeferred(db, current.model_inputs.map(input => input.event_id));
     db.query("DELETE FROM extract_batches WHERE previous_cursor = ?").run(batch.previous_cursor ?? NULL_CURSOR);
     return true;
   }).immediate();
@@ -137,6 +254,7 @@ export function completeDurableExtractBatch(db: Database, batch: DurableExtractB
 
 /** Called inside the source purge transaction, before deleting ledger rows. */
 export function purgeExtractInputs(db: Database, eventIds: ReadonlySet<string>, purge: { receipt_id: string; created_at: string }): void {
+  if (tableExists(db, "extract_deferred_inputs")) deleteDeferred(db, [...eventIds]);
   if (!tableExists(db, "extract_batches")) return;
   let batch: DurableExtractBatch | null;
   try {
@@ -161,13 +279,15 @@ export function purgeExtractInputs(db: Database, eventIds: ReadonlySet<string>, 
     else writeCheckpoint(db, MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY, nextPrevious);
   }
   if (batch === null) return;
-  if (!batch.input_ids.some(id => eventIds.has(id)) && nextPrevious === previous) return;
+  if (!batch.input_ids.some(id => eventIds.has(id)) && !batch.deferred_inputs.some(input => eventIds.has(input.event_id)) && nextPrevious === previous) return;
   const remaining = batch.input_ids.filter(id => !eventIds.has(id));
   db.query("DELETE FROM extract_batches").run();
   if (remaining.length === 0) return;
   const last = remaining.at(-1)!;
   const row = db.query<{ accepted_at: string }, [string]>("SELECT accepted_at FROM events WHERE event_id = ?").get(last)!;
   saveBatch(db, { ...batch, previous_cursor: nextPrevious, input_ids: remaining, cursor: { event_id: last, accepted_at: row.accepted_at },
+    model_inputs: batch.model_inputs.filter(input => !eventIds.has(input.event_id)),
+    deferred_inputs: batch.deferred_inputs.filter(input => !eventIds.has(input.event_id)),
     drafts: batch.drafts.filter(draft => !draft.event_ids.some(id => eventIds.has(id))), outcome: "purged" });
 }
 
@@ -205,13 +325,25 @@ export function readExtractCursor(db: Database): string | null {
  */
 export function commitExtractCursor(db: Database, mined: MineResult): boolean {
   if (!shouldAdvanceExtractCursor(mined.mined) || mined.cursor === null) return false;
-  const cursor = `${mined.cursor.accepted_at}\t${mined.cursor.event_id}`;
+  const boundary = mined.cursor;
   return db.transaction(() => {
     if (mined.source_epoch !== undefined && mined.source_epoch !== sourcePolicyEpoch(db)) throw new Error("source authorization changed during extraction");
     if (readExtractCursor(db) !== mined.previous_cursor) return false;
-    const events = interval(db, mined.previous_cursor, mined.cursor!);
+    const mode = mined.mode ?? "frontier";
+    const events = mode === "frontier" ? interval(db, mined.previous_cursor, boundary) : (mined.model_inputs ?? []).map(input => {
+      const event = readEvent(db, input.event_id);
+      if (event === null) throw new Error("deferred extraction input is missing");
+      return event;
+    });
     if (mined.input_ids !== undefined && JSON.stringify(mined.input_ids) !== JSON.stringify(events.map(event => event.event_id))) return false;
-    writeCheckpoint(db, MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY, cursor);
+    if (mode === "deferred") {
+      const inputs = mined.model_inputs ?? [];
+      if (inputs.some(input => db.query("SELECT 1 FROM extract_deferred_inputs WHERE event_id=?").get(input.event_id) === null)) return false;
+      deleteDeferred(db, inputs.map(input => input.event_id));
+    } else {
+      insertDeferred(db, mined.deferred_inputs ?? []);
+      writeCheckpoint(db, MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY, encodeCursor(boundary));
+    }
     return true;
   }).immediate();
 }
@@ -229,19 +361,59 @@ export async function mineLiveDrafts(
   const denied = (): MineResult => ({ mined: { status: "unavailable", reason: "source authorization unavailable" }, drafts: [], previous_cursor, cursor: null });
   if (source_epoch > 0 && !isLocalSourcePort(producer) && !sourceEventsAllowed(db, [], { owner: false, purpose: "extract", model: true, port: producer })) return denied();
   const scope = { owner: false, purpose: "extract" as const, model: true, port: producer };
-  const cursor = parseCursor(previous_cursor);
-  const batch = readSince(db, cursor, EXTRACT_BATCH);
-  if (batch.events.length === 0 || batch.cursor === null) {
-    return { mined: { status: "empty" }, drafts: [], previous_cursor, cursor: null };
+  let mode: "frontier" | "deferred" = "frontier";
+  let cursor: LedgerCursor | null = null;
+  let inputIds: string[] = [];
+  let modelInputs: DeferredInput[] = [];
+  let deferredInputs: DeferredInput[] = [];
+  let usable: CaptureEvent[] = [];
+
+  const queued = queuedEvents(db);
+  if (queued.length > 0) {
+    usable = queued.filter(event => sourceEventsAllowed(db, [event.event_id], scope));
+    const held = queued.filter(event => !usable.some(candidate => candidate.event_id === event.event_id));
+    db.transaction(() => {
+      if (sourcePolicyEpoch(db) !== source_epoch) throw new Error("source authorization changed during extraction");
+      const update = db.query(`UPDATE extract_deferred_inputs SET source_key=?,checked_revision=?,checked_binding_digest=? WHERE event_id=?`);
+      for (const event of held) {
+        const input = sourceInput(db, event, producer);
+        update.run(input.source_key, input.checked_revision, input.checked_binding_digest, input.event_id);
+      }
+      writeCheckpoint(db, MODEL_PRODUCER_ID, DEFERRED_SCAN_KEY, queued.at(-1)!.event_id);
+    }).immediate();
+    if (usable.length > 0) {
+      mode = "deferred";
+      inputIds = usable.map(event => event.event_id);
+      modelInputs = usable.map(event => sourceInput(db, event, producer));
+      const last = usable.at(-1)!;
+      const row = db.query<{ accepted_at: string }, [string]>("SELECT accepted_at FROM events WHERE event_id=?").get(last.event_id);
+      if (row === null) throw new Error("deferred extraction input is missing");
+      cursor = { event_id: last.event_id, accepted_at: row.accepted_at };
+    }
   }
 
-  // Packet text that later lands in the ledger is history, not extract input.
-  const usable = batch.events.filter(
-    (event) => !event.deleted && !event.text.includes("KIZUKI CONTEXT v1") && sourceEventsAllowed(db, [event.event_id], scope),
-  );
-  if (usable.length === 0 && source_epoch > 0) return denied();
   if (usable.length === 0) {
-    return { mined: { status: "empty" }, drafts: [], previous_cursor, cursor: batch.cursor, input_ids: batch.events.map(event => event.event_id) };
+    const batch = readSince(db, parseCursor(previous_cursor), EXTRACT_BATCH);
+    if (batch.events.length === 0 || batch.cursor === null) {
+      return { mined: { status: "empty" }, drafts: [], previous_cursor, cursor: null };
+    }
+    cursor = batch.cursor;
+    inputIds = batch.events.map(event => event.event_id);
+    // Packet text that later lands in the ledger is history, not extract input.
+    const eligible = batch.events.filter(event => !event.deleted && !event.text.includes("KIZUKI CONTEXT v1"));
+    usable = eligible.filter(event => sourceEventsAllowed(db, [event.event_id], scope));
+    modelInputs = usable.map(event => sourceInput(db, event, producer));
+    deferredInputs = source_epoch === 0 ? [] : eligible
+      .filter(event => !usable.some(candidate => candidate.event_id === event.event_id))
+      .map(event => sourceInput(db, event, producer));
+    if (usable.length === 0 && source_epoch > 0) {
+      return { source_epoch, mined: { status: "deferred", count: deferredInputs.length }, drafts: [],
+        previous_cursor, cursor, input_ids: inputIds, mode, model_inputs: [], deferred_inputs: deferredInputs };
+    }
+    if (usable.length === 0) {
+      return { source_epoch, mined: { status: "empty" }, drafts: [], previous_cursor, cursor,
+        input_ids: inputIds, mode, model_inputs: [], deferred_inputs: [] };
+    }
   }
 
   const subjects = new Set(usable.flatMap((event) => event.subjects.map((subject) => subject.subject_id)));
@@ -298,5 +470,6 @@ export async function mineLiveDrafts(
     }
   }
 
-  return { source_epoch, mined, drafts, previous_cursor, cursor: batch.cursor, input_ids: batch.events.map(event => event.event_id) };
+  return { source_epoch, mined, drafts, previous_cursor, cursor, input_ids: inputIds,
+    mode, model_inputs: modelInputs, deferred_inputs: deferredInputs };
 }

@@ -30,7 +30,7 @@ import { CLAIMS_SCHEMA_VERSION, syncCompatProposals } from "./claims/schema";
 import { rebuildDerived } from "./derived";
 import { validateEventInput } from "./contracts/event";
 import { computeContentHash } from "./util/hash";
-import { ulid } from "./util/ulid";
+import { isUlid, ulid } from "./util/ulid";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "./ledger/db";
 import { PURGE_SCHEMA_VERSION } from "./ledger/purge-schema";
 import { tableExists } from "./ledger/schema";
@@ -179,6 +179,13 @@ interface CheckpointRow {
   updated_at: string;
   last_run_at: string;
   last_result: string;
+}
+
+interface DeferredInputRow {
+  event_id: string;
+  source_key: string | null;
+  checked_revision: number;
+  checked_binding_digest: string;
 }
 
 interface SupersessionRow {
@@ -854,6 +861,21 @@ function* pageCheckpoints(db: Database): Generator<Record<string, unknown>> {
   }
 }
 
+function* pageDeferredInputs(db: Database): Generator<DeferredInputRow> {
+  if (!tableExists(db, "extract_deferred_inputs")) return;
+  let after = "";
+  while (true) {
+    const rows = db.query<DeferredInputRow, [string, number]>(
+      `SELECT event_id,source_key,checked_revision,checked_binding_digest
+         FROM extract_deferred_inputs WHERE event_id>? ORDER BY event_id LIMIT ?`,
+    ).all(after, PAGE);
+    if (rows.length === 0) return;
+    yield* rows;
+    if (rows.length < PAGE) return;
+    after = rows.at(-1)!.event_id;
+  }
+}
+
 function writeJsonl(
   path: string,
   rows: Iterable<unknown>,
@@ -1084,6 +1106,7 @@ export function exportVault(
       files,
       options.signal,
     );
+    writeStream(staging, "serve/extract-deferred-inputs.jsonl", pageDeferredInputs(db), files, options.signal);
 
     if ((files["ledger/events.jsonl"]?.count ?? 0) !== snapshot.event_count) {
       throw new Error("export event stream drifted from the snapshot");
@@ -1131,6 +1154,9 @@ function verifyFiles(root: string, manifest: ExportManifest): void {
   }).manifest_sha256;
   if (manifest.manifest_sha256 !== expectedHash) {
     throw new Error("backup manifest hash does not match");
+  }
+  if (manifest.schema_versions.serve >= 8 && manifest.files["serve/extract-deferred-inputs.jsonl"] === undefined) {
+    throw new Error("backup deferred extraction stream is missing");
   }
   for (const key of Object.keys(manifest.files).sort(compareCodeUnits)) {
     const entry = manifest.files[key];
@@ -1455,6 +1481,24 @@ function insertCheckpointRow(db: Database, raw: Record<string, unknown>): void {
   );
 }
 
+function insertDeferredInput(db: Database, raw: Record<string, unknown>): void {
+  const expected = "checked_binding_digest,checked_revision,event_id,source_key";
+  if (Object.keys(raw).sort().join(",") !== expected) throw new Error("invalid deferred extraction backup row");
+  const eventId = asString(raw.event_id, "event_id");
+  const sourceKey = asStringOrNull(raw.source_key, "source_key");
+  const revision = asNumber(raw.checked_revision, "checked_revision");
+  const digest = asString(raw.checked_binding_digest, "checked_binding_digest");
+  if (!isUlid(eventId) || (sourceKey !== null && !isUlid(sourceKey)) || !Number.isSafeInteger(revision) || revision < 0 || !/^[a-f0-9]{64}$/.test(digest)) {
+    throw new Error("invalid deferred extraction backup value");
+  }
+  const binding = db.query<{ source_key: string }, [string]>("SELECT source_key FROM source_event_bindings WHERE event_id=?").get(eventId)?.source_key ?? null;
+  if (binding !== sourceKey || db.query("SELECT 1 FROM events WHERE event_id=?").get(eventId) === null) {
+    throw new Error("deferred extraction backup source binding mismatch");
+  }
+  db.query(`INSERT INTO extract_deferred_inputs
+    (event_id,source_key,checked_revision,checked_binding_digest) VALUES (?,?,?,?)`).run(eventId, sourceKey, revision, digest);
+}
+
 function* streamRows(
   backupDir: string,
   relativePath: string,
@@ -1497,6 +1541,9 @@ export function restoreVault(
     throw new Error(
       `backup ledger schema ${manifest.schema_versions.ledger} is newer than ${supported.ledger}`,
     );
+  }
+  if (manifest.schema_versions.serve > supported.serve) {
+    throw new Error(`backup serve schema ${manifest.schema_versions.serve} is newer than ${supported.serve}`);
   }
   prepareDestination(destination);
   const parent = dirname(destination);
@@ -1564,6 +1611,16 @@ export function restoreVault(
           insertConnectorSensitivity(db, row);
         }
         restoreSourcePolicy(db, source, manifest);
+        const deferredPath = "serve/extract-deferred-inputs.jsonl";
+        const deferredRequired = manifest.schema_versions.serve >= 8;
+        let deferredCount = 0;
+        for (const row of streamRows(source, deferredPath, deferredRequired)) {
+          insertDeferredInput(db, row);
+          deferredCount += 1;
+        }
+        if (deferredRequired && deferredCount !== manifest.files[deferredPath]!.count) {
+          throw new Error("backup deferred extraction count mismatch");
+        }
       })();
 
       const events =
