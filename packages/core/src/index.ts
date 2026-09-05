@@ -265,6 +265,7 @@ export {
 export type {
   ClaimDraft,
   ClaimDraftKind,
+  ClaimDiagnostic,
   ClaimSummary,
   DroppedDraft,
   DroppedDraftReason,
@@ -273,6 +274,8 @@ export type {
   ProduceInput,
   ProduceResult,
   ProducerCapability,
+  ProducerDiagnostic,
+  DiagnosticShape,
   ProducerPort,
   QuotedEvent,
   RejectReason,

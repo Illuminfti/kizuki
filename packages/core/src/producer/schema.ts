@@ -1,7 +1,8 @@
 import { isRfc3339 } from "../util/time";
 import { isPlainObject } from "../util/validate";
-import type { ClaimDraft, ClaimDraftKind } from "../contracts/producer";
+import type { ClaimDiagnostic, ClaimDraft, ClaimDraftKind } from "../contracts/producer";
 import type { Sensitivity } from "../agents/types";
+import { diagnosticShape } from "./diagnostics";
 
 /**
  * Strict `ExtractResponse` validation (RFC 0002 §4.2, §12.1). The provider
@@ -53,10 +54,11 @@ const CODE_FENCE = /^```(?:json)?\s*\n([\s\S]*?)\n```\s*$/;
 
 export type ParseExtractResult =
   | { ok: true; claims: ClaimDraft[] }
-  | { ok: false; detail: string };
+  | { ok: false; detail: string; diagnostic: ClaimDiagnostic };
+type SchemaFailure = Extract<ParseExtractResult, { ok: false }>;
 
-function fail(detail: string): ParseExtractResult {
-  return { ok: false, detail };
+function fail(detail: string, field: ClaimDiagnostic["field"], rule: ClaimDiagnostic["rule"], value: unknown, index: number | null = null, count: number | null = null): SchemaFailure {
+  return { ok: false, detail, diagnostic: { stage: "claims", field, rule, shape: diagnosticShape(value), claim_index: index, claim_count: count } };
 }
 
 function exactKeys(
@@ -93,13 +95,14 @@ function readEventIds(value: unknown): string[] | null {
   return ids;
 }
 
-function readClaim(raw: unknown, index: number): ClaimDraft | string {
-  if (!isPlainObject(raw)) return `claims[${index}] is not an object`;
+function readClaim(raw: unknown, index: number, count: number): ClaimDraft | SchemaFailure {
+  const invalid = (field: ClaimDiagnostic["field"], rule: ClaimDiagnostic["rule"], value: unknown, detail: string) => fail(detail, field, rule, value, index, count);
+  if (!isPlainObject(raw)) return invalid("claim", "object", raw, `claims[${index}] is not an object`);
   if (!exactKeys(raw, CLAIM_KEYS)) {
     const unexpected = Object.keys(raw).filter((key) => !CLAIM_KEY_SET.has(key));
-    return unexpected.length > 0
-      ? `claims[${index}] has unexpected keys`
-      : `claims[${index}] is missing keys`;
+    if (unexpected.length > 0) return invalid("claim", "extra_field", raw, `claims[${index}] has unexpected keys`);
+    const missing = CLAIM_KEYS.find(key => !Object.hasOwn(raw, key))!;
+    return invalid(missing, "missing_field", undefined, `claims[${index}] is missing keys (${missing})`);
   }
   const kind = raw["kind"];
   const subject = raw["subject"];
@@ -112,28 +115,28 @@ function readClaim(raw: unknown, index: number): ClaimDraft | string {
   const confidence = raw["confidence"];
   const sensitivity = raw["sensitivity"];
   if (typeof kind !== "string" || !KINDS.has(kind)) {
-    return `claims[${index}].kind is not a claim kind`;
+    return invalid("kind", "enum", kind, `claims[${index}].kind is not a claim kind`);
   }
   if (!boundedString(subject, MAX_SUBJECT_CHARS)) {
-    return `claims[${index}].subject is not a bounded string`;
+    return invalid("subject", "bounded_string", subject, `claims[${index}].subject is not a bounded string`);
   }
   if (!boundedString(predicate, MAX_PREDICATE_CHARS)) {
-    return `claims[${index}].predicate is not a bounded string`;
+    return invalid("predicate", "bounded_string", predicate, `claims[${index}].predicate is not a bounded string`);
   }
   if (!boundedString(object, MAX_OBJECT_CHARS)) {
-    return `claims[${index}].object is not a bounded string`;
+    return invalid("object", "bounded_string", object, `claims[${index}].object is not a bounded string`);
   }
   if (typeof polarity !== "string" || !POLARITIES.has(polarity)) {
-    return `claims[${index}].polarity is not a polarity`;
+    return invalid("polarity", "enum", polarity, `claims[${index}].polarity is not a polarity`);
   }
   if (!boundedString(body, MAX_BODY_CHARS)) {
-    return `claims[${index}].body is not a bounded string`;
+    return invalid("body", "bounded_string", body, `claims[${index}].body is not a bounded string`);
   }
   if (!nullableTimestamp(validFrom)) {
-    return `claims[${index}].valid_from is not RFC3339 or null`;
+    return invalid("valid_from", "timestamp", validFrom, `claims[${index}].valid_from is not RFC3339 or null`);
   }
   if (!nullableTimestamp(validTo)) {
-    return `claims[${index}].valid_to is not RFC3339 or null`;
+    return invalid("valid_to", "timestamp", validTo, `claims[${index}].valid_to is not RFC3339 or null`);
   }
   if (
     typeof confidence !== "number" ||
@@ -141,14 +144,14 @@ function readClaim(raw: unknown, index: number): ClaimDraft | string {
     confidence < 0 ||
     confidence > 1
   ) {
-    return `claims[${index}].confidence is not in 0..1`;
+    return invalid("confidence", "confidence", confidence, `claims[${index}].confidence is not in 0..1`);
   }
   if (typeof sensitivity !== "string" || !SENSITIVITIES.has(sensitivity)) {
-    return `claims[${index}].sensitivity is not a sensitivity`;
+    return invalid("sensitivity", "enum", sensitivity, `claims[${index}].sensitivity is not a sensitivity`);
   }
   const eventIds = readEventIds(raw["event_ids"]);
   if (eventIds === null) {
-    return `claims[${index}].event_ids is not a bounded non-empty unique list`;
+    return invalid("event_ids", "event_ids", raw["event_ids"], `claims[${index}].event_ids is not a bounded non-empty unique list`);
   }
   return {
     kind: kind as ClaimDraftKind,
@@ -170,8 +173,8 @@ function readClaim(raw: unknown, index: number): ClaimDraft | string {
  * output; a failure names the field, never the offending value.
  */
 export function parseExtractResponse(text: string): ParseExtractResult {
-  if (typeof text !== "string") return fail("response is not text");
-  if (text.length > MAX_RESPONSE_CHARS) return fail("response exceeds the size cap");
+  if (typeof text !== "string") return fail("response is not text", "response", "text", text);
+  if (text.length > MAX_RESPONSE_CHARS) return fail("response exceeds the size cap", "response", "size_cap", text);
 
   let source = text.trim();
   const fenced = CODE_FENCE.exec(source);
@@ -181,22 +184,23 @@ export function parseExtractResponse(text: string): ParseExtractResult {
   try {
     parsed = JSON.parse(source) as unknown;
   } catch {
-    return fail("response is not JSON");
+    return fail("response is not JSON", "response", "json", source);
   }
-  if (!isPlainObject(parsed)) return fail("response is not an object");
-  if (!exactKeys(parsed, RESPONSE_KEYS)) {
-    return fail("response keys are not exactly {claims}");
-  }
+  if (!isPlainObject(parsed)) return fail("response is not an object", "response", "object", parsed);
   const rawClaims = parsed["claims"];
-  if (!Array.isArray(rawClaims)) return fail("claims is not a list");
+  const count = Array.isArray(rawClaims) ? rawClaims.length : null;
+  if (!exactKeys(parsed, RESPONSE_KEYS)) {
+    return fail("response keys are not exactly {claims}", "response", Object.hasOwn(parsed, "claims") ? "extra_field" : "missing_field", parsed, null, count);
+  }
+  if (!Array.isArray(rawClaims)) return fail("claims is not a list", "claims", "list", rawClaims);
   if (rawClaims.length > MAX_CLAIMS_PER_RESPONSE) {
-    return fail("claims exceeds the per-response cap");
+    return fail("claims exceeds the per-response cap", "claims", "list_cap", rawClaims, null, count);
   }
 
   const claims: ClaimDraft[] = [];
   for (const [index, raw] of rawClaims.entries()) {
-    const claim = readClaim(raw, index);
-    if (typeof claim === "string") return fail(claim);
+    const claim = readClaim(raw, index, rawClaims.length);
+    if ("ok" in claim) return claim;
     claims.push(claim);
   }
   return { ok: true, claims };

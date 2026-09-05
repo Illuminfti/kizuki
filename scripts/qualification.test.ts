@@ -197,3 +197,26 @@ test("a process start identity changing during collection is diagnosed and never
  try {const result=sampleQualification(f.out);expect(result.issues).toContain("process-start-identity-changed");expect(result.credited_ms).toBe(0);expect(result.release_qualified).toBe(false);}
  finally {hook.mockRestore();}
 });
+
+test("classified model failures are unhealthy evidence and hostile diagnostic fields are refused", () => {
+ const receipt={run_id:"01K00000000000000000000004",rail:"sync",started_at:"2026-09-05T00:00:00.000Z",finished_at:"2026-09-05T00:00:01.000Z",status:"degraded",model:{unavailable:0},retrieval:{degraded:[]},errors:[]};
+ const project=(diagnostic:unknown)=>strictReceiptProjection(JSON.stringify({...receipt,model:{...receipt.model,diagnostic}})+"\n")[0]!;
+ const failure={stage:"response",rule:"unsupported_metadata"};
+ const projected=project(failure);
+ expect(projected.healthy).toBe(false);
+ expect(projected.sha256).not.toBe(project({stage:"response",rule:"bad_response"}).sha256);
+ expect(JSON.stringify(projected)).not.toContain("unsupported_metadata");
+ for(const diagnostic of [{stage:"claims",field:"predicate",rule:"bounded_string",shape:"object",claim_index:0,claim_count:1},
+   {stage:"transport",rule:"http",http_status:503},{stage:"budget",rule:"max_input_tokens",used:0,requested:9000,limit:8000}]) expect(project(diagnostic).healthy).toBe(false);
+ for(const diagnostic of [{...failure,private_text:"SYNTHETIC_PRIVATE_CANARY"},{stage:"response",rule:"SYNTHETIC_PRIVATE_CANARY"},null]) {
+   expect(()=>project(diagnostic)).toThrow("invalid receipt model diagnostic");
+ }
+});
+
+test("model identity digests are strict semantic evidence without copying the model identity", () => {
+ const receipt={run_id:"01K00000000000000000000005",rail:"sync",started_at:"2026-09-05T00:00:00.000Z",finished_at:"2026-09-05T00:00:01.000Z",status:"ok",model:{unavailable:0,model_ref:"model:[redacted]"},retrieval:{degraded:[]},errors:[]};
+ const project=(model_ref_sha256:unknown)=>strictReceiptProjection(JSON.stringify({...receipt,model:{...receipt.model,model_ref_sha256}})+"\n")[0]!;
+ expect(project("a".repeat(64)).sha256).not.toBe(project("b".repeat(64)).sha256);
+ expect(JSON.stringify(project("a".repeat(64)))).not.toContain("model_ref_sha256");
+ for(const invalid of ["SYNTHETIC_PRIVATE_IDENTITY", "A".repeat(64), "a".repeat(63), null, {}]) expect(()=>project(invalid)).toThrow("invalid receipt model identity");
+});

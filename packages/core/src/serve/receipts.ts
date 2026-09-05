@@ -9,6 +9,8 @@ import {
 import { dirname, join } from "node:path";
 import { tableExists } from "../ledger/schema";
 import { isPlainObject } from "../util/validate";
+import { sha256Hex } from "../util/hash";
+import { readProducerDiagnostic } from "../producer/diagnostics";
 import { loadServeConfig } from "./config";
 import {
   InjectedCrash,
@@ -28,15 +30,24 @@ export function runReceiptsPath(vaultPath: string): string {
   return join(vaultPath, RUN_RECEIPTS_PATH);
 }
 
-function redact(text: string): string {
+export function redactReceiptText(text: string): string {
   return text
     .replace(/\/(?:home|Users|tmp|var|workspace|opt)\/[^\s"']+/g, "[path]")
     .replace(/\b[A-Za-z0-9_-]{20,}\b/g, "[redacted]");
 }
 
+/** A display marker cannot recover the original model reference identity. */
+export function isRedactedModelReference(reference: string): boolean {
+  return reference.includes("[redacted]") || reference.includes("[path]");
+}
+
+export function readModelReferenceDigest(value: unknown): string | undefined {
+  return typeof value === "string" && /^[a-f0-9]{64}$/.test(value) ? value : undefined;
+}
+
 export function redactReceiptError(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
-  return redact(text).slice(0, 240);
+  return redactReceiptText(text).slice(0, 240);
 }
 
 export function parseRunExecution(value: unknown): RunExecution | undefined {
@@ -78,6 +89,8 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
   }
   const totals = emptyRunTotals();
   const model = isPlainObject(value["model"]) ? value["model"] : {};
+  const diagnostic = readProducerDiagnostic(model["diagnostic"]);
+  const modelRefDigest = readModelReferenceDigest(model["model_ref_sha256"]);
   const retrieval = isPlainObject(value["retrieval"]) ? value["retrieval"] : {};
   const execution = parseRunExecution(value["execution"]);
   const transition = parseTransition(value["schedule_transition"]);
@@ -115,6 +128,8 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
     canon_writes: numberOr(value["canon_writes"], totals.canon_writes),
     canon_reverts: numberOr(value["canon_reverts"], totals.canon_reverts),
     model: {
+      ...(diagnostic === undefined ? {} : { diagnostic }),
+      ...(modelRefDigest === undefined ? {} : { model_ref_sha256: modelRefDigest }),
       ...(model["usage_unknown"] === true ? { usage_unknown: true } : {}),
       calls: numberOr(model["calls"], 0),
       input_tokens: numberOr(model["input_tokens"], 0),
@@ -145,7 +160,7 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
     errors: Array.isArray(value["errors"])
       ? value["errors"]
           .filter((item): item is string => typeof item === "string")
-          .map(redact)
+          .map(redactReceiptText)
       : [],
   };
 }
@@ -165,6 +180,7 @@ function numberOr(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+/** Select the newest matching receipts, then return them in chronological order. */
 export function listRunReceipts(
   db: Database,
   options: { rail?: string; since?: string; limit?: number } = {},
@@ -177,7 +193,7 @@ export function listRunReceipts(
           .query<{ report: string }, [string, string, number]>(
             `SELECT report FROM run_receipts
               WHERE rail = ? AND finished_at >= ?
-              ORDER BY finished_at, run_id
+              ORDER BY finished_at DESC, run_id DESC
               LIMIT ?`,
           )
           .all(options.rail, options.since, limit)
@@ -186,7 +202,7 @@ export function listRunReceipts(
             .query<{ report: string }, [string, number]>(
               `SELECT report FROM run_receipts
                 WHERE rail = ?
-                ORDER BY finished_at, run_id
+                ORDER BY finished_at DESC, run_id DESC
                 LIMIT ?`,
             )
             .all(options.rail, limit)
@@ -195,18 +211,19 @@ export function listRunReceipts(
               .query<{ report: string }, [string, number]>(
                 `SELECT report FROM run_receipts
                   WHERE finished_at >= ?
-                  ORDER BY finished_at, run_id
+                  ORDER BY finished_at DESC, run_id DESC
                   LIMIT ?`,
               )
               .all(options.since, limit)
           : db
               .query<{ report: string }, [number]>(
                 `SELECT report FROM run_receipts
-                  ORDER BY finished_at, run_id
+                  ORDER BY finished_at DESC, run_id DESC
                   LIMIT ?`,
               )
               .all(limit);
   return rows
+    .reverse()
     .map((row) => {
       try {
         return parseRunReceipt(JSON.parse(row.report));
@@ -215,6 +232,37 @@ export function listRunReceipts(
       }
     })
     .filter((receipt): receipt is RunReceipt => receipt !== null);
+}
+
+export interface ModelRunHistory {
+  /** Chronological candidates; null retains the position of an unreadable receipt. */
+  readonly receipts: (RunReceipt | null)[];
+  readonly truncated: boolean;
+}
+
+/** LIMIT applies before report parsing, using the rail/time/run-id index. */
+const MODEL_RUN_HISTORY_SQL = `SELECT report, run_id, finished_at FROM run_receipts
+  WHERE rail = 'sync' AND finished_at >= ?
+  ORDER BY finished_at DESC, run_id DESC LIMIT ?`;
+
+/** A bounded raw sync window; identity and outcome classification happen after normalization. */
+export function readModelRunHistory(db: Database, since: string): ModelRunHistory {
+  if (!tableExists(db, "run_receipts")) return { receipts: [], truncated: false };
+  const limit = 10_000;
+  const rows = db.query<{ report: string; run_id: string; finished_at: string }, [string, number]>(
+    MODEL_RUN_HISTORY_SQL,
+  ).all(since, limit + 1);
+  return {
+    truncated: rows.length > limit,
+    receipts: rows.slice(0, limit).reverse().map(row => {
+      try {
+        const receipt = parseRunReceipt(JSON.parse(row.report));
+        // Keep an unknown position rather than letting malformed selected
+        // history make an earlier success appear to be the latest attempt.
+        return receipt?.rail === "sync" && receipt.run_id === row.run_id && receipt.finished_at === row.finished_at ? receipt : null;
+      } catch { return null; }
+    }),
+  };
 }
 
 export function getRunReceipt(db: Database, runId: string): RunReceipt | null {
@@ -278,13 +326,21 @@ function insertReceiptRow(db: Database, receipt: RunReceipt, vaultPath: string):
 }
 
 function redactReceipt(receipt: RunReceipt): RunReceipt {
+  const { diagnostic: rawDiagnostic, model_ref_sha256: rawDigest, ...model } = receipt.model;
+  const diagnostic = readProducerDiagnostic(rawDiagnostic);
+  const reference = model.model_ref;
+  // Hash the original reference before redaction. Recovered historical display
+  // text cannot invent a stable identity; preserve a prior valid digest only.
+  const modelRefDigest = reference !== null && !isRedactedModelReference(reference)
+    ? sha256Hex(reference) : readModelReferenceDigest(rawDigest);
   return {
     ...receipt,
-    errors: receipt.errors.map(redact),
+    errors: receipt.errors.map(redactReceiptText),
     model: {
-      ...receipt.model,
-      model_ref:
-        receipt.model.model_ref === null ? null : redact(receipt.model.model_ref),
+      ...model,
+      ...(diagnostic === undefined ? {} : { diagnostic }),
+      ...(modelRefDigest === undefined ? {} : { model_ref_sha256: modelRefDigest }),
+      model_ref: reference === null ? null : redactReceiptText(reference),
     },
   };
 }

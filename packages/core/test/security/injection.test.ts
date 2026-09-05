@@ -131,6 +131,7 @@ describe("an injection attempt (RFC 0002 §16.5)", () => {
         status: "rejected",
         reason: "tool_call_in_response",
         usage: { calls: 1, input_tokens: 0, output_tokens: 0 },
+        diagnostic: { stage: "response", rule: "tool_call" },
       });
       await producer.close();
     } finally {

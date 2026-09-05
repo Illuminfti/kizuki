@@ -11,11 +11,12 @@ import type {
   ModelUsage,
   ProduceInput,
   ProduceResult,
+  ProducerDiagnostic,
   ProducerPort,
   QuotedEvent,
   RejectReason,
 } from "../contracts/producer";
-import { PortError, validatePortDescriptor } from "../contracts/ports";
+import { PortError, isPortErrorCode, validatePortDescriptor } from "../contracts/ports";
 import type {
   PortContext,
   PortDescriptor,
@@ -62,13 +63,10 @@ const MAX_SUBJECTS = 4_096;
 const MAX_KNOWN_CLAIMS = 4_096;
 const MAX_PREDICATES = 1_024;
 const MAX_BUDGET = 1_000_000_000;
-const MAX_LOGGED_CHARS = 128;
 
 const EVENT_ID = /^[A-Za-z0-9:_.-]{1,64}$/;
 const CONNECTOR_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const PREDICATE = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*$/;
-
-const TOOL_CALL_MARK = "tool_call_in_response";
 
 export interface ModelProducerOptions {
   /** The bound `kizuki.llm/v1` port. The producer does not own or close it. */
@@ -321,23 +319,32 @@ export function planBatches(
   return { batches, dropped };
 }
 
-function bounded(value: string): string {
-  return value.length > MAX_LOGGED_CHARS ? `${value.slice(0, MAX_LOGGED_CHARS)}…` : value;
-}
-
 function estimateTokens(messages: readonly { content: string }[]): number {
   const chars = messages.reduce((sum, message) => sum + message.content.length, 0);
   return Math.ceil(chars / CHARS_PER_TOKEN);
 }
 
-function isToolCallRejection(error: PortError): boolean {
-  return error.code === "not_supported" && error.message.includes(TOOL_CALL_MARK);
-}
-
 type CallOutcome =
   | { kind: "ok"; response: LlmResponse }
-  | { kind: "rejected"; reason: RejectReason }
-  | { kind: "unavailable"; reason: string };
+  | { kind: "rejected"; reason: RejectReason; diagnostic: ProducerDiagnostic }
+  | { kind: "unavailable"; reason: string; diagnostic: ProducerDiagnostic };
+
+function classifyLlmError(error: unknown): Exclude<CallOutcome, { kind: "ok" }> {
+  if (!(error instanceof PortError)) return { kind: "unavailable", reason: "llm error", diagnostic: { stage: "transport", rule: "unavailable" } };
+  if (error.code === "not_supported" && error.message === "rejected: tool_call_in_response") {
+    return { kind: "rejected", reason: "tool_call_in_response", diagnostic: { stage: "response", rule: "tool_call" } };
+  }
+  for (const rule of ["bad_response", "unsupported_metadata", "response_refused", "response_truncated", "response_incomplete", "response_too_large"] as const) {
+    if (error.code === "unavailable" && error.message === `rejected: ${rule}`) return { kind: "rejected", reason: "schema_invalid", diagnostic: { stage: "response", rule } };
+  }
+  let diagnostic: ProducerDiagnostic = { stage: "transport", rule: "unavailable" };
+  if (error.code === "timeout") diagnostic = { stage: "transport", rule: "timeout" };
+  else if (error.message === "model network") diagnostic = { stage: "transport", rule: "network" };
+  else if (error.message === "model redirect") diagnostic = { stage: "transport", rule: "redirect" };
+  else if (error.message === "secret reference did not resolve") diagnostic = { stage: "transport", rule: "credentials" };
+  else if (/^http [1-5][0-9]{2}$/.test(error.message)) diagnostic = { stage: "transport", rule: "http", http_status: Number(error.message.slice(5)) };
+  return { kind: "unavailable", reason: `llm ${isPortErrorCode(error.code) ? error.code : "unavailable"}`, diagnostic };
+}
 
 async function callModel(
   llm: LlmPort,
@@ -353,14 +360,7 @@ async function callModel(
     });
     return { kind: "ok", response };
   } catch (error) {
-    if (error instanceof PortError) {
-      if (isToolCallRejection(error)) {
-        return { kind: "rejected", reason: "tool_call_in_response" };
-      }
-      // Only the code is surfaced; a provider message never reaches a receipt.
-      return { kind: "unavailable", reason: `llm ${error.code}` };
-    }
-    return { kind: "unavailable", reason: "llm error" };
+    return classifyLlmError(error);
   }
 }
 
@@ -388,9 +388,7 @@ export function createModelProducerPort(
       detail:
         item.reason === "event_too_large"
           ? { reason: item.reason, event_id: item.event_id, chars: item.chars }
-          : item.reason === "unknown_predicate"
-            ? { reason: item.reason, predicate: bounded(item.predicate) }
-            : { reason: item.reason, subject: bounded(item.subject) },
+          : { reason: item.reason },
     });
   };
 
@@ -431,7 +429,8 @@ export function createModelProducerPort(
       for (const item of dropped) drop(item);
 
       if (batches.length > input.budget.max_calls) {
-        return { status: "rejected", reason: "budget_exhausted", usage };
+        return { status: "rejected", reason: "budget_exhausted", usage,
+          diagnostic: { stage: "budget", rule: "max_calls", used: 0, requested: batches.length, limit: input.budget.max_calls } };
       }
 
       const predicates = new Set(input.context.predicates);
@@ -463,12 +462,17 @@ export function createModelProducerPort(
         const estimate = estimateTokens(messages);
         const remainingOutput = input.budget.max_output_tokens - spent.output_tokens;
         const maxOutput = Math.min(EXTRACT_MAX_OUTPUT_TOKENS, remainingOutput);
-        if (
-          spent.calls + 1 > input.budget.max_calls ||
-          spent.input_tokens + estimate > input.budget.max_input_tokens ||
-          maxOutput < 1
-        ) {
-          return { status: "rejected", reason: "budget_exhausted", usage };
+        if (spent.calls + 1 > input.budget.max_calls) {
+          return { status: "rejected", reason: "budget_exhausted", usage,
+            diagnostic: { stage: "budget", rule: "max_calls", used: spent.calls, requested: 1, limit: input.budget.max_calls } };
+        }
+        if (spent.input_tokens + estimate > input.budget.max_input_tokens) {
+          return { status: "rejected", reason: "budget_exhausted", usage,
+            diagnostic: { stage: "budget", rule: "max_input_tokens", used: spent.input_tokens, requested: estimate, limit: input.budget.max_input_tokens } };
+        }
+        if (maxOutput < 1) {
+          return { status: "rejected", reason: "budget_exhausted", usage,
+            diagnostic: { stage: "budget", rule: "max_output_tokens", used: spent.output_tokens, requested: 1, limit: input.budget.max_output_tokens } };
         }
         spent.calls += 1;
         spent.input_tokens += estimate;
@@ -480,10 +484,10 @@ export function createModelProducerPort(
           // A transport failure is not an empty call.  Preserve the charged
           // attempt in the receipt so an unavailable model cannot masquerade
           // as a rail that never contacted its configured port.
-          return { status: "unavailable", reason: outcome.reason, usage };
+          return { status: "unavailable", reason: outcome.reason, usage, diagnostic: outcome.diagnostic };
         }
         if (outcome.kind === "rejected") {
-          return { status: "rejected", reason: outcome.reason, usage };
+          return { status: "rejected", reason: outcome.reason, usage, diagnostic: outcome.diagnostic };
         }
         usage.input_tokens += outcome.response.usage.input_tokens;
         usage.output_tokens += outcome.response.usage.output_tokens;
@@ -499,7 +503,7 @@ export function createModelProducerPort(
             message: "extract_schema_invalid",
             detail: { detail: parsed.detail },
           });
-          return { status: "rejected", reason: "schema_invalid", usage };
+          return { status: "rejected", reason: "schema_invalid", usage, diagnostic: parsed.diagnostic };
         }
 
         const batchEventIds = new Set(batch.events.map((event) => event.event_id));
@@ -511,7 +515,7 @@ export function createModelProducerPort(
         );
         const sources = batch.events.map((event) => event.text);
 
-        for (const draft of parsed.claims) {
+        for (const [index, draft] of parsed.claims.entries()) {
           if (!draft.event_ids.every((id) => batchEventIds.has(id))) {
             return { status: "rejected", reason: "provenance_not_cited", usage };
           }
@@ -521,7 +525,8 @@ export function createModelProducerPort(
               message: "extract_schema_invalid",
               detail: { detail: "body reproduces quoted text verbatim" },
             });
-            return { status: "rejected", reason: "schema_invalid", usage };
+            return { status: "rejected", reason: "schema_invalid", usage,
+              diagnostic: { stage: "claims", rule: "verbatim", field: "body", shape: "string", claim_index: index, claim_count: parsed.claims.length } };
           }
         }
         for (const draft of parsed.claims) {
