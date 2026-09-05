@@ -372,7 +372,8 @@ describe("the packet is scoped by the grant, not by the request", () => {
       }
     }
     expect(drifted).toEqual([]);
-  });
+    // This is 100 correctness probes, not a five-second latency contract.
+  }, 10_000);
 });
 
 describe("LifeOS-calibre packet compilation", () => {
