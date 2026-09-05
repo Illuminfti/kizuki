@@ -42,11 +42,16 @@ export const SOURCE_FIELDS = [
   "attachments",
   "metadata",
 ] as const;
+export interface SourceModelEgress {
+  model_endpoint: string;
+  model: string;
+  external_retention: "provider_managed";
+}
 export interface SourceGrantPolicy {
   purposes: SourcePurpose[];
   allowed_fields: (typeof SOURCE_FIELDS)[number][];
   retention: "persistent_owned_until_revoked";
-  egress: "local_only";
+  egress: "local_only" | SourceModelEgress;
   sensitivity_floor: SensitivityHint;
 }
 export interface SourceGrant {
@@ -127,6 +132,53 @@ function choices<T extends string>(value: unknown, allowed: readonly T[]): T[] {
   if (new Set(value).size !== value.length) fail("invalid_source_policy");
   return [...value].sort() as T[];
 }
+const MODEL_ENDPOINT_BYTES = 2_048;
+const MODEL_NAME_BYTES = 256;
+const utf8Bytes = (value: string): number => Buffer.byteLength(value, "utf8");
+const hasWhitespaceOrControl = (value: string): boolean => /[\s\p{C}]/u.test(value);
+function loopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  if (host === "localhost" || host === "::1" || host === "[::1]") return true;
+  const parts = host.split(".");
+  return parts.length === 4 && parts[0] === "127" && parts.every(part => /^\d{1,3}$/.test(part) && Number(part) <= 255);
+}
+function modelName(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0 || utf8Bytes(value) > MODEL_NAME_BYTES || hasWhitespaceOrControl(value)) {
+    fail("invalid_source_policy");
+  }
+  return value;
+}
+function modelEndpoint(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0 || utf8Bytes(value) > MODEL_ENDPOINT_BYTES || hasWhitespaceOrControl(value)) {
+    fail("invalid_source_policy");
+  }
+  let url: URL;
+  try { url = new URL(value); } catch { fail("invalid_source_policy"); }
+  if (url.username.length > 0 || url.password.length > 0 || url.search.length > 0 || url.hash.length > 0) {
+    fail("invalid_source_policy");
+  }
+  let decodedPath: string;
+  try { decodedPath = decodeURIComponent(url.pathname); } catch { fail("invalid_source_policy"); }
+  if (hasWhitespaceOrControl(decodedPath)) fail("invalid_source_policy");
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && loopbackHost(url.hostname))) {
+    fail("unsupported_egress");
+  }
+  const canonical = url.href;
+  if (utf8Bytes(canonical) > MODEL_ENDPOINT_BYTES) fail("invalid_source_policy");
+  return canonical;
+}
+function egress(value: unknown): SourceGrantPolicy["egress"] {
+  if (value === "local_only") return value;
+  if (!isPlainObject(value) || Object.keys(value).sort().join(",") !== "external_retention,model,model_endpoint") {
+    fail("unsupported_egress");
+  }
+  if (value.external_retention !== "provider_managed") fail("unsupported_retention");
+  return {
+    model_endpoint: modelEndpoint(value.model_endpoint),
+    model: modelName(value.model),
+    external_retention: "provider_managed",
+  };
+}
 function policyOf(value: unknown): SourceGrantPolicy {
   if (
     !isPlainObject(value) ||
@@ -136,12 +188,11 @@ function policyOf(value: unknown): SourceGrantPolicy {
     fail("invalid_source_policy");
   if (value.retention !== "persistent_owned_until_revoked")
     fail("unsupported_retention");
-  if (value.egress !== "local_only") fail("unsupported_egress");
   return {
     purposes: choices(value.purposes, SOURCE_PURPOSES),
     allowed_fields: choices(value.allowed_fields, SOURCE_FIELDS),
     retention: value.retention,
-    egress: value.egress,
+    egress: egress(value.egress),
     sensitivity_floor: label(value.sensitivity_floor),
   };
 }
@@ -592,6 +643,7 @@ export function bindSourceEvent(
 }
 
 const localPorts = new WeakSet<object>();
+const modelPorts = new WeakMap<object, Readonly<Pick<SourceModelEgress, "model_endpoint" | "model">>>();
 /** Trusted host composition capability, not an event/config assertion or agent API. */
 export function bindLocalSourcePort<T extends object>(
   port: T,
@@ -603,6 +655,29 @@ export function bindLocalSourcePort<T extends object>(
 }
 export function isLocalSourcePort(port: object | undefined): boolean {
   return port !== undefined && localPorts.has(port);
+}
+/** Trusted host capability for one concrete model transport destination. */
+export function bindSourceModelPort<T extends object>(
+  port: T,
+  binding: { model_endpoint: string; model: string },
+): T {
+  const normalized = Object.freeze({
+    model_endpoint: modelEndpoint(binding.model_endpoint),
+    model: modelName(binding.model),
+  });
+  const prior = modelPorts.get(port);
+  if (prior !== undefined && (prior.model_endpoint !== normalized.model_endpoint || prior.model !== normalized.model)) {
+    fail("source_model_binding_conflict");
+  }
+  modelPorts.set(port, prior ?? normalized);
+  return port;
+}
+/** Preserve host-minted trust when metrics wrap a producer for one write pass. */
+export function inheritSourcePortBindings<T extends object>(source: object, target: T): T {
+  if (localPorts.has(source)) localPorts.add(target);
+  const model = modelPorts.get(source);
+  if (model !== undefined) modelPorts.set(target, model);
+  return target;
 }
 export interface SourceReadScope {
   owner: boolean;
@@ -616,7 +691,11 @@ export function sourceEventsAllowed(
   scope: SourceReadScope,
 ): boolean {
   if (sourcePolicyEpoch(db) === 0) return true;
-  if (scope.port !== undefined && !isLocalSourcePort(scope.port)) return false;
+  const local = isLocalSourcePort(scope.port);
+  const model = scope.port === undefined ? undefined : modelPorts.get(scope.port);
+  if (scope.port !== undefined && !local && model === undefined) return false;
+  if (model !== undefined && (!scope.model || scope.purpose !== "extract")) return false;
+  if (scope.model && scope.purpose === "extract" && !local && model === undefined) return false;
   for (const id of ids) {
     const row = db
       .query<
@@ -650,6 +729,8 @@ export function sourceEventsAllowed(
       !grant.policy.purposes.includes(scope.purpose ?? "recall")
     )
       return false;
+    if (model !== undefined && (grant.policy.egress === "local_only" ||
+      grant.policy.egress.model_endpoint !== model.model_endpoint || grant.policy.egress.model !== model.model)) return false;
     if (
       (row.text.length > 0 && !grant.policy.allowed_fields.includes("text")) ||
       (["subjects", "attachments", "metadata"] as const).some(

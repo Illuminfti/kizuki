@@ -122,12 +122,41 @@ and owner recall of text and its provenance:
 
 Purposes are `capture`, `recall`, `session`, `correction`, `audit`, `derive`,
 `extract`, and `export`; choose only the uses you authorize. Populated fields
-outside `allowed_fields` refuse capture. Only the retention and egress values
-shown above are supported. `extract` does not make an untrusted model local.
-There is currently no native local model capability in the CLI. Managed
-`local_only` sources refuse extraction through the generic OpenAI-compatible
-HTTP adapter, including loopback endpoints; granting `extract` does not override
-that boundary. Owner recall remains available without a model.
+outside `allowed_fields` refuse capture. `extract` does not make an untrusted
+model local. There is currently no native local model capability in the CLI.
+Managed `local_only` sources refuse extraction through the generic
+OpenAI-compatible HTTP adapter, including loopback endpoints; granting
+`extract` does not override that boundary. Owner recall remains available
+without a model.
+
+To authorize extraction through the one configured OpenAI-compatible model,
+replace `local_only` with an exact destination object. `model_endpoint` is the
+final chat-completions URL, while `[ports.llm].base_url` remains the configured
+base. HTTPS is required except for explicit loopback local-model fixtures.
+The endpoint and model must match the running host binding exactly after URL
+canonicalization:
+
+```json
+{
+  "purposes": ["capture", "recall", "derive", "extract"],
+  "allowed_fields": ["text", "subjects", "attachments", "metadata"],
+  "retention": "persistent_owned_until_revoked",
+  "egress": {
+    "model_endpoint": "https://models.example.test/v1/chat/completions",
+    "model": "example-model",
+    "external_retention": "provider_managed"
+  },
+  "sensitivity_floor": "private"
+}
+```
+
+This consent covers one destination. It contains no secret and does not bind a
+transport by itself. The trusted CLI host binds the actual configured model;
+an endpoint path or model mismatch sends no source payload. Revocation stops
+future calls and discards a result if policy changes while a call is pending.
+Owned purge removes Kizuki's retained source and derived payload, but cannot
+retract data already sent to a provider. Provider-side retention and deletion
+remain governed by that provider.
 Export requires the explicit `export` purpose and refuses pending revocations.
 
 ```bash

@@ -193,6 +193,7 @@ describe("public surface", () => {
       "bindFromConfig",
       "bindLocalSourcePort",
       "bindManyFromConfig",
+      "bindSourceModelPort",
       "briefPath",
       "budgetDay",
       "buildAuthorizationUrl",

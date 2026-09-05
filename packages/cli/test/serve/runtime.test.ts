@@ -1,8 +1,7 @@
-import { fixtureConsent } from "../helpers";
 import { afterEach, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { listCanonReceipts, listClaims, listRunReceipts, openLedger, sourcePolicyEpoch } from "@kizuki/core";
+import { listCanonReceipts, listClaims, listRunReceipts, openLedger, setSourceGrant, sourcePolicyEpoch } from "@kizuki/core";
 import { createHelpers } from "../helpers";
 
 const { cleanup, runCli, tempVault } = createHelpers();
@@ -21,12 +20,13 @@ async function cli(env: Record<string, string | undefined>, ...args: string[]) {
   return { stdout, stderr, exitCode };
 }
 
-async function exerciseModelJourney(managed: boolean) {
+async function exerciseModelJourney(mode: "legacy" | "local_only" | "model") {
   const setup = tempVault();
   const env = { ...setup.env, BEEPER_TOKEN: token };
   let emit = 0;
   let modelUnavailable = false;
   let modelRequests = 0;
+  const modelPaths: string[] = [];
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -44,6 +44,9 @@ async function exerciseModelJourney(managed: boolean) {
           }] : [],
           hasMore: false,
         });
+      }
+      if (url.pathname.endsWith("/chat/completions")) {
+        modelPaths.push(url.pathname);
       }
       if (url.pathname === "/v1/chat/completions") {
         modelRequests += 1;
@@ -71,8 +74,27 @@ async function exerciseModelJourney(managed: boolean) {
   try {
     expect((await cli(env, "connect", "beeper", "--token-ref", "env:BEEPER_TOKEN", "--endpoint", endpoint)).exitCode).toBe(0);
     const enrolled = JSON.parse((await cli(env, "connect", "status", "--json")).stdout).data.connections[0];
-    if (managed) {
-      expect((await cli(env, "connect", "grant", "--source", enrolled.source_key, ...fixtureConsent(setup.root))).exitCode).toBe(0);
+    if (mode !== "legacy") {
+      // This is a runtime composition fixture, not a policy-file custody test.
+      // Grant through the trusted core seam so UID-mapped sandboxes do not
+      // weaken or bypass the separate POSIX policy-file checks.
+      const consent = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+      try {
+        setSourceGrant(consent, {
+          source_key: enrolled.source_key,
+          expected_revision: 0,
+          operation_id: mode === "model" ? "fixture-model-grant" : "fixture-local-grant",
+          policy: {
+          purposes: ["capture", "recall", "session", "derive", "extract", "export"],
+          allowed_fields: ["text", "subjects", "attachments", "metadata"],
+          retention: "persistent_owned_until_revoked",
+          egress: mode === "model"
+            ? { model_endpoint: `${endpoint}/v1/chat/completions`, model: "loopback", external_retention: "provider_managed" }
+            : "local_only",
+          sensitivity_floor: "public",
+          },
+        });
+      } finally { consent.close(); }
     } else {
       // Historical pre-consent fixture only. Production enrollment always requires
       // consent; this row reconstructs an existing legacy connection at epoch zero.
@@ -91,13 +113,14 @@ async function exerciseModelJourney(managed: boolean) {
     expect(served.exitCode).toBe(0);
     const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
     try {
-      const receipt = listRunReceipts(db, { limit: 20 }).find((item) => item.rail === "sync");
-      expect(receipt?.events_synced).toBeGreaterThan(0);
+      const receipt = listRunReceipts(db, { limit: 20 }).find((item) => item.rail === "sync" && item.events_synced > 0);
+      expect(receipt).toBeDefined();
       expect(receipt?.events_stored).toBeGreaterThan(0);
-      if (managed) {
+      if (mode === "local_only") {
         expect(receipt?.claims_extracted).toBe(0);
         expect(receipt?.model.calls).toBe(0);
         expect(modelRequests).toBe(0);
+        expect(modelPaths).toEqual([]);
         expect(listClaims(db, { status: "live", limit: 20 }).some((claim) => claim.object === "orchard library collaborator")).toBe(false);
       } else {
       expect(receipt?.claims_extracted).toBe(1);
@@ -109,11 +132,12 @@ async function exerciseModelJourney(managed: boolean) {
       expect(receipt?.claims_rejected).toEqual({});
       expect(listClaims(db, { status: "live", limit: 20 }).some((claim) => claim.object === "orchard library collaborator")).toBe(true);
       expect(listCanonReceipts(db, { limit: 20 }).some((item) => item.writer === "loop")).toBe(true);
+      expect(modelPaths).toEqual(["/v1/chat/completions"]);
       }
     } finally {
       db.close();
     }
-    if (managed) {
+    if (mode === "local_only") {
       const captured = await cli(env, "query", "orchard");
       expect(captured.exitCode).toBe(0);
       expect(captured.stdout).toContain("Ada joined the orchard library project");
@@ -125,6 +149,26 @@ async function exerciseModelJourney(managed: boolean) {
     expect(queried.stdout).toContain("orchard");
     expect(queried.stdout).toContain("collaborator");
     emit = 2;
+    if (mode === "model") {
+      writeFileSync(
+        join(setup.vault, ".kizuki", "serve.toml"),
+        `[ports.llm]\nid = "kizuki.llm.openai-compatible"\nbase_url = "${endpoint}/v1"\nmodel = "other-model"\ntimeout_ms = 1000\nmax_retries = 0\n`,
+      );
+      expect((await cli(env, "serve", "--once", "--no-http", "--json")).exitCode).toBe(0);
+      expect(modelRequests).toBe(1);
+      expect(modelPaths).toEqual(["/v1/chat/completions"]);
+      writeFileSync(
+        join(setup.vault, ".kizuki", "serve.toml"),
+        `[ports.llm]\nid = "kizuki.llm.openai-compatible"\nbase_url = "${endpoint}/other"\nmodel = "loopback"\ntimeout_ms = 1000\nmax_retries = 0\n`,
+      );
+      expect((await cli(env, "serve", "--once", "--no-http", "--json")).exitCode).toBe(0);
+      expect(modelRequests).toBe(1);
+      expect(modelPaths).toEqual(["/v1/chat/completions"]);
+      writeFileSync(
+        join(setup.vault, ".kizuki", "serve.toml"),
+        `[ports.llm]\nid = "kizuki.llm.openai-compatible"\nbase_url = "${endpoint}/v1"\nmodel = "loopback"\ntimeout_ms = 1000\nmax_retries = 0\n`,
+      );
+    }
     modelUnavailable = true;
     expect((await cli(env, "serve", "--once", "--no-http", "--json")).exitCode).toBe(0);
     const afterUnavailable = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
@@ -143,8 +187,9 @@ async function exerciseModelJourney(managed: boolean) {
   }
 }
 
-test("the shipped HTTP model consumer writes searchable canon for an explicitly historical unbound epoch-zero source", () => exerciseModelJourney(false), 30_000);
-test("new source enrollment captures with explicit consent but local_only refuses a generic loopback HTTP model", () => exerciseModelJourney(true), 30_000);
+test("the shipped HTTP model consumer writes searchable canon for an explicitly historical unbound epoch-zero source", () => exerciseModelJourney("legacy"), 30_000);
+test("new source enrollment with a local_only grant refuses a generic loopback HTTP model", () => exerciseModelJourney("local_only"), 30_000);
+test("an exact source model grant binds the shipped HTTP runtime and mismatched destinations stay offline", () => exerciseModelJourney("model"), 30_000);
 
 test("a malformed configured model fails through the public CLI without leaking its secret or writing canon", () => {
   const setup = tempVault();

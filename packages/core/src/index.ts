@@ -976,8 +976,8 @@ export { EstateImportError, planEstateImport } from "./import/estate";
 export { evaluateQualification, QUALIFICATION_WINDOW_MS } from "./serve/qualification";
 export type { QualificationProfile, QualificationRail, QualificationReceipt, QualificationProcess, QualificationSample } from "./serve/qualification";
 
-export { SOURCE_PURPOSES, SOURCE_FIELDS, SourceGrantError, sourcePolicyEpoch, sourceCaptureAdmission, inspectSourceGrant, setSourceGrant, revokeSourceGrant, resumeSourceRevocation, bindLocalSourcePort } from "./ledger/source-grants";
-export type { SourcePurpose, SourceGrantPolicy, SourceGrant, SourceGrantRequest, SourceGrantReceipt, SourceAdmission } from "./ledger/source-grants";
+export { SOURCE_PURPOSES, SOURCE_FIELDS, SourceGrantError, sourcePolicyEpoch, sourceCaptureAdmission, inspectSourceGrant, setSourceGrant, revokeSourceGrant, resumeSourceRevocation, bindLocalSourcePort, bindSourceModelPort } from "./ledger/source-grants";
+export type { SourcePurpose, SourceModelEgress, SourceGrantPolicy, SourceGrant, SourceGrantRequest, SourceGrantReceipt, SourceAdmission } from "./ledger/source-grants";
 
 export type { OwnedSourceRetrievalInventory, OwnedSourceRetrievalStore, SourceStoreStatus } from "./ledger/source-stores";
 

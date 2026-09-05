@@ -80,7 +80,7 @@ function saveBatch(db: Database, batch: DurableExtractBatch): void {
   );
 }
 /** Persist the entire decision before filing; no model is called again on replay. */
-export function journalExtractBatch(db: Database, mined: MineResult, modelRef: string | null): void {
+export function journalExtractBatch(db: Database, mined: MineResult, modelRef: string | null, producer?: ProducerPort): void {
   if (mined.mined.status !== "ok" || mined.cursor === null) return;
   db.transaction(() => {
     if (mined.source_epoch !== undefined && mined.source_epoch !== sourcePolicyEpoch(db)) throw new Error("source authorization changed during extraction");
@@ -90,14 +90,14 @@ export function journalExtractBatch(db: Database, mined: MineResult, modelRef: s
     if (db.query("SELECT 1 FROM extract_batches LIMIT 1").get() !== null) throw new Error("extraction decision already pending");
     saveBatch(db, { previous_cursor: mined.previous_cursor, cursor: mined.cursor!, drafts: mined.drafts,
       model_ref: modelRef, input_ids: events.map(event => event.event_id), outcome: "ok" });
-    readDurableExtractBatch(db);
+    readDurableExtractBatch(db, producer);
   }).immediate();
 }
 
-export function readDurableExtractBatch(db: Database): DurableExtractBatch | null {
-  return readStoredExtractBatch(db, true);
+export function readDurableExtractBatch(db: Database, producer?: ProducerPort): DurableExtractBatch | null {
+  return readStoredExtractBatch(db, true, producer);
 }
-function readStoredExtractBatch(db: Database, enforceConsent: boolean): DurableExtractBatch | null {
+function readStoredExtractBatch(db: Database, enforceConsent: boolean, producer?: ProducerPort): DurableExtractBatch | null {
   const rows = db.query<{ previous_cursor: string; cursor: string; drafts: string; model_ref: string | null; input_ids: string | null; integrity: string | null; outcome: string }, []>(
     "SELECT * FROM extract_batches ORDER BY created_at, previous_cursor LIMIT 2",
   ).all();
@@ -114,7 +114,7 @@ function readStoredExtractBatch(db: Database, enforceConsent: boolean): DurableE
   const ids = events.map(event => event.event_id);
   if (row.input_ids !== null && row.input_ids !== JSON.stringify(ids)) throw new Error("durable extraction inputs changed");
   if (parsed.claims.some(draft => draft.event_ids.some(id => !ids.includes(id)))) throw new Error("durable extraction provenance is invalid");
-  if (enforceConsent) for (const draft of parsed.claims) requireSourceEvents(db, draft.event_ids, { owner: false, purpose: "extract", model: true });
+  if (enforceConsent) for (const draft of parsed.claims) requireSourceEvents(db, draft.event_ids, { owner: false, purpose: "extract", model: true, ...(producer === undefined ? {} : { port: producer }) });
   const batch: DurableExtractBatch = { previous_cursor: row.previous_cursor || null, cursor, drafts: parsed.claims,
     model_ref: row.model_ref, input_ids: ids, outcome: row.outcome as DurableExtractBatch["outcome"] };
   if (row.integrity !== null && row.integrity !== integrity(batch)) throw new Error("durable extraction integrity mismatch");
@@ -125,9 +125,9 @@ function readStoredExtractBatch(db: Database, enforceConsent: boolean): DurableE
 }
 
 /** Validate again after asynchronous filing, then advance and delete atomically. */
-export function completeDurableExtractBatch(db: Database, batch: DurableExtractBatch): boolean {
+export function completeDurableExtractBatch(db: Database, batch: DurableExtractBatch, producer?: ProducerPort): boolean {
   return db.transaction(() => {
-    const current = readDurableExtractBatch(db);
+    const current = readDurableExtractBatch(db, producer);
     if (current === null || integrity(current) !== integrity(batch)) return false;
     writeCheckpoint(db, MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY, encodeCursor(batch.cursor));
     db.query("DELETE FROM extract_batches WHERE previous_cursor = ?").run(batch.previous_cursor ?? NULL_CURSOR);
@@ -227,7 +227,7 @@ export async function mineLiveDrafts(
   const previous_cursor = readExtractCursor(db);
   const source_epoch = sourcePolicyEpoch(db);
   const denied = (): MineResult => ({ mined: { status: "unavailable", reason: "source authorization unavailable" }, drafts: [], previous_cursor, cursor: null });
-  if (source_epoch > 0 && !isLocalSourcePort(producer)) return denied();
+  if (source_epoch > 0 && !isLocalSourcePort(producer) && !sourceEventsAllowed(db, [], { owner: false, purpose: "extract", model: true, port: producer })) return denied();
   const scope = { owner: false, purpose: "extract" as const, model: true, port: producer };
   const cursor = parseCursor(previous_cursor);
   const batch = readSince(db, cursor, EXTRACT_BATCH);

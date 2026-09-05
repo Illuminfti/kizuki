@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   MODEL_PRODUCER_ID,
   PortRegistry,
+  bindSourceModelPort,
   isPlainObject,
   registerModelProducerPort,
   runToCompletion,
@@ -16,7 +17,7 @@ import {
   type RailSyncResult,
   type RetrievalPort,
 } from "@kizuki/core";
-import { registerLlmPorts } from "@kizuki/llm";
+import { chatCompletionsUrl, parseOpenAiCompatibleConfig, registerLlmPorts } from "@kizuki/llm";
 import { listHostConnections, loadConnector, closeHostConnector } from "./connections";
 import { tryRefreshDerived } from "./derived";
 import { tokenResolver } from "./secrets";
@@ -180,6 +181,13 @@ export async function createServeRuntime(options: {
         { producer: MODEL_PRODUCER_ID },
         portContext(options.vaultPath, "producer", MODEL_PRODUCER_ID, {}, null, options.env, options.err),
       )).port;
+      if (selected.id === MODEL_LLM_ID) {
+        const configured = parseOpenAiCompatibleConfig(selected.config);
+        bindSourceModelPort(producer, {
+          model_endpoint: chatCompletionsUrl(configured.base_url),
+          model: configured.model,
+        });
+      }
     }
   } catch (error) {
     await llm.close();

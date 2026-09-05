@@ -1,4 +1,4 @@
-import { bindLocalSourcePort, isLocalSourcePort } from "../ledger/source-grants";
+import { inheritSourcePortBindings } from "../ledger/source-grants";
 import { readReceiptsLog } from "../canon/receipts";
 import { settleWriteReservations } from "./budget-ledger";
 import { ulid } from "../util/ulid";
@@ -104,7 +104,7 @@ function observedProducer(producer: ProducerPort, metrics: ProduceMetrics, recor
       return result;
     },
   };
-  return isLocalSourcePort(producer) ? bindLocalSourcePort(observed) : observed;
+  return inheritSourcePortBindings(producer, observed);
 }
 
 function metricResult(metrics: ProduceMetrics): Pick<WritePassResult, "claims_rejected" | "model"> {
@@ -203,14 +203,14 @@ async function runWritePassLocked(
   const metrics = emptyMetrics();
 
   if (options.producer !== undefined && options.claims !== undefined) {
-    const pendingBatch = readDurableExtractBatch(db);
+    const pendingBatch = readDurableExtractBatch(db, options.producer);
     if (pendingBatch !== null) {
       const filed = await fileProducedDrafts(options.claims, pendingBatch.drafts, "model", pendingBatch.model_ref);
       // Replay files an existing decision; it is not another extraction.
       extracted = 0;
       deduped += filed.deduped;
       superseded += filed.superseded;
-      if (!completeDurableExtractBatch(db, pendingBatch)) {
+      if (!completeDurableExtractBatch(db, pendingBatch, options.producer)) {
         errors.push("extract cursor changed before durable batch commit");
       }
     } else {
@@ -237,7 +237,7 @@ async function runWritePassLocked(
         // Persist the accepted model output before the first claim write.  A
         // retry must replay this exact decision, never ask a nondeterministic
         // producer to regenerate a partially filed batch.
-        journalExtractBatch(db, mined, options.model_ref ?? null);
+        journalExtractBatch(db, mined, options.model_ref ?? null, options.producer);
         const filed = await fileProducedDrafts(
           options.claims,
           mined.drafts,
@@ -247,8 +247,8 @@ async function runWritePassLocked(
         extracted = mined.mined.count;
         deduped += filed.deduped;
         superseded += filed.superseded;
-        const durable = readDurableExtractBatch(db);
-        if (durable === null || !completeDurableExtractBatch(db, durable)) {
+        const durable = readDurableExtractBatch(db, options.producer);
+        if (durable === null || !completeDurableExtractBatch(db, durable, options.producer)) {
           errors.push("extract cursor changed before commit");
         }
         break;
