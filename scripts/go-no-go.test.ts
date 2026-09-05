@@ -86,6 +86,39 @@ test.each(["serialize", "write", "sync", "race"])("report publication keeps the 
   expect(result.final).toBe(mode === "race" ? "competing report" : null);
 });
 
+test.each(["unlink", "rmdir", "directory-sync"])("report publication identifies complete output after %s failure", (mode) => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-report-postpublication-")); roots.push(root);
+  const out = join(root, "report.json");
+  const script = `
+    import { mock } from "bun:test";
+    import * as fs from "node:fs";
+    const remove = fs.rmSync, rmdir = fs.rmdirSync, sync = fs.fsyncSync;
+    const mode = ${JSON.stringify(mode)}, out = ${JSON.stringify(out)};
+    let directorySyncAttempted = false;
+    mock.module("node:fs", () => ({ ...fs,
+      rmSync(path, options) { if (mode === "unlink") throw new Error("synthetic cleanup failure"); return remove(path, options); },
+      rmdirSync(path) { if (mode === "rmdir") throw new Error("synthetic cleanup failure"); return rmdir(path); },
+      fsyncSync(fd) {
+        if (fs.fstatSync(fd).isDirectory()) {
+          directorySyncAttempted = true;
+          if (mode === "directory-sync") throw new Error("synthetic directory sync failure");
+        }
+        return sync(fd);
+      },
+    }));
+    const { writeAcceptanceReport } = await import(${JSON.stringify(join(import.meta.dir, "go-no-go.ts"))});
+    let reason = null;
+    try { writeAcceptanceReport(out, { synthetic: true }); } catch (error) { reason = error.reason ?? error.message; }
+    process.stdout.write(JSON.stringify({ reason, directorySyncAttempted, final: JSON.parse(fs.readFileSync(out, "utf8")) }));
+  `;
+  const child = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 10_000 });
+  expect(child.exitCode, child.stderr.toString()).toBe(0);
+  const result = JSON.parse(child.stdout.toString());
+  expect(result.directorySyncAttempted).toBe(true);
+  expect(result.final).toEqual({ synthetic: true });
+  expect(result.reason).toBe(mode === "directory-sync" ? "published-report-durability-unconfirmed" : "published-report-cleanup-failed");
+});
+
 test("all fixed journeys, C3 connectors and separate 1.0 gates remain visible without evidence", () => {
   const f = fixture(); f.index.artifacts = []; f.save();
   for (const profile of ["rc", "1.0"] as const) {

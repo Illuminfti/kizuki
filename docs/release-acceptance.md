@@ -23,7 +23,12 @@ bun run release:acceptance --profile rc --evidence /absolute/evidence/index.json
 bun run release:acceptance --profile 1.0 --evidence /absolute/evidence/index.json --out /absolute/evidence/new-1.0-report.json
 ```
 
-The parent output directory must already exist. The checker writes a new
+The parent output directory must already exist. Complete private bytes are
+synced before atomic publication without replacing an existing destination.
+The parent directory is synced even when temporary-file cleanup fails. A
+`published-report-cleanup-failed` or `published-report-durability-unconfirmed`
+error means complete output exists, but publication did not finish cleanly;
+do not retry the same output path. The checker writes a new
 private file exclusively, flushes it and its directory, and also emits the
 report JSON on stdout. Exit status is `0` for `GO`, `1` for a produced `NO-GO`
 report, and `2` for invalid arguments or failure to retain the output. A

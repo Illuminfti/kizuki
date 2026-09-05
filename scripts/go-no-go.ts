@@ -258,6 +258,7 @@ export function writeAcceptanceReport(path: string, report: ReturnType<typeof ev
   const bytes = JSON.stringify(report, null, 2) + "\n";
   const temporary = mkdtempSync(join(dirname(path), ".kizuki-acceptance-publish-"));
   const pending = join(temporary, "report.json");
+  let cleanupFailed = false;
   try {
     const fd = openSync(pending, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
     try { writeFileSync(fd, bytes); fsyncSync(fd); } finally { closeSync(fd); }
@@ -265,13 +266,26 @@ export function writeAcceptanceReport(path: string, report: ReturnType<typeof ev
     // Hard-link publication is atomic and refuses an existing destination.
     // The final name cannot expose bytes before their write and fsync complete.
     linkSync(pending, path);
-  } finally { rmSync(pending, { force: true }); rmdirSync(temporary); }
-  const directory = openSync(dirname(path), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-  try { fsyncSync(directory); } finally { closeSync(directory); }
+  } finally {
+    // Preserve a write/publication error, and attempt both cleanup operations.
+    try { rmSync(pending, { force: true }); } catch { cleanupFailed = true; }
+    try { rmdirSync(temporary); } catch { cleanupFailed = true; }
+  }
+  try {
+    // Once published, cleanup failure must not prevent the durability attempt.
+    const directory = openSync(dirname(path), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    try { fsyncSync(directory); } finally { closeSync(directory); }
+  } catch { reject("published-report-durability-unconfirmed"); }
+  if (cleanupFailed) reject("published-report-cleanup-failed");
 }
 if (import.meta.main) {
   try {
     const args = parseAcceptanceArgs(Bun.argv.slice(2)), report = evaluateRelease(args.profile, args.evidence);
     writeAcceptanceReport(args.out, report); process.stdout.write(JSON.stringify(report) + "\n"); process.exitCode = report.decision === "GO" ? 0 : 1;
-  } catch { process.stderr.write("acceptance-report-failed: use --profile rc|1.0 --evidence ABSOLUTE_FILE --out ABSOLUTE_NEW_FILE\n"); process.exitCode = 2; }
+  } catch (error) {
+    const published = error instanceof EvidenceError && error.reason.startsWith("published-report-");
+    process.stderr.write(published ? `${error.reason}: complete report exists at the requested output; do not retry publication to that path\n`
+      : "acceptance-report-failed: use --profile rc|1.0 --evidence ABSOLUTE_FILE --out ABSOLUTE_NEW_FILE\n");
+    process.exitCode = 2;
+  }
 }
