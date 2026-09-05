@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { WriterLease, openEmbeddedRetrievalPort, McpEngineSurface } from "../src/index";
@@ -185,4 +185,62 @@ test("fresh ownerless acquisition stays busy until the recovery bound", () => {
     now = "2099-01-01T00:00:00.000Z";
     expect(lease.tryAcquire("later").action).toBe("reclaimed");
   } finally { lease.release(); fixture.cleanup(); }
+});
+
+
+test("a post-rename holder failure releases ownership and permits recovery", () => {
+  const fixture = temporaryPortContext();
+  const lease = new WriterLease(fixture.ctx.data_dir);
+  const atomic = require("../src/atomic") as typeof import("../src/atomic");
+  const original = atomic.writeAtomic;
+  const fault = spyOn(atomic, "writeAtomic").mockImplementation((path, content) => {
+    original(path, content);
+    if (path.endsWith("holder.json")) throw new Error("synthetic post-rename failure");
+  });
+  const retry = new WriterLease(fixture.ctx.data_dir, {clock: () => "2099-01-01T00:00:00.000Z"});
+  try {
+    expect(() => lease.tryAcquire("interrupted")).toThrow("synthetic post-rename failure");
+    fault.mockRestore();
+    expect(["acquired", "reclaimed"]).toContain(retry.tryAcquire("retry").action);
+  } finally { fault.mockRestore(); lease.release(); retry.release(); fixture.cleanup(); }
+});
+
+test("surface close racing a failed open does not poison future opens", async () => {
+  const fixture = temporaryPortContext();
+  const holder = new WriterLease(fixture.ctx.data_dir);
+  const surface = new McpEngineSurface();
+  try {
+    holder.tryAcquire("busy");
+    const opening = surface.open(fixture.ctx);
+    const closing = surface.close();
+    const failures = await Promise.allSettled([opening, closing]);
+    expect(failures.map(result => result.status)).toEqual(["rejected", "rejected"]);
+    holder.release();
+    const retry = await surface.open(fixture.ctx);
+    expect((await retry.health()).status).toBe("ready");
+  } finally { holder.release(); await surface.close().catch(() => {}); fixture.cleanup(); }
+});
+
+test("stale token-bearing diagnostics recover even while their old PID is alive", async () => {
+  const fixture = temporaryPortContext();
+  const { writeSyntheticHolder } = await import("../src/lease");
+  writeSyntheticHolder(fixture.ctx.data_dir, {pid: process.pid, holder_id: "orphan", ownership_token: crypto.randomUUID(), acquired_at: "2000-01-01T00:00:00Z", heartbeat_at: "2000-01-01T00:00:00Z"});
+  const lease = new WriterLease(fixture.ctx.data_dir);
+  try {
+    expect(lease.tryAcquire("recovered").action).toBe("reclaimed");
+    expect(lease.readReceipts().at(-1)?.previous?.holder_id).toBe("orphan");
+  } finally { lease.release(); fixture.cleanup(); }
+});
+
+test("a failed close of a produced port remains unavailable to new opens", async () => {
+  const fixture = temporaryPortContext();
+  const surface = new McpEngineSurface();
+  const port = await surface.open(fixture.ctx);
+  const original = port.close.bind(port);
+  port.close = async () => { throw new Error("synthetic unconfirmed close"); };
+  try {
+    await expect(surface.close()).rejects.toThrow("synthetic unconfirmed close");
+    await expect(surface.open(fixture.ctx)).rejects.toThrow("synthetic unconfirmed close");
+    expect(surface.engineOpens).toBe(1);
+  } finally { port.close = original; await original(); fixture.cleanup(); }
 });

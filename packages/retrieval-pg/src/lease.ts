@@ -131,8 +131,9 @@ export class WriterLease {
       const existing = this.readHolder();
       const now = this.now();
       if (existing !== null) {
-        // Compatibility: a live pre-flock writer must still never be stolen.
-        if (isProcessAlive(existing.pid)) throw new PortError("lease_required", `writer lease is held by live pid ${existing.pid}`, true);
+        // Taking the native lock proves a token-bearing holder is no longer
+        // active. Only legacy holders can still own the engine without flock.
+        if (existing.ownership_token === undefined && isProcessAlive(existing.pid)) throw new PortError("lease_required", `writer lease is held by live pid ${existing.pid}`, true);
         if (heartbeatAgeMs(existing.heartbeat_at, Date.parse(now)) <= STALE_HEARTBEAT_MULTIPLIER * this.heartbeatMs) {
           throw new PortError("lease_required", "writer lease heartbeat is still fresh", true);
         }
@@ -272,11 +273,13 @@ export class WriterLease {
       acquired_at: at,
       ownership_token: crypto.randomUUID(),
     };
+    // Record our token before publication: writeAtomic may throw after rename.
+    // The acquisition catch can then remove only our published diagnostic.
+    this.holder = holder;
     writeAtomic(
       dataPath(this.dataDir, LEASE_HOLDER_REL),
       `${JSON.stringify(holder)}\n`,
     );
-    this.holder = holder;
     return holder;
   }
 
