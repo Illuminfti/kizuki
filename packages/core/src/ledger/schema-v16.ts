@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { installEventIdentityGuards } from "./event-identity-schema";
-import { tableExists } from "./schema";
+import { oneShotGet, oneShotRun, tableColumns, tableExists } from "./schema";
 
 const ULID_CHECK = `length(event_id) = 26 AND event_id NOT GLOB '*[^0123456789ABCDEFGHJKMNPQRSTVWXYZ]*'`;
 const HASH_CHECK = `length(content_hash) = 64 AND content_hash NOT GLOB '*[^0-9a-f]*'`;
@@ -76,28 +76,16 @@ CREATE TABLE checkpoints_v16 (
 ) STRICT;
 `;
 
-function columnNames(db: Database, table: string): Set<string> {
-  return new Set(
-    db
-      .query<{ name: string }, [string]>("SELECT name FROM pragma_table_info(?)")
-      .all(table)
-      .map(({ name }) => name),
-  );
-}
-
 function rebuildSchemaVersion(db: Database): void {
   const columns = tableExists(db, "schema_version")
-    ? columnNames(db, "schema_version")
+    ? new Set(tableColumns(db, "schema_version"))
     : new Set<string>();
   if (columns.has("id") && columns.has("version")) return;
 
   const version =
-    db.query<{ version: number }, []>("SELECT version FROM schema_version").get()
-      ?.version ?? 0;
+    oneShotGet<{ version: number }>(db, "SELECT version FROM schema_version")?.version ?? 0;
   db.exec(SCHEMA_VERSION_V16);
-  db.query<never, [number]>(
-    "INSERT INTO schema_version_v16(id, version) VALUES (1, ?)",
-  ).run(version);
+  oneShotRun(db, "INSERT INTO schema_version_v16(id, version) VALUES (1, ?)", version);
   db.exec("DROP TABLE schema_version");
   db.exec("ALTER TABLE schema_version_v16 RENAME TO schema_version");
 }
@@ -167,11 +155,11 @@ function moveExtractCheckpoints(db: Database): void {
 function rebuildCheckpoints(db: Database): void {
   if (!tableExists(db, "checkpoints")) return;
   const sql =
-    db
-      .query<{ sql: string | null }, [string]>(
-        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
-      )
-      .get("checkpoints")?.sql ?? "";
+    oneShotGet<{ sql: string | null }>(
+      db,
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+      "checkpoints",
+    )?.sql ?? "";
   if (sql.includes("REFERENCES connections")) return;
 
   db.exec(CHECKPOINTS_V16);

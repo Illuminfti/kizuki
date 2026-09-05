@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as core from "../src/index";
+import { insertClaim } from "../src/claims/store";
 import { LEDGER_SCHEMA_VERSION, inspectOpenLedgerHealth, openLedger } from "../src/ledger/db";
 import { LedgerStoreError } from "../src/ledger/errors";
 import { LEDGER_BUSY_TIMEOUT_MS, MAX_READ_SINCE } from "../src/ledger/limits";
@@ -218,6 +219,34 @@ describe("ledger p1 store", () => {
     expect(Object.hasOwn(core, "openLedger")).toBe(false);
     expect(typeof core.inspectLedgerHealth).toBe("function");
     expect(typeof core.LedgerStoreError).toBe("function");
+  });
+
+  test("a claims write leaves close(true) possible", async () => {
+    const db = openLedger(":memory:");
+    try {
+      const event = stored(db);
+      const result = await insertClaim(
+        { db, now: () => "2026-09-05T00:00:00.000Z" },
+        {
+          kind: "claim",
+          subject: "person:grace",
+          predicate: "employment.works_at",
+          object: "acme",
+          polarity: "positive",
+          body: "Grace runs partnerships at Acme.",
+          provenance: [event.event_id],
+          subjects: ["person:grace"],
+          producer: "deterministic",
+          confidence: 0.8,
+          sensitivity: "personal",
+          taint: "clean",
+        },
+      );
+      expect(result.outcome).toBe("stored");
+      expect(() => db.close(true)).not.toThrow();
+    } finally {
+      db.close();
+    }
   });
 
   test("agent_audit is not keyed to agents so owner rows can persist", () => {

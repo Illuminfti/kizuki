@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { LedgerStoreError } from "./errors";
 import { LEDGER_DOCTOR_ROW_CAP } from "./limits";
 import { decodeEventRow, type EventRow } from "./event-row";
-import { tableExists } from "./schema";
+import { oneShotAll, oneShotGet, tableColumns, tableExists } from "./schema";
 
 const REQUIRED_TABLES = [
   "schema_version",
@@ -64,50 +64,46 @@ export interface LedgerHealth {
 
 function tableSql(db: Database, name: string): string {
   return (
-    db
-      .query<{ sql: string | null }, [string]>(
-        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
-      )
-      .get(name)?.sql ?? ""
+    oneShotGet<{ sql: string | null }>(
+      db,
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+      name,
+    )?.sql ?? ""
   );
 }
 
 function isStrict(db: Database, name: string): boolean {
-  const row = db
-    .query<{ strict: number }, [string]>("SELECT strict FROM pragma_table_list WHERE name = ?")
-    .get(name);
+  const row = oneShotGet<{ strict: number }>(
+    db,
+    "SELECT strict FROM pragma_table_list WHERE name = ?",
+    name,
+  );
   return row?.strict === 1;
-}
-
-function columns(db: Database, table: string): string[] {
-  return db
-    .query<{ name: string }, [string]>("SELECT name FROM pragma_table_info(?) ORDER BY cid")
-    .all(table)
-    .map(({ name }) => name);
 }
 
 function indexExists(db: Database, name: string): boolean {
   return (
-    db
-      .query<{ name: string }, [string]>(
-        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?",
-      )
-      .get(name) !== null
+    oneShotGet<{ name: string }>(
+      db,
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?",
+      name,
+    ) !== null
   );
 }
 
 function schemaVersionRows(db: Database): { id: number | null; version: number }[] {
   if (!tableExists(db, "schema_version")) return [];
-  const names = new Set(columns(db, "schema_version"));
+  const names = new Set(tableColumns(db, "schema_version"));
   if (names.has("id")) {
-    return db
-      .query<{ id: number; version: number }, []>("SELECT id, version FROM schema_version")
-      .all();
+    return oneShotAll<{ id: number; version: number }>(
+      db,
+      "SELECT id, version FROM schema_version",
+    );
   }
-  return db
-    .query<{ version: number }, []>("SELECT version FROM schema_version")
-    .all()
-    .map((row) => ({ id: null, version: row.version }));
+  return oneShotAll<{ version: number }>(db, "SELECT version FROM schema_version").map((row) => ({
+    id: null,
+    version: row.version,
+  }));
 }
 
 export function readSchemaVersion(db: Database): number {
@@ -146,7 +142,7 @@ export function assertLedgerSchema(db: Database, expectedVersion: number): void 
   if (!isStrict(db, "schema_version")) {
     throw new LedgerStoreError("corrupt", "schema_version is not STRICT");
   }
-  const eventColumns = columns(db, "events");
+  const eventColumns = tableColumns(db, "events");
   if (EVENTS_COLUMNS.some((name, index) => eventColumns[index] !== name)) {
     throw new LedgerStoreError("corrupt", "events columns do not match schema");
   }

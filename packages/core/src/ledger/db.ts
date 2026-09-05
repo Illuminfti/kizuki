@@ -17,7 +17,7 @@ import type { LedgerHealth } from "./integrity";
 import { LEDGER_BUSY_TIMEOUT_MS } from "./limits";
 import { applyPurgeV5 } from "./purge-schema";
 import { applyEventIdentityV16 } from "./event-identity-schema";
-import { tableExists } from "./schema";
+import { oneShotAll, oneShotRun, tableColumns, tableExists } from "./schema";
 import { applyLedgerV16 } from "./schema-v16";
 
 interface Migration {
@@ -184,22 +184,15 @@ const MIGRATIONS: readonly Migration[] = [
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
 
 function schemaVersionHasId(db: Database): boolean {
-  return (
-    db
-      .query<{ name: string }, []>("SELECT name FROM pragma_table_info('schema_version')")
-      .all()
-      .some((row) => row.name === "id")
-  );
+  return tableColumns(db, "schema_version").includes("id");
 }
 
 function insertVersion(db: Database, version: number): void {
   if (schemaVersionHasId(db)) {
-    db.query<never, [number]>(
-      "INSERT INTO schema_version(id, version) VALUES (1, ?)",
-    ).run(version);
+    oneShotRun(db, "INSERT INTO schema_version(id, version) VALUES (1, ?)", version);
     return;
   }
-  db.query<never, [number]>("INSERT INTO schema_version(version) VALUES (?)").run(version);
+  oneShotRun(db, "INSERT INTO schema_version(version) VALUES (?)", version);
 }
 
 function repairSchemaVersion(db: Database): void {
@@ -214,9 +207,7 @@ function repairSchemaVersion(db: Database): void {
     return;
   }
 
-  const rows = db
-    .query<{ version: number }, []>("SELECT version FROM schema_version")
-    .all();
+  const rows = oneShotAll<{ version: number }>(db, "SELECT version FROM schema_version");
   if (rows.length === 0) {
     insertVersion(db, 0);
     return;
@@ -236,7 +227,7 @@ function repairSchemaVersion(db: Database): void {
 }
 
 function writeSchemaVersion(db: Database, version: number): void {
-  db.query<never, [number]>("UPDATE schema_version SET version = ?").run(version);
+  oneShotRun(db, "UPDATE schema_version SET version = ?", version);
 }
 
 function migrate(db: Database): void {
