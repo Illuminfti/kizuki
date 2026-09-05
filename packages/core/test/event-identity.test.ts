@@ -33,7 +33,7 @@ describe("accepted event revision identity", () => {
       expect(readSince(db, null, 1).events[0]).toMatchObject({
         content_hash_version: 2, text_hash: sha256Hex(validEvent().text), origin: "external",
       });
-      for (const field of ["origin", "text_hash", "content_hash_version"]) {
+      for (const field of ["origin", "text_hash", "content_hash_version", "origin_binding_version", "origin_binding_kind", "origin_binding"]) {
         expect(accept(db, { ...validEvent(), [field]: "forged" }).status).toBe("error");
       }
     } finally { db.close(); }

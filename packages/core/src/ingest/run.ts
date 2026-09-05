@@ -21,6 +21,7 @@ import { getConnectorSensitivity } from "../sensitivity/store";
 import { cascadeTombstone, proposalsForEvent } from "../staging/producers";
 import type { ProducerGrants } from "../staging/producers";
 import { fileProposal } from "../staging/proposals";
+import type { SourceTombstoneContext } from "../canon/source-tombstone";
 import { DeadlineError, withDeadline } from "../util/deadline";
 
 /**
@@ -69,6 +70,7 @@ function processEvent(
   input: unknown,
   grants: ProducerGrants,
   source?: SourceAdmission,
+  context?: SourceTombstoneContext,
 ): EventResult {
   return db
     .transaction((): EventResult => {
@@ -95,7 +97,7 @@ function processEvent(
 
       result.stored = 1;
       if (accepted.event.deleted) {
-        const cascade = cascadeTombstone(db, accepted.event);
+        const cascade = cascadeTombstone(db, accepted.event, context);
         result.withdrawn = cascade.withdrawn.length;
         result.retractions_filed = cascade.retractions_filed.length;
         return result;
@@ -138,6 +140,7 @@ export function runBatch(
   batch: SyncBatch,
   grants: ProducerGrants,
   source?: SourceAdmission,
+  context?: SourceTombstoneContext,
 ): RunResult {
   const result: RunResult = {
     stored: 0,
@@ -157,7 +160,7 @@ export function runBatch(
 
   for (const input of batch.events) {
     try {
-      const event = processEvent(db, input, grants, source);
+      const event = processEvent(db, input, grants, source, context);
       result.stored += event.stored;
       result.duplicates += event.duplicates;
       result.errors.push(...event.errors);
@@ -309,6 +312,7 @@ async function runConnector(
   connector_id: string,
   source_key: string,
   mode: "backfill" | "sync",
+  context?: SourceTombstoneContext,
 ): Promise<RunResult> {
   const previous = getCheckpoint(db, connector_id, source_key)?.cursor ?? null;
   let admission: SourceAdmission | null;
@@ -385,6 +389,7 @@ async function runConnector(
     labelBatch(db, connector_id, source_key, batch),
     sourceGrants(manifest),
     admission ?? undefined,
+    context,
   );
   const status: ConnectionRunStatus = processed.errors.length === 0 ? "ok" : "failed";
   return persistRun(
@@ -404,8 +409,9 @@ export function runBackfill(
   connector: Connector,
   connector_id: string,
   source_key: string,
+  context?: SourceTombstoneContext,
 ): Promise<RunResult> {
-  return runConnector(db, connector, connector_id, source_key, "backfill");
+  return runConnector(db, connector, connector_id, source_key, "backfill", context);
 }
 
 export function runSync(
@@ -413,13 +419,16 @@ export function runSync(
   connector: Connector,
   connector_id: string,
   source_key: string,
+  context?: SourceTombstoneContext,
 ): Promise<RunResult> {
-  return runConnector(db, connector, connector_id, source_key, "sync");
+  return runConnector(db, connector, connector_id, source_key, "sync", context);
 }
 
 export interface RunToCompletionOptions {
   /** Upper bound on batches per call; exceeding it is an error, not a silent stop. */
   maxBatches?: number;
+  /** Host-owned vault path, required when a source tombstone targets receipted canon. */
+  vault_path?: string;
 }
 
 /** Batches beyond this are treated as a connector that will not settle. */
@@ -462,9 +471,10 @@ export async function runToCompletion(
   const stored = (): string | null =>
     getCheckpoint(db, connector_id, source_key)?.cursor ?? null;
   const total: RunResult = emptyResult(stored());
+  const context = opts?.vault_path === undefined ? undefined : { vault_path: opts.vault_path };
   for (let batch = 0; batch < maxBatches; batch += 1) {
     const before = stored();
-    const result = await runConnector(db, connector, connector_id, source_key, mode);
+    const result = await runConnector(db, connector, connector_id, source_key, mode, context);
     absorb(total, result);
     total.cursor = stored();
     if (result.errors.length > 0) return total;

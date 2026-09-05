@@ -673,11 +673,30 @@ Three additions:
   `kizuki.owner` connector (CLI `tell`, MCP `correct`, hand edits detected
   in canon) are `owner` — and even those are stored as data, never
   concatenated into a system prompt.
-- **Origin stamp.** `events.origin TEXT NOT NULL` ∈ `{"external",
-"self"}`. An event whose `text` contains the context-packet marker
-  `KIZUKI CONTEXT v1` (§12.6) is `self`. Self events are ledgered — they
-  are real history — and **excluded from extraction**. This is E8's fix
-  enforced at the reader.
+- **Origin stamp.** `events.origin TEXT NOT NULL` ∈ `{"external", "self"}`
+  is an immutable causal admission fact. Core classifies ordinary capture as
+  self when accepted text contains `KIZUKI CONTEXT v1` (§12.6), or its nonempty
+  exact UTF-8 text hash matches loop bytes already admitted by a receipt or a
+  durable machine-byte intent. Capture and intent admission serialize under
+  SQLite's immediate write transaction. An intent commits before file effects;
+  a later matching intent never changes an earlier event's origin. Duplicate
+  delivery preserves and validates the original stamp. The internal native
+  correction operation admits its external event and exact owner proof in one
+  transaction; public capture has no exemption argument.
+  Core binds event ID, revision hash/version, text hash, acceptance time, origin,
+  binding kind and native request digest with `origin_binding_version=1`,
+  `origin_binding_kind=capture|native|legacy` and a domain-separated SHA-256
+  `origin_binding`. These are Core spine fields, excluded from connector input.
+  Reads and current restores validate that binding without reclassifying it.
+  Self events remain captured history but cannot supply positive claim effects,
+  corroboration, known-claim model context or positive canon writes through any
+  producer label. An exact persisted source tombstone may still withdraw its
+  own source evidence and archive the corresponding receipted page.
+  Legacy compatibility derives a conservative immutable binding once; machine
+  matches with possibly consumed historical model state refuse migration or
+  restore with `legacy_origin_rebuild_required`. See the binding definition,
+  bounded preflight proof and conservative loss contract in
+  [Event identity and origin](../docs/event-identity-origin.md).
 - **Internal events are idempotent by construction.** For a correction,
   `source_record_id = sha256(statement || "�" || target_json)`, so
   repeating the same correction is a `duplicate`, not a second row.

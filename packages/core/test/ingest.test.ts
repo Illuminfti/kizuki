@@ -23,6 +23,9 @@ import {
 } from "../src/ingest/run";
 import { listProposals, initStaging } from "../src/staging/proposals";
 import { validEvent } from "./fixtures";
+import { getClaim } from "../src/claims/store";
+import { write } from "./canon/helpers";
+import { tempVault } from "./helpers/vault";
 
 type ManifestOverrides = Partial<Pick<Manifest, "connector_id" | "kinds">> & {
   page_candidates?: boolean;
@@ -97,6 +100,55 @@ class FixtureConnector implements Connector {
 
 /** The grant a caller with no page authority names. */
 const NOTHING = { page_candidates: false } as const;
+
+test.each(["backfill", "sync", "completion"] as const)(
+  "host vault context reaches source retraction through %s", async mode => {
+    const db = database();
+    const vault = tempVault("kizuki-tombstone-ingest-");
+    try {
+      const capture = new FixtureConnector({ events: [validEvent()], cursor: null });
+      expect((await runBackfill(db, capture, "fixture", SOURCE)).errors).toEqual([]);
+      const proposal = listProposals(db, { kind: "claim" })[0]!;
+      const io = { db, vault_path: vault.path };
+      const original = write(io, getClaim(db, proposal.proposal_id)!);
+      const batch = { events: [{ ...validEvent(), deleted: true, text: "Source deleted" }], cursor: null };
+      const connector = new FixtureConnector(batch, batch);
+      const result = mode === "backfill" ? await runBackfill(db, connector, "fixture", SOURCE, io) :
+        mode === "sync" ? await runSync(db, connector, "fixture", SOURCE, io) :
+        await runToCompletion(db, connector, "fixture", SOURCE, "sync", io);
+      expect(result).toMatchObject({ errors: [], stored: 1, retractions_filed: 1, withdrawn: 1 });
+      const deletion = listProposals(db, { kind: "deletion" })[0]!;
+      expect(write(io, getClaim(db, deletion.proposal_id)!)).toMatchObject({
+        page_action: "archive", page_path: original.page_path,
+      });
+    } finally { db.close(); vault.dispose(); }
+  },
+);
+
+test("a refused retraction rolls back tombstone admission and retries before advancing the checkpoint", async () => {
+  const db = database();
+  const vault = tempVault("kizuki-tombstone-retry-");
+  try {
+    const captured = await runBackfill(db, new FixtureConnector({ events: [validEvent()], cursor: "before-delete" }), "fixture", SOURCE);
+    expect(captured.errors).toEqual([]);
+    const proposal = listProposals(db, { kind: "claim" })[0]!;
+    const io = { db, vault_path: vault.path };
+    write(io, getClaim(db, proposal.proposal_id)!);
+    const batch = { events: [{ ...validEvent(), deleted: true, text: "Source deleted" }], cursor: null };
+    const connector = new FixtureConnector(batch, batch);
+    const refused = await runToCompletion(db, connector, "fixture", SOURCE, "sync");
+    expect(refused).toMatchObject({ stored: 0, duplicates: 0, retractions_filed: 0,
+      errors: ["source_tombstone_vault_required"] });
+    expect(db.query("SELECT count(*) AS n FROM events WHERE deleted=1").get()).toEqual({ n: 0 });
+    expect(getCheckpoint(db, "fixture", SOURCE)?.cursor).toBe("before-delete");
+    const retried = await runToCompletion(db, connector, "fixture", SOURCE, "sync", io);
+    expect(retried).toMatchObject({ stored: 1, duplicates: 0, retractions_filed: 1, errors: [] });
+    expect(db.query("SELECT count(*) AS n FROM events WHERE deleted=1").get()).toEqual({ n: 1 });
+    expect(getCheckpoint(db, "fixture", SOURCE)?.cursor).toBeNull();
+    const deletion = listProposals(db, { kind: "deletion" })[0]!;
+    expect(write(io, getClaim(db, deletion.proposal_id)!).page_action).toBe("archive");
+  } finally { db.close(); vault.dispose(); }
+});
 
 /** An event asking the floor to stage its text as a typed page, not a quote. */
 function candidate(over: Partial<CaptureEventInput> = {}): CaptureEventInput {

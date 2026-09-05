@@ -27,3 +27,4 @@ export {
   withdrawForTombstone,
 } from "./producers";
 export type { ProducerGrants, TombstoneCascade } from "./producers";
+export type { SourceTombstoneContext } from "../canon/source-tombstone";

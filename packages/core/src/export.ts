@@ -31,8 +31,8 @@ import { rebuildDerived } from "./derived";
 import { EVENT_LIMITS, type CaptureEvent } from "./contracts/event";
 import { isUlid, ulid } from "./util/ulid";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "./ledger/db";
-import { eventFromRow, validateEventRecord } from "./ledger/event-record";
-import { classifyEventOrigin, refreshEventOrigin } from "./ledger/event-origin";
+import { eventFromRow, parseEventRecord, type LegacyEventRecord } from "./ledger/event-record";
+import { bindLegacyEventOrigins, installEventIdentityGuards } from "./ledger/event-identity-schema";
 import { PURGE_SCHEMA_VERSION } from "./ledger/purge-schema";
 import { tableExists } from "./ledger/schema";
 import { SENSITIVITY_SCHEMA_VERSION } from "./sensitivity/schema";
@@ -132,6 +132,9 @@ interface EventRow {
   content_hash_version: 1 | 2;
   text_hash: string;
   origin: "external" | "self";
+  origin_binding_version: 1;
+  origin_binding_kind: CaptureEvent["origin_binding_kind"];
+  origin_binding: string;
   accepted_at: string;
 }
 
@@ -260,7 +263,8 @@ interface SensitivityRow {
 const EVENT_COLUMNS = `
   event_id, connector_id, source_record_id, kind, occurred_at, observed_at,
   text, subjects, sensitivity_hint, deleted, attachments, metadata,
-  content_hash, content_hash_version, text_hash, origin, accepted_at
+  content_hash, content_hash_version, text_hash, origin, accepted_at,
+  origin_binding_version, origin_binding_kind, origin_binding
 `;
 
 function compareCodeUnits(left: string, right: string): number {
@@ -500,6 +504,9 @@ function eventRecord(row: EventRow): Record<string, unknown> {
     content_hash_version: row.content_hash_version,
     text_hash: row.text_hash,
     origin: row.origin,
+    origin_binding_version: row.origin_binding_version,
+    origin_binding_kind: row.origin_binding_kind,
+    origin_binding: row.origin_binding,
     accepted_at: row.accepted_at,
   };
 }
@@ -507,12 +514,12 @@ function eventRecord(row: EventRow): Record<string, unknown> {
 function backupEventRecord(
   raw: Record<string, unknown>,
   format: "legacy" | "current",
-): { event: CaptureEvent; accepted_at: string } {
+): { event: CaptureEvent | LegacyEventRecord; accepted_at: string } {
   const { accepted_at, ...record } = raw;
-  if (typeof accepted_at !== "string" || !isRfc3339(accepted_at)) {
+  if (typeof accepted_at !== "string" || accepted_at.length > EVENT_LIMITS.timestampBytes || !isRfc3339(accepted_at)) {
     throw new Error("backup event accepted_at is invalid");
   }
-  return { event: validateEventRecord(record, format), accepted_at };
+  return { event: parseEventRecord(record, format), accepted_at };
 }
 
 function claimRecord(row: ClaimRow): Record<string, unknown> {
@@ -618,7 +625,7 @@ function* pageMachineByteIntents(db: Database): Generator<MachineByteIntentRow> 
   }
 }
 
-function refreshExportEventOrigins(db: Database, snapshot: BackupSnapshot): void {
+function validateExportEventOrigins(db: Database, snapshot: BackupSnapshot): void {
   if (snapshot.last_event_id === null || snapshot.last_accepted_at === null) return;
   const capAt = snapshot.last_accepted_at;
   const capId = snapshot.last_event_id;
@@ -638,7 +645,7 @@ function refreshExportEventOrigins(db: Database, snapshot: BackupSnapshot): void
         ).all(cursor.accepted_at, cursor.accepted_at, cursor.event_id, capAt, capAt, capId, PAGE);
     if (rows.length === 0) return;
     for (const row of rows) {
-      refreshEventOrigin(db, eventFromRow(row));
+      eventFromRow(row, db);
     }
     if (rows.length < PAGE) return;
     const last: EventRow = rows.at(-1)!;
@@ -1170,7 +1177,7 @@ export function exportVault(
     // backup whose checkpoint and journal describe different moments.
     db.transaction(() => {
       snapshot = snapshotOf(db);
-      refreshExportEventOrigins(db, snapshot);
+      validateExportEventOrigins(db, snapshot);
       writeStream(
         staging,
         "ledger/events.jsonl",
@@ -1393,14 +1400,15 @@ function insertEvent(
   db: Database,
   raw: Record<string, unknown>,
   format: "legacy" | "current",
-): CaptureEvent {
+): void {
   const { event, accepted_at } = backupEventRecord(raw, format);
   db.query(
     `INSERT INTO events (
        event_id, connector_id, source_record_id, kind, occurred_at, observed_at,
        text, subjects, sensitivity_hint, deleted, attachments, metadata,
-       content_hash, content_hash_version, text_hash, origin, accepted_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       content_hash, content_hash_version, text_hash, origin, accepted_at,
+       origin_binding_version, origin_binding_kind, origin_binding
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     event.event_id,
     event.connector_id,
@@ -1419,8 +1427,10 @@ function insertEvent(
     event.text_hash,
     event.origin,
     accepted_at,
+    "origin_binding_version" in event ? event.origin_binding_version : 0,
+    "origin_binding_kind" in event ? event.origin_binding_kind : "",
+    "origin_binding" in event ? event.origin_binding : "",
   );
-  return event;
 }
 
 function insertPurge(db: Database, raw: Record<string, unknown>): void {
@@ -1619,35 +1629,13 @@ function insertMachineByteIntent(db: Database, raw: Record<string, unknown>): vo
   ).run(receiptId, beforeHash, afterHash);
 }
 
-function reconcileRestoredEventOrigins(
-  db: Database,
-  format: "legacy" | "current",
-): void {
+function validateRestoredEventOrigins(db: Database): void {
   let after = "";
-  while (true) {
-    const rows = db
-      .query<EventRow, [string, number]>(
-        `SELECT ${EVENT_COLUMNS} FROM events
-         WHERE event_id > ? ORDER BY event_id LIMIT ?`,
-      )
-      .all(after, PAGE);
+  for (;;) {
+    const rows = db.query<EventRow, [string, number]>(`SELECT ${EVENT_COLUMNS} FROM events
+      WHERE event_id>? ORDER BY event_id LIMIT ?`).all(after, PAGE);
     if (rows.length === 0) return;
-    for (const row of rows) {
-      const event = eventFromRow(row);
-      const nativeOwner = db.query(
-        "SELECT 1 FROM native_owner_evidence WHERE event_id = ? LIMIT 1",
-      ).get(event.event_id) !== null;
-      const classified = classifyEventOrigin(db, event);
-      if (nativeOwner && event.origin !== "external") {
-        throw new Error("backup native-owner event origin is invalid");
-      }
-      if (format === "legacy") {
-        refreshEventOrigin(db, event);
-      } else if (event.origin === "external" && classified === "self") {
-        throw new Error("backup event origin is inconsistent");
-      }
-    }
-    if (rows.length < PAGE) return;
+    for (const row of rows) eventFromRow(row, db);
     after = rows.at(-1)!.event_id;
   }
 }
@@ -1807,6 +1795,12 @@ export function restoreVault(
     try {
       options.onProgress?.("ledger");
       db.transaction(() => {
+        if (eventFormat === "legacy") {
+          // This database is private restore staging. No readers or file publication
+          // exist until legacy validation, backfill and guard restoration commit.
+          db.exec(`DROP TRIGGER events_identity_insert; DROP TRIGGER events_identity_update;
+            DROP TRIGGER native_owner_hash_insert; DROP TRIGGER native_owner_hash_update;`);
+        }
         for (const row of streamRows(source, "ledger/events.jsonl", true)) {
           throwIfAborted(options.signal);
           insertEvent(db, row, eventFormat);
@@ -1852,7 +1846,6 @@ export function restoreVault(
         if (eventFormat === "current" && intentCount !== manifest.files[MACHINE_BYTE_INTENTS_BACKUP]!.count) {
           throw new Error("backup machine-byte intent count mismatch");
         }
-        reconcileRestoredEventOrigins(db, eventFormat);
         const deferredPath = "serve/extract-deferred-inputs.jsonl";
         const deferredRequired = manifest.schema_versions.serve >= 8;
         let deferredCount = 0;
@@ -1871,8 +1864,13 @@ export function restoreVault(
         if (deferredRequired && batchCount !== manifest.files[EXTRACT_BATCH_BACKUP]!.count) {
           throw new Error("backup durable extraction count mismatch");
         }
+        if (eventFormat === "legacy") {
+          bindLegacyEventOrigins(db);
+          installEventIdentityGuards(db);
+        }
+        validateRestoredEventOrigins(db);
         validateDurableExtractStorage(db);
-      })();
+      }).immediate();
 
       const events =
         db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM events").get()

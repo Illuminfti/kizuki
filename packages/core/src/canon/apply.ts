@@ -3,6 +3,7 @@ import { serializePage } from "../vault/frontmatter";
 import { hashBytes, ABSENT_PAGE_HASH } from "../vault/write";
 import { requireSourceEvents, sourceSensitivity } from "../ledger/source-grants";
 import { commitMachineByteIntent, requireExternalEvents } from "../ledger/event-origin";
+import { requireSourceTombstoneProposal, requiresSourceTombstoneBinding, SourceTombstoneError } from "./source-tombstone";
 import { subjectPageType } from "../vault/subject-type";
 import { CanonAuthorityResolver } from "./authority";
 import { join } from "node:path";
@@ -481,7 +482,17 @@ export function applyCanonWrite(
     if (sourceSensitivity(io.db, provenance, prepared.sensitivity) !== prepared.page.data["sensitivity"]) {
       throw new CanonWriteError("decision_stale", "source sensitivity changed before byte admission");
     }
-    if (primary.producer === "model") requireExternalEvents(io.db, existingSources(prepared.page));
+    const sourceDeletion = claims.some((item) => requiresSourceTombstoneBinding(io.db, item));
+    if (sourceDeletion) {
+      for (const item of claims) requireSourceTombstoneProposal(io.db, item, io);
+      if (existing === null || prepared.action !== "archive" ||
+          primary.target !== target.rel_path.replace(/\.md$/, "") ||
+          prepared.page.body !== existing.page.body ||
+          primary.frontmatter["x-page-id"] !== pageId || primary.frontmatter["x-page-hash"] !== existing.hash) {
+        throw new SourceTombstoneError("source_tombstone_stale");
+      }
+    }
+    if (!sourceDeletion) requireExternalEvents(io.db, union([provenance, existingSources(prepared.page)]));
   };
   if (opts.writer === "loop") {
     commitMachineByteIntent(io.db, { receipt_id: receiptId, before_hash: existing?.hash ?? null, after_hash: expectedAfter }, admit);

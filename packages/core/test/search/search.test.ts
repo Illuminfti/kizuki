@@ -10,6 +10,7 @@ import { initSearch } from "../../src/search/schema";
 import { serializePage } from "../../src/vault/frontmatter";
 import type { CanonPage } from "../../src/vault/pages";
 import { computeContentHash, sha256Hex } from "../../src/util/hash";
+import { computeOriginBinding } from "../../src/ledger/event-origin-binding";
 import { searchDb, storedEvent, tempVault } from "./helpers";
 
 const disposers: (() => void)[] = [];
@@ -288,23 +289,23 @@ describe("search rebuild", () => {
       `INSERT INTO events (
          event_id, connector_id, source_record_id, kind, occurred_at, observed_at,
          text, subjects, sensitivity_hint, deleted, attachments, metadata,
-         content_hash, accepted_at, content_hash_version, text_hash, origin
+         content_hash, accepted_at, content_hash_version, text_hash, origin,
+         origin_binding_version, origin_binding_kind, origin_binding
        ) VALUES (?, 'fixture', ?, 'message', '2026-02-28T10:30:00Z',
-                '2026-03-01T00:00:00Z', ?, '[]', 'personal', 0, '[]', '{}', ?, ?, 2, ?, 'external')`,
+                '2026-03-01T00:00:00Z', ?, '[]', 'personal', 0, '[]', '{}', ?, ?, 2, ?, 'external', 1, 'capture', ?)`,
     );
     db.transaction(() => {
       for (let index = 0; index < 6000; index += 1) {
-        insert.run(
-          `01${String(index).padStart(24, "0")}`,
-          `src-${index}`,
-          `body ${index}`,
-          computeContentHash({ schema: "kizuki.event/v1", connector_id: "fixture",
-            source_record_id: `src-${index}`, kind: "message", occurred_at: "2026-02-28T10:30:00Z",
-            observed_at: "2026-03-01T00:00:00Z", text: `body ${index}`, subjects: [],
-            sensitivity_hint: "personal", deleted: false, attachments: [], metadata: {} }),
-          "2026-03-01T00:00:00.000Z",
-          sha256Hex(`body ${index}`),
-        );
+        const eventId = `01${String(index).padStart(24, "0")}`;
+        const textHash = sha256Hex(`body ${index}`);
+        const contentHash = computeContentHash({ schema: "kizuki.event/v1", connector_id: "fixture",
+          source_record_id: `src-${index}`, kind: "message", occurred_at: "2026-02-28T10:30:00Z",
+          observed_at: "2026-03-01T00:00:00Z", text: `body ${index}`, subjects: [],
+          sensitivity_hint: "personal", deleted: false, attachments: [], metadata: {} });
+        const acceptedAt = "2026-03-01T00:00:00.000Z";
+        insert.run(eventId, `src-${index}`, `body ${index}`, contentHash, acceptedAt, textHash,
+          computeOriginBinding({ event_id: eventId, content_hash: contentHash, content_hash_version: 2,
+            text_hash: textHash, origin: "external" }, acceptedAt, "capture", null));
       }
     })();
 

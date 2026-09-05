@@ -658,6 +658,7 @@ export type { StatePersisterHandle } from "./ledger/state-persister";
 export { isSecretRef, parseSecretRef } from "./contracts/secret-ref";
 export type { SecretRef, SecretRefScheme } from "./contracts/secret-ref";
 export type { RunResult, RunToCompletionOptions } from "./ingest/run";
+export type { SourceTombstoneContext } from "./canon/source-tombstone";
 export {
   DEFAULT_MAX_BATCHES,
   runBackfill,

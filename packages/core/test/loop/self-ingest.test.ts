@@ -8,7 +8,7 @@ import { resolveTarget, type TargetDecision } from "../../src/canon/arbiter";
 import { countClaims, getClaim, insertClaim } from "../../src/claims/store";
 import { recordNativeCorrection } from "../../src/correction/evidence";
 import { openLedger } from "../../src/ledger/db";
-import { commitMachineByteIntent, SelfOriginError } from "../../src/ledger/event-origin";
+import { commitMachineByteIntent } from "../../src/ledger/event-origin";
 import { accept, readSince } from "../../src/ledger/ledger";
 import { sha256Hex } from "../../src/util/hash";
 import { ulid } from "../../src/util/ulid";
@@ -118,7 +118,7 @@ test("an archived loop preimage is marked self before a copied byte can re-enter
   } finally { db.close(); }
 });
 
-test("the public writer refuses a stored model claim when its evidence later becomes self", async () => {
+test("the public writer preserves a model claim admitted before a later matching intent", async () => {
   const { db, vault } = fixture();
   try {
     const eventId = putEvent(db, { source_record_id: "model-later-self" });
@@ -127,12 +127,12 @@ test("the public writer refuses a stored model claim when its evidence later bec
     const target = resolveTarget({ db, vault_path: vault }, claim);
     expect(() => applyCanonWrite({ db, vault_path: vault }, claim, target, {
       writer: "loop", budget: createBudgetTracker({ canon_writes_per_run: 4 }),
-    })).toThrow("machine origin");
-    expect(existsSync(join(vault, targetPath(target)))).toBe(false);
+    })).not.toThrow();
+    expect(existsSync(join(vault, targetPath(target)))).toBe(true);
   } finally { db.close(); }
 });
 
-test("insertClaim rechecks event origin after an asynchronous retrieval query before filing or corroborating", async () => {
+test("a later intent during retrieval cannot restamp evidence or suppress legitimate corroboration", async () => {
   const { db } = fixture();
   let entered!: () => void;
   let release!: () => void;
@@ -157,9 +157,9 @@ test("insertClaim rechecks event origin after an asynchronous retrieval query be
     await within(queried);
     byteIntent(db, "race bytes");
     release();
-    await expect(filing).rejects.toBeInstanceOf(SelfOriginError);
+    expect((await filing).outcome).toBe("duplicate");
     expect(countClaims(db)).toBe(1);
-    expect(getClaim(db, independent.claim_id)?.corroboration).toBe(1);
+    expect(getClaim(db, independent.claim_id)?.corroboration).toBe(2);
   } finally { release(); db.close(); }
 });
 
@@ -241,4 +241,65 @@ test("a failed loop write retains its byte intent and nested admission is reject
     }))()).toThrow("top-level transaction");
     expect(existsSync(join(vault, targetPath(target)))).toBe(false);
   } finally { db.close(); }
+});
+
+test("a capture waiting on an earlier intent transaction stores self after that intent commits", async () => {
+  const { vault, db } = fixture();
+  db.close();
+  const path = join(vault, ".kizuki", "kizuki.db");
+  const imports = `
+    import { readSync } from 'node:fs';
+    import { openLedger } from ${JSON.stringify(join(process.cwd(), "packages/core/src/ledger/db.ts"))};
+    import { accept } from ${JSON.stringify(join(process.cwd(), "packages/core/src/ledger/ledger.ts"))};
+    import { commitMachineByteIntent } from ${JSON.stringify(join(process.cwd(), "packages/core/src/ledger/event-origin.ts"))};
+    const db = openLedger(${JSON.stringify(path)});
+    db.exec('PRAGMA busy_timeout=5000');
+    const waitForParent = () => readSync(0, Buffer.alloc(1), 0, 1, null);
+  `;
+  const input = { ...validEvent(), source_record_id: "waiting-capture", text: "transaction ordered machine bytes" };
+  const capture = Bun.spawn([process.execPath, "-e", `${imports}
+    console.log('capture-ready'); waitForParent(); console.log('capture-admitting');
+    const result = accept(db, ${JSON.stringify(input)});
+    console.log(JSON.stringify({status:result.status,origin:result.status==='stored'?result.event.origin:null}));
+    db.close();
+  `], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+  const captureOutput = capture.stdout.getReader();
+  let holder: ReturnType<typeof Bun.spawn> | undefined;
+  try {
+    const ready = await within(captureOutput.read());
+    expect(new TextDecoder().decode(ready.value)).toContain("capture-ready");
+    holder = Bun.spawn([process.execPath, "-e", `${imports}
+      commitMachineByteIntent(db, ${JSON.stringify({ receipt_id: ulid(), before_hash: null, after_hash: sha256Hex(input.text) })}, () => {
+        console.log('intent-locked'); waitForParent();
+      });
+      db.close();
+    `], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+    const holderOutput = (holder.stdout as ReadableStream<Uint8Array>).getReader();
+    const locked = await within(holderOutput.read());
+    expect(new TextDecoder().decode(locked.value)).toContain("intent-locked");
+    capture.stdin.write("g");
+    await capture.stdin.flush();
+    const admitting = await within(captureOutput.read());
+    expect(new TextDecoder().decode(admitting.value)).toContain("capture-admitting");
+    let captured = false;
+    const outcome = captureOutput.read().then(value => { captured = true; return value; });
+    await Bun.sleep(50);
+    expect(captured).toBe(false);
+    (holder.stdin as import("bun").FileSink).write("g");
+    await (holder.stdin as import("bun").FileSink).flush();
+    const result = await within(outcome);
+    expect(JSON.parse(new TextDecoder().decode(result.value))).toEqual({ status: "stored", origin: "self" });
+    expect(await within(capture.exited)).toBe(0);
+    expect(await within(holder.exited)).toBe(0);
+    holderOutput.releaseLock();
+    const reopened = openLedger(path);
+    try { expect(readSince(reopened, null, 1).events[0]?.origin).toBe("self"); }
+    finally { reopened.close(); }
+  } finally {
+    capture.kill();
+    holder?.kill();
+    await capture.exited;
+    if (holder !== undefined) await holder.exited;
+    captureOutput.releaseLock();
+  }
 });

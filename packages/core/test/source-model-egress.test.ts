@@ -695,7 +695,7 @@ test("an unbound historical null-manifest journal replays without a provider res
     db.query("INSERT INTO native_owner_evidence(event_id,origin,request_digest,recorded_at,filing_state,event_content_hash) VALUES (?,'correction',?,?,'recorded',?)")
       .run(accepted.event.event_id, "a".repeat(64), new Date().toISOString(), accepted.event.content_hash);
     expect(() => readDurableExtractBatch(db, bound))
-      .toThrow("durable extraction legacy input authority is corrupt");
+      .toThrow("event record is invalid");
     db.query("DELETE FROM native_owner_evidence WHERE event_id=?").run(accepted.event.event_id);
 
     // A later, unrelated grant changes the global epoch. It cannot relabel the
@@ -835,7 +835,7 @@ test("purge keeps a surviving historical journal in its null-manifest form", asy
   } finally { db.close(); }
 });
 
-test("managed pending origin filtering preserves the saved decision, external claims, and deferred membership", async () => {
+test("managed pending replay preserves causal external origins and deferred membership after a later intent", async () => {
   const { vault, db, source } = setup();
   try {
     const held = ulid();
@@ -873,7 +873,7 @@ test("managed pending origin filtering preserves the saved decision, external cl
     commitMachineByteIntent(db, { receipt_id: ulid(), before_hash: null, after_hash: sha256Hex(laterSelf.text) }, () => undefined);
     const pending = readDurableExtractBatch(db, bound)!;
     expect(pending.drafts).toEqual(drafts);
-    expect(pending.filing_drafts).toEqual([drafts[0]!, drafts[2]!]);
+    expect(pending.filing_drafts).toEqual(drafts);
     expect(pending.model_inputs.map(input => input.event_id)).toEqual(sent);
     expect(pending.deferred_inputs.map(input => input.event_id)).toEqual([deferred.event_id]);
     expect(db.query("SELECT * FROM extract_batches").get()).toEqual(original);
@@ -881,7 +881,7 @@ test("managed pending origin filtering preserves the saved decision, external cl
     expect(result.errors).toEqual([]);
     expect(calls).toBe(1);
     const claims = listClaims(db, { status: "live", limit: 20 }).filter(claim => claim.producer === "model");
-    expect(claims.map(claim => claim.subject).sort()).toEqual(["person:first", "person:last"]);
+    expect(claims.map(claim => claim.subject).sort()).toEqual(["person:first", "person:last", "person:self"]);
     expect(claims.find(claim => claim.subject === "person:first")?.claim_id).toBe(originalClaim.claim_id);
     expect(claims.every(claim => claim.model_ref === "original-origin-model")).toBe(true);
     expect(readExtractCursor(db)).toContain(alreadySelf.event.event_id);

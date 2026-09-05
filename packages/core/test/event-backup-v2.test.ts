@@ -15,7 +15,7 @@ import { openLedger } from "../src/ledger/db";
 import { accept, readSince } from "../src/ledger/ledger";
 import { commitMachineByteIntent } from "../src/ledger/event-origin";
 import { recordNativeCorrection } from "../src/correction/evidence";
-import { computeLegacyContentHash, sha256Hex } from "../src/util/hash";
+import { computeContentHash, computeLegacyContentHash, sha256Hex } from "../src/util/hash";
 import { initVault } from "../src/vault/init";
 import { validEvent } from "./fixtures";
 
@@ -91,6 +91,34 @@ function onlyEvent(backup: string): Record<string, unknown> {
   return rows[0]!;
 }
 
+function loopReceipt(text: string, provenance: readonly string[] = []): Record<string, unknown> {
+  return {
+    receipt_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    kind: "write",
+    claim_ids: [],
+    page_path: "people/fixture.md",
+    page_action: "create",
+    before_hash: null,
+    after_hash: sha256Hex(text),
+    archive_path: null,
+    writer: "loop",
+    producer: "deterministic",
+    model_ref: null,
+    authority: "connector_evidence",
+    confidence: 1,
+    sensitivity: "personal",
+    taint: "quoted",
+    provenance: [...provenance],
+    superseded: [],
+    candidates: [],
+    retrieval_ops: [],
+    reverts: null,
+    reverted_by: null,
+    at: "2030-01-01T00:00:00.000Z",
+    claim_kind: "claim",
+  };
+}
+
 test("exports v2 records with spine fields and the required empty intent stream", () => {
   const { backup, db, manifest } = fixture();
   expect(manifest.schema).toBe(BACKUP_SCHEMA);
@@ -127,38 +155,16 @@ test("rejects a re-signed v2 text-hash forgery before publishing the target", ()
   db.close();
 });
 
-test("rejects a re-signed v2 external event that matches a loop receipt", () => {
+test("restores the immutable external stamp despite a later matching loop receipt", () => {
   const { backup, db } = fixture();
   const manifest = readManifest(backup);
-  writeJsonl(backup, manifest, "canon/receipts.jsonl", [{
-    receipt_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
-    kind: "write",
-    claim_ids: [],
-    page_path: "people/fixture.md",
-    page_action: "create",
-    before_hash: null,
-    after_hash: sha256Hex(validEvent().text),
-    archive_path: null,
-    writer: "loop",
-    producer: "deterministic",
-    model_ref: null,
-    authority: "connector_evidence",
-    confidence: 1,
-    sensitivity: "personal",
-    taint: "quoted",
-    provenance: [],
-    superseded: [],
-    candidates: [],
-    retrieval_ops: [],
-    reverts: null,
-    reverted_by: null,
-    at: "2026-01-01T00:00:00.000Z",
-    claim_kind: "claim",
-  }]);
+  writeJsonl(backup, manifest, "canon/receipts.jsonl", [loopReceipt(validEvent().text)]);
   signManifest(backup, manifest);
   const target = join(temporary("kizuki-event-backup-v2-origin-"), "vault");
-  expect(() => restoreVault(backup, target)).toThrow(/origin is inconsistent/);
-  expect(existsSync(target)).toBe(false);
+  restoreVault(backup, target);
+  const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
+  try { expect(readSince(restored, null, 1).events[0]?.origin).toBe("external"); }
+  finally { restored.close(); }
   db.close();
 });
 
@@ -180,7 +186,8 @@ test("imports an exact legacy v1 record and annotates it under the v2 schema", (
     attachments: current.attachments,
     metadata: current.metadata,
   };
-  const { content_hash_version: _version, text_hash: _textHash, origin: _origin, ...legacy } = current;
+  const { content_hash_version: _version, text_hash: _textHash, origin: _origin,
+    origin_binding_version: _bindingVersion, origin_binding_kind: _bindingKind, origin_binding: _binding, ...legacy } = current;
   legacy.content_hash = computeLegacyContentHash(input as ReturnType<typeof validEvent>);
   manifest.schema = LEGACY_BACKUP_SCHEMA;
   manifest.schema_versions = { ...manifest.schema_versions, ledger: 15 };
@@ -221,6 +228,18 @@ test.each([
   ["declared v1 with v2 hash", (row: Record<string, unknown>) => { row.content_hash_version = 1; }],
   ["unknown spine field", (row: Record<string, unknown>) => { row.authority = "owner"; }],
   ["unknown origin", (row: Record<string, unknown>) => { row.origin = "owner"; }],
+  ["origin-only flip", (row: Record<string, unknown>) => { row.origin = "self"; }],
+  ["event-ID transfer", (row: Record<string, unknown>) => { row.event_id = "01ARZ3NDEKTSV4RRFFQ69G5FAV"; }],
+  ["missing origin binding", (row: Record<string, unknown>) => { delete row.origin_binding; }],
+  ["unknown origin binding version", (row: Record<string, unknown>) => { row.origin_binding_version = 2; }],
+  ["unknown origin binding kind", (row: Record<string, unknown>) => { row.origin_binding_kind = "owner"; }],
+  ["current archive claiming legacy backfill", (row: Record<string, unknown>) => { row.origin_binding_kind = "legacy"; delete row.origin_binding; }],
+  ["coherent revision rewrite with the old binding", (row: Record<string, unknown>) => {
+    row.text = "Coherently rewritten synthetic evidence.";
+    row.text_hash = sha256Hex(row.text as string);
+    row.content_hash = computeContentHash(row as unknown as ReturnType<typeof validEvent>);
+  }],
+  ["accepted-time edit", (row: Record<string, unknown>) => { row.accepted_at = "2030-01-01T00:00:00Z"; }],
   ["revision hash tamper", (row: Record<string, unknown>) => { row.content_hash = "b".repeat(64); }],
   ["attachment revision tamper", (row: Record<string, unknown>) => { row.attachments = []; }],
   ["sensitivity revision tamper", (row: Record<string, unknown>) => { row.sensitivity_hint = "private"; }],
@@ -238,37 +257,49 @@ test.each([
   } finally { db.close(); }
 });
 
-test("roundtrips mixed v1 and v2 revision hashes without changing legacy evidence", () => {
-  const { backup, db, vault } = fixture();
+test("roundtrips mixed legacy-bound v1 and capture-bound v2 events", () => {
+  const { backup, db } = fixture();
   try {
-    const original = readSince(db, null, 1).events[0]!;
-    const legacyHash = computeLegacyContentHash(validEvent());
-    db.query("UPDATE events SET content_hash_version=1,content_hash=? WHERE event_id=?").run(legacyHash, original.event_id);
-    const current = accept(db, { ...validEvent(), source_record_id: "current-revision", sensitivity_hint: "private" });
-    if (current.status !== "stored") throw new Error("fixture failed");
-    rmSync(backup, { recursive: true });
-    exportVault(db, vault, backup);
-    const target = join(temporary("kizuki-backup-mixed-"), "vault");
-    restoreVault(backup, target);
-    const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
+    const manifest = readManifest(backup);
+    const current = onlyEvent(backup);
+    const { content_hash_version, text_hash, origin, origin_binding_version, origin_binding_kind, origin_binding, ...legacy } = current;
+    legacy.content_hash = computeLegacyContentHash(validEvent());
+    manifest.schema = LEGACY_BACKUP_SCHEMA;
+    manifest.schema_versions = { ...manifest.schema_versions, ledger: 15 };
+    writeJsonl(backup, manifest, "ledger/events.jsonl", [legacy]);
+    unlinkSync(join(backup, "ledger/canon-machine-byte-intents.jsonl"));
+    delete manifest.files["ledger/canon-machine-byte-intents.jsonl"];
+    signManifest(backup, manifest);
+    const migratedVault = join(temporary("kizuki-backup-mixed-legacy-"), "vault");
+    restoreVault(backup, migratedVault);
+    const migrated = openLedger(join(migratedVault, ".kizuki", "kizuki.db"));
     try {
-      expect(readSince(restored, null, 10).events).toEqual([
-        { ...original, content_hash_version: 1, content_hash: legacyHash }, current.event,
-      ]);
-      expect(accept(restored, validEvent()).status).toBe("duplicate");
-      expect(accept(restored, { ...validEvent(), attachments: [] }).status).toBe("stored");
-    } finally { restored.close(); }
+      const legacyEvent = readSince(migrated, null, 1).events[0]!;
+      expect(legacyEvent).toMatchObject({ content_hash_version: 1, origin_binding_kind: "legacy" });
+      const accepted = accept(migrated, { ...validEvent(), source_record_id: "current-revision", sensitivity_hint: "private" });
+      if (accepted.status !== "stored") throw new Error("fixture failed");
+      const mixedBackup = join(temporary("kizuki-backup-mixed-current-"), "dump");
+      exportVault(migrated, migratedVault, mixedBackup);
+      const target = join(temporary("kizuki-backup-mixed-"), "vault");
+      restoreVault(mixedBackup, target);
+      const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
+      try {
+        expect(readSince(restored, null, 10).events).toEqual([legacyEvent, accepted.event]);
+        expect(accept(restored, validEvent()).status).toBe("duplicate");
+        expect(accept(restored, { ...validEvent(), attachments: [] }).status).toBe("stored");
+      } finally { restored.close(); }
+    } finally { migrated.close(); }
   } finally { db.close(); }
 });
 
-test("exports refreshed self origin and preserves unfinished byte intents through restore", () => {
+test("exports the original external stamp and preserves later byte intents through restore", () => {
   const { backup, db, vault } = fixture();
   const intent = { receipt_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV", before_hash: null, after_hash: sha256Hex(validEvent().text) };
   try {
     commitMachineByteIntent(db, intent, () => undefined);
     rmSync(backup, { recursive: true });
     exportVault(db, vault, backup);
-    expect(onlyEvent(backup).origin).toBe("self");
+    expect(onlyEvent(backup).origin).toBe("external");
     const target = join(temporary("kizuki-backup-intent-"), "vault");
     restoreVault(backup, target);
     const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
@@ -280,7 +311,7 @@ test("exports refreshed self origin and preserves unfinished byte intents throug
   } finally { db.close(); }
 });
 
-test.each(["duplicate", "invalid hash", "missing field", "extra field", "oversized row", "external match"])(
+test.each(["duplicate", "invalid hash", "missing field", "extra field", "oversized row"])(
   "refuses a re-signed byte-intent stream with %s", (mutation) => {
     const { backup, db } = fixture();
     try {
@@ -290,7 +321,6 @@ test.each(["duplicate", "invalid hash", "missing field", "extra field", "oversiz
       if (mutation === "missing field") delete row.before_hash;
       if (mutation === "extra field") row.origin = "external";
       if (mutation === "oversized row") row.after_hash = "a".repeat(100_000);
-      if (mutation === "external match") row.after_hash = sha256Hex(validEvent().text);
       writeJsonl(backup, manifest, "ledger/canon-machine-byte-intents.jsonl", mutation === "duplicate" ? [row, row] : [row]);
       signManifest(backup, manifest);
       const target = join(temporary("kizuki-backup-invalid-intent-"), "vault");
@@ -337,7 +367,7 @@ test("native owner evidence survives exact restore and ordinary connector eviden
   } finally { db.close(); }
 });
 
-test.each(["transferred event", "changed binding", "missing binding", "changed timestamp"])(
+test.each(["transferred event", "changed binding", "missing binding", "changed timestamp", "request substitution"])(
   "refuses a re-signed native proof with %s", (mutation) => {
     const { backup, db, vault } = fixture();
     try {
@@ -353,6 +383,7 @@ test.each(["transferred event", "changed binding", "missing binding", "changed t
       if (mutation === "changed binding") proof.event_content_hash = "b".repeat(64);
       if (mutation === "missing binding") delete proof.event_content_hash;
       if (mutation === "changed timestamp") proof.recorded_at = "2030-01-01T00:00:00Z";
+      if (mutation === "request substitution") proof.request_digest = "e".repeat(64);
       writeJsonl(backup, manifest, "ledger/native_owner_evidence.jsonl", [proof]);
       signManifest(backup, manifest);
       const target = join(temporary("kizuki-backup-invalid-native-binding-"), "vault");
@@ -374,7 +405,8 @@ test("explicit legacy restore binds an original native proof to its unchanged v1
     exportVault(db, vault, backup);
     const manifest = readManifest(backup);
     const current = onlyEvent(backup);
-    const { content_hash_version: _version, text_hash: _textHash, origin: _origin, ...legacy } = current;
+    const { content_hash_version: _version, text_hash: _textHash, origin: _origin,
+    origin_binding_version: _bindingVersion, origin_binding_kind: _bindingKind, origin_binding: _binding, ...legacy } = current;
     legacy.content_hash = computeLegacyContentHash(input);
     const proof = JSON.parse(readFileSync(join(backup, "ledger/native_owner_evidence.jsonl"), "utf8")) as Record<string, unknown>;
     delete proof.event_content_hash;
@@ -397,3 +429,41 @@ test("explicit legacy restore binds an original native proof to its unchanged v1
     } finally { restored.close(); }
   } finally { db.close(); }
 });
+
+
+test.each(["safe unmatched frontier", "completed frontier", "ambiguous deferred completion", "direct receipt provenance"])(
+  "legacy restore handles machine-byte history with %s before publication", (state) => {
+    const { backup, db } = fixture();
+    try {
+      const manifest = readManifest(backup);
+      const current = onlyEvent(backup);
+      const { content_hash_version, text_hash, origin, origin_binding_version, origin_binding_kind, origin_binding, ...legacy } = current;
+      legacy.content_hash = computeLegacyContentHash(validEvent());
+      manifest.schema = LEGACY_BACKUP_SCHEMA;
+      manifest.schema_versions = { ...manifest.schema_versions, ledger: 15 };
+      writeJsonl(backup, manifest, "ledger/events.jsonl", [legacy]);
+      writeJsonl(backup, manifest, "canon/receipts.jsonl", [loopReceipt(validEvent().text,
+        state === "direct receipt provenance" ? [current.event_id as string] : [])]);
+      if (state === "completed frontier" || state === "ambiguous deferred completion") {
+        writeJsonl(backup, manifest, "checkpoints.jsonl", [{
+          connector_id: "kizuki.producer.model", source_key: state === "completed frontier" ? "extract" : "extract-deferred-scan",
+          cursor: state === "completed frontier" ? `${current.accepted_at}\t${current.event_id}` : current.event_id,
+          mode: "incremental", updated_at: current.accepted_at, last_run_at: current.accepted_at, last_result: "ok",
+        }]);
+      }
+      unlinkSync(join(backup, "ledger/canon-machine-byte-intents.jsonl"));
+      delete manifest.files["ledger/canon-machine-byte-intents.jsonl"];
+      signManifest(backup, manifest);
+      const target = join(temporary("kizuki-legacy-origin-preflight-"), "vault");
+      if (state === "safe unmatched frontier") {
+        restoreVault(backup, target);
+        const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
+        try { expect(readSince(restored, null, 1).events[0]).toMatchObject({ origin: "self", origin_binding_kind: "legacy" }); }
+        finally { restored.close(); }
+      } else {
+        expect(() => restoreVault(backup, target)).toThrow("legacy_origin_rebuild_required");
+        expect(existsSync(target)).toBe(false);
+      }
+    } finally { db.close(); }
+  },
+);

@@ -111,11 +111,15 @@ export interface CaptureEvent {
   content_hash_version: 1 | 2;
   text_hash: string; // exact UTF-8 text bytes, independent of revision identity
   origin: "external" | "self"; // spine annotation; never connector authority
+  origin_binding_version: 1;
+  origin_binding_kind: "capture" | "native" | "legacy";
+  origin_binding: string; // immutable admission binding, not a signature
 }
 
 /** Frozen connector ingress. Identity and origin are supplied only by Core. */
 export type CaptureEventInput = Omit<CaptureEvent,
-  "event_id" | "content_hash" | "content_hash_version" | "text_hash" | "origin">;
+  "event_id" | "content_hash" | "content_hash_version" | "text_hash" | "origin" |
+  "origin_binding_version" | "origin_binding_kind" | "origin_binding">;
 
 function rejectUnknownKeys(
   raw: Record<string, unknown>,
