@@ -6,7 +6,7 @@ const FIELDS = new Set(["response", "claims", "claim", "kind", "subject", "predi
 const CLAIM_RULES = new Set(["text", "size_cap", "json", "object", "missing_field", "extra_field", "list", "list_cap", "bounded_string", "enum", "timestamp", "confidence", "event_ids", "verbatim"]);
 const RESPONSE_RULES = new Set(["tool_call", "bad_response", "unsupported_metadata", "response_refused", "response_truncated", "response_incomplete", "response_too_large"]);
 const TRANSPORT_RULES = new Set(["timeout", "network", "redirect", "credentials", "http", "unavailable"]);
-const BUDGET_RULES = new Set(["max_calls", "max_input_tokens", "max_output_tokens"]);
+const BUDGET_RULES = new Set(["max_calls", "max_input_tokens", "max_output_tokens", "max_quoted_chars"]);
 const count = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000_000;
 const nullableCount = (value: unknown): value is number | null => value === null || count(value);
 const keysAre = (value: Record<string, unknown>, allowed: readonly string[]): boolean => Object.keys(value).every(key => allowed.includes(key));

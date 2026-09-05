@@ -3,8 +3,8 @@ import type { SubjectRef } from "./event";
 import type { Port } from "./ports";
 
 export const PRODUCER_CONTRACT = "kizuki.producer/v1" as const;
-/** Minor 2 adds an optional content-free diagnostic to failed results. */
-export const PRODUCER_CONTRACT_MINOR = 2;
+/** Minor 3 adds a named quoted-character capacity diagnostic. */
+export const PRODUCER_CONTRACT_MINOR = 3;
 export const PRODUCER_CAPABILITIES = ["deterministic", "model"] as const;
 export type ProducerCapability =
   (typeof PRODUCER_CAPABILITIES)[number];
@@ -63,7 +63,7 @@ export type ProducerDiagnostic =
   | ClaimDiagnostic
   | { readonly stage: "response"; readonly rule: "tool_call" | "bad_response" | "unsupported_metadata" | "response_refused" | "response_truncated" | "response_incomplete" | "response_too_large" }
   | { readonly stage: "transport"; readonly rule: "timeout" | "network" | "redirect" | "credentials" | "http" | "unavailable"; readonly http_status?: number }
-  | { readonly stage: "budget"; readonly rule: "max_calls" | "max_input_tokens" | "max_output_tokens"; readonly used: number; readonly requested: number; readonly limit: number };
+  | { readonly stage: "budget"; readonly rule: "max_calls" | "max_input_tokens" | "max_output_tokens" | "max_quoted_chars"; readonly used: number; readonly requested: number; readonly limit: number };
 
 export const PRODUCER_REJECT_REASONS = [
   "tool_call_in_response",
