@@ -147,3 +147,31 @@ test('denied Gmail selection and enumeration never open protected state before c
         }
     } finally { db.close(); }
 });
+
+test('explicit new Gmail source rejects duplicate accounts and preserves old checkpoint and consent',async()=>{
+ const setup=h.tempVault(),owner=ownerIo(setup),a=new GmailFixture(21),first=oauth(a);
+ await runGmailConnect(owner.io,{fields,json:true},()=>{},first.create,first.open);
+ let db=openLedger(join(setup.vault,'.kizuki/kizuki.db'));const store=new ConnectionStateStore(join(setup.vault,'.kizuki'));
+ const original=listConnections(db)[0]!;grant(db,original.source_key);
+ const loaded=await loadConnector(selectConnection(db,store,'kizuki.gmail',original.source_key),store,db,owner.io.env,(_id,config,deps)=>createGmailConnector(config as GmailConnectorConfig,{persist:deps!.persist!,fetch:a.fetch,now:a.now}));
+ await runToCompletion(db,loaded,'kizuki.gmail',original.source_key,'backfill',{maxBatches:1});
+ const before=store.read(listConnections(db)[0]!)!,checkpoint=getCheckpoint(db,'kizuki.gmail',original.source_key);
+ db.close();
+ const same=oauth(a);await expect(runGmailConnect(owner.io,{fields:'text',newSource:true,json:true},()=>{},same.create,same.open)).rejects.toThrow('source');
+ const b=new GmailFixture(1);b.account='synthetic-second-account';const second=oauth(b);
+ expect(await runGmailConnect(owner.io,{fields,newSource:true,json:true},()=>{},second.create,second.open)).toBe(0);
+ db=openLedger(join(setup.vault,'.kizuki/kizuki.db'));
+ try{
+  const all=listConnections(db);expect(all).toHaveLength(2);const fresh=all.find(item=>item.source_key!==original.source_key)!;
+  expect(store.read(all.find(item=>item.source_key===original.source_key)!)).toEqual(before);
+  expect(getCheckpoint(db,'kizuki.gmail',original.source_key)).toEqual(checkpoint);expect(getCheckpoint(db,'kizuki.gmail',fresh.source_key)).toBeNull();
+  let calls=0;await expect(loadConnector(selectConnection(db,store,'kizuki.gmail',fresh.source_key),store,db,owner.io.env,()=>{calls++;throw Error();})).rejects.toThrow('source_capture_denied');expect(calls).toBe(0);
+  revokeSourceGrant(db,{source_key:original.source_key,expected_revision:1,operation_id:'synthetic-multi-revoke'});
+ }finally{db.close();}
+ const denied=oauth(a);await expect(runGmailConnect(owner.io,{fields,newSource:true,json:true},()=>{},denied.create,denied.open)).rejects.toThrow('source');
+});
+
+test('explicit new source and source selection are mutually exclusive before app configuration',async()=>{
+ const setup=h.tempVault();const result=h.runCli({...setup.env,KIZUKI_GMAIL_CLIENT_ID:''},'connect','gmail','--new-source','--source','synthetic','--fields','text');
+ expect(result.exitCode).not.toBe(0);expect(result.stderr+result.stdout).toContain('mutually exclusive');
+});

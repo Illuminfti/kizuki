@@ -56,3 +56,11 @@ Changed live Gmail observations on retry remain `snapshot_gap_unresolved` with
 no history advance. No automatic skip/reset hides that gap.
 
 Primary documentation verified 2026-09-05: [Google installed-app OAuth](https://developers.google.com/identity/protocols/oauth2/native-app), [Gmail authorization scopes](https://developers.google.com/workspace/gmail/api/auth/scopes), and [Gmail synchronization](https://developers.google.com/workspace/gmail/api/guides/sync). Operator app verification and live-account qualification remain outside the synthetic test evidence.
+
+## Additional accounts
+
+Use `kizuki connect gmail --new-source --fields text,subjects,headers,labels,attachments` to enroll another account. `--new-source` and `--source KEY` are mutually exclusive. Without either flag, the sole existing source is reauthorized; multiple sources require explicit selection. A new source gets a new Core key and no checkpoint or implicit consent. Each source needs its own explicit grant before capture.
+
+Duplicate OIDC account identities refuse before protected state publication, including disconnected or revoked sources. Selected fields do not create a different account identity. Choose the existing source key for reauthorization; its checkpoint, pending history and consent remain unchanged. No duplicate check resets tokens or consent.
+
+New-enrollment identity verification uses the existing Core write transaction and protected state store. It checks current same-provider state before publishing the new file/row, so concurrent duplicate enrollments cannot both succeed. At most 32 sources per provider and 8 MiB aggregate candidate/existing opaque state are supported; excess, unreadable state or unresolved recovery refuses without a partial scan. A refused local enrollment may follow a completed Google authorization; it cannot undo that provider permission or guarantee the earlier provider token remains valid. Recovery may require explicit reauthorization of the existing source. No second identity or token store is created.

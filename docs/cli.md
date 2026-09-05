@@ -65,7 +65,9 @@ Beeper messages, use `connect beeper` followed by `backfill beeper`.
 
 ## connect
 
-Google Calendar supports `connect google-calendar --calendar CANONICAL_ID --fields summary,description,location,attendees,attachments [--source KEY] [--json]`. Operator desktop app configuration and separate source consent are required; see [the native Calendar contract and limits](google-calendar.md). Use `--fields none` for baseline metadata and event-resource identity only. `primary` is refused; existing account/calendar/fields and recovery state are preserved during reauthorization.
+Google Calendar supports `connect google-calendar --calendar CANONICAL_ID --fields summary,description,location,attendees,attachments [--source KEY | --new-source] [--json]`. Operator desktop app configuration and separate source consent are required; see [the native Calendar contract and limits](google-calendar.md). Use `--fields none` for baseline metadata and event-resource identity only. `primary` is refused; existing account/calendar/fields and recovery state are preserved during reauthorization.
+
+Gmail and Google Calendar accept `--new-source` for explicit additional enrollment; it cannot be combined with `--source KEY`. Duplicate account identities (Calendar: account plus canonical calendar) refuse even if fields differ or prior consent is revoked. Existing-source reauthorization preserves checkpoints and recovery state. New sources require separate grants; see the provider docs for bounds and refusal semantics.
 
 ```text
 usage: kizuki connect [--list|status] [--json]

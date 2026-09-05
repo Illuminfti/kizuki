@@ -10,6 +10,7 @@ export async function enrollConnection(
   store: ConnectionStateStore,
   connector: Connector,
   io: SignInIo,
+  verifyNew?: Parameters<ConnectionStateStore["save"]>[5],
 ): Promise<Connection> {
   store.recover(db);
   const pending = store.begin();
@@ -21,6 +22,7 @@ export async function enrollConnection(
       pending.pending,
       undefined,
       connector.manifest().version,
+      verifyNew,
     );
   } catch (error) {
     store.discard(pending.pending);
