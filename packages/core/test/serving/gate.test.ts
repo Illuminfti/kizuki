@@ -403,4 +403,88 @@ describe("authority is re-read on every served call", () => {
     expect(JSON.stringify(row?.query_shape).length).toBeLessThan(20_000);
     expect(row?.query_shape["+truncated"]).toBeGreaterThan(0);
   });
+
+  test("root overflow preserves the exact serving marker ahead of caller keys", () => {
+    const ctx = live.agent("search-only");
+    const args: Record<string, unknown> = { "+truncated": 999_999 };
+    for (let index = 0; index < 64; index += 1) {
+      args[`field-${index}`] = Array.from({ length: 200 }, () => "private-canary");
+    }
+    expect(refusal(() => gate(ctx, "propose", args, emptyRun)).code).toBe("tool_not_granted");
+    const row = listAudit(live.db, "search-only", { limit: 1 })[0];
+    expect(row?.query_shape["+truncated"]).toBeGreaterThan(0);
+    expect(row?.query_shape["+truncated"]).not.toBe(999_999);
+    expect(JSON.stringify(row?.query_shape)).not.toContain("private-canary");
+    expect(JSON.stringify(row?.query_shape)).toContain("node_limit");
+  });
+
+  test("a caller cannot manufacture the reserved serving truncation count", () => {
+    const ctx = live.agent("search-only");
+    expect(refusal(() => gate(ctx, "propose", { "+truncated": 999_999 }, emptyRun)).code).toBe("tool_not_granted");
+    const row = listAudit(live.db, "search-only", { limit: 1 })[0];
+    expect(row?.query_shape["+truncated"]).toBe(1);
+  });
+
+  test("numeric root keys cannot displace the exact serving truncation count", () => {
+    const ctx = live.agent("search-only");
+    for (const count of [32, 33]) {
+      const args = Object.fromEntries(Array.from({ length: count }, (_, index) => [String(index), index]));
+      expect(refusal(() => gate(ctx, "propose", args, emptyRun)).code).toBe("tool_not_granted");
+      const shape = listAudit(live.db, "search-only", { limit: 1 })[0]?.query_shape;
+      expect(Object.keys(shape ?? {})).toHaveLength(32);
+      expect(shape?.["+truncated"]).toBe(count === 32 ? undefined : 2);
+      expect(shape?.["31"]).toBe(count === 32 ? 31 : undefined);
+    }
+  });
+
+  test("nested truncation reserves space beside numeric root keys", () => {
+    const ctx = live.agent("search-only");
+    const args: Record<string, unknown> = Object.fromEntries(Array.from({ length: 32 }, (_, index) => [String(index), index]));
+    args["0"] = Array.from({ length: 65 }, (_, index) => index);
+    expect(refusal(() => gate(ctx, "propose", args, emptyRun)).code).toBe("tool_not_granted");
+    const shape = listAudit(live.db, "search-only", { limit: 1 })[0]?.query_shape;
+    expect(shape?.["+truncated"]).toBe(2);
+    expect(shape?.["31"]).toBeUndefined();
+    expect(Object.keys(shape ?? {})).toHaveLength(32);
+  });
+
+  test("the reserved field is counted once after the leaf budget is exhausted", () => {
+    const ctx = live.agent("search-only");
+    const args = {
+      a: Array.from({ length: 64 }, (_, index) => index),
+      b: Array.from({ length: 64 }, (_, index) => index),
+      c: Array.from({ length: 64 }, (_, index) => index),
+      "+truncated": 999_999,
+    };
+    expect(refusal(() => gate(ctx, "propose", args, emptyRun)).code).toBe("tool_not_granted");
+    expect(listAudit(live.db, "search-only", { limit: 1 })[0]?.query_shape["+truncated"]).toBe(1);
+  });
+
+  test("a prototype key remains visible as rejected evidence through the public gate", () => {
+    const ctx = live.agent("search-only");
+    const args = JSON.parse('{"__proto__":{"hidden":"private-canary"}}');
+    expect(refusal(() => gate(ctx, "propose", args, emptyRun)).code).toBe("tool_not_granted");
+    const encoded = JSON.stringify(listAudit(live.db, "search-only", { limit: 1 })[0]?.query_shape);
+    expect(encoded).toContain('"key":"rejected"');
+    expect(encoded).toContain(new Bun.CryptoHasher("sha256").update("__proto__").digest("hex"));
+    expect(encoded).not.toContain("private-canary");
+  });
+
+  test("object and array getters cannot prevent recording a refused call", () => {
+    const ctx = live.agent("search-only");
+    let calls = 0;
+    const trap = { enumerable: true, get() { calls += 1; throw new Error("private-canary"); } };
+    const values: unknown[] = [];
+    Object.defineProperty(values, "0", trap);
+    const args = { values };
+    Object.defineProperty(args, "object_trap", trap);
+    // Force a serving truncation marker as well, so copying the bounded bag
+    // must preserve descriptors instead of invoking them via object spread.
+    for (let index = 0; index < 40; index += 1) Object.defineProperty(args, `extra_${index}`, { value: index, enumerable: true });
+    expect(refusal(() => gate(ctx, "propose", args, emptyRun)).code).toBe("tool_not_granted");
+    const encoded = JSON.stringify(listAudit(live.db, "search-only", { limit: 1 })[0]?.query_shape);
+    expect(calls).toBe(0);
+    expect(encoded).toContain('"type":"accessor"');
+    expect(encoded).not.toContain("private-canary");
+  });
 });
