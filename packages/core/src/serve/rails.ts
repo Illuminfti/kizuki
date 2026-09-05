@@ -131,6 +131,8 @@ async function runSyncRail(
     canon_writes: written.canon_writes,
     stopped: written.stopped,
     errors,
+    // model_ref is filled in by runRail from the resolved hook, not here.
+    model: { ...written.model, wall_ms: 0, model_ref: null },
   };
 }
 

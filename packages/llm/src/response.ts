@@ -7,7 +7,6 @@ import type { LlmResponse, LlmUsage } from "@kizuki/core";
 const TOOL_REJECT = "rejected: tool_call_in_response";
 const BAD_RESPONSE = "rejected: bad_response";
 
-const MESSAGE_KEYS = new Set(["role", "content", "refusal"]);
 const FORBIDDEN_MESSAGE_KEYS = new Set([
   "tool_calls",
   "function_call",
@@ -80,9 +79,11 @@ export function parseChatCompletion(
 
   const message = choice["message"];
   if (!isPlainObject(message)) badResponse();
+  // The forbidden set is the security boundary (RFC 0002 §10.1): a key
+  // outside it — `reasoning`, `provider`, or anything else a provider adds —
+  // is ignored, never read, never propagated into a claim or a page.
   for (const key of Object.keys(message)) {
     if (FORBIDDEN_MESSAGE_KEYS.has(key)) rejectToolCall();
-    if (!MESSAGE_KEYS.has(key)) badResponse();
   }
   if (!("content" in message)) badResponse();
 

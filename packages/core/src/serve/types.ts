@@ -180,6 +180,12 @@ export interface ModelDoctor {
   readonly unavailable: number;
   readonly budget: Readonly<Record<string, { used: number; limit: number }>>;
   readonly detail: string;
+  /**
+   * The most recent sync receipt where the model was attempted and never
+   * usefully answered — unreachable or reached-and-refused — with nothing
+   * in the window it did answer. Null once a call has succeeded (#438).
+   */
+  readonly last_stop: { readonly at: string; readonly detail: string } | null;
 }
 
 export interface StoreDoctor {

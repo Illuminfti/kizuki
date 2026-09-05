@@ -3,6 +3,7 @@ import type { LlmPort, LlmResponse } from "../contracts/llm";
 import {
   PRODUCER_CONTRACT,
   PRODUCER_CONTRACT_MINOR,
+  isRejectReason,
 } from "../contracts/producer";
 import type {
   ClaimDraft,
@@ -67,8 +68,6 @@ const MAX_LOGGED_CHARS = 128;
 const EVENT_ID = /^[A-Za-z0-9:_.-]{1,64}$/;
 const CONNECTOR_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const PREDICATE = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*$/;
-
-const TOOL_CALL_MARK = "tool_call_in_response";
 
 export interface ModelProducerOptions {
   /** The bound `kizuki.llm/v1` port. The producer does not own or close it. */
@@ -330,8 +329,21 @@ function estimateTokens(messages: readonly { content: string }[]): number {
   return Math.ceil(chars / CHARS_PER_TOKEN);
 }
 
-function isToolCallRejection(error: PortError): boolean {
-  return error.code === "not_supported" && error.message.includes(TOOL_CALL_MARK);
+/**
+ * The llm port marks every response it received and refused with this
+ * prefix (tool calls, malformed bodies, oversized bodies — see
+ * `packages/llm/src/response.ts` and `transport.ts`). A message without the
+ * prefix means the provider was never usefully reached, so only its code
+ * surfaces; a raw provider message never reaches a receipt.
+ */
+const REJECTED_PREFIX = "rejected: ";
+
+function classifyLlmError(error: PortError): CallOutcome {
+  if (error.message.startsWith(REJECTED_PREFIX)) {
+    const reason = error.message.slice(REJECTED_PREFIX.length);
+    if (isRejectReason(reason)) return { kind: "rejected", reason };
+  }
+  return { kind: "unavailable", reason: `llm ${error.code}` };
 }
 
 type CallOutcome =
@@ -353,13 +365,7 @@ async function callModel(
     });
     return { kind: "ok", response };
   } catch (error) {
-    if (error instanceof PortError) {
-      if (isToolCallRejection(error)) {
-        return { kind: "rejected", reason: "tool_call_in_response" };
-      }
-      // Only the code is surfaced; a provider message never reaches a receipt.
-      return { kind: "unavailable", reason: `llm ${error.code}` };
-    }
+    if (error instanceof PortError) return classifyLlmError(error);
     return { kind: "unavailable", reason: "llm error" };
   }
 }

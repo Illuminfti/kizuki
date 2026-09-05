@@ -18,11 +18,16 @@ import type { ClaimsIo } from "../claims/store";
 import { mineLiveDrafts } from "./extract";
 import { tryWriteFlock } from "./flock";
 import { redactReceiptError } from "./receipts";
+import type { RunModelReport } from "./types";
 
 /** One sync pass never materializes more than this many unwritten claims. */
 const WRITE_PASS_LIMIT = 32;
 /** Owner-edited skips stay live; scan past them so they cannot fill the write cap. */
 const WRITE_PASS_SCAN = 256;
+const NO_MODEL_USAGE: Pick<
+  RunModelReport,
+  "calls" | "input_tokens" | "output_tokens" | "unavailable"
+> = { calls: 0, input_tokens: 0, output_tokens: 0, unavailable: 0 };
 
 export interface WritePassResult {
   readonly revived: number;
@@ -33,6 +38,11 @@ export interface WritePassResult {
   readonly canon_writes: number;
   readonly stopped: string | null;
   readonly errors: readonly string[];
+  /** Model calls actually attempted this pass; zero when none was configured. */
+  readonly model: Pick<
+    RunModelReport,
+    "calls" | "input_tokens" | "output_tokens" | "unavailable"
+  >;
 }
 
 export interface WritePassOptions {
@@ -84,6 +94,7 @@ export async function runWritePass(
       canon_writes: 0,
       stopped: "lock:busy",
       errors: [],
+      model: NO_MODEL_USAGE,
     };
   }
   try {
@@ -106,12 +117,19 @@ async function runWritePassLocked(
   let canonWrites = 0;
   let stopped: string | null = null;
   const errors: string[] = [];
+  const model = { ...NO_MODEL_USAGE };
 
   if (options.producer !== undefined && options.claims !== undefined) {
     const mined = await mineLiveDrafts(db, options.producer);
+    model.calls = mined.usage.calls;
+    model.input_tokens = mined.usage.input_tokens;
+    model.output_tokens = mined.usage.output_tokens;
     switch (mined.mined.status) {
       case "unavailable":
+        // A provider that never usefully answered, distinct from one that
+        // answered and was refused (case "rejected" below) — see #438.
         stopped = `model:${mined.mined.reason}`;
+        model.unavailable = 1;
         break;
       case "rejected":
         errors.push(mined.mined.reason);
@@ -147,6 +165,7 @@ async function runWritePassLocked(
       canon_writes: 0,
       stopped,
       errors,
+      model,
     };
   }
 
@@ -181,6 +200,7 @@ async function runWritePassLocked(
     canon_writes: canonWrites,
     stopped,
     errors,
+    model,
   };
 }
 

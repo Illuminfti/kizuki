@@ -55,9 +55,17 @@ export const PRODUCER_REJECT_REASONS = [
   "unknown_predicate",
   "provenance_not_cited",
   "budget_exhausted",
+  "bad_response",
+  "response_too_large",
 ] as const;
 export type RejectReason =
   (typeof PRODUCER_REJECT_REASONS)[number];
+
+/** A response the provider sent and the transport or validator refused, as
+ * opposed to a provider that could never be reached (§10.1). */
+export function isRejectReason(value: string): value is RejectReason {
+  return (PRODUCER_REJECT_REASONS as readonly string[]).includes(value);
+}
 
 export type ClaimDraftKind =
   | "entity"

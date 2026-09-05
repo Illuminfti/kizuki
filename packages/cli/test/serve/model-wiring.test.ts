@@ -203,6 +203,38 @@ function extractReply(claims: readonly Record<string, unknown>[]) {
   return (): Response => defaultChatCompletion(JSON.stringify({ claims }));
 }
 
+/**
+ * The exact shape #438 reproduced against OpenRouter/DeepSeek: `reasoning`,
+ * `provider`, `native_finish_reason`, `system_fingerprint` and an explicit
+ * `refusal: null` alongside `content`. None of those keys are forbidden;
+ * only `content` should ever be read.
+ */
+function openRouterShapedReply(claims: readonly Record<string, unknown>[]) {
+  return (): Response =>
+    Response.json({
+      id: "gen-synthetic",
+      model: "deepseek/deepseek-v4-flash-0731",
+      provider: "StreamLake",
+      choices: [
+        {
+          index: 0,
+          finish_reason: "stop",
+          native_finish_reason: "stop",
+          logprobs: null,
+          message: {
+            role: "assistant",
+            content: JSON.stringify({ claims }),
+            refusal: null,
+            reasoning:
+              "We need to read the quoted record and answer with the claims JSON only.",
+          },
+        },
+      ],
+      system_fingerprint: "fp_abc123",
+      usage: { prompt_tokens: 42, completion_tokens: 9 },
+    });
+}
+
 function unavailableReply(): Response {
   return new Response(null, { status: 503 });
 }
@@ -298,6 +330,52 @@ describe("kizuki serve model wiring (M4)", () => {
     } else {
       expect(sha256File(pagePath)).toBe(written.before_hash);
     }
+  });
+
+  test("4.2b an OpenRouter-shaped response with reasoning still extracts and writes (#438)", async () => {
+    const setup = tempVault();
+    endpoint = startFakeEndpoint();
+    const eventId = await seedSubject(
+      setup.vault,
+      "person:grace",
+      "grace",
+      "Grace",
+      "Grace mentioned she now runs partnerships at Acme.",
+    );
+    endpoint.reply = openRouterShapedReply([
+      claimFor(eventId, "person:grace", "Grace leads partnerships at Acme."),
+    ]);
+    writeServeToml(setup.vault, {
+      id: "kizuki.llm.openai-compatible",
+      base_url: endpoint.base_url,
+      model: "test-model",
+      secret_ref: `env:${MODEL_KEY_ENV}`,
+      max_retries: 0,
+    });
+    const env = { ...setup.env, [MODEL_KEY_ENV]: MODEL_KEY_VALUE };
+
+    const once = await runCliLive(env, "serve", "run", "sync", "--json");
+    expect(once.exitCode).toBe(0);
+    const receipt = data<{
+      canon_writes: number;
+      stopped: string | null;
+      errors: string[];
+      model: { calls: number; input_tokens: number; output_tokens: number };
+    }>(once.stdout);
+    expect(receipt.stopped).toBeNull();
+    expect(receipt.errors).toEqual([]);
+    expect(receipt.canon_writes).toBeGreaterThanOrEqual(1);
+    expect(receipt.model.calls).toBeGreaterThan(0);
+    expect(receipt.model.input_tokens).toBeGreaterThan(0);
+    expect(receipt.model.output_tokens).toBeGreaterThan(0);
+
+    const expectedModelRef = `kizuki.llm.openai-compatible:test-model@127.0.0.1`;
+    const doctor = runCli(env, "doctor");
+    expect(doctor.stdout).toContain(`canon writing: on (${expectedModelRef})`);
+    const rows = auditRows(env);
+    expect(
+      rows.some((row) => row.writer === "loop" && row.model_ref === expectedModelRef),
+    ).toBe(true);
   });
 
   test("4.5 a plaintext secret fails closed before any rail runs", () => {

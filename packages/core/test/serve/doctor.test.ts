@@ -32,7 +32,15 @@ function host(status: SupervisorStatus): SupervisorHost {
   };
 }
 
-function receipt(day: string, overrides: Partial<ReturnType<typeof emptyRunTotals>> & { rail?: string; run_id: string }) {
+function receipt(
+  day: string,
+  overrides: Partial<ReturnType<typeof emptyRunTotals>> & {
+    rail?: string;
+    run_id: string;
+    status?: "ok" | "degraded" | "stopped" | "failed";
+    stopped?: string | null;
+  },
+) {
   return {
     ...emptyRunTotals(),
     rail: overrides.rail ?? "sync",
@@ -165,6 +173,85 @@ describe("serve doctor", () => {
     expect(report.calibration.write_rate).toBeCloseTo(0.4);
     expect(report.calibration.dedup_rate).toBeCloseTo(0.3);
     expect(report.calibration.failures).toEqual([]);
+    db.close();
+  });
+
+  test("a model configured but never reached is a doctor failure, not a silent on (#438)", () => {
+    const { path, db } = vault();
+    writeServeIntent(path, "opted-out");
+    persistRunReceipt(
+      db,
+      path,
+      receipt("2026-09-01", {
+        run_id: "01JBSTOP00000000000000001",
+        rail: "sync",
+        status: "stopped",
+        stopped: "model:llm timeout",
+      }),
+    );
+    const report = inspectServeDoctor(db, path, {
+      now: "2026-09-01T00:10:00Z",
+      model_ref: "kizuki.llm.openai-compatible:deepseek@openrouter.ai",
+    });
+    expect(report.model.canon_writing).toBe("on");
+    expect(report.model.last_success_at).toBeNull();
+    expect(report.model.last_stop).toEqual({
+      at: "2026-09-01T00:00:01Z",
+      detail: "llm timeout",
+    });
+    expect(report.failures).toContain(
+      "model never reached: llm timeout (at 2026-09-01T00:00:01Z)",
+    );
+    expect(report.ok).toBe(false);
+    db.close();
+  });
+
+  test("a rejected-but-reached response is named separately from an unreachable one", () => {
+    const { path, db } = vault();
+    writeServeIntent(path, "opted-out");
+    persistRunReceipt(
+      db,
+      path,
+      receipt("2026-09-01", {
+        run_id: "01JBREJECT0000000000000001",
+        rail: "sync",
+        status: "degraded",
+        errors: ["budget_exhausted: max_input_tokens used=9000 limit=8000"],
+      }),
+    );
+    const report = inspectServeDoctor(db, path, {
+      now: "2026-09-01T00:10:00Z",
+      model_ref: "kizuki.llm.openai-compatible:deepseek@openrouter.ai",
+    });
+    expect(report.model.last_stop).toEqual({
+      at: "2026-09-01T00:00:01Z",
+      detail: "budget_exhausted: max_input_tokens used=9000 limit=8000",
+    });
+    expect(report.failures).toContain(
+      "model never reached: budget_exhausted: max_input_tokens used=9000 limit=8000 (at 2026-09-01T00:00:01Z)",
+    );
+    db.close();
+  });
+
+  test("a call that already succeeded once is not flagged even if never repeated", () => {
+    const { path, db } = vault();
+    writeServeIntent(path, "opted-out");
+    persistRunReceipt(
+      db,
+      path,
+      receipt("2026-09-01", {
+        run_id: "01JBOK000000000000000001",
+        rail: "sync",
+        model: { calls: 1, input_tokens: 120, output_tokens: 12, unavailable: 0, wall_ms: 0, model_ref: null },
+      }),
+    );
+    const report = inspectServeDoctor(db, path, {
+      now: "2026-09-01T00:10:00Z",
+      model_ref: "kizuki.llm.openai-compatible:deepseek@openrouter.ai",
+    });
+    expect(report.model.last_success_at).toBe("2026-09-01T00:00:01Z");
+    expect(report.model.last_stop).toBeNull();
+    expect(report.failures.some((failure) => failure.includes("model never reached"))).toBe(false);
     db.close();
   });
 });

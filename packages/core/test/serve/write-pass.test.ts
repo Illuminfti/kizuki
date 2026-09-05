@@ -345,6 +345,57 @@ describe("write pass", () => {
     expect(result.claims_extracted).toBe(1);
     expect(result.claims_written).toBe(1);
     expect(result.canon_writes).toBe(1);
+    expect(result.model).toEqual({
+      calls: 1,
+      input_tokens: 10,
+      output_tokens: 4,
+      unavailable: 0,
+    });
+    db.close();
+  });
+
+  test("a rejected model response is distinguishable from an unreachable one (#438)", async () => {
+    const { path, db } = vault();
+    putEvent(db, { source_record_id: "rejected" });
+    const rejected = await runWritePass(db, path, {
+      budget: createBudgetTracker({ canon_writes_per_run: 8 }),
+      model_ref: "kizuki.llm.openai-compatible:synthetic@local",
+      claims: { db },
+      producer: stubProducer({
+        status: "rejected",
+        reason: "budget_exhausted",
+        usage: { calls: 1, input_tokens: 9_000, output_tokens: 0 },
+      }),
+    });
+    // Reached the provider and it was refused: status is not "stopped".
+    expect(rejected.stopped).toBeNull();
+    expect(rejected.errors).toEqual(["budget_exhausted"]);
+    expect(rejected.model).toEqual({
+      calls: 1,
+      input_tokens: 9_000,
+      output_tokens: 0,
+      unavailable: 0,
+    });
+
+    putEvent(db, { source_record_id: "unavailable" });
+    const unavailable = await runWritePass(db, path, {
+      budget: createBudgetTracker({ canon_writes_per_run: 8 }),
+      model_ref: "kizuki.llm.openai-compatible:synthetic@local",
+      claims: { db },
+      producer: stubProducer({
+        status: "unavailable",
+        reason: "llm timeout",
+      }),
+    });
+    // Never reached: status is "stopped", and no usage is claimed.
+    expect(unavailable.stopped).toBe("model:llm timeout");
+    expect(unavailable.errors).toEqual([]);
+    expect(unavailable.model).toEqual({
+      calls: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      unavailable: 1,
+    });
     db.close();
   });
 });

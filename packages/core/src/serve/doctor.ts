@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { isMachineOriginPath } from "../canon/origin";
 import { pendingRetrievalOps } from "../claims/store";
+import { PRODUCER_REJECT_REASONS } from "../contracts/producer";
 import { readDerivedMeta } from "../derived-meta";
 import { ConnectionStateStore } from "../ledger/connection-state";
 import { inspectCheckpoints, inspectConnections } from "../ledger/connections";
@@ -175,6 +176,39 @@ function calibration(db: Database, receipts: RunReceipt[], now: string): Calibra
   };
 }
 
+/** A receipt's error names a rejection reason, not an unrelated failure. */
+function producerRejection(receipt: RunReceipt): string | null {
+  return (
+    receipt.errors.find((error) =>
+      PRODUCER_REJECT_REASONS.some((reason) => error.startsWith(reason)),
+    ) ?? null
+  );
+}
+
+/** Reached the provider and got a usable answer — never merely attempted. */
+function modelSucceeded(receipt: RunReceipt): boolean {
+  return (
+    receipt.model.calls > 0 &&
+    receipt.model.unavailable === 0 &&
+    producerRejection(receipt) === null
+  );
+}
+
+function lastModelStop(
+  receipts: RunReceipt[],
+): { at: string; detail: string } | null {
+  for (let index = receipts.length - 1; index >= 0; index -= 1) {
+    const receipt = receipts[index];
+    if (receipt === undefined || receipt.rail !== "sync") continue;
+    if (receipt.stopped !== null && receipt.stopped.startsWith("model:")) {
+      return { at: receipt.finished_at, detail: receipt.stopped.slice("model:".length) };
+    }
+    const rejected = producerRejection(receipt);
+    if (rejected !== null) return { at: receipt.finished_at, detail: rejected };
+  }
+  return null;
+}
+
 function modelDoctor(
   receipts: RunReceipt[],
   modelRef: string | null | undefined,
@@ -182,8 +216,12 @@ function modelDoctor(
   usedToday: number,
 ): ModelDoctor {
   const on = typeof modelRef === "string" && modelRef.length > 0;
-  const lastOk = [...receipts].reverse().find((receipt) => receipt.model.calls > 0);
+  const lastOk = [...receipts].reverse().find(modelSucceeded);
   const unavailable = receipts.reduce((sum, receipt) => sum + receipt.model.unavailable, 0);
+  // A silent refusal never gets to look identical to "canon writing: on"
+  // with nothing wrong (#438): once nothing has succeeded, the most recent
+  // stop or rejection is named here too, not just buried in a receipt.
+  const lastStop = lastOk === undefined ? lastModelStop(receipts) : null;
   return {
     canon_writing: on ? "on" : "off",
     model_ref: on ? modelRef : null,
@@ -195,6 +233,7 @@ function modelDoctor(
     detail: on
       ? `canon writing: on (${modelRef})`
       : "canon writing: off (no model configured — connectors, ledger, search, timeline and undo still work)",
+    last_stop: lastStop,
   };
 }
 
@@ -355,6 +394,9 @@ export function inspectServeDoctor(
     if (rail.status === "down" && rail.reason !== null) {
       failures.push(`rail ${rail.rail}: ${rail.reason}`);
     }
+  }
+  if (model.canon_writing === "on" && model.last_stop !== null) {
+    failures.push(`model never reached: ${model.last_stop.detail} (at ${model.last_stop.at})`);
   }
   failures.push(...cal.failures);
   if (stores.orphan_run_receipts.length > 0) {

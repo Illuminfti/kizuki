@@ -1,6 +1,11 @@
 import type { Database } from "bun:sqlite";
 import type { CaptureEvent } from "../contracts/event";
-import type { ClaimDraft, ProducerPort, QuotedEvent } from "../contracts/producer";
+import type {
+  ClaimDraft,
+  ModelUsage,
+  ProducerPort,
+  QuotedEvent,
+} from "../contracts/producer";
 import { predicateIds } from "../claims/predicates";
 import { listClaims } from "../claims/store";
 import { readCheckpoint, writeCheckpoint } from "../ledger/checkpoints";
@@ -9,6 +14,7 @@ import type { LedgerCursor } from "../ledger/ledger";
 import { EXTRACT_BATCH, MODEL_PRODUCER_ID } from "../producer";
 
 const EXTRACT_SOURCE_KEY = "extract";
+const NO_USAGE: ModelUsage = { calls: 0, input_tokens: 0, output_tokens: 0 };
 
 /** Unavailable is not empty. Only empty or a successful mine advances the cursor. */
 export type ExtractMine =
@@ -35,6 +41,8 @@ export function shouldAdvanceExtractCursor(result: ExtractMine): boolean {
 export interface MineResult {
   readonly mined: ExtractMine;
   readonly drafts: readonly ClaimDraft[];
+  /** The model's own usage for this pass; zero when it was never reached. */
+  readonly usage: ModelUsage;
 }
 
 function parseCursor(raw: string | null): LedgerCursor | null {
@@ -83,7 +91,7 @@ export async function mineLiveDrafts(
   const cursor = parseCursor(readExtractCursor(db));
   const batch = readSince(db, cursor, EXTRACT_BATCH);
   if (batch.events.length === 0 || batch.cursor === null) {
-    return { mined: { status: "empty" }, drafts: [] };
+    return { mined: { status: "empty" }, drafts: [], usage: NO_USAGE };
   }
 
   // Packet text that later lands in the ledger is history, not extract input.
@@ -92,7 +100,7 @@ export async function mineLiveDrafts(
   );
   if (usable.length === 0) {
     persistCursor(db, batch.cursor);
-    return { mined: { status: "empty" }, drafts: [] };
+    return { mined: { status: "empty" }, drafts: [], usage: NO_USAGE };
   }
 
   const known = listClaims(db, { status: "live", keyed: true, limit: 32 });
@@ -119,15 +127,18 @@ export async function mineLiveDrafts(
 
   let mined: ExtractMine;
   let drafts: readonly ClaimDraft[] = [];
+  let usage: ModelUsage = NO_USAGE;
   switch (produced.status) {
     case "unavailable":
       mined = { status: "unavailable", reason: produced.reason };
       break;
     case "rejected":
       mined = { status: "rejected", reason: produced.reason };
+      usage = produced.usage;
       break;
     case "ok":
       drafts = produced.claims;
+      usage = produced.usage;
       mined =
         produced.claims.length === 0
           ? { status: "empty" }
@@ -140,5 +151,5 @@ export async function mineLiveDrafts(
   }
 
   if (shouldAdvanceExtractCursor(mined)) persistCursor(db, batch.cursor);
-  return { mined, drafts };
+  return { mined, drafts, usage };
 }
