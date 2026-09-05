@@ -1,13 +1,18 @@
 import { afterEach, expect, test } from "bun:test";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { ConnectionStateStore, getCheckpoint, listConnections, openLedger, runToCompletion } from "@kizuki/core";
+import { ConnectionStateStore, setSourceGrant, revokeSourceGrant, getCheckpoint, listConnections, openLedger, runToCompletion } from "@kizuki/core";
 import { TelegramConnector, ScriptedTelegramApi, fixtureAccount, FIXTURE_CREDENTIALS, FIXTURE_SESSION, parseState } from "@kizuki/connector-telegram";
 import { runTelegramConnect } from "../src/commands/connect-telegram";
 import { closeHostConnector, loadConnector, selectConnection } from "../src/connections";
 import type { CliIo } from "../src/commands";
 import { createHelpers } from "./helpers";
 const h = createHelpers(); afterEach(h.cleanup);
+function grantFixture(db: ReturnType<typeof openLedger>, source: string) {
+  setSourceGrant(db, { source_key: source, expected_revision: 0, operation_id: "fixture-telegram-grant",
+    policy: { purposes: ["capture"], allowed_fields: ["text", "subjects", "attachments", "metadata"],
+      retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "private" } });
+}
 
 function ownerIo(setup: ReturnType<typeof h.tempVault>) {
   const output: string[] = [], prompts: boolean[] = []; const answers = ["+15551234567", "22222"];
@@ -26,7 +31,12 @@ test("native Telegram command enrolls, resumes history and refuses changed accou
     const first = listConnections(db)[0]!;
     const bytes = store.read(first)!; expect(parseState(bytes).user_id).toBe("1001");
     expect(statSync(join(setup.vault, ".kizuki", first.secret_refs[0]!.slice(5))).mode & 0o777).toBe(0o600);
-    const open = async () => loadConnector(selectConnection(db, store, "kizuki.telegram", first.source_key), store, {}, (_id, config, deps) => new TelegramConnector(config as { state_ref: string }, { ...deps, api: () => new ScriptedTelegramApi(account), credentials: () => FIXTURE_CREDENTIALS }), db);
+    let transports = 0;
+    const open = async () => loadConnector(selectConnection(db, store, "kizuki.telegram", first.source_key), store, db, {}, (_id, config, deps) => new TelegramConnector(config as { state_ref: string }, { ...deps, api: () => { transports++; return new ScriptedTelegramApi(account); }, credentials: () => FIXTURE_CREDENTIALS }));
+    expect(owner.output.join("\n")).toContain("consent-required");
+    await expect(open()).rejects.toThrow("source_capture_denied");
+    expect(transports).toBe(0);
+    grantFixture(db, first.source_key);
     const connector = await open();
     const initial = await runToCompletion(db, connector, "kizuki.telegram", first.source_key, "backfill"); await closeHostConnector(connector);
     expect(initial.errors).toEqual([]); expect(initial.stored).toBeGreaterThan(0);
@@ -35,6 +45,10 @@ test("native Telegram command enrolls, resumes history and refuses changed accou
     expect(replay.stored).toBe(0); expect(getCheckpoint(db, "kizuki.telegram", first.source_key)!.cursor).toBe(cursor);
     const again = ownerIo(setup); expect(await runTelegramConnect(again.io, { source: first.source_key, json: true }, () => {}, create)).toBe(0);
     expect(listConnections(db)[0]!.source_key).toBe(first.source_key); expect(getCheckpoint(db, "kizuki.telegram", first.source_key)!.cursor).toBe(cursor);
+    revokeSourceGrant(db, { source_key: first.source_key, expected_revision: 1, operation_id: "fixture-telegram-revoke" });
+    const beforeRevokedOpen = transports;
+    await expect(open()).rejects.toThrow("source_capture_denied");
+    expect(transports).toBe(beforeRevokedOpen);
     const prior = store.read(listConnections(db)[0]!)!;
     const other = fixtureAccount(); other.me.id = "2002";
     await expect(runTelegramConnect(ownerIo(setup).io, { source: first.source_key, json: true }, () => {}, () => new TelegramConnector({}, { api: () => new ScriptedTelegramApi(other), credentials: () => FIXTURE_CREDENTIALS }))).rejects.toThrow("identity");
@@ -56,12 +70,12 @@ test("host persists Telegram cooldown before health returns and reauthentication
   await runTelegramConnect(owner.io, { json: true }, () => {}, () => new TelegramConnector({}, { api: () => new ScriptedTelegramApi(account), credentials: () => FIXTURE_CREDENTIALS }));
   const db = openLedger(join(setup.vault, ".kizuki/kizuki.db")), store = new ConnectionStateStore(join(setup.vault, ".kizuki"));
   try {
-    const row = listConnections(db)[0]!; const api = new ScriptedTelegramApi(account);
-    const port = await loadConnector(selectConnection(db, store, "kizuki.telegram", row.source_key), store, {}, (_id, config, deps) => new TelegramConnector(config as {state_ref:string}, { ...deps, api: () => api, credentials: () => FIXTURE_CREDENTIALS }), db);
+    const row = listConnections(db)[0]!; grantFixture(db, row.source_key); const api = new ScriptedTelegramApi(account);
+    const port = await loadConnector(selectConnection(db, store, "kizuki.telegram", row.source_key), store, db, {}, (_id, config, deps) => new TelegramConnector(config as {state_ref:string}, { ...deps, api: () => api, credentials: () => FIXTURE_CREDENTIALS }));
     api.floodProbe(120); expect((await port.health()).state).toBe("rate_limited"); await closeHostConnector(port);
     expect(Date.parse(parseState(store.read(listConnections(db)[0]!)!).retry_not_before!)).toBeGreaterThan(Date.now());
     const nextApi = new ScriptedTelegramApi(account);
-    await expect(loadConnector(selectConnection(db, store, "kizuki.telegram", row.source_key), store, {}, (_id, config, deps) => new TelegramConnector(config as {state_ref:string}, { ...deps, api: () => nextApi, credentials: () => FIXTURE_CREDENTIALS }), db)).rejects.toThrow("wait");
+    await expect(loadConnector(selectConnection(db, store, "kizuki.telegram", row.source_key), store, db, {}, (_id, config, deps) => new TelegramConnector(config as {state_ref:string}, { ...deps, api: () => nextApi, credentials: () => FIXTURE_CREDENTIALS }))).rejects.toThrow("wait");
     expect(nextApi.calls).toHaveLength(0);
     const retry = ownerIo(setup);
     await expect(runTelegramConnect(retry.io, { source: row.source_key, json: true }, () => {}, () => new TelegramConnector({}, { api: () => nextApi, credentials: () => FIXTURE_CREDENTIALS }))).rejects.toThrow("wait");

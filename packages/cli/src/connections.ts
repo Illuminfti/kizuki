@@ -346,7 +346,6 @@ export async function loadConnector(
   db: Database,
   env: Record<string, string | undefined> = process.env,
   factory: (id: string, config?: unknown, telegramDeps?: Partial<TelegramDeps>) => Connector = (id, config, deps) => id === "kizuki.telegram" ? new TelegramConnector(config as TelegramConnectorConfig, deps) : getConnector(id, config),
-  db?: Database,
 ): Promise<Connector> {
   try { sourceCaptureAdmission(db, selected.connection.connector_id, selected.connection.source_key); }
   catch (error) {
@@ -361,11 +360,10 @@ export async function loadConnector(
     );
   }
   const telegram = selected.connection.connector_id === "kizuki.telegram";
-  if (telegram && db === undefined) throw new ConnectionError("Telegram requires a durable host state persister");
   const connector = factory(
     selected.connection.connector_id,
     selected.state.config,
-    telegram ? { persist: createStatePersister(db!, store, selected.connection).persist } : undefined,
+    telegram ? { persist: createStatePersister(db, store, selected.connection).persist } : undefined,
   );
   const config = selected.state.config;
   const ref = "state_ref" in config ? config.state_ref : "token_secret_ref" in config

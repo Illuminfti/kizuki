@@ -1,9 +1,6 @@
-<<<<<<< HEAD
 import { runConnectConsent } from "./connect-consent";
 import { consentHint } from "../source-consent";
-=======
 import { runTelegramConnect } from "./connect-telegram";
->>>>>>> 7c9422e (Wire native Telegram enrollment with durable authenticated cooldowns)
 import { resolve } from "node:path";
 import {
   applyConnectionSensitivity,
@@ -111,11 +108,7 @@ export function imapSignInNotice(vaultPath: string): string {
 
 export const connectCommand: Command = {
   name: "connect",
-<<<<<<< HEAD
-  usage: "connect [--list|status] [--json]\n       kizuki connect status --source KEY [--json]\n       kizuki connect grant --source KEY --policy FILE --expected-revision N --operation-id ID [--json]\n       kizuki connect revoke --source KEY --expected-revision N --operation-id ID [--json]\n       kizuki connect resume-revocation --source KEY --operation-id ID [--json]\n       kizuki connect <connector> --source PATH [--sensitivity public|personal|private]\n       kizuki connect beeper --token-ref env:VAR|file:/absolute/path [--endpoint http://127.0.0.1:23373] [--sensitivity public|personal|private] [--json]\n       kizuki connect imap [--source KEY] [--sensitivity public|personal|private]",
-=======
-  usage: "connect [--list|status] [--json]\n       kizuki connect <connector> --source PATH [--sensitivity public|personal|private]\n       kizuki connect beeper --token-ref env:VAR|file:/absolute/path [--endpoint http://127.0.0.1:23373] [--sensitivity public|personal|private] [--json]\n       kizuki connect imap [--source KEY] [--sensitivity public|personal|private]\n       kizuki connect telegram [--source KEY] [--sensitivity public|personal|private] [--json]",
->>>>>>> 7c9422e (Wire native Telegram enrollment with durable authenticated cooldowns)
+  usage: "connect [--list|status] [--json]\n       kizuki connect status --source KEY [--json]\n       kizuki connect grant --source KEY --policy FILE --expected-revision N --operation-id ID [--json]\n       kizuki connect revoke --source KEY --expected-revision N --operation-id ID [--json]\n       kizuki connect resume-revocation --source KEY --operation-id ID [--json]\n       kizuki connect <connector> --source PATH [--sensitivity public|personal|private]\n       kizuki connect beeper --token-ref env:VAR|file:/absolute/path [--endpoint http://127.0.0.1:23373] [--sensitivity public|personal|private] [--json]\n       kizuki connect imap [--source KEY] [--sensitivity public|personal|private]\n       kizuki connect telegram [--source KEY] [--sensitivity public|personal|private] [--json]",
   summary: "choose a source, connect Beeper or local files, and check sync status",
   async run(io: CliIo, args: string[]): Promise<number> {
     if (["grant", "revoke", "resume-revocation"].includes(args[0] ?? "") || (args[0] === "status" && args.includes("--source"))) return runConnectConsent(io, args);

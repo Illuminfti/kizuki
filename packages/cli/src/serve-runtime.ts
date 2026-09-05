@@ -122,23 +122,7 @@ async function syncConnections(
       continue;
     }
     try {
-<<<<<<< HEAD
       const connector = await loadConnector(selected, store, db, env);
-      const result = await runToCompletion(
-        db,
-        connector,
-        selected.connection.connector_id,
-        selected.connection.source_key,
-        "sync",
-      );
-      events_stored += result.stored;
-      events_duplicate += result.duplicates;
-      events_synced += result.stored + result.duplicates;
-      if (result.errors.length > 0 && errors.length < MAX_SYNC_ERRORS) {
-        errors.push(`connector ${selected.connection.connector_id} sync failed`);
-      }
-=======
-      const connector = await loadConnector(selected, store, env, undefined, db);
       try {
         const result = await runToCompletion(
           db,
@@ -154,7 +138,6 @@ async function syncConnections(
           errors.push(`connector ${selected.connection.connector_id} sync failed`);
         }
       } finally { await closeHostConnector(connector); }
->>>>>>> 7c9422e (Wire native Telegram enrollment with durable authenticated cooldowns)
     } catch {
       if (errors.length < MAX_SYNC_ERRORS) {
         errors.push(`connector ${selected.connection.connector_id} sync unavailable`);

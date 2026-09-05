@@ -68,26 +68,7 @@ export const syncCommand: Command = {
             failed = true;
             continue;
           }
-<<<<<<< HEAD
-          const connector = await loadConnector(selected, ctx.store, ctx.db);
-          const result = await runToCompletion(
-            ctx.db,
-            connector,
-            selected.connection.connector_id,
-            selected.connection.source_key,
-            "sync",
-          );
-          const derived = tryRefreshDerived(ctx.db, ctx.vaultPath);
-          io.out(
-            `${selected.connection.connector_id} source=${selected.connection.source_key} ${formatRunCounts(result)}`,
-          );
-          for (const text of result.errors) {
-            io.err(`error: ${text}`);
-            failed = true;
-          }
-          for (const warning of derived.degraded) io.err(`degraded: ${warning}`);
-=======
-          const connector = await loadConnector(selected, ctx.store, io.env, undefined, ctx.db);
+          const connector = await loadConnector(selected, ctx.store, ctx.db, io.env);
           try {
             const result = await runToCompletion(
               ctx.db,
@@ -106,7 +87,6 @@ export const syncCommand: Command = {
             }
             for (const warning of derived.degraded) io.err(`degraded: ${warning}`);
           } finally { await closeHostConnector(connector); }
->>>>>>> 7c9422e (Wire native Telegram enrollment with durable authenticated cooldowns)
         } catch (error) {
           failed = true;
           io.err(

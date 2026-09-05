@@ -1,9 +1,10 @@
-import { applyConnectionSensitivity } from "@kizuki/core";
+import { applyConnectionSensitivity, inspectSourceGrant } from "@kizuki/core";
 import type { Connection, Manifest, Sensitivity } from "@kizuki/core";
 import type { Database } from "bun:sqlite";
 import { TelegramConnector, TelegramConnectorError, assertSameTelegramIdentity, assertTelegramRetryAllowed, PLACEHOLDER_CREDENTIALS_MESSAGE } from "@kizuki/connector-telegram";
 import { UsageError } from "../args";
 import { ConnectionError, enrollSignedInConnection, listHostConnections } from "../connections";
+import { consentHint } from "../source-consent";
 import { withVault } from "../context";
 import { clean, jsonEnvelope } from "../output";
 import type { CliIo } from "./index";
@@ -66,11 +67,12 @@ export async function runTelegramConnect(
     } catch (error) { throw telegramFailure(error); }
     finally { await connector.close(); }
     applyConnectionSensitivity(ctx.db, connection, connector.manifest(), options.sensitivity);
-    if (options.json) io.out(jsonEnvelope("connect", "ok", { connector_id: ID, source_key: connection.source_key, state: "enrolled", capture_started: false }));
+    if (options.json) io.out(jsonEnvelope("connect", "ok", { connector_id: ID, source_key: connection.source_key, state: "enrolled", capture_started: false, consent: inspectSourceGrant(ctx.db, connection.source_key)?.status ?? "required", next: inspectSourceGrant(ctx.db, connection.source_key)?.status === "active" ? `kizuki backfill telegram --source ${connection.source_key}` : consentHint(ctx.db, connection.source_key) }));
     else {
       io.out(`connected ${ID} source=${connection.source_key}`);
       io.out("No history was captured during enrollment. Telegram source deletion detection is unsupported.");
-      io.out(`next: kizuki backfill telegram --source ${connection.source_key}`);
+      if (inspectSourceGrant(ctx.db, connection.source_key)?.status !== "active") io.out(consentHint(ctx.db, connection.source_key));
+      else io.out(`next: kizuki backfill telegram --source ${connection.source_key}`);
     }
     return 0;
   }, { retrieval: "none" });

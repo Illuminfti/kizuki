@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeXArchiveFixture } from "@kizuki/connectors/testkit";
 import { getCheckpoint, listConnections, openLedger } from "@kizuki/core";
-import { createHelpers } from "./helpers";
+import { createHelpers, fixtureConsent } from "./helpers";
 
 const h = createHelpers();
 afterEach(h.cleanup);
@@ -24,6 +24,9 @@ test("generic CLI enrolls, ingests, and resumes an X posts archive after restart
   expect(connected.stdout).toContain("health=ok");
   const sourceKey = connected.stdout.match(/source=([0-9A-HJKMNP-TV-Z]{26})/)?.[1];
   expect(sourceKey).toBeDefined();
+
+  const granted = h.runCli(setup.env, "connect", "grant", "--source", sourceKey ?? "", ...fixtureConsent(setup.root, "fixture-x-grant"));
+  expect(granted.exitCode, granted.stderr).toBe(0);
 
   const ingested = h.runCli(setup.env, "backfill", "import-x-archive", "--source", sourceKey ?? "");
   expect(ingested.exitCode, ingested.stderr).toBe(0);
