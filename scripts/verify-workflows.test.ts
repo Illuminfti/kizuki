@@ -73,6 +73,8 @@ describe("workflow validation", () => {
     expect(validateWorkflowText(path, old).some(failure => failure.reason.includes("event-bound diff"))).toBe(true);
     const skipped = current.replace("      - name: exact-head diff integrity", "      - if: false\n        name: exact-head diff integrity");
     expect(validateWorkflowText(path, skipped).some(failure => failure.reason.includes("event-bound diff"))).toBe(true);
+    const secondCheckout = current.replace("      - name: secret patterns", `      - uses: ${pinnedCheckout}\n        with: { fetch-depth: 0, ref: main }\n      - name: secret patterns`);
+    expect(validateWorkflowText(path, secondCheckout).some(failure => failure.reason.includes("event head"))).toBe(true);
   });
 
   test("accepts a SHA-pinned ci workflow with fetch-depth 0", () => {
@@ -141,6 +143,7 @@ describe("workflow validation", () => {
       expect.objectContaining({
         reason: expect.stringContaining("fetch-depth"),
       }),
+      expect.objectContaining({ reason: expect.stringContaining("event head") }),
     ]);
   });
 

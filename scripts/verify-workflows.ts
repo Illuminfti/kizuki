@@ -96,10 +96,13 @@ function validateJobs(
       });
     }
     if (path.endsWith("/ci.yml") && Array.isArray(steps)) {
-      const checkout = steps.find(step => isRecord(step) && typeof step["uses"] === "string" && step["uses"].startsWith("actions/checkout@"));
-      const settings = isRecord(checkout) ? checkout["with"] : undefined;
-      if ((checkout !== undefined || name === "test" || jobRunsHistoryScan(rawJob)) &&
-        (!isRecord(settings) || settings["ref"] !== "${{ github.event.pull_request.head.sha || github.sha }}")) {
+      const checkouts = steps.filter(step => isRecord(step) && typeof step["uses"] === "string" && step["uses"].startsWith("actions/checkout@"));
+      const exact = (checkout: unknown): boolean => {
+        const settings = isRecord(checkout) ? checkout["with"] : undefined;
+        return isRecord(settings) && settings["ref"] === "${{ github.event.pull_request.head.sha || github.sha }}" &&
+          (!jobRunsHistoryScan(rawJob) || settings["fetch-depth"] === 0);
+      };
+      if (((name === "test" || jobRunsHistoryScan(rawJob)) && checkouts.length === 0) || !checkouts.every(exact)) {
         failures.push({ path, reason: `job "${name}" must check out the immutable event head` });
       }
       if (name === "test" && (rawJob["if"] !== undefined || !steps.some(step =>
