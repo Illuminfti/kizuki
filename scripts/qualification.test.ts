@@ -45,7 +45,7 @@ test("separate real subprocess samples preserve actual time and never turn fixtu
  writeFileSync(join(f.out,"samples.jsonl"),journal.replace('"seq":0','"seq":9'));expect(()=>statusQualification(f.out)).toThrow("hash chain");
 });
 test("strict collector refuses corruption and retains only content-free receipt fields",()=>{
- const receipt={run_id:"one",rail:"sync",started_at:"2026-09-05T00:00:00.000Z",finished_at:"2026-09-05T00:00:01.000Z",status:"ok",model:{unavailable:0},retrieval:{degraded:[]},errors:["PRIVATE SOURCE SHOULD NOT BE COPIED"]};
+ const receipt={run_id:"01K00000000000000000000000",rail:"sync",started_at:"2026-09-05T00:00:00.000Z",finished_at:"2026-09-05T00:00:01.000Z",status:"ok",model:{unavailable:0},retrieval:{degraded:[]},errors:["PRIVATE SOURCE SHOULD NOT BE COPIED"]};
  const rows=strictReceiptProjection(JSON.stringify(receipt)+"\n");expect(JSON.stringify(rows)).not.toContain("PRIVATE SOURCE");expect(rows[0]!.execution).toBeNull();
  expect(()=>strictReceiptProjection(JSON.stringify(receipt))).toThrow("torn");expect(()=>strictReceiptProjection("bad\n")).toThrow();
  expect(()=>strictReceiptProjection(JSON.stringify({...receipt,execution:{pid:1}})+"\n")).toThrow("identity");
@@ -57,16 +57,16 @@ test("artifact changes and stale collector locks refuse further appends",()=>{
 test("captured receipt hashes survive operational prune and a conflict stays durably interrupted",()=>{
  const f=fixture();initQualification(f.artifact,f.proof,f.scope,f.out);
  const now=new Date().toISOString();
- const receipt={run_id:"retained",rail:"sync",started_at:now,finished_at:now,status:"ok",errors:[],model:{unavailable:0},retrieval:{degraded:[]}};
+ const receipt={run_id:"01K00000000000000000000001",rail:"sync",started_at:now,finished_at:now,status:"ok",errors:[],model:{unavailable:0},retrieval:{degraded:[]}};
  const journal=join(f.vault,".kizuki/run-receipts.jsonl");writeFileSync(journal,JSON.stringify(receipt)+"\n");sampleQualification(f.out);
  writeFileSync(journal,"");sampleQualification(f.out);
- expect(readFileSync(join(f.out,"samples.jsonl"),"utf8")).toContain('"run_id":"retained"');
+ expect(readFileSync(join(f.out,"samples.jsonl"),"utf8")).toContain('"run_id":"01K00000000000000000000001"');
  writeFileSync(journal,JSON.stringify({...receipt,status:"failed"})+"\n");expect(()=>sampleQualification(f.out)).toThrow("durable interruption");
  writeFileSync(journal,"");expect(sampleQualification(f.out).issues).toContain("collection-rejected");
 });
 
 test("extra execution fields cannot enter content-minimal evidence", () => {
- const receipt={run_id:"one",rail:"sync",started_at:"2026-09-05T00:00:00.000Z",finished_at:"2026-09-05T00:00:01.000Z",status:"ok",model:{unavailable:0},retrieval:{degraded:[]},errors:[],execution:{instance_id:"i",pid:1,boot_id:"b",trigger:"scheduled",due_at:"2026-09-05T00:00:00.000Z",private_note:"SECRET_SENTINEL"}};
+ const receipt={run_id:"01K00000000000000000000000",rail:"sync",started_at:"2026-09-05T00:00:00.000Z",finished_at:"2026-09-05T00:00:01.000Z",status:"ok",model:{unavailable:0},retrieval:{degraded:[]},errors:[],execution:{instance_id:"i",pid:1,boot_id:"b",trigger:"scheduled",due_at:"2026-09-05T00:00:00.000Z",private_note:"SECRET_SENTINEL"}};
  expect(()=>strictReceiptProjection(JSON.stringify(receipt)+"\n")).toThrow("execution");
 });
 
@@ -76,7 +76,7 @@ test("actual retained receipt prune preserves canonical evidence; semantic chang
  const f=fixture();initQualification(f.artifact,f.proof,f.scope,f.out);
  const now=new Date().toISOString(), db=openLedger(join(f.vault,".kizuki/kizuki.db"));
  try {
-  persistRunReceipt(db,f.vault,{...emptyRunTotals(),run_id:"retained-real",rail:"doctor-sweep",started_at:now,finished_at:now,status:"ok",stopped:null});
+  persistRunReceipt(db,f.vault,{...emptyRunTotals(),run_id:"01K00000000000000000000002",rail:"doctor-sweep",started_at:now,finished_at:now,status:"ok",stopped:null});
   sampleQualification(f.out);
   pruneRunReceipts(db,f.vault,now);
   expect(()=>sampleQualification(f.out)).not.toThrow();
@@ -118,10 +118,31 @@ test("non-UTC and supervised scopes are refused rather than credited as fixture 
 });
 
 test("canonical receipt digest preserves semantic counters and ignores JSON key ordering only", () => {
- const receipt={run_id:"semantic",rail:"sync",started_at:"2026-09-05T00:00:00.000Z",finished_at:"2026-09-05T00:00:01.000Z",status:"ok",model:{unavailable:0},retrieval:{degraded:[]},errors:[],claims_rejected:{b:2,a:1}};
+ const receipt={run_id:"01K00000000000000000000003",rail:"sync",started_at:"2026-09-05T00:00:00.000Z",finished_at:"2026-09-05T00:00:01.000Z",status:"ok",model:{unavailable:0},retrieval:{degraded:[]},errors:[],claims_rejected:{b:2,a:1}};
  const projection=(value:unknown)=>strictReceiptProjection(JSON.stringify(value)+"\n")[0]!;
  expect(projection(receipt).sha256).toBe(projection({...receipt,claims_rejected:{a:1,b:2}}).sha256);
  expect(projection(receipt).sha256).not.toBe(projection({...receipt,events_stored:1}).sha256);
  expect(()=>projection({...receipt,events_stored:"1"})).toThrow("counter");
  expect(projection(receipt).sha256).not.toBe(projection({...receipt,model:{...receipt.model,usage_unknown:true}}).sha256);
+});
+
+test("strict projection accepts producer identifiers and rejects private values in each identity field", () => {
+ const execution = {instance_id:"12345678-1234-4123-8123-123456789abc",boot_id:"12345678-1234-4123-8123-123456789abd",pid:12,trigger:"scheduled",due_at:"2026-09-05T00:00:00.000Z"};
+ const receipt={run_id:"01K00000000000000000000000",rail:"sync",started_at:execution.due_at,finished_at:execution.due_at,status:"ok",errors:[],model:{unavailable:0},retrieval:{degraded:[]},execution};
+ expect(strictReceiptProjection(JSON.stringify(receipt)+"\n")[0]!.run_id).toBe(receipt.run_id);
+ for (const bad of ["PRIVATE_SOURCE_SENTINEL", "", "01k00000000000000000000000", "81K0000000000000000000000"]) {
+  expect(()=>strictReceiptProjection(JSON.stringify({...receipt,run_id:bad})+"\n")).toThrow("identifier");
+ }
+ for (const field of ["instance_id","boot_id"]) for (const bad of ["PRIVATE_SOURCE_SENTINEL", "12345678-1234-0123-8123-123456789abc", execution.instance_id.toUpperCase()]) {
+  expect(()=>strictReceiptProjection(JSON.stringify({...receipt,execution:{...execution,[field]:bad}})+"\n")).toThrow("identifier");
+ }
+});
+
+test("init refuses future or unsupported schedule policy before creating a report", () => {
+ for(const update of ["next_run_at='2099-01-01T00:00:00.000Z'", "jitter_s=604800", "period_s=604800"]) {
+  const f=fixture();const db=openLedger(join(f.vault,".kizuki/kizuki.db"));
+  db.exec(`UPDATE schedules SET ${update}`);db.close();
+  expect(()=>initQualification(f.artifact,f.proof,f.scope,f.out)).toThrow("rail profile");
+  expect(()=>statSync(f.out)).toThrow();
+ }
 });

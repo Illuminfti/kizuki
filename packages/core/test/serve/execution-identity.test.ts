@@ -1,5 +1,5 @@
 import type { QualificationProfile, QualificationSample } from "../../src/serve/qualification";
-import { RAIL_IDS } from "../../src/serve/types";
+import { DEFAULT_RAILS, RAIL_IDS } from "../../src/serve/types";
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync, statSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -61,15 +61,15 @@ test("JSONL recovery advances the original due slot exactly once despite a late 
  const db=openLedger(join(root,".kizuki/kizuki.db"));
  const due="2026-09-05T00:00:00.000Z",finished="2026-09-05T00:00:30.000Z";
  try {
-  db.query("UPDATE schedules SET next_run_at=?, period_s=60 WHERE rail='doctor-sweep'").run(due);
-  const receipt={...emptyRunTotals(),run_id:"replay-grid",rail:"doctor-sweep",started_at:due,finished_at:finished,status:"ok" as const,stopped:null,execution:{instance_id:"a",pid:12,boot_id:"boot",trigger:"scheduled" as const,due_at:due}};
+  db.query("UPDATE schedules SET next_run_at=?, period_s=60 WHERE rail='embed-backfill'").run(due);
+  const receipt={...emptyRunTotals(),run_id:"replay-grid",rail:"embed-backfill",started_at:due,finished_at:finished,status:"ok" as const,stopped:null,execution:{instance_id:"a",pid:12,boot_id:"boot",trigger:"scheduled" as const,due_at:due}};
   expect(()=>persistRunReceipt(db,root,receipt,{crashAfter:"after-jsonl"})).toThrow();
   expect(recoverRunJournal(db,root)).toEqual(["replay-grid"]);
-  const next=()=>listSchedules(db).find(r=>r.rail==="doctor-sweep")!.next_run_at;
+  const next=()=>listSchedules(db).find(r=>r.rail==="embed-backfill")!.next_run_at;
   expect(next()).toBe("2026-09-05T00:01:00.000Z");
   expect(recoverRunJournal(db,root)).toEqual([]);expect(next()).toBe("2026-09-05T00:01:00.000Z");
   const {evaluateQualification}=await import("../../src/serve/qualification");
-  const profile:QualificationProfile={scope:"fixture",start_at:due,boot_id:"boot",monotonic_ms:0,brief_hour:7,timezone:"UTC",supervisor:"none",sampling_interval_ms:30_000,max_gap_ms:60_000,lateness_ms:30_000,rails:RAIL_IDS.map(rail=>({rail,period_s:60,jitter_s:0,next_run_at:rail==="doctor-sweep"?due:"2026-09-05T01:00:00.000Z"}))};
+  const profile:QualificationProfile={scope:"fixture",start_at:due,boot_id:"boot",monotonic_ms:0,brief_hour:7,timezone:"UTC",supervisor:"none",sampling_interval_ms:30_000,max_gap_ms:60_000,lateness_ms:30_000,rails:DEFAULT_RAILS.map(spec=>({...spec,next_run_at:spec.rail==="embed-backfill"?due:new Date(Date.parse(due)+spec.period_s*1000).toISOString()}))};
   const recovered=listRunReceipts(db)[0]!;
   const first:QualificationSample={at:finished,monotonic_ms:30_000,boot_id:"boot",supervisor:"not-observed",process:{pid:12,boot_id:"boot",start_ticks:"1",binary_sha256:"a".repeat(64),instance_id:"a"},issues:[],receipts:[{run_id:recovered.run_id,sha256:"b".repeat(64),rail:recovered.rail,started_at:recovered.started_at,finished_at:recovered.finished_at,status:recovered.status,healthy:true,execution:recovered.execution!}]};
   const restarted={...receipt,run_id:"restart-grid",started_at:next()!,finished_at:"2026-09-05T00:01:30.000Z",execution:{...receipt.execution,instance_id:"b",pid:13,due_at:next()!}};

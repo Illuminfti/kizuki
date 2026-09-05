@@ -254,12 +254,14 @@ function appendJsonl(vaultPath: string, receipt: RunReceipt): void {
 
 function insertReceiptRow(db: Database, receipt: RunReceipt, vaultPath: string): void {
   db.transaction(() => {
+    const raw = db.query<{ report: string }, [string]>("SELECT report FROM run_receipts WHERE run_id = ?").get(receipt.run_id);
     const existing = getRunReceipt(db, receipt.run_id);
+    if (raw !== null && raw !== undefined && existing === null) throw new Error("invalid existing run receipt");
     if (existing !== null && canonicalReceiptContent(existing) !== canonicalReceiptContent(receipt)) throw new Error("conflicting run receipt");
     if (existing !== null) return;
     applyScheduleTransition(db, vaultPath, receipt);
     db.query(
-      `INSERT OR IGNORE INTO run_receipts
+      `INSERT INTO run_receipts
          (run_id, rail, started_at, finished_at, status, stopped, report)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
     ).run(

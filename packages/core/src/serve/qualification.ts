@@ -1,5 +1,5 @@
 import { nextScheduleSlot } from "./receipts";
-import { RAIL_IDS, type RunExecution } from "./types";
+import { DEFAULT_RAILS, RAIL_IDS, type RunExecution } from "./types";
 
 export const QUALIFICATION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 export interface QualificationRail { rail: string; period_s: number; jitter_s: number; next_run_at: string; }
@@ -45,8 +45,14 @@ export function evaluateQualification(profile: QualificationProfile, samples: re
   if (profile.rails.map((r) => r.rail).sort().join() !== [...RAIL_IDS].sort().join()) issues.add("required-rails-missing");
   const due = new Map<string, number>();
   for (const rail of profile.rails) {
-    if (!Number.isSafeInteger(rail.period_s) || rail.period_s <= 0 || !Number.isSafeInteger(rail.jitter_s) || rail.jitter_s < 0) throw new Error("invalid rail profile");
-    due.set(rail.rail, qualificationDate(rail.next_run_at));
+    const supported = DEFAULT_RAILS.find(spec => spec.rail === rail.rail);
+    const first = qualificationDate(rail.next_run_at);
+    // The observer cannot redefine cadence or postpone every obligation beyond
+    // its window. A slightly overdue current slot remains observable as such.
+    if (!supported || rail.period_s !== supported.period_s || rail.jitter_s !== supported.jitter_s ||
+        first > start + supported.period_s * 1000 ||
+        first < start - profile.lateness_ms - supported.jitter_s * 1000) throw new Error("invalid rail profile");
+    due.set(rail.rail, first);
   }
   const seen = new Map<string, string>();
   const bindings = new Map<string, string>();

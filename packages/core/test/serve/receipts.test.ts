@@ -93,3 +93,18 @@ describe("run receipts", () => {
     db.close();
   });
 });
+
+test("malformed existing receipt cannot consume the recovered schedule transition", () => {
+ const {path,db}=vault(), due="2026-09-05T00:00:00.000Z", run_id="01K00000000000000000000000";
+ try {
+  db.query("UPDATE schedules SET next_run_at=? WHERE rail='doctor-sweep'").run(due);
+  const receipt={...emptyRunTotals(),run_id,rail:"doctor-sweep",started_at:due,finished_at:due,status:"ok" as const,stopped:null,execution:{instance_id:"i",pid:12,boot_id:"b",trigger:"scheduled" as const,due_at:due}};
+  expect(()=>persistRunReceipt(db,path,receipt,{crashAfter:"after-jsonl"})).toThrow();
+  const malformed=JSON.stringify({run_id});
+  db.query("INSERT INTO run_receipts(run_id,rail,started_at,finished_at,status,stopped,report) VALUES (?,?,?,?,?,?,?)").run(run_id,"doctor-sweep",due,due,"ok",null,malformed);
+  expect(()=>recoverRunJournal(db,path)).toThrow();
+  expect(db.query<{next_run_at:string},[]>("SELECT next_run_at FROM schedules WHERE rail='doctor-sweep'").get()!.next_run_at).toBe(due);
+  expect(db.query<{report:string},[string]>("SELECT report FROM run_receipts WHERE run_id=?").get(run_id)!.report).toBe(malformed);
+  expect(getRunReceipt(db,run_id)).toBeNull();
+ } finally {db.close();}
+});

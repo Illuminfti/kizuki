@@ -110,3 +110,16 @@ Focused verification:
 bun test packages/core/test/serve/execution-identity.test.ts packages/core/test/serve/qualification.test.ts scripts/qualification.test.ts packages/core/test/index.test.ts
 bun run typecheck
 ```
+
+The fixture observer accepts only the native `DEFAULT_RAILS` period and jitter
+policy. Each initial due slot must be no later than one supported period after
+observation start, and no earlier than its already documented lateness allowance.
+Future schedules cannot replace automatic-run evidence. Synthetic boundary tests
+use those same cadences; they supply no real elapsed-time qualification credit.
+
+Before retaining receipt projections, the collector requires native uppercase
+ULID run IDs and canonical lowercase version-4 UUID instance/boot IDs. Invalid
+identifier values and extra execution fields are refused without copying them
+into samples. Operational readers retain their historical compatibility.
+Recovery refuses a malformed existing same-ID receipt inside the receipt/schedule
+transaction, preserving both its original row and due boundary for investigation.

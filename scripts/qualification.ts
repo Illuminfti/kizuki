@@ -10,6 +10,14 @@ import { readServeProcessMarker } from "../packages/core/src/serve/daemon";
 import { parseRunExecution, canonicalReceiptContent } from "../packages/core/src/serve/receipts";
 import { RAIL_IDS, RUN_STATUSES } from "../packages/core/src/serve/types";
 
+// Exact native producer spellings, not arbitrary labels carrying source content.
+const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+function identifier(value: unknown, grammar: RegExp): string {
+  if (typeof value !== "string" || !grammar.test(value)) throw new Error("invalid evidence identifier");
+  return value;
+}
+
 const LIMIT = 64 * 1024 * 1024;
 const hash = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
 function object(value: unknown): Record<string, unknown> {
@@ -99,7 +107,7 @@ function validateManifest(value: unknown): Manifest {
   for(const key of ["binary_sha256","build_sha256","proof_sha256"])if(typeof identity[key]!=="string" || !/^[0-9a-f]{64}$/.test(identity[key] as string))throw new Error("invalid manifest digest");
   text(identity.target);
   const profile=exact(m.profile,"scope,start_at,boot_id,monotonic_ms,rails,brief_hour,timezone,supervisor,sampling_interval_ms,max_gap_ms,lateness_ms");
-  text(profile.boot_id);
+  identifier(profile.boot_id, UUID);
   if(!Array.isArray(profile.rails))throw new Error("invalid manifest rails");
   for(const rail of profile.rails)exact(rail,"rail,period_s,jitter_s,next_run_at");
   const result=m as unknown as Manifest;
@@ -176,7 +184,7 @@ export function strictReceiptProjection(raw: string): QualificationReceipt[] {
     if(value.stopped!==undefined && value.stopped!==null && typeof value.stopped!=="string")throw new Error("invalid receipt stop reason");
     if(value.claims_rejected!==undefined)for(const count of Object.values(object(value.claims_rejected)))counter(count);
     if(value.budget!==undefined)for(const entry of Object.values(object(value.budget))){const item=exact(entry,"used,limit");counter(item.used);counter(item.limit);}
-    const run_id = text(value.run_id), rail = text(value.rail), started_at = text(value.started_at), finished_at = text(value.finished_at), status = text(value.status);
+    const run_id = identifier(value.run_id, ULID), rail = text(value.rail), started_at = text(value.started_at), finished_at = text(value.finished_at), status = text(value.status);
     qualificationDate(started_at); qualificationDate(finished_at);
     if (!(RAIL_IDS as readonly string[]).includes(rail) || !(RUN_STATUSES as readonly string[]).includes(status)) throw new Error("unknown run rail or status");
     if (value.execution !== undefined) {
@@ -184,6 +192,7 @@ export function strictReceiptProjection(raw: string): QualificationReceipt[] {
     }
     const execution = parseRunExecution(value.execution);
     if (value.execution !== undefined && !execution) throw new Error("invalid run execution identity");
+    if (execution) { identifier(execution.instance_id, UUID); identifier(execution.boot_id, UUID); }
     if (execution?.due_at) qualificationDate(execution.due_at);
     if (!Array.isArray(value.errors) || value.errors.some((e: unknown) => typeof e !== "string")) throw new Error("invalid run errors");
     const model = object(value.model), retrieval = object(value.retrieval);
@@ -226,7 +235,7 @@ function collect(manifest: Manifest, known: Map<string,string>): QualificationSa
           if (!imageStat.isFile() || imageStat.size > 256 * 1024 * 1024) throw new Error("process image exceeds limit");
           digest = hash(readFileSync(imageFd));
         } finally { closeSync(imageFd); }
-        if (before === ticks() && digest === manifest.identity.binary_sha256 && marker?.pid === lease.holder_pid && marker.boot_id === lease.holder_boot_id && marker.instance_id === readServeProcessMarker(manifest.vault)?.instance_id) processBinding = {pid:lease.holder_pid,boot_id:lease.holder_boot_id,start_ticks:before,binary_sha256:digest,instance_id:marker.instance_id};
+        if (before === ticks() && digest === manifest.identity.binary_sha256 && marker?.pid === lease.holder_pid && marker.boot_id === lease.holder_boot_id && UUID.test(marker.instance_id) && UUID.test(marker.boot_id) && marker.instance_id === readServeProcessMarker(manifest.vault)?.instance_id) processBinding = {pid:lease.holder_pid,boot_id:lease.holder_boot_id,start_ticks:before,binary_sha256:digest,instance_id:marker.instance_id};
       } catch { issues.push("process-image-unavailable"); }
     }
   } finally { db.close(); }

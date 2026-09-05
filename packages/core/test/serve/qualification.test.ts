@@ -24,16 +24,16 @@ test("uncaptured intervals and backward time interrupt", () => {
   expect(evaluateQualification(profile, [sample(0), sample(61_000)]).issues).toContain("collection-gap");
   expect(evaluateQualification(profile, [sample(1000), sample(0)]).issues).toContain("clock-discontinuity");
 });
-import { RAIL_IDS } from "../../src/serve/types";
+import { DEFAULT_RAILS, RAIL_IDS } from "../../src/serve/types";
 function trace(duration: number) {
-  const p: QualificationProfile = {...profile, rails:RAIL_IDS.map(rail=>({rail,period_s:60,jitter_s:0,next_run_at:new Date(start).toISOString()}))};
+  const p: QualificationProfile = {...profile, rails:DEFAULT_RAILS.map(spec=>({...spec,next_run_at:new Date(start).toISOString()}))};
   const due = new Map<string,number>(RAIL_IDS.map(rail=>[rail,0]));
   const samples: QualificationSample[] = [];
   for(let ms=0;ms<=duration;ms+=60_000) {
     const s=sample(ms); s.process={pid:12,boot_id:"boot",start_ticks:"1",binary_sha256:"a".repeat(64),instance_id:"instance"};
     for(const rail of RAIL_IDS) if(ms===due.get(rail)) {
       s.receipts.push({run_id:`${rail}-${ms}`,sha256:"b".repeat(64),rail,started_at:s.at,finished_at:s.at,status:"ok",healthy:true,execution:{instance_id:"instance",pid:12,boot_id:"boot",trigger:"scheduled",due_at:s.at}});
-      if(rail==="brief") {const next=new Date(start+ms);next.setUTCHours(7,0,0,0);if(next.getTime()<=start+ms)next.setUTCDate(next.getUTCDate()+1);due.set(rail,next.getTime()-start);} else due.set(rail,ms+60_000);
+      if(rail==="brief") {const next=new Date(start+ms);next.setUTCHours(7,0,0,0);if(next.getTime()<=start+ms)next.setUTCDate(next.getUTCDate()+1);due.set(rail,next.getTime()-start);} else due.set(rail,ms+DEFAULT_RAILS.find(r=>r.rail===rail)!.period_s*1000);
     }
     samples.push(s);
   }
@@ -50,7 +50,7 @@ test("exact seven-day boundary needs every due slot and still proves only fixtur
 });
 test("manual, once, legacy and degraded receipts cannot fill automatic due slots",()=>{
   for(const mode of ["manual","once","legacy","degraded"]){
-    const {p,samples}=trace(60_000); const first=samples[0]!.receipts[0]!;
+    const {p,samples}=trace(180_000); const first=samples[0]!.receipts[0]!;
     if(mode==="legacy") first.execution=null;
     else if(mode==="degraded")first.status="degraded";
     else first.execution={...first.execution!,trigger:mode as "manual"|"once"};
@@ -66,17 +66,19 @@ test("duplicate hashes dedupe, conflicting run ids and unbound processes interru
 
 test("repeated maximum lateness cannot shift the frozen seven-day due grid", () => {
   const { p, samples } = trace(604_800_000);
-  // Reproduce the old completion-relative scheduler: six rails run every 90s,
-  // claiming a new slot after their previous 30s-late completion.
+  // Reproduce the old completion-relative scheduler at each supported cadence,
+  // claiming a new slot after its previous 30s-late completion.
   const drifted = samples.map(s => ({ ...s, receipts: s.receipts.filter(r => r.rail === "brief") }));
-  for (let due = 0; due + 30_000 <= 604_800_000; due += 90_000) {
-    const ended = due + 30_000;
-    const bucket = drifted[Math.ceil(ended / 60_000)]!;
-    for (const rail of RAIL_IDS.filter(r => r !== "brief")) bucket.receipts.push({
-      run_id: `${rail}-drift-${due}`, sha256: "d".repeat(64), rail,
-      started_at: new Date(start + due).toISOString(), finished_at: new Date(start + ended).toISOString(), status: "ok", healthy: true,
-      execution: { instance_id: "instance", pid: 12, boot_id: "boot", trigger: "scheduled", due_at: new Date(start + due).toISOString() },
-    });
+  for (const spec of DEFAULT_RAILS.filter(r => r.rail !== "brief")) {
+    for (let due = 0; due + 30_000 <= 604_800_000; due += spec.period_s * 1000 + 30_000) {
+      const ended = due + 30_000;
+      const bucket = drifted[Math.ceil(ended / 60_000)]!;
+      bucket.receipts.push({
+        run_id: `${spec.rail}-drift-${due}`, sha256: "d".repeat(64), rail: spec.rail,
+        started_at: new Date(start + due).toISOString(), finished_at: new Date(start + ended).toISOString(), status: "ok", healthy: true,
+        execution: { instance_id: "instance", pid: 12, boot_id: "boot", trigger: "scheduled", due_at: new Date(start + due).toISOString() },
+      });
+    }
   }
   const result = evaluateQualification(p, drifted);
   expect(result.status).toBe("interrupted");
@@ -93,4 +95,17 @@ test("UTC fixture timing does not claim local morning or supervisor qualificatio
  const result=evaluateQualification(p,samples);
  expect(result.owner_morning).toBe("unqualified");expect(result.supervised_pilot).toBe("unqualified");
  for(const state of ["masked","disabled"] as const){samples[0]!.supervisor=state;expect(evaluateQualification(p,samples).issues).toContain("supervisor-policy-unqualified");}
+});
+
+test("seven days with no runs cannot qualify from future initial due dates or unsupported cadence", async () => {
+  const { DEFAULT_RAILS } = await import("../../src/serve/types");
+  const { samples } = trace(604_800_000);
+  for (const s of samples) s.receipts = [];
+  const rails = DEFAULT_RAILS.map(r => ({ ...r, next_run_at: new Date(start + 8 * 86_400_000).toISOString() }));
+  expect(() => evaluateQualification({ ...profile, rails }, samples)).toThrow("rail profile");
+  for (const field of ["period_s", "jitter_s"] as const) {
+    const altered = DEFAULT_RAILS.map(r => ({ ...r, next_run_at: new Date(start).toISOString() }));
+    altered[0]![field] += 604_800;
+    expect(() => evaluateQualification({ ...profile, rails: altered }, samples)).toThrow("rail profile");
+  }
 });
