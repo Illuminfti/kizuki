@@ -58,6 +58,11 @@ current model. New receipts bind the original model reference through a
 collide in doctor history. Older receipts whose reference was already redacted
 without a digest remain explicitly unattributed; they do not count as current
 model success or failure. Lossless older references still match exactly.
+`current_failure` reflects the newest attributable attempt and controls model
+health; a later usable success clears it while preserving `last_failure`.
+An unrelated model or a run without a model attempt cannot clear a failure.
+Unattributed-only history remains unknown until a current-model attempt
+establishes its state; a later success retains the warning without failing health.
 Diagnostics contain no provider prose, rejected field names, predicate values
 or raw responses. The claim JSON schema remains exact.
 

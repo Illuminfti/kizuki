@@ -205,6 +205,8 @@ export interface ModelDoctor {
   readonly model_ref: string | null;
   readonly last_success_at: string | null;
   readonly last_failure: { readonly at: string; readonly detail: string } | null;
+  /** Failure of the newest attributable attempt, independently of historical failures. */
+  readonly current_failure: { readonly at: string; readonly detail: string } | null;
   readonly unattributed_receipts: number;
   readonly unavailable: number;
   readonly budget: Readonly<Record<string, { used: number; limit: number }>>;

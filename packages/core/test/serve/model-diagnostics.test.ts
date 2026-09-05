@@ -9,6 +9,7 @@ import { initVault } from "../../src/vault/init";
 import { runRail } from "../../src/serve/rails";
 import { runWritePass } from "../../src/serve/write-pass";
 import { inspectServeDoctor } from "../../src/serve/doctor";
+import { writeServeIntent } from "../../src/serve/intent";
 import { readExtractCursor } from "../../src/serve/extract";
 import { getRunReceipt, listRunReceipts, parseRunReceipt, persistRunReceipt, pruneRunReceipts } from "../../src/serve/receipts";
 import { emptyRunTotals } from "../../src/serve/types";
@@ -109,7 +110,7 @@ test("long model references keep distinct private receipt identities and indepen
     expect(first.model.model_ref_sha256).not.toBe(otherReceipt.model.model_ref_sha256);
     const currentReport = inspectServeDoctor(db, path, { model_ref: firstModel, now: "2026-09-05T00:00:04Z" });
     const current = currentReport.model;
-    expect(currentReport.failures.some(value => value.includes("field=predicate"))).toBe(true);
+    expect(currentReport.failures.some(value => value.includes("field=predicate"))).toBe(false);
     expect(current.last_success_at).toBe("2026-09-05T00:00:03Z");
     expect(current.last_failure?.at).toBe("2026-09-05T00:00:01Z");
     expect(current.last_failure?.detail).toContain("field=predicate");
@@ -124,6 +125,7 @@ test("long model references keep distinct private receipt identities and indepen
 
 test("already redacted historical references remain unattributed through republication", () => {
   const { path, db } = fixture();
+  writeServeIntent(path, "opted-out");
   try {
     persistRunReceipt(db, path, { ...emptyRunTotals(), run_id: "legacy-redacted", rail: "sync", started_at: "2026-09-05T00:00:01Z", finished_at: "2026-09-05T00:00:01Z", status: "degraded", stopped: null,
       model: { ...emptyRunTotals().model, calls: 1, model_ref: "kizuki.llm.openai-compatible:deepseek/[redacted]@openrouter.ai", diagnostic } });
@@ -137,5 +139,53 @@ test("already redacted historical references remain unattributed through republi
     expect(doctor.model.unattributed_receipts).toBe(1);
     expect(doctor.model.detail).toContain("unattributed");
     expect(doctor.failures.some(value => value.includes("model history"))).toBe(true);
+    const knownModel = "kizuki.llm.openai-compatible:deepseek/deepseek-v4-flash-0731@openrouter.ai";
+    const persist = (id: string, calls: number) => persistRunReceipt(db, path, {
+      ...emptyRunTotals(), run_id: id, rail: "sync", started_at: "2026-09-05T00:00:02Z", finished_at: "2026-09-05T00:00:03Z", status: "ok", stopped: null,
+      model: { ...emptyRunTotals().model, calls, model_ref: knownModel },
+    });
+    persist("001-known-no-attempt", 0);
+    expect(inspectServeDoctor(db, path, { model_ref: knownModel, now: "2026-09-05T00:00:04Z" }).ok).toBe(false);
+    persist("002-known-success", 1);
+    const recovered = inspectServeDoctor(db, path, { model_ref: knownModel, now: "2026-09-05T00:00:04Z" });
+    expect(recovered.model.unattributed_receipts).toBe(1);
+    expect(recovered.model.detail).toContain("unattributed");
+    expect(recovered.model.last_failure).toBeNull();
+    expect(recovered.ok).toBe(true);
+  } finally { db.close(); }
+});
+
+test("doctor health follows the latest current-model attempt while retaining failure history", () => {
+  const { path, db } = fixture();
+  writeServeIntent(path, "opted-out");
+  const at = "2026-09-05T00:00:02Z";
+  const inspect = () => inspectServeDoctor(db, path, { model_ref: MODEL, now: "2026-09-05T00:00:03Z" });
+  const persist = (id: string, failed: boolean, calls = 1, model = MODEL) => persistRunReceipt(db, path, {
+    ...emptyRunTotals(), run_id: id, rail: "sync", started_at: at, finished_at: at,
+    status: failed ? "degraded" : "ok", stopped: null,
+    model: { ...emptyRunTotals().model, model_ref: model, calls, ...(failed ? { diagnostic } : {}) },
+  });
+  try {
+    expect(inspect().ok).toBe(true);
+    persist("001-failed", true);
+    expect(inspect().ok).toBe(false);
+    persist("002-no-attempt", false, 0);
+    expect(inspect().ok).toBe(false);
+    persist("003-other-success", false, 1, "model:other");
+    expect(inspect().ok).toBe(false);
+    persist("004-recovered", false); // Equal times must retain the receipt-order tie break.
+    const recovered = inspect();
+    expect(recovered.model.last_success_at).toBe(at);
+    expect(recovered.model.last_failure?.detail).toContain("field=predicate");
+    expect(recovered.failures).toEqual([]);
+    expect(recovered.ok).toBe(true);
+    expect(recovered.model.current_failure).toBeNull();
+    persist("005-failed-again", true, 0); // A pre-call failure is still a current attempt.
+    const failed = inspect();
+    expect(failed.model.last_success_at).toBe(at);
+    expect(failed.model.current_failure).toEqual(failed.model.last_failure);
+    expect(failed.failures).toHaveLength(1);
+    expect(failed.failures[0]).toContain("field=predicate");
+    expect(failed.ok).toBe(false);
   } finally { db.close(); }
 });

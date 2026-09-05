@@ -214,12 +214,15 @@ function modelDoctor(
   const lastOk = latestFirst.find(receipt => receipt.model.calls > 0 && modelFailure(receipt) === null);
   const lastFailed = latestFirst.find(receipt => modelFailure(receipt) !== null);
   const lastFailure = lastFailed === undefined ? null : { at: lastFailed.finished_at, detail: modelFailure(lastFailed)! };
+  const lastAttempt = latestFirst.find(receipt => receipt.model.calls > 0 || modelFailure(receipt) !== null);
+  const currentFailure = lastAttempt !== undefined && modelFailure(lastAttempt) !== null ? lastFailure : null;
   const unavailable = current.reduce((sum, receipt) => sum + receipt.model.unavailable, 0);
   return {
     canon_writing: on ? "on" : unverified ? "unverified" : "off",
     model_ref: on ? displayRef : null,
     last_success_at: lastOk?.finished_at ?? null,
     last_failure: lastFailure,
+    current_failure: currentFailure,
     unattributed_receipts: unattributed,
     unavailable,
     budget: {
@@ -383,8 +386,8 @@ export function inspectServeDoctor(
   const stores = storeDoctor(db, vaultPath, now);
   const cal = calibration(db, receipts, now);
   const failures: string[] = [];
-  if (model.last_failure !== null) failures.push(`${model.last_failure.detail} (at ${model.last_failure.at})`);
-  if (model.unattributed_receipts > 0) failures.push(`model history has ${model.unattributed_receipts} unattributed receipts; the stored reference was redacted before stable identity was recorded`);
+  if (model.current_failure !== null) failures.push(`${model.current_failure.detail} (at ${model.current_failure.at})`);
+  if (model.unattributed_receipts > 0 && model.last_success_at === null && model.last_failure === null) failures.push(`model history has ${model.unattributed_receipts} unattributed receipts; the stored reference was redacted before stable identity was recorded`);
   if (intent === "unknown") failures.push("service intent unavailable or invalid");
   else if (intent !== "installed" && (supervisor.enabled || supervisor.state === "active")) {
     failures.push("supervisor active or enabled without installed intent");
