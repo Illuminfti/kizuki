@@ -12,7 +12,11 @@ import {
 import type { Connection, Manifest, Sensitivity } from "@kizuki/core";
 import type { Database } from "bun:sqlite";
 import { getConnector } from "@kizuki/connectors";
-import { assertSameImapIdentity, ImapSignInInputError } from "@kizuki/connector-imap";
+import {
+  assertSameImapIdentity,
+  ImapSignInInputError,
+  secretSpellings,
+} from "@kizuki/connector-imap";
 import { UsageError, parseArguments, requirePositional } from "../args";
 import {
   ConnectionError,
@@ -54,7 +58,7 @@ export function sanitizedSignInIo(io: CliIo) {
   const secrets: string[] = [];
   const redact = (text: string): string => {
     let result = text;
-    for (const secret of [...secrets].sort((a, b) => b.length - a.length)) {
+    for (const secret of secrets.flatMap(secretSpellings).sort((a, b) => b.length - a.length)) {
       if (secret.length === 0) continue;
       const escaped = secret.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       result = result.replace(new RegExp(escaped, "gi"), "[redacted]");

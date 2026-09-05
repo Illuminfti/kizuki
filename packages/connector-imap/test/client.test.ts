@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { KizukiError } from "@kizuki/core";
 import type { KizukiErrorCode } from "@kizuki/core";
 import { ImapClient, MAX_UNTAGGED, atom, str } from "../src/imap/client";
-import { failureFor, sanitizeDetail } from "../src/imap/codes";
+import { failureFor, sanitizeDetail, secretSpellings } from "../src/imap/codes";
 import type { ImapConn } from "../src/transport";
 
 interface Scripted extends ImapConn {
@@ -355,5 +355,15 @@ describe("failure handling", () => {
   test("sanitizeDetail strips control characters and bounds the length", () => {
     expect(sanitizeDetail(`ab${BELL} c `)).toBe("ab c");
     expect(sanitizeDetail("y".repeat(500))).toHaveLength(200);
+  });
+
+  test("canonical password variants are redacted without changing credentials", () => {
+    const composed = "review-éclair";
+    const decomposed = "review-e\u0301clair";
+    expect(secretSpellings(composed)).toContain(composed);
+    expect(secretSpellings(composed)).toContain(decomposed);
+    expect(secretSpellings(decomposed)).toContain(composed);
+    expect(sanitizeDetail(`folder ${decomposed}`, secretSpellings(composed))).not.toContain(decomposed);
+    expect(sanitizeDetail(`folder ${composed}`, secretSpellings(decomposed))).not.toContain(composed);
   });
 });

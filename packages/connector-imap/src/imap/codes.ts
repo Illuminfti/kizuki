@@ -54,11 +54,17 @@ export function redactSecrets(
  * be filtered or a non-ASCII password leaves mangled but perfectly readable.
  */
 export function secretSpellings(secret: string): string[] {
-  let latin = "";
-  for (const byte of new TextEncoder().encode(secret)) {
-    latin += String.fromCharCode(byte);
-  }
-  return latin === secret ? [secret] : [secret, latin];
+  // Never normalize the credential used for authentication or storage. These
+  // are only equivalent display spellings a server can manufacture in a
+  // mailbox name or a decoded response.
+  const canonical = [...new Set([secret, secret.normalize("NFC"), secret.normalize("NFD")])];
+  return [...new Set(canonical.flatMap((value) => {
+    let latin = "";
+    for (const byte of new TextEncoder().encode(value)) {
+      latin += String.fromCharCode(byte);
+    }
+    return latin === value ? [value] : [value, latin];
+  }))];
 }
 
 /**

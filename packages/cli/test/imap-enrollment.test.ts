@@ -76,12 +76,13 @@ function prompts(values: readonly string[]): SignInIo {
 }
 
 function credentialFree(error: unknown, canary: string): void {
+  const spellings = [canary, canary.normalize("NFC"), canary.normalize("NFD")];
   const seen = new Set<unknown>();
   const visit = (value: unknown): void => {
     if (value === null || typeof value !== "object" || seen.has(value)) return;
     seen.add(value);
     if (value instanceof Error) {
-      expect(value.message).not.toContain(canary);
+      for (const spelling of spellings) expect(value.message).not.toContain(spelling);
       visit(value.cause);
     }
   };
@@ -92,6 +93,7 @@ describe("IMAP interactive enrollment", () => {
   test("real IMAP enrollment keeps a password canary out of notices and failures", async () => {
     const canary = "pr435-password-canary";
     const run = async (
+      password: string,
       folders: ReturnType<typeof fixtureMailbox>,
       answer: string,
       options: ConstructorParameters<typeof FakeImapServer>[1] = {},
@@ -105,7 +107,7 @@ describe("IMAP interactive enrollment", () => {
         env: {}, vaultOverride: null, stdinIsTTY: true, stdoutIsTTY: true, stderrIsTTY: true,
         out: (line) => output.push(line), err: (line) => output.push(line),
         async prompt(_question, promptOptions) {
-          const answers = ["mail.acme.example", "", FIXTURE_USERNAME, canary, answer];
+          const answers = ["mail.acme.example", "", FIXTURE_USERNAME, password, answer];
           if (index === 3) expect(promptOptions).toEqual({ secret: true });
           return answers[index++] ?? "";
         },
@@ -114,7 +116,7 @@ describe("IMAP interactive enrollment", () => {
         const connector = createImapConnector({}, {
           dial: memoryDialer(new FakeImapServer(folders, {
             username: FIXTURE_USERNAME,
-            password: canary,
+            password,
             ...options,
           })),
         });
@@ -127,25 +129,45 @@ describe("IMAP interactive enrollment", () => {
       }
     };
 
-    const folderCanary = await run([
+    const folderCanary = await run(canary, [
       ...fixtureMailbox(),
       { wire: canary, attributes: ["\\HasNoChildren"], uidvalidity: 99, uidnext: 1, messages: [] },
     ], "");
     expect(folderCanary.output.join("\n")).not.toContain(canary);
     expect(folderCanary.result).not.toBeInstanceOf(Error);
 
-    const answerCanary = await run(fixtureMailbox(), canary);
+    const answerCanary = await run(canary, fixtureMailbox(), canary);
     expect(answerCanary.output.join("\n")).not.toContain(canary);
     expect(answerCanary.result).toBeInstanceOf(Error);
     credentialFree(answerCanary.result, canary);
 
-    const providerCanary = await run(fixtureMailbox(), "", {
+    const providerCanary = await run(canary, fixtureMailbox(), "", {
       password: "different-server-password",
       echoCredentialsOnFailure: true,
     });
     expect(providerCanary.output.join("\n")).not.toContain(canary);
     expect(providerCanary.result).toBeInstanceOf(Error);
     credentialFree(providerCanary.result, canary);
+
+    const composed = "review-éclair";
+    const decomposed = "review-e\u0301clair";
+    const decomposedFolder = await run(composed, [
+      ...fixtureMailbox(),
+      { wire: "review-e&AwE-clair", attributes: ["\\HasNoChildren"], uidvalidity: 100, uidnext: 1, messages: [] },
+    ], "");
+    for (const spelling of [composed, decomposed]) {
+      expect(decomposedFolder.output.join("\n")).not.toContain(spelling);
+    }
+    expect(decomposedFolder.result).not.toBeInstanceOf(Error);
+
+    const composedFolder = await run(decomposed, [
+      ...fixtureMailbox(),
+      { wire: "review-&AOk-clair", attributes: ["\\HasNoChildren"], uidvalidity: 101, uidnext: 1, messages: [] },
+    ], "");
+    for (const spelling of [composed, decomposed]) {
+      expect(composedFolder.output.join("\n")).not.toContain(spelling);
+    }
+    expect(composedFolder.result).not.toBeInstanceOf(Error);
   });
 
   test("refuses a changed mailbox before replacing its state or checkpoint", async () => {
