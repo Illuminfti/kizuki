@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test";
 import {
   listLiveConflicts,
   listSubjectAliases,
+  scanLegacyIdentityRows,
   upsertIdentityLink,
 } from "../../src/claims/identity";
+import { Database } from "bun:sqlite";
 import { ClaimError } from "../../src/claims/errors";
 import { insertClaim } from "../../src/claims/store";
 import { openLedger } from "../../src/ledger/db";
@@ -75,6 +77,43 @@ describe("identity aliases and live conflicts", () => {
       expect(conflicts.length).toBeGreaterThan(0);
       expect(conflicts[0]?.claims.length).toBeGreaterThan(1);
     }
+    db.close();
+  });
+
+  test("bounds SQLite legacy identity rows before payload use", () => {
+    const db = openLedger(":memory:");
+    db.query(
+      `INSERT INTO identity_links
+       (subject_a, subject_b, score, evidence, status, decided_by, receipt_id, at)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`,
+    ).run("x".repeat(1_025), "person:b", 1, "[]", "candidate", "legacy", "2026-09-05T00:00:00.000Z");
+    expect(() => scanLegacyIdentityRows(db)).toThrow(/oversized/);
+    db.close();
+  });
+
+  test("rejects aggregate legacy identity payloads within the individual row limit", () => {
+    const db = openLedger(":memory:");
+    const insert = db.query(
+      `INSERT INTO identity_links
+       (subject_a, subject_b, score, evidence, status, decided_by, receipt_id, at)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`,
+    );
+    for (let index = 0; index < 90; index += 1)
+      insert.run(`person:a-${index}`, `person:b-${index}`, 1, `"${"x".repeat(12_000)}"`, "candidate", "legacy", "2026-09-05T00:00:00.000Z");
+    expect(() => scanLegacyIdentityRows(db)).toThrow(/aggregate/);
+    db.close();
+  });
+
+  test("rejects non-text legacy storage even when SQLite compatibility tables are corrupt", () => {
+    const db = new Database(":memory:");
+    db.exec(`CREATE TABLE identity_links (
+      subject_a TEXT NOT NULL, subject_b TEXT NOT NULL, score REAL NOT NULL,
+      evidence BLOB NOT NULL, status TEXT NOT NULL, decided_by TEXT NOT NULL,
+      receipt_id TEXT, at TEXT NOT NULL, PRIMARY KEY (subject_a, subject_b)
+    )`);
+    db.query("INSERT INTO identity_links VALUES (?,?,?,?,?,?,NULL,?)")
+      .run("person:a", "person:b", 1, Buffer.from("[]"), "candidate", "legacy", "2026-09-05T00:00:00.000Z");
+    expect(() => scanLegacyIdentityRows(db)).toThrow(/malformed/);
     db.close();
   });
 });

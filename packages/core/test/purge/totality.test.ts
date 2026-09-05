@@ -508,4 +508,73 @@ describe("RFC 0002 purge totality", () => {
     const { db, vaultPath } = vault();
     expect((await verifyPurge(db, vaultPath, "not-a-purge-receipt", { now: () => AT })).ok).toBe(false);
   });
+
+  test("public verification rechecks identity residue after an awaited store callback", async () => {
+    const { db, vaultPath } = vault();
+    const erased = storeEvent(db, {
+      source_record_id: "public-verify-race.md",
+      subjects: [{ subject_id: "person:erased", role: "about" }],
+    });
+    const surviving = storeEvent(db, { source_record_id: "public-verify-surviving.md" });
+    const port = fts5(vaultPath);
+    const outcome = await runPurge(db, vaultPath, { event_id: erased.event_id }, "race", { retrieval: port, now: () => AT });
+    const verify = port.verifyAbsent.bind(port);
+    port.verifyAbsent = async (ids) => {
+      const proof = await verify(ids);
+      db.query(
+        `INSERT INTO identity_links
+         (subject_a, subject_b, score, evidence, status, decided_by, receipt_id, at)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`,
+      ).run("person:erased", "person:residue", 1, JSON.stringify([`event:${surviving.event_id}`]), "candidate", "race", AT);
+      return proof;
+    };
+    expect((await verifyPurge(db, vaultPath, outcome.receipts[0]!.receipt_id, { retrieval: port, now: () => AT })).ok).toBe(false);
+  });
+
+  test("malformed selected subjects roll back before endpoint cleanup can be claimed", () => {
+    const { db, vaultPath } = vault();
+    const erased = storeEvent(db, {
+      source_record_id: "bad-subjects.md",
+      subjects: [{ subject_id: "person:erased", role: "about" }],
+    });
+    const surviving = storeEvent(db, { source_record_id: "bad-subjects-surviving.md" });
+    db.query("UPDATE events SET subjects=? WHERE event_id=?").run("{", erased.event_id);
+    db.query(
+      `INSERT INTO identity_links
+       (subject_a, subject_b, score, evidence, status, decided_by, receipt_id, at)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`,
+    ).run("person:erased", "person:survives", 1, JSON.stringify([`event:${surviving.event_id}`]), "candidate", "legacy", AT);
+    expect(() => purgeEvents(db, vaultPath, { event_id: erased.event_id }, "strict subjects", { now: () => AT }))
+      .toThrow("purge subject snapshot is malformed or exceeds its bound");
+    expect(db.query("SELECT 1 FROM events WHERE event_id=?").get(erased.event_id)).not.toBeNull();
+    expect(db.query("SELECT 1 FROM identity_links WHERE subject_a='person:erased'").get()).not.toBeNull();
+  });
+
+  test("purge accepts all 65 valid raw subjects allowed by the event contract", () => {
+    const { db, vaultPath } = vault();
+    const subjects = Array.from({ length: 65 }, (_, index) => ({ subject_id: `person:subject-${index}`, role: "about" as const }));
+    const event = storeEvent(db, { source_record_id: "many-subjects.md", subjects });
+    expect(purgeEvents(db, vaultPath, { event_id: event.event_id }, "many valid subjects", { now: () => AT }).receipts)
+      .toHaveLength(1);
+  });
+
+  test("malformed subject role or extra field rolls back endpoint erasure", () => {
+    for (const subjects of [
+      [{ subject_id: "person:erased", role: "unknown" }],
+      [{ subject_id: "person:erased", role: "about", extra: "forbidden" }],
+    ]) {
+      const { db, vaultPath } = vault();
+      const erased = storeEvent(db, { source_record_id: `invalid-subject-${JSON.stringify(subjects)}.md` });
+      db.query("UPDATE events SET subjects=? WHERE event_id=?").run(JSON.stringify(subjects), erased.event_id);
+      db.query(
+        `INSERT INTO identity_links
+         (subject_a, subject_b, score, evidence, status, decided_by, receipt_id, at)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`,
+      ).run("person:erased", "person:survives", 1, JSON.stringify([`event:${erased.event_id}`]), "candidate", "legacy", AT);
+      expect(() => purgeEvents(db, vaultPath, { event_id: erased.event_id }, "strict role", { now: () => AT }))
+        .toThrow("purge subject snapshot is malformed or exceeds its bound");
+      expect(db.query("SELECT 1 FROM events WHERE event_id=?").get(erased.event_id)).not.toBeNull();
+      expect(db.query("SELECT 1 FROM identity_links WHERE subject_a='person:erased'").get()).not.toBeNull();
+    }
+  });
 });

@@ -27,7 +27,12 @@ import {
   rowToReceipt,
 } from "./canon/receipts";
 import { CLAIMS_SCHEMA_VERSION, syncCompatProposals } from "./claims/schema";
-import { LEGACY_IDENTITY_EVIDENCE_MAX_BYTES, parseLegacyIdentityEvidence } from "./claims/identity";
+import {
+  LEGACY_IDENTITY_EVIDENCE_MAX_BYTES,
+  LEGACY_IDENTITY_ENDPOINT_MAX_BYTES,
+  LEGACY_IDENTITY_SCAN_MAX_ROWS,
+  scanLegacyIdentityRows,
+} from "./claims/identity";
 import { rebuildDerived } from "./derived";
 import { EVENT_LIMITS, type CaptureEvent } from "./contracts/event";
 import { isUlid, ulid } from "./util/ulid";
@@ -59,6 +64,10 @@ const MACHINE_BYTE_INTENTS_BACKUP = "ledger/canon-machine-byte-intents.jsonl";
 const MAX_EXTRACT_BATCH_BACKUP_BYTES = 2_000_000;
 const MAX_EVENT_BACKUP_ROW_BYTES = EVENT_LIMITS.eventBytes + 2_048;
 const MAX_MACHINE_BYTE_INTENT_ROW_BYTES = 512;
+const IDENTITY_BACKUP = "claims/identity_links.jsonl";
+// Allow worst-case JSON escaping within the scanner's 1 MiB raw-text budget.
+const MAX_IDENTITY_BACKUP_BYTES = 8_388_608;
+const MAX_IDENTITY_BACKUP_ROW_BYTES = 131_072;
 const FORBIDDEN_KEYS = new Set([
   "resolved_secret",
   "client_secret",
@@ -237,17 +246,6 @@ interface BindingRow {
   claim_key: string;
   page_id: string;
   bound_at: string;
-}
-
-interface IdentityLinkRow {
-  subject_a: string;
-  subject_b: string;
-  score: number;
-  evidence: string;
-  status: string;
-  decided_by: string;
-  receipt_id: string | null;
-  at: string;
 }
 
 interface SensitivityRow {
@@ -770,45 +768,12 @@ function* pageBindings(db: Database): Generator<BindingRow> {
 }
 
 function* pageIdentityLinks(db: Database): Generator<Record<string, unknown>> {
-  if (!tableExists(db, "identity_links")) return;
-  let after: { subject_a: string; subject_b: string } | null = null;
-  while (true) {
-    let rows: IdentityLinkRow[];
-    if (after === null) {
-      rows = db
-        .query<IdentityLinkRow, [number]>(
-          `SELECT subject_a, subject_b, score, evidence, status, decided_by, receipt_id, at
-           FROM identity_links ORDER BY subject_a, subject_b LIMIT ?`,
-        )
-        .all(PAGE);
-    } else {
-      rows = db
-        .query<IdentityLinkRow, [string, string, string, number]>(
-          `SELECT subject_a, subject_b, score, evidence, status, decided_by, receipt_id, at
-           FROM identity_links
-           WHERE subject_a > ?
-              OR (subject_a = ? AND subject_b > ?)
-           ORDER BY subject_a, subject_b LIMIT ?`,
-        )
-        .all(after.subject_a, after.subject_a, after.subject_b, PAGE);
-    }
-    if (rows.length === 0) break;
-    for (const row of rows) {
-      yield {
-        subject_a: row.subject_a,
-        subject_b: row.subject_b,
-        score: row.score,
-        // v3 makes opaque legacy text explicit. It stays inert and exact.
-        evidence: { encoding: "kizuki.identity-evidence/raw-v1", raw: row.evidence },
-        status: row.status,
-        decided_by: row.decided_by,
-        receipt_id: row.receipt_id,
-        at: row.at,
-      };
-    }
-    const last: IdentityLinkRow | undefined = rows.at(-1);
-    if (last === undefined || rows.length < PAGE) break;
-    after = { subject_a: last.subject_a, subject_b: last.subject_b };
+  for (const row of scanLegacyIdentityRows(db)) {
+    yield {
+      ...row,
+      // V3 preserves the exact opaque text; parsing it grants no authority.
+      evidence: { encoding: "kizuki.identity-evidence/raw-v1", raw: row.evidence },
+    };
   }
 }
 
@@ -1291,6 +1256,15 @@ function verifyFiles(root: string, manifest: ExportManifest): void {
       throw new Error("backup durable extraction stream exceeds its bound");
     }
   }
+  const identities = manifest.files[IDENTITY_BACKUP];
+  if (manifest.schema === BACKUP_SCHEMA && identities === undefined) {
+    throw new Error("backup legacy identity stream is missing");
+  }
+  if (identities !== undefined &&
+      (!Number.isSafeInteger(identities.count) || identities.count < 0 || identities.count > LEGACY_IDENTITY_SCAN_MAX_ROWS ||
+       !Number.isSafeInteger(identities.size) || identities.size < 0 || identities.size > MAX_IDENTITY_BACKUP_BYTES)) {
+    throw new Error("backup legacy identity stream exceeds its bound");
+  }
   const intents = manifest.files[MACHINE_BYTE_INTENTS_BACKUP];
   if (manifest.schema !== LEGACY_BACKUP_SCHEMA && intents === undefined) {
     throw new Error("backup machine-byte intent stream is missing");
@@ -1507,34 +1481,45 @@ function insertBinding(db: Database, raw: Record<string, unknown>): void {
   );
 }
 
+function identityText(value: unknown, maxBytes: number, field: string): string {
+  if (typeof value !== "string" || value.length > maxBytes || Buffer.byteLength(value, "utf8") > maxBytes) {
+    throw new Error(`legacy identity ${field} is malformed or oversized`);
+  }
+  // Bound before allocation. SQLite cannot preserve lone UTF-16 surrogates.
+  if (Buffer.from(value, "utf8").toString("utf8") !== value) {
+    throw new Error(`legacy identity ${field} encoding is malformed`);
+  }
+  return value;
+}
+
 function insertIdentityLink(db: Database, raw: Record<string, unknown>, schema: BackupSchema): void {
-  const rawEvidence = raw.evidence;
-  const evidence = schema === BACKUP_SCHEMA
-    ? (() => {
-      const tagged = typeof rawEvidence === "object" && rawEvidence !== null && !Array.isArray(rawEvidence)
-        ? rawEvidence as { encoding?: unknown; raw?: unknown } : null;
-      if (tagged === null || tagged.encoding !== "kizuki.identity-evidence/raw-v1" || typeof tagged.raw !== "string" ||
-        Buffer.byteLength(tagged.raw, "utf8") > LEGACY_IDENTITY_EVIDENCE_MAX_BYTES) throw new Error("identity evidence is invalid");
-      return tagged.raw;
-    })()
-    : typeof rawEvidence === "string" ? rawEvidence : JSON.stringify(rawEvidence ?? []);
-  if (Buffer.byteLength(evidence, "utf8") > LEGACY_IDENTITY_EVIDENCE_MAX_BYTES) throw new Error("identity evidence is too large");
-  const parsed = parseLegacyIdentityEvidence(evidence);
+  let evidence: string;
+  if (schema === BACKUP_SCHEMA) {
+    const tagged = typeof raw.evidence === "object" && raw.evidence !== null && !Array.isArray(raw.evidence)
+      ? raw.evidence as Record<string, unknown> : null;
+    if (tagged === null || Object.keys(tagged).sort().join(",") !== "encoding,raw" ||
+        tagged.encoding !== "kizuki.identity-evidence/raw-v1") {
+      throw new Error("legacy identity evidence is invalid");
+    }
+    evidence = identityText(tagged.raw, LEGACY_IDENTITY_EVIDENCE_MAX_BYTES, "evidence");
+  } else {
+    // Preserve the supported V1/V2 reader's original JSON-value semantics,
+    // including its null/missing default. A wire string stays a JSON string.
+    evidence = identityText(JSON.stringify(raw.evidence ?? []), LEGACY_IDENTITY_EVIDENCE_MAX_BYTES, "evidence");
+  }
   db.query(
     `INSERT INTO identity_links
        (subject_a, subject_b, score, evidence, status, decided_by, receipt_id, at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    asString(raw.subject_a, "subject_a"),
-    asString(raw.subject_b, "subject_b"),
+    identityText(raw.subject_a, LEGACY_IDENTITY_ENDPOINT_MAX_BYTES, "subject_a"),
+    identityText(raw.subject_b, LEGACY_IDENTITY_ENDPOINT_MAX_BYTES, "subject_b"),
     asNumber(raw.score, "score"),
-    parsed.ok
-      ? JSON.stringify(parsed.refs.map((ref) => `${ref.kind}:${ref.id}`))
-      : evidence,
-    asString(raw.status, "status"),
-    asString(raw.decided_by, "decided_by"),
-    asStringOrNull(raw.receipt_id, "receipt_id"),
-    asString(raw.at, "at"),
+    evidence,
+    identityText(raw.status, 32, "status"),
+    identityText(raw.decided_by, 1024, "decided_by"),
+    raw.receipt_id === null || raw.receipt_id === undefined ? null : identityText(raw.receipt_id, 256, "receipt_id"),
+    identityText(raw.at, 64, "at"),
   );
 }
 
@@ -1753,8 +1738,13 @@ function* streamRows(
     return;
   }
   const maxRowBytes = relativePath === "ledger/events.jsonl" ? MAX_EVENT_BACKUP_ROW_BYTES
-    : relativePath === MACHINE_BYTE_INTENTS_BACKUP ? MAX_MACHINE_BYTE_INTENT_ROW_BYTES : Infinity;
+    : relativePath === MACHINE_BYTE_INTENTS_BACKUP ? MAX_MACHINE_BYTE_INTENT_ROW_BYTES
+    : relativePath === IDENTITY_BACKUP ? MAX_IDENTITY_BACKUP_ROW_BYTES : Infinity;
+  let rows = 0;
   for (const row of readJsonl(path, maxRowBytes)) {
+    if (relativePath === IDENTITY_BACKUP && ++rows > LEGACY_IDENTITY_SCAN_MAX_ROWS) {
+      throw new Error("backup legacy identity row limit exceeded");
+    }
     refuseSecrets(row, relativePath);
     yield asRecord(row, relativePath);
   }
@@ -1841,9 +1831,17 @@ export function restoreVault(
         for (const row of streamRows(source, "claims/bindings.jsonl", false)) {
           insertBinding(db, row);
         }
-        for (const row of streamRows(source, "claims/identity_links.jsonl", false)) {
+        let identityCount = 0;
+        for (const row of streamRows(source, IDENTITY_BACKUP, manifest.schema === BACKUP_SCHEMA)) {
           insertIdentityLink(db, row, manifest.schema);
+          identityCount += 1;
         }
+        if (manifest.files[IDENTITY_BACKUP] !== undefined && identityCount !== manifest.files[IDENTITY_BACKUP]!.count) {
+          throw new Error("backup legacy identity count mismatch");
+        }
+        // The same raw-byte and aggregate-reference budget governs export,
+        // restore and purge. Opaque malformed support remains inert history.
+        scanLegacyIdentityRows(db);
         for (const row of streamRows(source, "canon/receipts.jsonl", true)) {
           insertReceipt(db, row);
         }

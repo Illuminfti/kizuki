@@ -768,7 +768,7 @@ function assertLegacyIdentityAbsent(
 }
 
 function legacyIdentityAbsenceProvable(db: Database): boolean {
-  try { return scanLegacyIdentityRows(db).length === 0; } catch { return false; }
+  return !tableExists(db, "identity_links") || db.query("SELECT 1 FROM identity_links LIMIT 1").get() === null;
 }
 
 function recognizedPurgeReceipt(db: Database, receiptId: string): boolean {
@@ -833,7 +833,7 @@ function purgeEventsLocked(
 
     const purgedIds = new Set(candidates.map((row) => row.event_id));
     let subjectRefs: Set<string>;
-    try { subjectRefs = collectLegacyPurgeSubjects(db, [...purgedIds]); } catch { throw new PurgeError("absence_failed", "purge subject snapshot is malformed or exceeds its bound"); }
+    try { subjectRefs = collectLegacyPurgeSubjects(db, purgedIds); } catch { throw new PurgeError("absence_failed", "purge subject snapshot is malformed or exceeds its bound"); }
     const purgedAt = nowIso(options.now);
     const batchReceipt = mint(options.ids);
     purgeExtractInputs(db, purgedIds, { receipt_id: batchReceipt, created_at: purgedAt });
@@ -1207,12 +1207,11 @@ export async function verifyPurge(
   initPurgeOps(db);
   const clock = options.now ?? (() => new Date().toISOString());
   const binding = bindRetrieval(vaultPath, options.retrieval, clock);
+  let closePending = binding.owned;
   try {
   const ops = listOps(db, receiptId);
   const proofs: AbsenceProof[] = [];
-  // No raw subject survives deletion. Public identity absence is therefore
-  // provable only for an empty legacy table; retained inert rows are unprovable.
-  let ok = recognizedPurgeReceipt(db, receiptId) && legacyIdentityAbsenceProvable(db);
+  let ok = true;
   for (const op of ops) {
     if (binding.port === null && ownedErasureProof(db,receiptId,op,clock()) === null) {
       ok = false;
@@ -1244,6 +1243,13 @@ export async function verifyPurge(
     .get(receiptId)?.n ?? 0;
   const holdLifted = holds.length === 0;
   if (!holdLifted) ok = false;
+  if (closePending) {
+    closePending = false;
+    await binding.port?.close();
+  }
+  // Recheck after every external verification and owned close have settled. No erased subject
+  // dictionary is retained, so legacy identity absence requires an empty table.
+  if (!recognizedPurgeReceipt(db, receiptId) || !legacyIdentityAbsenceProvable(db)) ok = false;
   return {
     receipt_id: receiptId,
     proofs,
@@ -1251,7 +1257,7 @@ export async function verifyPurge(
     hold_lifted: holdLifted,
     ok,
   };
-  } finally { if (binding.owned) await binding.port?.close(); }
+  } finally { if (closePending) await binding.port?.close(); }
 }
 
 /** Resume existing persisted purge work without creating another deletion path. */

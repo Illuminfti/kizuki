@@ -499,6 +499,54 @@ test("revocation stays denied while a derived write is in flight and removes its
   }
 });
 
+test("source completion stays retryable when identity residue appears after public verification", async () => {
+  const { db, dir, a, b } = setup();
+  try {
+    grant(db, a);
+    setSourceGrant(db, {
+      source_key: b,
+      expected_revision: 0,
+      operation_id: "grant-b-identity-race",
+      policy: policy(),
+    });
+    const erased = accept(db, { ...event(), subjects: [{ subject_id: "person:erased", role: "about" }] }, {
+      source: { source_key: a, expected_revision: 1 },
+    });
+    const surviving = accept(db, { ...event(), source_record_id: "surviving-identity-race" }, {
+      source: { source_key: b, expected_revision: 1 },
+    });
+    if (erased.status !== "stored" || surviving.status !== "stored") throw new Error("fixture failed");
+    const port = bindLocalSourcePort(new FixtureVectorPort({ vector: false }), { store_id: "local:identity-race" });
+    const verify = port.verifyAbsent.bind(port);
+    let calls = 0;
+    port.verifyAbsent = async (ids) => {
+      const proof = await verify(ids);
+      calls += 1;
+      if (calls === 2) db.query(
+        `INSERT INTO identity_links
+         (subject_a, subject_b, score, evidence, status, decided_by, receipt_id, at)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`,
+      ).run("person:erased", "person:residue", 1, JSON.stringify([`event:${surviving.event.event_id}`]), "candidate", "race", "2026-09-05T00:00:00.000Z");
+      return proof;
+    };
+    const options = {
+      retrieval: port,
+      ownedRetrieval: { stores: async () => ({ stores: [], absent_store_ids: [] }) },
+    };
+    revokeSourceGrant(db, { source_key: a, expected_revision: 1, operation_id: "identity-race" });
+    const pending = await resumeSourceRevocation(db, dir, "identity-race", options);
+    expect(calls).toBeGreaterThanOrEqual(2);
+    expect(pending.status).toBe("denied");
+    expect(pending.purge_blockers).toContain("identity_payload_retained");
+    expect(db.query("SELECT 1 FROM identity_links WHERE subject_a='person:erased'").get()).not.toBeNull();
+    db.query("DELETE FROM identity_links").run();
+    const done = await resumeSourceRevocation(db, dir, "identity-race", options);
+    expect(done.status).toBe("purged");
+  } finally {
+    db.close();
+  }
+});
+
 test("native resume cannot drop a revoked citation and expose surviving mixed canon text", async () => {
   const { db, dir, a, b } = setup();
   try {

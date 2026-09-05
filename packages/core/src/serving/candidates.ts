@@ -4,8 +4,7 @@ import { claimReader } from "./claims";
 import type { Database } from "bun:sqlite";
 import { isMachineOriginPath } from "../canon/origin";
 import { listValidityGaps } from "../claims/gaps";
-import { listLiveConflicts, listSubjectAliases } from "../claims/identity";
-import { ClaimError } from "../claims/errors";
+import { listLiveConflicts } from "../claims/identity";
 import { listClaims } from "../claims/store";
 import { neighbors } from "../graph/graph";
 import { timeline } from "../query/timeline";
@@ -319,22 +318,9 @@ export async function collectPieces(
         block: `- gap key=${inline(gap.claim_key.slice(0, 12))} after=${inline(gap.after)} before=${inline(gap.before)}\n`,
       });
     }
-    const aliasRoots = wanted ?? live.map((claim) => claim.subject).filter(
-      (subject): subject is string => subject !== null,
-    );
-    let identityUnavailable = false;
-    try {
-      // A0 deliberately retires identity authority. Keep the only capability
-      // call at its real consumer seam, so a future implementation cannot
-      // double-read the first subject through a discarded probe.
-      for (const root of aliasRoots.slice(0, 8)) {
-        listSubjectAliases(ctx.db, root, 8, reader.canReadAlias, reader.invalidAlias);
-      }
-    } catch (error) {
-      if (!(error instanceof ClaimError) || error.code !== "identity_unsupported") throw error;
-      identityUnavailable = true;
-    }
-    if (identityUnavailable) nominated.degraded.push("identity-authority-unavailable");
+    // Identity authority is retired for every request in A0. Do not probe its
+    // legacy API: there is no usable capability to discover at runtime.
+    nominated.degraded.push("identity-authority-unavailable");
     withheld.push(...reader.denied.values());
   }
 

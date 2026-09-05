@@ -24,18 +24,14 @@ export interface SourceErasureReport {
   retained_reasons: string[];
 }
 
-interface LegacyIdentityRow {
-  subject_a: string;
-  subject_b: string;
-  evidence: string;
-}
-
 function sourceSubjectRefs(db: Database, source: string): Set<string> {
-  const ids = db.query<{ event_id: string }, [string]>("SELECT e.event_id FROM events e JOIN source_event_bindings b ON b.event_id=e.event_id WHERE b.source_key=?").all(source).map((row) => row.event_id);
-  return collectLegacyPurgeSubjects(db, ids);
+  function* ids(): Generator<string> {
+    for (const row of db.query<{ event_id: string }, [string]>(
+      "SELECT e.event_id FROM events e JOIN source_event_bindings b ON b.event_id=e.event_id WHERE b.source_key=? ORDER BY e.event_id").iterate(source)) yield row.event_id;
+  }
+  return collectLegacyPurgeSubjects(db, ids());
 }
 
-function allLegacyIdentityRows(db: Database): LegacyIdentityRow[] { return scanLegacyIdentityRows(db); }
 export function sourceErasureReport(
   db: Database,
   source: string,
@@ -136,14 +132,12 @@ export function eraseSourcePayload(
   source: string,
 ): SourceErasureReport {
   const prior = sourceErasureReport(db, source);
-  const ids = new Set(
-    db
-      .query<{ event_id: string }, [string]>(
-        "SELECT event_id FROM source_event_bindings WHERE source_key=?",
-      )
-      .all(source)
-      .map((row) => row.event_id),
-  );
+  const ids = new Set<string>();
+  for (const row of db.query<{ event_id: string }, [string]>(
+    "SELECT event_id FROM source_event_bindings WHERE source_key=?").iterate(source)) {
+    if (ids.size >= 1_000_000) throw new Error("source erasure event limit exceeded");
+    ids.add(row.event_id);
+  }
   const claims = db
     .query<{ claim_id: string; claim_key: string | null }, [string]>(
       "SELECT DISTINCT c.claim_id,c.claim_key FROM claims c JOIN json_each(c.provenance) p JOIN source_event_bindings b ON b.event_id=p.value WHERE b.source_key=? LIMIT 10001",
@@ -154,7 +148,7 @@ export function eraseSourcePayload(
   ).all(source);
   const subjectRefs = sourceSubjectRefs(db, source);
   const claimIds = new Set(claims.map((row) => row.claim_id));
-  const links = allLegacyIdentityRows(db);
+  const links = scanLegacyIdentityRows(db);
   const erasedLinks = links.filter((row) => {
     if (subjectRefs.has(row.subject_a) || subjectRefs.has(row.subject_b)) return true;
     const parsed = parseLegacyIdentityEvidence(row.evidence);
@@ -182,14 +176,9 @@ export function eraseSourcePayload(
         ...claims.map((row) => row.claim_id),
       ]),
     ],
-    affected_identity_hashes: [
-      ...new Set([
-        ...(prior?.affected_identity_hashes ?? []),
-        ...erasedLinks.map((row) =>
-          sha256Hex(JSON.stringify([row.subject_a, row.subject_b])),
-        ),
-      ]),
-    ],
+    // Kept as an empty compatibility field. Guessable endpoint hashes are
+    // erased payload too; a resumed operation scrubs older report values.
+    affected_identity_hashes: [],
     retained_reasons: [],
   };
   if (claims.length > 10000 || links.length > 10000 || proposals.length > 10000)
@@ -230,7 +219,7 @@ export function eraseSourcePayload(
   // DELETE plus VACUUM can retain obsolete tokens in live FTS5 segments.
   // Rebuild from the surviving content before compacting the owned SQLite files.
   db.exec("INSERT INTO search_docs(search_docs) VALUES ('rebuild')");
-  for (const row of allLegacyIdentityRows(db)) {
+  for (const row of scanLegacyIdentityRows(db)) {
     const parsed = parseLegacyIdentityEvidence(row.evidence);
     if (!parsed.ok) {
       report.retained_reasons.push("identity_evidence_unresolved");

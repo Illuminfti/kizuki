@@ -2134,8 +2134,31 @@ proved.
 Purge is keyed on **raw subject refs**. A0 retires `identity_links` as an
 authority source: `--include-aliases` refuses before planning or mutation,
 and ordinary raw-subject purge remains available. The retained table is inert
-compatibility history only; it is removed when an endpoint or durable support
-is erased. Absence is publicly provable only when the legacy table is empty.
+compatibility history only; incident rows are removed when an endpoint or durable
+support is erased. Before deletion, selected event subjects are strictly decoded
+under the ingress subject limits. Retained typed support must resolve to a current
+event or non-purged claim; malformed, dangling or erased support prevents a
+successful absence assertion. One scanner bounds SQLite field sizes before
+payload reads, then limits rows, aggregate bytes and references for purge,
+source erasure, export and restore.
+
+No erased subject dictionary, plain endpoint hash or keyed endpoint digest is
+retained for proof. Public `verifyPurge` can therefore prove legacy identity
+absence only when the legacy table is empty; unrelated inert rows produce
+`ok: false` and are not silently deleted. Verification checks after external
+verification and owned-port closure settle. Source completion checks again in
+its final transaction. Legacy `affected_identity_hashes` report fields are
+scrubbed to an empty compatibility array during resumed source erasure; retained
+or malformed hash fields block source completion.
+
+Backup `kizuki.backup/v3` requires the legacy identity stream and encodes evidence
+as exactly `{ encoding: "kizuki.identity-evidence/raw-v1", raw: string }`.
+The bounded opaque text is preserved byte for byte, including whitespace and
+malformed historical JSON, and grants no authority. Current restore rejects
+unknown/missing tag fields, oversized rows or streams, and scanner-budget
+violations before publishing the target. V1/V2 retain their original JSON-value
+import semantics and optional identity stream; older readers reject v3. This
+format adds no purge-proof stream or identity authority.
 
 ### 13.3 What the ledger must never hold
 

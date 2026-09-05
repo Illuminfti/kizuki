@@ -698,6 +698,96 @@ describe("restoreVault", () => {
     db.close();
   });
 
+  test("imports a genuine v2 identity evidence array as inert raw bytes", () => {
+    const { db, vaultPath } = populated();
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    const manifest = exportVault(db, vaultPath, backup);
+    const key = "claims/identity_links.jsonl";
+    const payload = Buffer.from(`${JSON.stringify({
+      subject_a: "person:legacy-a", subject_b: "person:legacy-b", score: 1,
+      evidence: ["event:legacy-v2"], status: "candidate", decided_by: "legacy", receipt_id: null,
+      at: "2026-01-01T00:00:00.000Z",
+    })}\n`);
+    writeFileSync(join(backup, "claims", "identity_links.jsonl"), payload);
+    const files = { ...manifest.files, [key]: {
+      count: 1, size: payload.byteLength, mode: 0o600,
+      sha256: new Bun.CryptoHasher("sha256").update(payload).digest("hex"),
+    } };
+    writeSignedManifest(backup, { ...manifest, schema: "kizuki.backup/v2", files });
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    restoreVault(backup, target);
+    const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
+    expect(restored.query<{ evidence: string }, []>("SELECT evidence FROM identity_links").get()?.evidence)
+      .toBe('["event:legacy-v2"]');
+    expect(() => listSubjectAliases(restored, "person:legacy-a")).toThrow("identity authority unavailable");
+    restored.close();
+    db.close();
+  });
+
+  test("v3 preserves opaque valid identity evidence bytes exactly", () => {
+    const { db, vaultPath } = populated();
+    const evidence = '[  "event:legacy-emoji-😀" ]';
+    db.query(
+      `INSERT INTO identity_links
+       (subject_a, subject_b, score, evidence, status, decided_by, receipt_id, at)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`,
+    ).run("person:space-a", "person:space-b", 1, evidence, "candidate", "legacy", "2026-01-01T00:00:00.000Z");
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    exportVault(db, vaultPath, backup);
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    restoreVault(backup, target);
+    const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
+    expect(restored.query<{ evidence: string }, []>("SELECT evidence FROM identity_links").get()?.evidence).toBe(evidence);
+    restored.close();
+    db.close();
+  });
+
+  test("v3 identity evidence rejects malformed tags before target publication", () => {
+    const cases: readonly unknown[] = [
+      {},
+      { encoding: "kizuki.identity-evidence/raw-v1" },
+      { encoding: "kizuki.identity-evidence/raw-v1", raw: "x".repeat(16_385) },
+      { encoding: "kizuki.identity-evidence/raw-v1", raw: "\ud800" },
+      { encoding: "kizuki.identity-evidence/raw-v1", raw: "[]", extra: true },
+    ];
+    for (const evidence of cases) {
+      const { db, vaultPath } = populated();
+      const backup = join(temporary("kizuki-export-parent-"), "dump");
+      const manifest = exportVault(db, vaultPath, backup);
+      const key = "claims/identity_links.jsonl";
+      const payload = Buffer.from(`${JSON.stringify({
+        subject_a: "person:a", subject_b: "person:b", score: 1, evidence,
+        status: "candidate", decided_by: "legacy", receipt_id: null, at: "2026-01-01T00:00:00.000Z",
+      })}\n`);
+      writeFileSync(join(backup, "claims", "identity_links.jsonl"), payload);
+      const files = { ...manifest.files, [key]: {
+        count: 1, size: payload.byteLength, mode: 0o600,
+        sha256: new Bun.CryptoHasher("sha256").update(payload).digest("hex"),
+      } };
+      writeSignedManifest(backup, { ...manifest, files });
+      const target = join(temporary("kizuki-restore-parent-"), "vault");
+      expect(() => restoreVault(backup, target)).toThrow(/identity evidence/);
+      expect(existsSync(target)).toBe(false);
+      db.close();
+    }
+  });
+
+  test("refuses malformed SQLite UTF-8 identity evidence before export publication", () => {
+    const { db, vaultPath } = populated();
+    db.exec("DROP TABLE identity_links");
+    db.exec(`CREATE TABLE identity_links (
+      subject_a TEXT NOT NULL, subject_b TEXT NOT NULL, score REAL NOT NULL,
+      evidence BLOB NOT NULL, status TEXT NOT NULL, decided_by TEXT NOT NULL,
+      receipt_id TEXT, at TEXT NOT NULL, PRIMARY KEY (subject_a, subject_b)
+    )`);
+    db.query("INSERT INTO identity_links VALUES (?,?,?,?,?,?,NULL,?)")
+      .run("person:bad-a", "person:bad-b", 1, Buffer.from([0xc3, 0x28]), "candidate", "legacy", "2026-01-01T00:00:00.000Z");
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    expect(() => exportVault(db, vaultPath, backup)).toThrow(/identity|UTF-8/i);
+    expect(existsSync(backup)).toBe(false);
+    db.close();
+  });
+
   test("restores backups that omit identity links and connector sensitivity", () => {
     const { db, vaultPath } = populated();
     const backup = join(temporary("kizuki-export-parent-"), "dump");
@@ -707,9 +797,23 @@ describe("restoreVault", () => {
     const files = { ...manifest.files };
     delete files["claims/identity_links.jsonl"];
     delete files["ledger/connector_sensitivity.jsonl"];
-    writeSignedManifest(backup, { ...manifest, files });
+    writeSignedManifest(backup, { ...manifest, schema: "kizuki.backup/v2", files });
     const target = join(temporary("kizuki-restore-parent-"), "vault");
     expect(restoreVault(backup, target).events).toBe(1);
+    db.close();
+  });
+
+  test("v3 restore requires the identity stream before publishing a target", () => {
+    const { db, vaultPath } = populated();
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    const manifest = exportVault(db, vaultPath, backup);
+    rmSync(join(backup, "claims", "identity_links.jsonl"));
+    const files = { ...manifest.files };
+    delete files["claims/identity_links.jsonl"];
+    writeSignedManifest(backup, { ...manifest, files });
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    expect(() => restoreVault(backup, target)).toThrow(/identity.*stream/i);
+    expect(existsSync(target)).toBe(false);
     db.close();
   });
 

@@ -4,13 +4,20 @@ import { tableExists } from "../ledger/schema";
 import { claimsConflict, type ConflictClaim } from "./conflict";
 import { ClaimError } from "./errors";
 import { listClaims } from "./store";
+import { EVENT_LIMITS, SUBJECT_ROLES } from "../contracts/event";
+import { isPlainObject } from "../util/validate";
+import { isVisibleIdentifier } from "../util/opaque-identifier";
 
 export const LEGACY_IDENTITY_EVIDENCE_MAX_BYTES = 16_384;
 export const LEGACY_IDENTITY_EVIDENCE_MAX_REFS = 64;
 export const LEGACY_IDENTITY_EVIDENCE_ID_MAX_BYTES = 256;
-export const LEGACY_IDENTITY_ENDPOINT_MAX_BYTES = 1_024;
+export const LEGACY_IDENTITY_ENDPOINT_MAX_BYTES = EVENT_LIMITS.subjectIdBytes;
 export const LEGACY_IDENTITY_SCAN_MAX_ROWS = 10_000;
 export const LEGACY_IDENTITY_SCAN_MAX_BYTES = 1_048_576;
+export const LEGACY_IDENTITY_SCAN_MAX_REFS = 8_192;
+const SCAN_PAGE = 128;
+const SUBJECT_SCAN_MAX_EVENTS = 1_000_000;
+const SUBJECT_SCAN_MAX_BYTES = 16 * EVENT_LIMITS.eventBytes;
 
 export interface LegacyIdentityEvidenceRef {
   readonly kind: "event" | "claim";
@@ -24,7 +31,12 @@ export type LegacyIdentityEvidence =
 export interface LegacyIdentityRow {
   readonly subject_a: string;
   readonly subject_b: string;
+  readonly score: number;
   readonly evidence: string;
+  readonly status: string;
+  readonly decided_by: string;
+  readonly receipt_id: string | null;
+  readonly at: string;
 }
 
 const LEGACY_EVIDENCE_REF = /^(event|claim):([A-Za-z0-9][A-Za-z0-9._:/-]{0,255})$/;
@@ -36,7 +48,7 @@ const LEGACY_EVIDENCE_REF = /^(event|claim):([A-Za-z0-9][A-Za-z0-9._:/-]{0,255})
 export function parseLegacyIdentityEvidence(raw: unknown): LegacyIdentityEvidence {
   // Callers that read SQLite use scanLegacyIdentityRows, which checks byte
   // lengths before materialising text. This guard remains for archive input.
-  if (typeof raw !== "string" || Buffer.byteLength(raw, "utf8") > LEGACY_IDENTITY_EVIDENCE_MAX_BYTES) {
+  if (typeof raw !== "string" || raw.length > LEGACY_IDENTITY_EVIDENCE_MAX_BYTES || Buffer.byteLength(raw, "utf8") > LEGACY_IDENTITY_EVIDENCE_MAX_BYTES) {
     return { ok: false };
   }
   let values: unknown;
@@ -46,7 +58,7 @@ export function parseLegacyIdentityEvidence(raw: unknown): LegacyIdentityEvidenc
   }
   const refs: LegacyIdentityEvidenceRef[] = [];
   for (const value of values) {
-    if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > LEGACY_IDENTITY_EVIDENCE_ID_MAX_BYTES) {
+    if (typeof value !== "string" || value.length > LEGACY_IDENTITY_EVIDENCE_ID_MAX_BYTES || Buffer.byteLength(value, "utf8") > LEGACY_IDENTITY_EVIDENCE_ID_MAX_BYTES) {
       return { ok: false };
     }
     const match = LEGACY_EVIDENCE_REF.exec(value);
@@ -62,54 +74,119 @@ export function parseLegacyIdentityEvidence(raw: unknown): LegacyIdentityEvidenc
 /** Read inert legacy rows under a finite work and allocation budget. */
 export function scanLegacyIdentityRows(db: Database): LegacyIdentityRow[] {
   if (!tableExists(db, "identity_links")) return [];
-  const preflight = db.query<{
-    subject_a_type: string; subject_b_type: string; evidence_type: string;
-    subject_a_bytes: number; subject_b_bytes: number; evidence_bytes: number;
-  }, []>(`SELECT typeof(subject_a) AS subject_a_type, typeof(subject_b) AS subject_b_type,
-                   typeof(evidence) AS evidence_type,
-                   length(CAST(subject_a AS BLOB)) AS subject_a_bytes,
-                   length(CAST(subject_b AS BLOB)) AS subject_b_bytes,
-                   length(CAST(evidence AS BLOB)) AS evidence_bytes
-            FROM identity_links LIMIT ${LEGACY_IDENTITY_SCAN_MAX_ROWS + 1}`).all();
-  if (preflight.length > LEGACY_IDENTITY_SCAN_MAX_ROWS) throw new Error("legacy identity row limit exceeded");
-  let total = 0;
-  for (const row of preflight) {
-    if (row.subject_a_type !== "text" || row.subject_b_type !== "text" || row.evidence_type !== "text" ||
-      row.subject_a_bytes > LEGACY_IDENTITY_ENDPOINT_MAX_BYTES || row.subject_b_bytes > LEGACY_IDENTITY_ENDPOINT_MAX_BYTES ||
-      row.evidence_bytes > LEGACY_IDENTITY_EVIDENCE_MAX_BYTES) throw new Error("legacy identity row is malformed or oversized");
-    total += row.subject_a_bytes + row.subject_b_bytes + row.evidence_bytes;
-    if (total > LEGACY_IDENTITY_SCAN_MAX_BYTES) throw new Error("legacy identity aggregate limit exceeded");
-  }
-  return db.query<LegacyIdentityRow, []>("SELECT subject_a, subject_b, evidence FROM identity_links").all();
+  return db.transaction(() => {
+    const result: LegacyIdentityRow[] = [];
+    let after: string | null = null;
+    let bytes = 0;
+    let refs = 0;
+    // Metadata and payload reads share one SQLite snapshot. Row keys are text
+    // so even a legacy 64-bit rowid is never rounded through a JS number.
+    const metadata = db.query<{ row_key: string; invalid: number; bytes: number }, [string | null, string | null]>(`
+      SELECT CAST(rowid AS TEXT) AS row_key,
+        (typeof(subject_a)!='text' OR length(CAST(subject_a AS BLOB))>${LEGACY_IDENTITY_ENDPOINT_MAX_BYTES}
+         OR typeof(subject_b)!='text' OR length(CAST(subject_b AS BLOB))>${LEGACY_IDENTITY_ENDPOINT_MAX_BYTES}
+         OR typeof(evidence)!='text' OR length(CAST(evidence AS BLOB))>${LEGACY_IDENTITY_EVIDENCE_MAX_BYTES}
+         OR typeof(status)!='text' OR length(CAST(status AS BLOB))>32
+         OR typeof(decided_by)!='text' OR length(CAST(decided_by AS BLOB))>1024
+         OR typeof(at)!='text' OR length(CAST(at AS BLOB))>64
+         OR typeof(receipt_id) NOT IN ('text','null') OR length(CAST(coalesce(receipt_id,'') AS BLOB))>256
+         OR typeof(score) NOT IN ('integer','real') OR score NOT BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308) AS invalid,
+        length(CAST(subject_a AS BLOB))+length(CAST(subject_b AS BLOB))+length(CAST(evidence AS BLOB))+
+        length(CAST(status AS BLOB))+length(CAST(decided_by AS BLOB))+length(CAST(at AS BLOB))+
+        length(CAST(coalesce(receipt_id,'') AS BLOB)) AS bytes
+      FROM identity_links WHERE (? IS NULL OR rowid>CAST(? AS INTEGER)) ORDER BY rowid LIMIT ${SCAN_PAGE}`);
+    while (true) {
+      const page = metadata.all(after, after);
+      if (page.length === 0) break;
+      if (result.length + page.length > LEGACY_IDENTITY_SCAN_MAX_ROWS) throw new Error("legacy identity row limit exceeded");
+      for (const item of page) {
+        if (item.invalid !== 0 || !Number.isSafeInteger(item.bytes) || item.bytes < 0) throw new Error("legacy identity row is malformed or oversized");
+        bytes += item.bytes;
+        if (bytes > LEGACY_IDENTITY_SCAN_MAX_BYTES) throw new Error("legacy identity aggregate limit exceeded");
+      }
+      // Decode actual stored bytes strictly. Bun's permissive SQLite TEXT
+      // conversion can lose malformed UTF-8, which cannot be an exact backup.
+      const rows = db.query<{
+        subject_a: Uint8Array; subject_b: Uint8Array; score: number;
+        evidence: Uint8Array; status: Uint8Array; decided_by: Uint8Array;
+        receipt_id: Uint8Array | null; at: Uint8Array;
+      }, string[]>(`
+        SELECT CAST(subject_a AS BLOB) AS subject_a,CAST(subject_b AS BLOB) AS subject_b,score,
+          CAST(evidence AS BLOB) AS evidence,CAST(status AS BLOB) AS status,
+          CAST(decided_by AS BLOB) AS decided_by,CAST(receipt_id AS BLOB) AS receipt_id,
+          CAST(at AS BLOB) AS at
+          FROM identity_links WHERE rowid IN (${page.map(() => "?").join(",")}) ORDER BY rowid`).all(...page.map(item => item.row_key));
+      if (rows.length !== page.length) throw new Error("legacy identity snapshot is incomplete");
+      const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+      for (const stored of rows) {
+        let row: LegacyIdentityRow;
+        try {
+          row = {
+            subject_a: decoder.decode(stored.subject_a), subject_b: decoder.decode(stored.subject_b),
+            score: stored.score, evidence: decoder.decode(stored.evidence),
+            status: decoder.decode(stored.status), decided_by: decoder.decode(stored.decided_by),
+            receipt_id: stored.receipt_id === null ? null : decoder.decode(stored.receipt_id),
+            at: decoder.decode(stored.at),
+          };
+        } catch { throw new Error("legacy identity text encoding is malformed"); }
+        const parsed = parseLegacyIdentityEvidence(row.evidence);
+        if (parsed.ok) refs += parsed.refs.length;
+        if (refs > LEGACY_IDENTITY_SCAN_MAX_REFS) throw new Error("legacy identity reference limit exceeded");
+        result.push(row);
+      }
+      after = page.at(-1)!.row_key;
+    }
+    return result;
+  }).deferred();
 }
 
 /** Strictly snapshot raw subjects before a purge deletes their event rows. */
-export function collectLegacyPurgeSubjects(db: Database, eventIds: readonly string[]): Set<string> {
-  const refs = new Set<string>();
-  if (eventIds.length === 0) return refs;
-  const rows = db.query<{ event_id: string; bytes: number; type: string }, string[]>(
-    `SELECT event_id, length(CAST(subjects AS BLOB)) AS bytes, typeof(subjects) AS type FROM events WHERE event_id IN (${eventIds.map(() => "?").join(",")})`,
-  ).all(...eventIds);
-  if (rows.length !== eventIds.length) throw new Error("purge subject snapshot is incomplete");
-  let total = 0;
-  for (const row of rows) {
-    if (row.type !== "text" || row.bytes > LEGACY_IDENTITY_EVIDENCE_MAX_BYTES) throw new Error("purge subject snapshot is malformed or oversized");
-    total += row.bytes;
-    if (total > LEGACY_IDENTITY_SCAN_MAX_BYTES) throw new Error("purge subject aggregate limit exceeded");
-    if (row.event_id === undefined) throw new Error("purge subject snapshot is incomplete");
-    const payload = db.query<{ subjects: string }, [string]>("SELECT subjects FROM events WHERE event_id=?").get(row.event_id);
-    if (payload === null) throw new Error("purge subject snapshot is incomplete");
-    let values: unknown;
-    try { values = JSON.parse(payload.subjects); } catch { throw new Error("purge subject snapshot is malformed"); }
-    if (!Array.isArray(values) || values.length > LEGACY_IDENTITY_EVIDENCE_MAX_REFS) throw new Error("purge subject snapshot is malformed");
-    for (const value of values) {
-      if (typeof value !== "object" || value === null || typeof (value as { subject_id?: unknown }).subject_id !== "string") throw new Error("purge subject snapshot is malformed");
-      const id = (value as { subject_id: string }).subject_id;
-      if (Buffer.byteLength(id, "utf8") > LEGACY_IDENTITY_ENDPOINT_MAX_BYTES) throw new Error("purge subject snapshot is malformed");
-      refs.add(id);
+export function collectLegacyPurgeSubjects(db: Database, eventIds: Iterable<string>): Set<string> {
+  return db.transaction(() => {
+    const refs = new Set<string>();
+    let count = 0;
+    let bytes = 0;
+    let page: string[] = [];
+    const readPage = (): void => {
+      const slots = page.map(() => "?").join(",");
+      const metadata = db.query<{ bytes: number; type: string }, string[]>(
+        `SELECT length(CAST(subjects AS BLOB)) AS bytes,typeof(subjects) AS type FROM events WHERE event_id IN (${slots})`).all(...page);
+      if (metadata.length !== page.length) throw new Error("purge subject snapshot is incomplete");
+      for (const row of metadata) {
+        if (row.type !== "text" || !Number.isSafeInteger(row.bytes) || row.bytes < 0 || row.bytes > EVENT_LIMITS.eventBytes) throw new Error("purge subject snapshot is malformed or oversized");
+        bytes += row.bytes;
+        if (bytes > SUBJECT_SCAN_MAX_BYTES) throw new Error("purge subject aggregate limit exceeded");
+      }
+      for (const row of db.query<{ subjects: string }, string[]>(`SELECT subjects FROM events WHERE event_id IN (${slots})`).iterate(...page)) {
+        let values: unknown;
+        try { values = JSON.parse(row.subjects); }
+        catch { throw new Error("purge subject snapshot is malformed"); }
+        if (!Array.isArray(values) || values.length > EVENT_LIMITS.subjectCount) throw new Error("purge subject snapshot is malformed");
+        const seen = new Set<string>();
+        for (const value of values) {
+          if (!isPlainObject(value) || Object.keys(value).some(key => !["subject_id", "role", "display_name"].includes(key)) ||
+              typeof value.subject_id !== "string" || value.subject_id.length === 0 || value.subject_id.length > EVENT_LIMITS.subjectIdBytes ||
+              Buffer.byteLength(value.subject_id, "utf8") > EVENT_LIMITS.subjectIdBytes || !isVisibleIdentifier(value.subject_id) ||
+              typeof value.role !== "string" || !(SUBJECT_ROLES as readonly string[]).includes(value.role) ||
+              (value.display_name !== undefined && (typeof value.display_name !== "string" || value.display_name.length > EVENT_LIMITS.displayNameBytes || Buffer.byteLength(value.display_name, "utf8") > EVENT_LIMITS.displayNameBytes))) {
+            throw new Error("purge subject snapshot is malformed");
+          }
+          const key = `${value.subject_id}\0${value.role}`;
+          if (seen.has(key)) throw new Error("purge subject snapshot has duplicate subjects");
+          seen.add(key);
+          refs.add(value.subject_id);
+        }
+      }
+      page = [];
+    };
+    for (const id of eventIds) {
+      if (++count > SUBJECT_SCAN_MAX_EVENTS) throw new Error("purge subject event limit exceeded");
+      page.push(id);
+      if (page.length === SCAN_PAGE) readPage();
     }
-  }
-  return refs;
+    if (page.length > 0) readPage();
+    return refs;
+  }).deferred();
 }
 
 export type LegacySupportState = "current" | "erased" | "unresolved";
@@ -123,7 +200,7 @@ export function resolveLegacyIdentityRef(db: Database, ref: LegacyIdentityEviden
   return row == null ? "unresolved" : row.status === "purged" ? "erased" : "current";
 }
 
-/** RFC 0002 §18.1: autonomous merge only at this score with two connectors. */
+/** Historical compatibility constant; A0 provides no identity authority. */
 export const IDENTITY_MERGE_MIN = 0.9;
 
 export const IDENTITY_LINK_STATUSES = [

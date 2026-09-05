@@ -24,7 +24,6 @@ import { isPlainObject } from "../util/validate";
 import { getConnectorSensitivity } from "../sensitivity/store";
 import { getConnection } from "./connections";
 import { tableExists } from "./schema";
-import { scanLegacyIdentityRows } from "../claims/identity";
 
 export const SOURCE_PURPOSES = [
   "capture",
@@ -865,21 +864,13 @@ function sourcePurgeBlockers(
   ).all(sourceKey);
   if (retainedProposals.length > 10000 || retainedProposals.some(row => row.payload !== 0 || row.body_hash !== sourceBodyTombstoneHash("proposals", row.proposal_id)))
     blockers.push("proposal_payload_retained");
-  if (tableExists(db, "identity_links")) {
-    const eventIds = new Set(
-      db.query<{ event_id: string }, [string]>(
-        "SELECT event_id FROM source_event_bindings WHERE source_key=?",
-      ).all(sourceKey).map((row) => row.event_id),
-    );
-    const claimIds = new Set(retainedClaims.map((row) => row.claim_id));
-    let links;
-    try { links = scanLegacyIdentityRows(db); } catch { links = null; }
-    // With no retained raw subject dictionary, final source completion can
-    // prove identity absence only after every inert legacy row is gone.
-    if (links === null || links.length > 0) {
-      blockers.push("identity_payload_retained");
-    }
-  }
+  // An empty table proves absence without retaining erased endpoint labels.
+  // Old erasure reports may still contain guessable endpoint hashes; resume
+  // their existing erasure operation before certifying completion again.
+  const legacyRows = tableExists(db, "identity_links") && db.query("SELECT 1 FROM identity_links LIMIT 1").get() !== null;
+  const legacyHashes = db.query(`SELECT 1 FROM source_store_inventory WHERE source_key=? AND erasure_report IS NOT NULL
+    AND CASE WHEN json_valid(erasure_report) THEN (json_type(erasure_report,'$.affected_identity_hashes') IS NOT 'array' OR json_array_length(erasure_report,'$.affected_identity_hashes')>0) ELSE 1 END LIMIT 1`).get(sourceKey) !== null;
+  if (legacyRows || legacyHashes) blockers.push("identity_payload_retained");
   if (
     db
       .query(
