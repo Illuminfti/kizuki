@@ -24,7 +24,9 @@ The public CLI, a Linux x64 baseline local native package, file ingest, FTS
 query, doctor, tell/undo/audit, serve loopback, context packets, and MCP stdio
 adapter. Capture never writes canon. Local files and exports are enrollable;
 an opt-in Beeper Desktop connection reads local history through an approved
-token reference. Other sign-in connectors are not enrollable through this CLI.
+token reference. IMAP supports local sign-in and re-enrollment that preserves
+the existing mailbox identity and checkpoint. Other sign-in connectors are not
+enrollable through this CLI.
 After
 `import`, claims are live and `tell --claim` can name them. Canon writing
 still requires a configured model; without one the sync rail leaves live
