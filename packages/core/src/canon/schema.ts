@@ -38,6 +38,10 @@ CREATE TABLE IF NOT EXISTS canon_receipts (
 ) STRICT;
 `;
 
+const SOURCE_ERASURE_INTENTS_SQL = `CREATE TABLE IF NOT EXISTS canon_source_erasure_intents (
+  page_path TEXT PRIMARY KEY, source_key TEXT NOT NULL, intent TEXT NOT NULL, digest TEXT NOT NULL
+) STRICT;`;
+
 const CANON_INDEXES = `
 CREATE INDEX IF NOT EXISTS canon_receipts_by_page ON canon_receipts(page_path, at, receipt_id);
 CREATE INDEX IF NOT EXISTS canon_receipts_by_at ON canon_receipts(at, receipt_id);
@@ -125,10 +129,11 @@ export function applyCanonV4(db: Database): void {
   db.exec(CANON_RECEIPTS_TABLE);
   for (const ddl of WIDENING_COLUMNS) addColumn(db, "canon_receipts", ddl);
   db.exec(CANON_INDEXES);
+  db.exec(SOURCE_ERASURE_INTENTS_SQL);
 }
 
 function canonSurfaceReady(db: Database): boolean {
-  if (!tableExists(db, "canon_receipts") || !tableExists(db, "page_index")) {
+  if (!tableExists(db, "canon_receipts") || !tableExists(db, "page_index") || !tableExists(db, "canon_source_erasure_intents")) {
     return false;
   }
   const columns = columnNames(db, "canon_receipts");

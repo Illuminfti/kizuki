@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { applySourceGrantsV11, applyNativeOwnerEvidenceV12, applySourceStoresV13, applySourceErasureV14, applySourceReceiptIntegrityV15 } from "./source-grants-schema";
 import { applyAgentsV9 } from "../agents/schema";
-import { applyCanonV4 } from "../canon/schema";
+import { applyCanonV4, initCanon } from "../canon/schema";
 import { applyClaimsV3 } from "../claims/schema";
 import { applyDerivedV10 } from "../derived";
 import { applyServeV7, initServe } from "../serve/schema";
@@ -222,6 +222,7 @@ export function openLedger(dbPath: string): Database {
     db.exec("PRAGMA foreign_keys = ON");
     migrate(db);
     initServe(db);
+    initCanon(db);
     return db;
   } catch (error) {
     db.close();

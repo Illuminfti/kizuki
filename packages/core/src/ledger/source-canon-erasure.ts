@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { applyPurgeRewrite } from "../canon/apply";
+import { applyPurgeRewrite, recoverSourceErasureIntents } from "../canon/apply";
 import { getClaim } from "../claims/store";
 import type { Claim } from "../contracts/proposal";
 import { parseFrontmatter, type VaultPage } from "../vault/frontmatter";
@@ -118,6 +118,7 @@ export function eraseSourceCanon(
   vault: string,
   source: string,
 ): boolean {
+  if (!recoverSourceErasureIntents({db,vault_path:vault},source)) return false;
   const affected = new Set(
     db
       .query<{ claim_id: string }, [string]>(
@@ -212,6 +213,7 @@ export function eraseSourceCanon(
           purged_claim_ids: [...affected],
           purged_claim_bodies: [],
           source_erasure: {
+            source_key: source,
             expected_hash: hash,
             page: next,
             retained_claim_ids:

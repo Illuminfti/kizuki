@@ -1513,3 +1513,154 @@ test("mixed erasure removes A-only page-index subject while B without a subject 
   restored.close();
   db.close();
 });
+
+for (const interruption of ["before-append", "before-row", "before-write", "owner-edit", "corrupt-intent", "delete-before-append", "before-rename", "changed-temp"] as const) {
+    test(`mixed source erasure recovers exact postimage after ${interruption}`, async () => {
+        const { db, dir, a, b } = setup();
+        grant(db, a);
+        setSourceGrant(db, { source_key: b, expected_revision: 0, operation_id: "grant-b", policy: policy() });
+        const aa = accept(db, { ...event(), source_record_id: "a", text: "A_PRIVATE_7142" }, { source: { source_key: a, expected_revision: 1 } });
+        const bb = accept(db, { ...event(), source_record_id: "b", text: "B independent" }, { source: { source_key: b, expected_revision: 1 } });
+        if (aa.status !== "stored" || bb.status !== "stored")
+            throw Error("fixture failed");
+        const io = { db, vault_path: dir };
+        const original = write(io, await storeClaim(db, aa.event.event_id, { body: "A_PRIVATE_7142", frontmatter: { type: "person", title: "Shared" } }));
+        if (interruption !== "delete-before-append")
+            write(io, await storeClaim(db, bb.event.event_id, { kind: "merge", predicate: null, object: null, body: "B_SURVIVES_7194", frontmatter: { type: "person", title: "Shared" } }));
+        revokeSourceGrant(db, { source_key: a, expected_revision: 1, operation_id: "interrupted-erasure" });
+        const { chmodSync, readFileSync, writeFileSync, existsSync } = await import("node:fs");
+        const { dirname } = await import("node:path");
+        const log = join(dir, ".kizuki", "receipts", "promotions.jsonl");
+        const preimage = readFileSync(join(dir, original.page_path), "utf8");
+        if (interruption === "before-row")
+            db.exec("CREATE TRIGGER fail_erasure_receipt BEFORE INSERT ON canon_receipts WHEN NEW.receipt_kind='purge_rewrite' BEGIN SELECT RAISE(FAIL,'synthetic pre-row interruption'); END");
+        else if (interruption === "before-write")
+            chmodSync(dirname(join(dir, original.page_path)), 0o500);
+        else
+            chmodSync(log, 0o400);
+        const options = { ownedRetrieval: { stores: async () => ({ stores: [], absent_store_ids: [] }) } };
+        const pending = await resumeSourceRevocation(db, dir, "interrupted-erasure", options);
+        expect(pending.status).toBe("denied");
+        const path = join(dir, original.page_path);
+        const partial = existsSync(path) ? readFileSync(path, "utf8") : "";
+        if (interruption === "before-write")
+            expect(partial).toContain("A_PRIVATE_7142");
+        else
+            expect(partial).not.toContain("A_PRIVATE_7142");
+        if (interruption !== "delete-before-append")
+            expect(partial).toContain("B_SURVIVES_7194");
+        const intents = db.query<{
+            intent: string;
+        }, [
+        ]>("SELECT intent FROM canon_source_erasure_intents").all();
+        expect(intents.length).toBeGreaterThan(0);
+        expect(JSON.stringify(intents)).not.toContain("A_PRIVATE_7142");
+        expect(JSON.stringify(intents)).not.toContain("B_SURVIVES_7194");
+        const pendingIds = intents.map(row => JSON.parse(row.intent).receipt.receipt_id);
+        expect(() => exportVault(db, dir, join(dir, "pending-export"))).toThrow("source_erasure_recovery_pending");
+        if (interruption === "before-rename" || interruption === "changed-temp") {
+            const { basename } = await import("node:path");
+            const entry = intents.map(row => JSON.parse(row.intent)).find(row => row.receipt.page_path === original.page_path);
+            writeFileSync(join(dirname(path), `.${basename(path)}.${entry.receipt.receipt_id}.tmp`), partial + (interruption === "changed-temp" ? "Unrelated bytes" : ""), { mode: 0o600 });
+            writeFileSync(path, preimage);
+        }
+        if (interruption === "corrupt-intent")
+            db.query("UPDATE canon_source_erasure_intents SET intent='{}'").run();
+        if (interruption === "owner-edit")
+            writeFileSync(path, partial + "\nOwner paragraph preserved.\n");
+        const expected = existsSync(path) ? readFileSync(path, "utf8") : "";
+        if (interruption === "before-row")
+            db.exec("DROP TRIGGER fail_erasure_receipt");
+        chmodSync(log, 0o600);
+        chmodSync(dirname(path), 0o700);
+        db.close();
+        const reopened = openLedger(join(dir, ".kizuki", "kizuki.db"));
+        const done = await resumeSourceRevocation(reopened, dir, "interrupted-erasure", options);
+        const refused = interruption === "owner-edit" || interruption === "corrupt-intent" || interruption === "changed-temp";
+        expect(done.status).toBe(refused ? "denied" : "purged");
+        const final = existsSync(path) ? readFileSync(path, "utf8") : "";
+        if (interruption === "before-write" || interruption === "before-rename") {
+            expect(final).not.toContain("A_PRIVATE_7142");
+            expect(final).toContain("B_SURVIVES_7194");
+        }
+        else
+            expect(final).toBe(expected);
+        if (!refused) {
+            const lines = readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line));
+            expect(new Set(lines.map(row => row.receipt_id)).size).toBe(lines.length);
+            for (const id of pendingIds)
+                expect(lines.filter(row => row.receipt_id === id)).toHaveLength(1);
+            expect(reopened.query("SELECT * FROM canon_source_erasure_intents").all()).toEqual([]);
+            expect(reopened.query("SELECT 1 FROM events WHERE event_id=?").get(bb.event.event_id)).not.toBeNull();
+        }
+        reopened.close();
+    });
+}
+test("real runBatch compatibility proposal payload is erased from owned SQLite after source revocation", async () => {
+    const { db, dir, a } = setup();
+    grant(db, a);
+    const { runBatch } = await import("../src/index");
+    const sentinel = "qzxcompatproposalprivate73915";
+    runBatch(db, { events: [{ ...event(), text: sentinel, subjects: [], metadata: {} }], cursor: null }, { page_candidates: false }, { source_key: a, expected_revision: 1 });
+    expect(JSON.stringify(db.query("SELECT * FROM proposals").all())).toContain(sentinel);
+    revokeSourceGrant(db, { source_key: a, expected_revision: 1, operation_id: "proposal-revoke" });
+    const done = await resumeSourceRevocation(db, dir, "proposal-revoke", { ownedRetrieval: { stores: async () => ({ stores: [], absent_store_ids: [] }) } });
+    expect(done.status).toBe("purged");
+    expect(JSON.stringify(db.query("SELECT * FROM proposals").all())).not.toContain(sentinel);
+    const { readFileSync, existsSync } = await import("node:fs");
+    for (const suffix of ["", "-wal", "-shm"]) {
+        const path = join(dir, ".kizuki", `kizuki.db${suffix}`);
+        if (existsSync(path))
+            expect(readFileSync(path).includes(Buffer.from(sentinel))).toBe(false);
+    }
+    db.close();
+});
+test("compatibility erasure covers joint and rejected proposals, preserves independent B, and refuses retained payload", async () => {
+    const { db, dir, a, b } = setup();
+    grant(db, a);
+    setSourceGrant(db, { source_key: b, expected_revision: 0, operation_id: "compat-b", policy: policy() });
+    const { runBatch } = await import("../src/index");
+    runBatch(db, { events: [{ ...event(), source_record_id: "a1", text: "Joint A payload" }, { ...event(), source_record_id: "a2", text: "Rejected A payload" }], cursor: null }, { page_candidates: false }, { source_key: a, expected_revision: 1 });
+    runBatch(db, { events: [{ ...event(), source_record_id: "b", text: "Independent B payload" }], cursor: null }, { page_candidates: false }, { source_key: b, expected_revision: 1 });
+    const bId = db.query<{
+        event_id: string;
+    }, [
+        string
+    ]>("SELECT event_id FROM source_event_bindings WHERE source_key=?").get(b)!.event_id;
+    const aRows = db.query<{
+        proposal_id: string;
+        provenance: string;
+    }, [
+        string
+    ]>("SELECT p.proposal_id,p.provenance FROM proposals p JOIN json_each(p.provenance) e JOIN source_event_bindings b ON b.event_id=e.value WHERE b.source_key=? ORDER BY p.proposal_id").all(a);
+    const bBefore = db.query("SELECT * FROM proposals WHERE provenance=?").get(JSON.stringify([bId]));
+    // Compatibility history can contain every lifecycle state; source closure is independent of status.
+    db.query("UPDATE proposals SET provenance=?,status='promoted' WHERE proposal_id=?").run(JSON.stringify([...JSON.parse(aRows[0]!.provenance), bId]), aRows[0]!.proposal_id);
+    db.query("UPDATE proposals SET status='rejected',frontmatter=?,subjects=?,producer='legacy-agent-label' WHERE proposal_id=?").run(JSON.stringify({ title: "Private old title" }), JSON.stringify(["person:private-old-subject"]), aRows[1]!.proposal_id);
+    revokeSourceGrant(db, { source_key: a, expected_revision: 1, operation_id: "compat-joint-revoke" });
+    db.exec("CREATE TRIGGER prevent_proposal_erasure BEFORE UPDATE OF body ON proposals BEGIN SELECT RAISE(FAIL,'synthetic retained proposal'); END");
+    const options = { ownedRetrieval: { stores: async () => ({ stores: [], absent_store_ids: [] }) } };
+    await expect(resumeSourceRevocation(db, dir, "compat-joint-revoke", options)).rejects.toThrow("synthetic retained proposal");
+    expect(inspectSourceGrant(db, a)?.status).toBe("denied");
+    expect(inspectSourceGrant(db, a)?.purge_blockers).toContain("proposal_payload_retained");
+    db.exec("DROP TRIGGER prevent_proposal_erasure");
+    const done = await resumeSourceRevocation(db, dir, "compat-joint-revoke", options);
+    expect(done.status).toBe("purged");
+    expect(done.erasure?.affected_proposal_ids.sort()).toEqual(aRows.map(row => row.proposal_id).sort());
+    for (const row of aRows)
+        expect(db.query("SELECT body,target,frontmatter,subjects,producer FROM proposals WHERE proposal_id=?").get(row.proposal_id)).toEqual({ body: "", target: null, frontmatter: "{}", subjects: "[]", producer: "deterministic" });
+    expect(db.query("SELECT * FROM proposals WHERE provenance=?").get(JSON.stringify([bId]))).toEqual(bBefore);
+    expect(db.query("SELECT 1 FROM events WHERE event_id=?").get(bId)).not.toBeNull();
+    db.close();
+});
+test("an existing current ledger gains the metadata-only erasure journal without changing prior rows", () => {
+    const { db, dir, a } = setup();
+    grant(db, a);
+    const before = db.query("SELECT * FROM source_grants").all();
+    db.exec("DROP TABLE canon_source_erasure_intents");
+    db.close();
+    const reopened = openLedger(join(dir, ".kizuki", "kizuki.db"));
+    expect(reopened.query("SELECT * FROM canon_source_erasure_intents").all()).toEqual([]);
+    expect(reopened.query("SELECT * FROM source_grants").all()).toEqual(before);
+    reopened.close();
+});

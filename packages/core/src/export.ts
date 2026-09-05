@@ -1623,6 +1623,7 @@ function* sourcePolicyRows(db: Database, table: SourceBackupTable): Generator<Re
   for (const row of db.query<Record<string, unknown>, []>(`SELECT * FROM ${table} ORDER BY ${SOURCE_COLUMNS[table][0]}`).iterate()) yield row;
 }
 function assertSourceExport(db: Database): void {
+  if (db.query("SELECT 1 FROM canon_source_erasure_intents LIMIT 1").get() !== null) throw new Error("source_erasure_recovery_pending");
   if (sourcePolicyEpoch(db) === 0) return;
   for (const row of db.query<{ source_key: string }, []>("SELECT source_key FROM source_grants").iterate()) {
     const grant = inspectSourceGrant(db, row.source_key)!;

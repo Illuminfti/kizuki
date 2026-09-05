@@ -1,3 +1,6 @@
+import { stageSourceErasureIntent, readSourceErasureIntent, appendSourceErasureReceipt, type SourceErasureIntent } from "./source-erasure-intent";
+import { serializePage } from "../vault/frontmatter";
+import { hashBytes, ABSENT_PAGE_HASH } from "../vault/write";
 import { requireSourceEvents, sourceSensitivity } from "../ledger/source-grants";
 import { subjectPageType } from "../vault/subject-type";
 import { CanonAuthorityResolver } from "./authority";
@@ -588,6 +591,7 @@ export interface PurgeRewriteInput {
   /** Internal, hash-qualified native source erasure. Null deletes an entirely attributed page. */
   source_erasure?: {
     expected_hash: string;
+    source_key: string;
     page: VaultPage | null;
     retained_claim_ids: readonly string[];
   };
@@ -707,6 +711,9 @@ export function applyPurgeRewrite(
   data["sensitivity"] = sensitivity;
   data["taint"] = taint;
 
+  if (input.source_erasure !== undefined) return applySourcePurgeWrite(io,
+    {...input,source_erasure:input.source_erasure},
+    {existing,data,body,nothingRemains,action,authority,sensitivity,taint});
   const receiptId = mintId(io);
   const cap = grantCanonWrite("loop", receiptId);
   const path = join(io.vault_path, input.rel_path);
@@ -717,9 +724,6 @@ export function applyPurgeRewrite(
     {
       revision: true,
       expected_hash: existing.hash,
-      ...(input.source_erasure === undefined
-        ? {}
-        : { erase_prior: true, delete: nothingRemains }),
     },
   );
 
@@ -734,9 +738,7 @@ export function applyPurgeRewrite(
   const receipt: CanonReceipt = {
     receipt_id: receiptId,
     kind: "purge_rewrite",
-    claim_ids: input.source_erasure?.page
-      ? [...input.source_erasure.retained_claim_ids]
-      : [...input.purged_claim_ids],
+    claim_ids: [...input.purged_claim_ids],
     page_path: input.rel_path,
     page_action: action,
     before_hash: existing.hash,
@@ -749,9 +751,7 @@ export function applyPurgeRewrite(
     confidence: 1,
     sensitivity,
     taint,
-    provenance: input.source_erasure?.page
-      ? existingSources(input.source_erasure.page)
-      : [...input.purged_event_ids],
+    provenance: [...input.purged_event_ids],
     superseded: [],
     candidates: [],
     retrieval_ops: retrievalOps,
@@ -770,19 +770,13 @@ export function applyPurgeRewrite(
         .run(input.rel_path);
     }
     if (pageId !== null && !input.rel_path.startsWith("archive/")) {
-      if (input.source_erasure !== undefined && nothingRemains)
-        io.db.query("DELETE FROM page_index WHERE page_id=?").run(pageId);
-      else
-        upsertPageIndex(io.db, {
+      upsertPageIndex(io.db, {
           page_id: pageId,
           rel_path: input.rel_path,
           subject_key: typeof retainedSubject === "string" ? retainedSubject : null,
           last_receipt: receipt.receipt_id,
           last_hash: receipt.after_hash,
         });
-      // General upserts preserve unknown subjects; erasure must explicitly clear a removed one.
-      if (input.source_erasure !== undefined && !nothingRemains && typeof retainedSubject !== "string")
-        io.db.query("UPDATE page_index SET subject_key=NULL WHERE page_id=?").run(pageId);
     }
   })();
   if (pageId !== null && !input.rel_path.startsWith("archive/")) {
@@ -806,4 +800,95 @@ export function applyPurgeRewrite(
     }
   }
   return receipt;
+}
+
+function finishSourceErasure(io: CanonIo, intent: SourceErasureIntent, page: VaultPage | null): void {
+    const receipt = intent.receipt;
+    appendSourceErasureReceipt(io, receipt);
+    io.db.transaction(() => {
+        insertReceiptRow(io.db, receipt, "purge_review");
+        if (tableExists(io.db, "canon_holds"))
+            io.db.query("DELETE FROM canon_holds WHERE page_path=?").run(receipt.page_path);
+        if (intent.page_id !== null && !receipt.page_path.startsWith("archive/")) {
+            if (page === null)
+                io.db.query("DELETE FROM page_index WHERE page_id=?").run(intent.page_id);
+            else {
+                const subject = page.data["x-subject-id"];
+                upsertPageIndex(io.db, { page_id: intent.page_id, rel_path: receipt.page_path, subject_key: typeof subject === "string" ? subject : null, last_receipt: receipt.receipt_id, last_hash: receipt.after_hash });
+                if (typeof subject !== "string")
+                    io.db.query("UPDATE page_index SET subject_key=NULL WHERE page_id=?").run(intent.page_id);
+            }
+        }
+        io.db.query("DELETE FROM canon_source_erasure_intents WHERE page_path=?").run(receipt.page_path);
+    })();
+    if (intent.page_id !== null && !receipt.page_path.startsWith("archive/")) {
+        if (page === null)
+            removeDerivedPage(io.db, intent.page_id, io.vault_path);
+        else
+            refreshDerivedPage(io.db, canonPageFromWrite(io.vault_path, receipt.page_path, intent.page_id, page, receipt.after_hash), io.vault_path);
+    }
+}
+/** Called only inside the source purge's existing native writer ownership. */
+export function recoverSourceErasureIntents(io: CanonIo, source: string): boolean {
+    initCanon(io.db);
+    const rows = io.db.query<{
+        page_path: string;
+    }, [
+        string
+    ]>("SELECT page_path FROM canon_source_erasure_intents WHERE source_key=? LIMIT 10001").all(source);
+    if (rows.length > 10000)
+        return false;
+    for (const row of rows) {
+        try {
+            const intent = readSourceErasureIntent(io.db, row.page_path)!;
+            const current = readPage(io, row.page_path);
+            const hash = current?.hash ?? ABSENT_PAGE_HASH;
+            if (hash === intent.receipt.before_hash)
+                continue;
+            if (hash !== intent.receipt.after_hash)
+                return false;
+            finishSourceErasure(io, intent, current?.page ?? null);
+        }
+        catch {
+            return false;
+        }
+    }
+    return true;
+}
+interface SourcePurgeInput extends PurgeRewriteInput {
+    source_erasure: NonNullable<PurgeRewriteInput["source_erasure"]>;
+}
+interface SourcePurgePrepared {
+    existing: ExistingPage;
+    data: Record<string, unknown>;
+    body: string;
+    nothingRemains: boolean;
+    action: PageAction;
+    authority: AuthorityTier;
+    sensitivity: Sensitivity;
+    taint: ClaimTaint;
+}
+function applySourcePurgeWrite(io: CanonIo, input: SourcePurgeInput, prepared: SourcePurgePrepared): CanonReceipt {
+    const { existing, data, body, nothingRemains, action, authority, sensitivity, taint } = prepared;
+    const pageId = typeof existing.page.data["id"] === "string" ? existing.page.data["id"] : null;
+    const next = nothingRemains ? null : { data, body: body.length === 0 ? "\n" : body };
+    const receipt: CanonReceipt = {
+        receipt_id: mintId(io), kind: "purge_rewrite",
+        claim_ids: next === null ? [...input.purged_claim_ids] : [...input.source_erasure.retained_claim_ids],
+        page_path: input.rel_path, page_action: action, before_hash: existing.hash,
+        after_hash: next === null ? ABSENT_PAGE_HASH : hashBytes(Buffer.from(serializePage(next))),
+        archive_path: null, writer: "loop", producer: "deterministic", model_ref: null,
+        authority, confidence: 1, sensitivity, taint,
+        provenance: next === null ? [...input.purged_event_ids] : existingSources(next),
+        superseded: [], candidates: [], retrieval_ops: [], reverts: null, reverted_by: null, at: nowOf(io),
+    };
+    const intent = stageSourceErasureIntent(io, input.source_erasure.source_key, input.purged_event_ids, receipt, pageId);
+    const cap = grantCanonWrite("loop", intent.receipt.receipt_id);
+    const outcome = writePage(cap, join(io.vault_path, input.rel_path), next ?? { data, body: "\n" }, {
+        revision: true, expected_hash: existing.hash, erase_prior: true, delete: nothingRemains,
+    });
+    if (outcome.after_hash !== intent.receipt.after_hash)
+        throw new CanonWriteError("decision_stale", "source erasure postimage changed");
+    finishSourceErasure(io, intent, next);
+    return intent.receipt;
 }

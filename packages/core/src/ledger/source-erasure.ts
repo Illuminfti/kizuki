@@ -12,6 +12,7 @@ export interface SourceErasureReport {
   owned_file_maintenance: "pending" | "complete";
   external_copies: "out_of_scope";
   affected_claim_ids: string[];
+  affected_proposal_ids: string[];
   affected_receipt_ids: string[];
   affected_identity_hashes: string[];
   retained_reasons: string[];
@@ -28,12 +29,14 @@ export function sourceErasureReport(
   if (row?.erasure_report == null) return null;
   const report = JSON.parse(row.erasure_report) as SourceErasureReport;
   report.affected_receipt_ids ??= [];
+  report.affected_proposal_ids ??= [];
   if (
     typeof report.logical_absence !== "boolean" ||
     !["pending", "complete"].includes(report.owned_file_maintenance) ||
     report.external_copies !== "out_of_scope" ||
     ![
       report.affected_claim_ids,
+      report.affected_proposal_ids,
       report.affected_receipt_ids,
       report.affected_identity_hashes,
       report.retained_reasons,
@@ -127,6 +130,9 @@ export function eraseSourcePayload(
       "SELECT DISTINCT c.claim_id FROM claims c JOIN json_each(c.provenance) p JOIN source_event_bindings b ON b.event_id=p.value WHERE b.source_key=? LIMIT 10001",
     )
     .all(source);
+  const proposals = db.query<{proposal_id:string},[string]>(
+    "SELECT DISTINCT p.proposal_id FROM proposals p JOIN json_each(p.provenance) e JOIN source_event_bindings b ON b.event_id=e.value WHERE b.source_key=? LIMIT 10001"
+  ).all(source);
   const links = db
     .query<{ subject_a: string; subject_b: string }, [string, string]>(
       "SELECT DISTINCT l.subject_a,l.subject_b FROM identity_links l JOIN json_each(l.evidence) p WHERE replace(p.value,'event:','') IN (SELECT event_id FROM source_event_bindings WHERE source_key=?) OR replace(p.value,'claim:','') IN (SELECT c.claim_id FROM claims c JOIN json_each(c.provenance) e JOIN source_event_bindings b ON b.event_id=e.value WHERE b.source_key=?) LIMIT 10001",
@@ -147,6 +153,7 @@ export function eraseSourcePayload(
           .map((row) => row.receipt_id),
       ]),
     ],
+    affected_proposal_ids: [...new Set([...(prior?.affected_proposal_ids ?? []), ...proposals.map(row => row.proposal_id)])],
     affected_claim_ids: [
       ...new Set([
         ...(prior?.affected_claim_ids ?? []),
@@ -163,7 +170,7 @@ export function eraseSourcePayload(
     ],
     retained_reasons: [],
   };
-  if (claims.length > 10000 || links.length > 10000)
+  if (claims.length > 10000 || links.length > 10000 || proposals.length > 10000)
     report.retained_reasons.push("bounded_record_limit");
   save(db, source, report);
   if (
@@ -187,6 +194,8 @@ export function eraseSourcePayload(
       db.query(
         "DELETE FROM identity_links WHERE subject_a=? AND subject_b=?",
       ).run(row.subject_a, row.subject_b);
+    for (const row of proposals)
+      db.query("UPDATE proposals SET body='',target=NULL,frontmatter='{}',subjects='[]',producer='deterministic',status='withdrawn' WHERE proposal_id=?").run(row.proposal_id);
     for (const row of claims)
       db.query(
         "UPDATE claims SET body='',object=NULL,target=NULL,subject=NULL,predicate=NULL,subjects='[]',frontmatter='{}',model_ref=NULL,producer='deterministic',status='purged' WHERE claim_id=?",

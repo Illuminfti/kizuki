@@ -67,6 +67,7 @@ export interface SourceGrant {
   purge_blockers: (
     | "retrieval_pending"
     | "claim_payload_retained"
+    | "proposal_payload_retained"
     | "identity_payload_retained"
     | "canon_rewrite_pending"
     | "owned_payload_maintenance_pending"
@@ -708,6 +709,8 @@ function sourcePurgeBlockers(
       .get(sourceKey) !== null
   )
     blockers.push("claim_payload_retained");
+  if (db.query("SELECT 1 FROM proposals p JOIN json_each(p.provenance) e JOIN source_event_bindings b ON b.event_id=e.value WHERE b.source_key=? AND (length(p.body)>0 OR p.target IS NOT NULL OR p.frontmatter!='{}' OR p.subjects!='[]' OR p.producer!='deterministic') LIMIT 1").get(sourceKey) !== null)
+    blockers.push("proposal_payload_retained");
   if (
     db
       .query(

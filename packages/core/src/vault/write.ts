@@ -1,5 +1,7 @@
 import {
   closeSync,
+  constants,
+  fstatSync,
   copyFileSync,
   existsSync,
   fsyncSync,
@@ -194,8 +196,8 @@ function nextArchivePath(vault: string, file: string): string {
   return candidate;
 }
 
-function writeDurably(path: string, content: string, flag: "wx" | "w"): void {
-  const fd = openSync(path, flag);
+function writeDurably(path: string, content: string, flag: "wx" | "w", mode?: number): void {
+  const fd = openSync(path, flag, mode);
   try {
     writeSync(fd, content);
     fsyncSync(fd);
@@ -204,9 +206,25 @@ function writeDurably(path: string, content: string, flag: "wx" | "w"): void {
   }
 }
 
-function replaceAtomically(path: string, content: string, stamp: string): void {
+function replaceAtomically(path: string, content: string, stamp: string, resumeExact = false): void {
   const temp = join(dirname(path), `.${basename(path)}.${stamp}.tmp`);
-  writeDurably(temp, content, "wx");
+  if (resumeExact && existsSync(temp)) {
+    const before = lstatSync(temp);
+    const fd = openSync(temp, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      const stat = fstatSync(fd);
+      if (!stat.isFile() || before.isSymbolicLink() || stat.nlink !== 1 ||
+        stat.ino !== before.ino || stat.dev !== before.dev ||
+        stat.uid !== process.geteuid?.() || (stat.mode & 0o077) !== 0 ||
+        stat.size !== Buffer.byteLength(content) || readFileSync(fd,"utf8") !== content) {
+        throw new CanonWriteRefused("page_changed", "source erasure temporary revision changed");
+      }
+      fsyncSync(fd);
+      const current=lstatSync(temp);
+      if(current.ino!==stat.ino || current.dev!==stat.dev || current.isSymbolicLink())
+        throw new CanonWriteRefused("page_changed", "source erasure temporary revision changed");
+    } finally { closeSync(fd); }
+  } else writeDurably(temp, content, "wx", resumeExact ? 0o600 : undefined);
   try {
     renameSync(temp, path);
   } catch (error) {
@@ -329,7 +347,7 @@ export function writePage(
   }
 
   if (opts.erase_prior === true) {
-    replaceAtomically(path, content, cap.receipt_id);
+    replaceAtomically(path, content, cap.receipt_id, true);
     const fd = openSync(dirname(path), "r");
     try {
       fsyncSync(fd);
