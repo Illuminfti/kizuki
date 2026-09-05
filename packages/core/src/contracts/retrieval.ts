@@ -1,5 +1,6 @@
 import {
   SENSITIVITY_ORDER,
+  isSensitivity,
 } from "../agents/types";
 import type { Sensitivity } from "../agents/types";
 import { isRfc3339 } from "../util/time";
@@ -261,10 +262,7 @@ export function validateRetrievalQuery(value: unknown): RetrievalQuery {
   if (scope["until"] !== undefined && !isRfc3339(scope["until"])) {
     invalid("query.scope.until");
   }
-  if (
-    typeof value["ceiling"] !== "string" ||
-    !(value["ceiling"] in SENSITIVITY_ORDER)
-  ) {
+  if (!isSensitivity(value["ceiling"])) {
     invalid("query.ceiling");
   }
   if (

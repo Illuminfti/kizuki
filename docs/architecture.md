@@ -136,15 +136,6 @@ in; nothing user-facing ever asks for a client id. Where a service has no
 sanctioned user sign-in, the connector says so and offers export import
 instead.
 
-Connector minor 2 adds an optional third `signIn` argument supplied by the
-trusted host: `{ mode: "new" }` for enrollment, or `{ mode: "replace",
-previous_state }` for reauthentication. Replacement receives a copy of the
-previous opaque bytes, so a connector can check identity and revocation before
-browser or network work without changing the host's verification snapshot.
-Existing two-argument connectors keep their behavior. Implementations that
-require this context refuse context-less calls; hosts never infer the mode from
-the presence of a secret reference.
-
 ## Storage
 
 Bun + TypeScript (strict). Authoritative state is one SQLite database (`bun:sqlite`, WAL) per vault
@@ -174,6 +165,9 @@ Implemented on this revision:
   `kizuki agent add` CLI verb on this revision.
 
 Enforcement happens in the query engine, below the prompt layer.
+The public core search and timeline APIs require an explicit validated
+sensitivity ceiling; null or unlabeled records are never returned. See the
+[query ceiling contract and compatibility note](query-ceilings.md).
 
 ## Proactive (`kizuki serve`)
 
