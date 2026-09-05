@@ -362,25 +362,106 @@ key, which this task's author cannot mint. The node `kizuki-m2-proof`
 (`100.125.239.98` on `taila6c912.ts.net`) remains listed in the tailnet
 admin console, offline; the owner needs to remove it.
 
+Finding (2026-09-04/05, M3 lane): checks 2.6–2.14 above are no longer
+"not yet proven live" — the M3 lane provisioned a real Box VM, ran the
+compose stack on it with a fresh reusable, tagged (`tag:kizuki`) auth key,
+and ran `deploy/proof/tailnet.sh` from `lars-pc` (a genuine second tailnet
+node, Windows) against it. All eight checks passed:
+`PASS 2.6 node-online`, `PASS 2.7 health-over-tailnet`,
+`PASS 2.8 mcp-over-tailnet`, `PASS 2.9 fail-closed-no-token`,
+`PASS 2.10 public-ip-dark`, `PASS 2.11 no-shell-exposed`,
+`PASS 2.12 restart-keeps-identity`, `PASS 2.14 only-served-ports-reachable`
+— exit 0. This is the first time this proof has run end to end; see the M3
+section and its own pull request receipts for the full transcript. Getting
+there needed one real fix, recorded here because it corrects a row of this
+document rather than of M3's own plan text:
+`deploy/tailscale/entrypoint.sh` was tracked in git as mode `100644`
+(non-executable) while `deploy/entrypoint.sh` was `100755`; on a real Linux
+box this made `containerboot`'s wrapper fail with `exec: "/local/
+entrypoint.sh": permission denied` and the tailscale service never started.
+It was never caught locally because the single-use key available during
+M2's own work was spent before a full `docker compose up` completed against
+the real image (see the Auth key exhaustion finding above) — the M2 finish
+line's own static check, `compose-lint.sh`, has no way to see a bind-mounted
+script's executable bit, since that bit lives on the host filesystem, not
+in `compose.yml`. Fixed with `git update-index --chmod=+x
+deploy/tailscale/entrypoint.sh` (this repository has `core.filemode=false`,
+so the bit had to be set in the index directly rather than relying on a
+local `chmod` to be picked up).
+
 ### M3 Box golden snapshot and one-command setup
 
 Files: `deploy/box/bootstrap.sh`, `deploy/box/README.md`,
 `deploy/proof/box.sh`.
 
-`bootstrap.sh` on a fresh Box VM: install nothing global beyond what the
-image ships (Docker is present), clone the pinned tag or copy the compose
-bundle, create the `TS_AUTHKEY` secret from an argument that is never
-echoed, `docker compose up -d`, wait for 1.4. Then `box stop` and snapshot.
+Correction (2026-09-04/05): there is no `box` CLI available to this work,
+and no pre-existing snapshot to fork from (`GET /snapshots` returned an
+empty list at the start of this lane). Everything here goes through the
+HTTP API at `https://ascii.dev/api/box/v1` directly — `POST /boxes`,
+`GET /boxes/{id}`, `POST /boxes/{id}/{stop,resume,fork}`,
+`DELETE /boxes/{id}`, and, in place of SSH (a hosted box exposes none, see
+M2's shell-removal finding), `POST /boxes/{id}/commands` and
+`PUT|GET /boxes/{id}/files`. `bootstrap.sh` provisions a box, uploads a
+`git bundle` of this repository's exact commit (the box's own GitHub remote
+needs credentials this script does not have) and clones it, places the
+tailnet auth key, and runs `docker compose up -d --build`, waiting for the
+same health signal as M1 check 1.4 (a `docker compose exec` `curl`, since
+nothing is bound to the box's own host network — see `deploy/box/README.md`
+for the full command contract and every API fact this script relies on).
 
-Finish line, `deploy/proof/box.sh` (runs from the owner's machine with the
-`box` CLI; receipts in the PR):
+Finish line, `deploy/proof/box.sh` (not CI-runnable; provisions and deletes
+real boxes; run against `https://ascii.dev/api/box/v1` on 2026-09-05, exact
+head in this PR):
 
-| # | Assertion | How it is decided |
-| --- | --- | --- |
-| 3.1 | One command, five minutes. | Wall clock from `box new --from <snapshot>` to 2.7 passing is ≤ 300 s, measured by the script. |
-| 3.2 | Stop and start keep the vault. | `box stop`, `box start`; 1.6 passes without re-import. |
-| 3.3 | Fork is a fresh identity. | A forked box comes up as a different tailnet node id and its `/vault/.kizuki/vault-id` differs. |
-| 3.4 | Stranger proof runs against it. | `scripts/stranger-proof.sh` (when it lands from its own lane) exits 0 with the box as target; until then this row is marked BLOCKED, not PASS. |
+| # | Assertion | Result | How it is decided |
+| --- | --- | --- | --- |
+| 3.1 | One command, five minutes. | **PASS**, measured 49–85s across four runs. | Wall clock from `bootstrap.sh`'s own box creation to its own health check passing, asserted ≤ 300s. |
+| 3.2 | Stop and start keep the vault. | **FAIL**, reproduced on every attempt. | Import 3 fixtures (`events=3`), `POST /stop`, wait for `state=archived`, `POST /resume`, wait usable, bring the compose stack back up, re-read `events=`. Got `events=0` (or, once, `database is locked` — see the finding below) every time, never `events=3`. |
+| 3.3 | Fork is a fresh identity. | **FAIL/BLOCKED** (never reached a clean comparison). | `POST /boxes/{id}/fork` is a real endpoint (confirmed: a fork against a nonexistent box id returns a distinct `not_found` shape from a genuine unrouted path) and does return a second box id, but reading `/vault/.kizuki/vault-id` from either box requires the compose stack to be up first, and 3.2's finding means the original box's own stack is frequently not in a state that can be brought back up cleanly within this check's own window. |
+| 3.4 | Stranger proof runs against it. | **BLOCKED** (correctly — `scripts/stranger-proof.sh` does not exist in this tree; see `docs/CURRENT.md`). | `[ -x scripts/stranger-proof.sh ]`. |
+
+Finding (2026-09-05): **stop/resume and fork do not restart the compose
+stack, and only images and named volumes reliably survive them — running
+containers do not.** `docker ps -a` immediately after a resume shows no
+containers at all (not even exited ones), while `docker volume ls` and
+`docker images` show the same named volumes (`deploy_kizuki-vault`,
+`deploy_tailscale-state`) and the previously built `deploy-kizuki` image
+still present. `docker compose up -d` must be run again — `bootstrap.sh`'s
+own bring-up sequence, not something `resume`/`fork` do automatically —
+and its first attempt after a resume or fork reliably (reproduced on every
+box tried) fails with `Error response from daemon: Conflict ... name
+"/deploy-tailscale-1" is already in use by container <id>`, a race between
+dockerd's own post-resume container reconciliation and this script's
+attempt to create the same name; `docker rm -f` on the two named
+containers and a retry clears it. `deploy/proof/box.sh`'s `bring_up_compose`
+implements this retry so 3.2/3.3 fail for their own real reason rather than
+this separate, cosmetic race.
+
+The real, still-open finding is that **ledger writes committed shortly
+before a stop are lost across the resume**, even once the stack is
+correctly brought back up. `GET /boxes/{id}` reports a `snapshotCompletedAt`
+timestamp that updates on its own roughly every 30s regardless of when
+`/stop` is called — in one trial the most recent automatic snapshot
+completed one second *before* an import that had already returned
+`events_stored=3` moments earlier, and the resumed box then read
+`events=0`. This is evidence for, not proof of, a specific mechanism (an
+automatic periodic snapshot as the actual resume restore point, rather than
+one taken atomically at `/stop` time); it was not tested further because
+doing so needs more real boxes and would not change what this lane can
+safely ship. Once, after several manual stop/resume/recreate cycles run in
+diagnosis, the kizuki container instead failed to start at all with
+`error: database is locked` — a second, distinct symptom consistent with
+the same underlying cause (an abruptly-interrupted SQLite WAL-mode
+connection whose state the platform's snapshot does not reliably capture
+consistently). Neither this repository's compose design nor
+`packages/core`'s serve lifecycle was changed to chase this: `AGENTS.md`
+and this lane's own brief are explicit that a proof does not get bent to
+pass, and this is squarely a platform behavior question (whether Box's
+`/stop` can be made to snapshot synchronously, or whether a caller must
+force an application-level checkpoint and fsync first) rather than
+something `deploy/compose.yml` or `deploy/entrypoint.sh` can fix on their
+own. Every box created while chasing this (and every other box this lane
+created) was deleted; `GET /boxes` was empty at the end of every run.
 
 ### M4 Canon writing from configuration
 

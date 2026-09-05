@@ -3,3 +3,4 @@ dist/
 .kizuki/
 *.tsbuildinfo
 .env*
+/deploy/box/.state/
