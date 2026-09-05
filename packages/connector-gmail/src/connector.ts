@@ -1,7 +1,7 @@
 import { HealthReport, KizukiError, OAuthSession, freezeManifest, loopbackTransport, parseOAuthState, signInWithBrowser, withDeadline, type Connector, type ConnectionStateWriter, type OAuthProvider, type OAuthTransport, type SecretResolver, type SignInIo, type StatePersister, type SyncBatch, } from "@kizuki/core";
 import { Budget, GMAIL_API, USERINFO, HttpFailure, getJson, type GmailFetch } from "./api";
 import { messageEvent, messageProjection, tombstoneEvent } from "./events";
-import { GMAIL_CONNECTOR_ID, GMAIL_CURSOR_SCHEMA, GMAIL_SCOPES, decodeCursor, digest, encodeCursor, encodeState, failure, fields, historyId, id, object, pageToken, parseState, type Change, type Field, type GmailCursor, type GmailState, type Plan, } from "./state";
+import { GMAIL_CONNECTOR_ID, GMAIL_CURSOR_SCHEMA, GMAIL_SCOPES, decodeCursor, digest, encodeCursor, encodeState, failure, fields, historyId, id, object, pageToken, parseState, planIdentity, type Change, type Field, type GmailCursor, type GmailState, type Plan, } from "./state";
 export interface GmailConnectorConfig {
     secret_ref?: string;
     /** Trusted application composition, never an owner key-pasting enrollment flow. */
@@ -21,11 +21,14 @@ export interface GmailConnectorDeps {
     now?: () => Date;
 }
 const MANIFEST = freezeManifest({ schema: "kizuki.connector/v1", connector_id: GMAIL_CONNECTOR_ID, version: "0.1.0", contract_minor: 1, implementation: "@kizuki/connector-gmail", allowed_egress: ["accounts.google.com", "oauth2.googleapis.com", "openidconnect.googleapis.com", "gmail.googleapis.com"], cursor_schema: GMAIL_CURSOR_SCHEMA, kinds: ["email"], capabilities: { backfill: true, sync: true, tombstones: true, purge: false, fixture: true }, required_secrets: [], emits_sensitivity_hint: true, default_sensitivity: "private", sensitivity_floor: "private", auth_modes: ["oauth"] });
+class SnapshotGap extends Error {
+}
 export class GmailConnector implements Connector {
     private state: GmailState | null = null;
     private session: OAuthSession | null = null;
     private disabled = false;
     private busy = false;
+    private reloadRequired = false;
     private last: "ok" | "misconfigured" | "unauthenticated" | "degraded" | "rate_limited" = "misconfigured";
     private readonly now: () => Date;
     private readonly config: GmailConnectorConfig;
@@ -44,15 +47,35 @@ export class GmailConnector implements Connector {
         return { name: GMAIL_CONNECTOR_ID, authorization_url: "https://accounts.google.com/o/oauth2/v2/auth", token_url: "https://oauth2.googleapis.com/token", client_id: client.id, ...(client.secret === undefined ? {} : { client_secret: client.secret }), scopes: [...GMAIL_SCOPES], extra_authorization_params: { access_type: "offline", prompt: "consent" } };
     }
     private selected(): Field[] { return fields(this.config.fields); }
-    private live(): void { if (this.disabled)
-        throw failure("unauthenticated"); }
-    private require(): GmailState { this.live(); if (!this.state || !this.session)
-        throw failure("unauthenticated"); return this.state; }
+    private live(): void {
+        if (this.disabled)
+            throw failure("unauthenticated");
+    }
+    private require(): GmailState {
+        this.live();
+        if (this.reloadRequired)
+            throw failure("unavailable");
+        if (!this.state || !this.session)
+            throw failure("unauthenticated");
+        return this.state;
+    }
     private async persist(next: GmailState): Promise<void> {
         this.live();
         if (!this.deps.persist)
             throw failure("misconfigured");
-        await this.deps.persist(encodeState(next));
+        const bytes = encodeState(next);
+        try {
+            await this.deps.persist(bytes);
+        }
+        catch {
+            // A failed response cannot tell us whether the native state write committed.
+            // Reload through the trusted resolver before exposing any later snapshot.
+            this.reloadRequired = true;
+            this.session?.forget();
+            this.session = null;
+            this.state = null;
+            throw failure("unavailable");
+        }
         this.live();
         this.state = next;
     }
@@ -70,6 +93,7 @@ export class GmailConnector implements Connector {
             if (digest(selected) !== digest(state.fields) || this.config.expected_account !== undefined && state.oauth.account.id !== this.config.expected_account)
                 throw failure("unauthenticated");
             this.state = state;
+            this.reloadRequired = false;
             this.session = new OAuthSession({ provider, state: state.oauth, transport: this.deps.oauth ?? loopbackTransport({ postTimeoutMs: 5000 }), now: this.now, persist: async (bytes) => {
                     const current = this.require();
                     await this.persist({ ...current, oauth: parseOAuthState(bytes, GMAIL_CONNECTOR_ID) });
@@ -151,8 +175,12 @@ export class GmailConnector implements Connector {
             return result;
         }
     }
-    private url(path: string, params: Record<string, string> = {}): URL { const url = new URL(path, GMAIL_API); for (const [key, value] of Object.entries(params))
-        url.searchParams.set(key, value); return url; }
+    private url(path: string, params: Record<string, string> = {}): URL {
+        const url = new URL(path, GMAIL_API);
+        for (const [key, value] of Object.entries(params))
+            url.searchParams.set(key, value);
+        return url;
+    }
     private async initial(budget: Budget, gap = false): Promise<GmailCursor> {
         const profile = await this.request(this.url("profile", { fields: "historyId" }), budget);
         return { schema: GMAIL_CURSOR_SCHEMA, account: this.require().oauth.account.id, phase: "backfill", anchor: historyId(profile.historyId), page: null, count: 0, gap, capped: false, unresolved: false, plan: null, offset: 0 };
@@ -208,7 +236,7 @@ export class GmailConnector implements Connector {
                 throw failure();
             next = { ...base, page, anchor: page === null ? anchor : base.anchor };
         }
-        const plan: Plan = { input: digest(input), base, next, observed_at, items };
+        const plan: Plan = { input: digest(input), base, next, observed_at, items, fence: null };
         await this.persist({ ...this.require(), pending: plan });
         return plan;
     }
@@ -225,18 +253,26 @@ export class GmailConnector implements Connector {
             const cursor = input === null ? null : decodeCursor(input, state.oauth.account.id);
             let plan = state.pending, offset = 0;
             if (cursor?.plan !== null && cursor?.plan !== undefined) {
-                if (!plan || digest(plan) !== cursor.plan || digest({ ...cursor, unresolved: plan.base.unresolved, plan: null, offset: 0 }) !== digest(plan.base) || cursor.offset > plan.items.length)
+                if (!plan || planIdentity(plan) !== cursor.plan || digest({ ...cursor, unresolved: plan.base.unresolved, plan: null, offset: 0 }) !== digest(plan.base) || cursor.offset > plan.items.length)
                     throw failure();
                 offset = cursor.offset;
             }
             else if (!plan || plan.input !== digest(input) || plan.items.length === 0 && encodeCursor(plan.next) === input) {
                 plan = await this.plan(input, cursor ?? await this.initial(budget), budget);
             }
+            const previous = plan.fence;
+            if (previous !== null && offset !== previous.offset && offset !== previous.offset + previous.fingerprints.length ||
+                previous === null && offset !== 0)
+                throw new SnapshotGap();
             const events = [];
+            const fingerprints: string[] = [];
             let missing = false;
             for (const change of plan.items.slice(offset, offset + 20)) {
-                if (change.deleted)
-                    events.push(tombstoneEvent(state.oauth.account.id, change, plan.observed_at));
+                if (change.deleted) {
+                    const event = tombstoneEvent(state.oauth.account.id, change, plan.observed_at);
+                    events.push(event);
+                    fingerprints.push(digest(event));
+                }
                 else {
                     try {
                         const url = this.url(`messages/${encodeURIComponent(change.id)}`, { format: state.fields.includes("text") || state.fields.includes("attachments") ? "full" : "metadata", fields: messageProjection(state.fields) });
@@ -246,27 +282,39 @@ export class GmailConnector implements Connector {
                         const raw = await this.request(url, budget);
                         if (raw.id !== change.id)
                             throw failure();
-                        events.push(messageEvent(state.oauth.account.id, raw, plan.observed_at, state.fields));
+                        const event = messageEvent(state.oauth.account.id, raw, plan.observed_at, state.fields);
+                        events.push(event);
+                        fingerprints.push(digest(event));
                     }
                     catch (error) {
-                        if (error instanceof HttpFailure && error.status === 404)
+                        if (error instanceof HttpFailure && error.status === 404) {
                             missing = true;
+                            fingerprints.push(digest(["gmail.message_missing/v1", change]));
+                        }
                         else
                             throw error;
                     }
                 }
             }
+            if (previous !== null && previous.offset === offset) {
+                if (digest(previous.fingerprints) !== digest(fingerprints))
+                    throw new SnapshotGap();
+            }
+            else if (fingerprints.length > 0) {
+                plan = { ...plan, fence: { offset, fingerprints } };
+                await this.persist({ ...this.require(), pending: plan });
+            }
             this.live();
             budget.remaining();
             const consumed = Math.min(offset + 20, plan.items.length);
-            const next = consumed < plan.items.length ? { ...plan.base, unresolved: plan.base.unresolved || cursor?.unresolved === true || missing, plan: digest(plan), offset: consumed } : { ...plan.next, unresolved: plan.next.unresolved || cursor?.unresolved === true || missing };
+            const next = consumed < plan.items.length ? { ...plan.base, unresolved: plan.base.unresolved || cursor?.unresolved === true || missing, plan: planIdentity(plan), offset: consumed } : { ...plan.next, unresolved: plan.next.unresolved || cursor?.unresolved === true || missing };
             const detail = ["bounded_capture", ...(next.gap ? ["history_gap_deletions_unreconciled"] : []), ...(next.capped ? ["backfill_cap_partial"] : []), ...(next.unresolved ? ["message_unavailable_no_deletion_inferred"] : [])].join("; ");
             this.last = next.gap || next.capped || next.unresolved ? "degraded" : "ok";
             return { events, cursor: encodeCursor(next), detail };
         }
         catch (error) {
             this.last = error instanceof KizukiError && error.code === "rate_limited" ? "rate_limited" : "degraded";
-            return { events: [], cursor: input, status: "unavailable", detail: error instanceof KizukiError ? failure(error.code).message : "Gmail unavailable; check permissions or source coverage" };
+            return { events: [], cursor: input, status: "unavailable", detail: error instanceof SnapshotGap ? "Gmail snapshot_gap_unresolved; provider observation changed or checkpoint is stale; no history was advanced" : error instanceof KizukiError ? failure(error.code).message : "Gmail unavailable; check permissions or source coverage" };
         }
         finally {
             this.busy = false;

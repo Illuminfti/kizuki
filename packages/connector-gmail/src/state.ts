@@ -30,6 +30,11 @@ export interface Plan {
     next: GmailCursor;
     observed_at: string;
     items: Change[];
+    /** One bounded batch, persisted before any of its events may leave the connector. */
+    fence: {
+        offset: number;
+        fingerprints: string[];
+    } | null;
 }
 export interface GmailState {
     schema: "kizuki.gmail-state/v1";
@@ -74,6 +79,11 @@ export function fields(value: unknown): Field[] {
     return FIELDS.filter(field => value.includes(field));
 }
 export function digest(value: unknown): string { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
+/** Capturing another batch must not invalidate the cursor that can retry that batch. */
+export function planIdentity(plan: Plan): string {
+    const { fence: _fence, ...identity } = plan;
+    return digest(identity);
+}
 function cursorValue(value: unknown, account: string): GmailCursor {
     const c = exact(value, ["schema", "account", "phase", "anchor", "page", "count", "gap", "capped", "unresolved", "plan", "offset"]);
     if (c.schema !== GMAIL_CURSOR_SCHEMA || c.account !== account || !["backfill", "sync"].includes(c.phase as string) || !Number.isSafeInteger(c.count) || (c.count as number) < 0 || (c.count as number) > 1000 || typeof c.gap !== "boolean" || typeof c.capped !== "boolean" || typeof c.unresolved !== "boolean" || !Number.isSafeInteger(c.offset) || (c.offset as number) < 0 || (c.offset as number) > 1000 || !(c.plan === null || typeof c.plan === "string" && /^[a-f0-9]{64}$/.test(c.plan)) || (c.plan === null && c.offset !== 0))
@@ -116,7 +126,7 @@ export function parseState(bytes: Uint8Array): GmailState {
         if (s.pending !== null) {
             if (Buffer.byteLength(JSON.stringify(s.pending)) > MAX_PLAN_BYTES)
                 throw failure();
-            const p = exact(s.pending, ["input", "base", "next", "observed_at", "items"]);
+            const p = exact(s.pending, ["input", "base", "next", "observed_at", "items", "fence"]);
             if (typeof p.input !== "string" || !/^[a-f0-9]{64}$/.test(p.input) || !isRfc3339(p.observed_at) || !Array.isArray(p.items) || p.items.length > 1000)
                 throw failure();
             const base = cursorValue(p.base, oauth.account.id), next = cursorValue(p.next, oauth.account.id);
@@ -130,7 +140,17 @@ export function parseState(bytes: Uint8Array): GmailState {
             });
             if (new Set(items.map(c => c.id)).size !== items.length)
                 throw failure();
-            pending = { input: p.input, base, next, observed_at: p.observed_at, items };
+            let fence: Plan["fence"] = null;
+            if (p.fence !== null) {
+                const f = exact(p.fence, ["offset", "fingerprints"]);
+                if (!Number.isSafeInteger(f.offset) || (f.offset as number) < 0 || (f.offset as number) % 20 !== 0 ||
+                    (f.offset as number) >= items.length || !Array.isArray(f.fingerprints) ||
+                    f.fingerprints.length !== Math.min(20, items.length - (f.offset as number)) ||
+                    f.fingerprints.some(hash => typeof hash !== "string" || !/^[a-f0-9]{64}$/.test(hash)))
+                    throw failure();
+                fence = { offset: f.offset as number, fingerprints: f.fingerprints as string[] };
+            }
+            pending = { input: p.input, base, next, observed_at: p.observed_at, items, fence };
         }
         return { schema: "kizuki.gmail-state/v1", oauth, fields: selected, pending };
     }

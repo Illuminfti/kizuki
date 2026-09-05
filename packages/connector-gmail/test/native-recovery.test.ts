@@ -57,3 +57,82 @@ test("native runToCompletion reopens persisted deletion observation after lost s
         rmSync(root, { recursive: true, force: true });
     }
 });
+for (const boundary of ["before-accept", "after-accept"] as const) {
+    for (const edited of [false, true]) {
+        test(`native live retry ${boundary} ${edited ? "refuses provider edit" : "reuses unchanged version"}`, async () => {
+            const root = mkdtempSync(join(tmpdir(), "gmail-live-native-"));
+            const database = join(root, "ledger.db");
+            let db = openLedger(database);
+            try {
+                const fixture = new GmailFixture(2);
+                let store = new ConnectionStateStore(root);
+                const enrollment = store.begin();
+                await enrollment.writer.write(fixture.state);
+                let connection = store.save(db, GMAIL_CONNECTOR_ID, enrollment.pending);
+                const source = connection.source_key;
+                let handle = createStatePersister(db, store, connection);
+                let witnessWritten = false;
+                let connector = await fixture.connected(async (bytes) => {
+                    await handle.persist(bytes);
+                    fixture.state = bytes;
+                    if (JSON.parse(new TextDecoder().decode(bytes)).pending?.fence) {
+                        witnessWritten = true;
+                        if (boundary === "before-accept")
+                            throw Error("synthetic lost durable witness response");
+                    }
+                });
+                if (boundary === "after-accept") {
+                    db.exec("CREATE TRIGGER interrupt_gmail_checkpoint BEFORE INSERT ON checkpoints BEGIN SELECT RAISE(FAIL,'synthetic checkpoint interruption'); END");
+                    await expect(runToCompletion(db, connector, GMAIL_CONNECTOR_ID, source, "backfill")).rejects.toThrow("synthetic checkpoint interruption");
+                }
+                else {
+                    const stopped = await runToCompletion(db, connector, GMAIL_CONNECTOR_ID, source, "backfill");
+                    expect(stopped.errors.length).toBeGreaterThan(0);
+                    expect(stopped.stored).toBe(0);
+                }
+                expect(witnessWritten).toBe(true);
+                expect(getCheckpoint(db, GMAIL_CONNECTOR_ID, source)?.cursor ?? null).toBeNull();
+                const before = db.query("SELECT * FROM events ORDER BY event_id").all();
+                expect(before).toHaveLength(boundary === "after-accept" ? 2 : 0);
+                const pendingBytes = store.read(handle.current())!;
+                expect(new TextDecoder().decode(pendingBytes)).not.toContain("Synthetic message body");
+                db.close();
+                db = openLedger(database);
+                if (boundary === "after-accept")
+                    db.exec("DROP TRIGGER interrupt_gmail_checkpoint");
+                store = new ConnectionStateStore(root);
+                expect(store.recover(db).unresolved).toEqual([]);
+                connection = getConnection(db, GMAIL_CONNECTOR_ID, source)!;
+                fixture.state = store.read(connection)!;
+                fixture.advanceDay();
+                if (edited) {
+                    fixture.messages.get("m1")!.historyId = "101";
+                    fixture.messages.get("m1")!.payload = { mimeType: "text/plain", body: { data: Buffer.from("Changed synthetic version").toString("base64url") } };
+                }
+                handle = createStatePersister(db, store, connection);
+                connector = await fixture.connected(async (bytes) => { await handle.persist(bytes); fixture.state = bytes; });
+                const resumed = await runToCompletion(db, connector, GMAIL_CONNECTOR_ID, source, "backfill");
+                if (edited) {
+                    expect(resumed.errors.join(" ")).toContain("snapshot_gap_unresolved");
+                    expect(resumed.stored).toBe(0);
+                    expect(resumed.duplicates).toBe(0);
+                    expect(getCheckpoint(db, GMAIL_CONNECTOR_ID, source)?.cursor ?? null).toBeNull();
+                    expect(db.query("SELECT * FROM events ORDER BY event_id").all()).toEqual(before);
+                    expect((await runToCompletion(db, connector, GMAIL_CONNECTOR_ID, source, "backfill")).errors.join(" ")).toContain("snapshot_gap_unresolved");
+                }
+                else {
+                    expect(resumed.errors).toEqual([]);
+                    expect(resumed.stored).toBe(boundary === "before-accept" ? 2 : 0);
+                    expect(resumed.duplicates).toBe(boundary === "after-accept" ? 2 : 0);
+                    expect(db.query("SELECT * FROM events").all()).toHaveLength(2);
+                    if (boundary === "after-accept")
+                        expect(db.query("SELECT * FROM events ORDER BY event_id").all()).toEqual(before);
+                }
+            }
+            finally {
+                db.close();
+                rmSync(root, { recursive: true, force: true });
+            }
+        });
+    }
+}
