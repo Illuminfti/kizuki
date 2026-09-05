@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import * as core from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import * as publicSearch from "../../src/search";
 import * as publicQuery from "../../src/query";
 import { searchAuditCandidates } from "../../src/search/query";
@@ -14,7 +15,7 @@ test("audit query helpers are absent from every public query export", () => {
 });
 
 test("search audit candidates retain bounded rank/filter order without projecting content", () => {
-  const db = core.openLedger(":memory:");
+  const db = openLedger(":memory:");
   try {
     core.initSearch(db);
     for (const [n, sensitivity] of [[1, "private"], [2, "public"], [3, undefined], [4, "personal"]] as const) {
@@ -38,7 +39,7 @@ test("search audit candidates retain bounded rank/filter order without projectin
 });
 
 test("timeline audit candidates keep time/filter/limit order and retrieve identities only", () => {
-  const db = core.openLedger(":memory:");
+  const db = openLedger(":memory:");
   try {
     const ids: string[] = [];
     for (let n = 0; n < 4; n++) {

@@ -12,7 +12,6 @@ import {
   shouldAdvanceExtractCursor,
 } from "../../src/serve/extract";
 import { initVault } from "../../src/vault/init";
-import { accept } from "../../src/ledger/ledger";
 import { putEvent } from "../claims/helpers";
 import { validEvent } from "../fixtures";
 
