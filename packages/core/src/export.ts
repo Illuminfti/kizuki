@@ -39,7 +39,7 @@ import {
 import { rebuildDerived } from "./derived";
 import { EVENT_LIMITS, type CaptureEvent } from "./contracts/event";
 import { isUlid, ulid } from "./util/ulid";
-import { writeResumeCursor } from "./ledger/connections";
+import { writeRailCursor } from "./ledger/checkpoints";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "./ledger/db";
 import { eventFromRow, parseEventRecord, type LegacyEventRecord } from "./ledger/event-record";
 import { bindLegacyEventOrigins, installEventIdentityGuards } from "./ledger/event-identity-schema";
@@ -1684,7 +1684,7 @@ function insertCheckpointRow(db: Database, raw: Record<string, unknown>): void {
     connectorId === "kizuki.producer.model" &&
     (sourceKey === "extract" || sourceKey === "extract-deferred-scan")
   ) {
-    if (cursor !== null) writeResumeCursor(db, connectorId, sourceKey, cursor);
+    if (cursor !== null) writeRailCursor(db, connectorId, sourceKey, cursor);
     return;
   }
   db.query(
