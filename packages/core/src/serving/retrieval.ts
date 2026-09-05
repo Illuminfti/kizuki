@@ -30,7 +30,7 @@ export async function retrievalCandidates(
       ...(options.since === undefined ? {} : { since: options.since }),
       ...(options.until === undefined ? {} : { until: options.until }),
     },
-    ceiling: options.ceiling ?? ctx.principal.grant.ceiling,
+    ceiling: options.ceiling,
     limit: Math.min(100, options.limit ?? 20), deadline_ms: 3_000,
   };
   let timer: ReturnType<typeof setTimeout> | undefined;

@@ -76,6 +76,7 @@ export const syncCommand: Command = {
               selected.connection.connector_id,
               selected.connection.source_key,
               "sync",
+              { vault_path: ctx.vaultPath },
             );
             const derived = tryRefreshDerived(ctx.db, ctx.vaultPath);
             io.out(

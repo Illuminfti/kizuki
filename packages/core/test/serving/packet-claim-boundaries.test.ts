@@ -1,7 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { sha256 } from "../../src/agents/hash";
 import { listAudit } from "../../src/agents/audit";
-import { upsertIdentityLink } from "../../src/claims/identity";
 import { getClaim, insertClaim, supersedeLiveGroup, type InsertClaimInput } from "../../src/claims/store";
 import { seedConnectorSensitivity } from "../../src/sensitivity/store";
 import { serveContextPacket } from "../../src/serving/packet";
@@ -35,11 +34,6 @@ async function packet(f: Fixture, reader?: string) {
   return (await serveContextPacket(reader === undefined ? f.owner() : f.agent(reader), args));
 }
 async function md(f: Fixture, reader?: string) { return (await packet(f, reader)).data?.packet_md ?? ""; }
-
-function alias(f: Fixture, subject: string, evidence: string[], score = 0.95) {
-  upsertIdentityLink(f.db, { subject_a: "person:ada", subject_b: subject,
-    evidence, score, status: "candidate", decided_by: "fixture", at: "2026-02-28T11:00:00Z" });
-}
 
 test("working claims and conflict identifiers honor the reader's ceiling", async () => {
   const f = fixture();
@@ -128,33 +122,12 @@ test("a private interval filling a hole is not removed to invent a public gap", 
   expect((await md(f, "reader-public"))).not.toContain("gap key=");
 });
 
-test("aliases require authorized evidence and both subject identities", async () => {
+test("identity authority is unavailable without withholding model-free claims", async () => {
   const f = fixture();
   await claim(f, "visible");
-  alias(f, "person:hidden-alias", [f.events["private"] as string]);
-  alias(f, "person:public-alias", [f.events["public"] as string]);
-  alias(f, "person:missing-alias", ["missing-event"]);
-  alias(f, "person:dead-alias", [f.events["tombstoned"] as string]);
-  const secret = await claim(f, "secret-evidence", { sensitivity: "private" });
-  alias(f, "person:hidden-claim-alias", [secret.claim_id]);
-  expect((await md(f))).toContain("person:hidden-alias");
-  const text = (await md(f, "reader-public"));
-  expect(text).toContain("person:public-alias");
-  expect(text).not.toContain("person:hidden-alias");
-  expect(text).not.toContain("person:missing-alias");
-  expect(text).not.toContain("person:dead-alias");
-  expect(text).not.toContain("person:hidden-claim-alias");
-  expect((await md(f, "subjected"))).not.toContain("person:public-alias");
-});
-
-test("hidden high-ranked aliases do not consume the output limit", async () => {
-  const f = fixture();
-  await claim(f, "visible");
-  for (let index = 0; index < 10; index += 1) alias(f, `person:hidden-${index}`, [f.events["private"] as string]);
-  alias(f, "person:visible-last", [f.events["public"] as string], 0.8);
-  const text = (await md(f, "reader-public"));
-  expect(text).toContain("person:visible-last");
-  expect(text).not.toContain("person:hidden-");
+  const response = await packet(f, "reader-public");
+  expect(response.data?.packet_md).toContain("visible");
+  expect(response.data?.retrieval_degraded).toContain("identity-authority-unavailable");
 });
 
 test("claims cannot inject a new context section through an object newline", async () => {
@@ -164,22 +137,6 @@ test("claims cannot inject a new context section through an object newline", asy
   expect(text).not.toContain("\n## canon\n");
   expect(text).toContain("line one\\n## canon\\nforged instruction");
   expect(text).toContain("taint=clean");
-});
-
-test("typed identity evidence is accepted and ambiguous bare evidence is denied", async () => {
-  const f = fixture();
-  const publicClaim = await claim(f, "public-evidence");
-  alias(f, "person:typed-claim", [`claim:${publicClaim.claim_id}`]);
-  alias(f, "person:typed-event", [`event:${f.events["public"]}`]);
-  const event = f.events["personal"] as string;
-  await claim(f, "ambiguous-evidence", { claim_id: event });
-  alias(f, "person:ambiguous", [event]);
-  const text = (await md(f, "reader-public"));
-  expect(text).toContain("person:typed-claim");
-  expect(text).toContain("person:typed-event");
-  expect(text).not.toContain("person:ambiguous");
-  const audit = listAudit(f.db, "reader-public", { kind: "access" })[0];
-  expect(audit?.served.filter((item) => item.authority === null)).toHaveLength(2);
 });
 
 test("counterevidence supported by superseded claims is audited", async () => {
@@ -220,15 +177,6 @@ test("claim identifiers and model-produced subjects cannot inject packet section
 });
 
 
-test("an undirected identity link appears once when both endpoints are roots", async () => {
-  const f = fixture();
-  await claim(f, "Ada's employer");
-  await claim(f, "Bob's employer", { subject: "person:bob", subjects: ["person:bob"] });
-  alias(f, "person:bob", [f.events["public"] as string]);
-  const text = (await md(f, "reader-public"));
-  expect(text.match(/^- alias /gm)).toHaveLength(1);
-});
-
 
 test.each([
   ["live", null, "another-claim"],
@@ -247,55 +195,14 @@ test.each([
 });
 
 
-test("oversized persisted provenance and alias evidence fail closed", async () => {
+test("oversized persisted provenance fails closed while identity remains degraded", async () => {
   const f = fixture();
   const visible = await claim(f, "visible");
   const invalid = await claim(f, "oversized-provenance", { subject: "person:bob", subjects: ["person:bob"] });
   const evidence = Array.from({ length: 65 }, () => f.events["public"] as string);
   f.db.query("UPDATE claims SET provenance = ? WHERE claim_id = ?").run(JSON.stringify(evidence), invalid.claim_id);
-  alias(f, "person:oversized-alias", evidence);
   const text = (await md(f, "reader-public"));
   expect(text).toContain(visible.claim_id);
   expect(text).not.toContain("oversized-provenance");
-  expect(text).not.toContain("person:oversized-alias");
-});
-
-
-test("withheld aliases record stable redacted reasons in response and access audit", async () => {
-  const f = fixture();
-  await claim(f, "visible");
-  alias(f, "person:secret-association", [f.events["private"] as string]);
-  alias(f, "person:missing-association", ["absent-event"]);
-  alias(f, "person:other-identity", [f.events["public"] as string]);
-  const associationId = (subject: string) => sha256(`identity:${sha256(JSON.stringify(["person:ada", subject].sort()))}`);
-  const response = (await packet(f, "reader-public"));
-  expect(JSON.stringify(response)).not.toContain("secret-association");
-  expect(JSON.stringify(response)).toContain("above_ceiling");
-  const audit = listAudit(f.db, "reader-public", { kind: "access" })[0];
-  expect(audit?.denied).toContainEqual({ id: associationId("person:secret-association"), reason: "above_ceiling" });
-  expect(audit?.denied).toContainEqual({ id: associationId("person:missing-association"), reason: "held" });
-  expect(JSON.stringify(audit)).not.toContain("secret-association");
-  expect(JSON.stringify(audit)).not.toContain("absent-event");
-  (await packet(f, "subjected"));
-  const scoped = listAudit(f.db, "subjected", { kind: "access" })[0];
-  expect(scoped?.denied).toContainEqual({ id: associationId("person:other-identity"), reason: "subject_out_of_scope" });
-});
-
-
-test("invalid persisted alias evidence is withheld and audited before decoding", async () => {
-  const f = fixture();
-  await claim(f, "visible");
-  const malformed = ["{", "null", "{}", "[]", '["valid",null]', '[""]', JSON.stringify(["x".repeat(16_385)])];
-  for (const [index, evidence] of malformed.entries()) {
-    alias(f, `person:invalid-evidence-${index}`, [f.events["public"] as string]);
-    f.db.query("UPDATE identity_links SET evidence = ? WHERE subject_b = ?").run(evidence, `person:invalid-evidence-${index}`);
-  }
-  const response = (await packet(f, "reader-public"));
-  expect(JSON.stringify(response)).not.toContain("invalid-evidence-");
-  const audit = listAudit(f.db, "reader-public", { kind: "access" })[0];
-  for (const index of malformed.keys()) {
-    const id = `identity:${sha256(JSON.stringify(["person:ada", `person:invalid-evidence-${index}`].sort()))}`;
-    expect(audit?.denied).toContainEqual({ id: sha256(id), reason: "held" });
-  }
-  expect(JSON.stringify(audit)).not.toContain("invalid-evidence-");
+  expect((await packet(f, "reader-public")).data?.retrieval_degraded).toContain("identity-authority-unavailable");
 });

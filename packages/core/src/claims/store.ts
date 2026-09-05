@@ -1,6 +1,9 @@
 import { recordSourceStoreWrite } from "../ledger/source-stores";
 import { historicalSourceWriteAllowed, sourceEventsAllowed, requireSourceEvents, sourcePolicyEpoch, isLocalSourcePort, sourceSensitivity } from "../ledger/source-grants";
 import type { Database } from "bun:sqlite";
+import { SelfOriginError, validateEventOrigin, requireExternalEvents } from "../ledger/event-origin";
+import { requireSourceTombstoneProposal, requiresSourceTombstoneBinding } from "../canon/source-tombstone";
+import { eventFromRow, type EventRow } from "../ledger/event-record";
 import type { Sensitivity } from "../agents/types";
 import type { RetrievalDoc, RetrievalPort, RetrievalQuery } from "../contracts/retrieval";
 import { bareRetrievalId, retrievalDocId } from "../retrieval/ids";
@@ -49,6 +52,8 @@ export const RETRIEVAL_SWEEP_LIMIT = 32;
 export interface ClaimsIo {
   readonly db: Database;
   readonly retrieval?: RetrievalPort;
+  /** Actual opened vault, required only for a current source-deletion control. */
+  readonly vault_path?: string;
   readonly now?: () => string;
   /** Internal exact-provenance capability for a pre-policy durable replay. */
   readonly historical_source_write?: object;
@@ -289,14 +294,15 @@ function resolveProvenance(db: Database, ids: readonly string[]): void {
 function loadEventFacts(db: Database, ids: readonly string[]): EventFacts[] {
   const placeholders = ids.map(() => "?").join(", ");
   return db
-    .query<{ event_id: string; connector_id: string; text: string }, string[]>(
-      `SELECT event_id, connector_id, text FROM events WHERE event_id IN (${placeholders})`,
+    .query<EventRow, string[]>(
+      `SELECT * FROM events WHERE event_id IN (${placeholders})`,
     )
     .all(...ids)
     .map((row) => ({
       event_id: row.event_id,
       connector_id: row.connector_id,
       text: row.text,
+      origin: validateEventOrigin(db, eventFromRow(row, db)).origin,
       taint: db.query("SELECT 1 FROM native_owner_evidence WHERE event_id=? AND origin='correction'").get(row.event_id) !== null ? "owner" : "untrusted",
     }));
 }
@@ -453,13 +459,19 @@ function provenanceGone(db: Database, claim: Claim): boolean {
   return row === null || row.n === 0;
 }
 
+function externalEvidence(db: Database, provenance: readonly string[]): boolean {
+  try { requireExternalEvents(db, provenance); return true; }
+  catch (error) { if (!(error instanceof SelfOriginError)) throw error; return false; }
+}
+
 async function nominateSemantic(
   io: ClaimsIo,
-  incoming: Claim,
+  incoming: Pick<Claim, "body" | "subject" | "provenance">,
   mode: DedupMode,
 ): Promise<Claim[]> {
   if (mode !== "full" || io.retrieval === undefined) return [];
   if (await retrievalIsDegraded(io.retrieval)) return [];
+  requireSourceEvents(io.db, incoming.provenance, { owner: true, purpose: "derive", port: io.retrieval });
   const query: RetrievalQuery = {
     text: incoming.body,
     mode: "vector",
@@ -530,14 +542,15 @@ function finishOp(db: Database, opId: string, at: string): void {
 export function pendingRetrievalOps(
   db: Database,
   limit = RETRIEVAL_SWEEP_LIMIT,
+  store?: string,
 ): { op_id: string; doc_id: string }[] {
   if (!tableExists(db, "retrieval_ops")) return [];
   return db
-    .query<{ op_id: string; doc_id: string }, [number]>(
+    .query<{ op_id: string; doc_id: string }, [string | null, string | null, number]>(
       `SELECT op_id, doc_id FROM retrieval_ops
-        WHERE state = 'pending' ORDER BY created_at, op_id LIMIT ?`,
+        WHERE state = 'pending' AND (? IS NULL OR store=?) ORDER BY created_at, op_id LIMIT ?`,
     )
-    .all(limit);
+    .all(store ?? null, store ?? null, limit);
 }
 
 /**
@@ -545,30 +558,37 @@ export function pendingRetrievalOps(
  * replay of an operation that in fact succeeded costs one write and changes
  * nothing; that is cheaper than a doc the index never learns about.
  */
-async function cancelDeniedRetrieval(io: ClaimsIo, claim: Claim, opId: string | null): Promise<boolean> {
-  if (io.retrieval === undefined || sourceEventsAllowed(io.db, claim.provenance, { owner: true, purpose: "derive", port: io.retrieval })) return false;
-  await io.retrieval.remove([`claim:${claim.claim_id}`]);
-  if (opId !== null) io.db.query("UPDATE retrieval_ops SET state='cancelled',done_at=? WHERE op_id=?").run(nowOf(io), opId);
-  return true;
+function retrievalClaimAllowed(io: ClaimsIo, claim: Claim): boolean {
+  return claim.status === "live" &&
+    sourceEventsAllowed(io.db, claim.provenance, { owner: true, purpose: "derive", ...(io.retrieval === undefined ? {} : { port: io.retrieval }) }) &&
+    externalEvidence(io.db, claim.provenance);
+}
+
+async function cancelRetrievalOp(io: ClaimsIo, op: { op_id: string; doc_id: string }): Promise<void> {
+  if (io.retrieval === undefined) return;
+  await io.retrieval.remove([retrievalDocId("claim", op.doc_id)]);
+  io.db.query("UPDATE retrieval_ops SET state='cancelled',done_at=? WHERE op_id=?").run(nowOf(io), op.op_id);
 }
 
 export async function retryRetrievalOps(
   io: ClaimsIo,
   limit = RETRIEVAL_SWEEP_LIMIT,
 ): Promise<{ retried: number; pending: number }> {
+  if (io.db.inTransaction) throw new Error("retrieval publication requires committed claims");
   if (io.retrieval === undefined || (sourcePolicyEpoch(io.db) > 0 && !isLocalSourcePort(io.retrieval))) {
     return { retried: 0, pending: pendingRetrievalOps(io.db, limit).length };
   }
   let retried = 0;
-  for (const op of pendingRetrievalOps(io.db, limit)) {
-    const claim = getClaim(io.db, op.doc_id);
-    if (claim === null) { finishOp(io.db, op.op_id, nowOf(io)); continue; }
+  for (const op of pendingRetrievalOps(io.db, limit, io.retrieval.descriptor.id)) {
     try {
-      if (!await cancelDeniedRetrieval(io, claim, op.op_id)) {
-        requireSourceEvents(io.db, claim.provenance, { owner: true, purpose: "derive", port: io.retrieval });
+      const claim = getClaim(io.db, op.doc_id);
+      if (claim === null || !retrievalClaimAllowed(io, claim)) await cancelRetrievalOp(io, op);
+      else {
         recordSourceStoreWrite(io.db, io.retrieval, claim.provenance);
         await io.retrieval.upsert([{ ...claimRetrievalDoc(claim), sensitivity: sourceSensitivity(io.db, claim.provenance, claim.sensitivity) }]);
-        if (!await cancelDeniedRetrieval(io, claim, op.op_id)) finishOp(io.db, op.op_id, nowOf(io));
+        const current = getClaim(io.db, op.doc_id);
+        if (current === null || !retrievalClaimAllowed(io, current)) await cancelRetrievalOp(io, op);
+        else finishOp(io.db, op.op_id, nowOf(io));
       }
       retried += 1;
     } catch {
@@ -576,22 +596,9 @@ export async function retryRetrievalOps(
       break;
     }
   }
-  return { retried, pending: pendingRetrievalOps(io.db, limit).length };
+  return { retried, pending: pendingRetrievalOps(io.db, limit, io.retrieval.descriptor.id).length };
 }
 
-async function upsertRetrieval(io: ClaimsIo, claim: Claim, opId: string | null): Promise<void> {
-  if (io.retrieval === undefined) return;
-  try {
-    if (await cancelDeniedRetrieval(io, claim, opId)) return;
-    requireSourceEvents(io.db, claim.provenance, { owner: true, purpose: "derive", port: io.retrieval });
-    recordSourceStoreWrite(io.db, io.retrieval, claim.provenance);
-        await io.retrieval.upsert([{ ...claimRetrievalDoc(claim), sensitivity: sourceSensitivity(io.db, claim.provenance, claim.sensitivity) }]);
-    if (await cancelDeniedRetrieval(io, claim, opId)) return;
-    if (opId !== null) finishOp(io.db, opId, nowOf(io));
-  } catch {
-    // The authoritative claim stands; unresolved derived work remains pending.
-  }
-}
 
 export function countClaims(
   db: Database,
@@ -904,12 +911,70 @@ export function markClaimsAfterPurge(
   return { purged, reduced };
 }
 
-export async function insertClaim(
+/** Internal prepared operation; source and claim facts are reloaded when applied. */
+export interface PreparedClaimInsert {
+  readonly db: Database;
+  readonly signature: string;
+  apply(): InsertClaimResult;
+}
+
+/** Exact deletion controls use current page authority; ordinary evidence stays external. */
+function requireIncomingClaimOrigin(io: ClaimsIo, input: InsertClaimInput): boolean {
+  const proposal = { ...input, frontmatter: input.frontmatter ?? {} };
+  if (requiresSourceTombstoneBinding(io.db, proposal)) {
+    requireSourceTombstoneProposal(io.db, proposal,
+      io.vault_path === undefined ? undefined : { vault_path: io.vault_path });
+    return true;
+  }
+  requireExternalEvents(io.db, input.provenance);
+  return false;
+}
+
+/** Preparation may consult retrieval; application requires its caller's SQLite transaction. */
+export async function prepareClaimInsert(
   io: ClaimsIo,
   input: InsertClaimInput,
-): Promise<InsertClaimResult> {
+): Promise<PreparedClaimInsert> {
   assertInput(input);
-  initClaims(io.db);
+  // A caller cannot alter the prepared draft while the semantic lookup waits.
+  input = structuredClone(input);
+  io = { ...io };
+  const scope = { owner: canonicalizeProducer(input.producer) !== "model" && !input.producer.startsWith("agent:"),
+    model: canonicalizeProducer(input.producer) === "model",
+    purpose: input.intent === "correct" ? "correction" as const : "derive" as const };
+  const historical = historicalSourceWriteAllowed(io.historical_source_write, io.db, input.provenance, historicalClaimReplaySignature(input));
+  if (!historical) requireSourceEvents(io.db, input.provenance, scope);
+  resolveProvenance(io.db, input.provenance);
+  requireIncomingClaimOrigin(io, input);
+  if (sourcePolicyEpoch(io.db) > 0 && (!isLocalSourcePort(io.retrieval) ||
+      !sourceEventsAllowed(io.db, input.provenance, { ...scope, ...(io.retrieval === undefined ? {} : { port: io.retrieval }) }))) {
+    const { retrieval: _retrieval, ...local } = io;
+    io = local;
+  }
+  let mode = retrievalDedupMode(io.retrieval);
+  if (mode === "full" && await retrievalIsDegraded(io.retrieval)) mode = "structural-only";
+  const nominees = mode === "full" ? await nominateSemantic(io, {
+    body: input.body, subject: input.subject ?? input.subjects?.[0] ?? null, provenance: input.provenance,
+  }, mode) : [];
+  const nomineeIds = nominees.map(claim => claim.claim_id);
+  return {
+    db: io.db,
+    signature: historicalClaimReplaySignature(input),
+    apply() {
+      if (!io.db.inTransaction) throw new Error("prepared claim requires a transaction");
+      return applyClaimInsert(io, input, mode, nomineeIds);
+    },
+  };
+}
+
+/** One synchronous authority path shared by ordinary insertion and atomic extraction. */
+function applyClaimInsert(
+  io: ClaimsIo,
+  input: InsertClaimInput,
+  mode: DedupMode,
+  semanticNomineeIds: readonly string[],
+): InsertClaimResult {
+  const at = nowOf(io);
   const sourceScope = { owner: canonicalizeProducer(input.producer) !== "model" && !input.producer.startsWith("agent:"), model: canonicalizeProducer(input.producer) === "model", purpose: input.intent === "correct" ? "correction" as const : "derive" as const };
   const historicalSignature = historicalClaimReplaySignature(input);
   const historicalInputAllowed = (): boolean => historicalSourceWriteAllowed(
@@ -923,9 +988,8 @@ export async function insertClaim(
   }
   resolveProvenance(io.db, input.provenance);
 
-  if (sourcePolicyEpoch(io.db) > 0 && (!isLocalSourcePort(io.retrieval) || !sourceEventsAllowed(io.db, input.provenance, { ...sourceScope, ...(io.retrieval === undefined ? {} : { port: io.retrieval }) }))) { const { retrieval: _retrieval, ...local } = io; io = local; }
-  const at = nowOf(io);
   const producer = canonicalizeProducer(input.producer);
+  const sourceControl = requireIncomingClaimOrigin(io, input);
   const subject = input.subject ?? input.subjects?.[0] ?? null;
   const predicate = input.predicate ?? null;
   const object = input.object ?? null;
@@ -939,7 +1003,7 @@ export async function insertClaim(
   const authorityEvents = events.map(event => ({...event, taint: ownerAttested ? event.taint : "untrusted" as const}));
   const hasCorroboration =
     key !== null &&
-    liveByKey(io.db, key).filter(live => sourceEventsAllowed(io.db, live.provenance, sourceScope)).some((live) =>
+    liveByKey(io.db, key).filter(live => sourceEventsAllowed(io.db, live.provenance, sourceScope) && externalEvidence(io.db, live.provenance)).some((live) =>
       live.provenance.some((id) => {
         const incomingConnectors = new Set(events.map((event) => event.connector_id));
         const liveFacts = loadEventFacts(io.db, live.provenance);
@@ -947,7 +1011,9 @@ export async function insertClaim(
       }),
     );
 
-  const assigned = authorityFor(
+  const assigned = sourceControl
+    ? { authority: "connector_evidence" as const, confidence: 1, relayed_by: null }
+    : authorityFor(
     {
       producer: authorityProducer,
       taint: input.taint ?? "clean",
@@ -1020,124 +1086,115 @@ export async function insertClaim(
   };
 
   claim.sensitivity = sourceSensitivity(io.db, claim.provenance, claim.sensitivity);
-  let mode: DedupMode = retrievalDedupMode(io.retrieval);
-  if (mode === "full" && (await retrievalIsDegraded(io.retrieval))) {
-    mode = "structural-only";
+  const exact = findExact(io.db, claim.kind, claim.target, claim.body_hash);
+  if (exact !== null && sourceControl) {
+    requireSourceTombstoneProposal(io.db, exact,
+      io.vault_path === undefined ? undefined : { vault_path: io.vault_path });
+    return { outcome: "duplicate", claim: exact, dedup: mode };
   }
-  const semanticNominees =
-    mode === "full" ? await nominateSemantic(io, claim, mode) : [];
-
-  let opId: string | null = null;
-  const apply = io.db.transaction((): InsertClaimResult => {
-    if (!historicalInputAllowed() && !sourceEventsAllowed(io.db, input.provenance, sourceScope)) {
-      requireSourceEvents(io.db, input.provenance, sourceScope);
-    }
-    resolveProvenance(io.db, input.provenance);
-
-    const exact = findExact(io.db, claim.kind, claim.target, claim.body_hash);
-    if (exact !== null && (sourceEventsAllowed(io.db, exact.provenance, sourceScope) ||
-        (historicalInputAllowed() && exact.model_ref === (input.model_ref ?? null) &&
-         JSON.stringify(exact.provenance) === JSON.stringify(input.provenance)))) {
-      return { outcome: "duplicate", claim: exact, dedup: mode };
-    }
-
-    const structuralCandidates = [
-      ...(claim.claim_key !== null ? liveByKey(io.db, claim.claim_key) : []),
-      ...semanticNominees,
-    ];
-    const structural = structuralCandidates.find((live) =>
-      sourceEventsAllowed(io.db, live.provenance, sourceScope) && structuralMatch(claim, live),
-    );
-    // Same key + polarity + object is corroboration, including a second
-    // owner denial of the same reading. `intent: "correct"` still reaches
-    // conflict/R5 when the object or polarity differs (RFC 0002 §5.2, §6.3).
-    if (structural !== undefined) {
-      return {
-        outcome: "duplicate",
-        claim: corroborate(io.db, structural, claim, at),
-        dedup: mode,
-      };
-    }
-
-    const conflicts = (claim.claim_key === null
-      ? []
-      : liveByKey(io.db, claim.claim_key)
-    ).filter((live) =>
-      sourceEventsAllowed(io.db, live.provenance, sourceScope) && claimsConflict(toConflict(claim), toConflict(live, provenanceGone(io.db, live))),
-    );
-
-    const superseded: { claim_id: string; rule: ConflictRule }[] = [];
-    let incomingStatus: ClaimStatus = "live";
-    let contestedAgainst: Claim | null = null;
-
-    for (const live of conflicts) {
-      const purged = provenanceGone(io.db, live);
-      if (purged && live.status !== "purged") {
-        persistClaim(io.db, { ...live, status: "purged", retracted_at: at });
-      }
-      const resolution = resolveConflict(
-        toConflict(claim),
-        toConflict(purged ? { ...live, status: "purged" } : live, purged),
-      );
-      if (resolution.action === "skip") {
-        incomingStatus = "skipped";
-        break;
-      }
-      if (resolution.action === "contested") {
-        contestedAgainst = live;
-        continue;
-      }
-      if (resolution.winner === "incoming") {
-        const prior = live.valid_to;
-        persistClaim(io.db, {
-          ...live,
-          status: "superseded",
-          superseded_by: claim.claim_id,
-          retracted_at: at,
-          valid_to: minTimestamp(live.valid_to, claim.valid_from),
-        });
-        writeSupersession(io.db, claim.claim_id, live.claim_id, resolution.rule, prior, at);
-        superseded.push({ claim_id: live.claim_id, rule: resolution.rule });
-      } else {
-        incomingStatus = "skipped";
-        break;
-      }
-    }
-
-    const stored: Claim = { ...claim, status: incomingStatus };
-    insertRow(io.db, stored);
-    if (incomingStatus !== "skipped") {
-      opId = enqueueRetrieval(io.db, io, stored, at);
-    }
-
-    if (incomingStatus === "skipped") {
-      return {
-        outcome: "skipped",
-        reason: "below_authority",
-        claim: stored,
-        dedup: mode,
-      };
-    }
-    if (contestedAgainst !== null) {
-      return {
-        outcome: "contested",
-        incoming: stored,
-        live: contestedAgainst,
-        dedup: mode,
-      };
-    }
-    return { outcome: "stored", claim: stored, dedup: mode, superseded };
-  });
-
-  const result = apply();
-
-  if (result.outcome === "stored" || result.outcome === "contested") {
-    const stored = result.outcome === "stored" ? result.claim : result.incoming;
-    await upsertRetrieval(io, stored, opId);
+  if (exact !== null && externalEvidence(io.db, exact.provenance) && (sourceEventsAllowed(io.db, exact.provenance, sourceScope) ||
+      (historicalInputAllowed() && exact.model_ref === (input.model_ref ?? null) &&
+       JSON.stringify(exact.provenance) === JSON.stringify(input.provenance)))) {
+    return { outcome: "duplicate", claim: exact, dedup: mode };
   }
-  // A refile that deduped still drains what an earlier failure left behind.
+
+  const structuralCandidates = [
+    ...(claim.claim_key !== null ? liveByKey(io.db, claim.claim_key) : []),
+    ...semanticNomineeIds.map(id => getClaim(io.db, id)).filter((candidate): candidate is Claim => candidate !== null && candidate.status === "live"),
+  ];
+  const structural = structuralCandidates.find((live) =>
+    sourceEventsAllowed(io.db, live.provenance, sourceScope) && externalEvidence(io.db, live.provenance) && structuralMatch(claim, live),
+  );
+  // Same key + polarity + object is corroboration, including a second
+  // owner denial of the same reading. `intent: "correct"` still reaches
+  // conflict/R5 when the object or polarity differs (RFC 0002 §5.2, §6.3).
+  if (structural !== undefined) {
+    const confirmed = corroborate(io.db, structural, claim, at);
+    enqueueRetrieval(io.db, io, confirmed, at);
+    return { outcome: "duplicate", claim: confirmed, dedup: mode };
+  }
+
+  const conflicts = (claim.claim_key === null
+    ? []
+    : liveByKey(io.db, claim.claim_key)
+  ).filter((live) =>
+    sourceEventsAllowed(io.db, live.provenance, sourceScope) && externalEvidence(io.db, live.provenance) && claimsConflict(toConflict(claim), toConflict(live, provenanceGone(io.db, live))),
+  );
+
+  const superseded: { claim_id: string; rule: ConflictRule }[] = [];
+  let incomingStatus: ClaimStatus = "live";
+  let contestedAgainst: Claim | null = null;
+
+  for (const live of conflicts) {
+    const purged = provenanceGone(io.db, live);
+    if (purged && live.status !== "purged") {
+      persistClaim(io.db, { ...live, status: "purged", retracted_at: at });
+    }
+    const resolution = resolveConflict(
+      toConflict(claim),
+      toConflict(purged ? { ...live, status: "purged" } : live, purged),
+    );
+    if (resolution.action === "skip") {
+      incomingStatus = "skipped";
+      break;
+    }
+    if (resolution.action === "contested") {
+      contestedAgainst = live;
+      continue;
+    }
+    if (resolution.winner === "incoming") {
+      const prior = live.valid_to;
+      persistClaim(io.db, {
+        ...live,
+        status: "superseded",
+        superseded_by: claim.claim_id,
+        retracted_at: at,
+        valid_to: minTimestamp(live.valid_to, claim.valid_from),
+      });
+      writeSupersession(io.db, claim.claim_id, live.claim_id, resolution.rule, prior, at);
+      enqueueRetrieval(io.db, io, live, at);
+      superseded.push({ claim_id: live.claim_id, rule: resolution.rule });
+    } else {
+      incomingStatus = "skipped";
+      break;
+    }
+  }
+
+  const stored: Claim = { ...claim, status: incomingStatus };
+  insertRow(io.db, stored);
+  if (incomingStatus !== "skipped") {
+    enqueueRetrieval(io.db, io, stored, at);
+  }
+
+  if (incomingStatus === "skipped") {
+    return {
+      outcome: "skipped",
+      reason: "below_authority",
+      claim: stored,
+      dedup: mode,
+    };
+  }
+  if (contestedAgainst !== null) {
+    return {
+      outcome: "contested",
+      incoming: stored,
+      live: contestedAgainst,
+      dedup: mode,
+    };
+  }
+  return { outcome: "stored", claim: stored, dedup: mode, superseded };
+}
+
+export async function insertClaim(
+  io: ClaimsIo,
+  input: InsertClaimInput,
+): Promise<InsertClaimResult> {
+  if (io.db.inTransaction) throw new Error("claim insertion requires a top-level transaction");
+  initClaims(io.db);
+  const prepared = await prepareClaimInsert(io, input);
+  if (io.db.inTransaction) throw new Error("claim insertion requires a top-level transaction");
+  const result = io.db.transaction(() => prepared.apply()).immediate();
   await retryRetrievalOps(io);
-
   return result;
 }
 
@@ -1150,7 +1207,7 @@ export async function semanticDuplicates(
   const mode = retrievalDedupMode(io.retrieval);
   const nominated = await nominateSemantic(io, incoming, mode);
   return nominated.filter((candidate) => {
-    if (!sourceEventsAllowed(io.db, candidate.provenance, { owner: true, purpose: "derive" }) || incoming.claim_key === null) return false;
+    if (!sourceEventsAllowed(io.db, candidate.provenance, { owner: true, purpose: "derive" }) || !externalEvidence(io.db, candidate.provenance) || incoming.claim_key === null) return false;
     return candidate.claim_key === incoming.claim_key;
   });
 }

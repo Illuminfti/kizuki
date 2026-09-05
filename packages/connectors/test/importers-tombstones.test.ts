@@ -220,7 +220,7 @@ for (const { name, build } of scenarios) {
   });
 }
 
-test("a file appearing beside an export does not fork the message", async () => {
+test("an available attachment creates one revision of the same message", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-tombstone-"));
   const db = openVault();
   try {
@@ -242,24 +242,30 @@ test("a file appearing beside an export does not fork the message", async () => 
     expect((await runBackfill(db, connector, id, SOURCE_KEY)).stored).toBe(1);
     expect(stored(db)[0]?.attachments).toEqual([]);
 
-    // A message is what it says. Which files sit beside the chat is not part
-    // of it, so copying the media in — or pruning it — re-stores nothing.
+    const original = stored(db)[0]!;
+    // V2 binds accepted attachment references. Available media changes the
+    // revision while retaining the provider record and the earlier bytes.
     await writeFile(path.join(root, "IMG-1.jpg"), "fixture-bytes");
     const again = await runSync(db, connector, id, SOURCE_KEY);
-    expect(again).toMatchObject({
-      stored: 0,
-      duplicates: 1,
-      withdrawn: 0,
-      retractions_filed: 0,
-    });
-    expect(stored(db).length).toBe(1);
+    expect(again).toMatchObject({ stored: 1, duplicates: 0, withdrawn: 0, retractions_filed: 0 });
+    const revisions = stored(db);
+    expect(revisions).toHaveLength(2);
+    expect(revisions.find(event => event.event_id === original.event_id)).toEqual(original);
+    const attached = revisions.find(event => event.event_id !== original.event_id)!;
+    expect(attached.connector_id).toBe(original.connector_id);
+    expect(attached.source_record_id).toBe(original.source_record_id);
+    expect(attached.deleted).toBe(false);
+    expect(attached.content_hash).not.toBe(original.content_hash);
+    expect(attached.attachments).toHaveLength(1);
+    expect(await runSync(db, connector, id, SOURCE_KEY)).toMatchObject({ stored: 0, duplicates: 1 });
+    expect(stored(db)).toEqual(revisions);
   } finally {
     db.close();
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("a content file appearing later does not fork the item", async () => {
+test("an available content file creates one revision of the same item", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kizuki-tombstone-"));
   const db = openVault();
   try {
@@ -277,11 +283,22 @@ test("a content file appearing later does not fork the item", async () => {
     expect((await runBackfill(db, connector, id, SOURCE_KEY)).stored).toBe(1);
     expect(stored(db)[0]?.attachments).toEqual([]);
 
+    const original = stored(db)[0]!;
     await mkdir(path.join(root, "content"));
     await writeFile(path.join(root, "content", "one.html"), "<p>saved</p>");
     const again = await runSync(db, connector, id, SOURCE_KEY);
-    expect(again).toMatchObject({ stored: 0, duplicates: 1 });
-    expect(stored(db).length).toBe(1);
+    expect(again).toMatchObject({ stored: 1, duplicates: 0, withdrawn: 0, retractions_filed: 0 });
+    const revisions = stored(db);
+    expect(revisions).toHaveLength(2);
+    expect(revisions.find(event => event.event_id === original.event_id)).toEqual(original);
+    const attached = revisions.find(event => event.event_id !== original.event_id)!;
+    expect(attached.connector_id).toBe(original.connector_id);
+    expect(attached.source_record_id).toBe(original.source_record_id);
+    expect(attached.deleted).toBe(false);
+    expect(attached.content_hash).not.toBe(original.content_hash);
+    expect(attached.attachments).toHaveLength(1);
+    expect(await runSync(db, connector, id, SOURCE_KEY)).toMatchObject({ stored: 0, duplicates: 1 });
+    expect(stored(db)).toEqual(revisions);
   } finally {
     db.close();
     await rm(root, { recursive: true, force: true });

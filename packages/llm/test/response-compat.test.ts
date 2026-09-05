@@ -5,7 +5,6 @@ import { completionBody, SAMPLE_REQUEST, temporaryLlmContext } from "./helpers";
 import { startFakeEndpoint } from "./fake-endpoint";
 
 // The reported #438 shape and key-by-key probes originate in 408a1a2.
-// This repair supports documented passive metadata, not arbitrary objects.
 const CANARY = "synthetic-private-reasoning-canary";
 const reasoning = [
   { type: "reasoning.summary", summary: CANARY, id: "synthetic", format: "openai-responses-v1", index: 0 },
@@ -18,9 +17,17 @@ function message(extra: Record<string, unknown>) {
 }
 
 describe("documented response metadata", () => {
-  test("OpenRouter and DeepSeek metadata never enters the projected result", () => {
+  test("OpenRouter-shaped envelopes and unread keys never enter the projected result", () => {
     const body: Record<string, unknown> = {
-      ...message({ reasoning: CANARY, reasoning_content: CANARY, reasoning_details: reasoning, annotations: [] }),
+      ...message({
+        reasoning: CANARY,
+        reasoning_content: CANARY,
+        reasoning_details: reasoning,
+        annotations: [],
+        name: CANARY,
+        parsed: { tool: CANARY },
+        [CANARY]: { tool_calls: [CANARY] },
+      }),
       provider: CANARY,
       system_fingerprint: CANARY,
     };
@@ -31,13 +38,26 @@ describe("documented response metadata", () => {
     expect(JSON.stringify(result)).not.toContain(CANARY);
   });
 
-  test("unknown metadata and malformed passive shapes refuse without echoing input", () => {
+  test("unknown scalar, array, and nested-object message metadata is discarded without projection", () => {
     for (const extra of [
-      { [CANARY]: {} }, { reasoning: { text: CANARY } },
+      { unknown_scalar: CANARY },
+      { unknown_array: [CANARY] },
+      { unknown_object: { nested: { value: CANARY } } },
+    ]) {
+      const result = parseChatCompletion(message(extra), "synthetic");
+      expect(result).toEqual({ text: "usable content", model: "synthetic", usage: { input_tokens: 8, output_tokens: 4 } });
+      expect(JSON.stringify(result)).not.toContain(CANARY);
+    }
+  });
+
+  test("malformed named passive metadata refuses without echoing input", () => {
+    for (const extra of [
+      { reasoning: { text: CANARY } },
       { reasoning_details: [{ type: "tool_call", arguments: CANARY }] },
       { reasoning_details: [{ type: "reasoning.text", text: CANARY, unexpected: CANARY }] },
       { reasoning_details: Array.from({ length: 129 }, () => reasoning[0]) },
-      { reasoning: "x".repeat(262_145) }, { annotations: [{ text: CANARY }] },
+      { reasoning: "x".repeat(262_145) },
+      { annotations: [{ text: CANARY }] },
     ]) {
       expect(() => parseChatCompletion(message(extra), "synthetic")).toThrow("rejected: unsupported_metadata");
       try { parseChatCompletion(message(extra), "synthetic"); } catch (error) {
@@ -47,12 +67,21 @@ describe("documented response metadata", () => {
     }
   });
 
-  for (const key of ["tool_calls", "function_call", "function_calls", "tool_call_id"]) {
-    test(`${key} refuses at body, choice and message, even empty`, () => {
-      const nested = completionBody("ok");
-      (nested.choices as Record<string, unknown>[])[0]![key] = null;
-      for (const body of [{ ...completionBody("ok"), [key]: [] }, nested, message({ [key]: null })]) {
-        expect(() => parseChatCompletion(body, "synthetic")).toThrow("rejected: tool_call_in_response");
+  for (const key of [
+    "tool_calls", "function_call", "function_calls", "tool_call_id",
+    "audio", "image", "images", "file", "files", "attachments", "data",
+  ]) {
+    test(`${key} refuses null and empty values at body, choice and message`, () => {
+      for (const value of [null, [], {}]) {
+        const choice = completionBody("ok");
+        (choice.choices as Record<string, unknown>[])[0]![key] = value;
+        for (const body of [
+          { ...completionBody("ok"), [key]: value },
+          choice,
+          message({ [key]: value }),
+        ]) {
+          expect(() => parseChatCompletion(body, "synthetic")).toThrow("rejected: tool_call_in_response");
+        }
       }
     });
   }
@@ -77,8 +106,35 @@ describe("documented response metadata", () => {
     expect(() => parseChatCompletion(completionBody("{}", { finish_reason: "content_filter" }), "synthetic")).toThrow("rejected: response_refused");
   });
 
+  test("an OpenRouter-shaped fake endpoint projects text once and discards unknown metadata", async () => {
+    const body: Record<string, unknown> = {
+      ...message({
+        reasoning: CANARY,
+        reasoning_content: CANARY,
+        reasoning_details: reasoning,
+        annotations: [],
+        unknown_object: { nested: { value: CANARY } },
+        name: CANARY, parsed: { tool: CANARY }, [CANARY]: { data: CANARY },
+      }),
+      provider: CANARY,
+      system_fingerprint: CANARY,
+    };
+    (body.choices as Record<string, unknown>[])[0]!.native_finish_reason = "stop";
+    (body.choices as Record<string, unknown>[])[0]!.logprobs = null;
+    const endpoint = startFakeEndpoint(() => Response.json(body));
+    const temporary = temporaryLlmContext(OPENAI_COMPATIBLE_LLM_DESCRIPTOR, { base_url: endpoint.base_url, model: "synthetic", max_retries: 3 });
+    try {
+      const port = createOpenAiCompatibleLlmPort(temporary.ctx);
+      const result = await port.complete(SAMPLE_REQUEST);
+      expect(result).toEqual({ text: "usable content", model: "synthetic", usage: { input_tokens: 8, output_tokens: 4 } });
+      expect(JSON.stringify(result)).not.toContain(CANARY);
+      expect(endpoint.requests).toHaveLength(1);
+      await port.close();
+    } finally { endpoint.stop(); temporary.cleanup(); }
+  });
+
   test("a real fake endpoint refuses deterministic response failures once", async () => {
-    const responses = [message({ [CANARY]: {} }), message({ refusal: CANARY }), message({ tool_calls: [] }),
+    const responses = [message({ annotations: [{ text: CANARY }] }), message({ refusal: CANARY }), message({ tool_calls: [] }),
       completionBody("{}", { finish_reason: "length" }), { ...completionBody("{}"), usage: { prompt_tokens: CANARY, completion_tokens: 1 } }]
       .map(body => () => Response.json(body));
     responses.push(() => new Response("{invalid JSON"), () => new Response("x".repeat(2_097_153)));

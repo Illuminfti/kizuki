@@ -32,7 +32,7 @@ test("native source consent, model canon, rejected responses and doctor compose"
     return Response.json({ id: "synthetic", model: MODEL, provider: CANARY,
       choices: [{ index: 0, finish_reason: "stop", native_finish_reason: "stop", logprobs: null,
         message: { role: "assistant", content: JSON.stringify({ claims: [mode === "claims" ? { ...claim, predicate: { [CANARY]: CANARY } } : claim] }), refusal: null,
-          reasoning: CANARY, ...(mode === "metadata" ? { [CANARY]: { data: CANARY } } : {}) } }],
+          reasoning: CANARY, name: CANARY, [CANARY]: { data: CANARY }, ...(mode === "metadata" ? { annotations: [{ text: CANARY }] } : {}) } }],
       usage: { prompt_tokens: 12, completion_tokens: 8 } });
   });
   const database = join(setup.vault, ".kizuki/kizuki.db");

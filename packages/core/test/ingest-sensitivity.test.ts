@@ -131,7 +131,7 @@ describe("connector-run sensitivity resolution", () => {
     imported.db.close();
   });
 
-  test("keeps policies isolated by source_key and snapshots the first accepted label", async () => {
+  test("keeps policies isolated by source_key and appends relabeled revisions without changing prior labels", async () => {
     const secondSource = "01JJ0000000000000000000002";
     const personal = setup({ ...validEvent(), source_record_id: "personal" });
     await runBackfill(personal.db, personal.connector, "fixture", SOURCE);
@@ -154,12 +154,12 @@ describe("connector-run sensitivity resolution", () => {
     if (firstConnection === null) throw new Error("expected first connection");
     applyConnectionSensitivity(personal.db, firstConnection, manifest(), "private");
     await runBackfill(personal.db, personal.connector, "fixture", SOURCE);
-    expect(readSince(personal.db, null, 10).events).toHaveLength(2);
-    expect(
-      readSince(personal.db, null, 10).events.find(
-        (event) => event.source_record_id === "personal",
-      )?.sensitivity_hint,
-    ).toBe("personal");
+    const revisions = readSince(personal.db, null, 10).events;
+    expect(revisions).toHaveLength(3);
+    expect(revisions.filter((event) => event.source_record_id === "personal")
+      .map((event) => event.sensitivity_hint)).toEqual(["personal", "private"]);
+    expect(revisions.filter((event) => event.source_record_id === "private")
+      .map((event) => event.sensitivity_hint)).toEqual(["private"]);
     personal.db.close();
   });
 

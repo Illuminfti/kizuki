@@ -7,6 +7,10 @@ import type {
   ProposalKind,
 } from "../contracts/proposal";
 import { tableExists } from "../ledger/schema";
+import { requireExternalEvents } from "../ledger/event-origin";
+import { requiresSourceTombstoneBinding, requireSourceTombstoneProposal } from "../canon/source-tombstone";
+import type { SourceTombstoneContext } from "../canon/source-tombstone";
+import { cloneExactJson } from "../util/validate";
 import { ulid } from "../util/ulid";
 
 /**
@@ -238,6 +242,8 @@ function updateCompatClaim(
   ).run(compatStatusToClaim(status), retracted, proposalId);
 }
 
+export { isSourceTombstoneProposal } from "../canon/source-tombstone";
+
 /**
  * Idempotent file. Refiling identical content is a duplicate, not an error.
  * Owner rejection no longer poisons a body hash (RFC 0002 §18.2).
@@ -245,7 +251,17 @@ function updateCompatClaim(
 export function fileProposal(
   db: Database,
   input: ProposalInput,
+  context?: SourceTombstoneContext,
 ): FileProposalResult {
+  const errors: string[] = [];
+  const snapshot = cloneExactJson(input, "proposal", {
+    maxDepth: 32, maxKeysPerObject: 512, maxArrayLength: 4096,
+    maxStringBytes: 4_194_304, maxKeyBytes: 2048, maxTotalBytes: 8_388_608,
+  }, errors);
+  if (snapshot === undefined || snapshot === null || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    throw new StagingError("proposal: bounded exact JSON data is required");
+  }
+  input = snapshot as unknown as ProposalInput;
   validateInput(input);
   initStaging(db);
 
@@ -257,6 +273,9 @@ export function fileProposal(
     : [...input.provenance];
 
   const file = db.transaction((): FileProposalResult => {
+    const sourceDeletion = requiresSourceTombstoneBinding(db, input);
+    if (sourceDeletion) requireSourceTombstoneProposal(db, input, context);
+    else requireExternalEvents(db, provenance);
     const existing = input.kind === "purge_review"
       ? db
           .query(
@@ -271,7 +290,9 @@ export function fileProposal(
           )
           .get(input.kind, targetKey, bodyHash) as ProposalRow | null;
     if (existing !== null) {
-      return { outcome: "duplicate", proposal: rowToProposal(existing) };
+      const proposal = rowToProposal(existing);
+      if (sourceDeletion) requireSourceTombstoneProposal(db, proposal, context);
+      return { outcome: "duplicate", proposal };
     }
 
     const proposal: StagedProposal = {

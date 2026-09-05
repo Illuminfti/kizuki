@@ -113,29 +113,37 @@ test("a single leap-second observation is preserved", async () => {
   } finally { f.db.close(); }
 });
 
-for (const legacy of [false, true]) test(`partial filing keeps raw nulls and replays observed times, legacy=${legacy}`, async () => {
+for (const legacy of [false, true]) test(`interrupted filing keeps raw nulls and handles versioned recovery, legacy=${legacy}`, async () => {
   const observations = ["2026-07-01T12:00:00Z", "2026-08-01T12:00:00Z"];
   const f = fixture(observations, ids => [draft([ids[0]!]), draft([ids[1]!], { subject: "person:ada", body: "Ada works at Acme." })]);
   try {
     f.db.exec("CREATE TRIGGER fail_ada BEFORE INSERT ON claims WHEN NEW.subject='person:ada' BEGIN SELECT RAISE(ABORT,'injected filing interruption'); END");
     expect((await f.run()).errors.length).toBeGreaterThan(0);
-    expect(listClaims(f.db, { limit: 20 })).toMatchObject([{ valid_from: observations[0], asserted_at: FILED_AT }]);
+    expect(listClaims(f.db, { limit: 20 })).toEqual([]);
     const saved = f.db.query<{ drafts: string }, []>("SELECT drafts FROM extract_batches").get()!;
     expect(JSON.parse(saved.drafts).map((item: ClaimDraft) => item.valid_from)).toEqual([null, null]);
     expect(readExtractCursor(f.db)).toBeNull();
     if (legacy) f.db.exec("UPDATE extract_batches SET model_inputs=NULL,deferred_inputs=NULL,input_ids=NULL,integrity=NULL");
     f.db.exec("DROP TRIGGER fail_ada");
-    expect((await f.run(RETRIED_AT)).errors).toEqual([]);
+    const recovered = await f.run(RETRIED_AT);
     expect(f.calls()).toBe(1);
+    if (legacy) {
+      expect(recovered.stopped).toBe("legacy_extraction_reconciliation_required");
+      expect(listClaims(f.db, { limit: 20 })).toEqual([]);
+      expect(readExtractCursor(f.db)).toBeNull();
+      expect(f.db.query("SELECT drafts FROM extract_batches").get()).toEqual(saved);
+      return;
+    }
+    expect(recovered.errors).toEqual([]);
     const claims = listClaims(f.db, { limit: 20 });
-    expect(claims.find(claim => claim.subject === "person:grace")).toMatchObject({ valid_from: observations[0], asserted_at: FILED_AT });
+    expect(claims.find(claim => claim.subject === "person:grace")).toMatchObject({ valid_from: observations[0], asserted_at: RETRIED_AT });
     expect(claims.find(claim => claim.subject === "person:ada")).toMatchObject({ valid_from: observations[1], asserted_at: RETRIED_AT });
     expect(f.db.query("SELECT 1 FROM extract_batches").get()).toBeNull();
     expect(readExtractCursor(f.db)).not.toBeNull();
   } finally { f.db.close(); }
 });
 
-test("legacy replay preserves an already filed row while fixing the remaining historical draft", async () => {
+test("legacy refusal preserves an already filed row and the remaining historical draft", async () => {
   const observations = ["2026-07-01T12:00:00Z", "2026-08-01T12:00:00Z"];
   const f = fixture(observations, ids => [draft([ids[0]!]), draft([ids[1]!], { subject: "person:ada", body: "Ada works at Acme." })]);
   try {
@@ -151,11 +159,13 @@ test("legacy replay preserves an already filed row while fixing the remaining hi
     const before = listClaims(f.db, { limit: 20 })[0]!;
     expect(before.valid_from).toBe(FILED_AT);
     f.db.exec("UPDATE extract_batches SET model_inputs=NULL,deferred_inputs=NULL,input_ids=NULL,integrity=NULL");
-    expect((await f.run(RETRIED_AT)).errors).toEqual([]);
+    const journal = f.db.query("SELECT * FROM extract_batches").all();
+    expect((await f.run(RETRIED_AT)).stopped).toBe("legacy_extraction_reconciliation_required");
     const claims = listClaims(f.db, { limit: 20 });
     expect(claims.find(claim => claim.subject === "person:grace")).toEqual(before);
-    expect(claims.find(claim => claim.subject === "person:ada")).toMatchObject({ valid_from: observations[1], asserted_at: RETRIED_AT });
+    expect(claims.find(claim => claim.subject === "person:ada")).toBeUndefined();
+    expect(f.db.query("SELECT * FROM extract_batches").all()).toEqual(journal);
     expect(f.calls()).toBe(1);
-    expect(readExtractCursor(f.db)).not.toBeNull();
+    expect(readExtractCursor(f.db)).toBeNull();
   } finally { f.db.close(); }
 });

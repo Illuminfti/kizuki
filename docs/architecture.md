@@ -88,6 +88,9 @@ interface CaptureEvent {
   metadata: Record<string, unknown>; // persisted verbatim
   content_hash: string; // sha256 of canonical serialization —
   // computed by the spine, never caller-supplied
+  content_hash_version: 1 | 2;
+  text_hash: string; // exact UTF-8 text, independent of revision identity
+  origin: "external" | "self"; // maintained by Core
 }
 ```
 
@@ -96,6 +99,12 @@ Queue semantics: `accept` → `stored | duplicate | error`; dedupe on
 different content is an error, not a duplicate. Read path: `readSince`,
 `replay`. Tombstones cascade to open claims automatically and to canon
 through the receipted writer.
+
+New revisions use hash version 2, which includes the effective sensitivity
+hint and attachment references. Existing version-1 event hashes and payloads
+remain unchanged. All five identity fields are excluded from connector input.
+See [Event identity and origin](event-identity-origin.md) for migration, backup
+compatibility and the limits of exact machine-byte matching.
 
 Ingress preserves opaque native identifiers without hashing or truncation.
 `connector_id`, `kind`, and attachment media types are capped at 256 UTF-8
@@ -174,6 +183,9 @@ Implemented on this revision:
   `kizuki agent add` CLI verb on this revision.
 
 Enforcement happens in the query engine, below the prompt layer.
+The public core search and timeline APIs require an explicit validated
+sensitivity ceiling; null or unlabeled records are never returned. See the
+[query ceiling contract and compatibility note](query-ceilings.md).
 
 ## Proactive (`kizuki serve`)
 

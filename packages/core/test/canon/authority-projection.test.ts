@@ -229,6 +229,11 @@ test("equal corrupt revert hashes cannot recover owner authority", async () => {
     producer: "model", model_ref: "fixture:model",
   }));
   const reverted = await undoReceipt(f.io, target.receipt_id);
+  expect(() => f.db.query("UPDATE canon_receipts SET after_hash=? WHERE receipt_id=?").run("not-a-sha256", target.receipt_id))
+    .toThrow("machine byte registry is invalid");
+  // Model an already-corrupted store after bypassing the new write guard.
+  // Retrieval must still refuse authority from matching non-hash strings.
+  f.db.exec("DROP TRIGGER canon_loop_hash_update");
   f.db.query("UPDATE canon_receipts SET after_hash=? WHERE receipt_id=?").run("not-a-sha256", target.receipt_id);
   f.db.query("UPDATE canon_receipts SET before_hash=? WHERE receipt_id=?").run("not-a-sha256", reverted.receipt_id);
   rebuildDerived(f.db, f.vault);

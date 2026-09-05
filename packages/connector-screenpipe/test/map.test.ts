@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  canonicalSerialize,
+  computeContentHash,
   validateEventInput,
 } from "@kizuki/core";
 import {
@@ -213,24 +213,20 @@ describe("screenpipe mapping", () => {
     expect(events.every((event) => validateEventInput(event).ok)).toBe(true);
   });
 
-  test("fixture hashes are stable", async () => {
+  test("fixture revision-v2 hashes are stable", async () => {
     const events = await createScreenpipeConnector({
       path: ":memory:",
     }).fixture();
-    const hashes = events.map((event) =>
-      new Bun.CryptoHasher("sha256")
-        .update(canonicalSerialize(event))
-        .digest("hex"),
-    );
+    const hashes = events.map(computeContentHash);
     expect(hashes).toEqual([
-      "d43e61b8c5ebf16b84c76c235c96421f58842b77105e26178bd5faa97abdd21e",
-      "6ab95bdbdfcb18b7cb22409e8ee459fc81e070867919f79478d3959b79188eb2",
-      "5231d39af256c222f8288ac348a1491cabc853a3f5fb98c2499a2cb30e9f99e2",
-      "dd68a6cc7df7a147fd2778f3803fa73f87b654b4f3e9b557bc471fed439991b8",
-      "fcef17c6245580e5698749d2f2ae817985bfa843fd318f86572803f056edf04d",
-      "2f5e3eebc444aefc94ec1eac5b8a8ca51a8368e24dacb3d18159c1cd76b42df0",
-      "645c182a35b0bb94852cfbdb697a2f8e079ae8b2696a1fbf31873738e6e0bcb1",
-      "ba514502628e7957ed1ab565881f0cb8a41acc2531fa5d83bd1024bc5d1ba1cd",
+      "4e03d246afc2b625998ac29af24e76245de159741be0aab9cb67de6d4be12f76",
+      "2e083b40e45382f492fc67d31ff96b05fb479f8aeeb06d98d5f1593105251828",
+      "d6b43910fcdf04486f3aa4cf0bd96bedfd1ef40779eeb8022e91e0f1165fc72d",
+      "0440680359a1cd3324f9a2226ea27e03d1fde95a51b04b6bf96a59247f30ef8d",
+      "2a2aee85373356667aeb91c251184736db1b368ad28ec4a78a46a49d222a40fa",
+      "baa60fc4c01bc79e9e1a458a47c7a81594e9b1606934b6d0dc6d6bdd58575a6c",
+      "6892f1520fe874fdad6d6485e93cd866f00e1c55b3db0ac758cc5a57d664ebab",
+      "68d1952aeb3971e825515145ea5b19f5362a2aaf6914315095c348b02079d902",
     ]);
   });
 });

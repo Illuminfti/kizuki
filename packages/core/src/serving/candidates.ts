@@ -4,7 +4,7 @@ import { claimReader } from "./claims";
 import type { Database } from "bun:sqlite";
 import { isMachineOriginPath } from "../canon/origin";
 import { listValidityGaps } from "../claims/gaps";
-import { listLiveConflicts, listSubjectAliases } from "../claims/identity";
+import { listLiveConflicts } from "../claims/identity";
 import { listClaims } from "../claims/store";
 import { neighbors } from "../graph/graph";
 import { timeline } from "../query/timeline";
@@ -318,26 +318,9 @@ export async function collectPieces(
         block: `- gap key=${inline(gap.claim_key.slice(0, 12))} after=${inline(gap.after)} before=${inline(gap.before)}\n`,
       });
     }
-    const aliasRoots = wanted ?? live.map((claim) => claim.subject).filter(
-      (subject): subject is string => subject !== null,
-    );
-    const seenAlias = new Set<string>();
-    for (const root of aliasRoots.slice(0, 8)) {
-      for (const alias of listSubjectAliases(ctx.db, root, 8, reader.canReadAlias, reader.invalidAlias)) {
-        const key = JSON.stringify([root, alias.subject].sort());
-        if (seenAlias.has(key)) continue;
-        seenAlias.add(key);
-        const audit = reader.auditAlias(root, alias.subject);
-        pieces.push({
-          section: "claims",
-          heading: "## working knowledge",
-          block:
-            `- alias ${inline(root)} ~ ${inline(alias.subject)} s=${audit[0]?.sensitivity} taint=clean score=${confidenceLabel(alias.score)}` +
-            ` status=${alias.status}\n`,
-          audit,
-        });
-      }
-    }
+    // Identity authority is retired for every request in A0. Do not probe its
+    // legacy API: there is no usable capability to discover at runtime.
+    nominated.degraded.push("identity-authority-unavailable");
     withheld.push(...reader.denied.values());
   }
 
