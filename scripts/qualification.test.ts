@@ -1,4 +1,5 @@
-import { afterEach, expect, test } from "bun:test";
+import * as fs from "node:fs";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, appendFileSync, symlinkSync, statSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -145,4 +146,54 @@ test("init refuses future or unsupported schedule policy before creating a repor
   expect(()=>initQualification(f.artifact,f.proof,f.scope,f.out)).toThrow("rail profile");
   expect(()=>statSync(f.out)).toThrow();
  }
+});
+
+test("process collection distinguishes absent, stale, invalid and mismatched leases without credit",()=>{
+ for (const [kind, patch] of Object.entries({
+  "lease-absent":null, "lease-stale":{heartbeat_at:"2020-01-01T00:00:00.000Z"},
+  "lease-boot-mismatch":{holder_boot_id:"12345678-1234-4123-8123-123456789abc"},
+  "lease-invalid":{ttl_s:31}, "lease-heartbeat-future":{heartbeat_at:"2099-01-01T00:00:00.000Z"},
+  "process-marker-absent":{},
+ })) {
+  const f=fixture();initQualification(f.artifact,f.proof,f.scope,f.out);
+  if(patch!==null){const db=openLedger(join(f.vault,".kizuki/kizuki.db"));const now=new Date().toISOString();const row={holder_pid:process.pid,holder_boot_id:readFileSync("/proc/sys/kernel/random/boot_id","utf8").trim(),heartbeat_at:now,ttl_s:30,...patch};db.query("INSERT INTO leases VALUES ('writer',?,?,?,?,?)").run(row.holder_pid,row.holder_boot_id,now,row.heartbeat_at,row.ttl_s);db.close();}
+  const result=sampleQualification(f.out);expect(result.issues).toContain(kind);expect(result.status).toBe("interrupted");expect(result.credited_ms).toBe(0);expect(result.release_qualified).toBe(false);
+ }
+});
+
+test("process marker and image failures have distinct content-free diagnostics",async()=>{
+ const {servePidPath}=await import("../packages/core/src/serve/daemon");
+ for(const kind of ["process-marker-invalid","process-marker-unavailable","process-marker-identity-mismatch","process-image-mismatch","process-image-unavailable"]){
+  const f=fixture();initQualification(f.artifact,f.proof,f.scope,f.out);
+  const pid=kind==="process-image-unavailable"?2147483647:process.pid;
+  const boot=readFileSync("/proc/sys/kernel/random/boot_id","utf8").trim();const now=new Date().toISOString();
+  const db=openLedger(join(f.vault,".kizuki/kizuki.db"));db.query("INSERT INTO leases VALUES ('writer',?,?,?,?,30)").run(pid,boot,now,now);db.close();
+  writeFileSync(servePidPath(f.vault),kind==="process-marker-invalid"?"PRIVATE_DIAGNOSTIC_SENTINEL":JSON.stringify({pid:kind==="process-marker-identity-mismatch"?pid+1:pid,boot_id:boot,instance_id:"12345678-1234-4123-8123-123456789abc"}));
+  if(kind==="process-marker-unavailable"){renameSync(servePidPath(f.vault),join(f.root,"marker"));symlinkSync(join(f.root,"marker"),servePidPath(f.vault));}
+  const result=sampleQualification(f.out);expect(result.issues).toContain(kind);expect(result.credited_ms).toBe(0);expect(result.release_qualified).toBe(false);expect(readFileSync(join(f.out,"samples.jsonl"),"utf8")).not.toContain("PRIVATE_DIAGNOSTIC_SENTINEL");
+ }
+});
+
+test("unexpected collector failures leave a durable content-free reason and zero credit",()=>{
+ const f=fixture();initQualification(f.artifact,f.proof,f.scope,f.out);
+ writeFileSync(join(f.vault,".kizuki/run-receipts.jsonl"),"PRIVATE_DIAGNOSTIC_SENTINEL\n");
+ expect(()=>sampleQualification(f.out)).toThrow("durable interruption");
+ const status=statusQualification(f.out);expect(status.issues).toContain("collector-unexpected-failure");expect(status.issues).toContain("collection-rejected");expect(status.credited_ms).toBe(0);expect(status.release_qualified).toBe(false);expect(readFileSync(join(f.out,"samples.jsonl"),"utf8")).not.toContain("PRIVATE_DIAGNOSTIC_SENTINEL");
+});
+
+
+test("a process start identity changing during collection is diagnosed and never credited",async()=>{
+ const {servePidPath}=await import("../packages/core/src/serve/daemon");
+ const f=fixture();initQualification(f.artifact,f.proof,f.scope,f.out);
+ const boot=readFileSync("/proc/sys/kernel/random/boot_id","utf8").trim(), now=new Date().toISOString();
+ const db=openLedger(join(f.vault,".kizuki/kizuki.db"));db.query("INSERT INTO leases VALUES ('writer',?,?,?,?,30)").run(process.pid,boot,now,now);db.close();
+ writeFileSync(servePidPath(f.vault),JSON.stringify({pid:process.pid,boot_id:boot,instance_id:"12345678-1234-4123-8123-123456789abc"}));
+ const original=fs.readFileSync;let reads=0;
+ const hook=spyOn(fs,"readFileSync").mockImplementation(((...args:any[])=>{
+  const result=(original as any)(...args);
+  if(args[0]===`/proc/${process.pid}/stat` && ++reads===2){const parts=String(result).split(") ");const fields=parts[1]!.split(" ");fields[19]=String(BigInt(fields[19]!)+1n);return parts[0]+") "+fields.join(" ");}
+  return result;
+ }) as typeof fs.readFileSync);
+ try {const result=sampleQualification(f.out);expect(result.issues).toContain("process-start-identity-changed");expect(result.credited_ms).toBe(0);expect(result.release_qualified).toBe(false);}
+ finally {hook.mockRestore();}
 });

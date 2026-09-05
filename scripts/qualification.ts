@@ -6,7 +6,7 @@ import { dirname, join, resolve, parse } from "node:path";
 import { parseBuildInfo } from "./stranger-proof";
 import { evaluateQualification, qualificationDate, type QualificationProfile, type QualificationReceipt, type QualificationSample } from "../packages/core/src/serve/qualification";
 import { loadServeConfig } from "../packages/core/src/serve/config";
-import { readServeProcessMarker } from "../packages/core/src/serve/daemon";
+import { readServeProcessMarker, servePidPath } from "../packages/core/src/serve/daemon";
 import { parseRunExecution, canonicalReceiptContent } from "../packages/core/src/serve/receipts";
 import { RAIL_IDS, RUN_STATUSES } from "../packages/core/src/serve/types";
 
@@ -221,22 +221,45 @@ function collect(manifest: Manifest, known: Map<string,string>): QualificationSa
   const db = openObservationDb(manifest.vault);
   try {
     const lease = db.query("SELECT holder_pid, holder_boot_id, heartbeat_at, ttl_s FROM leases WHERE name = 'writer'").get() as {holder_pid:number;holder_boot_id:string;heartbeat_at:string;ttl_s:number}|null;
-    if (lease && Number.isSafeInteger(lease.ttl_s) && lease.ttl_s > 0 && lease.ttl_s <= 30 && Number.isSafeInteger(lease.holder_pid) && lease.holder_pid > 0 && lease.holder_boot_id === now.boot_id && qualificationDate(lease.heartbeat_at) <= qualificationDate(now.at) && qualificationDate(now.at) - qualificationDate(lease.heartbeat_at) <= lease.ttl_s * 1000) {
-      try {
-        const proc = `/proc/${lease.holder_pid}`;
-        const ticks = () => readFileSync(join(proc,"stat"),"utf8").split(") ")[1]!.split(" ")[19]!;
-        const before = ticks();
-        const marker = readServeProcessMarker(manifest.vault);
-        // /proc/PID/exe is the kernel's running image, intentionally followed here.
-        const imageFd = openSync(join(proc,"exe"), constants.O_RDONLY);
-        let digest: string;
+    if (!lease) issues.push("lease-absent");
+    else if (!Number.isSafeInteger(lease.ttl_s) || lease.ttl_s <= 0 || lease.ttl_s > 30 || !Number.isSafeInteger(lease.holder_pid) || lease.holder_pid <= 0) issues.push("lease-invalid");
+    else if (lease.holder_boot_id !== now.boot_id) issues.push("lease-boot-mismatch");
+    else {
+      let heartbeat: number | null = null;
+      try { heartbeat = qualificationDate(lease.heartbeat_at); } catch { issues.push("lease-invalid"); }
+      if (heartbeat !== null && heartbeat > qualificationDate(now.at)) issues.push("lease-heartbeat-future");
+      else if (heartbeat !== null && qualificationDate(now.at) - heartbeat > lease.ttl_s * 1000) issues.push("lease-stale");
+      else if (heartbeat !== null) {
+        let processFailure = "process-marker-unavailable";
         try {
-          const imageStat = fstatSync(imageFd);
-          if (!imageStat.isFile() || imageStat.size > 256 * 1024 * 1024) throw new Error("process image exceeds limit");
-          digest = hash(readFileSync(imageFd));
-        } finally { closeSync(imageFd); }
-        if (before === ticks() && digest === manifest.identity.binary_sha256 && marker?.pid === lease.holder_pid && marker.boot_id === lease.holder_boot_id && UUID.test(marker.instance_id) && UUID.test(marker.boot_id) && marker.instance_id === readServeProcessMarker(manifest.vault)?.instance_id) processBinding = {pid:lease.holder_pid,boot_id:lease.holder_boot_id,start_ticks:before,binary_sha256:digest,instance_id:marker.instance_id};
-      } catch { issues.push("process-image-unavailable"); }
+          const marker = readServeProcessMarker(manifest.vault);
+          if (!marker) issues.push(existsSync(servePidPath(manifest.vault)) ? "process-marker-invalid" : "process-marker-absent");
+          else if (marker.pid !== lease.holder_pid || marker.boot_id !== lease.holder_boot_id || !UUID.test(marker.instance_id) || !UUID.test(marker.boot_id)) issues.push("process-marker-identity-mismatch");
+          else {
+            processFailure = "process-image-unavailable";
+            const proc = `/proc/${lease.holder_pid}`;
+            const ticks = () => {
+              const value = readFileSync(join(proc,"stat"),"utf8").split(") ")[1]?.split(" ")[19];
+              if (!value || !/^[0-9]+$/.test(value)) throw new Error("invalid process start identity");
+              return value;
+            };
+            const before = ticks();
+            // /proc/PID/exe is the kernel's running image, intentionally followed here.
+            const imageFd = openSync(join(proc,"exe"), constants.O_RDONLY);
+            let digest: string;
+            try {
+              const imageStat = fstatSync(imageFd);
+              if (!imageStat.isFile() || imageStat.size > 256 * 1024 * 1024) throw new Error("process image exceeds limit");
+              digest = hash(readFileSync(imageFd));
+            } finally { closeSync(imageFd); }
+            const after = readServeProcessMarker(manifest.vault);
+            if (before !== ticks()) issues.push("process-start-identity-changed");
+            else if (digest !== manifest.identity.binary_sha256) issues.push("process-image-mismatch");
+            else if (!after || after.pid !== marker.pid || after.boot_id !== marker.boot_id || after.instance_id !== marker.instance_id) issues.push("process-marker-changed");
+            else processBinding = {pid:lease.holder_pid,boot_id:lease.holder_boot_id,start_ticks:before,binary_sha256:digest,instance_id:marker.instance_id};
+          }
+        } catch { issues.push(processFailure); }
+      }
     }
   } finally { db.close(); }
   return {...anchor(), supervisor:"not-observed", process:processBinding, receipts, issues};
@@ -249,13 +272,15 @@ export function sampleQualification(runInput: string) {
     const {manifest,entries,last} = load(run);
     let sample: QualificationSample;
     let rejected = false;
+    let failureReason = "artifact-verification-failed";
     try {
       if (JSON.stringify(verifyArtifact(manifest.artifact,manifest.proof)) !== JSON.stringify(manifest.identity)) throw new Error("artifact or proof identity changed");
+      failureReason = "collector-unexpected-failure";
       const known = new Map(entries.flatMap((e) => e.sample.receipts.map((r) => [r.run_id,r.sha256] as const)));
       sample = collect(manifest,known);
     } catch {
       rejected = true;
-      sample = {...anchor(),supervisor:"not-observed",process:null,receipts:[],issues:["collection-rejected"]};
+      sample = {...anchor(),supervisor:"not-observed",process:null,receipts:[],issues:["collection-rejected",failureReason]};
     }
     const payload = {seq:entries.length,previous:last,sample};
     const line = JSON.stringify({...payload,sha256:hash(JSON.stringify(payload))}) + "\n";
