@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { readFileSync, statSync } from "node:fs";
 import { MAX_PLAN_IDS, PLAN_DEADLINE_MS, PLAN_PAGE } from "./cursor";
 import { ScreenpipeConnectorError } from "./errors";
 import { siteHost } from "./map";
@@ -134,9 +135,23 @@ function databaseFingerprint(db: Database): string {
   const migrations = db.query<{ version: unknown; installed_on: unknown }, []>("SELECT version, installed_on FROM _sqlx_migrations WHERE success = 1 ORDER BY version").all();
   const maxima = db.query<{ frames: unknown; transcriptions: unknown }, []>("SELECT (SELECT MAX(id) FROM frames) AS frames, (SELECT MAX(id) FROM audio_transcriptions) AS transcriptions").get();
   const file = db.query<{ file: unknown }, []>("PRAGMA database_list").all().map((row) => row.file);
+  const source = file.map((value) => fileSnapshot(typeof value === "string" ? value : ""));
   return new Bun.CryptoHasher("sha256")
-    .update(JSON.stringify({ migrations, maxima, file }, (_key, value) => typeof value === "bigint" ? value.toString() : value))
+    .update(JSON.stringify({ migrations, maxima, file, source }, (_key, value) => typeof value === "bigint" ? value.toString() : value))
     .digest("hex");
+}
+
+function fileSnapshot(path: string): string | null {
+  if (path.length === 0) return null;
+  try {
+    const stat = statSync(path, { bigint: true });
+    const hash = new Bun.CryptoHasher("sha256").update(readFileSync(path)).digest("hex");
+    let wal: string | null = null;
+    try { wal = new Bun.CryptoHasher("sha256").update(readFileSync(`${path}-wal`)).digest("hex"); } catch { /* no WAL */ }
+    return JSON.stringify({ dev: stat.dev.toString(), ino: stat.ino.toString(), size: stat.size.toString(), ctime: stat.ctimeNs.toString(), birthtime: stat.birthtimeNs.toString(), hash, wal });
+  } catch {
+    return null;
+  }
 }
 
 function planId(value: unknown): number {

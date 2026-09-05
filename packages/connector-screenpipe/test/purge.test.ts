@@ -172,6 +172,16 @@ describe("ScreenpipeConnector source purge", () => {
     expect(() => planSourceRecords(other.writer, subjectId("app", "Bound"), Date.now, page.continuation)).toThrow("does not match");
   });
 
+  test("a continuation rejects changed rows even when the path, schema, and maxima stay the same", () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    fixture.writer.transaction(() => {
+      for (let id = 1; id <= MAX_PLAN_IDS + 1; id += 1) insertFrame(fixture.writer, { id, timestamp: "2026-01-01T00:00:00Z", appName: "Stable" });
+    })();
+    const page = planSourceRecords(fixture.writer, subjectId("app", "Stable"));
+    fixture.writer.query("UPDATE frames SET window_name = ? WHERE id = 5000").run("replacement content");
+    expect(() => planSourceRecords(fixture.writer, subjectId("app", "Stable"), Date.now, page.continuation)).toThrow("does not match");
+  });
+
   test("distinct-value scans used for planning are capped", async () => {
     const fixture = createFixtureDatabase({ rows: false });
     fixture.writer.transaction(() => {

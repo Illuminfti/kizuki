@@ -15,6 +15,7 @@ import {
   cleanupFixtureDatabases,
   createFixtureDatabase,
   fixtureDeps,
+  insertFrame,
 } from "./helpers";
 
 afterEach(cleanupFixtureDatabases);
@@ -165,6 +166,21 @@ describe("ScreenpipeConnector health and lifecycle", () => {
     expect(health.detail).toBe(
       `screenpipe schema verified (max migration ${SCREENPIPE_SCHEMA_VERIFIED})`,
     );
+    await connector.revoke();
+  });
+
+  test("a malformed row degrades health without retaining captured text and a successful retry recovers", async () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    insertFrame(fixture.writer, { id: 1, timestamp: "bad", fullText: "private words must not appear" });
+    const connector = new ScreenpipeConnector({ path: fixture.path, settle_seconds: 0 }, fixtureDeps(FIXTURE_NOW));
+    await expect(connector.backfill(null)).rejects.toMatchObject({ code: "parse_error" });
+    const failed = await connector.health();
+    expect(failed.state).toBe("degraded");
+    expect(failed.detail).toContain("last_failure=kizuki.screenpipe: malformed frame:1 timestamp");
+    expect(failed.detail).not.toContain("private words");
+    fixture.writer.query("UPDATE frames SET timestamp = ? WHERE id = 1").run("2026-01-01T00:00:00Z");
+    await connector.backfill(null);
+    expect((await connector.health()).state).toBe("ok");
     await connector.revoke();
   });
 

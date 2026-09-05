@@ -75,8 +75,10 @@ private floor.
   `not_supported`. `planUnreachableSourceRecords()` is a read-only planning
   helper: it returns `{ ids, complete, continuation? }`, is capped at 10,000
   ids and a two-second deadline, and never deletes source rows. An incomplete
-  page has an opaque continuation bound to the exact subject and stopped
-  database; it is never proof of complete source erasure. Ledger purge is the
+  page has an opaque continuation bound to the exact subject and a read-only
+  snapshot signature of the stopped database (including its WAL when present);
+  a changed source rejects continuation rather than claiming completeness. It
+  is never proof of complete source erasure. Ledger purge is the
   path that removes imported evidence.
 - This package must not attach to screenpipe's live database.
 - Timezone-less source timestamps are not assigned UTC. They are quarantined
@@ -86,7 +88,9 @@ private floor.
 - Frames are emitted only after they are at least `settle_seconds` old
   (default 300). A malformed settled row fails the batch before a new
   checkpoint is returned, so it can be corrected or retried without silent
-  loss. `replayFrom(cursor, { frame, transcription })` rewinds a stream id
+  loss. Health remains degraded with a safe row-kind/id/field failure receipt
+  until a successful batch clears it; captured text is never retained there.
+  `replayFrom(cursor, { frame, transcription })` rewinds a stream id
   without dropping database identity.
 - Cursors bind to the resolved path, the first successful migration
   (version and `installed_on`), and source high-water marks. Compatible
