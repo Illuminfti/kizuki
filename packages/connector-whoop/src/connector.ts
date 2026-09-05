@@ -180,10 +180,18 @@ export class WhoopConnector implements Connector {
     }
     private async token(budget: Budget): Promise<string> {
         const g = this.generation;
+        // Refuse an expired method before starting uncancellable token custody.
+        const timeoutMs = Math.min(5000, budget.remaining());
+        if (budget.exhausted) throw failure('request_limit');
+        const session = this.session!;
         try {
             this.pendingTokens++;
-            const exchange = this.session!.accessToken().finally(() => { this.pendingTokens--; });
-            const token = await withDeadline(exchange, Math.min(5000, budget.remaining()), 'WHOOP refresh timeout');
+            const exchange = Promise.resolve().then(() => {
+                this.live(g);
+                return session.accessToken();
+            }).finally(() => { this.pendingTokens--; });
+            void exchange.catch(() => undefined);
+            const token = await withDeadline(exchange, timeoutMs, 'WHOOP refresh timeout');
             this.live(g);
             return token;
         }
