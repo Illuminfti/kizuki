@@ -38,6 +38,12 @@ import {
 } from "@kizuki/connector-telegram";
 import type { TelegramConnectorConfig } from "@kizuki/connector-telegram";
 import {
+  X_ARCHIVE_CONNECTOR_ID,
+  X_ARCHIVE_CURSOR_SCHEMA,
+  createXArchiveConnector,
+} from "@kizuki/connector-x";
+import type { XArchiveConnectorConfig } from "@kizuki/connector-x";
+import {
   CHATGPT_IMPORT_CONNECTOR_ID,
   createChatGptImportConnector,
 } from "./import-chatgpt";
@@ -374,6 +380,20 @@ enroll(
   LOCAL,
 );
 enroll(
+  X_ARCHIVE_CONNECTOR_ID,
+  ["backfill", "sync", "fixture"],
+  "@kizuki/connector-x",
+  (config) => createXArchiveConnector(config as XArchiveConnectorConfig),
+  {
+    contract_minor: 1,
+    implementation: "@kizuki/connector-x",
+    allowed_egress: [],
+    cursor_schema: X_ARCHIVE_CURSOR_SCHEMA,
+    default_sensitivity: "personal",
+    sensitivity_floor: "personal",
+  },
+);
+enroll(
   LEGACY_WIKI_CONNECTOR_ID,
   ["backfill", "sync", "tombstones", "fixture"],
   IN_TREE,
@@ -438,6 +458,10 @@ export function getConnector(
 export function getConnector(
   id: typeof OMNIVORE_IMPORT_CONNECTOR_ID,
   config: OmnivoreImportConfig,
+): Connector;
+export function getConnector(
+  id: typeof X_ARCHIVE_CONNECTOR_ID,
+  config: XArchiveConnectorConfig,
 ): Connector;
 export function getConnector(
   id: typeof LEGACY_WIKI_CONNECTOR_ID,

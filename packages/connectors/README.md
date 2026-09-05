@@ -30,6 +30,7 @@ Two kinds of adapter live in this package:
 | `kizuki.import-whatsapp` | An unzipped WhatsApp "Export chat" folder, or the chat `.txt` inside it                               | Snapshot importer |
 | `kizuki.import-pocket`   | A Pocket CSV export: one `.csv`, or a folder of `part_*.csv`                                          | Snapshot importer |
 | `kizuki.import-omnivore` | An unzipped Omnivore export folder                                                                    | Snapshot importer |
+| `kizuki.import-x-archive` | Owner posts from an unzipped X data archive; local and read-only                                       | Snapshot importer |
 
 In the examples below, `kizuki` stands for `bun packages/cli/src/main.ts` run
 from the tree, as in the repository README.
@@ -44,8 +45,8 @@ yet, and this page will say so until there is.
 
 ## What a snapshot importer will not do
 
-None of the three importers below is a live sync, and none should be described
-as one.
+None of the snapshot importers below is a live sync, and none should be
+described as one.
 
 Absence is not deletion. A record in one export and missing from the next may
 have been deleted at the source, or the second export may simply cover a
@@ -196,11 +197,29 @@ Known limits:
   collapse them. As with a repeated bookmark, that number is a position: an
   export that drops the earlier entry stores the later one under the bare id.
 
+## X data archive
+
+`kizuki.import-x-archive` reads owner posts from an unzipped X data archive.
+The package is registered for programmatic use; command-line enrollment is not
+part of this connector change. See `packages/connector-x/README.md` for the
+accepted file names, hard limits, and exact coverage.
+
+The importer preserves native account and post IDs, post timestamps, links,
+mentions, and portable attachment references. It labels every post `personal`
+because the archive does not establish whether an account or individual post
+was public. It never executes the archive's JavaScript wrappers, reads media
+bytes, infers deletion from absence, or contacts X.
+
+Likes are not inspected. Bookmarks, direct messages, ZIP input, live sync, and
+X API access are not supported by this bounded importer.
+
 ## Not here, deliberately
 
-- Live sync of WhatsApp, Pocket or Omnivore. There is no sanctioned personal
+- Live sync of WhatsApp, Pocket, or Omnivore. There is no sanctioned personal
   API for any of the three: the first has none for personal history, and the
   other two are closed services.
+- Live X sync and X API access. This package implements only the bounded local
+  archive slice described above.
 - The WhatsApp Business API, and Composio as an integration provider. Both were
   deferred by an explicit decision.
 - Reading zip archives, downloading or parsing media, and converting saved
