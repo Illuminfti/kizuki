@@ -1,3 +1,5 @@
+import type { ProducerDiagnostic } from "../contracts/producer";
+
 /**
  * RFC 0002 §4.6 / §11: daemon rails, leases, run receipts and doctor.
  * The loop writes canon through the receipted writer; this module never
@@ -91,6 +93,7 @@ export interface LeaseRow {
 }
 
 export interface RunModelReport {
+  readonly diagnostic?: ProducerDiagnostic;
   /** An interrupted producer attempt: token counts are lower bounds, not measured totals. */
   readonly usage_unknown?: boolean;
   readonly calls: number;
@@ -199,6 +202,7 @@ export interface ModelDoctor {
   readonly canon_writing: "on" | "off" | "unverified";
   readonly model_ref: string | null;
   readonly last_success_at: string | null;
+  readonly last_failure: { readonly at: string; readonly detail: string } | null;
   readonly unavailable: number;
   readonly budget: Readonly<Record<string, { used: number; limit: number }>>;
   readonly detail: string;

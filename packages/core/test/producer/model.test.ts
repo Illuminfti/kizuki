@@ -49,7 +49,7 @@ describe("kizuki.producer.model", () => {
       id: MODEL_PRODUCER_ID,
       kind: "producer",
       contract: "kizuki.producer/v1",
-      contract_minor: 1,
+      contract_minor: 2,
       supports: ["model"],
       requires_lease: false,
       optional_package: null,
@@ -91,6 +91,7 @@ describe("kizuki.producer.model", () => {
         status: "unavailable",
         reason: "llm unavailable",
         usage: { calls: 1, input_tokens: 0, output_tokens: 0 },
+        diagnostic: { stage: "transport", rule: "http", http_status: 503 },
       });
     });
     const timeout = scriptedLlm(() => new PortError("timeout", "model request timed out", true));
@@ -99,6 +100,7 @@ describe("kizuki.producer.model", () => {
         status: "unavailable",
         reason: "llm timeout",
         usage: { calls: 1, input_tokens: 0, output_tokens: 0 },
+        diagnostic: { stage: "transport", rule: "timeout" },
       });
     });
     const thrown = scriptedLlm(() => new Error("provider said: leak-me"));
@@ -107,6 +109,7 @@ describe("kizuki.producer.model", () => {
         status: "unavailable",
         reason: "llm error",
         usage: { calls: 1, input_tokens: 0, output_tokens: 0 },
+        diagnostic: { stage: "transport", rule: "unavailable" },
       });
     });
   });
@@ -135,6 +138,7 @@ describe("kizuki.producer.model", () => {
         status: "rejected",
         reason: "tool_call_in_response",
         usage: { calls: 1, input_tokens: 0, output_tokens: 0 },
+        diagnostic: { stage: "response", rule: "tool_call" },
       });
     });
   });
@@ -198,7 +202,7 @@ describe("kizuki.producer.model", () => {
       expect(logs).toContainEqual({
         level: "warn",
         message: "draft_dropped",
-        detail: { reason: "unknown_predicate", predicate: "employment.salary" },
+        detail: { reason: "unknown_predicate" },
       });
     });
   });
@@ -314,12 +318,14 @@ describe("kizuki.producer.model", () => {
         status: "rejected",
         reason: "budget_exhausted",
         usage: { calls: 0, input_tokens: 0, output_tokens: 0 },
+        diagnostic: { stage: "budget", rule: "max_calls", used: 0, requested: 2, limit: 1 },
       });
       const tooFewInput = await producer.produce(input([GRACE_EVENT], { max_input_tokens: 10 }));
       expect(tooFewInput).toEqual({
         status: "rejected",
         reason: "budget_exhausted",
         usage: { calls: 0, input_tokens: 0, output_tokens: 0 },
+        diagnostic: { stage: "budget", rule: "max_input_tokens", used: 0, requested: expect.any(Number), limit: 10 },
       });
       const noOutput = await producer.produce(input([GRACE_EVENT], { max_output_tokens: 0 }));
       expect(noOutput.status).toBe("rejected");

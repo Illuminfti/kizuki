@@ -143,9 +143,9 @@ function transportToError(result: Extract<TransportResult, { ok: false }>): neve
     if (result.failure === "not_json") {
       throw new PortError("unavailable", "rejected: bad_response", false);
     }
-    throw new PortError("unavailable", `model ${result.failure}`, true);
+    throw new PortError("unavailable", `model ${result.failure}`, result.failure === "network");
   }
-  throw new PortError("unavailable", `http ${result.status}`, true);
+  throw new PortError("unavailable", `http ${result.status}`, isRetryableStatus(result.status));
 }
 
 async function resolveApiKey(

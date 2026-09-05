@@ -9,6 +9,7 @@ import {
 import { dirname, join } from "node:path";
 import { tableExists } from "../ledger/schema";
 import { isPlainObject } from "../util/validate";
+import { readProducerDiagnostic } from "../producer/diagnostics";
 import { loadServeConfig } from "./config";
 import {
   InjectedCrash,
@@ -78,6 +79,7 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
   }
   const totals = emptyRunTotals();
   const model = isPlainObject(value["model"]) ? value["model"] : {};
+  const diagnostic = readProducerDiagnostic(model["diagnostic"]);
   const retrieval = isPlainObject(value["retrieval"]) ? value["retrieval"] : {};
   const execution = parseRunExecution(value["execution"]);
   const transition = parseTransition(value["schedule_transition"]);
@@ -115,6 +117,7 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
     canon_writes: numberOr(value["canon_writes"], totals.canon_writes),
     canon_reverts: numberOr(value["canon_reverts"], totals.canon_reverts),
     model: {
+      ...(diagnostic === undefined ? {} : { diagnostic }),
       ...(model["usage_unknown"] === true ? { usage_unknown: true } : {}),
       calls: numberOr(model["calls"], 0),
       input_tokens: numberOr(model["input_tokens"], 0),
@@ -278,11 +281,14 @@ function insertReceiptRow(db: Database, receipt: RunReceipt, vaultPath: string):
 }
 
 function redactReceipt(receipt: RunReceipt): RunReceipt {
+  const { diagnostic: rawDiagnostic, ...model } = receipt.model;
+  const diagnostic = readProducerDiagnostic(rawDiagnostic);
   return {
     ...receipt,
     errors: receipt.errors.map(redact),
     model: {
-      ...receipt.model,
+      ...model,
+      ...(diagnostic === undefined ? {} : { diagnostic }),
       model_ref:
         receipt.model.model_ref === null ? null : redact(receipt.model.model_ref),
     },

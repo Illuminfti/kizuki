@@ -1,8 +1,7 @@
 # `@kizuki/llm`
 
-The `kizuki.llm/v1` port. This package is the model transport, not a
-producer and not a live vendor client. Tests drive it through a loopback
-fake. Canon writing is a later lane that consumes this port.
+The `kizuki.llm/v1` model transport port. The producer consumes text from this
+port; the receipted writer owns canon. Tests use a loopback fake endpoint.
 
 ## Implementations
 
@@ -19,7 +18,7 @@ fake. Canon writing is a later lane that consumes this port.
 | `model` | yes (openai-compatible) | Wire model id, sent as `model`. |
 | `secret_ref` | no | `env:` or `file:` only. A literal key is a startup failure. |
 | `timeout_ms` | no | Default `60000`. |
-| `max_retries` | no | Default `2`. Retries 429/502/503/504 only. |
+| `max_retries` | no | Default `2`. Bounded retries for network failures, timeouts and HTTP 429/502/503/504 share the request deadline. |
 
 `model_ref` recorded by callers is `<port_id>:<model>@<host>`.
 
@@ -31,6 +30,47 @@ fake. Canon writing is a later lane that consumes this port.
 - Network, timeout, and schema failures throw `PortError`. They are not an
   empty completion.
 - Provider bodies and secret values never appear in errors.
+
+## Provider response compatibility
+
+The result carries assistant text, the model name and numeric usage. `reasoning` and
+`reasoning_content` may be string or null. The three documented
+`reasoning_details` record types (summary, text and encrypted) are accepted
+with known keys and scalar values, then discarded. Reasoning strings are
+bounded to 262,144 characters each; details have at most 128 records and
+262,144 total string characters. Annotations may be absent, null or empty.
+Reasoning and annotations are never forwarded as claims, prompts or logs.
+
+Unknown assistant-message fields or malformed passive metadata fail with
+`unsupported_metadata`. Audio, image, file and tool payloads are refused,
+including additional data fields hidden beside a text content part. Every
+returned choice is validated before the first choice supplies text. Refused,
+truncated and incomplete completions have distinct failure classes. These
+response failures are terminal for that call and are not retried. No universal
+compatibility with future provider metadata is claimed.
+
+Run receipts preserve a content-free `model.diagnostic` when available:
+response/transport class, or claim schema field/rule/type/count, or a budget
+dimension with used/requested/limit. `doctor` distinguishes these outcomes and
+reports the latest failed attempt and last usable success for the current model.
+Diagnostics contain no provider prose, rejected field names, predicate values
+or raw responses. The claim JSON schema remains exact.
+
+The extraction pass still permits at most 2 calls, 8,000 estimated input tokens
+and 2,000 reserved output tokens. A refused prompt now identifies that budget;
+this change does not make every character-bounded batch fit those limits.
+
+Primary schema references checked 2026-09-05:
+[OpenRouter reasoning metadata](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)
+and [DeepSeek chat completions](https://api-docs.deepseek.com/api/create-chat-completion/).
+
+## Verification
+
+```bash
+bun test packages/llm/test packages/core/test/producer
+bun test packages/cli/test/model-compatibility.test.ts packages/core/test/serve/model-diagnostics.test.ts
+bun run typecheck
+```
 
 ## Egress
 

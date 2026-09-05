@@ -6,6 +6,7 @@ import { dirname, join, resolve, parse } from "node:path";
 import { parseBuildInfo } from "./stranger-proof";
 import { evaluateQualification, qualificationDate, type QualificationProfile, type QualificationReceipt, type QualificationSample } from "../packages/core/src/serve/qualification";
 import { loadServeConfig } from "../packages/core/src/serve/config";
+import { readProducerDiagnostic } from "../packages/core/src/producer/diagnostics";
 import { readServeProcessMarker, servePidPath } from "../packages/core/src/serve/daemon";
 import { parseRunExecution, canonicalReceiptContent } from "../packages/core/src/serve/receipts";
 import { RAIL_IDS, RUN_STATUSES } from "../packages/core/src/serve/types";
@@ -196,13 +197,14 @@ export function strictReceiptProjection(raw: string): QualificationReceipt[] {
     if (execution?.due_at) qualificationDate(execution.due_at);
     if (!Array.isArray(value.errors) || value.errors.some((e: unknown) => typeof e !== "string")) throw new Error("invalid run errors");
     const model = object(value.model), retrieval = object(value.retrieval);
-    allowed(model,"calls,input_tokens,output_tokens,unavailable,wall_ms,model_ref,usage_unknown");
+    allowed(model,"calls,input_tokens,output_tokens,unavailable,wall_ms,model_ref,usage_unknown,diagnostic");
+    if(model.diagnostic!==undefined && readProducerDiagnostic(model.diagnostic)===undefined)throw new Error("invalid receipt model diagnostic");
     allowed(retrieval,"upserts,removals,pending_ops,degraded");
     for(const key of ["calls","input_tokens","output_tokens","unavailable","wall_ms"])counter(model[key]);
     for(const key of ["upserts","removals","pending_ops"])counter(retrieval[key]);
     if(model.model_ref!==undefined && model.model_ref!==null && typeof model.model_ref!=="string")throw new Error("invalid receipt model reference");
     if (!Array.isArray(retrieval.degraded) || retrieval.degraded.some((v:unknown)=>typeof v!=="string") || !Number.isSafeInteger(model.unavailable) || Number(model.unavailable) < 0 || (model.usage_unknown !== undefined && typeof model.usage_unknown !== "boolean")) throw new Error("invalid run health");
-    const healthy = value.errors.length === 0 && retrieval.degraded.length === 0 && model.unavailable === 0 && model.usage_unknown !== true;
+    const healthy = value.errors.length === 0 && retrieval.degraded.length === 0 && model.unavailable === 0 && model.usage_unknown !== true && model.diagnostic === undefined;
     return {run_id,rail,started_at,finished_at,status,healthy,execution:execution ?? null,sha256:hash(canonicalReceiptContent(value))};
   });
 }

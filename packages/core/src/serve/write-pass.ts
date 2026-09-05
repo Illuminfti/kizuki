@@ -12,7 +12,8 @@ import {
 } from "../canon";
 import { machineOriginPath } from "../canon/origin";
 import type { Claim } from "../contracts/proposal";
-import type { ClaimDraft, ProduceResult, ProducerPort } from "../contracts/producer";
+import type { ClaimDraft, ProduceResult, ProducerDiagnostic, ProducerPort } from "../contracts/producer";
+import { formatProducerDiagnostic, readProducerDiagnostic } from "../producer/diagnostics";
 import type { RunModelReport } from "./types";
 import {
   insertClaim,
@@ -50,6 +51,7 @@ export interface WritePassResult {
 }
 
 interface ProduceMetrics {
+  diagnostic?: ProducerDiagnostic;
   calls: number;
   input_tokens: number;
   output_tokens: number;
@@ -68,6 +70,10 @@ function count(metrics: ProduceMetrics, reason: string): void {
 
 function observe(metrics: ProduceMetrics, result: ProduceResult, wallMs: number): void {
   metrics.wall_ms += wallMs;
+  if (result.status !== "ok") {
+    const diagnostic = readProducerDiagnostic(result.diagnostic);
+    if (diagnostic !== undefined) metrics.diagnostic = diagnostic;
+  }
   switch (result.status) {
     case "ok":
       metrics.calls += result.usage.calls;
@@ -112,6 +118,7 @@ function metricResult(metrics: ProduceMetrics): Pick<WritePassResult, "claims_re
   return {
     claims_rejected: metrics.rejected,
     model: {
+      ...(metrics.diagnostic === undefined ? {} : { diagnostic: metrics.diagnostic }),
       calls: metrics.calls,
       input_tokens: metrics.input_tokens,
       output_tokens: metrics.output_tokens,
@@ -236,9 +243,11 @@ async function runWritePassLocked(
     switch (mined.mined.status) {
       case "unavailable":
         stopped = `model:${mined.mined.reason}`;
+        if (metrics.diagnostic !== undefined) errors.push(formatProducerDiagnostic(metrics.diagnostic));
         break;
       case "rejected":
         errors.push(mined.mined.reason);
+        if (metrics.diagnostic !== undefined) errors.push(formatProducerDiagnostic(metrics.diagnostic));
         break;
       case "empty": {
         if (!commitExtractCursor(db, mined) && mined.cursor !== null) {

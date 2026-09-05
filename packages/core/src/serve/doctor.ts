@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { isMachineOriginPath } from "../canon/origin";
+import { formatProducerDiagnostic } from "../producer/diagnostics";
 import { pendingRetrievalOps } from "../claims/store";
 import { readDerivedMeta } from "../derived-meta";
 import { ConnectionStateStore } from "../ledger/connection-state";
@@ -178,6 +179,17 @@ function calibration(db: Database, receipts: RunReceipt[], now: string): Calibra
   };
 }
 
+/** Whole-call rejection is distinct from a counted, permitted draft drop. */
+function modelFailure(receipt: RunReceipt): string | null {
+  if (receipt.model.diagnostic !== undefined) return formatProducerDiagnostic(receipt.model.diagnostic);
+  if (receipt.model.usage_unknown === true) return "model attempt interrupted; token usage unknown";
+  if (receipt.model.unavailable > 0) return "model unavailable";
+  for (const reason of ["tool_call_in_response", "fence_leak", "schema_invalid", "provenance_not_cited", "budget_exhausted"]) {
+    if ((receipt.claims_rejected[reason] ?? 0) > 0 || receipt.errors.includes(reason)) return `model result rejected: ${reason.replaceAll("_", " ")}`;
+  }
+  return null;
+}
+
 function modelDoctor(
   receipts: RunReceipt[],
   modelRef: string | null | undefined,
@@ -187,18 +199,25 @@ function modelDoctor(
 ): ModelDoctor {
   const on = typeof modelRef === "string" && modelRef.length > 0;
   const unverified = !on && typeof configuredModelRef === "string" && configuredModelRef.length > 0;
-  const lastOk = [...receipts].reverse().find((receipt) => receipt.model.calls > 0 && receipt.model.usage_unknown !== true && receipt.model.unavailable === 0);
-  const unavailable = receipts.reduce((sum, receipt) => sum + receipt.model.unavailable, 0);
+  const currentRef = on ? modelRef : unverified ? configuredModelRef : null;
+  const current = currentRef === null ? [] : receipts.filter(receipt => receipt.rail === "sync" && receipt.model.model_ref === currentRef);
+  const latestFirst = [...current].reverse();
+  const lastOk = latestFirst.find(receipt => receipt.model.calls > 0 && modelFailure(receipt) === null);
+  const lastAttempt = latestFirst.find(receipt => receipt.model.calls > 0 || modelFailure(receipt) !== null);
+  const failure = lastAttempt === undefined ? null : modelFailure(lastAttempt);
+  const lastFailure = failure === null || lastAttempt === undefined ? null : { at: lastAttempt.finished_at, detail: failure };
+  const unavailable = current.reduce((sum, receipt) => sum + receipt.model.unavailable, 0);
   return {
     canon_writing: on ? "on" : unverified ? "unverified" : "off",
     model_ref: on ? modelRef : null,
     last_success_at: lastOk?.finished_at ?? null,
+    last_failure: lastFailure,
     unavailable,
     budget: {
       canon_writes_per_day: { used: usedToday, limit: configCanonDay },
     },
     detail: on
-      ? `canon writing: on (${modelRef}); last_success=${lastOk?.finished_at ?? "never"} unavailable=${unavailable}`
+      ? `canon writing: on (${modelRef}); last_success=${lastOk?.finished_at ?? "never"} unavailable=${unavailable}${lastFailure === null ? "" : `; last_failure=${lastFailure.detail} (at ${lastFailure.at})`}`
       : unverified
         ? "canon writing: unverified (model configured but not bound by the running host)"
       : "canon writing: off (no model configured — connectors, ledger, search, timeline and undo still work)",
@@ -354,6 +373,7 @@ export function inspectServeDoctor(
   const stores = storeDoctor(db, vaultPath, now);
   const cal = calibration(db, receipts, now);
   const failures: string[] = [];
+  if (model.last_failure !== null) failures.push(`${model.last_failure.detail} (at ${model.last_failure.at})`);
   if (intent === "unknown") failures.push("service intent unavailable or invalid");
   else if (intent !== "installed" && (supervisor.enabled || supervisor.state === "active")) {
     failures.push("supervisor active or enabled without installed intent");
