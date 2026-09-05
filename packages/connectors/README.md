@@ -19,6 +19,9 @@ Two kinds of adapter live in this package:
 - A **snapshot importer** reads a file the owner exported once. It cannot tell
   a deleted record from a shorter export, so it never emits a tombstone.
 
+Markdown sources must be separate from the Kizuki vault. See the
+[folder boundary and its limits](../../docs/markdown-sources.md).
+
 ## The registry
 
 | Registry id              | Reads                                                                                                 | Kind              |
