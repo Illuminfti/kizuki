@@ -1,6 +1,6 @@
 import { removeOwnedGeneration, validateOwnedGeneration } from "./owned-generation";
 import { existsSync, lstatSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { PortError, validatePortDescriptor, validateRetrievalDoc, validateRetrievalQuery, SENSITIVITY_ORDER } from "@kizuki/core";
 import type { AbsenceProof, EmbeddingPort, EmbeddingSpace, EntityRef, GraphQueryOptions, GraphResult, PortContext, PortDescriptor, PortHealth, RetrievalDoc, RetrievalMutationReport, RetrievalPort, RetrievalQuery, RetrievalResult } from "@kizuki/core";
 import { EMBEDDED_RETRIEVAL_DESCRIPTOR } from "./descriptor";
@@ -24,6 +24,10 @@ export interface EmbeddedRetrievalOptions {
   readonly holder_id?: string;
 }
 export class EmbeddedRetrievalPort implements RetrievalPort {
+  static validateOwnedGeneration(ctx: PortContext): void { validateOwnedGeneration(ctx.vault_path, ctx.data_dir); }
+  ownsGeneration(vaultPath: string): boolean {
+    return resolve(vaultPath) === resolve(this.ownedVaultPath) && resolve(this.ownedDataDir) === resolve(vaultPath, ".kizuki/retrieval", EMBEDDED_RETRIEVAL_DESCRIPTOR.id);
+  }
   readonly descriptor: PortDescriptor;
   private closed = false;
   private readonly ownedDataDir: string;
@@ -225,7 +229,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
     return this.closing;
   }
   /** Final native maintenance call. The old object stays closed after disposal. */
-  eraseOwnedGeneration(): Promise<void> {
+  async eraseOwnedGeneration(): Promise<void> {
     if (this.closed) return Promise.reject(new PortError("unavailable", "retrieval port is already closing or closed", false));
     validateOwnedGeneration(this.ownedVaultPath, this.ownedDataDir);
     this.closed = true;

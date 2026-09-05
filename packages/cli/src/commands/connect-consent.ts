@@ -1,4 +1,5 @@
 import { inspectSourceGrant, listConnections, resumeSourceRevocation, revokeSourceGrant, setSourceGrant } from "@kizuki/core";
+import { createOwnedRetrievalInventory, OwnedRetrievalInventoryError } from "../owned-retrieval-inventory";
 import { parseArguments, UsageError } from "../args";
 import { withVault } from "../context";
 import { jsonEnvelope } from "../output";
@@ -24,16 +25,26 @@ export async function runConnectConsent(io: CliIo, args: string[]): Promise<numb
     let receipt;
     if (action === "grant") receipt = setSourceGrant(ctx.db, { source_key: source, expected_revision: revision!, operation_id: operation!, policy });
     if (action === "revoke") receipt = revokeSourceGrant(ctx.db, { source_key: source, expected_revision: revision!, operation_id: operation! });
+    let maintenanceError: string | null = null;
     let grant = inspectSourceGrant(ctx.db, source);
     if (action === "resume-revocation") {
       if (grant === null || grant.revoke_operation !== operation) throw new Error("source_revocation_scope_mismatch");
-      grant = await resumeSourceRevocation(ctx.db, ctx.vaultPath, operation!, ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval });
+      const inventory = createOwnedRetrievalInventory(ctx.vaultPath);
+      try { grant = await resumeSourceRevocation(ctx.db, ctx.vaultPath, operation!, { ownedRetrieval: inventory }); }
+      catch (error) {
+        if (!(error instanceof OwnedRetrievalInventoryError)) throw error;
+        maintenanceError = "owned_retrieval_inventory_unavailable";
+        grant = inspectSourceGrant(ctx.db, source);
+      } finally {
+        try { await inventory.close(); } catch { maintenanceError = "owned_retrieval_shutdown_unavailable"; }
+      }
     }
-    const purge = grant?.status === "purged" && grant.purge_blockers.length === 0 ? "complete" : grant?.status === "denied" ? "pending" : "not_requested";
-    const pending = action === "resume-revocation" && purge !== "complete";
-    if (parsed.flags.has("--json")) io.out(jsonEnvelope("connect", pending ? "degraded" : "ok", { source_key: source, receipt: receipt ?? null, grant, purge }));
+    const purge = maintenanceError !== null ? "pending" : grant?.status === "purged" && grant.purge_blockers.length === 0 ? "complete" : grant?.status === "denied" ? "pending" : "not_requested";
+    const pending = action === "resume-revocation" && (purge !== "complete" || maintenanceError !== null);
+    if (parsed.flags.has("--json")) io.out(jsonEnvelope("connect", pending ? "degraded" : "ok", { source_key: source, receipt: receipt ?? null, grant, purge, maintenance_error: maintenanceError }));
     else {
       io.out(`source=${source} consent=${grant?.status ?? "required"} revision=${grant?.revision ?? 0} purge=${purge}`);
+      if (maintenanceError !== null) io.out(maintenanceError);
       if (receipt !== undefined) io.out(`operation_id=${receipt.operation_id} receipt_revision=${receipt.revision}`);
       if (grant === null) io.out(consentHint(ctx.db, source));
       if (grant?.status === "denied") {
@@ -42,5 +53,5 @@ export async function runConnectConsent(io: CliIo, args: string[]): Promise<numb
       }
     }
     return pending ? 1 : 0;
-  }, { retrieval: action === "resume-revocation" ? "required" : "none" });
+  }, { retrieval: "none" });
 }

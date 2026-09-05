@@ -47,11 +47,11 @@ test("owner grants explicit policy, retries original intent across processes, an
   expect(h.runCli(f.env, "backfill", "markdown-folder").exitCode).toBe(1);
   expect(command(f, "resume-revocation", "--operation-id", "wrong-operation").exitCode).not.toBe(0);
   const resumed = command(f, "resume-revocation", "--operation-id", "owner-revoke");
-  expect(resumed.exitCode).toBe(1);
-  expect(JSON.parse(resumed.stdout).data.purge).toBe("pending");
-  expect(JSON.parse(resumed.stdout).data.grant.purge_blockers).toContain("claim_payload_retained");
-  expect(command(f, "resume-revocation", "--operation-id", "owner-revoke").exitCode).toBe(1);
-  expect(h.runCli(f.env, "export", "--out", join(f.root, "pending-export")).exitCode).toBe(1);
+  expect(resumed.exitCode, resumed.stdout + resumed.stderr).toBe(0);
+  expect(JSON.parse(resumed.stdout).data.purge).toBe("complete");
+  expect(JSON.parse(resumed.stdout).data.grant.purge_blockers).toEqual([]);
+  expect(command(f, "resume-revocation", "--operation-id", "owner-revoke").exitCode).toBe(0);
+  expect(h.runCli(f.env, "export", "--out", join(f.root, "purged-export")).exitCode).toBe(0);
 }, 15_000);
 
 test("import can receive explicit consent before content capture", () => {
@@ -103,7 +103,8 @@ test("a busy local retrieval writer cannot prevent grant inspection or immediate
     expect(command(f, "revoke", "--expected-revision", "1", "--operation-id", "busy-revoke").exitCode).toBe(0);
     const pending = command(f, "resume-revocation", "--operation-id", "busy-revoke");
     expect(pending.exitCode).toBe(1);
-    expect(pending.stderr).toContain("writer lease");
+    expect(JSON.parse(pending.stdout).data.purge).toBe("pending");
+    expect(JSON.parse(pending.stdout).data.grant.owned_retrieval).toContainEqual({ store_id: "local:kizuki.retrieval.embedded-pg", status: "pending" });
     expect(JSON.parse(command(f, "status").stdout).data.grant.status).toBe("denied");
     expect((await held!.health()).status).toBe("ready");
   } finally { await held?.close(); }

@@ -135,10 +135,9 @@ shows current state, which may be newer than a retried operation's receipt.
 
 Grant, status, and revoke work without opening retrieval. Revocation commits
 denial immediately. Physical purge is a separate resumable operation tied to the
-same source and revoke ID; it requires the configured retrieval store to be
-available. `purge=pending` / JSON `status=degraded` and exit 1 means it is **not
-complete**. Retained claim or identity payloads and `canon_rewrite_pending` remain
-explicit blockers; retry cannot invent an erasure receipt. A source cannot be
+same source and revoke ID; it inventories all known owned retrieval stores and
+can retry a broken native generation without opening its SQL database. `purge=pending` / JSON `status=degraded` and exit 1 means it is **not
+complete**. Any remaining payload or canon blocker remains explicit; retry cannot invent an erasure receipt. A source cannot be
 regranted while its purge is pending. `purge=complete` is reported only from the
 native completed state with no blockers. Local revocation does not delete the
 upstream account or source file.
@@ -329,3 +328,14 @@ Stdio adapter. Tokens never travel on argv.
 
 `timeline` and `agent add` are not registered. Timeline exists
 as an MCP / core serving function.
+
+Source revocation maintenance inventories both known native retrieval roots under
+`.kizuki/retrieval`, including a previously selected engine. Each store has a
+vault-scoped stable `local:<implementation-id>` identity that survives a vault
+move. Logical clearing is followed by whole-generation native disposal, and
+newly opened ports are closed. A busy, unknown, symlinked or otherwise unsafe
+root leaves revocation pending; changing the configured engine never proves
+absence. Broken native generations can be retried without successful SQL startup.
+Reports distinguish owned-store maintenance from external copies, which remain
+out of scope. The main ledger, claims and canon have separate core erasure rules;
+only a core report with no purge blockers is rendered complete.

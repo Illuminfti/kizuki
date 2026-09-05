@@ -7,7 +7,7 @@ import {
   renameSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { SENSITIVITY_ORDER } from "../agents/types";
 import type { Sensitivity } from "../agents/types";
 import { PortError } from "../contracts/ports";
@@ -117,6 +117,10 @@ function matchAllSnippet(text: string): string {
 }
 
 export class Fts5RetrievalPort implements RetrievalPort {
+  static validateOwnedGeneration(ctx: PortContext): void { validateFtsGeneration(ctx); }
+  ownsGeneration(vaultPath: string): boolean {
+    return resolve(vaultPath) === resolve(this.ctx.vault_path) && resolve(this.ctx.data_dir) === resolve(vaultPath, ".kizuki/retrieval", FTS5_RETRIEVAL_ID);
+  }
   readonly descriptor: PortDescriptor;
   private readonly ctx: PortContext;
   private readonly db: Database;

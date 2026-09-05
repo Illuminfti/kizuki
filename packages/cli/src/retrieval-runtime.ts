@@ -18,5 +18,5 @@ export async function openConfiguredRetrieval(vaultPath: string, selected?: stri
     logger: () => {},
   });
   // Only this host-created embedded implementation receives the local capability.
-  return id === "kizuki.retrieval.embedded-pg" ? bindLocalSourcePort(bound.port) : bound.port;
+  return id === "kizuki.retrieval.embedded-pg" ? bindLocalSourcePort(bound.port, { store_id: `local:${id}` }) : bound.port;
 }

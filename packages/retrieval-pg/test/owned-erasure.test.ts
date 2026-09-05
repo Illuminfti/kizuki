@@ -116,10 +116,38 @@ test("failed partial deletion retries natively without reopening broken SQL", as
     expect(injected).toBe(true);
     fault.mockRestore();
     // No SQL open is needed to finish the already-authorized whole-generation purge.
-    await eraseOwnedEmbeddedGeneration(f.ctx);
+    const script = join(f.root, "retry.ts");
+    writeFileSync(script, `import { eraseOwnedEmbeddedGeneration } from ${JSON.stringify(join(import.meta.dir, "../src/port.ts"))}; await eraseOwnedEmbeddedGeneration({...${JSON.stringify(f.ctx)},clock:()=>new Date().toISOString(),logger:()=>{},secrets:async()=>''});`);
+    const retried = Bun.spawnSync([process.execPath, script], { stdout: "pipe", stderr: "pipe" });
+    expect(retried.exitCode, retried.stderr.toString()).toBe(0);
     expect(existsSync(join(f.ctx.data_dir, "store"))).toBe(false);
     const reopened = await openEmbeddedRetrievalPort(f.ctx);
     try { expect((await reopened.search(SYNTHETIC_QUERY)).hits).toEqual([]); }
     finally { await reopened.close(); }
   } finally { fault.mockRestore(); await port.close().catch(() => {}); f.cleanup(); }
 });
+
+
+test("unconfirmed SQL shutdown retains ownership until process death", async () => {
+  const f = temporaryPortContext();
+  const script = join(f.root, "shutdown-failure.ts");
+  writeFileSync(script, `import { openEmbeddedRetrievalPort } from ${JSON.stringify(join(import.meta.dir, "../src/port.ts"))};
+import { SqlStore } from ${JSON.stringify(join(import.meta.dir, "../src/sql-store.ts"))};
+const ctx={...${JSON.stringify(f.ctx)},clock:()=>new Date().toISOString(),logger:()=>{},secrets:async()=>''};
+const port=await openEmbeddedRetrievalPort(ctx);
+SqlStore.prototype.close=async()=>{throw new Error('synthetic SQL shutdown failure')};
+try { await port.eraseOwnedGeneration(); process.exit(2); } catch {}
+try { await openEmbeddedRetrievalPort(ctx); process.exit(3); } catch(error) { if(!String(error).includes('writer lease')) process.exit(4); }
+console.log('shutdown-unconfirmed-lease-retained'); process.exit(0);`);
+  try {
+    const child = Bun.spawnSync([process.execPath, script], { stdout: "pipe", stderr: "pipe" });
+    expect(child.exitCode, child.stderr.toString()).toBe(0);
+    expect(child.stdout.toString()).toContain("shutdown-unconfirmed-lease-retained");
+    expect(existsSync(join(f.ctx.data_dir, "store"))).toBe(true);
+    const { eraseOwnedEmbeddedGeneration } = await import("../src/port");
+    // Preserve the existing bounded stale-heartbeat policy after abrupt death.
+    await expect(eraseOwnedEmbeddedGeneration(f.ctx)).rejects.toThrow("heartbeat is still fresh");
+    await eraseOwnedEmbeddedGeneration({ ...f.ctx, clock: () => new Date(Date.now() + 60_001).toISOString() });
+    expect(existsSync(join(f.ctx.data_dir, "store"))).toBe(false);
+  } finally { f.cleanup(); }
+}, 15_000);

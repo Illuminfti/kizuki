@@ -82,3 +82,14 @@ Without one, hybrid reads declare `vector-skipped`, and claim insertion and owne
 correction use structural deduplication while still updating the SQL index. The
 current CLI and MCP composition binds lexical retrieval; it does not configure a
 production embedding model or claim calibrated vector deduplication.
+
+Native source-revocation maintenance may discard the entire owned `store/`
+generation after SQL shutdown while retaining the writer lease. It seals the
+old port, stops its watcher, drains queued SQL work, removes SQL/WAL and legacy
+payload files, and fsyncs the managed root. Known engine/assets/lease metadata
+remain. Unknown files, symlinks and hardlinks refuse deletion. If deletion is
+interrupted after SQL closes, the native SQL-free maintenance entry can retry
+under the same lease without reopening a partial database. This covers the
+application-managed generation, not external copies or arbitrary raw handles.
+An empty authoritative rebuild can clear a historical vector generation without
+its embedding model; a nonempty rebuild still requires the original model space.

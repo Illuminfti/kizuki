@@ -64,7 +64,7 @@ async function bindRetrieval(vault: string, id: string): Promise<RetrievalPort> 
     logger: (line) => process.stderr.write(`${line.level} ${line.message}\n`),
   });
   // The host registry above contains only the concrete local embedded factory.
-  return id === "kizuki.retrieval.embedded-pg" ? bindLocalSourcePort(port) : port;
+  return id === "kizuki.retrieval.embedded-pg" ? bindLocalSourcePort(port, { store_id: `local:${id}` }) : port;
 }
 
 function refuse(message: string): never {
