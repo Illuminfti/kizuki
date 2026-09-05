@@ -41,3 +41,16 @@ export function applyNativeOwnerEvidenceV12(db: Database): void {
     filing_state TEXT NOT NULL CHECK(filing_state IN ('recorded','filed','failed'))
   ) STRICT;`);
 }
+
+export function applySourceStoresV13(db: Database): void {
+  db.exec(`
+    CREATE TABLE source_retrieval_stores (
+      source_key TEXT NOT NULL REFERENCES source_grants(source_key), store_id TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('pending','logical_absence','maintained','absent')),
+      PRIMARY KEY(source_key,store_id)
+    ) STRICT;
+    CREATE TABLE source_store_inventory (
+      source_key TEXT PRIMARY KEY REFERENCES source_grants(source_key), checked INTEGER NOT NULL CHECK(checked IN (0,1)), payload_complete INTEGER NOT NULL DEFAULT 0 CHECK(payload_complete IN (0,1))
+    ) STRICT;
+  `);
+}

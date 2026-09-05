@@ -977,3 +977,5 @@ export type { QualificationProfile, QualificationRail, QualificationReceipt, Qua
 
 export { SOURCE_PURPOSES, SOURCE_FIELDS, SourceGrantError, sourcePolicyEpoch, inspectSourceGrant, setSourceGrant, revokeSourceGrant, resumeSourceRevocation, bindLocalSourcePort } from "./ledger/source-grants";
 export type { SourcePurpose, SourceGrantPolicy, SourceGrant, SourceGrantRequest, SourceGrantReceipt, SourceAdmission } from "./ledger/source-grants";
+
+export type { OwnedSourceRetrievalInventory, OwnedSourceRetrievalStore, SourceStoreStatus } from "./ledger/source-stores";

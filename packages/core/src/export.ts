@@ -1608,9 +1608,11 @@ export function restoreVault(
   }
 }
 
-const SOURCE_BACKUP_TABLES = ["source_grants", "source_event_bindings", "source_grant_receipts", "native_owner_evidence"] as const;
+const SOURCE_BACKUP_TABLES = ["source_grants", "source_event_bindings", "source_grant_receipts", "native_owner_evidence", "source_retrieval_stores", "source_store_inventory"] as const;
 type SourceBackupTable = typeof SOURCE_BACKUP_TABLES[number];
 const SOURCE_COLUMNS: Record<SourceBackupTable, readonly string[]> = {
+  source_retrieval_stores: ["source_key", "store_id", "status"],
+  source_store_inventory: ["source_key", "checked", "payload_complete"],
   native_owner_evidence: ["event_id", "origin", "request_digest", "recorded_at", "filing_state"],
   source_grants: ["source_key", "connector_id", "revision", "status", "policy", "policy_digest", "updated_at", "revoke_operation", "purge_receipt_id"],
   source_event_bindings: ["event_id", "source_key", "grant_revision", "policy_digest"],
@@ -1639,7 +1641,7 @@ function assertSourceExport(db: Database): void {
 }
 function restoreSourcePolicy(db: Database, backup: string, manifest: ExportManifest): void {
   for (const table of SOURCE_BACKUP_TABLES) {
-    const required = manifest.schema_versions.ledger >= (table === "native_owner_evidence" ? 12 : 11);
+    const required = manifest.schema_versions.ledger >= (table === "native_owner_evidence" ? 12 : table === "source_retrieval_stores" || table === "source_store_inventory" ? 13 : 11);
     const path = `ledger/${table}.jsonl`;
     if (required && manifest.files[path] === undefined) throw new Error("backup source policy stream missing");
     for (const row of streamRows(backup, path, required)) {

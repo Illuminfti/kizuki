@@ -1,3 +1,4 @@
+import { recordSourceStoreWrite } from "../ledger/source-stores";
 import { tryWriteFlock } from "../serve/flock";
 import { sourcePolicyEpoch, isLocalSourcePort, sourceSensitivity, requireSourceEvents, sourceEventsAllowed, invalidateLocalSourcePort } from "../ledger/source-grants";
 import type { Database } from "bun:sqlite";
@@ -108,6 +109,7 @@ async function rebuildUnderFence(db: Database, vaultPath: string, port: Retrieva
     if (port.rebuildFromDocuments === undefined) {
       throw new PortError("not_supported", "configured retrieval does not support atomic authoritative rebuild", false);
     }
+    recordSourceStoreWrite(db, port, docs.flatMap(doc => doc.provenance));
     let failure: unknown;
     try { await port.rebuildFromDocuments(docs); } catch (error) { failure = error; }
     if (expired() || epoch !== sourcePolicyEpoch(db)) {

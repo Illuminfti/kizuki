@@ -201,7 +201,10 @@ describe("durable source grants", () => {
     try {
       expect(inspectSourceGrant(reopened, a)?.status).toBe("denied");
       const completed = await resumeSourceRevocation(reopened, dir, "revoke-a");
-      expect(completed.status).toBe("purged");
+      expect(completed.status).toBe("denied");
+      expect(completed.purge_blockers).toContain(
+        "owned_payload_maintenance_pending",
+      );
       expect(reopened.query("SELECT count(*) AS n FROM events").get()).toEqual({
         n: 1,
       });
@@ -447,7 +450,9 @@ test("revocation stays denied while a derived write is in flight and removes its
       source: { source_key: a, expected_revision: 1 },
     });
     if (input.status !== "stored") throw new Error("fixture failed");
-    const port = bindLocalSourcePort(new FixtureVectorPort({ vector: false }));
+    const port = bindLocalSourcePort(new FixtureVectorPort({ vector: false }), {
+      store_id: "local:fixture",
+    });
     const original = port.upsert.bind(port);
     let release!: () => void;
     let started!: () => void;
@@ -486,7 +491,7 @@ test("revocation stays denied while a derived write is in flight and removes its
       retrieval: port,
     });
     expect(remaining.status).toBe("denied");
-    expect(remaining.purge_blockers).toEqual(["claim_payload_retained"]);
+    expect(remaining.purge_blockers).toContain("claim_payload_retained");
     expect(db.query("SELECT state FROM retrieval_ops").get()).toEqual({
       state: "cancelled",
     });
@@ -643,9 +648,9 @@ test("an in-flight rebuild fences purge and verifies removal after revocation", 
       source: { source_key: a, expected_revision: 1 },
     });
     if (input.status !== "stored") throw new Error("fixture failed");
-    const port = bindLocalSourcePort(
-      new FixtureVectorPort({ vector: false }),
-    ) as FixtureVectorPort & {
+    const port = bindLocalSourcePort(new FixtureVectorPort({ vector: false }), {
+      store_id: "local:fixture",
+    }) as FixtureVectorPort & {
       rebuildFromDocuments: NonNullable<RetrievalPort["rebuildFromDocuments"]>;
     };
     let release!: () => void;
@@ -702,9 +707,9 @@ test("rebuild timeout retains its fence until the late operation is removed and 
       accept(db, event(), { source: { source_key: a, expected_revision: 1 } })
         .status,
     ).toBe("stored");
-    const port = bindLocalSourcePort(
-      new FixtureVectorPort({ vector: false }),
-    ) as FixtureVectorPort & {
+    const port = bindLocalSourcePort(new FixtureVectorPort({ vector: false }), {
+      store_id: "local:fixture",
+    }) as FixtureVectorPort & {
       rebuildFromDocuments: NonNullable<RetrievalPort["rebuildFromDocuments"]>;
     };
     Object.assign(port.descriptor, {
@@ -766,7 +771,7 @@ test("a crashed rebuild releases kernel ownership and reopened source revocation
       import { FixtureVectorPort } from ${JSON.stringify(fixtureModule)};
       const dir=${JSON.stringify(dir)};
       const db=openLedger(dir+'/.kizuki/kizuki.db');
-      const port=bindLocalSourcePort(new FixtureVectorPort({vector:false}));
+      const port=bindLocalSourcePort(new FixtureVectorPort({vector:false}),{store_id:"local:fixture"});
       port.rebuildFromDocuments=async()=>{ process.stdout.write('ready\\n'); await new Promise(()=>{}); };
       await rebuildRetrieval(db,dir,port);`;
     child = Bun.spawn([process.execPath, "--eval", script], {
@@ -944,4 +949,103 @@ test("a failed native correction has a durable recording receipt and can retry a
     reopened.query("SELECT count(*) AS n FROM native_owner_evidence").get(),
   ).toEqual({ n: 1 });
   reopened.close();
+});
+
+test("historical owned retrieval stores remain pending until inventory verifies and physically maintains them", async () => {
+  const { db, dir, a } = setup();
+  grant(db, a);
+  const accepted = accept(db, event(), {
+    source: { source_key: a, expected_revision: 1 },
+  });
+  if (accepted.status !== "stored") throw new Error("fixture failed");
+  const old: FixtureVectorPort & RetrievalPort = new FixtureVectorPort();
+  old.rebuildFromDocuments = async (docs) => {
+    old.docs.clear();
+    for await (const doc of docs) await old.upsert([doc]);
+  };
+  bindLocalSourcePort(old, { store_id: "local:fixture-old" });
+  await rebuildRetrieval(db, dir, old);
+  revokeSourceGrant(db, {
+    source_key: a,
+    expected_revision: 1,
+    operation_id: "old-store-revoke",
+  });
+  const pending = await resumeSourceRevocation(db, dir, "old-store-revoke");
+  expect(pending.status).toBe("denied");
+  expect(pending.purge_blockers).toContain("owned_retrieval_pending");
+  expect(old.docs.size).toBeGreaterThan(0);
+  let maintained = false;
+  const cleared = await resumeSourceRevocation(db, dir, "old-store-revoke", {
+    ownedRetrieval: {
+      stores: async () => ({
+        stores: [
+          {
+            id: "local:fixture-old",
+            port: old,
+            maintain: async () => {
+              expect(old.docs.size).toBe(0);
+              maintained = true;
+              return { owned_file_maintenance: "complete" as const };
+            },
+          },
+        ],
+        absent_store_ids: [],
+      }),
+    },
+  });
+  expect(maintained).toBe(true);
+  expect(cleared.owned_retrieval).toContainEqual({
+    store_id: "local:fixture-old",
+    status: "maintained",
+  });
+  db.close();
+});
+
+test("owned-store omission is not absence and broken stores can be erased through trusted maintenance only", async () => {
+  const { db, dir, a } = setup();
+  grant(db, a);
+  const accepted = accept(db, event(), {
+    source: { source_key: a, expected_revision: 1 },
+  });
+  if (accepted.status !== "stored") throw new Error("fixture failed");
+  const port: FixtureVectorPort & RetrievalPort = new FixtureVectorPort();
+  port.rebuildFromDocuments = async (docs) => {
+    for await (const doc of docs) await port.upsert([doc]);
+  };
+  bindLocalSourcePort(port, { store_id: "local:broken" });
+  await rebuildRetrieval(db, dir, port);
+  revokeSourceGrant(db, {
+    source_key: a,
+    expected_revision: 1,
+    operation_id: "broken-revoke",
+  });
+  const omitted = await resumeSourceRevocation(db, dir, "broken-revoke", {
+    ownedRetrieval: {
+      stores: async () => ({ stores: [], absent_store_ids: [] }),
+    },
+  });
+  expect(omitted.owned_retrieval).toEqual([
+    { store_id: "local:broken", status: "pending" },
+  ]);
+  const erased = await resumeSourceRevocation(db, dir, "broken-revoke", {
+    ownedRetrieval: {
+      stores: async () => ({
+        stores: [
+          {
+            id: "local:broken",
+            maintain: async () => {
+              port.docs.clear();
+              return { owned_file_maintenance: "complete" };
+            },
+          },
+        ],
+        absent_store_ids: [],
+      }),
+    },
+  });
+  expect(erased.owned_retrieval).toEqual([
+    { store_id: "local:broken", status: "maintained" },
+  ]);
+  expect(erased.purge_blockers).toContain("owned_payload_maintenance_pending");
+  db.close();
 });

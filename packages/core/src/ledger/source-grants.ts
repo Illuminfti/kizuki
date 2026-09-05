@@ -1,3 +1,11 @@
+import {
+  bindSourceStoreId,
+  sourceStoreStatuses,
+  sourceStoresPending,
+  eraseOwnedSourceStores,
+  type OwnedSourceRetrievalInventory,
+  type SourceStoreStatus,
+} from "./source-stores";
 import type { Database } from "bun:sqlite";
 import type { CaptureEventInput, SensitivityHint } from "../contracts/event";
 import { raiseSensitivity } from "../contracts/event";
@@ -44,11 +52,18 @@ export interface SourceGrant {
   updated_at: string;
   revoke_operation: string | null;
   purge_receipt_id: string | null;
+  retention_effects: {
+    joint_derived_records: "whole_record_erasure";
+    disposable_retrieval: "whole_generation_erasure";
+  };
+  owned_retrieval: SourceStoreStatus[];
   purge_blockers: (
     | "retrieval_pending"
     | "claim_payload_retained"
     | "identity_payload_retained"
     | "canon_rewrite_pending"
+    | "owned_payload_maintenance_pending"
+    | "owned_retrieval_pending"
     | "writer_busy"
   )[];
 }
@@ -67,7 +82,10 @@ export interface SourceGrantReceipt {
   at: string;
   policy_digest: string;
 }
-interface GrantRow extends Omit<SourceGrant, "policy" | "purge_blockers"> {
+interface GrantRow extends Omit<
+  SourceGrant,
+  "policy" | "purge_blockers" | "owned_retrieval" | "retention_effects"
+> {
   policy: string;
 }
 export class SourceGrantError extends Error {
@@ -168,8 +186,13 @@ export function inspectSourceGrant(
   return {
     ...row,
     policy,
+    retention_effects: {
+      joint_derived_records: "whole_record_erasure",
+      disposable_retrieval: "whole_generation_erasure",
+    },
+    owned_retrieval: sourceStoreStatuses(db, row.source_key),
     purge_blockers:
-      row.status === "denied" ? sourcePurgeBlockers(db, row.source_key) : [],
+      row.status !== "active" ? sourcePurgeBlockers(db, row.source_key) : [],
   };
 }
 function replay(
@@ -337,7 +360,10 @@ export async function resumeSourceRevocation(
   db: Database,
   vaultPath: string,
   operationId: string,
-  options: { retrieval?: RetrievalPort } = {},
+  options: {
+    retrieval?: RetrievalPort;
+    ownedRetrieval?: OwnedSourceRetrievalInventory;
+  } = {},
 ): Promise<SourceGrant> {
   if (options.retrieval !== undefined && !isLocalSourcePort(options.retrieval))
     fail("source_egress_denied");
@@ -348,10 +374,15 @@ export async function resumeSourceRevocation(
     .get(operationId);
   if (row === null) fail("revocation_not_found");
   let grant = inspectSourceGrant(db, row.source_key)!;
-  if (grant.status === "purged") return grant;
-  if (grant.status !== "denied" || grant.purge_receipt_id === null)
+  if (grant.status === "purged" && grant.purge_blockers.length === 0)
+    return grant;
+  if (
+    (grant.status !== "denied" && grant.status !== "purged") ||
+    grant.purge_receipt_id === null
+  )
     fail("source_not_denied");
-  const { runPurge, resumePurge, PurgeError } = await import("./purge");
+  const { runPurge, resumePurge, PurgeError, underPurgeFence } =
+    await import("./purge");
   const receiptId = grant.purge_receipt_id;
   const exists =
     db.query("SELECT 1 FROM event_purges WHERE receipt_id=?").get(receiptId) !==
@@ -379,6 +410,9 @@ export async function resumeSourceRevocation(
     }
     const verified = await resumePurge(db, vaultPath, receiptId, options);
     if (!verified.ok) return inspectSourceGrant(db, row.source_key)!;
+    await underPurgeFence(vaultPath, options, () =>
+      eraseOwnedSourceStores(db, grant.source_key, options.ownedRetrieval),
+    );
   } catch (error) {
     if (error instanceof PurgeError && error.code === "canon_changed")
       return {
@@ -500,7 +534,11 @@ export function bindSourceEvent(
 
 const localPorts = new WeakSet<object>();
 /** Trusted host composition capability, not an event/config assertion or agent API. */
-export function bindLocalSourcePort<T extends object>(port: T): T {
+export function bindLocalSourcePort<T extends object>(
+  port: T,
+  options?: { store_id: string },
+): T {
+  if (options !== undefined) bindSourceStoreId(port, options.store_id);
   localPorts.add(port);
   return port;
 }
@@ -603,6 +641,19 @@ function sourcePurgeBlockers(
   sourceKey: string,
 ): SourceGrant["purge_blockers"] {
   const blockers: SourceGrant["purge_blockers"] = [];
+  if (sourceStoresPending(db, sourceKey))
+    blockers.push("owned_retrieval_pending");
+  if (
+    db
+      .query("SELECT 1 FROM source_event_bindings WHERE source_key=? LIMIT 1")
+      .get(sourceKey) !== null &&
+    db
+      .query(
+        "SELECT 1 FROM source_store_inventory WHERE source_key=? AND payload_complete=1",
+      )
+      .get(sourceKey) === null
+  )
+    blockers.push("owned_payload_maintenance_pending");
   const sourceClaims =
     "SELECT c.claim_id FROM claims c JOIN json_each(c.provenance) p JOIN source_event_bindings b ON b.event_id=p.value WHERE b.source_key=?";
   if (

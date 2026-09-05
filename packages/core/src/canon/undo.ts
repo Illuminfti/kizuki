@@ -1,3 +1,4 @@
+import { recordSourceStoreWrite } from "../ledger/source-stores";
 import { requireSourceEvents } from "../ledger/source-grants";
 import { stringArray } from "../vault/pages";
 import { CanonAuthorityResolver } from "./authority";
@@ -159,7 +160,9 @@ async function reverseRetrieval(
   if (pageId === null) return [];
   const restoredSources = stringArray(restored.data["sources"]);
   requireSourceEvents(io.db, restoredSources, { owner: true, purpose: "derive", port });
-  await port.upsert([pageDoc(pageId, restored, original, authority, at)]);
+  const document = pageDoc(pageId, restored, original, authority, at);
+  recordSourceStoreWrite(io.db, port, document.provenance);
+  await port.upsert([document]);
   try { requireSourceEvents(io.db, restoredSources, { owner: true, purpose: "derive", port }); }
   catch (error) { await port.remove([`page:${pageId}`]); throw error; }
   return docs.map((doc) => ({ store: port.descriptor.id, op: "upsert" as const, doc }));

@@ -1193,7 +1193,7 @@ export async function resumePurge(db: Database, vaultPath: string, receiptId: st
 }
 
 /** A timeout bounds the caller, not ownership of an unsettled external operation. */
-async function underPurgeFence<T>(vaultPath: string, options: PurgeRunOptions, work: () => Promise<T>, filter?: PurgeFilter): Promise<T> {
+export async function underPurgeFence<T>(vaultPath: string, options: PurgeRunOptions, work: () => Promise<T>, filter?: PurgeFilter): Promise<T> {
   const lock = tryWriteFlock(vaultPath);
   if (lock === null) throw new PurgeError("canon_changed", "canon writer is busy; retry purge", filter);
   let timer: ReturnType<typeof setTimeout> | undefined;

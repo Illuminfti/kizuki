@@ -1,3 +1,4 @@
+import { recordSourceStoreWrite } from "../ledger/source-stores";
 import { sourceEventsAllowed, requireSourceEvents, sourcePolicyEpoch, isLocalSourcePort, sourceSensitivity } from "../ledger/source-grants";
 import type { Database } from "bun:sqlite";
 import type { Sensitivity } from "../agents/types";
@@ -558,6 +559,7 @@ export async function retryRetrievalOps(
     try {
       if (!await cancelDeniedRetrieval(io, claim, op.op_id)) {
         requireSourceEvents(io.db, claim.provenance, { owner: true, purpose: "derive", port: io.retrieval });
+        recordSourceStoreWrite(io.db, io.retrieval, claim.provenance);
         await io.retrieval.upsert([{ ...claimRetrievalDoc(claim), sensitivity: sourceSensitivity(io.db, claim.provenance, claim.sensitivity) }]);
         if (!await cancelDeniedRetrieval(io, claim, op.op_id)) finishOp(io.db, op.op_id, nowOf(io));
       }
@@ -575,7 +577,8 @@ async function upsertRetrieval(io: ClaimsIo, claim: Claim, opId: string | null):
   try {
     if (await cancelDeniedRetrieval(io, claim, opId)) return;
     requireSourceEvents(io.db, claim.provenance, { owner: true, purpose: "derive", port: io.retrieval });
-    await io.retrieval.upsert([{ ...claimRetrievalDoc(claim), sensitivity: sourceSensitivity(io.db, claim.provenance, claim.sensitivity) }]);
+    recordSourceStoreWrite(io.db, io.retrieval, claim.provenance);
+        await io.retrieval.upsert([{ ...claimRetrievalDoc(claim), sensitivity: sourceSensitivity(io.db, claim.provenance, claim.sensitivity) }]);
     if (await cancelDeniedRetrieval(io, claim, opId)) return;
     if (opId !== null) finishOp(io.db, opId, nowOf(io));
   } catch {
