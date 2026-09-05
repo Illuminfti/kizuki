@@ -237,6 +237,18 @@ export function listCanonPages(vaultPath: string): CanonPage[] {
   return listCanonPagesReport(vaultPath).pages;
 }
 
+/**
+ * Parse, identity, and I/O failures make a vault walk incomplete.
+ * Schema-invalid and oversized files are withheld; they do not abort rebuild.
+ */
+export function fatalCanonSkips(
+  skipped: readonly SkippedPage[],
+): SkippedPage[] {
+  return skipped.filter(
+    (entry) => entry.code !== "invalid" && entry.code !== "oversize",
+  );
+}
+
 /** Stable hash of live page identity and path. Shared by search and graph stamps. */
 export function canonPagesHash(pages: readonly CanonPage[]): string {
   const material = pages

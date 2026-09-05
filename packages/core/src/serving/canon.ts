@@ -4,7 +4,12 @@ import type { DenyReason, Grant, Sensitivity, Servable } from "../agents";
 import type { AuthorityTier } from "../contracts/proposal";
 import { canonAuthorities } from "../canon/authority";
 import { readHolds } from "../ledger/purge";
-import { isLiveCanonPage, listCanonPagesReport, stringArray } from "../vault/pages";
+import {
+  fatalCanonSkips,
+  isLiveCanonPage,
+  listCanonPagesReport,
+  stringArray,
+} from "../vault/pages";
 import type { CanonPage, SkippedPage } from "../vault/pages";
 import { PAGE_TAINTS } from "../vault/schema";
 import type { PageTaint } from "../vault/schema";
@@ -60,9 +65,7 @@ export class CanonUnreadableError extends Error {
  */
 export function loadCanon(ctx: ServeContext): CanonIndex {
   const report = listCanonPagesReport(ctx.vaultPath);
-  const fatal = report.skipped.filter(
-    (skipped) => skipped.code !== "invalid" && skipped.code !== "oversize",
-  );
+  const fatal = fatalCanonSkips(report.skipped);
   if (fatal.length > 0) {
     throw new CanonUnreadableError(fatal);
   }
