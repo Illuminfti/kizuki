@@ -190,7 +190,7 @@ Importing does **not** itself write canon. Without a model, expect `canon writin
 
 Start with `kizuki connect` to see the catalog and `kizuki connect status` to inspect enrolled sources and their last run. New enrollment requires an explicit [source consent policy](docs/cli.md#source-consent) before capture.
 
-Current entry points include local Markdown, ChatGPT/Claude exports, WhatsApp/Pocket/Omnivore exports, Beeper Desktop, read-only IMAP, ICS files, offline Screenpipe ingestion, and legacy estate imports. Provider-specific coverage and qualification limits are documented honestly rather than implied.
+Current entry points include local Markdown, ChatGPT/Claude exports, WhatsApp/Pocket/Omnivore exports, Beeper Desktop, read-only IMAP, ICS files, offline Screenpipe ingestion, and one-shot [estate importers](docs/legacy-import.md) with owner-written mapping files. Provider-specific coverage and qualification limits are documented honestly rather than implied.
 
 [Connection setup and limits →](docs/connect.md)
 
