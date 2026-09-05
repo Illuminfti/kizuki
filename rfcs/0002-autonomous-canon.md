@@ -1510,6 +1510,8 @@ export const OWNER_AGENT_GRANT: Grant = {
   ceiling: "private",
   types: null,
   subjects: null,
+  since: null,
+  until: null,
   tools: ["search", "get_page", "query_entities", "timeline", "context_packet", "graph_neighbors", "system_health", "propose"],
   rate_limit_per_minute: 60,
   relay_owner_corrections: true,

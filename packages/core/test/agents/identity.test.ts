@@ -386,18 +386,35 @@ describe("least-privilege enrollment", () => {
     db.close();
   });
 
-  test("an existing personal proposal grant remains exactly as stored", () => {
-    const db = agentsDb();
-    const legacy = addAgent(db, "legacy-agent", {
-      ...OWNER_AGENT_GRANT,
-      ceiling: "personal",
-      tools: [...OWNER_AGENT_GRANT.tools],
-    });
-    expect(authenticate(db, legacy.token)?.grant).toEqual({
-      ...OWNER_AGENT_GRANT,
-      ceiling: "personal",
-    });
-    db.close();
+  test("a persisted pre-change personal grant survives reopening and initialization exactly", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-legacy-agent-"));
+    const path = join(directory, "agents.sqlite");
+    // Literal old default: independent of the candidate's presets and merger.
+    const oldGrant: Grant = { ceiling: "personal", types: null, subjects: null, since: null, until: null,
+      tools: ["search", "get_page", "query_entities", "timeline", "context_packet", "graph_neighbors", "system_health", "propose"],
+      rate_limit_per_minute: 60, relay_owner_corrections: true };
+    const token = `kzk_${"A".repeat(52)}`;
+    try {
+      const old = new Database(path, { create: true });
+      let before: unknown[][] = [];
+      try {
+        initAgents(old);
+        old.query("INSERT INTO agents(agent_id,name,token_hash,created_at) VALUES (?,?,?,?)")
+          .run("01J00000000000000000000001", "legacy-agent", sha256(token), "2026-01-01T00:00:00Z");
+        old.query(`INSERT INTO agent_grants(agent_id,ceiling,types,subjects,since,until,tools,
+          rate_limit_per_minute,relay_owner_corrections,grant_epoch,updated_at)
+          VALUES (?,'personal',NULL,NULL,NULL,NULL,?,60,1,1,'2026-01-01T00:00:00Z')`)
+          .run("01J00000000000000000000001", JSON.stringify(oldGrant.tools));
+        before = [old.query("SELECT * FROM agents").all(), old.query("SELECT * FROM agent_grants").all()];
+      } finally { old.close(); }
+      const reopened = new Database(path);
+      try {
+        initAgents(reopened);
+        expect(authenticate(reopened, token)?.grant).toEqual(oldGrant);
+        expect([reopened.query("SELECT * FROM agents").all(), reopened.query("SELECT * FROM agent_grants").all()]).toEqual(before);
+        expect(reopened.query("SELECT count(*) AS n FROM agent_audit").get()).toEqual({ n: 0 });
+      } finally { reopened.close(); }
+    } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 });
 
