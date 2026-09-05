@@ -521,7 +521,7 @@ describe("public surface", () => {
 
   test("the schema tags are frozen strings", () => {
     expect(core.EVENT_SCHEMA).toBe("kizuki.event/v1");
-    expect(core.BACKUP_SCHEMA).toBe("kizuki.backup/v2");
+    expect(core.BACKUP_SCHEMA).toBe("kizuki.backup/v3");
     expect(core.CLAIM_SCHEMA).toBe("kizuki.claim/v1");
     expect(core.PROPOSAL_SCHEMA).toBe("kizuki.claim/v1");
     expect(core.CONNECTOR_SCHEMA).toBe("kizuki.connector/v1");

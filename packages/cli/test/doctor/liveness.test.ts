@@ -13,6 +13,12 @@ function supervisedVault() {
 afterEach(cleanup);
 
 describe("doctor liveness", () => {
+  test("doctor prints the fixed legacy identity degradation", () => {
+    const setup = supervisedVault();
+    const result = runCli(setup.env, "doctor");
+    expect(result.stdout).toContain("identity authority: unavailable");
+  });
+
   test("a masked or absent unit for an enabled vault is a failure", () => {
     const setup = supervisedVault();
     const installed = runCli(

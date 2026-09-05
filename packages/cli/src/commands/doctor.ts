@@ -382,6 +382,9 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   );
   const origin = report.serve.stores.origin;
   io.out(`origin machine=${origin.machine} human=${origin.human}`);
+  if (report.serve.stores.degraded.includes("identity-authority-unavailable")) {
+    io.out("identity authority: unavailable");
+  }
   const calibration = report.serve.calibration;
   io.out(
     `calibration write_rate=${calibration.write_rate === null ? "-" : calibration.write_rate.toFixed(3)} spread=${calibration.confidence_spread === null ? "-" : calibration.confidence_spread.toFixed(3)} failures=${calibration.failures.length}`,
