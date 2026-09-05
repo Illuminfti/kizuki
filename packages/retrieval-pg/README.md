@@ -75,3 +75,10 @@ The public `kizuki rebuild --layer all` path supplies authoritative documents;
 partial public layers remain explicitly unsupported. See
 [`RETRIEVAL-REBUILD.md`](../core/RETRIEVAL-REBUILD.md) for source bounds and the
 per-store atomicity and concurrent-writer limitations.
+
+The registration descriptor lists capabilities available from this implementation.
+Each bound instance reports `vector` only when an embedding port was supplied.
+Without one, hybrid reads declare `vector-skipped`, and claim insertion and owner
+correction use structural deduplication while still updating the SQL index. The
+current CLI and MCP composition binds lexical retrieval; it does not configure a
+production embedding model or claim calibrated vector deduplication.

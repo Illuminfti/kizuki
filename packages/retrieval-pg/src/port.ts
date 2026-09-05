@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { PortError, validateRetrievalDoc, validateRetrievalQuery, SENSITIVITY_ORDER } from "@kizuki/core";
-import type { AbsenceProof, EmbeddingPort, EmbeddingSpace, EntityRef, GraphQueryOptions, GraphResult, PortContext, PortHealth, RetrievalDoc, RetrievalMutationReport, RetrievalPort, RetrievalQuery, RetrievalResult } from "@kizuki/core";
+import { PortError, validatePortDescriptor, validateRetrievalDoc, validateRetrievalQuery, SENSITIVITY_ORDER } from "@kizuki/core";
+import type { AbsenceProof, EmbeddingPort, EmbeddingSpace, EntityRef, GraphQueryOptions, GraphResult, PortContext, PortDescriptor, PortHealth, RetrievalDoc, RetrievalMutationReport, RetrievalPort, RetrievalQuery, RetrievalResult } from "@kizuki/core";
 import { EMBEDDED_RETRIEVAL_DESCRIPTOR } from "./descriptor";
 import { WriterLease } from "./lease";
 import type { LeaseReceipt } from "./lease";
@@ -23,7 +23,7 @@ export interface EmbeddedRetrievalOptions {
   readonly holder_id?: string;
 }
 export class EmbeddedRetrievalPort implements RetrievalPort {
-  readonly descriptor = EMBEDDED_RETRIEVAL_DESCRIPTOR;
+  readonly descriptor: PortDescriptor;
   private closed = false;
   private closing:Promise<void>|undefined;
   private rebuilding = false;
@@ -32,7 +32,16 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
   private selfWrites = new Map<string, string>();
   private checkpoint: EmbedCheckpoint | null = null;
   lastRefreshPass = 0;
-  constructor(private readonly ctx: PortContext, private readonly store: SqlStore, private readonly lease: WriterLease, readonly leaseReceipt: LeaseReceipt, private readonly options: EmbeddedRetrievalOptions) { }
+  constructor(private readonly ctx: PortContext, private readonly store: SqlStore, private readonly lease: WriterLease, readonly leaseReceipt: LeaseReceipt, private readonly options: EmbeddedRetrievalOptions) {
+    // The catalog names implementation capabilities; callers use the bound
+    // descriptor to decide whether vector nomination is actually available.
+    this.descriptor = validatePortDescriptor({
+      ...EMBEDDED_RETRIEVAL_DESCRIPTOR,
+      supports: EMBEDDED_RETRIEVAL_DESCRIPTOR.supports.filter(
+        (capability) => capability !== "vector" || options.embedding !== undefined,
+      ),
+    });
+  }
   private effectiveSpace(): EmbeddingSpace {
     if (this.embedding === undefined) {
       throw new PortError("unavailable", "embedding port is not configured", false);

@@ -50,7 +50,7 @@ async function openPort(embedding?: FixtureEmbeddingPort): Promise<{
 function harness(): RetrievalConformanceHarness {
   return {
     descriptor: EMBEDDED_RETRIEVAL_DESCRIPTOR,
-    create: async (ctx) => createEmbeddedRetrievalPort(ctx),
+    create: async (ctx) => createEmbeddedRetrievalPort(ctx, { embedding: new FixtureEmbeddingPort() }),
     destroy: async (port) => port.close(),
     fixtures: RETRIEVAL_FIXTURES,
   };
@@ -71,6 +71,24 @@ const PRIVATE_CORRECTION: RetrievalDoc = {
 };
 
 describe("kizuki.retrieval.embedded-pg conformance", () => {
+  test("bound capabilities advertise vector nomination only with an embedding port", async () => {
+    const lexical = await openPort();
+    expect(lexical.port.descriptor.supports).toEqual(["lexical", "hybrid", "graph"]);
+    expect((await lexical.port.health()).status).toBe("ready");
+    const embedded = await openPort(new FixtureEmbeddingPort());
+    expect(embedded.port.descriptor.supports).toEqual(EMBEDDED_RETRIEVAL_DESCRIPTOR.supports);
+    expect(EMBEDDED_RETRIEVAL_DESCRIPTOR.supports).toContain("vector");
+    expect(Object.isFrozen(lexical.port.descriptor)).toBe(true);
+    expect(Object.isFrozen(lexical.port.descriptor.supports)).toBe(true);
+    const registry = new PortRegistry();
+    registerEmbeddedRetrieval(registry);
+    const temporary = temporaryPortContext();
+    const bound = await registry.bindFromConfig<RetrievalPort>("retrieval", { retrieval: EMBEDDED_RETRIEVAL_ID }, temporary.ctx);
+    disposers.push(async () => { await bound.port.close(); temporary.cleanup(); });
+    expect(bound.d.supports).toContain("vector");
+    expect(bound.port.descriptor.supports).not.toContain("vector");
+  });
+
   test("registers behind the retrieval port", () => {
     const registry = new PortRegistry();
     registerEmbeddedRetrieval(registry);
