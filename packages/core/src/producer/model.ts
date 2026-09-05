@@ -1,5 +1,5 @@
 import type { SubjectRef } from "../contracts/event";
-import type { LlmPort, LlmResponse } from "../contracts/llm";
+import type { LlmMessage, LlmPort, LlmResponse } from "../contracts/llm";
 import {
   PRODUCER_CONTRACT,
   PRODUCER_CONTRACT_MINOR,
@@ -324,6 +324,47 @@ function estimateTokens(messages: readonly { content: string }[]): number {
   return Math.ceil(chars / CHARS_PER_TOKEN);
 }
 
+interface PlannedModelCall {
+  readonly events: readonly QuotedEvent[];
+  readonly nonce: string;
+  readonly messages: readonly LlmMessage[];
+  readonly max_output_tokens: number;
+}
+
+type BudgetDiagnostic = Extract<ProducerDiagnostic, { stage: "budget" }>;
+export type ModelExtractionPlan =
+  | { readonly status: "ready"; readonly input: ProduceInput; readonly calls: readonly PlannedModelCall[] }
+  | { readonly status: "rejected"; readonly diagnostic: BudgetDiagnostic };
+
+/** Prepare and reserve the complete request set before any external call. */
+export function planModelExtraction(rawInput: ProduceInput): ModelExtractionPlan {
+  const input = validateProduceInput(rawInput);
+  const reject = (rule: BudgetDiagnostic["rule"], requested: number, limit: number): ModelExtractionPlan =>
+    ({ status: "rejected", diagnostic: { stage: "budget", rule, used: 0, requested, limit } });
+  const { batches, dropped } = planBatches(input.events);
+  const oversized = dropped.find(item => item.reason === "event_too_large");
+  if (oversized?.reason === "event_too_large") return reject("max_quoted_chars", oversized.chars, EXTRACT_INPUT_CHARS);
+  if (batches.length > input.budget.max_calls) return reject("max_calls", batches.length, input.budget.max_calls);
+  const calls: PlannedModelCall[] = [];
+  let inputReserved = 0;
+  let outputReserved = 0;
+  for (const batch of batches) {
+    const subjects = new Map<string, SubjectRef>();
+    for (const event of batch.events) for (const subject of event.subjects) subjects.set(subject.subject_id, subject);
+    const nonce = newFenceNonce();
+    const messages = buildExtractionMessages({ events: batch.events, subjects: [...subjects.values()],
+      known_claims: input.context.known_claims.filter(claim => claim.subject !== null && subjects.has(claim.subject)),
+      predicates: input.context.predicates }, nonce);
+    inputReserved += estimateTokens(messages);
+    if (inputReserved > input.budget.max_input_tokens) return reject("max_input_tokens", inputReserved, input.budget.max_input_tokens);
+    const maxOutput = Math.min(EXTRACT_MAX_OUTPUT_TOKENS, input.budget.max_output_tokens - outputReserved);
+    if (maxOutput < 1) return reject("max_output_tokens", outputReserved + 1, input.budget.max_output_tokens);
+    outputReserved += maxOutput;
+    calls.push({ events: batch.events, nonce, messages, max_output_tokens: maxOutput });
+  }
+  return { status: "ready", input, calls };
+}
+
 type CallOutcome =
   | { kind: "ok"; response: LlmResponse }
   | { kind: "rejected"; reason: RejectReason; diagnostic: ProducerDiagnostic }
@@ -385,10 +426,7 @@ export function createModelProducerPort(
     ctx.logger({
       level: "warn",
       message: "draft_dropped",
-      detail:
-        item.reason === "event_too_large"
-          ? { reason: item.reason, event_id: item.event_id, chars: item.chars }
-          : { reason: item.reason },
+      detail: { reason: item.reason },
     });
   };
 
@@ -417,68 +455,21 @@ export function createModelProducerPort(
     },
     async produce(rawInput: ProduceInput): Promise<ProduceResult> {
       assertOpen();
-      const input = validateProduceInput(rawInput);
       const usage: { -readonly [K in keyof ModelUsage]: ModelUsage[K] } = {
         calls: 0,
         input_tokens: 0,
         output_tokens: 0,
       };
-      const spent = { calls: 0, input_tokens: 0, output_tokens: 0 };
       const claims: ClaimDraft[] = [];
-      const { batches, dropped } = planBatches(input.events);
-      for (const item of dropped) drop(item);
+      const dropped: DroppedDraft[] = [];
+      const plan = planModelExtraction(rawInput);
+      if (plan.status === "rejected") return { status: "rejected", reason: "budget_exhausted", usage, diagnostic: plan.diagnostic };
+      const predicates = new Set(plan.input.context.predicates);
 
-      if (batches.length > input.budget.max_calls) {
-        return { status: "rejected", reason: "budget_exhausted", usage,
-          diagnostic: { stage: "budget", rule: "max_calls", used: 0, requested: batches.length, limit: input.budget.max_calls } };
-      }
-
-      const predicates = new Set(input.context.predicates);
-
-      for (const batch of batches) {
+      for (const batch of plan.calls) {
         assertOpen();
-        // Context is scoped per request. A subject or claim from another
-        // batch must never become evidence for this batch's model call.
-        const batchSubjects = new Map<string, SubjectRef>();
-        for (const event of batch.events) {
-          for (const subject of event.subjects) batchSubjects.set(subject.subject_id, subject);
-        }
-        const scopedSubjects = [...batchSubjects.values()];
-        const scopedKnownClaims = input.context.known_claims.filter(
-          (claim) => claim.subject !== null && batchSubjects.has(claim.subject),
-        );
-        const nonce = newFenceNonce();
-        const messages = buildExtractionMessages(
-          {
-            events: batch.events,
-            subjects: scopedSubjects,
-            known_claims: scopedKnownClaims,
-            predicates: input.context.predicates,
-          },
-          nonce,
-        );
-
-        // Budgets are charged before the request, never after.
-        const estimate = estimateTokens(messages);
-        const remainingOutput = input.budget.max_output_tokens - spent.output_tokens;
-        const maxOutput = Math.min(EXTRACT_MAX_OUTPUT_TOKENS, remainingOutput);
-        if (spent.calls + 1 > input.budget.max_calls) {
-          return { status: "rejected", reason: "budget_exhausted", usage,
-            diagnostic: { stage: "budget", rule: "max_calls", used: spent.calls, requested: 1, limit: input.budget.max_calls } };
-        }
-        if (spent.input_tokens + estimate > input.budget.max_input_tokens) {
-          return { status: "rejected", reason: "budget_exhausted", usage,
-            diagnostic: { stage: "budget", rule: "max_input_tokens", used: spent.input_tokens, requested: estimate, limit: input.budget.max_input_tokens } };
-        }
-        if (maxOutput < 1) {
-          return { status: "rejected", reason: "budget_exhausted", usage,
-            diagnostic: { stage: "budget", rule: "max_output_tokens", used: spent.output_tokens, requested: 1, limit: input.budget.max_output_tokens } };
-        }
-        spent.calls += 1;
-        spent.input_tokens += estimate;
-        spent.output_tokens += maxOutput;
-
-        const outcome = await callModel(llm, messages, maxOutput, config.deadline_ms);
+        const batchSubjects = new Set(batch.events.flatMap(event => event.subjects.map(subject => subject.subject_id)));
+        const outcome = await callModel(llm, batch.messages, batch.max_output_tokens, config.deadline_ms);
         usage.calls += 1;
         if (outcome.kind === "unavailable") {
           // A transport failure is not an empty call.  Preserve the charged
@@ -493,7 +484,7 @@ export function createModelProducerPort(
         usage.output_tokens += outcome.response.usage.output_tokens;
 
         const text = outcome.response.text;
-        if (hasFenceLeak(text, nonce)) {
+        if (hasFenceLeak(text, batch.nonce)) {
           return { status: "rejected", reason: "fence_leak", usage };
         }
         const parsed = parseExtractResponse(text);

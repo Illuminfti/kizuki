@@ -4,7 +4,7 @@ import { parseExtractResponse } from "../producer/schema";
 import { tableExists } from "../ledger/schema";
 import type { Database } from "bun:sqlite";
 import type { CaptureEvent } from "../contracts/event";
-import type { ClaimDraft, ProducerPort, QuotedEvent } from "../contracts/producer";
+import type { ClaimDraft, ProduceInput, ProducerPort, QuotedEvent } from "../contracts/producer";
 import { predicateIds } from "../claims/predicates";
 import { historicalClaimReplaySignature, listClaims } from "../claims/store";
 import type { InsertClaimInput } from "../claims/store";
@@ -12,7 +12,7 @@ import { compareRfc3339 } from "../agents/time";
 import { readCheckpoint, writeCheckpoint } from "../ledger/checkpoints";
 import { readEvent, readSince } from "../ledger/ledger";
 import type { LedgerCursor } from "../ledger/ledger";
-import { EXTRACT_BATCH, MODEL_PRODUCER_ID } from "../producer";
+import { EXTRACT_BATCH, MODEL_PRODUCER_ID, planModelExtraction } from "../producer";
 
 const EXTRACT_SOURCE_KEY = "extract";
 const DEFERRED_SCAN_KEY = "extract-deferred-scan";
@@ -285,6 +285,11 @@ function deleteDeferred(db: Database, ids: readonly string[]): void {
   const remove = db.query("DELETE FROM extract_deferred_inputs WHERE event_id=?");
   for (const id of ids) remove.run(id);
 }
+function completeDeferredInputs(db: Database, inputs: readonly DeferredInput[]): void {
+  deleteDeferred(db, inputs.map(input => input.event_id));
+  const last = inputs.at(-1);
+  if (last !== undefined) writeCheckpoint(db, MODEL_PRODUCER_ID, DEFERRED_SCAN_KEY, last.event_id);
+}
 function queuedEvents(db: Database): CaptureEvent[] {
   const after = readCheckpoint(db, MODEL_PRODUCER_ID, DEFERRED_SCAN_KEY);
   const queryAfter = db.query<DeferredInput, [string, number]>(
@@ -429,7 +434,7 @@ export function completeDurableExtractBatch(db: Database, batch: DurableExtractB
     if (current === null || integrity(current) !== integrity(batch)) return false;
     insertDeferred(db, current.deferred_inputs);
     if (current.mode === "frontier") writeCheckpoint(db, MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY, encodeCursor(batch.cursor));
-    else deleteDeferred(db, current.model_inputs.map(input => input.event_id));
+    else completeDeferredInputs(db, current.model_inputs);
     db.query("DELETE FROM extract_batches WHERE previous_cursor = ?").run(batch.previous_cursor ?? NULL_CURSOR);
     return true;
   }).immediate();
@@ -528,7 +533,7 @@ export function commitExtractCursor(db: Database, mined: MineResult): boolean {
     if (mode === "deferred") {
       const inputs = mined.model_inputs ?? [];
       if (inputs.some(input => db.query("SELECT 1 FROM extract_deferred_inputs WHERE event_id=?").get(input.event_id) === null)) return false;
-      deleteDeferred(db, inputs.map(input => input.event_id));
+      completeDeferredInputs(db, inputs);
     } else {
       insertDeferred(db, mined.deferred_inputs ?? []);
       writeCheckpoint(db, MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY, encodeCursor(boundary));
@@ -556,6 +561,7 @@ export async function mineLiveDrafts(
   let modelInputs: DeferredInput[] = [];
   let deferredInputs: DeferredInput[] = [];
   let usable: CaptureEvent[] = [];
+  let frontierEvents: readonly CaptureEvent[] = [];
 
   const queued = queuedEvents(db);
   if (queued.length > 0) {
@@ -568,7 +574,9 @@ export async function mineLiveDrafts(
         const input = sourceInput(db, event, producer);
         update.run(input.source_key, input.checked_revision, input.checked_binding_digest, input.event_id);
       }
-      writeCheckpoint(db, MODEL_PRODUCER_ID, DEFERRED_SCAN_KEY, queued.at(-1)!.event_id);
+      // A denied-only page may rotate. A selected page advances its scan only
+      // when the exact processed prefix is durably removed from the queue.
+      if (usable.length === 0) writeCheckpoint(db, MODEL_PRODUCER_ID, DEFERRED_SCAN_KEY, queued.at(-1)!.event_id);
     }).immediate();
     if (usable.length > 0) {
       mode = "deferred";
@@ -587,6 +595,7 @@ export async function mineLiveDrafts(
       return { mined: { status: "empty" }, drafts: [], previous_cursor, cursor: null };
     }
     cursor = batch.cursor;
+    frontierEvents = batch.events;
     inputIds = batch.events.map(event => event.event_id);
     // Packet text that later lands in the ledger is history, not extract input.
     const eligible = batch.events.filter(extractEligible);
@@ -605,35 +614,51 @@ export async function mineLiveDrafts(
     }
   }
 
-  const subjects = new Set(usable.flatMap((event) => event.subjects.map((subject) => subject.subject_id)));
-  // Filter in SQLite before applying the shared packet cap.  Selecting the
-  // oldest global page first makes a mature, unrelated subject starve this
-  // batch of the context the producer needs to deduplicate it.
-  const known = [...subjects]
-    .sort()
-    .flatMap((subject) => listClaims(db, { status: "live", keyed: true, subject, limit: 32 }))
-    .filter(claim => sourceEventsAllowed(db, claim.provenance, scope))
-    .slice(0, 32);
-  const produced = await producer.produce({
-    events: usable.map(quoted),
-    context: {
-      subjects: usable.flatMap((event) => event.subjects),
-      known_claims: known.map((claim) => ({
-        claim_id: claim.claim_id,
-        subject: claim.subject,
-        predicate: claim.predicate,
-        object: claim.object,
-        polarity: claim.polarity,
-        confidence: claim.confidence,
-      })),
-      predicates: [...predicateIds()],
-    },
-    budget: {
-      max_calls: 2,
-      max_input_tokens: 8_000,
-      max_output_tokens: 2_000,
-    },
-  });
+  const knownBySubject = new Map<string, ReturnType<typeof listClaims>>();
+  const inputFor = (events: readonly CaptureEvent[]): ProduceInput => {
+    const subjects = new Set(events.flatMap(event => event.subjects.map(subject => subject.subject_id)));
+    // Select context for this prefix before applying the shared cap. A full
+    // batch's capped context may omit the subjects the prefix actually needs.
+    const known = [...subjects].sort().flatMap(subject => {
+      let claims = knownBySubject.get(subject);
+      if (claims === undefined) {
+        claims = listClaims(db, { status: "live", keyed: true, subject, limit: 32 })
+          .filter(claim => sourceEventsAllowed(db, claim.provenance, scope));
+        knownBySubject.set(subject, claims);
+      }
+      return claims;
+    }).slice(0, 32);
+    return { events: events.map(quoted), context: { subjects: events.flatMap(event => event.subjects),
+      known_claims: known.map(claim => ({ claim_id: claim.claim_id, subject: claim.subject, predicate: claim.predicate,
+        object: claim.object, polarity: claim.polarity, confidence: claim.confidence })), predicates: [...predicateIds()] },
+      budget: { max_calls: 2, max_input_tokens: 8_000, max_output_tokens: 2_000 } };
+  };
+  // Keep an impossible first record on the ordinary observed-producer path:
+  // native preflight will publish an exact zero-call refusal, never a drop.
+  let selectedCount = 1;
+  let selectedInput = inputFor(usable.slice(0, 1));
+  for (let count = 1; count <= usable.length; count++) {
+    const candidate = count === 1 ? selectedInput : inputFor(usable.slice(0, count));
+    const plan = planModelExtraction(candidate);
+    // Capped context can change when a subject is added, so inspect every
+    // prefix instead of assuming prompt size grows monotonically.
+    if (plan.status === "ready" && plan.calls.length === 1) { selectedCount = count; selectedInput = candidate; }
+  }
+  if (selectedCount < usable.length) {
+    usable = usable.slice(0, selectedCount);
+    modelInputs = modelInputs.slice(0, selectedCount);
+    const last = usable.at(-1)!;
+    const accepted = db.query<{ accepted_at: string }, [string]>("SELECT accepted_at FROM events WHERE event_id=?").get(last.event_id);
+    if (accepted === null) throw new Error("extraction prefix input is missing");
+    cursor = { event_id: last.event_id, accepted_at: accepted.accepted_at };
+    inputIds = mode === "frontier"
+      ? frontierEvents.slice(0, frontierEvents.findIndex(event => event.event_id === last.event_id) + 1).map(event => event.event_id)
+      : usable.map(event => event.event_id);
+    const included = new Set(inputIds);
+    deferredInputs = deferredInputs.filter(input => included.has(input.event_id));
+  }
+  if (source_epoch !== sourcePolicyEpoch(db)) return denied();
+  const produced = await producer.produce(selectedInput);
 
   if (source_epoch !== sourcePolicyEpoch(db)) return denied();
   if (produced.status === "ok" && produced.claims.some(draft => draft.event_ids.some(id => !usable.some(event => event.event_id === id)))) return denied();

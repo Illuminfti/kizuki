@@ -32,6 +32,7 @@ export {
   createModelProducerPort,
   parseModelProducerConfig,
   planBatches,
+  planModelExtraction,
   registerModelProducerPort,
   validateProduceInput,
 } from "./model";
@@ -39,4 +40,5 @@ export type {
   ModelProducerConfig,
   ModelProducerOptions,
   ModelProducerPort,
+  ModelExtractionPlan,
 } from "./model";
