@@ -2,13 +2,18 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHelpers } from "../helpers";
+import { fakeSystemd } from "../serve/supervisor-fixture";
 
 const { cleanup, isolatedEnv, runCli, tempVault } = createHelpers();
+function supervisedVault() {
+  const setup = tempVault();
+  return { ...setup, env: fakeSystemd(setup.root, setup.env) };
+}
 afterEach(cleanup);
 
 describe("doctor liveness", () => {
   test("a masked or absent unit for an enabled vault is a failure", () => {
-    const setup = tempVault();
+    const setup = supervisedVault();
     const installed = runCli(
       { ...setup.env, KIZUKI_SUPERVISOR: "systemd" },
       "serve",
@@ -19,7 +24,7 @@ describe("doctor liveness", () => {
       {
         ...setup.env,
         KIZUKI_SUPERVISOR: "systemd",
-        KIZUKI_SUPERVISOR_FIXTURE: "masked",
+        TEST_SUPERVISOR_STATE: "masked",
       },
       "doctor",
       "--json",
@@ -31,7 +36,7 @@ describe("doctor liveness", () => {
       {
         ...setup.env,
         KIZUKI_SUPERVISOR: "systemd",
-        KIZUKI_SUPERVISOR_FIXTURE: "absent",
+        TEST_SUPERVISOR_STATE: "absent",
       },
       "doctor",
       "--json",
@@ -41,14 +46,14 @@ describe("doctor liveness", () => {
   });
 
   test("a deliberately disabled service is reported without failing", () => {
-    const setup = tempVault();
+    const setup = supervisedVault();
     const result = runCli(setup.env, "doctor", "--json");
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("opted-out");
   });
 
   test("a rail with five empty runs in a row is reported down", () => {
-    const setup = tempVault();
+    const setup = supervisedVault();
     for (let index = 0; index < 5; index += 1) {
       const ran = runCli(setup.env, "serve", "run", "sync", "--json");
       expect(ran.exitCode).toBe(0);
@@ -57,7 +62,7 @@ describe("doctor liveness", () => {
       {
         ...setup.env,
         KIZUKI_SUPERVISOR: "systemd",
-        KIZUKI_SUPERVISOR_FIXTURE: "active",
+        TEST_SUPERVISOR_STATE: "active",
       },
       "doctor",
     );
@@ -68,7 +73,7 @@ describe("doctor liveness", () => {
       {
         ...setup.env,
         KIZUKI_SUPERVISOR: "systemd",
-        KIZUKI_SUPERVISOR_FIXTURE: "active",
+        TEST_SUPERVISOR_STATE: "active",
       },
       "doctor",
     );
@@ -77,7 +82,7 @@ describe("doctor liveness", () => {
   });
 
   test("doctor reports canon writing off with no model configured", () => {
-    const setup = tempVault();
+    const setup = supervisedVault();
     const result = runCli(setup.env, "doctor");
     expect(result.stdout).toContain(
       "canon writing: off (no model configured — connectors, ledger, search, timeline and undo still work)",
@@ -94,7 +99,7 @@ describe("doctor liveness", () => {
   });
 
   test("doctor reports an unverified configured model rather than a write-enabled string", () => {
-    const setup = tempVault();
+    const setup = supervisedVault();
     writeFileSync(
       join(setup.vault, ".kizuki", "serve.toml"),
       '[ports.llm]\nid = "kizuki.llm.openai-compatible"\nmodel = "synthetic@local"\n',
@@ -107,7 +112,7 @@ describe("doctor liveness", () => {
   });
 
   test("doctor does not call a model with an unresolved configured secret bound", () => {
-    const setup = tempVault();
+    const setup = supervisedVault();
     writeFileSync(
       join(setup.vault, ".kizuki", "serve.toml"),
       '[ports.llm]\nid = "kizuki.llm.openai-compatible"\nbase_url = "http://127.0.0.1:7777/v1"\nmodel = "loopback"\nsecret_ref = "env:MODEL_KEY"\n',
@@ -121,7 +126,7 @@ describe("doctor liveness", () => {
   });
 
   test("doctor does not treat KIZUKI_MODEL_REF as a configured write path", () => {
-    const setup = tempVault();
+    const setup = supervisedVault();
     const result = runCli(
       {
         ...setup.env,
@@ -135,7 +140,7 @@ describe("doctor liveness", () => {
   });
 
   test("doctor stamps stay redacted and do not echo captured text", () => {
-    const setup = tempVault();
+    const setup = supervisedVault();
     const imported = runCli(
       setup.env,
       "import",
@@ -153,7 +158,7 @@ describe("doctor liveness", () => {
   });
 
   test("serve --once writes a doctor-valid brief and does not fail doctor for that file", () => {
-    const setup = tempVault();
+    const setup = supervisedVault();
     const once = runCli(setup.env, "serve", "--once", "--no-http");
     expect(once.exitCode).toBe(0);
 
@@ -187,7 +192,7 @@ describe("doctor liveness", () => {
       {
         ...setup.env,
         KIZUKI_SUPERVISOR: "systemd",
-        KIZUKI_SUPERVISOR_FIXTURE: "masked",
+        TEST_SUPERVISOR_STATE: "masked",
       },
       "doctor",
       "--json",

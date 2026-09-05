@@ -46,6 +46,7 @@ export const SUPERVISOR_KINDS = ["systemd", "launchd", "none"] as const;
 export type SupervisorKind = (typeof SUPERVISOR_KINDS)[number];
 
 export const SUPERVISOR_STATES = [
+  "unknown",
   "active",
   "disabled",
   "masked",

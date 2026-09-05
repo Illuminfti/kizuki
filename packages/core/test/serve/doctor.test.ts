@@ -49,6 +49,16 @@ afterEach(() => {
 });
 
 describe("serve doctor", () => {
+  test("an expected installed supervisor cannot be unknown, stopped, or unenabled", () => {
+    const { path, db } = vault();
+    try {
+      writeServeIntent(path, "installed");
+      for (const state of ["unknown", "disabled", "none", "active"] as const) {
+        const report = inspectServeDoctor(db, path, { supervisor: host({ kind: "systemd", state, unit: "synthetic", enabled: false, detail: state }) });
+        expect(report.ok).toBe(false);
+      }
+    } finally { db.close(); }
+  });
   test("a masked or absent unit for an enabled vault is a failure", () => {
     const { path, db } = vault();
     writeServeIntent(path, "installed");

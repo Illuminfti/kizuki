@@ -12,7 +12,6 @@ import {
   serveExecHint,
   thisProcess,
   uninstallServeService,
-  writeServeIntent,
 } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
 import { withVault } from "../context";
@@ -22,7 +21,9 @@ import { serveArgs } from "../runtime";
 import { createServeRuntime } from "../serve-runtime";
 
 function homeOf(io: CliIo): string {
-  return io.env.HOME ?? io.env.XDG_CONFIG_HOME ?? "";
+  return io.env.HOME && io.env.HOME.length > 0
+    ? io.env.HOME
+    : io.env.XDG_CONFIG_HOME && io.env.XDG_CONFIG_HOME.length > 0 ? io.env.XDG_CONFIG_HOME : "";
 }
 
 export const serveCommand: Command = {
@@ -43,7 +44,7 @@ export const serveCommand: Command = {
 
       if (parsed.flags.has("--install")) {
         if (kind === "none") {
-          writeServeIntent(ctx.vaultPath, "none");
+          installServeService(ctx.vaultPath, host);
           io.out("supervisor: none (loop runs only while you run it)");
           io.out(`run: ${serveExecHint(ctx.vaultPath)}`);
           return 0;
@@ -91,7 +92,7 @@ export const serveCommand: Command = {
           io.err("serve is not running");
           return 1;
         }
-        io.out(`stopped pid=${pid}`);
+        io.out(`stop requested for pid=${pid}`);
         return 0;
       }
 

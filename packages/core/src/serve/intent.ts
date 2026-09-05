@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { SERVE_INTENT_PATH, isServeIntent, type ServeIntent } from "./types";
+import { replaceServiceFile, serviceDirectory, serviceFile } from "./service-files";
 
 export function serveIntentPath(vaultPath: string): string {
   return join(vaultPath, SERVE_INTENT_PATH);
@@ -8,13 +8,12 @@ export function serveIntentPath(vaultPath: string): string {
 
 export function readServeIntent(vaultPath: string): ServeIntent {
   const path = serveIntentPath(vaultPath);
-  if (!existsSync(path)) return "none";
-  const value = readFileSync(path, "utf8").trim();
+  const value = serviceFile(path)?.trim() ?? "none";
   return isServeIntent(value) ? value : "none";
 }
 
 export function writeServeIntent(vaultPath: string, intent: ServeIntent): void {
   const path = serveIntentPath(vaultPath);
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  writeFileSync(path, `${intent}\n`, { mode: 0o600 });
+  serviceDirectory(vaultPath, dirname(path));
+  replaceServiceFile(path, `${intent}\n`);
 }
