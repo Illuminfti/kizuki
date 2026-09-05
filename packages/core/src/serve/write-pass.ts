@@ -23,6 +23,7 @@ import type { ClaimsIo } from "../claims/store";
 import {
   commitExtractCursor,
   completeDurableExtractBatch,
+  DurableExtractAuthorizationError,
   journalExtractBatch,
   mineLiveDrafts,
   readDurableExtractBatch,
@@ -203,17 +204,29 @@ async function runWritePassLocked(
   const metrics = emptyMetrics();
 
   if (options.producer !== undefined && options.claims !== undefined) {
-    const pendingBatch = readDurableExtractBatch(db, options.producer);
-    if (pendingBatch !== null) {
+    let pendingBatch;
+    try {
+      pendingBatch = readDurableExtractBatch(db, options.producer);
+    } catch (error) {
+      if (!(error instanceof DurableExtractAuthorizationError)) throw error;
+      stopped = `source:${error.code}`;
+      pendingBatch = null;
+    }
+    if (stopped === null && pendingBatch !== null) {
       const filed = await fileProducedDrafts(options.claims, pendingBatch.drafts, "model", pendingBatch.model_ref);
       // Replay files an existing decision; it is not another extraction.
       extracted = 0;
       deduped += filed.deduped;
       superseded += filed.superseded;
-      if (!completeDurableExtractBatch(db, pendingBatch, options.producer)) {
-        errors.push("extract cursor changed before durable batch commit");
+      try {
+        if (!completeDurableExtractBatch(db, pendingBatch, options.producer)) {
+          errors.push("extract cursor changed before durable batch commit");
+        }
+      } catch (error) {
+        if (!(error instanceof DurableExtractAuthorizationError)) throw error;
+        stopped = `source:${error.code}`;
       }
-    } else {
+    } else if (stopped === null) {
     const runId = options.run_id ?? ulid();
     const mined = await mineLiveDrafts(db, observedProducer(options.producer, metrics, (result) => {
       db.query("INSERT INTO extract_usage(run_id,model_ref,metrics,created_at,holder_pid) VALUES (?,?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET metrics=excluded.metrics").run(
@@ -242,18 +255,31 @@ async function runWritePassLocked(
         // retry must replay this exact decision, never ask a nondeterministic
         // producer to regenerate a partially filed batch.
         journalExtractBatch(db, mined, options.model_ref ?? null, options.producer);
+        let durable;
+        try {
+          durable = readDurableExtractBatch(db, options.producer);
+        } catch (error) {
+          if (!(error instanceof DurableExtractAuthorizationError)) throw error;
+          stopped = `source:${error.code}`;
+          break;
+        }
+        if (durable === null) throw new Error("durable extraction decision is missing");
         const filed = await fileProducedDrafts(
           options.claims,
-          mined.drafts,
+          durable.drafts,
           "model",
-          options.model_ref ?? null,
+          durable.model_ref,
         );
         extracted = mined.mined.count;
         deduped += filed.deduped;
         superseded += filed.superseded;
-        const durable = readDurableExtractBatch(db, options.producer);
-        if (durable === null || !completeDurableExtractBatch(db, durable, options.producer)) {
-          errors.push("extract cursor changed before commit");
+        try {
+          if (!completeDurableExtractBatch(db, durable, options.producer)) {
+            errors.push("extract cursor changed before commit");
+          }
+        } catch (error) {
+          if (!(error instanceof DurableExtractAuthorizationError)) throw error;
+          stopped = `source:${error.code}`;
         }
         break;
       }

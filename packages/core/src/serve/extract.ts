@@ -1,4 +1,4 @@
-import { sourcePolicyEpoch, sourceEventsAllowed, requireSourceEvents, isLocalSourcePort, sourcePortBindingDigest } from "../ledger/source-grants";
+import { sourcePolicyEpoch, sourceEventsAllowed, isLocalSourcePort, sourcePortBindingDigest } from "../ledger/source-grants";
 import { createHash } from "node:crypto";
 import { parseExtractResponse } from "../producer/schema";
 import { tableExists } from "../ledger/schema";
@@ -63,6 +63,8 @@ export interface DurableExtractBatch {
   readonly model_inputs: readonly DeferredInput[];
   readonly deferred_inputs: readonly DeferredInput[];
   readonly outcome: "ok" | "purged";
+  /** Current authorization epoch captured immediately before a replay filing attempt. */
+  readonly authorization_epoch: number | null;
 }
 
 export interface DeferredInput {
@@ -70,6 +72,14 @@ export interface DeferredInput {
   readonly source_key: string | null;
   readonly checked_revision: number;
   readonly checked_binding_digest: string;
+}
+
+export class DurableExtractAuthorizationError extends Error {
+  override name = "DurableExtractAuthorizationError";
+  readonly code = "durable_extraction_authorization_pending";
+  constructor() {
+    super("durable extraction authorization is pending");
+  }
 }
 
 const NULL_CURSOR = "";
@@ -101,6 +111,67 @@ function sourceInput(db: Database, event: CaptureEvent, producer: ProducerPort |
     checked_revision: revision,
     checked_binding_digest: sourcePortBindingDigest(producer),
   };
+}
+function sourceKey(db: Database, eventId: string): string | null {
+  return db.query<{ source_key: string }, [string]>(
+    "SELECT source_key FROM source_event_bindings WHERE event_id=?",
+  ).get(eventId)?.source_key ?? null;
+}
+function sourceIdentityMatches(db: Database, input: DeferredInput): boolean {
+  return sourceKey(db, input.event_id) === input.source_key;
+}
+function extractEligible(event: CaptureEvent): boolean {
+  return !event.deleted && !event.text.includes("KIZUKI CONTEXT v1");
+}
+function orderedSubset(ids: readonly string[], order: ReadonlyMap<string, number>): boolean {
+  let previous = -1;
+  for (const id of ids) {
+    const position = order.get(id);
+    if (position === undefined || position <= previous) return false;
+    previous = position;
+  }
+  return true;
+}
+function validateInputPartition(
+  db: Database,
+  mode: DurableExtractBatch["mode"],
+  cursor: LedgerCursor,
+  events: readonly CaptureEvent[],
+  modelInputs: readonly DeferredInput[],
+  deferredInputs: readonly DeferredInput[],
+): void {
+  const modelIds = modelInputs.map(input => input.event_id);
+  const deferredIds = deferredInputs.map(input => input.event_id);
+  const allInputs = [...modelInputs, ...deferredInputs];
+  if (allInputs.some(input => !sourceIdentityMatches(db, input))) {
+    throw new Error("durable extraction source identity is corrupt");
+  }
+  if (mode === "deferred") {
+    const last = events.at(-1);
+    const accepted = last === undefined ? null : db.query<{ accepted_at: string }, [string]>(
+      "SELECT accepted_at FROM events WHERE event_id=?",
+    ).get(last.event_id);
+    if (deferredInputs.length > 0 || JSON.stringify(modelIds) !== JSON.stringify(events.map(event => event.event_id)) ||
+        last === undefined || last.event_id !== cursor.event_id || accepted?.accepted_at !== cursor.accepted_at ||
+        modelInputs.some(input => {
+          return db.query(
+            "SELECT 1 FROM extract_deferred_inputs WHERE event_id=?",
+          ).get(input.event_id) === null;
+        })) {
+      throw new Error("durable extraction input partition is corrupt");
+    }
+    return;
+  }
+  const eligibleIds = events.filter(extractEligible).map(event => event.event_id);
+  const order = new Map(eligibleIds.map((id, index) => [id, index]));
+  const union = new Set([...modelIds, ...deferredIds]);
+  if (union.size !== modelIds.length + deferredIds.length ||
+      union.size !== eligibleIds.length ||
+      eligibleIds.some(id => !union.has(id)) ||
+      !orderedSubset(modelIds, order) ||
+      !orderedSubset(deferredIds, order)) {
+    throw new Error("durable extraction input partition is corrupt");
+  }
 }
 function validInput(value: unknown): value is DeferredInput {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -181,7 +252,7 @@ export function journalExtractBatch(db: Database, mined: MineResult, modelRef: s
     if (db.query("SELECT 1 FROM extract_batches LIMIT 1").get() !== null) throw new Error("extraction decision already pending");
     saveBatch(db, { previous_cursor: mined.previous_cursor, cursor: mined.cursor!, drafts: mined.drafts,
       model_ref: modelRef, input_ids: events.map(event => event.event_id), mode, model_inputs: modelInputs,
-      deferred_inputs: [...(mined.deferred_inputs ?? [])], outcome: "ok" });
+      deferred_inputs: [...(mined.deferred_inputs ?? [])], outcome: "ok", authorization_epoch: null });
     readDurableExtractBatch(db, producer);
   }).immediate();
 }
@@ -218,16 +289,26 @@ function readStoredExtractBatch(db: Database, enforceConsent: boolean, producer?
   });
   const ids = events.map(event => event.event_id);
   if (row.input_ids !== null && row.input_ids !== JSON.stringify(ids)) throw new Error("durable extraction inputs changed");
+  if (!legacyManifest) validateInputPartition(db, mode, cursor, events, modelInputs, deferredInputs);
   const sent = modelInputs.length === 0 ? [...new Set(parsed.claims.flatMap(draft => [...draft.event_ids]))] : modelInputs.map(input => input.event_id);
   if (parsed.claims.some(draft => draft.event_ids.some(id => !sent.includes(id)))) throw new Error("durable extraction provenance is invalid");
-  if (enforceConsent) requireSourceEvents(db, sent, { owner: false, purpose: "extract", model: true, ...(producer === undefined ? {} : { port: producer }) });
-  if (enforceConsent && modelInputs.length > 0 && modelInputs.some(input => {
-    const event = readEvent(db, input.event_id);
-    return event === null || JSON.stringify(input) !== JSON.stringify(sourceInput(db, event, producer));
-  })) throw new Error("source authorization changed during extraction");
+  const authorizationEpoch = enforceConsent ? sourcePolicyEpoch(db) : null;
+  if (enforceConsent) {
+    if (!sourceEventsAllowed(db, sent, {
+      owner: false,
+      purpose: "extract",
+      model: true,
+      ...(producer === undefined ? {} : { port: producer }),
+    })) throw new DurableExtractAuthorizationError();
+    const bindingDigest = sourcePortBindingDigest(producer);
+    if (modelInputs.some(input => input.checked_binding_digest !== bindingDigest)) {
+      throw new DurableExtractAuthorizationError();
+    }
+    if (authorizationEpoch !== sourcePolicyEpoch(db)) throw new DurableExtractAuthorizationError();
+  }
   const batch: DurableExtractBatch = { previous_cursor: row.previous_cursor || null, cursor, drafts: parsed.claims,
     model_ref: row.model_ref, input_ids: ids, mode, model_inputs: modelInputs, deferred_inputs: deferredInputs,
-    outcome: row.outcome as DurableExtractBatch["outcome"] };
+    outcome: row.outcome as DurableExtractBatch["outcome"], authorization_epoch: authorizationEpoch };
   const legacyIntegrity = createHash("sha256").update(JSON.stringify([
     batch.previous_cursor, encodeCursor(batch.cursor), batch.model_ref, batch.input_ids, batch.outcome,
     batch.drafts.map(d => [d.kind,d.subject,d.predicate,d.object,d.polarity,d.body,d.valid_from,d.valid_to,d.confidence,d.sensitivity,d.event_ids]),
@@ -242,6 +323,9 @@ function readStoredExtractBatch(db: Database, enforceConsent: boolean, producer?
 /** Validate again after asynchronous filing, then advance and delete atomically. */
 export function completeDurableExtractBatch(db: Database, batch: DurableExtractBatch, producer?: ProducerPort): boolean {
   return db.transaction(() => {
+    if (batch.authorization_epoch === null || batch.authorization_epoch !== sourcePolicyEpoch(db)) {
+      throw new DurableExtractAuthorizationError();
+    }
     const current = readDurableExtractBatch(db, producer);
     if (current === null || integrity(current) !== integrity(batch)) return false;
     insertDeferred(db, current.deferred_inputs);
@@ -288,7 +372,8 @@ export function purgeExtractInputs(db: Database, eventIds: ReadonlySet<string>, 
   saveBatch(db, { ...batch, previous_cursor: nextPrevious, input_ids: remaining, cursor: { event_id: last, accepted_at: row.accepted_at },
     model_inputs: batch.model_inputs.filter(input => !eventIds.has(input.event_id)),
     deferred_inputs: batch.deferred_inputs.filter(input => !eventIds.has(input.event_id)),
-    drafts: batch.drafts.filter(draft => !draft.event_ids.some(id => eventIds.has(id))), outcome: "purged" });
+    drafts: batch.drafts.filter(draft => !draft.event_ids.some(id => eventIds.has(id))), outcome: "purged",
+    authorization_epoch: null });
 }
 
 function parseCursor(raw: string | null): LedgerCursor | null {
@@ -400,7 +485,7 @@ export async function mineLiveDrafts(
     cursor = batch.cursor;
     inputIds = batch.events.map(event => event.event_id);
     // Packet text that later lands in the ledger is history, not extract input.
-    const eligible = batch.events.filter(event => !event.deleted && !event.text.includes("KIZUKI CONTEXT v1"));
+    const eligible = batch.events.filter(extractEligible);
     usable = eligible.filter(event => sourceEventsAllowed(db, [event.event_id], scope));
     modelInputs = usable.map(event => sourceInput(db, event, producer));
     deferredInputs = source_epoch === 0 ? [] : eligible

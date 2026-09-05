@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,6 +19,7 @@ import {
   setSourceGrant,
 } from "../src/ledger/source-grants";
 import {
+  completeDurableExtractBatch,
   commitExtractCursor,
   journalExtractBatch,
   mineLiveDrafts,
@@ -104,6 +106,43 @@ function draft(eventId: string): ClaimDraft {
     sensitivity: "private",
     event_ids: [eventId],
   };
+}
+
+function durableIntegrity(row: {
+  previous_cursor: string;
+  cursor: string;
+  model_ref: string | null;
+  input_ids: string;
+  batch_mode: string;
+  model_inputs: string;
+  deferred_inputs: string;
+  outcome: string;
+  drafts: string;
+}): string {
+  const drafts = JSON.parse(row.drafts) as ClaimDraft[];
+  return createHash("sha256").update(JSON.stringify([
+    row.previous_cursor || null,
+    row.cursor,
+    row.model_ref,
+    JSON.parse(row.input_ids),
+    row.batch_mode,
+    JSON.parse(row.model_inputs),
+    JSON.parse(row.deferred_inputs),
+    row.outcome,
+    drafts.map(item => [
+      item.kind,
+      item.subject,
+      item.predicate,
+      item.object,
+      item.polarity,
+      item.body,
+      item.valid_from,
+      item.valid_to,
+      item.confidence,
+      item.sensitivity,
+      item.event_ids,
+    ]),
+  ])).digest("hex");
 }
 
 describe("source model egress policy", () => {
@@ -279,7 +318,7 @@ describe("source model egress authority", () => {
       const restarted = bindSourceModelPort(producer({ status: "ok", claims: [], usage: { calls: 0, input_tokens: 0, output_tokens: 0 } }), { model_endpoint: endpoint, model: "fixture-model" });
       expect(readDurableExtractBatch(reopened, restarted)?.input_ids).toEqual([event.event_id]);
       const mismatch = bindSourceModelPort(producer({ status: "ok", claims: [], usage: { calls: 0, input_tokens: 0, output_tokens: 0 } }), { model_endpoint: "https://other.example.test/v1/chat/completions", model: "fixture-model" });
-      expect(() => readDurableExtractBatch(reopened, mismatch)).toThrow("source_access_denied");
+      expect(() => readDurableExtractBatch(reopened, mismatch)).toThrow("durable extraction authorization is pending");
     } finally { reopened.close(); }
   });
 });
@@ -363,6 +402,166 @@ test("a frontier journal binds a later authorized input without filing the earli
   } finally { db.close(); }
 });
 
+test("a frontier journal cannot omit one deferred member with a recomputed digest", async () => {
+  const { db, source: allowedSource } = setup();
+  const deniedSource = ulid();
+  registerConnection(db, "kizuki.fixture", deniedSource);
+  try {
+    grant(db, allowedSource);
+    grant(db, deniedSource, "local_only", "grant-denied-partition");
+    const allowed = capture(db, allowedSource, "partition-allowed");
+    const denied = capture(db, deniedSource, "partition-denied");
+    const bound = bindSourceModelPort(producer({
+      status: "ok",
+      claims: [draft(allowed.event_id)],
+      usage: { calls: 1, input_tokens: 2, output_tokens: 1 },
+    }), { model_endpoint: endpoint, model: "fixture-model" });
+    const mined = await mineLiveDrafts(db, bound);
+    expect(mined.deferred_inputs?.map(item => item.event_id)).toEqual([denied.event_id]);
+    journalExtractBatch(db, mined, "fixture-partition-model", bound);
+    const row = db.query<{
+      previous_cursor: string;
+      cursor: string;
+      model_ref: string | null;
+      input_ids: string;
+      batch_mode: string;
+      model_inputs: string;
+      deferred_inputs: string;
+      outcome: string;
+      drafts: string;
+    }, []>("SELECT * FROM extract_batches").get()!;
+    row.deferred_inputs = "[]";
+    db.query("UPDATE extract_batches SET deferred_inputs=?,integrity=?")
+      .run(row.deferred_inputs, durableIntegrity(row));
+    expect(() => readDurableExtractBatch(db, bound)).toThrow("durable extraction input partition is corrupt");
+  } finally { db.close(); }
+});
+
+test("a permission-preserving grant revision replays the durable decision without another model call", async () => {
+  const { vault, db, source } = setup();
+  try {
+    grant(db, source);
+    const event = capture(db, source, "durable-permission-expansion");
+    let calls = 0;
+    const bound = bindSourceModelPort(producer({
+      status: "ok",
+      claims: [draft(event.event_id)],
+      usage: { calls: 1, input_tokens: 1, output_tokens: 1 },
+    }, () => { calls += 1; }), { model_endpoint: endpoint, model: "fixture-model" });
+    const mined = await mineLiveDrafts(db, bound);
+    journalExtractBatch(db, mined, "fixture-original-model-ref", bound);
+    setSourceGrant(db, {
+      source_key: source,
+      expected_revision: 1,
+      operation_id: "expand-durable-permission",
+      policy: { ...policy(), purposes: [...policy().purposes, "audit"] },
+    });
+    const replay = readDurableExtractBatch(db, bound)!;
+    expect(replay.model_inputs[0]?.checked_revision).toBe(1);
+    expect(replay.model_inputs[0]?.checked_binding_digest).toBe(mined.model_inputs?.[0]?.checked_binding_digest);
+    const result = await runWritePass(db, vault, {
+      budget: createBudgetTracker({ canon_writes_per_run: 0 }),
+      model_ref: "fixture-current-model-ref",
+      claims: { db },
+      producer: bound,
+    });
+    expect(result.errors).toEqual([]);
+    expect(calls).toBe(1);
+    expect(listClaims(db, { status: "live", limit: 20 })).toHaveLength(1);
+    expect(listClaims(db, { status: "live", limit: 20 })[0]?.model_ref).toBe("fixture-original-model-ref");
+    expect(db.query("SELECT 1 FROM extract_batches").get()).toBeNull();
+  } finally { db.close(); }
+});
+
+test("a narrowed grant keeps the durable decision pending without another model call", async () => {
+  const { vault, db, source } = setup();
+  try {
+    grant(db, source);
+    const event = capture(db, source, "durable-permission-narrow");
+    let calls = 0;
+    const bound = bindSourceModelPort(producer({
+      status: "ok",
+      claims: [draft(event.event_id)],
+      usage: { calls: 1, input_tokens: 1, output_tokens: 1 },
+    }, () => { calls += 1; }), { model_endpoint: endpoint, model: "fixture-model" });
+    const mined = await mineLiveDrafts(db, bound);
+    journalExtractBatch(db, mined, "fixture-original-model-ref", bound);
+    setSourceGrant(db, {
+      source_key: source,
+      expected_revision: 1,
+      operation_id: "narrow-durable-permission",
+      policy: { ...policy(), purposes: policy().purposes.filter(item => item !== "extract") },
+    });
+    expect(() => readDurableExtractBatch(db, bound)).toThrow("durable extraction authorization is pending");
+    const blocked = await runWritePass(db, vault, {
+      budget: createBudgetTracker({ canon_writes_per_run: 0 }),
+      model_ref: "fixture-current-model-ref",
+      claims: { db },
+      producer: bound,
+    });
+    expect(blocked.stopped).toBe("source:durable_extraction_authorization_pending");
+    expect(blocked.errors).toEqual([]);
+    expect(blocked.model).toEqual({ calls: 0, input_tokens: 0, output_tokens: 0, unavailable: 0, wall_ms: 0 });
+    expect(calls).toBe(1);
+    expect(db.query("SELECT 1 FROM extract_batches").get()).not.toBeNull();
+    expect(readExtractCursor(db)).toBeNull();
+    setSourceGrant(db, {
+      source_key: source,
+      expected_revision: 2,
+      operation_id: "restore-durable-permission",
+      policy: policy(),
+    });
+    const resumed = await runWritePass(db, vault, {
+      budget: createBudgetTracker({ canon_writes_per_run: 0 }),
+      model_ref: "fixture-current-model-ref",
+      claims: { db },
+      producer: bound,
+    });
+    expect(resumed.errors).toEqual([]);
+    expect(calls).toBe(1);
+    expect(listClaims(db, { status: "live", limit: 20 })[0]?.model_ref).toBe("fixture-original-model-ref");
+    expect(db.query("SELECT 1 FROM extract_batches").get()).toBeNull();
+    expect(readExtractCursor(db)).not.toBeNull();
+  } finally { db.close(); }
+});
+
+test("a grant change after replay authorization cannot complete that filing attempt", async () => {
+  const { vault, db, source } = setup();
+  try {
+    grant(db, source);
+    const event = capture(db, source, "durable-attempt-epoch");
+    let calls = 0;
+    const bound = bindSourceModelPort(producer({
+      status: "ok",
+      claims: [draft(event.event_id)],
+      usage: { calls: 1, input_tokens: 1, output_tokens: 1 },
+    }, () => { calls += 1; }), { model_endpoint: endpoint, model: "fixture-model" });
+    const mined = await mineLiveDrafts(db, bound);
+    journalExtractBatch(db, mined, "fixture-original-model-ref", bound);
+    const authorized = readDurableExtractBatch(db, bound)!;
+    setSourceGrant(db, {
+      source_key: source,
+      expected_revision: 1,
+      operation_id: "expand-during-filing-attempt",
+      policy: { ...policy(), purposes: [...policy().purposes, "audit"] },
+    });
+    expect(() => completeDurableExtractBatch(db, authorized, bound))
+      .toThrow("durable extraction authorization is pending");
+    expect(db.query("SELECT 1 FROM extract_batches").get()).not.toBeNull();
+    expect(readExtractCursor(db)).toBeNull();
+    const resumed = await runWritePass(db, vault, {
+      budget: createBudgetTracker({ canon_writes_per_run: 0 }),
+      model_ref: "fixture-current-model-ref",
+      claims: { db },
+      producer: bound,
+    });
+    expect(resumed.errors).toEqual([]);
+    expect(calls).toBe(1);
+    expect(listClaims(db, { status: "live", limit: 20 })[0]?.model_ref).toBe("fixture-original-model-ref");
+    expect(db.query("SELECT 1 FROM extract_batches").get()).toBeNull();
+  } finally { db.close(); }
+});
+
 test("a configured destination change reconsiders deferred input without a grant revision", async () => {
   const { db, source } = setup();
   try {
@@ -380,6 +579,31 @@ test("a configured destination change reconsiders deferred input without a grant
     expect(seen).toEqual([event.event_id]);
     expect(commitExtractCursor(db, replay)).toBe(true);
     expect(db.query("SELECT 1 FROM extract_deferred_inputs").get()).toBeNull();
+  } finally { db.close(); }
+});
+
+test("a deferred journal refuses when its exact sent input is no longer queued", async () => {
+  const { db, source } = setup();
+  try {
+    const event = await captureAfterWrongGrant(db, source);
+    setSourceGrant(db, {
+      source_key: source,
+      expected_revision: 1,
+      operation_id: "authorize-deferred-journal",
+      policy: policy(),
+    });
+    const bound = bindSourceModelPort(producer({
+      status: "ok",
+      claims: [draft(event.event_id)],
+      usage: { calls: 1, input_tokens: 1, output_tokens: 1 },
+    }), { model_endpoint: endpoint, model: "fixture-model" });
+    const mined = await mineLiveDrafts(db, bound);
+    expect(mined.mode).toBe("deferred");
+    journalExtractBatch(db, mined, "fixture-deferred-model", bound);
+    db.query("DELETE FROM extract_deferred_inputs WHERE event_id=?").run(event.event_id);
+    expect(() => readDurableExtractBatch(db, bound))
+      .toThrow("durable extraction input partition is corrupt");
+    expect(readExtractCursor(db)).not.toBeNull();
   } finally { db.close(); }
 });
 

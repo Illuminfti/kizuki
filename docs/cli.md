@@ -157,6 +157,11 @@ future calls and discards a result if policy changes while a call is pending.
 Owned purge removes Kizuki's retained source and derived payload, but cannot
 retract data already sent to a provider. Provider-side retention and deletion
 remain governed by that provider.
+Once a provider decision is durably journaled, a later narrowed or revoked
+grant leaves that decision pending without resending source data or advancing
+the extraction cursor. Restoring the required purpose, fields, and exact
+destination lets a later pass file the original decision under its original
+model reference; source purge removes affected pending derived work.
 Export requires the explicit `export` purpose and refuses pending revocations.
 
 ```bash
