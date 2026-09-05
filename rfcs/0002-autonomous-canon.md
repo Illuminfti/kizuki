@@ -14,6 +14,10 @@ Nothing in this document is a claim that any of it is built. Every lane in
 §18 names its exit proof; until that proof exists the surface does not
 exist (invariant 10).
 
+Clarification (2026-09-05): §12.1 projects consumed provider-envelope
+fields and reserved refusals. Exact extra-key refusal applies to the
+extraction claim payload in §4.2, not to unread assistant-message keys.
+
 ---
 
 ## 1. Motivation: queues rot, and the evidence is not theoretical
@@ -733,8 +737,10 @@ prose). It never calls a model, never fails, and is what runs when
   `EXTRACT_INPUT_CHARS = 24_000` characters of quoted text per call;
 - the system prompt is a constant in the tree; captured text appears only
   in the user role, only inside a nonce fence (§12.2);
-- the response must be a JSON object matching `ExtractResponse` exactly —
-  extra keys are a `schema_invalid` rejection, not a warning;
+- the assistant text must parse as a JSON object matching
+  `ExtractResponse` exactly — extra keys are a `schema_invalid`
+  rejection, not a warning. This exactness is the extraction payload,
+  not the provider HTTP envelope (§12.1);
 - every draft must cite at least one `event_id` from the input set;
   citing anything else is `provenance_not_cited` and the whole call is
   discarded;
@@ -2047,9 +2053,13 @@ Requirements:
   config is a startup failure. Nothing is logged that could contain a key,
   and provider error bodies are truncated and scrubbed before they reach a
   receipt.
-- The provider response is **attacker-controlled input** and is validated
-  strictly: exact schema, no extra keys, size caps, and the tool-call
-  rejection of §10.1.
+- The provider HTTP envelope is **attacker-controlled input**. The LLM
+  port projects only consumed fields (assistant text, model id, usage)
+  after validating those fields, reserved tool and data keys (§10.1),
+  named passive-metadata shapes, and size caps. Other assistant-message
+  keys are discarded unread and uncopied. Exact-schema, no-extra-keys
+  validation applies to the extraction claim payload (§4.2), not to
+  unread provider envelope metadata.
 - `model_ref` recorded on every claim and receipt is
   `"<port_id>:<model>@<host>"` — enough to answer "which model wrote this"
   without recording a credential.

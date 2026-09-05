@@ -7,7 +7,6 @@ import type { LlmResponse, LlmUsage } from "@kizuki/core";
 const TOOL_REJECT = "rejected: tool_call_in_response";
 const BAD_RESPONSE = "rejected: bad_response";
 
-const MESSAGE_KEYS = new Set(["role", "content", "refusal", "reasoning", "reasoning_content", "reasoning_details", "annotations"]);
 const FORBIDDEN_MESSAGE_KEYS = new Set([
   "tool_calls",
   "function_call",
@@ -118,9 +117,6 @@ function readChoiceText(choice: unknown): string {
   const message = choice["message"];
   if (!isPlainObject(message)) badResponse();
   rejectEffectFields(message);
-  for (const key of Object.keys(message)) {
-    if (!MESSAGE_KEYS.has(key)) unsupportedMetadata();
-  }
   validateMetadata(message);
   if (message["role"] !== "assistant") badResponse();
   if (typeof message["refusal"] === "string") throw new PortError("unavailable", "rejected: response_refused", false);
