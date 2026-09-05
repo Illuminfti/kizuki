@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  pageTypeForSubject,
   proposalsForEvent,
   withdrawForTombstone,
 } from "../../src/staging/producers";
@@ -29,15 +30,27 @@ describe("proposalsForEvent", () => {
     }
   });
 
-  test("entity frontmatter is a person page carrying the source handle", () => {
+  test("entity frontmatter carries the source handle, typed by subject namespace", () => {
     const [ada] = proposalsForEvent(event());
     expect(ada?.frontmatter).toEqual({
-      type: "person",
+      // The fixture subject is "person:ada", a made-up namespace no shipped
+      // connector emits, so it defaults to "topic" like any other unknown
+      // prefix (see the pageTypeForSubject tests below for the shipped ones).
+      type: "topic",
       title: "Ada",
       "x-handle": "ada",
       "x-subject-id": "person:ada",
       "x-connector": "fixture",
     });
+  });
+
+  test("an email subject types as a person page", () => {
+    const [subject] = proposalsForEvent(
+      event({
+        subjects: [{ subject_id: "email:ada@example.com", role: "from" }],
+      }),
+    );
+    expect(subject?.frontmatter["type"]).toBe("person");
   });
 
   test("a subject with no display name falls back to the handle", () => {
@@ -102,6 +115,41 @@ describe("proposalsForEvent", () => {
 
   test("a tombstone event produces nothing", () => {
     expect(proposalsForEvent(event({ deleted: true }))).toEqual([]);
+  });
+});
+
+describe("pageTypeForSubject", () => {
+  test("an email: subject types as person", () => {
+    expect(pageTypeForSubject("email:ada@example.com")).toBe("person");
+  });
+
+  test("a screenpipe:app: subject types as topic, not person", () => {
+    expect(pageTypeForSubject("screenpipe:app:firefox")).toBe("topic");
+  });
+
+  test("a screenpipe:site: subject types as topic, not person", () => {
+    expect(pageTypeForSubject("screenpipe:site:example.com")).toBe("topic");
+  });
+
+  test("a screenpipe:speaker: subject types as topic, not person", () => {
+    // A speaker id names an unconfirmed diarization cluster, not a verified
+    // individual: it can be silent, misattributed, or shared by more than one
+    // voice, so it does not earn "person" on the strength of the id alone.
+    expect(pageTypeForSubject("screenpipe:speaker:3")).toBe("topic");
+  });
+
+  test("a screenpipe:audio-device: subject types as topic, not person", () => {
+    expect(pageTypeForSubject("screenpipe:audio-device:built-in-mic")).toBe(
+      "topic",
+    );
+  });
+
+  test("a calendar: subject types as topic, not person", () => {
+    expect(pageTypeForSubject("calendar:team-standup")).toBe("topic");
+  });
+
+  test("an unrecognized namespace defaults to topic", () => {
+    expect(pageTypeForSubject("markdown:notes/todo.md")).toBe("topic");
   });
 });
 

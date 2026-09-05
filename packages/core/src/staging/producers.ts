@@ -5,6 +5,7 @@ import { validatePageCandidate } from "../contracts/page-candidate";
 import { pageCandidateProposal } from "./page-candidate";
 import { fileProposal, setProposalStatus } from "./proposals";
 import type { ProposalInput } from "./proposals";
+import type { PageType } from "../vault/schema";
 
 /**
  * The deterministic floor: claims derivable from an event with no model.
@@ -36,6 +37,23 @@ function blockquote(text: string): string {
     .join("\n");
 }
 
+/**
+ * `SubjectRef` carries only an id, a role and a display name (`kizuki.event/v1`
+ * is frozen — see #430), so the only honest signal for what kind of thing a
+ * subject is is the namespace prefix a connector chose for its id. `email:` is
+ * the sole prefix that genuinely denotes a person by convention; every other
+ * shipped namespace (`screenpipe:app:`, `screenpipe:site:`,
+ * `screenpipe:speaker:`, `screenpipe:audio-device:`, `calendar:`, and anything
+ * unrecognized) defaults to `topic` rather than asserting an identity the
+ * deterministic producer has no basis to claim. A `screenpipe:speaker:` id
+ * names an unconfirmed diarization cluster, not a verified individual — it can
+ * be silent, misattributed, or shared by more than one voice — so it stays
+ * `topic` until the owner or the model confirms it names a person.
+ */
+export function pageTypeForSubject(subjectId: string): PageType {
+  return subjectId.startsWith("email:") ? "person" : "topic";
+}
+
 function entityProposal(
   event: CaptureEvent,
   subject: SubjectRef,
@@ -48,7 +66,7 @@ function entityProposal(
     // instead of forking a second stub page for the same person.
     body: `Stub entity page for \`${subject.subject_id}\`.`,
     frontmatter: {
-      type: "person",
+      type: pageTypeForSubject(subject.subject_id),
       title: subject.display_name ?? handle,
       "x-handle": handle,
       "x-subject-id": subject.subject_id,
