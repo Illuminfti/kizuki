@@ -123,27 +123,8 @@ const identifierSegmenter = new Intl.Segmenter(undefined, { granularity: "graphe
 const CONTROL_OR_LINE_SEPARATOR = /[\p{Cc}\p{Zl}\p{Zp}]/u;
 const MARK = /\p{M}/u;
 const FORMAT = /\p{Cf}/u;
-const EXTENDED_PICTOGRAPHIC = /\p{Extended_Pictographic}/u;
-const JOINER = new Set(["\u200c", "\u200d"]);
-const VARIATION_SELECTOR = new Set(["\ufe0e", "\ufe0f"]);
-
-function visibleBaseBefore(chars: readonly string[], index: number): string | null {
-  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
-    const ch = chars[cursor] ?? "";
-    if (MARK.test(ch) || VARIATION_SELECTOR.has(ch)) continue;
-    return FORMAT.test(ch) ? null : ch;
-  }
-  return null;
-}
-
-function visibleBaseAfter(chars: readonly string[], index: number): string | null {
-  for (let cursor = index + 1; cursor < chars.length; cursor += 1) {
-    const ch = chars[cursor] ?? "";
-    if (MARK.test(ch) || VARIATION_SELECTOR.has(ch)) continue;
-    return FORMAT.test(ch) ? null : ch;
-  }
-  return null;
-}
+const DEFAULT_IGNORABLE = /\p{Default_Ignorable_Code_Point}/u;
+const WHITE_SPACE = /\p{White_Space}/u;
 
 /**
  * Identifiers keep their opaque source spelling. This only decides whether
@@ -152,26 +133,20 @@ function visibleBaseAfter(chars: readonly string[], index: number): string | nul
  */
 function isVisibleIdentifier(value: string): boolean {
   if (value.trim() !== value || CONTROL_OR_LINE_SEPARATOR.test(value)) return false;
-  const chars = [...value];
-  for (let index = 0; index < chars.length; index += 1) {
-    const ch = chars[index] ?? "";
-    // CGJ is a default-ignorable mark with no visible role in identifiers.
-    if (ch === "\u034f") return false;
-    if (VARIATION_SELECTOR.has(ch)) {
-      const base = visibleBaseBefore(chars, index);
-      if (base === null || !EXTENDED_PICTOGRAPHIC.test(base)) return false;
-      continue;
-    }
-    if (JOINER.has(ch)) {
-      if (visibleBaseBefore(chars, index) === null || visibleBaseAfter(chars, index) === null) return false;
-      continue;
-    }
-    if (FORMAT.test(ch)) return false;
-  }
-  // A grapheme made only of marks/selectors/joiners has no visible identity.
-  return [...identifierSegmenter.segment(value)].every(({ segment }) =>
-    [...segment].some((ch) => !MARK.test(ch) && !FORMAT.test(ch)),
-  );
+  // CGJ is a default-ignorable mark whose source spelling is visually
+  // indistinguishable in identifiers, including when adjacent to visible text.
+  if (value.includes("\u034f")) return false;
+  // A cluster is usable when it contains visible source content. This admits
+  // native emoji selectors, joins and tag sequences without rewriting them.
+  return [...identifierSegmenter.segment(value)].every(({ segment }) => {
+    const chars = [...segment];
+    // Ordinary internal whitespace is valid in opaque source names; trimming
+    // above still excludes it at either edge and as the entire identifier.
+    if (chars.every((ch) => WHITE_SPACE.test(ch))) return true;
+    return chars.some((ch) =>
+      !MARK.test(ch) && !FORMAT.test(ch) && !DEFAULT_IGNORABLE.test(ch) && !WHITE_SPACE.test(ch),
+    );
+  });
 }
 
 function checkString(
@@ -201,12 +176,18 @@ function checkString(
     errors.push(`${path}: must be a non-empty string`);
     return false;
   }
-  if ((opts.identifier ?? !opts.allowEmpty) && value.length > 0 && !isVisibleIdentifier(value)) {
-    errors.push(`${path}: must be a visible identifier without controls or edge whitespace`);
+  // UTF-8 is never shorter than the UTF-16 source string. Reject obvious
+  // overages before identifier grapheme validation allocates per code point.
+  if (value.length > maxBytes) {
+    errors.push(`${path}: exceeds ${maxBytes} UTF-8 bytes`);
     return false;
   }
   if (utf8ByteLength(value) > maxBytes) {
     errors.push(`${path}: exceeds ${maxBytes} UTF-8 bytes`);
+    return false;
+  }
+  if ((opts.identifier ?? !opts.allowEmpty) && value.length > 0 && !isVisibleIdentifier(value)) {
+    errors.push(`${path}: must be a visible identifier without controls or edge whitespace`);
     return false;
   }
   return true;

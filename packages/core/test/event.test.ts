@@ -664,6 +664,18 @@ describe("validateEventInput resource limits", () => {
     });
   }
 
+  test("rejects a giant invisible identifier by byte limit before segmentation", () => {
+    const result = validateEventInput({
+      ...rawEvent(),
+      source_record_id: "\u034f".repeat(EVENT_LIMITS.identifierBytes + 100_000),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.errors).toEqual([
+      `source_record_id: exceeds ${EVENT_LIMITS.identifierBytes} UTF-8 bytes`,
+    ]);
+  });
+
   test("rejects a metadata cycle", () => {
     const cycle: Record<string, unknown> = {};
     cycle["self"] = cycle;
@@ -831,7 +843,7 @@ test("identifiers reject controls, invisible values and edge whitespace without 
   for (const value of [
     " ", "\t", "\n", "\r", "\u0085", "\u2028", "\u2029",
     " leading", "trailing ", "a\u0000b", "a\u001bb", "\u200b", "a\u202eb",
-    "\u034f", "a\u034fb", "\ufe0f", "a\ufe0fb",
+    "\u034f", "a\u034fb", "\ufe0f",
   ]) {
     for (const field of ["connector_id", "source_record_id", "kind", "subject_id", "attachment_id", "media_type"]) {
       const event = rawEvent();
@@ -852,6 +864,8 @@ test("visible identifier grammar accepts contextual joins and preserves opaque s
   const identifiers = [
     "👨‍👩‍👧‍👦.md",
     "❤️.md",
+    "1️⃣.md",
+    "🏴󠁧󠁢󠁥󠁮󠁧󠁿.md",
     "क्‍ष.md",
     "می‌رویم.md",
   ];
