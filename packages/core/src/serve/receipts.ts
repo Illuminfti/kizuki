@@ -180,6 +180,7 @@ function numberOr(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+/** Select the newest matching receipts, then return them in chronological order. */
 export function listRunReceipts(
   db: Database,
   options: { rail?: string; since?: string; limit?: number } = {},
@@ -192,7 +193,7 @@ export function listRunReceipts(
           .query<{ report: string }, [string, string, number]>(
             `SELECT report FROM run_receipts
               WHERE rail = ? AND finished_at >= ?
-              ORDER BY finished_at, run_id
+              ORDER BY finished_at DESC, run_id DESC
               LIMIT ?`,
           )
           .all(options.rail, options.since, limit)
@@ -201,7 +202,7 @@ export function listRunReceipts(
             .query<{ report: string }, [string, number]>(
               `SELECT report FROM run_receipts
                 WHERE rail = ?
-                ORDER BY finished_at, run_id
+                ORDER BY finished_at DESC, run_id DESC
                 LIMIT ?`,
             )
             .all(options.rail, limit)
@@ -210,18 +211,19 @@ export function listRunReceipts(
               .query<{ report: string }, [string, number]>(
                 `SELECT report FROM run_receipts
                   WHERE finished_at >= ?
-                  ORDER BY finished_at, run_id
+                  ORDER BY finished_at DESC, run_id DESC
                   LIMIT ?`,
               )
               .all(options.since, limit)
           : db
               .query<{ report: string }, [number]>(
                 `SELECT report FROM run_receipts
-                  ORDER BY finished_at, run_id
+                  ORDER BY finished_at DESC, run_id DESC
                   LIMIT ?`,
               )
               .all(limit);
   return rows
+    .reverse()
     .map((row) => {
       try {
         return parseRunReceipt(JSON.parse(row.report));
