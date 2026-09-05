@@ -3,8 +3,12 @@ import type { SubjectRef } from "./event";
 import type { Port } from "./ports";
 
 export const PRODUCER_CONTRACT = "kizuki.producer/v1" as const;
-/** Minor 1 adds the optional `dropped` report on an ok result. */
-export const PRODUCER_CONTRACT_MINOR = 1;
+/**
+ * Minor 1 adds the optional `dropped` report on an ok result. Minor 2 adds
+ * the optional `detail` on a `budget_exhausted` rejection, naming the
+ * budget and its used/limit values (#439).
+ */
+export const PRODUCER_CONTRACT_MINOR = 2;
 export const PRODUCER_CAPABILITIES = ["deterministic", "model"] as const;
 export type ProducerCapability =
   (typeof PRODUCER_CAPABILITIES)[number];
@@ -133,6 +137,12 @@ export type ProduceResult =
       status: "rejected";
       reason: RejectReason;
       usage: ModelUsage;
+      /**
+       * Set for `budget_exhausted`: names the budget and its used/limit
+       * values, so a refusal is never just a bare reason string next to two
+       * unrelated budgets in a receipt (#439).
+       */
+      detail?: string;
     };
 
 export interface ProducerPort extends Port {

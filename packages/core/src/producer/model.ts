@@ -54,6 +54,13 @@ export const EXTRACT_INPUT_CHARS = 24_000;
 export const EXTRACT_MAX_OUTPUT_TOKENS = 8_192;
 /** Conservative chars-per-token for charging input before the request. */
 export const CHARS_PER_TOKEN = 4;
+/**
+ * Prompt scaffolding — the system prompt, task line, predicate list, subject
+ * list and known-claim list — repeats on every call inside one `produce()`
+ * pass. A conservative allowance for it, so the budget derived below never
+ * falls short of a batch `planBatches` already committed to attempting.
+ */
+export const EXTRACT_PROMPT_OVERHEAD_CHARS = 6_000;
 
 export const DEFAULT_PRODUCER_DEADLINE_MS = 60_000;
 const MIN_DEADLINE_MS = 1_000;
@@ -320,6 +327,32 @@ export function planBatches(
   return { batches, dropped };
 }
 
+export interface ExtractProducerBudget {
+  readonly max_calls: number;
+  readonly max_input_tokens: number;
+  readonly max_output_tokens: number;
+}
+
+/**
+ * The budget a caller feeding `planBatches`-sized input should give
+ * `produce()`. Derived from the same `EXTRACT_BATCH` / `EXTRACT_INPUT_CHARS`
+ * bounds the batch planner uses, so a batch the planner is willing to
+ * assemble is always one this budget lets the producer attempt (#439): a
+ * batch of up to `EXTRACT_BATCH` events can, worst case, split into that
+ * many single-event calls, each up to `EXTRACT_INPUT_CHARS` of quoted text
+ * plus prompt scaffolding.
+ */
+export function extractProducerBudget(): ExtractProducerBudget {
+  return {
+    max_calls: EXTRACT_BATCH,
+    max_input_tokens: Math.ceil(
+      (EXTRACT_BATCH * (EXTRACT_INPUT_CHARS + EXTRACT_PROMPT_OVERHEAD_CHARS)) /
+        CHARS_PER_TOKEN,
+    ),
+    max_output_tokens: EXTRACT_BATCH * EXTRACT_MAX_OUTPUT_TOKENS,
+  };
+}
+
 function bounded(value: string): string {
   return value.length > MAX_LOGGED_CHARS ? `${value.slice(0, MAX_LOGGED_CHARS)}…` : value;
 }
@@ -437,7 +470,12 @@ export function createModelProducerPort(
       for (const item of dropped) drop(item);
 
       if (batches.length > input.budget.max_calls) {
-        return { status: "rejected", reason: "budget_exhausted", usage };
+        return {
+          status: "rejected",
+          reason: "budget_exhausted",
+          usage,
+          detail: `max_calls requires=${batches.length} limit=${input.budget.max_calls}`,
+        };
       }
 
       const predicates = new Set(input.context.predicates);
@@ -462,12 +500,29 @@ export function createModelProducerPort(
         const estimate = estimateTokens(messages);
         const remainingOutput = input.budget.max_output_tokens - spent.output_tokens;
         const maxOutput = Math.min(EXTRACT_MAX_OUTPUT_TOKENS, remainingOutput);
-        if (
-          spent.calls + 1 > input.budget.max_calls ||
-          spent.input_tokens + estimate > input.budget.max_input_tokens ||
-          maxOutput < 1
-        ) {
-          return { status: "rejected", reason: "budget_exhausted", usage };
+        if (spent.calls + 1 > input.budget.max_calls) {
+          return {
+            status: "rejected",
+            reason: "budget_exhausted",
+            usage,
+            detail: `max_calls used=${spent.calls} limit=${input.budget.max_calls}`,
+          };
+        }
+        if (spent.input_tokens + estimate > input.budget.max_input_tokens) {
+          return {
+            status: "rejected",
+            reason: "budget_exhausted",
+            usage,
+            detail: `max_input_tokens used=${spent.input_tokens} limit=${input.budget.max_input_tokens}`,
+          };
+        }
+        if (maxOutput < 1) {
+          return {
+            status: "rejected",
+            reason: "budget_exhausted",
+            usage,
+            detail: `max_output_tokens used=${spent.output_tokens} limit=${input.budget.max_output_tokens}`,
+          };
         }
         spent.calls += 1;
         spent.input_tokens += estimate;

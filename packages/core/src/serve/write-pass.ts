@@ -132,7 +132,11 @@ async function runWritePassLocked(
         model.unavailable = 1;
         break;
       case "rejected":
-        errors.push(mined.mined.reason);
+        errors.push(
+          mined.mined.detail === undefined
+            ? mined.mined.reason
+            : `${mined.mined.reason}: ${mined.mined.detail}`,
+        );
         break;
       case "empty":
         break;

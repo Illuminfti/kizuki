@@ -27,15 +27,18 @@ export {
   EXTRACT_BATCH,
   EXTRACT_INPUT_CHARS,
   EXTRACT_MAX_OUTPUT_TOKENS,
+  EXTRACT_PROMPT_OVERHEAD_CHARS,
   MODEL_PRODUCER_DESCRIPTOR,
   MODEL_PRODUCER_ID,
   createModelProducerPort,
+  extractProducerBudget,
   parseModelProducerConfig,
   planBatches,
   registerModelProducerPort,
   validateProduceInput,
 } from "./model";
 export type {
+  ExtractProducerBudget,
   ModelProducerConfig,
   ModelProducerOptions,
   ModelProducerPort,

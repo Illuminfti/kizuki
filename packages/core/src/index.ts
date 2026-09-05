@@ -284,6 +284,7 @@ export {
   buildExtractionMessages,
   createModelProducerPort,
   escapeFenceText,
+  extractProducerBudget,
   hasFenceLeak,
   newFenceNonce,
   parseExtractResponse,
@@ -291,6 +292,7 @@ export {
 } from "./producer";
 export type {
   ExtractionBatch,
+  ExtractProducerBudget,
   ModelProducerConfig,
   ModelProducerOptions,
   ModelProducerPort,

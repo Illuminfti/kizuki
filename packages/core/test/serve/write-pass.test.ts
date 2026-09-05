@@ -365,11 +365,15 @@ describe("write pass", () => {
         status: "rejected",
         reason: "budget_exhausted",
         usage: { calls: 1, input_tokens: 9_000, output_tokens: 0 },
+        detail: "max_input_tokens used=9000 limit=8000",
       }),
     });
-    // Reached the provider and it was refused: status is not "stopped".
+    // Reached the provider and it was refused: status is not "stopped", and
+    // the error names the budget with its used/limit, not a bare reason.
     expect(rejected.stopped).toBeNull();
-    expect(rejected.errors).toEqual(["budget_exhausted"]);
+    expect(rejected.errors).toEqual([
+      "budget_exhausted: max_input_tokens used=9000 limit=8000",
+    ]);
     expect(rejected.model).toEqual({
       calls: 1,
       input_tokens: 9_000,

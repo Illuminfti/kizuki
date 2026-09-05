@@ -11,7 +11,7 @@ import { listClaims } from "../claims/store";
 import { readCheckpoint, writeCheckpoint } from "../ledger/checkpoints";
 import { readSince } from "../ledger/ledger";
 import type { LedgerCursor } from "../ledger/ledger";
-import { EXTRACT_BATCH, MODEL_PRODUCER_ID } from "../producer";
+import { EXTRACT_BATCH, MODEL_PRODUCER_ID, extractProducerBudget } from "../producer";
 
 const EXTRACT_SOURCE_KEY = "extract";
 const NO_USAGE: ModelUsage = { calls: 0, input_tokens: 0, output_tokens: 0 };
@@ -21,7 +21,7 @@ export type ExtractMine =
   | { status: "ok"; count: number }
   | { status: "empty" }
   | { status: "unavailable"; reason: string }
-  | { status: "rejected"; reason: string };
+  | { status: "rejected"; reason: string; detail?: string };
 
 export function shouldAdvanceExtractCursor(result: ExtractMine): boolean {
   switch (result.status) {
@@ -118,11 +118,7 @@ export async function mineLiveDrafts(
       })),
       predicates: [...predicateIds()],
     },
-    budget: {
-      max_calls: 2,
-      max_input_tokens: 8_000,
-      max_output_tokens: 2_000,
-    },
+    budget: extractProducerBudget(),
   });
 
   let mined: ExtractMine;
@@ -133,7 +129,11 @@ export async function mineLiveDrafts(
       mined = { status: "unavailable", reason: produced.reason };
       break;
     case "rejected":
-      mined = { status: "rejected", reason: produced.reason };
+      mined = {
+        status: "rejected",
+        reason: produced.reason,
+        ...(produced.detail === undefined ? {} : { detail: produced.detail }),
+      };
       usage = produced.usage;
       break;
     case "ok":

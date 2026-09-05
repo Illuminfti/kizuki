@@ -8,6 +8,7 @@ import {
   MODEL_PRODUCER_DESCRIPTOR,
   MODEL_PRODUCER_ID,
   createModelProducerPort,
+  extractProducerBudget,
   parseModelProducerConfig,
   planBatches,
   registerModelProducerPort,
@@ -48,7 +49,7 @@ describe("kizuki.producer.model", () => {
       id: MODEL_PRODUCER_ID,
       kind: "producer",
       contract: "kizuki.producer/v1",
-      contract_minor: 1,
+      contract_minor: 2,
       supports: ["model"],
       requires_lease: false,
       optional_package: null,
@@ -285,16 +286,70 @@ describe("kizuki.producer.model", () => {
         status: "rejected",
         reason: "budget_exhausted",
         usage: { calls: 0, input_tokens: 0, output_tokens: 0 },
+        detail: "max_calls requires=2 limit=1",
       });
       const tooFewInput = await producer.produce(input([GRACE_EVENT], { max_input_tokens: 10 }));
       expect(tooFewInput).toEqual({
         status: "rejected",
         reason: "budget_exhausted",
         usage: { calls: 0, input_tokens: 0, output_tokens: 0 },
+        detail: "max_input_tokens used=0 limit=10",
       });
       const noOutput = await producer.produce(input([GRACE_EVENT], { max_output_tokens: 0 }));
       expect(noOutput.status).toBe("rejected");
       expect(llm.requests).toHaveLength(0);
+    });
+  });
+
+  test("extractProducerBudget lets an ordinary batch of documents through (#439)", async () => {
+    // Eight ordinary-length documents fit `planBatches` into one call; the
+    // old hardcoded `max_input_tokens: 8_000` budget could not attempt it
+    // (#439). `extractProducerBudget` is derived from the same
+    // EXTRACT_BATCH/EXTRACT_INPUT_CHARS bounds `planBatches` uses, so this
+    // call must be attempted, not refused.
+    const events = Array.from({ length: EXTRACT_BATCH }, (_, i) => ({
+      ...GRACE_EVENT,
+      event_id: `01JEVENT00000000000BATCH${i}`,
+      text: `Document ${i}: `.padEnd(2_900, "lorem ipsum dolor sit amet. "),
+    }));
+    const { batches } = planBatches(events);
+    expect(batches).toHaveLength(1);
+
+    const llm = scriptedLlm(() =>
+      responseText([draft({ event_ids: [events[0]!.event_id] })]),
+    );
+    await withProducer(llm, async (producer) => {
+      const result = await producer.produce(input(events, extractProducerBudget()));
+      expect(result.status).toBe("ok");
+      if (result.status !== "ok") return;
+      expect(result.usage.calls).toBe(1);
+      expect(llm.requests).toHaveLength(1);
+    });
+  });
+
+  test("extractProducerBudget covers the worst case planBatches can assemble, or names its own limit", async () => {
+    // Eight events each at the per-call character ceiling force planBatches
+    // to split into EXTRACT_BATCH single-event calls — the theoretical
+    // worst case for one mineLiveDrafts pass. Whatever the producer decides,
+    // it must not be a bare "budget_exhausted" next to headroom that looks
+    // fine (#439): either every call is attempted, or the refusal names the
+    // exact budget and its used/limit values.
+    const events = Array.from({ length: EXTRACT_BATCH }, (_, i) => ({
+      ...GRACE_EVENT,
+      event_id: `01JEVENT0000000000WORST${i}`,
+      text: "y".repeat(EXTRACT_INPUT_CHARS),
+    }));
+    const { batches } = planBatches(events);
+    expect(batches).toHaveLength(EXTRACT_BATCH);
+
+    const llm = scriptedLlm(() => '{"claims":[]}');
+    await withProducer(llm, async (producer) => {
+      const result = await producer.produce(input(events, extractProducerBudget()));
+      if (result.status === "rejected" && result.reason === "budget_exhausted") {
+        expect(result.detail).toMatch(/^(max_calls|max_input_tokens|max_output_tokens) (used|requires)=\d+ limit=\d+$/);
+      } else {
+        expect(result.status).toBe("ok");
+      }
     });
   });
 

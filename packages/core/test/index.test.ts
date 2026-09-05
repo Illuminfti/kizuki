@@ -228,6 +228,7 @@ describe("public surface", () => {
       "ensureVaultId",
       "escapeFenceText",
       "exportVault",
+      "extractProducerBudget",
       "filterServable",
       "findPageById",
       "freezeManifest",
