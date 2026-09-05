@@ -1699,7 +1699,7 @@ test("compatibility erasure covers joint and rejected proposals, preserves indep
         provenance: string;
     }, [
         string
-    ]>("SELECT p.proposal_id,p.provenance FROM proposals p JOIN json_each(p.provenance) e JOIN source_event_bindings b ON b.event_id=e.value WHERE b.source_key=? ORDER BY p.proposal_id").all(a);
+    ]>("SELECT p.proposal_id,p.provenance FROM proposals p WHERE EXISTS (SELECT 1 FROM json_each(p.provenance) e JOIN source_event_bindings b ON b.event_id=e.value WHERE b.source_key=?) ORDER BY p.proposal_id").all(a);
     const bBefore = db.query("SELECT * FROM proposals WHERE provenance=?").get(JSON.stringify([bId]));
     // Compatibility history can contain every lifecycle state; source closure is independent of status.
     db.query("UPDATE proposals SET provenance=?,status='promoted' WHERE proposal_id=?").run(JSON.stringify([...JSON.parse(aRows[0]!.provenance), bId]), aRows[0]!.proposal_id);
