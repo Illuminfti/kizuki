@@ -1,9 +1,9 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Database } from "bun:sqlite";
+import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { createBudgetTracker } from "../../src/canon/budget";
 import { getClaim, insertClaim } from "../../src/claims/store";
 import type { ClaimDraft, ProducerPort } from "../../src/contracts/producer";
@@ -314,3 +314,106 @@ test("full valid-row preflight is pure even when a later intent would refresh or
     expect(f.calls.count).toBe(1);
   } finally { f.close(); }
 });
+
+test("stored text is decoded without replacing malformed UTF-8 or removing a valid BOM", async () => {
+  const f = fixture();
+  try {
+    journalExtractBatch(f.db, await mineLiveDrafts(f.db, f.model), "fixture:\uFFFD\0é🙂", f.model);
+    const row = f.db.query<{ previous_cursor: string; cursor: string; model_ref: string; input_ids: string;
+      batch_mode: string; model_inputs: string; deferred_inputs: string; outcome: string; drafts: string }, []>("SELECT * FROM extract_batches").get()!;
+    const setModelRef = (value: string) => {
+      const digest = createHash("sha256").update("kizuki.extract-filing/atomic-v1\0").update(JSON.stringify([
+        row.previous_cursor || null, row.cursor, value, JSON.parse(row.input_ids), row.batch_mode,
+        JSON.parse(row.model_inputs), JSON.parse(row.deferred_inputs), row.outcome,
+        (JSON.parse(row.drafts) as ClaimDraft[]).map(d => [d.kind, d.subject, d.predicate, d.object, d.polarity,
+          d.body, d.valid_from, d.valid_to, d.confidence, d.sensitivity, d.event_ids]),
+      ])).digest("hex");
+      // Bind raw bytes because Bun's SQLite string binder strips a leading BOM.
+      f.db.query("UPDATE extract_batches SET model_ref=CAST(? AS TEXT),integrity=?").run(Buffer.from(value), `atomic-v1:${digest}`);
+    };
+    setModelRef("\uFEFFfixture:\uFFFD\0é🙂");
+    expect(() => requireAtomicExtractReplay(f.db)).not.toThrow();
+    setModelRef("");
+    const before = f.db.query("SELECT * FROM extract_batches").all();
+    // The driver's default string decoding maps this invalid byte to empty text,
+    // producing the same decoded row and digest as the original valid text.
+    f.db.exec("UPDATE extract_batches SET model_ref=CAST(x'ff' AS TEXT)");
+    expect(f.db.query("SELECT * FROM extract_batches").all()).toEqual(before);
+    expect(() => requireAtomicExtractReplay(f.db)).toThrow("durable extraction batch is corrupt");
+    expect(f.db.query("SELECT hex(CAST(model_ref AS BLOB)) AS bytes FROM extract_batches").get())
+      .toEqual({ bytes: "FF" });
+  } finally { f.close(); }
+});
+
+test("metadata admission and payload fetch use one SQLite snapshot", async () => {
+  const f = fixture();
+  const writer = new Database(f.ledger);
+  const query = f.db.query.bind(f.db);
+  const statementSpies: { mockRestore(): void }[] = [];
+  let concurrentWrites = 0;
+  try {
+    journalExtractBatch(f.db, await mineLiveDrafts(f.db, f.model), "fixture:snapshot", f.model);
+    const querySpy = spyOn(f.db, "query").mockImplementation(<Row, Params extends SQLQueryBindings | SQLQueryBindings[]>(sql: string) => {
+      const statement = query<Row, Params>(sql);
+      if (sql.includes("typeof(") && sql.includes("extract_batches")) {
+        const all = statement.all.bind(statement);
+        statementSpies.push(spyOn(statement, "all").mockImplementation((...params) => {
+          const metadata = all(...params);
+          writer.exec("UPDATE extract_batches SET model_ref=CAST(zeroblob(4096) AS TEXT)");
+          concurrentWrites++;
+          return metadata;
+        }));
+      }
+      return statement;
+    });
+    try {
+      expect(() => requireAtomicExtractReplay(f.db)).not.toThrow();
+      expect(concurrentWrites).toBe(1);
+    } finally {
+      for (const spy of statementSpies.reverse()) spy.mockRestore();
+      querySpy.mockRestore();
+    }
+    // A subsequent preflight sees and refuses the newly committed row.
+    expect(() => requireAtomicExtractReplay(f.db)).toThrow("durable extraction batch is corrupt");
+  } finally { writer.close(); f.close(); }
+});
+
+test("a 128 MiB stored text refuses with bounded memory through guard, writer and sync rail", async () => {
+  const f = fixture();
+  try {
+    journalExtractBatch(f.db, await mineLiveDrafts(f.db, f.model), "fixture:resource-bound", f.model);
+    // Construct hostile bytes inside SQLite, avoiding a giant JS fixture string.
+    f.db.query("UPDATE extract_batches SET drafts=CAST(zeroblob(?) AS TEXT)").run(128 * 1024 * 1024);
+    f.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    for (const entry of ["guard", "writer", "rail"]) {
+      const child = Bun.spawnSync([process.execPath, "--eval", `
+        import { Database } from "bun:sqlite";
+        import { requireAtomicExtractReplay } from ${JSON.stringify(join(import.meta.dir, "../../src/serve/extract.ts"))};
+        import { runWritePass } from ${JSON.stringify(join(import.meta.dir, "../../src/serve/write-pass.ts"))};
+        import { runRail } from ${JSON.stringify(join(import.meta.dir, "../../src/serve/rails.ts"))};
+        import { createBudgetTracker } from ${JSON.stringify(join(import.meta.dir, "../../src/canon/budget.ts"))};
+        const db = new Database(${JSON.stringify(f.ledger)});
+        let error = null, hookCalls = 0;
+        try {
+          if (${JSON.stringify(entry)} === "guard") requireAtomicExtractReplay(db);
+          else if (${JSON.stringify(entry)} === "writer") await runWritePass(db, ${JSON.stringify(f.vault)}, { budget: createBudgetTracker({ canon_writes_per_run: 8 }) });
+          else {
+            const receipt = await runRail(db, ${JSON.stringify(f.vault)}, "sync", { hooks: { sync: async () => { hookCalls++; throw new Error("unexpected hook"); } } });
+            if (receipt.status !== "failed") throw new Error("unexpected successful rail");
+            error = receipt.errors[0];
+          }
+        } catch (cause) { error = cause instanceof Error ? cause.message : "unexpected error"; }
+        db.close();
+        console.log(JSON.stringify({ error, hookCalls }));
+      `], { stdout: "pipe", stderr: "pipe" });
+      expect(child.exitCode).toBe(0);
+      expect(child.stderr.toString()).toBe("");
+      expect(JSON.parse(child.stdout.toString())).toEqual({ error: "durable extraction batch is corrupt", hookCalls: 0 });
+      // Includes Bun and all imported modules, with ample room above their
+      // normal footprint. The rejected reader exceeded 580 MiB on this input.
+      expect(child.resourceUsage.maxRSS).toBeLessThan(192 * 1024 * 1024);
+    }
+    expect(existsSync(join(f.vault, ".kizuki", "write-pass.flock"))).toBe(false);
+    expect(f.calls.count).toBe(1);
+  } finally { f.close(); }
+}, 30_000);

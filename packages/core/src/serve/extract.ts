@@ -313,7 +313,7 @@ function validInput(value: unknown): value is DeferredInput {
 }
 function inputList(raw: string | null, field: string): DeferredInput[] {
   if (raw === null) return [];
-  if (Buffer.byteLength(raw, "utf8") > 8_192) throw new Error(`durable extraction ${field} is corrupt`);
+  if (raw.length > 8_192 || Buffer.byteLength(raw, "utf8") > 8_192) throw new Error(`durable extraction ${field} is corrupt`);
   let value: unknown;
   try { value = JSON.parse(raw); } catch { throw new Error(`durable extraction ${field} is corrupt`); }
   if (!Array.isArray(value) || value.length > EXTRACT_BATCH || !value.every(validInput) ||
@@ -416,21 +416,55 @@ interface StoredExtractRow {
   deferred_inputs: string | null;
 }
 
+const STORED_EXTRACT_FIELDS = [
+  ["previous_cursor", 256, false], ["cursor", 256, false], ["drafts", 1_600_000, false],
+  ["model_ref", 2_048, true], ["created_at", 64, false], ["input_ids", 4_096, true],
+  ["integrity", 74, true], ["outcome", 16, false], ["batch_mode", 16, false],
+  ["model_inputs", 8_192, true], ["deferred_inputs", 8_192, true],
+] as const;
+const STORED_EXTRACT_METADATA = STORED_EXTRACT_FIELDS.map(([field]) =>
+  `typeof(${field}) AS ${field}_type,octet_length(${field}) AS ${field}_bytes`).join(",");
+const STORED_EXTRACT_BYTES = STORED_EXTRACT_FIELDS.map(([field]) => `CAST(${field} AS BLOB) AS ${field}`).join(",");
+
 function storedExtractRows(db: Database): StoredExtractRow[] {
-  return db.query<StoredExtractRow, []>("SELECT * FROM extract_batches ORDER BY created_at, previous_cursor LIMIT 2").all();
+  // Metadata admission and payload fetch share a read snapshot. No arbitrary
+  // cell is returned to Bun, decoded or sorted before its storage bounds pass.
+  return db.transaction(() => {
+    const metadata = db.query<Record<string, string | number | null>, []>(
+      `SELECT ${STORED_EXTRACT_METADATA} FROM extract_batches LIMIT 2`,
+    ).all();
+    if (metadata.length > 1) throw new Error("durable extraction batch is corrupt");
+    if (metadata.length === 0) return [];
+    for (const [field, maxBytes, nullable] of STORED_EXTRACT_FIELDS) {
+      const kind = metadata[0]![`${field}_type`];
+      const size = metadata[0]![`${field}_bytes`];
+      if (kind === "null" && nullable && size === null) continue;
+      if (kind !== "text" || typeof size !== "number" || !Number.isSafeInteger(size) || size < 0 || size > maxBytes) {
+        throw new Error("durable extraction batch is corrupt");
+      }
+    }
+    const rows = db.query<Record<keyof StoredExtractRow, Uint8Array | null>, []>(
+      `SELECT ${STORED_EXTRACT_BYTES} FROM extract_batches LIMIT 2`,
+    ).all();
+    const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+    try {
+      return rows.map(row => Object.fromEntries(STORED_EXTRACT_FIELDS.map(([field]) =>
+        [field, row[field] === null ? null : decoder.decode(row[field]!)])) as unknown as StoredExtractRow);
+    } catch {
+      throw new Error("durable extraction batch is corrupt");
+    }
+  }).deferred();
 }
 
 function boundedStoredText(value: unknown, maxBytes: number, nullable = false): boolean {
-  return (nullable && value === null) || (typeof value === "string" && Buffer.byteLength(value, "utf8") <= maxBytes);
+  return (nullable && value === null) || (typeof value === "string" && value.length <= maxBytes && Buffer.byteLength(value, "utf8") <= maxBytes);
 }
 
 /** Only row bytes enter this parser: it cannot read or refresh events, sources, or ports. */
 function parseStoredExtractBatch(row: StoredExtractRow): DurableExtractBatch {
   if (Object.keys(row).sort().join(",") !== "batch_mode,created_at,cursor,deferred_inputs,drafts,input_ids,integrity,model_inputs,model_ref,outcome,previous_cursor" ||
-      !boundedStoredText(row.previous_cursor, 256) || !boundedStoredText(row.cursor, 256) ||
-      !boundedStoredText(row.drafts, 1_600_000) || !boundedStoredText(row.model_ref, 2_048, true) ||
-      !boundedStoredText(row.created_at, 64) || !isRfc3339(row.created_at) ||
-      !boundedStoredText(row.input_ids, 4_096, true) || !boundedStoredText(row.integrity, 74, true)) {
+      STORED_EXTRACT_FIELDS.some(([field, maxBytes, nullable]) => !boundedStoredText(row[field], maxBytes, nullable)) ||
+      !isRfc3339(row.created_at)) {
     throw new Error("durable extraction batch is corrupt");
   }
   const filingVersion = extractBatchFilingVersion(row.integrity);
@@ -597,11 +631,11 @@ export function purgeExtractInputs(db: Database, eventIds: ReadonlySet<string>, 
   let legacyManifest = false;
   let unhashedLegacy = false;
   try {
-    const stored = db.query<{ model_inputs: string | null; deferred_inputs: string | null; integrity: string | null }, []>(
-      "SELECT model_inputs,deferred_inputs,integrity FROM extract_batches ORDER BY created_at,previous_cursor LIMIT 1",
+    const stored = db.query<{ legacy_manifest: number; unhashed: number }, []>(
+      "SELECT model_inputs IS NULL AND deferred_inputs IS NULL AS legacy_manifest,integrity IS NULL AS unhashed FROM extract_batches LIMIT 1",
     ).get();
-    legacyManifest = stored !== null && stored.model_inputs === null && stored.deferred_inputs === null;
-    unhashedLegacy = stored !== null && stored.integrity === null;
+    legacyManifest = stored?.legacy_manifest === 1;
+    unhashedLegacy = stored?.unhashed === 1;
     batch = readStoredExtractBatch(db, false);
   } catch {
     // Derived decisions cannot veto an owner purge. Do not parse or preserve

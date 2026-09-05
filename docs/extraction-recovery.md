@@ -43,6 +43,11 @@ input shapes, stored input relationships and the domain-bound digest. The same
 parser supplies the later durable reader, whose separate live checks own event
 existence, source authorization, origin and the current input partition. The
 early parser reads no events, refreshes no origin annotations and calls no port.
+Before loading that row, SQLite admits at most one row using the storage type,
+nullability and byte length of every expected field. The bounded payload fetch
+shares the same read snapshot and uses explicit raw-byte columns, without
+sorting stored text. Fatal UTF-8 decoding rejects malformed bytes instead of
+normalizing them into a different, apparently valid decision.
 Malformed current rows refuse before old claims can revive or reservations can
 settle. Non-RFC timestamps and scalar fields exceeding the existing archive
 bounds are treated as corrupt.
