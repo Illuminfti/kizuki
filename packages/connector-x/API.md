@@ -16,6 +16,8 @@ The reference contains a `kizuki.x-api-state/v1` envelope. The envelope binds
 the public client ID digest, provider account ID, selected fields, history start,
 OAuth state, pending page plan, and cooldown. Token strings never belong in
 connector configuration, cursors, health, or event metadata.
+The envelope also records authorization as `active`, `pending` revocation, or
+`revoked`; restoring either revocation state performs no automatic egress.
 
 ```ts
 const connector = createXApiConnector({
@@ -43,6 +45,8 @@ The host must approve the source capture grant before calling its ingestion
 runner. Event sensitivity defaults to `private` and has a `private` floor.
 Configuration, saved scopes, client identity, and selected fields are checked
 before API requests; account identity is verified before every capture call.
+History starts normalize to UTC only when millisecond precision preserves the
+exact supplied instant; a finer nonzero fractional boundary is refused.
 
 ## Projection and wire contract
 
@@ -57,6 +61,13 @@ relationships, links, and media references. No provider error prose is copied
 into events or failure receipts. A response containing partial errors, a foreign
 author, missing required fields, conflicting aliases, or incomplete selected
 media references refuses the whole page.
+
+Selected mentions use inline native IDs or the documented same-page
+`entities.mentions.username` user expansion, requested with `user.fields=id,username`.
+Username-only mentions require an unambiguous native ID in `includes.users`;
+missing or conflicting bindings refuse. At most 6,400 expanded user identities
+are examined within the same 2 MiB response bound. Expanded profile prose is
+discarded. No extra user-lookup request or guessed username identity is used.
 
 `tweet-v2` explicitly selects the official timeline integration guide's
 `tweet.fields` query and `/tweets` routes. The parser accepts documented
@@ -74,6 +85,9 @@ time and keeps the previously committed post ID as its lower frontier. The new
 frontier is promoted only after a terminal provider page. Continuation tokens
 are opaque, bounded, and cycle checked. A rejected continuation may restart that
 same frozen window once; it cannot move the lower frontier or switch dialects.
+The cumulative continuation count survives that restart. Only its per-traversal
+token-cycle history resets. Exhausting the 64-continuation allowance refuses the
+page with the previous host cursor and unpromoted frontier.
 
 Before yielding, the connector persists a content-free plan containing the exact
 IDs, event hashes, fixed observation time, and proposed cursor. A retry with the
@@ -94,8 +108,11 @@ uses the committed ID; it does not rescan older posts for later edits.
 
 Each operation admits at most five provider requests, including token work, in
 45 seconds; each request and durable write has a five-second deadline.
-Interactive enrollment has a 120-second outer deadline. Responses are limited
-to 2 MiB, normalized batches to 3 MiB, post text to 128 KiB, selected mentions to
+Interactive enrollment has a 120-second outer deadline. GET response headers are
+limited to 64 entries and 16 KiB of delivered name/value bytes before status or
+body normalization. This bounds processing after `fetch` delivers the response;
+it cannot bound the HTTP implementation's earlier header allocation. Bodies are
+limited to 2 MiB, normalized batches to 3 MiB, post text to 128 KiB, selected mentions to
 64, links to 32, and media references to 16 per post. Walks permit at most 64
 continuations; tokens are at most 2 KiB, cursors 8 KiB, and state 256 KiB.
 
@@ -107,14 +124,29 @@ overwrite a replacement enrollment. A deadline refusal before transport leaves
 the old refresh token usable in a fresh operation on the same session.
 
 A 401 permits one refresh and one retry. Payment and permission errors stay
-distinct. A 429 writes a durable cooldown before returning unavailable, and a
-restarted connector observes that cooldown without provider requests. Health is
-local and remains degraded because coverage is incomplete.
+distinct. GET 429 hints are untrusted input: valid numeric or HTTP-date hints
+are clamped to a local automatic delay between one second and 24 hours;
+absent or malformed hints use 60 seconds. This cap is a local scheduling rule,
+not a claim about the provider's actual reset time. OAuth transport does not
+expose headers, so token-endpoint 429 uses the same fixed 60-second default.
+Both paths persist cooldown before returning rate limited. Token 429 retains
+the old session only after durable original-CAS persistence; a failed/timed-out
+write fences the caller, while a late write can preserve cooldown through its
+original custody. A restarted connector observes saved cooldown without provider
+requests. Health is local and remains degraded because coverage is incomplete.
 
 Contract `revoke` and `close` stop local work immediately. The separate explicit
-`revokeProviderAccess` method revokes provider authorization; it does not delete
-provider content. Missing posts and HTTP 404 never imply deletion. The manifest
-declares neither tombstones nor purge, and `purgeSource` returns `not_supported`.
+`revokeProviderAccess` first persists pending revocation, then revokes the offline
+refresh credential and the access credential, and records terminal revocation
+only after both succeed. Capture and refresh are forbidden throughout. A
+partial failure or late pending write leaves a fence that a restored connector
+can load without egress; only another explicit `revokeProviderAccess` call may
+retry the provider revocations. Already revoked tokens are handled idempotently
+by the core OAuth helper. Local instances always close after an attempted revoke.
+Native CAS prevents a stale refresh, cooldown, or competing revoke from replacing
+a newer enrollment or revocation fence. This flow does not delete provider
+content. Missing posts and HTTP 404 never imply deletion. The manifest declares
+neither tombstones nor purge, and `purgeSource` returns `not_supported`.
 
 ## Verification
 
@@ -122,7 +154,9 @@ All provider fixtures and credentials are synthetic. Tests include real PKCE
 callbacks, parser aliases, frozen pagination, exact replay after partial ledger
 acceptance, an actual child exit after durable plan write, request/body limits,
 same-session token admission retry, late rotation, and native state replacement
-for both the same and a different account. The shared legacy conformance suite
+for both the same and a different account. Additional cases cover token 429,
+late/stale cooldown persistence, cumulative restart limits, bounded headers,
+pending provider-revoke retry, and concurrent native revocation. The shared legacy conformance suite
 checks contract behavior; dedicated native tests prove unavailable batches are
 recorded by the host without cursor advancement.
 
@@ -137,3 +171,5 @@ Provider references: [timeline integration](https://docs.x.com/x-api/posts/timel
 [user posts endpoint](https://docs.x.com/x-api/users/get-posts),
 [pagination](https://docs.x.com/x-api/fundamentals/pagination), and
 [OAuth 2.0 PKCE](https://docs.x.com/fundamentals/authentication/oauth-2-0/authorization-code).
+Username-only mention shapes and user expansions are illustrated in the
+[official data dictionary](https://docs.x.com/x-api/fundamentals/data-dictionary/reference).

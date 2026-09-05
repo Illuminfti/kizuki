@@ -17,6 +17,7 @@ export class XApiFixture {
   access = "SYNTHETIC_X_ACCESS_CANARY_0";
   refresh = "SYNTHETIC_X_REFRESH_CANARY_0";
   tokenCount = 0;
+  readonly revokedTokens = new Set<string>();
   failStatus = 0;
   retryAfter = "60";
   authorize = false;
@@ -29,7 +30,7 @@ export class XApiFixture {
     this.selected = selection(selected);
     this.records = Array.from({ length: count }, (_, i) => ({ id: String(100 + i), author_id: this.account, text: `Synthetic own post ${i}.`,
       created_at: new Date(Date.parse("2026-01-02T00:00:00Z") + i * 1000).toISOString() }));
-    this.state = encodeState({ schema: X_API_STATE_SCHEMA, app: digest(this.clientId), selection: this.selected, checkpoint: null, pending: null, retry_at: null,
+    this.state = encodeState({ schema: X_API_STATE_SCHEMA, app: digest(this.clientId), selection: this.selected, checkpoint: null, pending: null, retry_at: null, revocation: "active",
       oauth: { schema: "kizuki.oauth-state/v1", provider: X_API_CONNECTOR_ID, account: { id: this.account, display: "X account" }, written_at: this.time.toISOString(),
         tokens: { access_token: this.access, refresh_token: this.refresh, expires_at: "2027-01-01T00:00:00.000Z", scope: X_API_SCOPES.join(" "), token_type: "Bearer" } } });
   }
@@ -69,9 +70,9 @@ export class XApiFixture {
     postForm: async (url, form) => {
       this.forms.push({ url, form: { ...form } });
       const intercepted = await this.beforeToken?.(url, form); if (intercepted !== undefined) return intercepted;
-      if (url.endsWith("/revoke")) return { status: 200, body: { revoked: true } };
+      if (url.endsWith("/revoke")) { this.revokedTokens.add(form.token!); return { status: 200, body: { revoked: true } }; }
       if (url !== "https://api.x.com/2/oauth2/token" || !["refresh_token", "authorization_code"].includes(form.grant_type ?? "")) throw Error("unexpected synthetic OAuth request");
-      if (form.grant_type === "refresh_token" && form.refresh_token !== this.refresh) return { status: 400, body: { error: "invalid_grant" } };
+      if (form.grant_type === "refresh_token" && (form.refresh_token !== this.refresh || this.revokedTokens.has(form.refresh_token))) return { status: 400, body: { error: "invalid_grant" } };
       this.tokenCount++; this.access = `SYNTHETIC_X_ACCESS_CANARY_${this.tokenCount}`; this.refresh = `SYNTHETIC_X_REFRESH_CANARY_${this.tokenCount}`;
       return { status: 200, body: { access_token: this.access, refresh_token: this.refresh, expires_in: 7200, scope: X_API_SCOPES.join(" "), token_type: "Bearer" } };
     },

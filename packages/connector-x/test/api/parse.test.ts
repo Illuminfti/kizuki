@@ -51,3 +51,29 @@ test("empty continuation is resumable and optional field selection excludes its 
   expect(minimal.events[0]?.attachments).toEqual([]);
   expect(minimal.events[0]?.metadata?.urls).toBeUndefined();
 });
+
+test("username-only mentions bind to same-page native user IDs in normal and long posts", () => {
+  for (const long of [false, true]) {
+    const entity = { mentions: [{ username: "Peer" }] }, raw: Record<string, unknown> = { id: "100", author_id: "7", text: "Synthetic @peer mention.", created_at: "2026-01-02T00:00:00Z", entities: entity };
+    if (long) raw.note_tweet = { text: "A longer synthetic @peer mention.", entities: entity };
+    const document = { data: [raw], meta: { result_count: 1 }, includes: { users: [{ id: "8", username: "peer", description: "SYNTHETIC_PROFILE_PROSE_CANARY" }] } };
+    const parsed = parsePage(document, "7", selected, "2026-02-01T00:00:00Z");
+    expect(parsed.events[0]!.subjects).toContainEqual({ subject_id: "x:user:8", role: "about" });
+    expect(JSON.stringify(parsed.events)).not.toContain("SYNTHETIC_PROFILE_PROSE_CANARY");
+    expect(parsed.events[0]!.text).toContain(long ? "longer" : "Synthetic");
+  }
+});
+
+test("missing or conflicting mention expansion identity refuses instead of guessing a native ID", () => {
+  const row = { id: "100", author_id: "7", text: "Synthetic @peer mention.", created_at: "2026-01-02T00:00:00Z", entities: { mentions: [{ username: "peer" }] } };
+  for (const included of [
+    {}, { users: [{ id: "8", username: "other" }] },
+    { users: [{ id: "8", username: "peer" }, { id: "9", username: "PEER" }] },
+    { users: [{ id: "8", username: "peer" }, { id: "8", username: "other" }] },
+    { users: [{ id: "8", username: "peer", withheld: {} }] },
+  ]) expect(() => parsePage({ data: [row], meta: { result_count: 1 }, includes: included }, "7", selected, "2026-02-01T00:00:00Z")).toThrow("partial_response");
+  expect(() => parsePage({ data: [row], meta: { result_count: 1 }, includes: { users: Array.from({ length: 6401 }, (_, i) => ({ id: String(i + 1), username: `user${i}` })) } }, "7", selected, "2026-02-01T00:00:00Z")).toThrow("response_limit");
+  const conflict = { ...row, entities: { mentions: [{ username: "peer", id: "9" }] } };
+  expect(() => parsePage({ data: [conflict], meta: { result_count: 1 }, includes: { users: [{ id: "8", username: "peer" }] } }, "7", selected, "2026-02-01T00:00:00Z")).toThrow("identity_mismatch");
+  expect(parsePage({ data: [row], meta: { result_count: 1 } }, "7", selection({ ...selected, fields: [] }), "2026-02-01T00:00:00Z").events[0]!.subjects).toEqual([{ subject_id: "x:user:7", role: "from" }]);
+});

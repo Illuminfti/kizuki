@@ -14,7 +14,7 @@ const MANIFEST = freezeManifest({ schema: "kizuki.connector/v1", connector_id: X
   capabilities: { backfill: true, sync: true, tombstones: false, purge: false, fixture: true }, required_secrets: [],
   emits_sensitivity_hint: true, default_sensitivity: "private", sensitivity_floor: "private", auth_modes: ["oauth", "secret_ref"] });
 interface Custody { state: XApiState; persist: StatePersister }
-interface TokenAdmission { budget: ApiBudget; refusal: ReturnType<typeof failure> | null }
+interface TokenAdmission { budget: ApiBudget; refusal: ReturnType<typeof failure> | null; rateLimited: boolean }
 
 export class XApiConnector implements Connector {
   private state: XApiState | null = null;
@@ -43,7 +43,7 @@ export class XApiConnector implements Connector {
   }
   manifest() { return freezeManifest({ ...MANIFEST, required_secrets: this.config.secret_ref === undefined ? [] : [this.config.secret_ref] }); }
   async health() {
-    return new HealthReport({ state: this.disabled ? "disabled" : this.state?.retry_at !== null && this.state?.retry_at !== undefined && Date.parse(this.state.retry_at) > this.now().getTime() ? "rate_limited" : this.last,
+    return new HealthReport({ state: this.disabled || this.state !== null && this.state.revocation !== "active" ? "disabled" : this.state?.retry_at !== null && this.state?.retry_at !== undefined && Date.parse(this.state.retry_at) > this.now().getTime() ? "rate_limited" : this.last,
       checked_at: this.now().toISOString(), detail: COVERAGE, last_success_at: this.lastSuccess });
   }
   private provider(): OAuthProvider {
@@ -55,7 +55,7 @@ export class XApiConnector implements Connector {
   private selected(): XApiSelection { if (this.config.selection === undefined) throw failure("misconfigured"); return selection(this.config.selection); }
   private live(generation = this.generation): void { if (this.disabled || this.reloadRequired || generation !== this.generation) throw failure("unavailable"); }
   private idle(): void { this.live(); if (this.busy || this.pendingTokens > 0 || this.pendingWrites > 0) throw failure("unavailable"); }
-  private require(): XApiState { this.live(); if (this.state === null || this.session === null) throw failure("unauthenticated"); return this.state; }
+  private require(): XApiState { this.live(); if (this.state === null || this.session === null || this.state.revocation !== "active") throw failure("unauthenticated"); return this.state; }
   private invalidate(generation: number): void {
     if (generation !== this.generation) return;
     this.generation++; this.reloadRequired = true; this.last = "unauthenticated";
@@ -70,8 +70,25 @@ export class XApiConnector implements Connector {
         ![`${X_API_ORIGIN}/2/oauth2/token`, `${X_API_ORIGIN}/2/oauth2/revoke`].includes(url)) throw failure("unavailable");
       try { admission.budget.requestMs(); }
       catch (error) { admission.refusal = normalizedFailure(error); throw error; }
-      return this.transport.postForm(url, form);
+      const custody = this.custody;
+      if (custody === null) throw failure("misconfigured");
+      return this.transport.postForm(url, form).then(async response => {
+        if (response.status === 429) {
+          // The core transport does not expose headers. Preserve a bounded
+          // default cooldown through original custody, including late delivery.
+          await this.commitCustody(custody, { ...custody.state, retry_at: new Date(this.now().getTime() + 60_000).toISOString() }, generation);
+          admission.rateLimited = true;
+        }
+        return response;
+      });
     } };
+  }
+  private async commitCustody(custody: Custody, next: XApiState, generation: number): Promise<void> {
+    this.pendingWrites++;
+    try {
+      await custody.persist(encodeState(next)); custody.state = next;
+      if (generation === this.generation && !this.disabled && !this.reloadRequired) this.state = next;
+    } finally { this.pendingWrites--; }
   }
   private async persist(next: XApiState, budget: ApiBudget, generation = this.generation): Promise<void> {
     this.live(generation);
@@ -97,19 +114,21 @@ export class XApiConnector implements Connector {
       if (state.app !== digest(provider.client_id) || digest(state.selection) !== digest(selected) ||
         this.config.expected_account !== undefined && state.oauth.account.id !== this.config.expected_account) throw failure("identity_mismatch");
       const custody: Custody = { state, persist: this.deps.persist }; this.state = state; this.custody = custody;
+      if (state.revocation !== "active") { this.last = "disabled"; return; }
       this.session = new OAuthSession({ provider, state: state.oauth, transport: this.tokenTransport(generation), now: this.now,
         persist: async bytes => {
           const oauth = parseOAuthState(bytes, X_API_CONNECTOR_ID);
           if (oauth.account.id !== custody.state.oauth.account.id) throw failure("identity_mismatch");
-          const next = { ...custody.state, oauth }; this.pendingWrites++;
-          try { await custody.persist(encodeState(next)); custody.state = next; if (generation === this.generation && !this.disabled && !this.reloadRequired) this.state = next; }
-          finally { this.pendingWrites--; }
+          await this.commitCustody(custody, { ...custody.state, oauth }, generation);
         } });
       if (state.retry_at === null || Date.parse(state.retry_at) <= this.now().getTime()) {
         if (parseAccount(await this.call(new URL(`${X_API_ORIGIN}/2/users/me`), budget)) !== state.oauth.account.id) throw failure("identity_mismatch");
       }
       this.last = "degraded";
-    } catch (error) { this.invalidate(generation); throw error instanceof DeadlineError ? failure("timeout") : normalizedFailure(error); }
+    } catch (error) {
+      if (failureRule(error) === "rate_limited" && generation === this.generation && this.state !== null && !this.reloadRequired) { this.last = "rate_limited"; return; }
+      this.invalidate(generation); throw error instanceof DeadlineError ? failure("timeout") : normalizedFailure(error);
+    }
     finally { this.operationBudget = null; this.busy = false; }
   }
   async signIn(io: SignInIo, writer: ConnectionStateWriter) {
@@ -141,13 +160,13 @@ export class XApiConnector implements Connector {
         const tokens = await signInWithBrowser(provider, io, transport, { timeoutMs: budget.remaining(), now: this.now });
         if (!active) throw failure("timeout"); this.live(generation);
         if (!X_API_SCOPES.every(scope => tokens.scope.split(/\s+/).includes(scope)) || tokens.refresh_token === null) throw failure("unauthenticated");
-        const account = parseAccount(await request(new URL(`${X_API_ORIGIN}/2/users/me`), tokens.access_token, budget, this.deps.fetch));
+        const account = parseAccount(await request(new URL(`${X_API_ORIGIN}/2/users/me`), tokens.access_token, budget, this.deps.fetch, () => this.now().getTime()));
         if (!active) throw failure("timeout"); this.live(generation);
         if (this.config.expected_account !== undefined && account !== this.config.expected_account || previous !== null &&
           (previous.oauth.account.id !== account || previous.app !== digest(provider.client_id) || digest(previous.selection) !== digest(selected))) throw failure("identity_mismatch");
         const state: XApiState = { schema: X_API_STATE_SCHEMA, app: digest(provider.client_id), selection: selected,
           oauth: { schema: "kizuki.oauth-state/v1", provider: X_API_CONNECTOR_ID, account: { id: account, display: "X account" }, tokens, written_at: this.now().toISOString() },
-          checkpoint: previous?.checkpoint ?? null, pending: previous?.pending ?? null, retry_at: previous?.retry_at ?? null };
+          checkpoint: previous?.checkpoint ?? null, pending: previous?.pending ?? null, retry_at: previous?.retry_at ?? null, revocation: "active" };
         const bytes = encodeState(state), ms = Math.min(X_API_REQUEST_MS, budget.remaining());
         this.invalidate(generation); const targetGeneration = this.generation; this.pendingWrites++;
         const assertActive = () => { if (!active || this.disabled || this.generation !== targetGeneration) throw failure("unavailable"); };
@@ -160,12 +179,13 @@ export class XApiConnector implements Connector {
     finally { active = false; if (listener !== null) void (listener as Awaited<ReturnType<OAuthTransport["listen"]>>).close().catch(() => undefined); this.busy = false; }
   }
   private async token<T>(start: () => Promise<T>, budget: ApiBudget): Promise<T> {
-    const generation = this.generation, ms = Math.min(X_API_REQUEST_MS, budget.remaining()), admission: TokenAdmission = { budget, refusal: null };
+    const generation = this.generation, ms = Math.min(X_API_REQUEST_MS, budget.remaining()), admission: TokenAdmission = { budget, refusal: null, rateLimited: false };
     this.admission = admission; this.pendingTokens++;
     const pending = Promise.resolve().then(() => { this.live(generation); return start(); }).finally(() => { this.pendingTokens--; });
     try { const result = await withDeadline(pending, ms, "X token deadline"); this.live(generation); return result; }
     catch (error) {
       if (admission.refusal !== null) throw admission.refusal;
+      if (admission.rateLimited && generation === this.generation && !this.disabled && !this.reloadRequired) { this.last = "rate_limited"; throw failure("rate_limited"); }
       this.invalidate(generation); throw failure(error instanceof DeadlineError ? "timeout" : "unauthenticated");
     } finally { if (this.admission === admission) this.admission = null; }
   }
@@ -174,12 +194,12 @@ export class XApiConnector implements Connector {
     let access = await this.token(() => session.accessToken(), budget);
     try {
       let response: Record<string, unknown>;
-      try { response = await request(url, access, budget, this.deps.fetch); }
+      try { response = await request(url, access, budget, this.deps.fetch, () => this.now().getTime()); }
       catch (error) {
         if (!(error instanceof HttpFailure) || error.status !== 401) throw error;
         await this.token(() => session.refresh(), budget);
         access = await this.token(() => session.accessToken(), budget);
-        response = await request(url, access, budget, this.deps.fetch);
+        response = await request(url, access, budget, this.deps.fetch, () => this.now().getTime());
       }
       this.live(generation); return response;
     } catch (error) {
@@ -216,7 +236,7 @@ export class XApiConnector implements Connector {
       // A previously issued continuation can be rejected after it expires.
       // Restart that exact frozen window once; never advance its lower bound.
       if (!(error instanceof HttpFailure) || error.status !== 400 || base.next === null || base.restarts !== 0) throw error;
-      const restarted = { ...base, next: null, pages: 0, seen: [], restarts: 1 };
+      const restarted = { ...base, next: null, seen: [], restarts: 1 };
       return { page: await fetchPage(restarted), base: restarted };
     }
   }
@@ -265,9 +285,19 @@ export class XApiConnector implements Connector {
   }
   /** Provider authorization revocation is explicit; it does not delete provider content. */
   async revokeProviderAccess(): Promise<void> {
-    this.idle(); this.require(); this.busy = true; const budget = this.budget(); this.operationBudget = budget;
-    try { const access = this.session!.tokens().access_token; await this.token(() => revokeToken(this.provider(), access, this.tokenTransport(this.generation)), budget); await this.close(); }
-    finally { this.operationBudget = null; this.busy = false; }
+    this.idle(); const state = this.state;
+    if (state === null) throw failure("unauthenticated");
+    this.busy = true; const budget = this.budget(); this.operationBudget = budget;
+    try {
+      if (state.revocation === "revoked") return;
+      if (state.revocation === "active") await this.persist({ ...state, revocation: "pending" }, budget);
+      if (state.retry_at !== null && Date.parse(state.retry_at) > this.now().getTime()) throw failure("rate_limited");
+      const tokens = state.oauth.tokens;
+      for (const token of [tokens.refresh_token!, tokens.access_token]) {
+        await this.token(() => revokeToken(this.provider(), token, this.tokenTransport(this.generation)), budget);
+      }
+      await this.persist({ ...this.state!, revocation: "revoked", retry_at: null }, budget);
+    } finally { await this.close(); this.operationBudget = null; this.busy = false; }
   }
   /** Contract revoke is immediate local cessation, including during provider failure. */
   async revoke(): Promise<void> { await this.close(); }

@@ -5,6 +5,13 @@ import { XApiFixture } from "../../src/api/testkit";
 import { digest, encodeState, parseCursor, parseState, selection } from "../../src/api/state";
 
 const ids = (events: { source_record_id: string }[]) => events.map(event => event.source_record_id);
+test("history selection refuses precision that would widen the requested lower boundary", () => {
+  for (const start of ["2026-01-01T00:00:00.0001Z", "2026-01-01T01:00:00.123001+01:00"]) {
+    expect(() => selection({ fields: [], history_start: start, wire_profile: "tweet-v2" })).toThrow("misconfigured");
+  }
+  expect(selection({ fields: [], history_start: "2026-01-01T01:00:00.123000+01:00", wire_profile: "tweet-v2" }).history_start).toBe("2026-01-01T00:00:00.123Z");
+});
+
 test("bounded pages retain the old frontier until the whole available walk is accepted", async () => {
   const f = new XApiFixture(5), port = await f.connected();
   let cursor: string | null = null; const collected: string[] = [];
@@ -131,4 +138,22 @@ test("a failed reload removes prior credentials and returns the host's unavailab
   f.requests = [];
   expect(await port.sync(null)).toMatchObject({ events: [], cursor: null, status: "unavailable" });
   expect(f.requests).toEqual([]); expect((await port.health()).state).not.toBe("ok");
+});
+
+test("one rejected continuation cannot replenish the cumulative frozen-walk budget", async () => {
+  const f = new XApiFixture(64, 1), port = await f.connected(); let rejected = false, continuations = 0, stopped = false;
+  f.before = async request => {
+    if (new URL(request.url).searchParams.get("pagination_token") === "page-5" && !rejected) { rejected = true; return Response.json({}, { status: 400 }); }
+  };
+  let cursor: string | null = null;
+  for (let i = 0; i < 100; i++) {
+    const batch = await port.sync(cursor);
+    if (batch.status === "unavailable") { expect(batch.cursor).toBe(cursor); expect(batch.detail).toContain("pagination_gap"); stopped = true; break; }
+    const decoded = parseCursor(batch.cursor!); expect(decoded.committed).toBeNull();
+    if (decoded.phase === "walk") continuations++;
+    expect(decoded.pages).toBe(continuations); cursor = batch.cursor;
+  }
+  expect(rejected).toBe(true); expect(stopped).toBe(true); expect(continuations).toBe(64);
+  expect(parseCursor(cursor!).restarts).toBe(1); expect(parseCursor(cursor!).seen.length).toBeLessThan(parseCursor(cursor!).pages);
+  expect(parseState(f.state).checkpoint).toBe(cursor); await port.close();
 });

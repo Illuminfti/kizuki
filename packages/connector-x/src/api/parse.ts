@@ -27,10 +27,33 @@ function aliased<T>(raw: Record<string, unknown>, modern: string, legacy: string
   if (a !== undefined && b !== undefined && digest(parsed) !== digest(parse(b))) throw failure();
   return parsed;
 }
-function entities(raw: unknown, selected: XApiSelection): { mentions: string[]; urls: string[] } {
+function username(value: unknown): string {
+  if (typeof value !== "string" || !/^[A-Za-z0-9_]{1,15}$/.test(value)) throw failure();
+  return value.toLowerCase();
+}
+function users(raw: Record<string, unknown>, selected: XApiSelection): Map<string, string> {
+  const result = new Map<string, string>();
+  if (!selected.fields.includes("relationships")) return result;
+  const included = optionalObject(raw.includes), ids = new Set<string>();
+  if (Array.isArray(included?.users) && included.users.length > MAX_PAGE_POSTS * 64) throw failure("response_limit");
+  for (const item of included?.users === undefined ? [] : array(included.users, MAX_PAGE_POSTS * 64)) {
+    const value = object(item), key = username(value.username), native = id(value.id);
+    if (result.has(key) || ids.has(native) || value.withheld !== undefined) throw failure("partial_response");
+    result.set(key, native); ids.add(native);
+  }
+  return result;
+}
+function mention(raw: unknown, users: Map<string, string>): string {
+  const value = object(raw), native = value.id === undefined ? null : id(value.id);
+  const expanded = value.username === undefined ? undefined : users.get(username(value.username));
+  if (native !== null && expanded !== undefined && native !== expanded) throw failure("identity_mismatch");
+  if (native === null && expanded === undefined) throw failure("partial_response");
+  return native ?? expanded!;
+}
+function entities(raw: unknown, selected: XApiSelection, users: Map<string, string>): { mentions: string[]; urls: string[] } {
   const value = optionalObject(raw);
   const mentions = selected.fields.includes("relationships") && value?.mentions !== undefined ?
-    array(value.mentions, 64).map(item => id(object(item).id)) : [];
+    array(value.mentions, 64).map(item => mention(item, users)) : [];
   const urls = selected.fields.includes("links") && value?.urls !== undefined ?
     array(value.urls, 32).map(item => url(object(item).expanded_url)) : [];
   return { mentions: [...new Set(mentions)], urls: [...new Set(urls)] };
@@ -52,13 +75,13 @@ function mediaRefs(raw: Record<string, unknown>, selected: XApiSelection): Map<s
   }
   return result;
 }
-function mapPost(raw: unknown, account: string, selected: XApiSelection, observed: string, media: Map<string, MediaRef>): CaptureEventInput {
+function mapPost(raw: unknown, account: string, selected: XApiSelection, observed: string, media: Map<string, MediaRef>, users: Map<string, string>): CaptureEventInput {
   const value = object(raw), postId = id(value.id), author = id(value.author_id);
   if (author !== account) throw failure("identity_mismatch");
   if (value.withheld !== undefined) throw failure("partial_response");
   const baseText = text(value.text);
   const note = aliased(value, "note_post", "note_tweet", raw => {
-    const note = object(raw); return { text: text(note.text), entities: entities(note.entities ?? value.entities, selected) };
+    const note = object(raw); return { text: text(note.text), entities: entities(note.entities ?? value.entities, selected, users) };
   });
   const relation = selected.fields.includes("relationships");
   const refs = relation ? aliased(value, "referenced_posts", "referenced_tweets", raw => array(raw, 3).map(item => {
@@ -68,7 +91,7 @@ function mapPost(raw: unknown, account: string, selected: XApiSelection, observe
   })) ?? [] : [];
   const edits = aliased(value, "edit_history_post_ids", "edit_history_tweet_ids", raw => array(raw, 16).map(id)) ?? [postId];
   if (!edits.includes(postId) || edits.length === 0 || new Set(edits).size !== edits.length) throw failure();
-  const includedEntities = note?.entities ?? entities(value.entities, selected);
+  const includedEntities = note?.entities ?? entities(value.entities, selected, users);
   const reply = relation && value.in_reply_to_user_id !== undefined ? id(value.in_reply_to_user_id) : null;
   const subjects: SubjectRef[] = [{ subject_id: `x:user:${account}`, role: "from" }];
   if (reply !== null && reply !== account) subjects.push({ subject_id: `x:user:${reply}`, role: "to" });
@@ -98,8 +121,8 @@ export function parsePage(raw: unknown, account: string, selected: XApiSelection
   const rows = value.data === undefined ? [] : array(value.data, MAX_PAGE_POSTS);
   const meta = value.meta === undefined && mode === "lookup" ? { result_count: rows.length } : object(value.meta);
   if (meta.result_count !== rows.length) throw failure("partial_response");
-  const media = mediaRefs(value, selected);
-  const events = rows.map(row => mapPost(row, account, selected, observed, media));
+  const media = mediaRefs(value, selected), identities = users(value, selected);
+  const events = rows.map(row => mapPost(row, account, selected, observed, media, identities));
   const ids = events.map(event => event.source_record_id.slice(5));
   if (new Set(ids).size !== ids.length) throw failure();
   const sortedIds = [...ids].sort((a, b) => BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0);

@@ -64,7 +64,7 @@ await runToCompletion(db,port,${JSON.stringify(ID)},${JSON.stringify(source)},"b
   } finally { db.close(); rmSync(root, { recursive: true, force: true }); }
 }, 10_000);
 
-for (const replacement of ["none", "same-account", "different-account"] as const) test(`late rotation keeps original native CAS after close: ${replacement}`, async () => {
+for (const replacement of ["none", "same-account", "different-account", "revocation-pending", "revocation-pending-429"] as const) test(`late token work keeps original native CAS after close: ${replacement}`, async () => {
   const root = mkdtempSync(join(tmpdir(), "x-api-custody-")); let db = openLedger(join(root, "ledger.db"));
   try {
     const f = new XApiFixture(1), state = parseState(f.state); state.oauth.tokens.expires_at = "2026-02-01T01:00:00Z"; f.state = encodeState(state);
@@ -80,9 +80,11 @@ for (const replacement of ["none", "same-account", "different-account"] as const
     if (replacement !== "none") {
       const value = parseState(f.state); value.oauth.tokens.access_token = "synthetic-replacement-access"; value.oauth.tokens.refresh_token = "synthetic-replacement-refresh";
       if (replacement === "different-account") { value.oauth.account.id = "8"; value.checkpoint = null; value.pending = null; }
+      if (replacement.startsWith("revocation-pending")) value.revocation = "pending";
       newer = encodeState(value); await createStatePersister(db, store, handle.current()).persist(newer);
     }
-    await port.close(); release({ status: 200, body: { access_token: "synthetic-late-access", refresh_token: "synthetic-late-refresh", expires_in: 3600, scope: X_API_SCOPES.join(" "), token_type: "Bearer" } });
+    await port.close(); release(replacement === "revocation-pending-429" ? { status: 429, body: { error: "SYNTHETIC_LATE_RATE_CANARY" } } :
+      { status: 200, body: { access_token: "synthetic-late-access", refresh_token: "synthetic-late-refresh", expires_in: 3600, scope: X_API_SCOPES.join(" "), token_type: "Bearer" } });
     expect((await running).status).toBe("unavailable"); await expect(port.sync(null)).rejects.toThrow();
     const durable = store.read(getConnection(db, ID, saved.source_key)!)!;
     if (newer !== null) { expect(rejected).toBe(1); expect(durable).toEqual(newer); }
@@ -96,5 +98,19 @@ for (const replacement of ["none", "same-account", "different-account"] as const
       } } });
       expect((await restarted.sync(first.cursor)).status).toBeUndefined(); expect(used).toBe("synthetic-late-refresh"); await restarted.close();
     }
+  } finally { db.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("concurrent native revoke handles admit remote work only for the winning durable fence", async () => {
+  const root = mkdtempSync(join(tmpdir(), "x-api-concurrent-revoke-")), db = openLedger(join(root, "ledger.db"));
+  try {
+    const f = new XApiFixture(1), store = new ConnectionStateStore(root), pending = store.begin(); await pending.writer.write(f.state);
+    const saved = store.save(db, ID, pending.pending), a = createStatePersister(db, store, saved), b = createStatePersister(db, store, saved);
+    const first = await f.connected({ persist: async bytes => { await a.persist(bytes); await f.persist(bytes); } });
+    const second = await f.connected({ persist: async bytes => { await b.persist(bytes); await f.persist(bytes); } });
+    const results = await Promise.allSettled([first.revokeProviderAccess(), second.revokeProviderAccess()]);
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1); expect(results.filter(result => result.status === "rejected")).toHaveLength(1);
+    expect(f.forms.map(entry => entry.form.token)).toEqual(["SYNTHETIC_X_REFRESH_CANARY_0", "SYNTHETIC_X_ACCESS_CANARY_0"]);
+    expect(parseState(store.read(getConnection(db, ID, saved.source_key)!)!).revocation).toBe("revoked");
   } finally { db.close(); rmSync(root, { recursive: true, force: true }); }
 });

@@ -57,7 +57,9 @@ export function selection(raw: unknown): XApiSelection {
     const value = object(raw); exact(value, ["fields", "history_start", "wire_profile"]);
     if (!Array.isArray(value.fields) || value.fields.length > OPTIONAL_FIELDS.length || new Set(value.fields).size !== value.fields.length ||
       value.fields.some(field => !OPTIONAL_FIELDS.includes(field)) || value.wire_profile !== "tweet-v2") throw failure();
-    const start = new Date(instant(value.history_start)).toISOString();
+    const suppliedStart = instant(value.history_start), start = new Date(suppliedStart).toISOString();
+    // A canonical millisecond query must never widen the owner's lower bound.
+    if (compareInstants(suppliedStart, start) !== 0) throw failure();
     if (start < "2010-11-06T00:00:00.000Z") throw failure();
     return { fields: OPTIONAL_FIELDS.filter(field => (value.fields as unknown[]).includes(field)), history_start: start, wire_profile: "tweet-v2" };
   } catch { throw failure("misconfigured"); }
@@ -95,7 +97,8 @@ export function parseCursor(raw: string): XApiCursor {
       newest: value.newest === null ? null : id(value.newest), next: value.next === null ? null : token(value.next), pages: Number(value.pages),
       seen: value.seen.map(hash), restarts: Number(value.restarts) };
     if (cursor.phase === "idle" ? cursor.next !== null || cursor.lower !== null || cursor.newest !== null || cursor.pages !== 0 || cursor.seen.length !== 0 || cursor.restarts !== 0 :
-      cursor.next === null || cursor.pages < 1 || cursor.seen.length !== cursor.pages || !cursor.seen.includes(digest(cursor.next)) || cursor.lower !== cursor.committed) throw failure();
+      cursor.next === null || cursor.pages < 1 || cursor.seen.length < 1 || cursor.seen.length > cursor.pages ||
+      cursor.restarts === 0 && cursor.seen.length !== cursor.pages || !cursor.seen.includes(digest(cursor.next)) || cursor.lower !== cursor.committed) throw failure();
     if (cursor.newest !== null && cursor.committed !== null && BigInt(cursor.newest) <= BigInt(cursor.committed)) throw failure();
     return cursor;
   } catch { throw failure("invalid_cursor"); }
@@ -109,14 +112,15 @@ export interface XApiState {
   checkpoint: string | null;
   pending: XApiPlan | null;
   retry_at: string | null;
+  revocation: "active" | "pending" | "revoked";
 }
 export function planDigest(plan: Omit<XApiPlan, "id">): string { return digest(plan); }
 export function parseState(bytes: Uint8Array): XApiState {
   try {
     if (bytes.byteLength > 256 * 1024) throw failure();
     const value = object(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
-    exact(value, ["schema", "app", "oauth", "selection", "checkpoint", "pending", "retry_at"]);
-    if (value.schema !== X_API_STATE_SCHEMA) throw failure();
+    exact(value, ["schema", "app", "oauth", "selection", "checkpoint", "pending", "retry_at", "revocation"]);
+    if (value.schema !== X_API_STATE_SCHEMA || !["active", "pending", "revoked"].includes(String(value.revocation))) throw failure();
     const selected = selection(value.selection), oauth = parseOAuthState(JSON.stringify(value.oauth), X_API_CONNECTOR_ID);
     id(oauth.account.id);
     if (!X_API_SCOPES.every(scope => oauth.tokens.scope.split(/\s+/).includes(scope)) || oauth.tokens.refresh_token === null ||
@@ -139,7 +143,8 @@ export function parseState(bytes: Uint8Array): XApiState {
       if (new Set(draft.entries.map(entry => entry.id)).size !== draft.entries.length || raw.id !== planDigest(draft) || draft.next === draft.base) throw failure();
       pending = { id: hash(raw.id), ...draft };
     }
-    return { schema: X_API_STATE_SCHEMA, app: hash(value.app), oauth, selection: selected, checkpoint, pending, retry_at: value.retry_at === null ? null : instant(value.retry_at) };
+    return { schema: X_API_STATE_SCHEMA, app: hash(value.app), oauth, selection: selected, checkpoint, pending, retry_at: value.retry_at === null ? null : instant(value.retry_at),
+      revocation: value.revocation as XApiState["revocation"] };
   } catch { throw failure("invalid_state"); }
 }
 export function encodeState(state: XApiState): Uint8Array {
