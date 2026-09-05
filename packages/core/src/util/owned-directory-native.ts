@@ -1,0 +1,51 @@
+import { cc, dlopen, FFIType, ptr } from "bun:ffi";
+import { closeSync, writeFileSync } from "node:fs";
+
+// Linux x86_64 only. Return the kernel's signed result directly: consulting
+// libc errno after returning through FFI can observe a later runtime operation.
+// The fixed flags are RDONLY | NOFOLLOW | NONBLOCK | CLOEXEC, optionally
+// DIRECTORY. Neither the caller nor the source can request file creation.
+const source = `
+long kizuki_open_owned_child(int parent, const char *name, int directory) {
+  long result;
+  long flags = 0x20000L | 0x800L | 0x80000L | (directory ? 0x10000L : 0);
+  register long mode __asm__("r10") = 0;
+  __asm__ volatile ("syscall" : "=a"(result)
+    : "a"(257L), "D"((long)parent), "S"(name), "d"(flags), "r"(mode)
+    : "rcx", "r11", "memory", "cc");
+  return result;
+}
+`;
+
+/** Fixed, sealed source needs no compiler executable, headers or writable path.
+ * Both library handles remain rooted for the lifetime of the cached API. */
+export function loadOwnedDirectoryNative() {
+  if (process.platform !== "linux" || process.arch !== "x64") throw new Error("owned_directory_unsupported");
+  const libc = dlopen("libc.so.6", {
+    memfd_create: { args: [FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
+    unlinkat: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
+    fcntl: { args: [FFIType.i32, FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+    syscall: { args: [FFIType.i64, FFIType.i64, FFIType.ptr, FFIType.u64], returns: FFIType.i64_fast },
+  });
+  try {
+    const label = Buffer.from("kizuki-owned-directory\0");
+    const fd = libc.symbols.memfd_create(ptr(label), 3 /* CLOEXEC | ALLOW_SEALING */);
+    if (fd < 0) throw new Error("owned_directory_native_unavailable");
+    try {
+      writeFileSync(fd, source);
+      if (libc.symbols.fcntl(fd, 1033 /* F_ADD_SEALS */, 15) !== 0 ||
+          libc.symbols.fcntl(fd, 1034 /* F_GET_SEALS */, 0) !== 15) {
+        throw new Error("owned_directory_native_unavailable");
+      }
+      const compiled = cc({
+        flags: ["-nostdlib", "-x", "c"],
+        source: `/proc/self/fd/${fd}`,
+        symbols: { kizuki_open_owned_child: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i64_fast } },
+      });
+      return { libc, compiled, symbols: { ...libc.symbols, openChild: compiled.symbols.kizuki_open_owned_child } };
+    } finally { closeSync(fd); }
+  } catch {
+    libc.close();
+    throw new Error("owned_directory_native_unavailable");
+  }
+}
