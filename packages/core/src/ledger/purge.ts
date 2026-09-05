@@ -173,6 +173,7 @@ interface PageFingerprint {
 }
 
 interface RetrievalBinding {
+  owned?: boolean;
   status: PurgeStorePresence;
   port: RetrievalPort | null;
 }
@@ -689,7 +690,7 @@ function bindRetrieval(
     return { status: "not_configured", port: null };
   }
   try {
-    return { status: "configured", port: createVaultFts5Port(vaultPath, clock) };
+    return { status: "configured", port: createVaultFts5Port(vaultPath, clock), owned: true };
   } catch {
     return { status: "unavailable", port: null };
   }
@@ -1114,6 +1115,7 @@ export async function runPurge(
     if (tableExists(db, "canon_write_reservations")) settleWriteReservations(db, vaultPath);
   const clock = options.now ?? (() => new Date().toISOString());
   const binding = bindRetrieval(vaultPath, options.retrieval, clock);
+  try {
   const retrievalStore =
     binding.status === "not_configured" ? null : FTS5_RETRIEVAL_ID;
   const phase1 = purgeEventsLocked(db, vaultPath, filter, reason, {
@@ -1127,6 +1129,7 @@ export async function runPurge(
   }
   phase1.rewritten = rewriteHolds(db, vaultPath, options);
   return phase1;
+  } finally { if (binding.owned) await binding.port?.close(); }
   }, filter);
 }
 
@@ -1139,6 +1142,7 @@ export async function verifyPurge(
   initPurgeOps(db);
   const clock = options.now ?? (() => new Date().toISOString());
   const binding = bindRetrieval(vaultPath, options.retrieval, clock);
+  try {
   const ops = listOps(db, receiptId);
   const proofs: AbsenceProof[] = [];
   let ok = true;
@@ -1180,15 +1184,19 @@ export async function verifyPurge(
     hold_lifted: holdLifted,
     ok,
   };
+  } finally { if (binding.owned) await binding.port?.close(); }
 }
 
 /** Resume existing persisted purge work without creating another deletion path. */
 export async function resumePurge(db: Database, vaultPath: string, receiptId: string, options: PurgeRunOptions = {}): Promise<PurgeVerifyReport> {
   return underPurgeFence(vaultPath, options, async () => {
   const clock = options.now ?? (() => new Date().toISOString());
-  await reconcileOps(db, receiptId, bindRetrieval(vaultPath, options.retrieval, clock), clock);
-  rewriteHolds(db, vaultPath, options);
-  return await verifyPurge(db, vaultPath, receiptId, options);
+  const binding = bindRetrieval(vaultPath, options.retrieval, clock);
+  try {
+    await reconcileOps(db, receiptId, binding, clock);
+    rewriteHolds(db, vaultPath, options);
+    return await verifyPurge(db, vaultPath, receiptId, {...options,...(binding.port === null ? {} : {retrieval:binding.port})});
+  } finally { if (binding.owned) await binding.port?.close(); }
   });
 }
 
