@@ -78,6 +78,7 @@ NOTE
 cat > "$demo/policy.json" <<'POLICY'
 {"purposes":["capture","recall","session","derive"],"allowed_fields":["text","subjects","attachments","metadata"],"retention":"persistent_owned_until_revoked","egress":"local_only","sensitivity_floor":"private"}
 POLICY
+chmod 600 "$demo/policy.json"
 
 bun packages/cli/src/main.ts init "$demo/vault" --no-default --no-service
 bun packages/cli/src/main.ts import markdown-folder --source "$demo/notes" --policy "$demo/policy.json" --expected-revision 0 --operation-id demo-import --vault "$demo/vault"

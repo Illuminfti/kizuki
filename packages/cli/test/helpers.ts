@@ -136,6 +136,6 @@ export function createHelpers(): CliHelpers {
 export function fixtureConsent(root: string, operation = "fixture-import"): string[] {
   const file = join(root, "fixture-source-policy.json");
   writeFileSync(file, JSON.stringify({ purposes: ["capture", "recall", "session", "correction", "audit", "derive", "extract", "export"],
-    allowed_fields: ["text", "subjects", "attachments", "metadata"], retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "public" }));
+    allowed_fields: ["text", "subjects", "attachments", "metadata"], retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "public" }), { mode: 0o600 });
   return ["--policy", file, "--expected-revision", "0", "--operation-id", operation];
 }

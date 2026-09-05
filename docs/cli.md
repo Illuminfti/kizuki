@@ -92,7 +92,13 @@ current grant, revision, policy digest, and physical purge blockers. All-source
 stops sync; revoking consent is a separate operation.
 
 Save a policy you intend to authorize in a regular JSON file, at most 16 KiB,
-without symlinks or secret fields. For example, this policy permits local capture
+without symlinks or secret fields. The file must belong to the effective user
+and must not be group/world writable (`0600` preferred; `0644` allowed).
+Each ancestor must be a real directory owned by root or the effective user,
+without group/world write permission; root-owned sticky directories such as
+`/tmp` are allowed. The bounded directory chain and open file are checked
+before and after reading. This is a POSIX local-owner boundary: the same user
+is trusted, and unsupported permission semantics are refused. For example, this policy permits local capture
 and owner recall of text and its provenance:
 
 ```json

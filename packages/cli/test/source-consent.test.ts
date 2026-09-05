@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { writeFileSync, symlinkSync } from "node:fs";
+import { writeFileSync, symlinkSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { createHelpers } from "./helpers";
 
@@ -12,7 +12,7 @@ function enrolled() {
   expect(result.exitCode).toBe(0);
   const key = result.stdout.match(/source=([0-9A-HJKMNPQRSTVWXYZ]{26})/)![1]!;
   const file = join(f.root, "policy.json");
-  writeFileSync(file, JSON.stringify(policy));
+  writeFileSync(file, JSON.stringify(policy), { mode: 0o600 });
   return { ...f, key, file };
 }
 function command(f: ReturnType<typeof enrolled>, action: string, ...args: string[]) {
@@ -60,7 +60,7 @@ test("import can receive explicit consent before content capture", () => {
   expect(denied.exitCode).toBe(1);
   expect(denied.stderr).toContain("connect grant --source");
   const file = join(f.root, "policy.json");
-  writeFileSync(file, JSON.stringify(policy));
+  writeFileSync(file, JSON.stringify(policy), { mode: 0o600 });
   const result = h.runCli(f.env, "import", "markdown-folder", "--source", f.notes, "--policy", file, "--expected-revision", "0", "--operation-id", "import-grant");
   expect(result.exitCode).toBe(0);
   expect(result.stdout).toContain("events_stored=3");
@@ -122,4 +122,47 @@ test("populated fields outside the explicit policy refuse capture without publis
   expect(captured.exitCode).toBe(1);
   expect(captured.stdout).toContain("events_stored=0");
   expect(h.runCli(f.env, "query", "acme").stdout).not.toContain("ada met grace");
+});
+
+
+test("owner consent refuses mutable policy files and directory paths before committing a grant", () => {
+  const f = enrolled();
+  const grant = () => command(f, "grant", "--policy", f.file, "--expected-revision", "0", "--operation-id", "custody-grant");
+  for (const mode of [0o666, 0o620, 0o602]) {
+    chmodSync(f.file, mode);
+    const refused = grant();
+    expect(refused.exitCode).toBe(2);
+    expect(refused.stderr).toContain("source_policy_file_unsafe");
+    expect(JSON.parse(command(f, "status").stdout).data.grant).toBeNull();
+  }
+  chmodSync(f.file, 0o644);
+  try {
+    for (const mode of [0o777, 0o770, 0o707]) {
+      chmodSync(f.root, mode);
+      expect(grant().stderr).toContain("source_policy_file_unsafe");
+    }
+  } finally { chmodSync(f.root, 0o700); }
+  // The private fixture is beneath the normal root-owned sticky /tmp directory.
+  expect(grant().exitCode).toBe(0);
+});
+
+
+test("POSIX custody metadata distinguishes owner policy, trusted root sticky paths and untrusted UIDs", async () => {
+  const { policyDirectoryCustody, policyFileCustody } = await import("../src/source-consent");
+  // Synthetic stat coverage is explicit; it does not assert host filesystem custody.
+  const directory = (uid: number, mode: number, real = true) => ({ uid, mode, isDirectory: () => real });
+  expect(policyDirectoryCustody(directory(0, 0o1777), 1000)).toBe(true);
+  expect(policyDirectoryCustody(directory(0, 0o755), 1000)).toBe(true);
+  expect(policyDirectoryCustody(directory(1000, 0o700), 1000)).toBe(true);
+  for (const uid of [1001, 65534]) {
+    expect(policyDirectoryCustody(directory(uid, 0o700), 1000)).toBe(false);
+    expect(policyDirectoryCustody(directory(uid, 0o1777), 1000)).toBe(false);
+    expect(policyFileCustody({ uid, mode: 0o600 }, 1000)).toBe(false);
+  }
+  expect(policyDirectoryCustody(directory(1000, 0o1777), 1000)).toBe(false);
+  expect(policyDirectoryCustody(directory(0, 0o777), 1000)).toBe(false);
+  expect(policyDirectoryCustody(directory(1000, 0o700, false), 1000)).toBe(false);
+  for (const mode of [0o600, 0o644]) expect(policyFileCustody({ uid: 1000, mode }, 1000)).toBe(true);
+  for (const mode of [0o666, 0o620, 0o602]) expect(policyFileCustody({ uid: 1000, mode }, 1000)).toBe(false);
+  expect(policyFileCustody({ uid: 0, mode: 0o600 }, 1000)).toBe(false);
 });
