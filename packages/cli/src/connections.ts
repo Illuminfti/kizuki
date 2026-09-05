@@ -1,4 +1,4 @@
-import { createGmailConnector, inspectGmailState, type GmailConnectorConfig } from "@kizuki/connector-gmail";
+import { GmailConnector, createGmailConnector, inspectGmailState, type GmailConnectorConfig } from "@kizuki/connector-gmail";
 import { gmailClient, gmailRequiredFields, gmailStateConfig } from "./gmail";
 import type { Database } from "bun:sqlite";
 import { isAbsolute, resolve } from "node:path";
@@ -387,7 +387,7 @@ export async function loadConnector(
         return new TextDecoder().decode(bytes);
       });
     } catch {
-      await connector.revoke();
+      await closeHostConnector(connector);
       throw new ConnectionError("Gmail connection unavailable; check operator configuration and reauthorize the existing source.");
     }
     return connector;
@@ -422,7 +422,8 @@ export async function loadConnector(
   return connector;
 }
 
-/** Concrete Telegram transport cleanup never revokes a provider session. */
+/** Local transport/custody cleanup never revokes a provider account. */
 export async function closeHostConnector(connector: Connector): Promise<void> {
   if (connector instanceof TelegramConnector) await connector.close();
+  if (connector instanceof GmailConnector) await connector.close();
 }

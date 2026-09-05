@@ -2,7 +2,7 @@ import { applyConnectionSensitivity, inspectSourceGrant, type Connection, type M
 import { assertSameGmailIdentity, createGmailConnector, inspectGmailState } from '@kizuki/connector-gmail';
 import type { Database } from 'bun:sqlite';
 import { UsageError } from '../args';
-import { ConnectionError, enrollSignedInConnection, listHostConnections } from '../connections';
+import { ConnectionError, closeHostConnector, enrollSignedInConnection, listHostConnections } from '../connections';
 import { withVault } from '../context';
 import { jsonEnvelope } from '../output';
 import { consentHint } from '../source-consent';
@@ -45,7 +45,7 @@ export async function runGmailConnect(io: CliIo, options: GmailEnrollmentOptions
             throw new ConnectionError('Gmail sign-in did not complete or account/history identity differed; existing source state was preserved.');
         }
         finally {
-            await connector.revoke();
+            await closeHostConnector(connector);
         }
         applyConnectionSensitivity(ctx.db, connection, connector.manifest(), options.sensitivity);
         const grant = inspectSourceGrant(ctx.db, connection.source_key);

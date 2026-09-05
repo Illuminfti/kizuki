@@ -39,9 +39,18 @@ not reactivate the closed session. A timed-out instance must reload durable
 state. Enrollment uses one two-minute authorization budget, including profile
 verification, and at most five seconds waiting for the final state write.
 
+Native capture and enrollment finalizers now terminally close the local connector
+and allow at most five additional seconds for its outstanding token exchanges and
+state writes to settle before closing the original database. This shutdown budget
+is separate from the capture or authorization budget. It uses the original state
+handle; it never reopens a stale handle or acquires a replacement account's handle.
+A drain timeout reports `credential_custody_unknown`, preserves pending-work
+bookkeeping, and does not claim that the provider exchange was canceled.
+
 This custody rule cannot recover a provider rotation whose response is lost,
-or save through a host handle after its database or process has closed. Those
-outcomes remain unavailable and may require explicit reauthorization; no
+or save through a host handle after its database or process has closed, including
+after the bounded drain expires. Those outcomes remain unavailable and may
+require explicit reauthorization; no
 automatic token reset or retry against a newer account hides the uncertainty.
 Changed live Gmail observations on retry remain `snapshot_gap_unresolved` with
 no history advance. No automatic skip/reset hides that gap.

@@ -34,6 +34,7 @@ export class GmailConnector implements Connector {
     private generation = 0;
     private pendingWrites = 0;
     private pendingTokens = 0;
+    private readonly custodyWork = new Set<Promise<unknown>>();
     private custody: { state: GmailState; persist: StatePersister } | null = null;
     private last: "ok" | "misconfigured" | "unauthenticated" | "degraded" | "rate_limited" = "misconfigured";
     private readonly now: () => Date;
@@ -47,6 +48,11 @@ export class GmailConnector implements Connector {
         this.now = deps.now ?? (() => new Date());
     }
     manifest() { return MANIFEST; }
+    private trackCustody<T>(work: Promise<T>): Promise<T> {
+        this.custodyWork.add(work);
+        void work.then(() => this.custodyWork.delete(work), () => this.custodyWork.delete(work));
+        return work;
+    }
     async health() { return new HealthReport({ state: this.disabled ? "disabled" : this.last, checked_at: this.now().toISOString(), detail: this.disabled ? "Gmail local session stopped" : this.last === "ok" ? "Gmail bounded capture; attachment bodies unsupported" : "Gmail unavailable; check application configuration and explicit enrollment" }); }
     private provider(): OAuthProvider {
         const client = this.config.client;
@@ -85,10 +91,10 @@ export class GmailConnector implements Connector {
         this.pendingWrites++;
         // The host write cannot be canceled. Keep custody fenced after timeout
         // until it actually settles, even though the caller's wait is bounded.
-        const write = Promise.resolve().then(() => {
+        const write = this.trackCustody(Promise.resolve().then(() => {
             this.assertGeneration(generation);
             return persist(bytes);
-        }).finally(() => { this.pendingWrites--; });
+        }).finally(() => { this.pendingWrites--; }));
         try {
             await withDeadline(write, timeoutMs, "Gmail state persistence deadline");
             this.assertGeneration(generation);
@@ -133,7 +139,7 @@ export class GmailConnector implements Connector {
                     // the original host CAS handle may save the new token; it
                     // must never be retried against a replacement connection.
                     this.pendingWrites++;
-                    try { await custody.persist(encodeState(next)); }
+                    try { await this.trackCustody(Promise.resolve().then(() => custody.persist(encodeState(next)))); }
                     finally { this.pendingWrites--; }
                     custody.state = next;
                     if (!this.disabled && !this.reloadRequired && this.generation === generation) this.state = next;
@@ -189,10 +195,10 @@ export class GmailConnector implements Connector {
     private async tokenWait<T>(start: () => Promise<T>, budget: Budget, generation: number): Promise<T> {
         const timeoutMs = Math.min(5000, budget.remaining());
         this.pendingTokens++;
-        const pending = Promise.resolve().then(() => {
+        const pending = this.trackCustody(Promise.resolve().then(() => {
             this.assertGeneration(generation);
             return start();
-        }).finally(() => { this.pendingTokens--; });
+        }).finally(() => { this.pendingTokens--; }));
         try {
             const result = await withDeadline(pending, timeoutMs, "Gmail token deadline");
             this.assertGeneration(generation);
@@ -374,6 +380,22 @@ export class GmailConnector implements Connector {
     backfill(cursor: string | null) { return this.capture(cursor); }
     sync(cursor: string | null) { return this.capture(cursor); }
     async revoke() { this.generation++; this.disabled = true; this.session?.forget(); this.session = null; this.state = null; this.custody = null; }
+    /** Terminal local shutdown; the host keeps its original DB open for this bounded drain. */
+    async close(): Promise<void> {
+        const deadline = Date.now() + 5000;
+        await this.revoke();
+        try {
+            while (this.custodyWork.size > 0) {
+                const remaining = deadline - Date.now();
+                if (remaining <= 0) throw new Error("deadline");
+                await withDeadline(Promise.allSettled([...this.custodyWork]), remaining, "Gmail close deadline");
+            }
+        } catch {
+            // A timeout is not proof of cancellation or failed provider rotation.
+            // Keep the tracked work and original CAS handle until actual settlement.
+            throw new KizukiError("unavailable", "Gmail credential_custody_unknown; shutdown deadline expired; inspect durable state before reauthorization");
+        }
+    }
     async purgeSource(_subject: string): Promise<never> { throw failure("not_supported"); }
     async fixture() { return [messageEvent("fixture-account", { id: "fixture-message", threadId: "fixture-thread", historyId: "100", internalDate: "1704067200000", payload: { mimeType: "text/plain", body: { data: Buffer.from("Synthetic Gmail fixture").toString("base64url") } } }, "2024-01-01T00:00:00.000Z", ["text"])]; }
 }
