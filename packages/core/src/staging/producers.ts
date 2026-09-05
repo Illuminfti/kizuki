@@ -182,7 +182,9 @@ export function cascadeTombstone(
   return db.transaction(() => {
     tombstone = validateEventOrigin(db, tombstone);
     if (!tombstone.deleted) throw new StagingError("tombstone: stored event is not deleted");
-    requireSourceEvents(db, [tombstone.event_id], { owner: true, purpose: "derive" });
+    // Recording deletion and withdrawing stale pending evidence belong to
+    // capture. Any canon control below independently requires derive authority.
+    requireSourceEvents(db, [tombstone.event_id], { owner: true, purpose: "capture" });
     const eventRows = db
       .query(
         `SELECT e.event_id FROM events e

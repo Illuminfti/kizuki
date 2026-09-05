@@ -150,6 +150,66 @@ test("a refused retraction rolls back tombstone admission and retries before adv
   } finally { db.close(); vault.dispose(); }
 });
 
+function replaceSourcePurposes(db: ReturnType<typeof database>, purposes: string[], revision: number): void {
+  setSourceGrant(db, { source_key: SOURCE, expected_revision: revision, operation_id: `fixture-purposes-${revision}`,
+    policy: { purposes, allowed_fields: ["text", "subjects", "attachments", "metadata"],
+      retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "public" } });
+}
+
+for (const promoted of [false, true]) {
+  test(`capture-only deletion ${promoted ? "preserves a canon retraction for authorized retry" : "withdraws pending evidence and advances"}`, async () => {
+    const db = database();
+    const vault = tempVault("kizuki-capture-tombstone-");
+    try {
+      const io = { db, vault_path: vault.path };
+      expect((await runBackfill(db, new FixtureConnector({ events: [validEvent()], cursor: "before-delete" }), "fixture", SOURCE)).errors).toEqual([]);
+      if (promoted) {
+        const claim = listProposals(db, { kind: "claim" })[0]!;
+        write(io, getClaim(db, claim.proposal_id)!);
+      }
+      const before = ["claims", "proposals", "canon_receipts"].map(table => db.query(`SELECT * FROM ${table}`).all());
+      replaceSourcePurposes(db, ["capture"], 1);
+      const batch = { events: [{ ...validEvent(), deleted: true, text: "Source deleted" }], cursor: null };
+      const connector = new FixtureConnector(batch, batch);
+      const result = await runSync(db, connector, "fixture", SOURCE, io);
+      if (promoted) {
+        expect(result).toMatchObject({ stored: 0, withdrawn: 0, retractions_filed: 0, errors: ["source_access_denied"] });
+        expect(db.query("SELECT 1 FROM events WHERE deleted=1").get()).toBeNull();
+        expect(getCheckpoint(db, "fixture", SOURCE)?.cursor).toBe("before-delete");
+        expect(["claims", "proposals", "canon_receipts"].map(table => db.query(`SELECT * FROM ${table}`).all())).toEqual(before);
+        replaceSourcePurposes(db, ["capture", "derive"], 2);
+        expect(await runSync(db, connector, "fixture", SOURCE, io)).toMatchObject({ stored: 1, withdrawn: 1, retractions_filed: 1, errors: [] });
+        const deletion = listProposals(db, { kind: "deletion" })[0]!;
+        expect(write(io, getClaim(db, deletion.proposal_id)!).page_action).toBe("archive");
+      } else {
+        expect(result).toMatchObject({ stored: 1, withdrawn: 2, retractions_filed: 0, errors: [] });
+        expect(listProposals(db, { status: "pending" })).toEqual([]);
+        expect(listProposals(db, { status: "withdrawn" })).toHaveLength(2);
+      }
+      expect(getCheckpoint(db, "fixture", SOURCE)?.cursor).toBeNull();
+      expect(db.query("SELECT count(*) AS n FROM events WHERE deleted=1").get()).toEqual({ n: 1 });
+      expect(await runSync(db, connector, "fixture", SOURCE, io)).toMatchObject({ stored: 0, duplicates: 1, retractions_filed: 0, errors: [] });
+    } finally { db.close(); vault.dispose(); }
+  });
+}
+
+test("removing capture permission refuses deletion before connector access", async () => {
+  const db = database();
+  try {
+    expect((await runBackfill(db, new FixtureConnector({ events: [validEvent()], cursor: "before-delete" }), "fixture", SOURCE)).errors).toEqual([]);
+    const before = ["events", "claims", "proposals"].map(table => db.query(`SELECT * FROM ${table}`).all());
+    replaceSourcePurposes(db, ["recall"], 1);
+    const batch = { events: [{ ...validEvent(), deleted: true, text: "Source deleted" }], cursor: null };
+    const connector = new FixtureConnector(batch, batch);
+    const result = await runSync(db, connector, "fixture", SOURCE);
+    expect(result.errors).toHaveLength(1);
+    expect(result.stored).toBe(0);
+    expect(connector.syncCursors).toEqual([]);
+    expect(["events", "claims", "proposals"].map(table => db.query(`SELECT * FROM ${table}`).all())).toEqual(before);
+    expect(getCheckpoint(db, "fixture", SOURCE)?.cursor).toBe("before-delete");
+  } finally { db.close(); }
+});
+
 /** An event asking the floor to stage its text as a typed page, not a quote. */
 function candidate(over: Partial<CaptureEventInput> = {}): CaptureEventInput {
   return {

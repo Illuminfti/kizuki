@@ -7,7 +7,7 @@ import { openLedger } from "../src/ledger/db";
 import { accept, count, readSince } from "../src/ledger/ledger";
 import { computeLegacyContentHash, sha256Hex } from "../src/util/hash";
 import { validEvent } from "./fixtures";
-import { readDurableExtractBatch } from "../src/serve/extract";
+import { readDurableExtractBatch, validateDurableExtractStorage, LegacyExtractReconciliationError } from "../src/serve/extract";
 import { runWritePass } from "../src/serve/write-pass";
 import { createBudgetTracker } from "../src/canon/budget";
 import { initVault } from "../src/vault/init";
@@ -242,7 +242,7 @@ function pendingLegacyDecision(db: Database, eventId: string, at: string): void 
     .run(`${at}\t${eventId}`, JSON.stringify(drafts), at);
 }
 
-test("a legacy pending decision with no committed claim effects filters and completes without a model", async () => {
+test("a legacy pending decision remains storage-only after origin migration", async () => {
   const f = legacyFixture();
   const row = position(f.db);
   receiptMatch(f.db, validEvent().text);
@@ -254,9 +254,13 @@ test("a legacy pending decision with no committed claim effects filters and comp
     initVault(vault);
     const db = openLedger(f.path);
     try {
-      const pending = readDurableExtractBatch(db);
-      expect(pending?.drafts).toHaveLength(1);
-      expect(pending?.filing_drafts).toHaveLength(0);
+      const rows = () => ["events", "claims", "claim_supersessions", "extract_batches",
+        "extract_deferred_inputs", "checkpoints", "retrieval_ops", "canon_receipts", "canon_machine_byte_intents"]
+        .map(table => db.query(`SELECT * FROM ${table} ORDER BY rowid`).all());
+      const before = rows();
+      expect(readSince(db, null, 1).events[0]).toMatchObject({ origin: "self", origin_binding_kind: "legacy" });
+      expect(() => validateDurableExtractStorage(db)).not.toThrow();
+      expect(() => readDurableExtractBatch(db)).toThrow(LegacyExtractReconciliationError);
       expect(db.query("SELECT drafts FROM extract_batches").get()).toEqual(original);
       let calls = 0;
       const producer: ProducerPort = {
@@ -265,12 +269,14 @@ test("a legacy pending decision with no committed claim effects filters and comp
         health: async () => ({ status: "ready", detail: {} }), close: async () => undefined,
         produce: async () => { calls += 1; throw new Error("legacy replay must not call a model"); },
       };
-      const result = await runWritePass(db, vault, { budget: createBudgetTracker({ canon_writes_per_run: 4 }), claims: { db }, producer });
+      await expect(runWritePass(db, vault, {
+        budget: createBudgetTracker({ canon_writes_per_run: 4 }), claims: { db }, producer,
+      })).rejects.toThrow(LegacyExtractReconciliationError);
       expect(calls).toBe(0);
-      expect(result.errors).toEqual([]);
-      expect(db.query("SELECT 1 FROM extract_batches").get()).toBeNull();
+      expect(rows()).toEqual(before);
+      expect(db.query("SELECT drafts FROM extract_batches").get()).toEqual(original);
       expect(db.query("SELECT 1 FROM claims").get()).toBeNull();
-      expect(db.query("SELECT 1 FROM checkpoints WHERE source_key='extract'").get()).not.toBeNull();
+      expect(db.query("SELECT 1 FROM checkpoints WHERE source_key='extract'").get()).toBeNull();
     } finally { db.close(); }
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });

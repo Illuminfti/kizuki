@@ -119,7 +119,10 @@ The host supplies explicit `{ vault_path }` context to `cascadeTombstone` and
 `fileProposal`. Ingestion passes it as the fifth `runBatch`, `runBackfill` or
 `runSync` argument, or the existing `runToCompletion` options object. CLI import,
 backfill, sync and the service composition supply their opened vault path.
-Pending-only withdrawals still work without a vault. A cascade with promoted
+Pending-only withdrawals still work without a vault and need only capture
+permission. A receipted canon deletion additionally requires derive permission;
+if it is absent, the cascade refuses and rolls back admission, withdrawals and
+checkpoint advancement so that the source deletion remains retryable. A cascade with promoted
 candidate paths and missing context raises `source_tombstone_vault_required`,
 rolling back the complete cascade, including pending withdrawals. `runBatch`
 reports that fixed error and rolls back that event's admission as well.
