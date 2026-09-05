@@ -95,6 +95,6 @@ export const syncCommand: Command = {
         }
       }
       return failed ? 1 : 0;
-    });
+    }, { retrieval: parsed.flags.has("--once") ? "required" : "none" });
   },
 };

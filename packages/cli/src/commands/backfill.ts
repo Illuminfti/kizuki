@@ -41,6 +41,6 @@ export const backfillCommand: Command = {
         for (const warning of derived.degraded) io.err(`degraded: ${warning}`);
         return result.errors.length > 0 ? 1 : 0;
       } finally { await closeHostConnector(connector); }
-    });
+    }, { retrieval: "none" });
   },
 };

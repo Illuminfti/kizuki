@@ -138,6 +138,6 @@ export const importCommand: Command = {
       for (const text of result.errors) io.err(`error: ${text}`);
       for (const warning of derived.degraded) io.err(`degraded: ${warning}`);
       return result.errors.length > 0 ? 1 : 0;
-    });
+    }, { retrieval: "none" });
   },
 };

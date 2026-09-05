@@ -160,6 +160,11 @@ Historical capture vs source refresh. Each selected connection is drained
 until the connector reports exhaustion. `--source` requires an explicit
 connector. A named connector with no rows exits `1` (`no_connections`).
 One connection failure does not skip the rest.
+Capture through `backfill`, plain `sync`, and `import` does not open the optional
+retrieval engine, so an existing MCP retrieval session cannot block ingestion or
+source-consent checks. These commands still refresh the local SQLite search
+floor. `sync --once` runs the automation tick and retains its configured
+retrieval requirements.
 The Beeper connector conservatively rescans available history on each completed
 sync cycle to observe edits and explicit tombstones; unchanged records deduplicate.
 
