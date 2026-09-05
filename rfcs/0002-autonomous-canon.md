@@ -1813,6 +1813,17 @@ filesystem handle and no network handle other than its configured LLM port
 — it receives a plain `ProduceInput` and returns a plain `ProduceResult`
 (§3.2 rule 1 makes this structural, not conventional).
 
+Provider responses are bounded, attacker-controlled JSON. Kizuki strictly
+validates every field it consumes and rejects reserved effect-bearing fields
+at the response, choice, and assistant-message seams; refusal,
+truncated/incomplete completion, non-assistant roles, and any content part
+other than an exact text part are also rejected. Every returned choice is
+validated before using the first choice's text. Unrecognized provider
+metadata outside that consumed projection is discarded without traversal and
+never enters `LlmResponse`, logs, receipts, prompts, claims, or canon. Exact
+key sets still apply to the model-authored extraction payload after text
+projection.
+
 ### 10.2 Quoted text is data, and it is fenced with a nonce
 
 ```
@@ -2047,9 +2058,11 @@ Requirements:
   config is a startup failure. Nothing is logged that could contain a key,
   and provider error bodies are truncated and scrubbed before they reach a
   receipt.
-- The provider response is **attacker-controlled input** and is validated
-  strictly: exact schema, no extra keys, size caps, and the tool-call
-  rejection of §10.1.
+- The provider response is **attacker-controlled input**. The transport
+  strictly validates its consumed projection, enforces size caps, and applies
+  the tool-call rejection of §10.1. Unrecognized metadata outside that
+  projection is discarded without traversal; exact key sets apply to the
+  model-authored extraction payload after text projection.
 - `model_ref` recorded on every claim and receipt is
   `"<port_id>:<model>@<host>"` — enough to answer "which model wrote this"
   without recording a credential.
