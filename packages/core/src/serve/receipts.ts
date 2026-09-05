@@ -214,19 +214,22 @@ function appendJsonl(vaultPath: string, receipt: RunReceipt): void {
 }
 
 function insertReceiptRow(db: Database, receipt: RunReceipt): void {
-  db.query(
-    `INSERT OR IGNORE INTO run_receipts
-       (run_id, rail, started_at, finished_at, status, stopped, report)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    receipt.run_id,
-    receipt.rail,
-    receipt.started_at,
-    receipt.finished_at,
-    receipt.status,
-    receipt.stopped,
-    JSON.stringify(receipt),
-  );
+  db.transaction(() => {
+    db.query(
+      `INSERT OR IGNORE INTO run_receipts
+         (run_id, rail, started_at, finished_at, status, stopped, report)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      receipt.run_id,
+      receipt.rail,
+      receipt.started_at,
+      receipt.finished_at,
+      receipt.status,
+      receipt.stopped,
+      JSON.stringify(receipt),
+    );
+    if (tableExists(db, "extract_usage")) db.query("DELETE FROM extract_usage WHERE run_id = ?").run(receipt.run_id);
+  }).immediate();
 }
 
 function redactReceipt(receipt: RunReceipt): RunReceipt {

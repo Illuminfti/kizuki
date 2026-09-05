@@ -1,3 +1,6 @@
+import { tryWriteFlock } from "../serve/flock";
+import { settleWriteReservations } from "../serve/budget-ledger";
+import { purgeExtractInputs } from "../serve/extract";
 import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -731,6 +734,21 @@ export function purgeEvents(
   reason: string,
   options: PurgePhaseOptions = {},
 ): PurgeOutcome {
+  const lock = tryWriteFlock(vaultPath);
+  if (lock === null) throw new PurgeError("canon_changed", "canon writer is busy; retry purge", filter);
+  try {
+    if (tableExists(db, "canon_write_reservations")) settleWriteReservations(db, vaultPath);
+    return purgeEventsLocked(db, vaultPath, filter, reason, options);
+  } finally { lock.release(); }
+}
+
+function purgeEventsLocked(
+  db: Database,
+  vaultPath: string,
+  filter: PurgeFilter,
+  reason: string,
+  options: PurgePhaseOptions = {},
+): PurgeOutcome {
   initPurgeOps(db);
   const recordedReason = normalizePurgeReason(reason);
   const includeAliases = options.include_aliases === true;
@@ -759,6 +777,7 @@ export function purgeEvents(
     }
 
     const purgedIds = new Set(candidates.map((row) => row.event_id));
+    purgeExtractInputs(db, purgedIds);
     const { matched, holdPaths } = holdPathsFor(snapshot, purgedIds);
     assertSnapshotStillHolds(vaultPath, snapshot, holdPaths);
 

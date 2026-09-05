@@ -16,6 +16,21 @@ import {
 export { SERVE_SCHEMA_VERSION };
 
 const TABLES = `
+CREATE TABLE IF NOT EXISTS canon_write_reservations (
+  receipt_id TEXT PRIMARY KEY,
+  day TEXT NOT NULL,
+  page_path TEXT NOT NULL,
+  before_hash TEXT
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS extract_usage (
+  run_id TEXT PRIMARY KEY,
+  model_ref TEXT,
+  metrics TEXT NOT NULL,
+  holder_pid INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS schedules (
   rail TEXT PRIMARY KEY,
   period_s INTEGER NOT NULL,
@@ -54,7 +69,10 @@ CREATE TABLE IF NOT EXISTS extract_batches (
   cursor TEXT NOT NULL,
   drafts TEXT NOT NULL,
   model_ref TEXT,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  input_ids TEXT,
+  integrity TEXT,
+  outcome TEXT NOT NULL DEFAULT 'ok'
 ) STRICT;
 `;
 
@@ -68,16 +86,11 @@ export function initServe(db: Database): void {
     applyServeV7(db);
     return;
   }
-  // v7 shipped before the durable extraction-output journal.  It is an
-  // additive table, so install it for existing vaults without re-running a
-  // destructive schema migration.
-  db.exec(`CREATE TABLE IF NOT EXISTS extract_batches (
-    previous_cursor TEXT PRIMARY KEY,
-    cursor TEXT NOT NULL,
-    drafts TEXT NOT NULL,
-    model_ref TEXT,
-    created_at TEXT NOT NULL
-  ) STRICT;`);
+  db.exec(TABLES);
+  const columns = new Set(db.query<{ name: string }, []>("PRAGMA table_info(extract_batches)").all().map(row => row.name));
+  for (const [name, definition] of [["input_ids", "TEXT"], ["integrity", "TEXT"], ["outcome", "TEXT NOT NULL DEFAULT 'ok'"]] as const) {
+    if (!columns.has(name)) db.exec(`ALTER TABLE extract_batches ADD COLUMN ${name} ${definition}`);
+  }
   seedSchedules(db);
 }
 

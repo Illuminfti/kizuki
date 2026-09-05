@@ -411,14 +411,14 @@ export function applyCanonWrite(
   const primary = assertBatch(claims);
   const target = targetOf(decision);
 
-  opts.budget.chargeWrite();
-
+  const existing = readPage(io, target.rel_path);
+  const receiptId = mintId(io);
+  opts.budget.chargeWrite({ receipt_id: receiptId, page_path: target.rel_path, before_hash: existing?.hash ?? null });
   initCanon(io.db);
   assertPersisted(io, claims);
   const provenance = union(claims.map((item) => item.provenance));
   assertProvenance(io, provenance);
 
-  const existing = readPage(io, target.rel_path);
   if (decision.action === "create" && existing !== null) {
     throw new CanonWriteError("page_exists", `page ${target.rel_path} already exists`);
   }
@@ -432,7 +432,6 @@ export function applyCanonWrite(
   }
 
   const pageId = target.page_id ?? mintId(io);
-  const receiptId = mintId(io);
   const prepared =
     existing === null
       ? prepareCreate(claims, pageId, provenance, decision.action === "conflict")

@@ -71,19 +71,7 @@ export async function runServeDaemon(
   if (!acquired.acquired) {
     throw new ServeDaemonError("lease_busy", "writer lease is held by a live process");
   }
-  writePid(vaultPath, process.pid);
-  const config = loadServeConfig(vaultPath);
-  const httpEnabled = options.http ?? config.http;
   let http: ServeHttpHandle | null = null;
-  if (httpEnabled) {
-    http = startServeHttp({
-      db,
-      vaultPath,
-      host: config.bind_host,
-      port: options.port ?? config.bind_port,
-    });
-  }
-
   let receipts = recovered.length;
   const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   // SIGTERM is the public stop mechanism.  Consume it here so an in-flight
@@ -94,6 +82,19 @@ export async function runServeDaemon(
   nodeProcess.once("SIGTERM", requestStop);
   nodeProcess.once("SIGINT", requestStop);
   try {
+  writePid(vaultPath, process.pid);
+  const config = loadServeConfig(vaultPath);
+  const httpEnabled = options.http ?? config.http;
+  if (httpEnabled) {
+    http = startServeHttp({
+      db,
+      vaultPath,
+      host: config.bind_host,
+      port: options.port ?? config.bind_port,
+    });
+  }
+
+
     if (options.once === true) {
       const rails =
         options.rails ??
@@ -140,9 +141,11 @@ export async function runServeDaemon(
   } finally {
     nodeProcess.off("SIGTERM", requestStop);
     nodeProcess.off("SIGINT", requestStop);
-    if (http !== null) await http.stop();
-    releaseLease(db, process);
-    clearPid(vaultPath);
+    try { if (http !== null) await http.stop(); }
+    finally {
+      try { releaseLease(db, process); }
+      finally { clearPid(vaultPath); }
+    }
   }
 }
 

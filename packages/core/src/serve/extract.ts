@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { parseExtractResponse } from "../producer/schema";
+import { tableExists } from "../ledger/schema";
 import type { Database } from "bun:sqlite";
 import type { CaptureEvent } from "../contracts/event";
 import type { ClaimDraft, ProducerPort, QuotedEvent } from "../contracts/producer";
@@ -37,6 +40,7 @@ export interface MineResult {
   readonly drafts: readonly ClaimDraft[];
   /** The checkpoint observed before the model call. */
   readonly previous_cursor: string | null;
+  readonly input_ids?: readonly string[];
   /** The batch boundary that may be committed after every draft is durable. */
   readonly cursor: LedgerCursor | null;
 }
@@ -45,57 +49,110 @@ export interface DurableExtractBatch {
   readonly previous_cursor: string | null;
   readonly cursor: LedgerCursor;
   readonly drafts: readonly ClaimDraft[];
+  readonly model_ref: string | null;
+  readonly input_ids: readonly string[];
+  readonly outcome: "ok" | "purged";
 }
 
 const NULL_CURSOR = "";
-
-/** A successful model decision is journaled before filing any individual draft. */
-export function journalExtractBatch(db: Database, mined: MineResult, modelRef: string | null): void {
-  if (mined.mined.status !== "ok" || mined.cursor === null) return;
-  db.query(
-    `INSERT OR IGNORE INTO extract_batches
-       (previous_cursor, cursor, drafts, model_ref, created_at) VALUES (?, ?, ?, ?, ?)`,
-  ).run(
-    mined.previous_cursor ?? NULL_CURSOR,
-    `${mined.cursor.accepted_at}\t${mined.cursor.event_id}`,
-    JSON.stringify(mined.drafts),
-    modelRef,
-    new Date().toISOString(),
+const encodeCursor = (cursor: LedgerCursor): string => `${cursor.accepted_at}\t${cursor.event_id}`;
+function integrity(batch: DurableExtractBatch): string {
+  return createHash("sha256").update(JSON.stringify([
+    batch.previous_cursor, encodeCursor(batch.cursor), batch.model_ref, batch.input_ids, batch.outcome,
+    batch.drafts.map(d => [d.kind,d.subject,d.predicate,d.object,d.polarity,d.body,d.valid_from,d.valid_to,d.confidence,d.sensitivity,d.event_ids]),
+  ])).digest("hex");
+}
+function interval(db: Database, previous: string | null, boundary: LedgerCursor): CaptureEvent[] {
+  const events = readSince(db, parseCursor(previous), EXTRACT_BATCH).events;
+  const index = events.findIndex(event => event.event_id === boundary.event_id);
+  const row = db.query<{ accepted_at: string }, [string]>("SELECT accepted_at FROM events WHERE event_id = ?").get(boundary.event_id);
+  if (index < 0 || row?.accepted_at !== boundary.accepted_at) throw new Error("durable extraction boundary is invalid");
+  return events.slice(0, index + 1);
+}
+function saveBatch(db: Database, batch: DurableExtractBatch): void {
+  db.query(`INSERT INTO extract_batches (previous_cursor,cursor,drafts,model_ref,created_at,input_ids,integrity,outcome)
+    VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(previous_cursor) DO UPDATE SET
+    cursor=excluded.cursor,drafts=excluded.drafts,model_ref=excluded.model_ref,input_ids=excluded.input_ids,integrity=excluded.integrity,outcome=excluded.outcome`).run(
+    batch.previous_cursor ?? NULL_CURSOR, encodeCursor(batch.cursor), JSON.stringify(batch.drafts), batch.model_ref,
+    new Date().toISOString(), JSON.stringify(batch.input_ids), integrity(batch), batch.outcome,
   );
 }
-
-function parseDrafts(raw: string): ClaimDraft[] | null {
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed as ClaimDraft[] : null;
-  } catch {
-    return null;
-  }
+/** Persist the entire decision before filing; no model is called again on replay. */
+export function journalExtractBatch(db: Database, mined: MineResult, modelRef: string | null): void {
+  if (mined.mined.status !== "ok" || mined.cursor === null) return;
+  db.transaction(() => {
+    if (readExtractCursor(db) !== mined.previous_cursor) throw new Error("extraction checkpoint changed during model call");
+    const events = interval(db, mined.previous_cursor, mined.cursor!);
+    if (mined.input_ids !== undefined && JSON.stringify(mined.input_ids) !== JSON.stringify(events.map(event => event.event_id))) throw new Error("extraction inputs changed during model call");
+    if (db.query("SELECT 1 FROM extract_batches LIMIT 1").get() !== null) throw new Error("extraction decision already pending");
+    saveBatch(db, { previous_cursor: mined.previous_cursor, cursor: mined.cursor!, drafts: mined.drafts,
+      model_ref: modelRef, input_ids: events.map(event => event.event_id), outcome: "ok" });
+    readDurableExtractBatch(db);
+  }).immediate();
 }
 
 export function readDurableExtractBatch(db: Database): DurableExtractBatch | null {
-  const row = db.query<{ previous_cursor: string; cursor: string; drafts: string }, []>(
-    "SELECT previous_cursor, cursor, drafts FROM extract_batches ORDER BY created_at, previous_cursor LIMIT 1",
-  ).get();
-  if (row === null) return null;
+  const rows = db.query<{ previous_cursor: string; cursor: string; drafts: string; model_ref: string | null; input_ids: string | null; integrity: string | null; outcome: string }, []>(
+    "SELECT * FROM extract_batches ORDER BY created_at, previous_cursor LIMIT 2",
+  ).all();
+  if (rows.length === 0) return null;
+  const row = rows[0]!;
   const cursor = parseCursor(row.cursor);
-  const drafts = parseDrafts(row.drafts);
-  if (cursor === null || drafts === null) {
+  const parsed = parseExtractResponse(`{"claims":${row.drafts}}`);
+  if (rows.length !== 1 || cursor === null || !parsed.ok || row.previous_cursor !== (readExtractCursor(db) ?? NULL_CURSOR) ||
+      ((row.integrity === null || row.input_ids === null) && (row.integrity !== null || row.input_ids !== null || row.outcome !== "ok")) ||
+      !["ok", "purged"].includes(row.outcome) || (row.outcome === "ok" && parsed.claims.length === 0)) {
     throw new Error("durable extraction batch is corrupt");
   }
-  return { previous_cursor: row.previous_cursor || null, cursor, drafts };
+  const events = interval(db, row.previous_cursor || null, cursor);
+  const ids = events.map(event => event.event_id);
+  if (row.input_ids !== null && row.input_ids !== JSON.stringify(ids)) throw new Error("durable extraction inputs changed");
+  if (parsed.claims.some(draft => draft.event_ids.some(id => !ids.includes(id)))) throw new Error("durable extraction provenance is invalid");
+  const batch: DurableExtractBatch = { previous_cursor: row.previous_cursor || null, cursor, drafts: parsed.claims,
+    model_ref: row.model_ref, input_ids: ids, outcome: row.outcome as DurableExtractBatch["outcome"] };
+  if (row.integrity !== null && row.integrity !== integrity(batch)) throw new Error("durable extraction integrity mismatch");
+  // Compatible journals predate the input manifest. Validate against the live
+  // ledger before upgrading them; never infer a boundary from draft text.
+  if (row.integrity === null || row.input_ids === null) saveBatch(db, batch);
+  return batch;
 }
 
-/** Cursor and journal deletion commit together only after every draft is durable. */
+/** Validate again after asynchronous filing, then advance and delete atomically. */
 export function completeDurableExtractBatch(db: Database, batch: DurableExtractBatch): boolean {
-  const expected = batch.previous_cursor;
-  const cursor = `${batch.cursor.accepted_at}\t${batch.cursor.event_id}`;
   return db.transaction(() => {
-    if (readExtractCursor(db) !== expected) return false;
-    writeCheckpoint(db, MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY, cursor);
-    const removed = db.query("DELETE FROM extract_batches WHERE previous_cursor = ?").run(expected ?? NULL_CURSOR);
-    return removed.changes === 1;
+    const current = readDurableExtractBatch(db);
+    if (current === null || integrity(current) !== integrity(batch)) return false;
+    writeCheckpoint(db, MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY, encodeCursor(batch.cursor));
+    db.query("DELETE FROM extract_batches WHERE previous_cursor = ?").run(batch.previous_cursor ?? NULL_CURSOR);
+    return true;
   }).immediate();
+}
+
+/** Called inside the source purge transaction, before deleting ledger rows. */
+export function purgeExtractInputs(db: Database, eventIds: ReadonlySet<string>): void {
+  if (!tableExists(db, "extract_batches")) return;
+  const batch = readDurableExtractBatch(db);
+  const previous = readExtractCursor(db);
+  const previousBoundary = parseCursor(previous);
+  let nextPrevious = previous;
+  if (previousBoundary !== null && eventIds.has(previousBoundary.event_id)) {
+    const candidates = db.query<{ event_id: string; accepted_at: string }, [string, string, string]>(
+      "SELECT event_id,accepted_at FROM events WHERE accepted_at < ? OR (accepted_at = ? AND event_id <= ?) ORDER BY accepted_at DESC,event_id DESC",
+    ).all(previousBoundary.accepted_at, previousBoundary.accepted_at, previousBoundary.event_id);
+    const surviving = candidates.find(row => !eventIds.has(row.event_id));
+    nextPrevious = surviving === undefined ? null : encodeCursor(surviving);
+    if (nextPrevious === null) db.query("DELETE FROM checkpoints WHERE connector_id=? AND source_key=?").run(MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY);
+    else writeCheckpoint(db, MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY, nextPrevious);
+  }
+  if (batch === null) return;
+  if (!batch.input_ids.some(id => eventIds.has(id)) && nextPrevious === previous) return;
+  const remaining = batch.input_ids.filter(id => !eventIds.has(id));
+  db.query("DELETE FROM extract_batches").run();
+  if (remaining.length === 0) return;
+  const last = remaining.at(-1)!;
+  const row = db.query<{ accepted_at: string }, [string]>("SELECT accepted_at FROM events WHERE event_id = ?").get(last)!;
+  saveBatch(db, { ...batch, previous_cursor: nextPrevious, input_ids: remaining, cursor: { event_id: last, accepted_at: row.accepted_at },
+    drafts: batch.drafts.filter(draft => !draft.event_ids.some(id => eventIds.has(id))), outcome: "purged" });
 }
 
 function parseCursor(raw: string | null): LedgerCursor | null {
@@ -135,6 +192,8 @@ export function commitExtractCursor(db: Database, mined: MineResult): boolean {
   const cursor = `${mined.cursor.accepted_at}\t${mined.cursor.event_id}`;
   return db.transaction(() => {
     if (readExtractCursor(db) !== mined.previous_cursor) return false;
+    const events = interval(db, mined.previous_cursor, mined.cursor!);
+    if (mined.input_ids !== undefined && JSON.stringify(mined.input_ids) !== JSON.stringify(events.map(event => event.event_id))) return false;
     writeCheckpoint(db, MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY, cursor);
     return true;
   }).immediate();
@@ -160,7 +219,7 @@ export async function mineLiveDrafts(
     (event) => !event.deleted && !event.text.includes("KIZUKI CONTEXT v1"),
   );
   if (usable.length === 0) {
-    return { mined: { status: "empty" }, drafts: [], previous_cursor, cursor: batch.cursor };
+    return { mined: { status: "empty" }, drafts: [], previous_cursor, cursor: batch.cursor, input_ids: batch.events.map(event => event.event_id) };
   }
 
   const subjects = new Set(usable.flatMap((event) => event.subjects.map((subject) => subject.subject_id)));
@@ -214,5 +273,5 @@ export async function mineLiveDrafts(
     }
   }
 
-  return { mined, drafts, previous_cursor, cursor: batch.cursor };
+  return { mined, drafts, previous_cursor, cursor: batch.cursor, input_ids: batch.events.map(event => event.event_id) };
 }

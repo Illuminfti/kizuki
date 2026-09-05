@@ -1,3 +1,6 @@
+import { readReceiptsLog } from "../canon/receipts";
+import { settleWriteReservations } from "./budget-ledger";
+import { ulid } from "../util/ulid";
 import type { Database } from "bun:sqlite";
 import {
   BudgetExhausted,
@@ -85,7 +88,7 @@ function observe(metrics: ProduceMetrics, result: ProduceResult, wallMs: number)
   }
 }
 
-function observedProducer(producer: ProducerPort, metrics: ProduceMetrics): ProducerPort {
+function observedProducer(producer: ProducerPort, metrics: ProduceMetrics, record: (result: ProduceResult) => void): ProducerPort {
   return {
     descriptor: producer.descriptor,
     health: () => producer.health(),
@@ -94,6 +97,7 @@ function observedProducer(producer: ProducerPort, metrics: ProduceMetrics): Prod
       const started = performance.now();
       const result = await producer.produce(input);
       observe(metrics, result, Math.max(0, Math.round(performance.now() - started)));
+      record(result);
       return result;
     },
   };
@@ -114,6 +118,7 @@ function metricResult(metrics: ProduceMetrics): Pick<WritePassResult, "claims_re
 
 export interface WritePassOptions {
   readonly budget: BudgetTracker;
+  readonly run_id?: string;
   readonly model_ref?: string | null;
   readonly producer?: ProducerPort;
   readonly claims?: ClaimsIo;
@@ -170,9 +175,11 @@ export async function runWritePass(
     };
   }
   try {
+    settleWriteReservations(db, vaultPath);
     return await runWritePassLocked(db, vaultPath, options);
   } finally {
-    lock.release();
+    try { settleWriteReservations(db, vaultPath); }
+    finally { lock.release(); }
   }
 }
 
@@ -194,15 +201,21 @@ async function runWritePassLocked(
   if (options.producer !== undefined && options.claims !== undefined) {
     const pendingBatch = readDurableExtractBatch(db);
     if (pendingBatch !== null) {
-      const filed = await fileProducedDrafts(options.claims, pendingBatch.drafts, "model", options.model_ref ?? null);
-      extracted = pendingBatch.drafts.length;
+      const filed = await fileProducedDrafts(options.claims, pendingBatch.drafts, "model", pendingBatch.model_ref);
+      // Replay files an existing decision; it is not another extraction.
+      extracted = 0;
       deduped += filed.deduped;
       superseded += filed.superseded;
       if (!completeDurableExtractBatch(db, pendingBatch)) {
         errors.push("extract cursor changed before durable batch commit");
       }
     } else {
-    const mined = await mineLiveDrafts(db, observedProducer(options.producer, metrics));
+    const runId = options.run_id ?? ulid();
+    const mined = await mineLiveDrafts(db, observedProducer(options.producer, metrics, (result) => {
+      db.query("INSERT INTO extract_usage(run_id,model_ref,metrics,created_at,holder_pid) VALUES (?,?,?,?,?)").run(
+        runId, options.model_ref ?? null, JSON.stringify({ ...metricResult(metrics), claims_extracted: result.status === "ok" ? result.claims.length : 0 }), new Date().toISOString(), process.pid,
+      );
+    }));
     switch (mined.mined.status) {
       case "unavailable":
         stopped = `model:${mined.mined.reason}`;
@@ -262,7 +275,7 @@ async function runWritePassLocked(
   const pending = listUnwrittenLiveClaims(db, WRITE_PASS_SCAN);
   for (const claim of pending) {
     if (canonWrites >= WRITE_PASS_LIMIT) break;
-    const receiptsBefore = loopReceiptCount(db);
+    const receiptsBefore = loopReceiptCount(db, vaultPath);
     try {
       const decision = segregateLoopDecision(resolveTarget(io, claim));
       if (decision.action === "skip") continue;
@@ -270,14 +283,14 @@ async function runWritePassLocked(
         writer: "loop",
         budget: options.budget,
       });
-      const committed = loopReceiptCount(db) - receiptsBefore;
+      const committed = loopReceiptCount(db, vaultPath) - receiptsBefore;
       canonWrites += committed;
       written += committed;
     } catch (error) {
       // Derived refresh happens after the canon receipt is durable.  Count a
       // committed write even when that optional follow-up fails, so the run
       // receipt and budget cannot hide it.
-      const committed = loopReceiptCount(db) - receiptsBefore;
+      const committed = loopReceiptCount(db, vaultPath) - receiptsBefore;
       canonWrites += committed;
       written += committed;
       if (error instanceof BudgetExhausted) {
@@ -301,10 +314,14 @@ async function runWritePassLocked(
   };
 }
 
-function loopReceiptCount(db: Database): number {
-  return db.query<{ count: number }, []>(
-    "SELECT count(*) AS count FROM canon_receipts WHERE writer = 'loop'",
-  ).get()?.count ?? 0;
+function loopReceiptCount(db: Database, vaultPath: string): number {
+  const ids = new Set(db.query<{ receipt_id: string }, []>(
+    "SELECT receipt_id FROM canon_receipts WHERE writer = 'loop'",
+  ).all().map(row => row.receipt_id));
+  for (const receipt of readReceiptsLog(vaultPath)) {
+    if (receipt.writer === "loop") ids.add(receipt.receipt_id);
+  }
+  return ids.size;
 }
 
 async function fileProducedDrafts(
