@@ -15,7 +15,6 @@ import { getConnector } from "@kizuki/connectors";
 import {
   assertSameImapIdentity,
   ImapSignInInputError,
-  secretSpellings,
 } from "@kizuki/connector-imap";
 import { UsageError, parseArguments, requirePositional } from "../args";
 import {
@@ -56,9 +55,11 @@ function checkRequestedSensitivity(db: Database, manifest: Manifest, requested: 
 
 export function sanitizedSignInIo(io: CliIo) {
   const secrets: string[] = [];
+  const displaySpellings = (secret: string): string[] =>
+    [...new Set([secret, secret.normalize("NFC"), secret.normalize("NFD")])];
   const redact = (text: string): string => {
     let result = text;
-    for (const secret of secrets.flatMap(secretSpellings).sort((a, b) => b.length - a.length)) {
+    for (const secret of secrets.flatMap(displaySpellings).sort((a, b) => b.length - a.length)) {
       if (secret.length === 0) continue;
       const escaped = secret.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       result = result.replace(new RegExp(escaped, "gi"), "[redacted]");

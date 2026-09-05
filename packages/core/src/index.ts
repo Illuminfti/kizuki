@@ -618,7 +618,6 @@ export {
   LedgerError,
   disconnect,
   getCheckpoint,
-  writeResumeCursor,
   getConnection,
   inspectCheckpoints,
   inspectConnections,

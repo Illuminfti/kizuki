@@ -52,7 +52,7 @@ export type {
 } from "./imap/session";
 export { ImapClient, atom, str } from "./imap/client";
 export type { CommandArg, CommandResult } from "./imap/client";
-export { failureFor, responseCode, sanitizeDetail, secretSpellings } from "./imap/codes";
+export { failureFor, responseCode, sanitizeDetail } from "./imap/codes";
 export {
   MAX_LINE_BYTES,
   MAX_LITERAL_BYTES,
