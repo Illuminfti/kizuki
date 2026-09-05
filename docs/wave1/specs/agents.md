@@ -81,7 +81,7 @@ export type Tool = typeof TOOLS[number]
 export const SENSITIVITY_ORDER = { public: 0, personal: 1, private: 2 } as const
 export interface Grant { ceiling: Sensitivity; types: string[] | null; subjects: string[] | null; since: string | null; until: string | null; tools: Tool[]; rate_limit_per_minute: number; relay_owner_corrections: boolean }
 export const DEFAULT_GRANT: Grant   // ceiling 'public', tools/types/subjects [], since/until null, 60/min, relay false
-export const OWNER_AGENT_GRANT: Grant // explicit literal private preset; tools ['search','get_page','query_entities','timeline','context_packet','graph_neighbors','system_health','propose']; types/subjects/since/until null, 60/min, relay false
+export const OWNER_AGENT_GRANT: Grant // explicit literal private preset; tools ['search','get_page','query_entities','timeline','context_packet','graph_neighbors','system_health','propose']; types/subjects/since/until null, 60/min, relay true
 export const OWNER: Principal       // { kind:'owner', name:'owner', grant: { ceiling:'private', ... unlimited } } — never persisted
 export interface Agent { agent_id; name; created_at; revoked_at: string | null }
 export type Principal = { kind: 'owner'; name: 'owner'; grant: Grant } | { kind: 'agent'; agent: Agent; grant: Grant }
