@@ -57,6 +57,15 @@ describe("padEnd", () => {
     expect(stringWidth(capped)).toBe(8);
     expect(capped).not.toContain("\x1b");
   });
+
+  test("fits oversized graphemes without empty lines or width drift", () => {
+    for (const width of [1, 2, 3]) {
+      expect(stringWidth(padEnd("👩‍💻👩‍💻", width))).toBe(width);
+    }
+    expect(wrap("👩‍💻", 1)).toEqual(["?"]);
+    expect(wrap("👩‍💻", 2)).toEqual(["👩‍💻"]);
+    expect(wrap("👩‍💻👩‍💻", 3)).toEqual(["👩‍💻", "👩‍💻"]);
+  });
 });
 
 describe("wrap", () => {

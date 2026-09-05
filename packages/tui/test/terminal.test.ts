@@ -193,4 +193,29 @@ describe("createTerminal", () => {
     expect(stdout.writes.join("")).toContain(`${CSI}?2004h`);
     expect(stdout.writes.join("")).toContain(`${CSI}?2004l`);
   });
+
+  test("keeps delayed partial control input buffered and disposal drops it", async () => {
+    const stdin = new FakeStdin();
+    const stdout = new FakeStdout();
+    const terminal = createTerminal(
+      stdin as unknown as NodeJS.ReadStream,
+      stdout as unknown as NodeJS.WriteStream,
+      { signals: null },
+    );
+    const seen: import("../src/keys").Key[] = [];
+    const stop = terminal.onKeys((keys) => seen.push(...keys));
+    stdin.emit("data", "\x1b]0;");
+    await Bun.sleep(40);
+    stdin.emit("data", "uyes\r\x07");
+    expect(seen).toEqual([{ name: "unknown" }]);
+    stdin.emit("data", "\x1b[2");
+    await Bun.sleep(40);
+    stdin.emit("data", "00~uyes\r\x1b[201~");
+    expect(seen).toEqual([{ name: "unknown" }, { name: "paste", text: "uyes\r" }]);
+    stdin.emit("data", "\x1b[2");
+    stop();
+    await Bun.sleep(40);
+    stdin.emit("data", "00~uyes\r\x1b[201~");
+    expect(seen).toEqual([{ name: "unknown" }, { name: "paste", text: "uyes\r" }]);
+  });
 });

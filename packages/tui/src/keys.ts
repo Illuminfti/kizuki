@@ -140,20 +140,16 @@ export function createKeyStream(): {
 
   return {
     push,
-    needsFlush: () => !pasting && pending.startsWith(ESC),
+    needsFlush: () => !pasting && pending === ESC,
     flush() {
       const rest = decoder.decode();
       if (rest.length > 0) pending += rest;
-      if (pasting) return [];
+      if (pasting || pending !== ESC) return [];
       if (pending === ESC) {
         pending = "";
         return [{ name: "escape" }];
       }
-      if (pending.startsWith(ESC)) {
-        pending = "";
-        return [{ name: "unknown" }];
-      }
-      return drain();
+      return [];
     },
     end() {
       const rest = decoder.decode();
@@ -163,7 +159,9 @@ export function createKeyStream(): {
         pasted = "";
         return [];
       }
-      return this.flush();
+      if (pending === ESC) return this.flush();
+      pending = "";
+      return [];
     },
   };
 }

@@ -78,7 +78,7 @@ describe("audit reducer", () => {
 
   test("bracketed paste cannot invoke list shortcuts or authorize undo", () => {
     const start = state([item()]);
-    expect(reduce(start, { name: "paste", text: "uq" }, VIEWPORT).effects).toEqual([]);
+    expect(reduce(start, { name: "paste", text: "uyes\r" }, VIEWPORT).effects).toEqual([]);
     const confirm = reduce(start, { name: "char", ch: "u" }, VIEWPORT).state;
     if (confirm.mode.name !== "confirm") throw new Error("expected undo confirmation");
     const pasted = reduce(confirm, { name: "paste", text: "yes" }, VIEWPORT);
@@ -346,6 +346,15 @@ describe("audit reducer", () => {
       expect(stringWidth(line)).toBe(50);
       expect(line).not.toContain("\x1b");
     }
+  });
+
+  test("split layouts keep every grapheme-rendered line at 97 cells", () => {
+    const frame = render(state([item({}, { title: "👩‍💻👩‍💻" })]), {
+      cols: 97,
+      rows: 30,
+      paint: paint(false),
+    });
+    for (const line of frame) expect(stringWidth(line)).toBe(97);
   });
 
   test("a loadError blocks undo from the list", () => {

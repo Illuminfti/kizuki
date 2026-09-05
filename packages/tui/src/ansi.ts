@@ -63,7 +63,8 @@ export function stringWidth(text: string): number {
 export function truncate(text: string, width: number, ellipsis = "…"): string {
   if (width <= 0) return "";
   if (stringWidth(text) <= width) return text;
-  const tailWidth = stringWidth(ellipsis);
+  const tail = stringWidth(ellipsis) <= width ? ellipsis : "";
+  const tailWidth = stringWidth(tail);
   const budget = Math.max(0, width - tailWidth);
   let out = "";
   let used = 0;
@@ -73,18 +74,18 @@ export function truncate(text: string, width: number, ellipsis = "…"): string 
     out += ch;
     used += w;
   }
-  return out + ellipsis;
+  // A cluster wider than the available cells cannot be split. Keep the line
+  // visible with one ASCII replacement cell rather than emitting an overflow.
+  if (out.length === 0 && budget > 0) out = "?";
+  return out + tail;
 }
 
 /** Pads or hard-caps a line to exactly `width` columns. Overflow is truncated after stripping ANSI. */
 export function padEnd(text: string, width: number): string {
   if (width <= 0) return "";
   const current = stringWidth(text);
-  if (current > width) {
-    return truncate(stripAnsi(text), width, "");
-  }
-  if (current === width) return text;
-  return text + " ".repeat(width - current);
+  const fitted = current > width ? truncate(stripAnsi(text), width, "") : text;
+  return fitted + " ".repeat(Math.max(0, width - stringWidth(fitted)));
 }
 
 /** Word-wraps plain text to `width` columns; blank lines survive, long tokens hard-break. */
@@ -110,8 +111,15 @@ export function wrap(text: string, width: number): string[] {
         let chunkWidth = 0;
         for (const ch of graphemes(word)) {
           const cw = charWidth(ch);
+          if (cw > w) {
+            if (chunk.length > 0) out.push(chunk);
+            chunk = "";
+            chunkWidth = 0;
+            out.push("?");
+            continue;
+          }
           if (chunkWidth + cw > w) {
-            out.push(chunk);
+            if (chunk.length > 0) out.push(chunk);
             chunk = "";
             chunkWidth = 0;
           }
@@ -132,7 +140,7 @@ export function wrap(text: string, width: number): string[] {
         lineWidth += sep + wordWidth;
       }
     }
-    out.push(line);
+    if (line.length > 0) out.push(line);
   }
   return out;
 }
