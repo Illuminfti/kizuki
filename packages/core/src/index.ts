@@ -566,7 +566,7 @@ export { isNonEmptyString, isPlainObject } from "./util/validate";
 export type { ValidationResult } from "./util/validate";
 
 export { openLedger } from "./ledger/db";
-export { readCheckpoint, writeCheckpoint } from "./ledger/checkpoints";
+export { readCheckpoint } from "./ledger/checkpoints";
 export {
   accept,
   count,

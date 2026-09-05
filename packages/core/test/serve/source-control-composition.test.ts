@@ -6,7 +6,7 @@ import { sourceTombstoneProposal } from "../../src/canon/source-tombstone";
 import { getClaim, insertClaim, type InsertClaimInput } from "../../src/claims/store";
 import type { ProducerPort } from "../../src/contracts/producer";
 import { accept } from "../../src/ledger/ledger";
-import { writeCheckpoint } from "../../src/ledger/checkpoints";
+import { commitExtractCursor } from "../../src/serve/extract";
 import { commitMachineByteIntent } from "../../src/ledger/event-origin";
 import { runWritePass } from "../../src/serve/write-pass";
 import { fileProposal } from "../../src/staging/proposals";
@@ -61,7 +61,9 @@ for (const self of [false, true]) {
       const last = f.db.query<{ accepted_at: string; event_id: string }, []>(
         "SELECT accepted_at,event_id FROM events ORDER BY accepted_at DESC,event_id DESC LIMIT 1",
       ).get()!;
-      writeCheckpoint(f.db, "kizuki.producer.model", "extract", `${last.accepted_at}\t${last.event_id}`);
+      expect(commitExtractCursor(f.db, {
+        mined: { status: "empty" }, drafts: [], previous_cursor: null, cursor: last,
+      })).toBe(true);
       let produced = 0;
       const producer: ProducerPort = {
         descriptor: { id: "kizuki.producer.fixture", kind: "producer", contract: "kizuki.producer/v1",

@@ -514,7 +514,6 @@ describe("public surface", () => {
       "verifyBackup",
       "verifyPurge",
       "withDeadline",
-      "writeCheckpoint",
       "writeServeIntent",
     ]);
   });
