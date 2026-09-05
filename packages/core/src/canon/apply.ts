@@ -299,7 +299,10 @@ function prepareRevision(
 ): Prepared {
   const extra = mergedFrontmatter(claims);
   const data: Record<string, unknown> = { ...existing.page.data };
-  for (const key of Object.keys(extra).sort()) data[key] = extra[key];
+  for (const key of Object.keys(extra).sort()) {
+    if (key === "type") continue;
+    data[key] = extra[key];
+  }
   assertPageType(data);
 
   const priorSensitivity = existing.page.data["sensitivity"];

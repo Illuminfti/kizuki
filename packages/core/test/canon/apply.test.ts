@@ -9,7 +9,10 @@ import { CanonWriteError } from "../../src/canon/errors";
 import { RECEIPTS_PATH, listCanonReceipts, readReceiptsLog } from "../../src/canon/receipts";
 import { getClaim } from "../../src/claims/store";
 import type { Claim } from "../../src/contracts/proposal";
+import { proposalsForEvent } from "../../src/staging/producers";
 import { parseFrontmatter } from "../../src/vault/frontmatter";
+import { subjectPageType } from "../../src/vault/subject-type";
+import { event } from "../staging/helpers";
 import { canonFixture, putEvent, storeClaim, write } from "./helpers";
 import type { CanonFixture } from "./helpers";
 
@@ -317,6 +320,67 @@ describe("applyCanonWrite", () => {
     expect(second.claim_ids).toHaveLength(1);
     expect(page.data["id"]).toBe(
       parseFrontmatter(readFileSync(join(vault, created.page_path), "utf8")).data["id"],
+    );
+  });
+
+  test("a single-subject capture note keeps the entity page type the subject chose", async () => {
+    const { db, io, vault } = fixture();
+    const subject = "calendar:standup";
+    const expectedType = subjectPageType(subject);
+    expect(expectedType).toBe("topic");
+
+    const captured = event({
+      connector_id: "kizuki.google-calendar",
+      kind: "calendar_event",
+      subjects: [{ subject_id: subject, role: "about", display_name: "standup" }],
+    });
+    const proposals = proposalsForEvent(captured);
+    const entityInput = proposals.find((item) => item.kind === "entity");
+    const noteInput = proposals.find((item) => item.kind === "claim");
+    if (entityInput === undefined || noteInput === undefined) {
+      throw new Error("deterministic floor must emit an entity and a capture note");
+    }
+    expect(entityInput.frontmatter["type"]).toBe(expectedType);
+    expect(noteInput.frontmatter["type"]).toBe("source");
+    expect(noteInput.target).toBeNull();
+
+    const eventId = putEvent(db);
+    const created = write(
+      io,
+      await storeClaim(db, eventId, {
+        kind: "entity",
+        target: entityInput.target ?? subject,
+        subject,
+        subjects: entityInput.subjects ?? [subject],
+        predicate: null,
+        object: null,
+        body: entityInput.body,
+        frontmatter: entityInput.frontmatter,
+      }),
+    );
+    expect(parseFrontmatter(readFileSync(join(vault, created.page_path), "utf8")).data["type"]).toBe(
+      expectedType,
+    );
+
+    const note = await storeClaim(db, eventId, {
+      kind: "claim",
+      target: null,
+      subject,
+      subjects: noteInput.subjects ?? [subject],
+      predicate: null,
+      object: null,
+      body: noteInput.body,
+      frontmatter: noteInput.frontmatter,
+    });
+    expect(resolveTarget(io, note)).toEqual({
+      action: "edit",
+      page_id: expect.any(String),
+      rel_path: created.page_path,
+      reason: "subject",
+    });
+    write(io, note);
+    expect(parseFrontmatter(readFileSync(join(vault, created.page_path), "utf8")).data["type"]).toBe(
+      expectedType,
     );
   });
 });
