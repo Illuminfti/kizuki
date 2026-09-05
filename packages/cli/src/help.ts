@@ -5,7 +5,7 @@ import { INVOCATION, IS_COMPILED } from "./runtime";
 export { INVOCATION } from "./runtime";
 
 const GROUPS: readonly { title: string; names: readonly string[] }[] = [
-  { title: "Start", names: ["init", "import", "doctor"] },
+  { title: "Start", names: ["app", "init", "import", "doctor"] },
   { title: "Recall", names: ["query", "context"] },
   { title: "Sources", names: ["connect", "backfill", "sync"] },
   { title: "Correct", names: ["tell", "undo", "audit"] },
@@ -15,6 +15,7 @@ const GROUPS: readonly { title: string; names: readonly string[] }[] = [
 ];
 
 const EXAMPLES: Readonly<Record<string, readonly string[]>> = {
+  app: [`${INVOCATION} app`],
   init: [`${INVOCATION} init ./vault`],
   import: [`${INVOCATION} import markdown-folder --source ./notes --policy POLICY.json --expected-revision 0 --operation-id first-import`],
   query: [
