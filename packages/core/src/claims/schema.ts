@@ -321,73 +321,75 @@ function claimsSurfaceReady(db: Database): boolean {
 }
 
 function indexSql(db: Database, name: string): string | null {
-  return (
-    db
-      .query<{ sql: string | null }, [string]>(
-        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
-      )
-      .get(name)?.sql ?? null
+  const statement = db.prepare<{ sql: string | null }, [string]>(
+    "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
   );
+  try {
+    return statement.get(name)?.sql ?? null;
+  } finally {
+    statement.finalize();
+  }
 }
 
 function backfillProposalContentHash(db: Database): void {
-  const rows = db
-    .query<
-      {
-        proposal_id: string;
-        kind: string;
-        target: string | null;
-        body: string;
-        frontmatter: string;
-        subjects: string;
-        producer: string;
-        confidence: number;
-        content_hash: string;
-      },
-      []
-    >(
-      `SELECT proposal_id, kind, target, body, frontmatter, subjects,
-              producer, confidence, content_hash
-         FROM proposals
-        WHERE content_hash IS NULL OR content_hash = ''`,
-    )
-    .all();
-  const update = db.query(
+  type ProposalHashRow = {
+    proposal_id: string;
+    kind: string;
+    target: string | null;
+    body: string;
+    frontmatter: string;
+    subjects: string;
+    producer: string;
+    confidence: number;
+    content_hash: string;
+  };
+  const select = db.prepare<ProposalHashRow, []>(
+    `SELECT proposal_id, kind, target, body, frontmatter, subjects,
+            producer, confidence, content_hash
+       FROM proposals
+      WHERE content_hash IS NULL OR content_hash = ''`,
+  );
+  const update = db.prepare(
     "UPDATE proposals SET content_hash = ? WHERE proposal_id = ?",
   );
-  for (const row of rows) {
-    let frontmatter: Record<string, unknown> = {};
-    let subjects: string[] = [];
-    try {
-      const parsed: unknown = JSON.parse(row.frontmatter);
-      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-        frontmatter = parsed as Record<string, unknown>;
+  try {
+    for (const row of select.all()) {
+      let frontmatter: Record<string, unknown> = {};
+      let subjects: string[] = [];
+      try {
+        const parsed: unknown = JSON.parse(row.frontmatter);
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+          frontmatter = parsed as Record<string, unknown>;
+        }
+      } catch {
+        frontmatter = {};
       }
-    } catch {
-      frontmatter = {};
-    }
-    try {
-      const parsed: unknown = JSON.parse(row.subjects);
-      if (Array.isArray(parsed) && parsed.every((item) => typeof item === "string")) {
-        subjects = parsed;
+      try {
+        const parsed: unknown = JSON.parse(row.subjects);
+        if (Array.isArray(parsed) && parsed.every((item) => typeof item === "string")) {
+          subjects = parsed;
+        }
+      } catch {
+        subjects = [];
       }
-    } catch {
-      subjects = [];
+      update.run(
+        contentSignature({
+          kind: row.kind,
+          target: row.target,
+          body: row.body,
+          frontmatter,
+          subjects,
+          producer: isProducer(row.producer)
+            ? canonicalizeProducer(row.producer)
+            : row.producer,
+          confidence: row.confidence,
+        }),
+        row.proposal_id,
+      );
     }
-    update.run(
-      contentSignature({
-        kind: row.kind,
-        target: row.target,
-        body: row.body,
-        frontmatter,
-        subjects,
-        producer: isProducer(row.producer)
-          ? canonicalizeProducer(row.producer)
-          : row.producer,
-        confidence: row.confidence,
-      }),
-      row.proposal_id,
-    );
+  } finally {
+    select.finalize();
+    update.finalize();
   }
 }
 
