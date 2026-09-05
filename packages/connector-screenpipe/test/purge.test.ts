@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { renameSync } from "node:fs";
 import {
   DISTINCT_SCAN_CAP,
   MAX_PLAN_IDS,
@@ -169,7 +171,7 @@ describe("ScreenpipeConnector source purge", () => {
     const page = planSourceRecords(first.writer, subjectId("app", "Bound"));
     expect(() => planSourceRecords(first.writer, subjectId("app", "Other"), Date.now, page.continuation)).toThrow("does not match");
     const other = createFixtureDatabase({ rows: false });
-    expect(() => planSourceRecords(other.writer, subjectId("app", "Bound"), Date.now, page.continuation)).toThrow("does not match");
+    expect(() => planSourceRecords(other.writer, subjectId("app", "Bound"), Date.now, page.continuation)).toThrow("restart enumeration");
   });
 
   test("a continuation rejects changed rows even when the path, schema, and maxima stay the same", () => {
@@ -179,7 +181,41 @@ describe("ScreenpipeConnector source purge", () => {
     })();
     const page = planSourceRecords(fixture.writer, subjectId("app", "Stable"));
     fixture.writer.query("UPDATE frames SET window_name = ? WHERE id = 5000").run("replacement content");
-    expect(() => planSourceRecords(fixture.writer, subjectId("app", "Stable"), Date.now, page.continuation)).toThrow("does not match");
+    expect(() => planSourceRecords(fixture.writer, subjectId("app", "Stable"), Date.now, page.continuation)).toThrow("restart enumeration");
+  });
+
+  test("a continuation rejects a replacement database with the same path, schema, and maxima", () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    const replacement = createFixtureDatabase({ rows: false });
+    for (const database of [fixture.writer, replacement.writer]) {
+      database.transaction(() => {
+        for (let id = 1; id <= MAX_PLAN_IDS + 1; id += 1) {
+          insertFrame(database, { id, timestamp: "2026-01-01T00:00:00Z", appName: "Replaced" });
+        }
+      })();
+    }
+    const page = planSourceRecords(fixture.writer, subjectId("app", "Replaced"));
+    replacement.writer.close();
+    renameSync(replacement.path, fixture.path);
+    expect(() => planSourceRecords(fixture.writer, subjectId("app", "Replaced"), Date.now, page.continuation)).toThrow("restart enumeration");
+  });
+
+  test("a mutation during a page never returns a completeness claim", () => {
+    const fixture = createFixtureDatabase({ rows: false });
+    fixture.writer.exec("PRAGMA journal_mode = WAL");
+    fixture.writer.transaction(() => {
+      for (let id = 1; id <= MAX_PLAN_IDS + 1; id += 1) {
+        insertFrame(fixture.writer, { id, timestamp: "2026-01-01T00:00:00Z", appName: "Race" });
+      }
+    })();
+    const changer = new Database(fixture.path, { safeIntegers: true });
+    let calls = 0;
+    expect(() => planSourceRecords(fixture.writer, subjectId("app", "Race"), () => {
+      calls += 1;
+      if (calls === 2) changer.query("UPDATE frames SET window_name = ? WHERE id = 1").run("changed mid-page");
+      return 0;
+    })).toThrow("restart enumeration");
+    changer.close();
   });
 
   test("distinct-value scans used for planning are capped", async () => {

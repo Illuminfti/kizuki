@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { readFileSync, statSync } from "node:fs";
+import { lstatSync } from "node:fs";
 import { MAX_PLAN_IDS, PLAN_DEADLINE_MS, PLAN_PAGE } from "./cursor";
 import { ScreenpipeConnectorError } from "./errors";
 import { siteHost } from "./map";
@@ -15,38 +15,59 @@ export interface PlanScan {
 
 interface PlanCursor {
   subject_id: string;
-  database_fingerprint: string;
+  session_nonce: string;
   after_id: number;
 }
 
-/** Lists records only; continuations bind to this subject and database. */
+interface FileIdentity {
+  path: string;
+  dev: string;
+  ino: string;
+  size: string;
+  ctime: string;
+  mtime: string;
+  birthtime: string;
+}
+
+interface ScanSession {
+  nonce: string;
+  identity: FileIdentity;
+  dataVersion: number;
+}
+
+const scanSessions = new WeakMap<Database, ScanSession>();
+
+/**
+ * Lists records only. A continuation belongs to this open Database instance;
+ * reopening the source starts a fresh scan rather than resuming an old view.
+ */
 export function planSourceRecords(
   db: Database,
   subjectId: string,
   now: () => number = Date.now,
   continuation?: string,
 ): PlanScan {
-  const fingerprint = databaseFingerprint(db);
-  const cursor = parseContinuation(continuation, subjectId, fingerprint);
   const deadline = now() + PLAN_DEADLINE_MS;
-  const app = exactSubjectValue(subjectId, "app");
-  if (app !== null) {
-    return pageIds(db, "frames", "app_name = ?", [app], "frame", cursor.after_id, deadline, now, subjectId, fingerprint);
-  }
-  const device = exactSubjectValue(subjectId, "audio-device");
-  if (device !== null) {
-    return pageIds(db, "audio_transcriptions", "device = ?", [device], "transcription", cursor.after_id, deadline, now, subjectId, fingerprint);
-  }
-  const speaker = prefixedValue(subjectId, "screenpipe:speaker:");
-  if (speaker !== null && /^[1-9]\d*$/.test(speaker)) {
-    return pageIds(db, "audio_transcriptions", "speaker_id = ?", [Number(speaker)], "transcription", cursor.after_id, deadline, now, subjectId, fingerprint);
-  }
-  const site = prefixedValue(subjectId, "screenpipe:site:");
-  if (site !== null) return pageSiteIds(db, site, cursor.after_id, deadline, now, subjectId, fingerprint);
-  if (subjectId.startsWith("screenpipe:app:") || subjectId.startsWith("screenpipe:audio-device:")) {
-    throw new ScreenpipeConnectorError("not_supported", "kizuki.screenpipe: legacy slug subject identities are ambiguous; rebackfill to use v2 identities");
-  }
-  return { ids: [], truncated: false, complete: true };
+  return inReadSnapshot(db, deadline, now, continuation, subjectId, (cursor, session) => {
+    const app = exactSubjectValue(subjectId, "app");
+    if (app !== null) {
+      return pageIds(db, "frames", "app_name = ?", [app], "frame", cursor.after_id, deadline, now, subjectId, session.nonce);
+    }
+    const device = exactSubjectValue(subjectId, "audio-device");
+    if (device !== null) {
+      return pageIds(db, "audio_transcriptions", "device = ?", [device], "transcription", cursor.after_id, deadline, now, subjectId, session.nonce);
+    }
+    const speaker = prefixedValue(subjectId, "screenpipe:speaker:");
+    if (speaker !== null && /^[1-9]\d*$/.test(speaker)) {
+      return pageIds(db, "audio_transcriptions", "speaker_id = ?", [Number(speaker)], "transcription", cursor.after_id, deadline, now, subjectId, session.nonce);
+    }
+    const site = prefixedValue(subjectId, "screenpipe:site:");
+    if (site !== null) return pageSiteIds(db, site, cursor.after_id, deadline, now, subjectId, session.nonce);
+    if (subjectId.startsWith("screenpipe:app:") || subjectId.startsWith("screenpipe:audio-device:")) {
+      throw new ScreenpipeConnectorError("not_supported", "kizuki.screenpipe: legacy slug subject identities are ambiguous; rebackfill to use v2 identities");
+    }
+    return { ids: [], truncated: false, complete: true };
+  });
 }
 
 function pageIds(
@@ -59,16 +80,16 @@ function pageIds(
   deadline: number,
   now: () => number,
   subjectId: string,
-  fingerprint: string,
+  sessionNonce: string,
 ): PlanScan {
-  if (now() >= deadline) return incomplete([], afterId, subjectId, fingerprint);
+  if (now() >= deadline) return incomplete([], afterId, subjectId, sessionNonce);
   const rows = db.query<{ id: unknown }, Array<string | number>>(
     `SELECT id FROM ${table} WHERE ${condition} AND id > ? ORDER BY id LIMIT ?`,
   ).all(...bindings, afterId, MAX_PLAN_IDS + 1);
   const included = rows.slice(0, MAX_PLAN_IDS).map((row) => planId(row.id));
   const ids = included.map((id) => `${prefix}:${id}`);
   if (rows.length <= MAX_PLAN_IDS) return { ids, truncated: false, complete: true };
-  return incomplete(ids, included.at(-1) ?? afterId, subjectId, fingerprint);
+  return incomplete(ids, included.at(-1) ?? afterId, subjectId, sessionNonce);
 }
 
 function pageSiteIds(
@@ -78,7 +99,7 @@ function pageSiteIds(
   deadline: number,
   now: () => number,
   subjectId: string,
-  fingerprint: string,
+  sessionNonce: string,
 ): PlanScan {
   const ids: string[] = [];
   let after = afterId;
@@ -91,16 +112,16 @@ function pageSiteIds(
       after = planId(row.id);
       if (siteHost(typeof row.browser_url === "string" ? row.browser_url : null) === host) {
         ids.push(`frame:${after}`);
-        if (ids.length === MAX_PLAN_IDS) return incomplete(ids, after, subjectId, fingerprint);
+        if (ids.length === MAX_PLAN_IDS) return incomplete(ids, after, subjectId, sessionNonce);
       }
     }
     if (rows.length < PLAN_PAGE) return { ids, truncated: false, complete: true };
   }
-  return incomplete(ids, after, subjectId, fingerprint);
+  return incomplete(ids, after, subjectId, sessionNonce);
 }
 
-function incomplete(ids: string[], afterId: number, subjectId: string, fingerprint: string): PlanScan {
-  return { ids, truncated: true, complete: false, continuation: encodeContinuation({ subject_id: subjectId, database_fingerprint: fingerprint, after_id: afterId }) };
+function incomplete(ids: string[], afterId: number, subjectId: string, sessionNonce: string): PlanScan {
+  return { ids, truncated: true, complete: false, continuation: encodeContinuation({ subject_id: subjectId, session_nonce: sessionNonce, after_id: afterId }) };
 }
 
 function exactSubjectValue(subjectId: string, kind: "app" | "audio-device"): string | null {
@@ -115,13 +136,13 @@ function exactSubjectValue(subjectId: string, kind: "app" | "audio-device"): str
   }
 }
 
-function parseContinuation(value: string | undefined, subjectId: string, fingerprint: string): PlanCursor {
-  if (value === undefined) return { subject_id: subjectId, database_fingerprint: fingerprint, after_id: 0 };
+function parseContinuation(value: string | undefined, subjectId: string, session: ScanSession): PlanCursor {
+  if (value === undefined) return { subject_id: subjectId, session_nonce: session.nonce, after_id: 0 };
   try {
     const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Partial<PlanCursor>;
     const afterId = parsed.after_id;
-    if (parsed.subject_id !== subjectId || parsed.database_fingerprint !== fingerprint || typeof afterId !== "number" || !Number.isSafeInteger(afterId) || afterId < 0) throw new Error();
-    return { subject_id: subjectId, database_fingerprint: fingerprint, after_id: afterId };
+    if (parsed.subject_id !== subjectId || parsed.session_nonce !== session.nonce || typeof afterId !== "number" || !Number.isSafeInteger(afterId) || afterId < 0) throw new Error();
+    return { subject_id: subjectId, session_nonce: session.nonce, after_id: afterId };
   } catch {
     throw new ScreenpipeConnectorError("parse_error", "kizuki.screenpipe: purge continuation does not match this subject and database");
   }
@@ -131,27 +152,59 @@ function encodeContinuation(cursor: PlanCursor): string {
   return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
 }
 
-function databaseFingerprint(db: Database): string {
-  const migrations = db.query<{ version: unknown; installed_on: unknown }, []>("SELECT version, installed_on FROM _sqlx_migrations WHERE success = 1 ORDER BY version").all();
-  const maxima = db.query<{ frames: unknown; transcriptions: unknown }, []>("SELECT (SELECT MAX(id) FROM frames) AS frames, (SELECT MAX(id) FROM audio_transcriptions) AS transcriptions").get();
-  const file = db.query<{ file: unknown }, []>("PRAGMA database_list").all().map((row) => row.file);
-  const source = file.map((value) => fileSnapshot(typeof value === "string" ? value : ""));
-  return new Bun.CryptoHasher("sha256")
-    .update(JSON.stringify({ migrations, maxima, file, source }, (_key, value) => typeof value === "bigint" ? value.toString() : value))
-    .digest("hex");
+function inReadSnapshot(
+  db: Database,
+  deadline: number,
+  now: () => number,
+  continuation: string | undefined,
+  subjectId: string,
+  page: (cursor: PlanCursor, session: ScanSession) => PlanScan,
+): PlanScan {
+  db.exec("BEGIN");
+  try {
+    const before = sourceState(db);
+    const prior = scanSessions.get(db);
+    const session = continuation === undefined
+      ? { nonce: crypto.randomUUID(), identity: before.identity, dataVersion: before.dataVersion }
+      : prior;
+    if (session === undefined || !sameIdentity(session.identity, before.identity) || session.dataVersion !== before.dataVersion) throw continuationReset();
+    if (continuation === undefined) scanSessions.set(db, session);
+    const cursor = parseContinuation(continuation, subjectId, session);
+    const result = now() >= deadline ? incomplete([], cursor.after_id, subjectId, session.nonce) : page(cursor, session);
+    const during = sourceState(db);
+    if (!sameIdentity(before.identity, during.identity) || before.dataVersion !== during.dataVersion) throw continuationReset();
+    db.exec("COMMIT");
+    const after = sourceState(db);
+    if (!sameIdentity(before.identity, after.identity) || before.dataVersion !== after.dataVersion) throw continuationReset();
+    return result;
+  } catch (error) {
+    try { db.exec("ROLLBACK"); } catch { /* the transaction may already be closed */ }
+    if (error instanceof Error) throw error;
+    throw new ScreenpipeConnectorError("reset_detected", "kizuki.screenpipe: purge scan could not establish a stable source snapshot");
+  }
 }
 
-function fileSnapshot(path: string): string | null {
-  if (path.length === 0) return null;
+function sourceState(db: Database): { identity: FileIdentity; dataVersion: number } {
+  const main = db.query<{ name: unknown; file: unknown }, []>("PRAGMA database_list").all().find((row) => row.name === "main");
+  if (typeof main?.file !== "string" || main.file.length === 0) throw new ScreenpipeConnectorError("misconfigured", "kizuki.screenpipe: purge source database identity is unavailable");
   try {
-    const stat = statSync(path, { bigint: true });
-    const hash = new Bun.CryptoHasher("sha256").update(readFileSync(path)).digest("hex");
-    let wal: string | null = null;
-    try { wal = new Bun.CryptoHasher("sha256").update(readFileSync(`${path}-wal`)).digest("hex"); } catch { /* no WAL */ }
-    return JSON.stringify({ dev: stat.dev.toString(), ino: stat.ino.toString(), size: stat.size.toString(), ctime: stat.ctimeNs.toString(), birthtime: stat.birthtimeNs.toString(), hash, wal });
-  } catch {
-    return null;
+    const stat = lstatSync(main.file, { bigint: true });
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error();
+    const dataVersion = toSafeNumber(db.query<{ data_version: unknown }, []>("PRAGMA data_version").get()?.data_version);
+    if (dataVersion === null) throw new Error();
+    return { identity: { path: main.file, dev: stat.dev.toString(), ino: stat.ino.toString(), size: stat.size.toString(), ctime: stat.ctimeNs.toString(), mtime: stat.mtimeNs.toString(), birthtime: stat.birthtimeNs.toString() }, dataVersion };
+  } catch (error) {
+    if (error instanceof ScreenpipeConnectorError) throw error;
+    throw new ScreenpipeConnectorError("misconfigured", "kizuki.screenpipe: purge source database identity is unavailable", { cause: error });
   }
+}
+
+function sameIdentity(left: FileIdentity, right: FileIdentity): boolean {
+  return left.path === right.path && left.dev === right.dev && left.ino === right.ino && left.size === right.size && left.ctime === right.ctime && left.mtime === right.mtime && left.birthtime === right.birthtime;
+}
+
+function continuationReset(): ScreenpipeConnectorError {
+  return new ScreenpipeConnectorError("reset_detected", "kizuki.screenpipe: purge continuation source changed or session was reopened; restart enumeration");
 }
 
 function planId(value: unknown): number {

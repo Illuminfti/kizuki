@@ -75,10 +75,12 @@ private floor.
   `not_supported`. `planUnreachableSourceRecords()` is a read-only planning
   helper: it returns `{ ids, complete, continuation? }`, is capped at 10,000
   ids and a two-second deadline, and never deletes source rows. An incomplete
-  page has an opaque continuation bound to the exact subject and a read-only
-  snapshot signature of the stopped database (including its WAL when present);
-  a changed source rejects continuation rather than claiming completeness. It
-  is never proof of complete source erasure. Ledger purge is the
+  page has an opaque continuation bound to the exact subject and the same open
+  SQLite connection. Each page runs in a read transaction and checks bounded
+  file-instance metadata plus SQLite's `data_version` before and after the
+  query. Reopening the source or changing it rejects continuation and requires
+  a fresh enumeration rather than claiming completeness. It is never proof of
+  complete source erasure. Ledger purge is the
   path that removes imported evidence.
 - This package must not attach to screenpipe's live database.
 - Timezone-less source timestamps are not assigned UTC. They are quarantined
