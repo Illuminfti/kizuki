@@ -61,8 +61,10 @@ model success or failure. Lossless older references still match exactly.
 `current_failure` reflects the newest attributable attempt and controls model
 health; a later usable success clears it while preserving `last_failure`.
 An unrelated model or a run without a model attempt cannot clear a failure.
-Unattributed-only history remains unknown until a current-model attempt
-establishes its state; a later success retains the warning without failing health.
+`history_unverified` remains true when a potentially matching unattributed
+attempt is newer than every attributable attempt. A later current-model
+attempt establishes its state; a later success retains the history warning
+without failing health. Durable receipt ordering handles equal timestamps.
 Diagnostics contain no provider prose, rejected field names, predicate values
 or raw responses. The claim JSON schema remains exact.
 
