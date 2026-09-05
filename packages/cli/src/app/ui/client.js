@@ -52,6 +52,14 @@ function button(text, run, kind = 'secondary', extra = {}) { return el('button',
 function message(text) { clearTimeout(noticeTimer); notice.textContent = text; notice.hidden = false; noticeTimer = setTimeout(() => { notice.hidden = true; }, 6500); }
 function dateText(value) { if (!value) return 'Not captured yet'; const date = new Date(value); return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date) : 'Time unavailable'; }
 function providerIcon(id) { return id.includes('calendar') ? 'calendar' : id.includes('gmail') ? 'mail' : 'folder'; }
+function resultTitle(hit) {
+  if (hit.scope === 'ledger' && String(hit.title).startsWith('kizuki.')) {
+    const first = String(hit.text).split(/\r?\n/, 1)[0].trim();
+    if (/^#{1,6}\s+/.test(first)) return first.replace(/^#{1,6}\s+/, '').slice(0, 160);
+    return hit.title.includes('markdown') ? 'Local notes' : hit.title.includes('calendar') ? 'Calendar evidence' : hit.title.includes('gmail') ? 'Mail evidence' : 'Source evidence';
+  }
+  return hit.title || 'Saved information';
+}
 function safeCount(value) { return Number.isSafeInteger(value) && value >= 0 ? value.toLocaleString() : '—'; }
 function humanError(code) {
   if (code === 'unauthorized') return 'This app session has ended. Open Kizuki again on this device to reconnect.';
@@ -136,7 +144,7 @@ function renderMemory() {
     const list = el('div', { class: 'result-list' });
     for (const hit of state.hits) {
       const citations = Array.isArray(hit.citations) ? hit.citations : [];
-      list.append(el('article', { class: 'result-item' }, el('div', { class: 'result-meta' }, el('span', { class: 'badge' }, hit.scope === 'canon' ? 'Memory page' : 'Source evidence'), el('span', {}, hit.sensitivity === 'public' ? 'Public' : hit.sensitivity === 'internal' ? 'Internal' : 'Private')), el('h3', {}, hit.title || 'Saved information'), el('p', { class: 'result-text' }, hit.text), el('details', { class: 'result-details' }, el('summary', {}, 'View evidence references'), el('p', {}, 'A search result retains its source. Being shown here does not make a generated statement owner-authored.'), ...citations.map(id => el('p', {}, el('code', {}, id))))));
+      list.append(el('article', { class: 'result-item' }, el('div', { class: 'result-meta' }, el('span', { class: 'badge' }, hit.scope === 'canon' ? 'Memory page' : 'Source evidence'), el('span', {}, hit.sensitivity === 'public' ? 'Public' : hit.sensitivity === 'internal' ? 'Internal' : 'Private')), el('h3', {}, resultTitle(hit)), el('p', { class: 'result-text' }, hit.text), el('details', { class: 'result-details' }, el('summary', {}, 'View evidence references'), el('p', {}, 'Use these references to check the original information.'), ...citations.map(id => el('p', {}, el('code', {}, id))))));
     }
     section.append(list);
   }
@@ -161,7 +169,7 @@ function renderSources() {
       const active = source.consent === 'active';
       const removing = source.consent === 'denied';
       const status = active ? 'Permission granted' : source.consent === 'purged' ? 'Removed' : removing ? 'Removal pending' : 'Needs permission';
-      const row = el('div', { class: 'source-row' }, el('div', { class: 'source-icon' }, icon(providerIcon(source.connector_id))), el('div', { class: 'source-info' }, el('h3', {}, source.display_name), el('p', {}, el('span', { class: `badge${active ? ' badge-active' : ''}` }, status)), el('p', {}, `${safeCount(source.stored)} saved · ${dateText(source.last_run)}`), source.errors > 0 && el('p', {}, 'The last capture reported a problem. Check before relying on complete coverage.')));
+      const row = el('div', { class: 'source-row' }, el('div', { class: 'source-icon' }, icon(providerIcon(source.connector_id))), el('div', { class: 'source-info' }, el('h3', {}, source.connector_id.includes('markdown') ? 'Local notes' : source.connector_id.includes('google-calendar') ? 'Google Calendar' : source.connector_id.includes('gmail') ? 'Gmail' : source.display_name), el('p', {}, el('span', { class: `badge${active ? ' badge-active' : ''}` }, status)), el('p', {}, `${safeCount(source.stored)} new in the last check · ${dateText(source.last_run)}`), source.errors > 0 && el('p', {}, 'The last capture reported a problem. Check before relying on complete coverage.')));
       const actions = el('div', { class: 'source-actions' });
       if (active) actions.append(button('Import history', () => capture(source)), button('Privacy', () => privacy(source)));
       else if (removing) actions.append(button('Check removal', () => resumeRemoval(source)));
@@ -193,7 +201,7 @@ function enrollment(provider) {
   if (provider.id === 'markdown') { path = field(form, 'Folder location', 'source-path', '/path/to/your/notes'); form.append(el('small', {}, 'Choose an existing folder of Markdown files outside your Kizuki workspace. Original files stay in place.')); }
   if (provider.id === 'google-calendar') { calendar = field(form, 'Calendar ID', 'calendar-id', 'The calendar’s exact ID'); form.append(el('small', {}, 'Find this in Google Calendar settings under Integrate calendar. Calendar discovery is not available yet.')); }
   const selected = [];
-  if (provider.fields.length) {
+  if (provider.id !== 'markdown' && provider.fields.length) {
     const choices = el('fieldset', { class: 'field-choices' }, el('legend', {}, 'Information to keep'));
     for (const name of provider.fields) { const check = el('input', { type: 'checkbox', value: name, checked: name !== 'attachments', id: `field-${name}` }); selected.push(check); choices.append(el('label', { class: 'check-row', for: `field-${name}` }, check, name.charAt(0).toUpperCase() + name.slice(1))); }
     form.append(choices);
@@ -206,7 +214,7 @@ function enrollment(provider) {
     event.preventDefault();
     if (path && !path.value.trim()) { errorLine.textContent = 'Enter the full path to your notes folder.'; path.focus(); return; }
     if (calendar && !calendar.value.trim()) { errorLine.textContent = 'Enter the exact calendar ID to continue.'; calendar.focus(); return; }
-    const payload = { provider: provider.id, new_source: true, ...(path ? { path: path.value.trim() } : {}), ...(calendar ? { calendar_id: calendar.value.trim() } : {}), ...(selected.length ? { fields: selected.filter(x => x.checked).map(x => x.value) } : {}) };
+    const payload = { provider: provider.id, ...(provider.id !== 'markdown' ? { new_source: true } : {}), ...(path ? { path: path.value.trim() } : {}), ...(calendar ? { calendar_id: calendar.value.trim() } : {}), ...(selected.length ? { fields: selected.filter(x => x.checked).map(x => x.value) } : {}) };
     submit.disabled = true;
     await launchOperation('enroll', payload, provider.id === 'markdown' ? 'Connecting your folder' : 'Waiting for Google sign-in', async operation => {
       await refresh();
@@ -217,7 +225,7 @@ function enrollment(provider) {
 }
 function consent(source) {
   const content = openDialog('Choose what Kizuki can use.', `Give ${source.display_name} permission to store selected information and make it available in your private memory.`, 'lock');
-  content.append(el('div', { class: 'consent-summary' }, ...[['Use', 'Capture, search, context and local derivation'], ['Fields', source.required_fields.join(', ')], ['Privacy', 'Private, on this device'], ['Retention', 'Kept until you remove this source'], ['Backups', 'Included in exports you choose to create']].map(([label, value]) => el('div', {}, el('span', {}, label), el('strong', {}, value)))));
+  content.append(el('div', { class: 'consent-summary' }, ...[['Use', 'Save, find and organise this source'], ['Fields', source.required_fields.join(', ')], ['Privacy', 'Private, on this device'], ['Retention', 'Kept until you remove this source'], ['Backups', 'Included in exports you choose to create']].map(([label, value]) => el('div', {}, el('span', {}, label), el('strong', {}, value)))));
   content.append(el('p', { class: 'dialog-description' }, 'This permission does not send source data to an external model. Removing this source stops further use and begins removal from Kizuki’s owned stores. Your original files and provider account remain yours.'));
   const request = { source_key: source.source_key, expected_revision: source.revision, operation_id: crypto.randomUUID(), policy: { purposes: ['capture','recall','session','correction','audit','derive','extract','export'], allowed_fields: source.required_fields, retention: 'persistent_owned_until_revoked', egress: 'local_only', sensitivity_floor: 'private' } };
   const errorLine = el('p', { class: 'form-error', role: 'alert' });
@@ -242,7 +250,7 @@ async function resumeRemoval(source) {
 }
 function renderActivity() {
   const section = el('section', {}, heading('A clear history.', 'See receipted changes to your memory. Undo restores the previous state when its receipt still applies.'));
-  if (!state.receipts.length) { section.append(empty('No receipted changes yet.', 'Once Kizuki changes a memory page, its receipt will appear here. Capturing source evidence does not itself claim to have written a page.')); return section; }
+  if (!state.receipts.length) { section.append(empty('No receipted changes yet.', 'Imported sources are searchable right away. Changes to your memory pages appear here when they happen.')); return section; }
   const list = el('ol', { class: 'activity-list' });
   for (const receipt of state.receipts) list.append(el('li', { class: 'activity-item' }, el('div', { class: 'activity-top' }, el('div', {}, el('h3', {}, receipt.page || 'Memory change'), el('p', {}, `${dateText(receipt.at)} · ${receipt.reverted ? 'Undone' : receipt.action}`)), !receipt.reverted && button('Undo', () => undo(receipt))), el('details', { class: 'result-details' }, el('summary', {}, 'Receipt reference'), el('code', {}, receipt.id))));
   section.append(list); return section;
@@ -254,18 +262,18 @@ function undo(receipt) {
 }
 function renderSettings() {
   return el('section', {}, heading('Simply yours.', 'A local workspace, clear permissions, and room to grow when you need it.'), el('div', { class: 'settings-list' },
-    el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Workspace'), el('p', {}, 'Your memory uses the same authoritative local vault as Kizuki’s other clients.')), el('span', { class: 'settings-value' }, state.status?.vault.name || 'Not created')),
+    el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Workspace'), el('p', {}, 'Your memory stays in a local folder you control.')), el('span', { class: 'settings-value' }, state.status?.vault.name || 'Not created')),
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Background activity'), el('p', {}, state.status?.service.detail || 'Status unavailable.')), el('span', { class: 'settings-value' }, state.status?.service.state || 'Unavailable')),
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Source privacy'), el('p', {}, 'Each source has its own permission. Sources connected here default to private storage and no external model egress.')), button('Manage sources', () => navigate('sources'))),
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'App session'), el('p', {}, 'This tab remembers only its local app capability. Search results and source content are not stored in browser storage.')), button('Disconnect tab', disconnect))),
-    el('div', { class: 'status-note' }, icon('info'), el('p', {}, 'Capture and search work without a model. Automatic memory-page writing depends on a usable model and explicit source permission; a configured model name alone does not make it ready.')));
+    el('div', { class: 'status-note' }, icon('info'), el('p', {}, 'Search works without a model. Automatic organisation needs a working model and your permission to use each source.')));
 }
 function renderOperation() {
   const operation = state.operation;
   if (!operation) return null;
   const running = operation.state === 'running';
-  const title = running ? 'Working on your source' : operation.state === 'failed' ? 'This step needs attention' : operation.state === 'unknown' ? 'Completion is not yet confirmed' : 'Completed';
-  const detail = running ? 'Your source checkpoint keeps progress recoverable. You can continue using the app.' : operation.error ? humanError(operation.error.code) : operation.result?.message || 'Check Sources for the current state.';
+  const title = running ? 'Working on your source' : operation.state === 'failed' ? 'This step needs attention' : operation.state === 'unknown' ? 'Completion is not yet confirmed' : operation.kind === 'capture' ? 'Import progress saved' : 'Completed';
+  const detail = running ? 'Your source checkpoint keeps progress recoverable. You can continue using the app.' : operation.error ? humanError(operation.error.code) : operation.kind === 'capture' && operation.counts ? `${safeCount(operation.counts.stored)} saved this time. Check Sources for the latest history and any problems.` : 'Check Sources or Activity for the current state.';
   return el('div', { class: 'job-status', role: 'status' }, icon(running ? 'clock' : operation.state === 'succeeded' ? 'check' : 'info'), el('div', {}, el('h3', {}, title), el('p', {}, detail)));
 }
 function render() {
