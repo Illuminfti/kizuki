@@ -12,7 +12,7 @@ import { listCanonPagesReport } from "../vault/pages";
 import { loadConfiguredModelRef, loadServeConfig } from "./config";
 import { readServeIntent } from "./intent";
 import { serviceFile } from "./service-files";
-import { isRedactedModelReference, listRunReceipts, orphanJournalReceipts, redactReceiptText } from "./receipts";
+import { isRedactedModelReference, listRunReceipts, orphanJournalReceipts, readModelRunHistory, redactReceiptText, type ModelRunHistory } from "./receipts";
 import { sha256Hex } from "../util/hash";
 import { listSchedules } from "./schema";
 import type { SupervisorHost } from "./supervisor";
@@ -192,22 +192,23 @@ function modelFailure(receipt: RunReceipt): string | null {
 }
 
 function modelDoctor(
-  receipts: RunReceipt[],
+  history: ModelRunHistory,
   modelRef: string | null | undefined,
   configuredModelRef: string | null | undefined,
   configCanonDay: number,
   usedToday: number,
 ): ModelDoctor {
+  const receipts = history.receipts;
   const on = typeof modelRef === "string" && modelRef.length > 0;
   const unverified = !on && typeof configuredModelRef === "string" && configuredModelRef.length > 0;
   const currentRef = on ? modelRef : unverified ? configuredModelRef : null;
   const currentDigest = currentRef === null ? null : sha256Hex(currentRef);
   const displayRef = currentRef === null ? null : redactReceiptText(currentRef);
-  const current = currentRef === null ? [] : receipts.filter(receipt => receipt.rail === "sync" && (
+  const current = currentRef === null ? [] : receipts.filter((receipt): receipt is RunReceipt => receipt !== null && receipt.rail === "sync" && (
     receipt.model.model_ref_sha256 !== undefined ? receipt.model.model_ref_sha256 === currentDigest :
       receipt.model.model_ref !== null && !isRedactedModelReference(receipt.model.model_ref) && receipt.model.model_ref === currentRef
   ));
-  const unattributed = currentRef === null ? [] : receipts.filter(receipt => receipt.rail === "sync" &&
+  const unattributed = currentRef === null ? [] : receipts.filter((receipt): receipt is RunReceipt => receipt !== null && receipt.rail === "sync" &&
     receipt.model.model_ref_sha256 === undefined && receipt.model.model_ref !== null && isRedactedModelReference(receipt.model.model_ref) &&
     receipt.model.model_ref === displayRef && (receipt.model.calls > 0 || modelFailure(receipt) !== null));
   const latestFirst = [...current].reverse();
@@ -219,8 +220,9 @@ function modelDoctor(
   const lastUnattributed = unattributed.at(-1);
   // Use the durable receipt order, including its run-id tie break. An older
   // known success cannot resolve a newer potentially matching unknown attempt.
-  const historyUnverified = lastUnattributed !== undefined && (lastAttempt === undefined ||
-    receipts.lastIndexOf(lastUnattributed) > receipts.lastIndexOf(lastAttempt));
+  const lastAttemptIndex = lastAttempt === undefined ? -1 : receipts.lastIndexOf(lastAttempt);
+  const historyUnverified = (lastUnattributed !== undefined && receipts.lastIndexOf(lastUnattributed) > lastAttemptIndex) ||
+    receipts.lastIndexOf(null) > lastAttemptIndex || (history.truncated && lastAttempt === undefined);
   const unavailable = current.reduce((sum, receipt) => sum + receipt.model.unavailable, 0);
   return {
     canon_writing: on ? "on" : unverified ? "unverified" : "off",
@@ -230,6 +232,7 @@ function modelDoctor(
     current_failure: currentFailure,
     unattributed_receipts: unattributed.length,
     history_unverified: historyUnverified,
+    history_truncated: history.truncated,
     unavailable,
     budget: {
       canon_writes_per_day: { used: usedToday, limit: configCanonDay },
@@ -239,7 +242,9 @@ function modelDoctor(
       : unverified
         ? "canon writing: unverified (model configured but not bound by the running host)"
       : "canon writing: off (no model configured — connectors, ledger, search, timeline and undo still work)") +
-      (unattributed.length === 0 ? "" : `; model history: unattributed receipts=${unattributed.length}${historyUnverified ? "; current history unverified" : ""}`),
+      (unattributed.length === 0 ? "" : `; model history: unattributed receipts=${unattributed.length}`) +
+      (history.truncated ? "; selected history window truncated; last_success, last_failure and counts cover only selected receipts" : "") +
+      (historyUnverified ? "; current history unverified" : ""),
   };
 }
 
@@ -388,12 +393,13 @@ export function inspectServeDoctor(
     .reduce((sum, receipt) => sum + receipt.canon_writes, 0);
   const modelRef = options.model_ref ?? null;
   const configuredModelRef = options.configured_model_ref ?? loadConfiguredModelRef(vaultPath);
-  const model = modelDoctor(receipts, modelRef, configuredModelRef, config.canon_writes_per_day, usedToday);
+  const modelHistory = modelRef || configuredModelRef ? readModelRunHistory(db, since) : { receipts: [], truncated: false };
+  const model = modelDoctor(modelHistory, modelRef, configuredModelRef, config.canon_writes_per_day, usedToday);
   const stores = storeDoctor(db, vaultPath, now);
   const cal = calibration(db, receipts, now);
   const failures: string[] = [];
   if (model.current_failure !== null) failures.push(`${model.current_failure.detail} (at ${model.current_failure.at})`);
-  if (model.history_unverified) failures.push(`model history has ${model.unattributed_receipts} unattributed receipts; the stored reference was redacted before stable identity was recorded`);
+  if (model.history_unverified) failures.push("model history unverified; the latest current-model attempt cannot be established from retained receipts");
   if (intent === "unknown") failures.push("service intent unavailable or invalid");
   else if (intent !== "installed" && (supervisor.enabled || supervisor.state === "active")) {
     failures.push("supervisor active or enabled without installed intent");

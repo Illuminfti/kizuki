@@ -234,6 +234,37 @@ export function listRunReceipts(
     .filter((receipt): receipt is RunReceipt => receipt !== null);
 }
 
+export interface ModelRunHistory {
+  /** Chronological candidates; null retains the position of an unreadable receipt. */
+  readonly receipts: (RunReceipt | null)[];
+  readonly truncated: boolean;
+}
+
+/** LIMIT applies before report parsing, using the rail/time/run-id index. */
+const MODEL_RUN_HISTORY_SQL = `SELECT report, run_id, finished_at FROM run_receipts
+  WHERE rail = 'sync' AND finished_at >= ?
+  ORDER BY finished_at DESC, run_id DESC LIMIT ?`;
+
+/** A bounded raw sync window; identity and outcome classification happen after normalization. */
+export function readModelRunHistory(db: Database, since: string): ModelRunHistory {
+  if (!tableExists(db, "run_receipts")) return { receipts: [], truncated: false };
+  const limit = 10_000;
+  const rows = db.query<{ report: string; run_id: string; finished_at: string }, [string, number]>(
+    MODEL_RUN_HISTORY_SQL,
+  ).all(since, limit + 1);
+  return {
+    truncated: rows.length > limit,
+    receipts: rows.slice(0, limit).reverse().map(row => {
+      try {
+        const receipt = parseRunReceipt(JSON.parse(row.report));
+        // Keep an unknown position rather than letting malformed selected
+        // history make an earlier success appear to be the latest attempt.
+        return receipt?.rail === "sync" && receipt.run_id === row.run_id && receipt.finished_at === row.finished_at ? receipt : null;
+      } catch { return null; }
+    }),
+  };
+}
+
 export function getRunReceipt(db: Database, runId: string): RunReceipt | null {
   if (!tableExists(db, "run_receipts")) return null;
   const row = db

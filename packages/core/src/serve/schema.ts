@@ -56,6 +56,10 @@ CREATE TABLE IF NOT EXISTS run_receipts (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS run_receipts_rail_finished
   ON run_receipts(rail, finished_at);
+CREATE INDEX IF NOT EXISTS run_receipts_rail_finished_run
+  ON run_receipts(rail, finished_at, run_id);
+CREATE INDEX IF NOT EXISTS run_receipts_finished_run
+  ON run_receipts(finished_at, run_id);
 CREATE TABLE IF NOT EXISTS leases (
   name TEXT PRIMARY KEY,
   holder_pid INTEGER NOT NULL,
