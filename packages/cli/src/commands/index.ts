@@ -1,3 +1,4 @@
+import { appCommand } from "./app";
 import { auditCommand } from "./audit";
 import { backfillCommand } from "./backfill";
 import { connectCommand } from "./connect";
@@ -36,6 +37,7 @@ export interface Command {
 }
 
 export const COMMANDS: readonly Command[] = [
+  appCommand,
   initCommand,
   connectCommand,
   backfillCommand,

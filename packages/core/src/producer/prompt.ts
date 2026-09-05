@@ -22,6 +22,7 @@ export const EXTRACTION_SYSTEM_PROMPT = [
   "- polarity is one of: positive, negative.",
   "- sensitivity is one of: public, personal, private.",
   "- subject is one of the provided subject keys, exactly as written.",
+  "- A subject's from, to or about role applies only to the record that lists it. Do not transfer roles between records.",
   "- predicate is one of the provided predicates, exactly as written.",
   "- object is at most 400 characters.",
   "- body is at most 1200 characters of your own prose. Do not copy quoted text verbatim.",
@@ -91,7 +92,7 @@ export function buildExtractionMessages(
     fenceBlock(
       nonce,
       SUBJECTS_FENCE_LABEL,
-      JSON.stringify(batch.subjects.map(subjectRecord)),
+      JSON.stringify([...new Set(batch.subjects.map(subject => subject.subject_id))]),
     ),
   );
   sections.push("");
@@ -110,6 +111,13 @@ export function buildExtractionMessages(
   for (const event of batch.events) {
     sections.push(
       `record ${event.event_id} from ${event.connector_id} at ${event.occurred_at}:`,
+    );
+    sections.push(
+      fenceBlock(
+        nonce,
+        `event-subjects:${event.event_id}`,
+        JSON.stringify(event.subjects.map(subjectRecord)),
+      ),
     );
     sections.push(
       fenceBlock(nonce, eventFenceLabel(event.event_id), event.text),

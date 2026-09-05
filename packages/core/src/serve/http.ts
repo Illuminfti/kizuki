@@ -1,4 +1,5 @@
-import { randomBytes } from "node:crypto";
+import { withDeadline } from "../util/deadline";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { join } from "node:path";
@@ -12,12 +13,27 @@ import { SERVE_TOKEN_PATH, ServeDaemonError } from "./types";
 const LOOPBACK = new Set(["127.0.0.1", "::1"]);
 
 export interface ServeHttpOptions {
+  readonly mode?: never;
   readonly db: ServeContext["db"];
   readonly vaultPath: string;
   readonly host?: string;
   readonly port?: number;
   readonly token?: string;
   readonly retrieval?: ServeContext["retrieval"];
+}
+
+interface AppHttpOptions {
+  readonly mode: "app";
+  readonly assets: Readonly<Record<string, { body: string; type: string }>>;
+  readonly handle: (request: Request) => Promise<Response>;
+}
+interface AppHttpHandle {
+  readonly host: string;
+  readonly port: number;
+  readonly url: string;
+  /** Trusted launcher only. Never log, write to disk or serve in asset bodies. */
+  readonly token: string;
+  stop(): Promise<void>;
 }
 
 export interface ServeHttpHandle {
@@ -88,22 +104,26 @@ function refused(error: unknown): Response {
  * Binds 127.0.0.1 or ::1 only. The token is minted at start and rotated on
  * restart; it is written to a 0600 file and never logged.
  */
-export function startServeHttp(options: ServeHttpOptions): ServeHttpHandle {
-  const host = options.host ?? "127.0.0.1";
+export function startServeHttp(options: AppHttpOptions): AppHttpHandle;
+export function startServeHttp(options: ServeHttpOptions): ServeHttpHandle;
+export function startServeHttp(options: ServeHttpOptions | AppHttpOptions): ServeHttpHandle | AppHttpHandle {
+  const host = options.mode === "app" ? "127.0.0.1" : options.host ?? "127.0.0.1";
   if (!LOOPBACK.has(host)) {
     throw new ServeDaemonError(
       "bind_refused",
       "serve http refuses a non-loopback host",
     );
   }
-  initAgents(options.db);
-  const token = options.token ?? mintToken();
-  const tokenPath = writeToken(options.vaultPath, token);
+  if (options.mode !== "app") initAgents(options.db);
+  const token = options.mode === "app" ? mintToken() : options.token ?? mintToken();
+  const tokenPath = options.mode === "app" ? null : writeToken(options.vaultPath, token);
+  let boundOrigin = "";
 
   const server = Bun.serve({
     hostname: host,
-    port: options.port ?? 0,
+    port: options.mode === "app" ? 0 : options.port ?? 0,
     async fetch(request) {
+      if (options.mode === "app") return appRequest(request, boundOrigin, token, options);
       const url = new URL(request.url);
       if (url.hostname !== "127.0.0.1" && url.hostname !== "localhost" && url.hostname !== "[::1]") {
         return json(403, { ok: false, error: { code: "bind_refused", message: "loopback only", retryable: false } });
@@ -160,13 +180,51 @@ export function startServeHttp(options: ServeHttpOptions): ServeHttpHandle {
     server.stop(true);
     throw new ServeDaemonError("bind_refused", "serve http did not bind a port");
   }
-  return {
-    host,
-    port,
-    tokenPath,
-    url: `http://${host}:${port}`,
-    async stop() {
-      server.stop(true);
-    },
+  boundOrigin = `http://${host}:${port}`;
+  const common = { host, port, url: boundOrigin, async stop() { server.stop(true); } };
+  return options.mode === "app" ? { ...common, token } : { ...common, tokenPath: tokenPath! };
+}
+
+const APP_HEADERS = {
+  "cache-control": "no-store",
+  "content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'",
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "no-referrer",
+  "cross-origin-opener-policy": "same-origin",
+};
+async function appRequest(request: Request, origin: string, token: string, options: AppHttpOptions): Promise<Response> {
+  const reply = (response: Response) => {
+    const headers = new Headers(response.headers);
+    for (const [name, value] of Object.entries(APP_HEADERS)) headers.set(name, value);
+    return new Response(response.body, { status: response.status, headers });
   };
+  const error = (status: number, code: string) => reply(json(status, { ok: false, error: { code, retryable: false } }));
+  const url = new URL(request.url), expected = new URL(origin);
+  if (url.origin !== origin || request.headers.get("host") !== expected.host || url.search !== "") return error(403, "origin_refused");
+  const presentedOrigin = request.headers.get("origin"), site = request.headers.get("sec-fetch-site");
+  if (presentedOrigin !== null && presentedOrigin !== origin || site !== null && site !== "same-origin" && site !== "none") return error(403, "origin_refused");
+  if (request.method === "GET" && ["/", "/app/assets/client.js", "/app/assets/app.css"].includes(url.pathname) && Object.hasOwn(options.assets, url.pathname)) {
+    const asset = options.assets[url.pathname]!;
+    return reply(new Response(asset.body, { headers: { "content-type": asset.type } }));
+  }
+  if (request.method !== "POST" || !/^\/app\/v1\/[a-z_]+$/.test(url.pathname)) return error(404, "not_found");
+  if (presentedOrigin !== origin) return error(403, "origin_refused");
+  const presented = bearer(request);
+  if (presented === null || Buffer.byteLength(presented) !== Buffer.byteLength(token) || !timingSafeEqual(Buffer.from(presented), Buffer.from(token))) return error(401, "unauthorized");
+  if (request.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json") return error(400, "invalid_request");
+  try {
+    const reader = request.body?.getReader();
+    const chunks: Uint8Array[] = []; let size = 0;
+    const deadline = Date.now() + 5000;
+    if (reader) while (true) {
+      if (Date.now() >= deadline) { await reader.cancel(); return error(408, "invalid_request"); }
+      const next = await withDeadline(reader.read(), Math.max(1, deadline - Date.now()), "app body deadline"); if (next.done) break;
+      size += next.value.byteLength;
+      if (size > 128 * 1024) { await reader.cancel(); return error(413, "invalid_request"); }
+      chunks.push(next.value);
+    }
+    const bytes = Buffer.concat(chunks);
+    const body = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return reply(await options.handle(new Request(url, { method: "POST", headers: request.headers, body })));
+  } catch { return error(400, "invalid_request"); }
 }

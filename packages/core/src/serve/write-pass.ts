@@ -27,6 +27,7 @@ import {
   DurableExtractAuthorizationError,
   journalExtractBatch,
   mineLiveDrafts,
+  producedClaimInput,
   readDurableExtractBatch,
 } from "./extract";
 import { tryWriteFlock } from "./flock";
@@ -378,23 +379,10 @@ async function fileProducedDrafts(
   let deduped = 0;
   let superseded = 0;
   for (const draft of drafts) {
-    const result = await insertClaim(historicalSourceWrite === undefined ? io : { ...io, historical_source_write: historicalSourceWrite }, {
-      kind: draft.kind,
-      subject: draft.subject,
-      predicate: draft.predicate,
-      object: draft.object,
-      polarity: draft.polarity,
-      body: draft.body,
-      provenance: [...draft.event_ids],
-      subjects: [draft.subject],
-      producer,
-      model_ref: modelRef,
-      confidence: draft.confidence,
-      taint: "quoted",
-      sensitivity: draft.sensitivity,
-      ...(draft.valid_from === null ? {} : { valid_from: draft.valid_from }),
-      ...(draft.valid_to === null ? {} : { valid_to: draft.valid_to }),
-    });
+    const result = await insertClaim(
+      historicalSourceWrite === undefined ? io : { ...io, historical_source_write: historicalSourceWrite },
+      producedClaimInput(io.db, draft, producer, modelRef),
+    );
     switch (result.outcome) {
       case "stored":
         superseded += result.superseded.length;

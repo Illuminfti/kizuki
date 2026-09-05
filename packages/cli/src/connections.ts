@@ -20,7 +20,7 @@ import {
   sourceCaptureAdmission,
   inspectSourceGrant,
 } from "@kizuki/core";
-import { REGISTRY, getConnector } from "@kizuki/connectors";
+import { LEGACY_EVENTS_AUTH_MODES, LEGACY_EVENTS_CONNECTOR_ID, LEGACY_WIKI_AUTH_MODES, LEGACY_WIKI_CONNECTOR_ID, REGISTRY, getConnector } from "@kizuki/connectors";
 import { TelegramConnector, type TelegramConnectorConfig, type TelegramDeps } from "@kizuki/connector-telegram";
 import { errorText } from "./output";
 import { tokenResolver, validTokenRef } from "./secrets";
@@ -125,6 +125,10 @@ export function decodeHostState(
 }
 
 function connectorAuthModes(id: string): readonly string[] | null {
+  // These importers need a real mapping to construct; their shared manifest
+  // auth metadata is enough to discover the CLI path, never to admit capture.
+  if (id === LEGACY_EVENTS_CONNECTOR_ID) return LEGACY_EVENTS_AUTH_MODES;
+  if (id === LEGACY_WIKI_CONNECTOR_ID) return LEGACY_WIKI_AUTH_MODES;
   for (const config of [{}, { path: "/var/empty" }, { token_secret_ref: "env:BEEPER_TOKEN" }] as const) {
     try {
       return getConnector(id, config).manifest().auth_modes;

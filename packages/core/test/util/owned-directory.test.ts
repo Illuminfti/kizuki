@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, 
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { openOwnedDirectory } from "../../src/util/owned-directory";
+import { dlopen, FFIType, toArrayBuffer } from "bun:ffi";
 const roots: string[] = [];
 afterEach(() => { for (const path of roots.splice(0)) rmSync(path, { recursive: true, force: true }); });
 function fixture() { const root = mkdtempSync(join(tmpdir(), "owned-dir-")); roots.push(root); const owned = join(root, "owned"), outside = join(root, "outside"); mkdirSync(join(owned, "store"), { recursive: true }); mkdirSync(join(outside, "store"), { recursive: true }); writeFileSync(join(outside, "store/canary"), "SYNTHETIC_UNOWNED"); return { root, owned, outside }; }
@@ -99,4 +100,48 @@ test("emptiness refuses a root replaced during its observation", () => {
   };
   try { expect(() => cap.isEmpty()).toThrow("identity"); }
   finally { cap.close(); }
+});
+
+for (const operation of ["missing-child", "empty-scan", "erase"] as const) test(`${operation} survives errno changes during memory-view allocation`, () => {
+  const f = fixture(), cap = openOwnedDirectory(f.owned);
+  if (operation === "empty-scan") rmSync(join(f.owned, "store"), { recursive: true });
+  const libc = dlopen("libc.so.6", { __errno_location: { args: [], returns: FFIType.ptr } });
+  const pointer = libc.symbols.__errno_location();
+  if (!pointer) throw new Error("synthetic errno fixture unavailable");
+  const OriginalDataView = DataView;
+  const error = new OriginalDataView(toArrayBuffer(pointer, 0, 4));
+  const store = cap.childIdentity("store");
+  let allocations = 0;
+  // A pinned-Bun EOF probe observed errno 0 become EAGAIN while the old
+  // helper allocated its view. Reproduce that VM boundary deterministically.
+  globalThis.DataView = new Proxy(OriginalDataView, {
+    construct(target, args, newTarget) {
+      const view = Reflect.construct(target, args, newTarget);
+      allocations++;
+      error.setInt32(0, 11 /* EAGAIN */, true);
+      return view;
+    },
+  });
+  try {
+    if (operation === "missing-child") expect(cap.childIdentity("missing")).toBeNull();
+    else if (operation === "empty-scan") expect(cap.isEmpty()).toBe(true);
+    else { cap.removeTree("store", store); expect(existsSync(join(f.owned, "store"))).toBe(false); }
+    expect(allocations).toBeGreaterThan(0);
+    expect(readFileSync(join(f.outside, "store/canary"), "utf8")).toBe("SYNTHETIC_UNOWNED");
+  } finally { globalThis.DataView = OriginalDataView; cap.close(); libc.close(); }
+});
+
+test("many-child erasure and repeated empty scans retain native EOF semantics", () => {
+  const f = fixture(), cap = openOwnedDirectory(f.owned);
+  try {
+    for (let directory = 0; directory < 32; directory++) {
+      const path = join(f.owned, "store", `directory-${directory}`);
+      mkdirSync(path);
+      for (let file = 0; file < 32; file++) writeFileSync(join(path, `file-${file}`), "SYNTHETIC_OWNED");
+    }
+    cap.removeTree("store", cap.childIdentity("store"));
+    expect(existsSync(join(f.owned, "store"))).toBe(false);
+    for (let scan = 0; scan < 256; scan++) expect(cap.isEmpty()).toBe(true);
+    expect(readFileSync(join(f.outside, "store/canary"), "utf8")).toBe("SYNTHETIC_UNOWNED");
+  } finally { cap.close(); }
 });

@@ -199,6 +199,20 @@ describe("backfill and sync", () => {
     ]);
   });
 
+  test("backfill resumes its returned snapshot to exhaustion after a restart", async () => {
+    seed();
+    const first = await createLegacyWikiConnector({ path: wiki }).backfill(null);
+    const resumed = await createLegacyWikiConnector({ path: wiki }).backfill(first.cursor);
+    expect(resumed.events).toEqual([]);
+    expect(resumed.cursor).toBe(first.cursor);
+    write("people/newcomer.md", "---\ntitle: Newcomer\n---\nNew.\n");
+    const changed = await createLegacyWikiConnector({ path: wiki }).backfill(resumed.cursor);
+    expect(changed.events.map((event) => event.source_record_id)).toEqual(["people/newcomer.md"]);
+    expect((await createLegacyWikiConnector({ path: wiki }).backfill(changed.cursor)).events).toEqual([]);
+    const fresh = await createLegacyWikiConnector({ path: wiki }).backfill(null);
+    expect(fresh.events).toHaveLength(first.events.length + 1);
+  });
+
   test("a page re-emitted later is the event backfill already produced", async () => {
     writeMapping();
     write("a/note.md", "one\n");
