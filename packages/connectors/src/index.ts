@@ -53,6 +53,21 @@ export type {
   TelegramUser,
 } from "@kizuki/connector-telegram";
 export {
+  X_ARCHIVE_CONNECTOR_ID,
+  X_ARCHIVE_IMPORT_CONNECTOR_ID,
+  X_ARCHIVE_CURSOR_SCHEMA,
+  XArchiveConnector,
+  XArchiveImportConnector,
+  createXArchiveConnector,
+  createXArchiveImportConnector,
+} from "@kizuki/connector-x";
+export type {
+  XArchiveConnectorConfig,
+  XArchiveConnectorDeps,
+  XArchiveCursor,
+  XArchiveImportConfig,
+} from "@kizuki/connector-x";
+export {
   MARKDOWN_FOLDER_CONNECTOR_ID,
   MarkdownFolderConnector,
   createMarkdownFolderConnector,
