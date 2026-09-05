@@ -178,7 +178,11 @@ export function accept(
     const infra = classifySqliteFailure(error);
     if (infra !== null) throw infra;
     if (error instanceof LedgerStoreError) throw error;
-    throw error;
+    return {
+      status: "error",
+      error: error instanceof Error ? error.message : String(error),
+      kind: "validation",
+    };
   }
 }
 

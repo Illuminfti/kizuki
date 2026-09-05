@@ -5,8 +5,8 @@ import {
   freezeManifest,
   getCheckpoint,
   listConnections,
-  setSourceGrant,
   saveCheckpoint,
+  setSourceGrant,
 } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import type { ConnectionStateWriter, Connector, SignInIo } from "@kizuki/core";
@@ -181,8 +181,13 @@ describe("IMAP interactive enrollment", () => {
     try {
       const first = await enrollSignedInConnection(db, store, connectorFor(state), prompts([]));
       saveCheckpoint(db, first.connector_id, first.source_key, "checkpoint", "sync", {
-        stored: 0, duplicates: 0, errors: [], proposals_created: 0, withdrawn: 0,
-        retractions_filed: 0, cursor: "checkpoint",
+        stored: 0,
+        duplicates: 0,
+        errors: [],
+        proposals_created: 0,
+        withdrawn: 0,
+        retractions_filed: 0,
+        cursor: "checkpoint",
       });
       const before = store.read(first)!;
       for (const candidate of [

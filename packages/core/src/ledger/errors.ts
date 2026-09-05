@@ -40,6 +40,11 @@ export function classifySqliteFailure(error: unknown): LedgerStoreError | null {
       : "";
   const text = error instanceof Error ? error.message : String(error);
   const haystack = `${code} ${text}`;
+  if (/Cannot use a closed database/.test(haystack)) {
+    return new LedgerStoreError("infrastructure", "ledger store is unavailable", {
+      cause: error,
+    });
+  }
   if (/SQLITE_BUSY|SQLITE_LOCKED/.test(haystack)) {
     return new LedgerStoreError("busy", "ledger is busy", { retryable: true, cause: error });
   }
