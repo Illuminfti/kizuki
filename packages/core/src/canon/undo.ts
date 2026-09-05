@@ -1,3 +1,5 @@
+import { requireSourceEvents } from "../ledger/source-grants";
+import { stringArray } from "../vault/pages";
 import { CanonAuthorityResolver } from "./authority";
 import { refreshDerivedPage } from "../derived";
 import { listCanonPagesReport } from "../vault/pages";
@@ -58,7 +60,9 @@ function loadArchivePage(io: CanonIo, archivePath: string): VaultPage {
   if (!existsSync(path)) {
     throw new UndoError("archive_missing", `undo: no archive copy exists at ${archivePath}`);
   }
-  return parseFrontmatter(readFileSync(path, "utf8"));
+  const page = parseFrontmatter(readFileSync(path, "utf8"));
+  requireSourceEvents(io.db, stringArray(page.data["sources"]), { owner: true, purpose: "derive" });
+  return page;
 }
 
 function pageIdOf(page: VaultPage | null, fallback: string | null): string | null {
@@ -137,6 +141,7 @@ async function reverseRetrieval(
   const port = io.retrieval;
   if (port === undefined || original.retrieval_ops.length === 0) return [];
 
+  requireSourceEvents(io.db, original.provenance, { owner: true, purpose: "derive", port });
   const docs = original.retrieval_ops.map((op) => op.doc);
   if (restored === null) {
     await port.remove(docs);
@@ -152,7 +157,11 @@ async function reverseRetrieval(
 
   const pageId = pageIdOf(restored, pageIndexByPath(io.db, original.page_path)?.page_id ?? null);
   if (pageId === null) return [];
+  const restoredSources = stringArray(restored.data["sources"]);
+  requireSourceEvents(io.db, restoredSources, { owner: true, purpose: "derive", port });
   await port.upsert([pageDoc(pageId, restored, original, authority, at)]);
+  try { requireSourceEvents(io.db, restoredSources, { owner: true, purpose: "derive", port }); }
+  catch (error) { await port.remove([`page:${pageId}`]); throw error; }
   return docs.map((doc) => ({ store: port.descriptor.id, op: "upsert" as const, doc }));
 }
 
@@ -291,6 +300,7 @@ export async function undoReceipt(
   if (original === null) {
     throw new UndoError("receipt_unknown", `undo: receipt ${receiptId} is unknown`);
   }
+  requireSourceEvents(io.db, original.provenance, { owner: true, purpose: "derive", ...(io.retrieval === undefined ? {} : { port: io.retrieval }) });
   if (original.reverted_by !== null) {
     throw new UndoError(
       "already_reverted",

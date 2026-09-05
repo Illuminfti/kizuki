@@ -1064,6 +1064,12 @@ function rewriteHolds(
       if (matchable.has(hold.page_path)) liftHold(db, hold.page_path);
       continue;
     }
+    // Removing only the citation would discard the authorization link while
+    // retaining mixed or unmatched prose. Keep the hold until source erasure
+    // can prove that every retained payload is independent of the denied source.
+    if (tableExists(db, "source_event_bindings") && toRemove.some(id =>
+      db.query("SELECT 1 FROM source_event_bindings b JOIN source_grants g ON g.source_key=b.source_key WHERE b.event_id=? AND g.status!='active'").get(id) !== null,
+    )) continue;
     const purged = new Set(toRemove);
     const matchingClaims = claimsCiting(db, toRemove).filter((claim) => {
       if (claim.target !== null && hold.page_path.startsWith(claim.target)) {

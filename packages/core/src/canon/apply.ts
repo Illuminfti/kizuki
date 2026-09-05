@@ -552,6 +552,7 @@ export function applyRevertWrite(
   io: CanonIo,
   input: RevertWriteInput,
 ): RevertWriteOutcome {
+  if (input.page !== null) requireSourceEvents(io.db, existingSources(input.page), { owner: true, purpose: "derive" });
   const cap = grantCanonWrite("revert", input.receipt_id);
   const path = join(io.vault_path, input.rel_path);
   if (input.page === null) {

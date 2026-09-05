@@ -45,7 +45,10 @@ export interface SourceGrant {
   revoke_operation: string | null;
   purge_receipt_id: string | null;
   purge_blockers: (
-    "retrieval_pending" | "claim_payload_retained" | "identity_payload_retained"
+    | "retrieval_pending"
+    | "claim_payload_retained"
+    | "identity_payload_retained"
+    | "canon_rewrite_pending"
   )[];
 }
 export interface SourceGrantRequest {
@@ -570,5 +573,13 @@ function sourcePurgeBlockers(
       .get(sourceKey, sourceKey) !== null
   )
     blockers.push("identity_payload_retained");
+  if (
+    db
+      .query(
+        "SELECT 1 FROM canon_holds WHERE proposal_id=(SELECT purge_receipt_id FROM source_grants WHERE source_key=?) LIMIT 1",
+      )
+      .get(sourceKey) !== null
+  )
+    blockers.push("canon_rewrite_pending");
   return blockers;
 }

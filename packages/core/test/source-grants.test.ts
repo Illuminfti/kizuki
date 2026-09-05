@@ -1,3 +1,7 @@
+import { undoReceipt } from "../src/index";
+import { write, storeClaim } from "./canon/helpers";
+import { serveGetPage } from "../src/index";
+import { page } from "./serving/helpers";
 import {
   addAgent,
   authenticate,
@@ -485,6 +489,92 @@ test("revocation stays denied while a derived write is in flight and removes its
     expect(db.query("SELECT state FROM retrieval_ops").get()).toEqual({
       state: "cancelled",
     });
+  } finally {
+    db.close();
+  }
+});
+
+test("native resume cannot drop a revoked citation and expose surviving mixed canon text", async () => {
+  const { db, dir, a, b } = setup();
+  try {
+    grant(db, a);
+    setSourceGrant(db, {
+      source_key: b,
+      expected_revision: 0,
+      operation_id: "mixed-b",
+      policy: policy(),
+    });
+    const first = accept(db, event(), {
+      source: { source_key: a, expected_revision: 1 },
+    });
+    const second = accept(
+      db,
+      { ...event(), source_record_id: "mixed-b-event" },
+      { source: { source_key: b, expected_revision: 1 } },
+    );
+    if (first.status !== "stored" || second.status !== "stored")
+      throw new Error("fixture failed");
+    page(
+      dir,
+      "facts/mixed.md",
+      {
+        id: "fact:mixed",
+        title: "Synthetic mixed evidence",
+        type: "fact",
+        status: "active",
+        sensitivity: "private",
+        taint: "clean",
+        sources: [first.event.event_id, second.event.event_id],
+      },
+      "Synthetic mixed source text.",
+    );
+    const owner = { db, vaultPath: dir, principal: OWNER };
+    expect(serveGetPage(owner, { id: "fact:mixed" }).canon).toHaveLength(1);
+    revokeSourceGrant(db, {
+      source_key: a,
+      expected_revision: 1,
+      operation_id: "mixed-canon",
+    });
+    expect((await resumeSourceRevocation(db, dir, "mixed-canon")).status).toBe(
+      "denied",
+    );
+    expect(serveGetPage(owner, { id: "fact:mixed" }).canon).toHaveLength(0);
+    expect(inspectSourceGrant(db, a)?.purge_blockers).toContain(
+      "canon_rewrite_pending",
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("undo cannot restore an archive whose source authorization was revoked", async () => {
+  const { db, dir, a } = setup();
+  try {
+    grant(db, a);
+    const input = accept(db, event(), {
+      source: { source_key: a, expected_revision: 1 },
+    });
+    if (input.status !== "stored") throw new Error("fixture failed");
+    const io = { db, vault_path: dir };
+    write(io, await storeClaim(db, input.event.event_id));
+    const edited = write(
+      io,
+      await storeClaim(db, input.event.event_id, {
+        kind: "edit",
+        predicate: null,
+        object: null,
+        body: "A second synthetic observation.",
+        frontmatter: { title: "Synthetic revision" },
+      }),
+    );
+    revokeSourceGrant(db, {
+      source_key: a,
+      expected_revision: 1,
+      operation_id: "deny-undo",
+    });
+    await expect(undoReceipt(io, edited.receipt_id)).rejects.toThrow(
+      "source_access_denied",
+    );
   } finally {
     db.close();
   }
