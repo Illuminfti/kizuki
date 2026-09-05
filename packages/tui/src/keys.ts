@@ -194,11 +194,11 @@ export function createKeyStream(): {
 
   return {
     push,
-    needsFlush: () => !pasting && pending === ESC,
+    needsFlush: () => quarantine === null && !pasting && pending === ESC,
     flush() {
       const rest = decoder.decode();
       if (rest.length > 0) pending += rest;
-      if (pasting || pending !== ESC) return [];
+      if (quarantine !== null || pasting || pending !== ESC) return [];
       if (pending === ESC) {
         pending = "";
         return [{ name: "escape" }];
@@ -208,14 +208,12 @@ export function createKeyStream(): {
     end() {
       const rest = decoder.decode();
       if (rest.length > 0) pending += rest;
-      if (pasting) {
-        pending = "";
-        pasted = "";
-        pasteTooLarge = false;
-        return [];
-      }
-      if (pending === ESC) return this.flush();
+      if (quarantine === null && !pasting && pending === ESC) return this.flush();
       pending = "";
+      pasting = false;
+      pasted = "";
+      pasteTooLarge = false;
+      quarantine = null;
       return [];
     },
   };

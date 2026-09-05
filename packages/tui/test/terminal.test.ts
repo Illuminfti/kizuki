@@ -240,4 +240,23 @@ describe("createTerminal", () => {
     stdin.emit("data", "uz");
     expect(seen).toEqual([{ name: "char", ch: "z" }, { name: "char", ch: "z" }]);
   });
+
+  test("keeps a delayed split string terminator quarantined", async () => {
+    const stdin = new FakeStdin();
+    const stdout = new FakeStdout();
+    const terminal = createTerminal(
+      stdin as unknown as NodeJS.ReadStream,
+      stdout as unknown as NodeJS.WriteStream,
+      { signals: null },
+    );
+    const seen: import("../src/keys").Key[] = [];
+    const stop = terminal.onKeys((keys) => seen.push(...keys));
+    stdin.emit("data", `\x1b]${"x".repeat(127)}`);
+    stdin.emit("data", "uyes\r\x1b");
+    await Bun.sleep(40);
+    expect(seen).toEqual([]);
+    stdin.emit("data", "\\z");
+    expect(seen).toEqual([{ name: "char", ch: "z" }]);
+    stop();
+  });
 });
