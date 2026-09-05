@@ -871,6 +871,27 @@ re-extracted identical claim is a `duplicate` outcome, not a second row
    unavailable, step 3 is skipped and the run receipt records
    `dedup: "structural-only"`. It is never silently skipped.
 
+**Durable extraction filing.** The complete accepted producer decision is
+journaled before filing. Semantic candidate lookup may await outside a SQLite
+transaction; it nominates IDs only. Filing reloads provenance, source policy,
+origin, sensitivity, authority and live claim state in one immediate
+transaction. Every draft's insert, corroboration, supersession and retrieval
+outbox row commits together with the saved decision's deferred-input updates,
+frontier advancement and journal deletion. A later failure rolls all of those
+effects back; restart replays the saved decision without another producer call.
+
+Retrieval publication runs after that commit and reads each claim's current
+status and evidence. An unavailable index leaves work pending. Purge or loss of
+source access during an upsert causes removal; failed removal remains pending
+until retry succeeds. A retry drains only its bound store. Public claim
+insertion and retrieval publication refuse an enclosing uncommitted transaction.
+
+Machine-origin evidence cannot support a positive claim through any producer
+label, corroborate an external claim, enter known-claim model context, or reach
+the canon writer. Capture and evidence inspection remain available. The
+regressions for the filing boundary live in
+`packages/core/test/serve/extract-atomic.test.ts`.
+
 ### 4.4 Stage 5: arbitration — create vs edit
 
 This is the largest piece of new logic, because it is the decision a human

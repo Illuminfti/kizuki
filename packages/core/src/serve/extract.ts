@@ -7,12 +7,12 @@ import type { CaptureEvent } from "../contracts/event";
 import type { ClaimDraft, ProduceInput, ProducerPort, QuotedEvent } from "../contracts/producer";
 import { predicateIds } from "../claims/predicates";
 import { historicalClaimReplaySignature, listClaims } from "../claims/store";
-import type { InsertClaimInput } from "../claims/store";
+import type { InsertClaimInput, InsertClaimResult, PreparedClaimInsert } from "../claims/store";
 import { compareRfc3339 } from "../agents/time";
 import { readCheckpoint, writeCheckpoint } from "../ledger/checkpoints";
 import { readEvent, readSince } from "../ledger/ledger";
 import type { LedgerCursor } from "../ledger/ledger";
-import { classifyEventOrigin, refreshEventOrigin } from "../ledger/event-origin";
+import { classifyEventOrigin, refreshEventOrigin, requireExternalEvents, SelfOriginError } from "../ledger/event-origin";
 import { EXTRACT_BATCH, MODEL_PRODUCER_ID, planModelExtraction } from "../producer";
 
 const EXTRACT_SOURCE_KEY = "extract";
@@ -455,20 +455,53 @@ export function validateDurableExtractStorage(db: Database): void {
   readStoredExtractBatch(db, false);
 }
 
-/** Validate again after asynchronous filing, then advance and delete atomically. */
+function matchingDurableBatch(db: Database, batch: DurableExtractBatch, producer?: ProducerPort): DurableExtractBatch | null {
+  if (batch.authorization_epoch === null || batch.authorization_epoch !== sourcePolicyEpoch(db)) {
+    throw new DurableExtractAuthorizationError();
+  }
+  const current = readDurableExtractBatch(db, producer);
+  return current !== null && integrity(current) === integrity(batch) &&
+    JSON.stringify(current.filing_drafts) === JSON.stringify(batch.filing_drafts) ? current : null;
+}
+
+function finishDurableBatch(db: Database, batch: DurableExtractBatch): void {
+  insertDeferred(db, batch.deferred_inputs);
+  if (batch.mode === "frontier") writeCheckpoint(db, MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY, encodeCursor(batch.cursor));
+  else completeDeferredInputs(db, batch.model_inputs);
+  db.query("DELETE FROM extract_batches WHERE previous_cursor = ?").run(batch.previous_cursor ?? NULL_CURSOR);
+}
+
+/** Complete an already handled decision; extraction filing uses the atomic operation below. */
 export function completeDurableExtractBatch(db: Database, batch: DurableExtractBatch, producer?: ProducerPort): boolean {
   return db.transaction(() => {
-    if (batch.authorization_epoch === null || batch.authorization_epoch !== sourcePolicyEpoch(db)) {
-      throw new DurableExtractAuthorizationError();
-    }
-    const current = readDurableExtractBatch(db, producer);
-    if (current === null || integrity(current) !== integrity(batch) ||
-        JSON.stringify(current.filing_drafts) !== JSON.stringify(batch.filing_drafts)) return false;
-    insertDeferred(db, current.deferred_inputs);
-    if (current.mode === "frontier") writeCheckpoint(db, MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY, encodeCursor(batch.cursor));
-    else completeDeferredInputs(db, current.model_inputs);
-    db.query("DELETE FROM extract_batches WHERE previous_cursor = ?").run(batch.previous_cursor ?? NULL_CURSOR);
+    const current = matchingDurableBatch(db, batch, producer);
+    if (current === null) return false;
+    finishDurableBatch(db, current);
     return true;
+  }).immediate();
+}
+
+/** All claim effects, outbox rows and decision completion share one durable commit. */
+export function fileAndCompleteDurableExtractBatch(
+  db: Database,
+  batch: DurableExtractBatch,
+  producer: ProducerPort,
+  prepared: readonly PreparedClaimInsert[],
+): InsertClaimResult[] | null {
+  if (db.inTransaction) throw new Error("extraction filing requires a top-level transaction");
+  return db.transaction(() => {
+    const current = matchingDurableBatch(db, batch, producer);
+    if (current === null) return null;
+    const signatures = historicalClaimSignatures(db, current.filing_drafts, current.model_ref);
+    if (prepared.length !== signatures.length || prepared.some((operation, index) =>
+      operation.db !== db || operation.signature !== signatures[index])) {
+      throw new Error("prepared extraction drafts do not match the durable decision");
+    }
+    const results = prepared.map(operation => operation.apply());
+    // A changed final fence must throw so every prior effect rolls back too.
+    if (matchingDurableBatch(db, current, producer) === null) throw new Error("extract decision changed during filing");
+    finishDurableBatch(db, current);
+    return results;
   }).immediate();
 }
 
@@ -666,7 +699,11 @@ export async function mineLiveDrafts(
       let claims = knownBySubject.get(subject);
       if (claims === undefined) {
         claims = listClaims(db, { status: "live", keyed: true, subject, limit: 32,
-          filter: claim => sourceEventsAllowed(db, claim.provenance, scope) });
+          filter: claim => {
+            if (!sourceEventsAllowed(db, claim.provenance, scope)) return false;
+            try { requireExternalEvents(db, claim.provenance); return true; }
+            catch (error) { if (!(error instanceof SelfOriginError)) throw error; return false; }
+          } });
         knownBySubject.set(subject, claims);
       }
       return claims;

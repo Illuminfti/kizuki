@@ -866,8 +866,7 @@ test("managed pending origin filtering preserves the saved decision, external cl
     await expect(runWritePass(db, vault, options)).rejects.toThrow("synthetic origin interruption");
     db.exec("DROP TRIGGER interrupt_origin");
     const original = db.query<Record<string, unknown>, []>("SELECT * FROM extract_batches").get()!;
-    const originalClaim = listClaims(db, { status: "live", limit: 20 }).find(claim => claim.subject === "person:first")!;
-    expect(originalClaim).toBeDefined();
+    expect(listClaims(db, { status: "live", limit: 20 }).find(claim => claim.subject === "person:first")).toBeUndefined();
     expect(calls).toBe(1);
     expect(sent).toEqual([first.event_id, laterSelf.event_id, last.event_id]);
     commitMachineByteIntent(db, { receipt_id: ulid(), before_hash: null, after_hash: sha256Hex(laterSelf.text) }, () => undefined);
@@ -882,7 +881,7 @@ test("managed pending origin filtering preserves the saved decision, external cl
     expect(calls).toBe(1);
     const claims = listClaims(db, { status: "live", limit: 20 }).filter(claim => claim.producer === "model");
     expect(claims.map(claim => claim.subject).sort()).toEqual(["person:first", "person:last"]);
-    expect(claims.find(claim => claim.subject === "person:first")?.claim_id).toBe(originalClaim.claim_id);
+    expect(claims.filter(claim => claim.subject === "person:first")).toHaveLength(1);
     expect(claims.every(claim => claim.model_ref === "original-origin-model")).toBe(true);
     expect(readExtractCursor(db)).toContain(alreadySelf.event.event_id);
     expect(db.query("SELECT * FROM extract_batches").get()).toBeNull();
