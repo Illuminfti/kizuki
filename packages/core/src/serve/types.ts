@@ -220,7 +220,7 @@ export interface CalibrationDoctor {
 
 export interface ServeDoctorReport {
   readonly supervisor: SupervisorStatus;
-  readonly intent: ServeIntent;
+  readonly intent: ServeIntent | "unknown";
   readonly rails: RailDoctor[];
   readonly model: ModelDoctor;
   readonly stores: StoreDoctor;

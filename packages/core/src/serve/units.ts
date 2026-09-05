@@ -15,8 +15,8 @@ export function launchdLabel(vaultId: string): string {
   return `dev.kizuki.${vaultId}`;
 }
 
-export function systemdUnitPath(home: string, vaultId: string): string {
-  return `${home}/.config/systemd/user/${systemdUnitName(vaultId)}`;
+export function systemdUnitPath(home: string, vaultId: string, configHome = `${home}/.config`): string {
+  return `${configHome}/systemd/user/${systemdUnitName(vaultId)}`;
 }
 
 export function launchdPlistPath(home: string, vaultId: string): string {

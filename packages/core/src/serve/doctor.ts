@@ -308,7 +308,7 @@ function storeDoctor(
   };
 }
 
-function expectRailLiveness(intent: ServeIntent, supervisor: SupervisorStatus): boolean {
+function expectRailLiveness(intent: ServeIntent | "unknown", supervisor: SupervisorStatus): boolean {
   return intent === "installed" && supervisor.state === "active";
 }
 
@@ -318,7 +318,9 @@ export function inspectServeDoctor(
   options: ServeDoctorOptions = {},
 ): ServeDoctorReport {
   const now = options.now ?? new Date().toISOString();
-  const intent = readServeIntent(vaultPath);
+  let intent: ServeIntent | "unknown";
+  try { intent = readServeIntent(vaultPath); }
+  catch { intent = "unknown"; }
   const supervisor = options.supervisor
     ? queryServeService(vaultPath, options.supervisor)
     : {
@@ -352,6 +354,10 @@ export function inspectServeDoctor(
   const stores = storeDoctor(db, vaultPath, now);
   const cal = calibration(db, receipts, now);
   const failures: string[] = [];
+  if (intent === "unknown") failures.push("service intent unavailable or invalid");
+  else if (intent !== "installed" && (supervisor.enabled || supervisor.state === "active")) {
+    failures.push("supervisor active or enabled without installed intent");
+  }
   try {
     if (serviceFile(join(vaultPath, ".kizuki", "service-change.json")) !== null) failures.push("service change recovery pending");
   } catch { failures.push("service recovery state unavailable"); }

@@ -19,6 +19,16 @@ configuration when possible. If recovery cannot confirm the service transition,
 the snapshot stays pending and doctor reports it. Retry the same install or
 uninstall operation with the original service home after resolving the reported
 supervisor failure; the command first recovers the previous configuration.
+Recovery is bound to the original vault identity, vault location and unit location.
+If any changes, recovery retains the journal and refuses to touch another service.
+An unknown or inconsistent prior supervisor state prevents a new change. Invalid
+intent is reported as unknown and unhealthy; it is never silently treated as an opt-out.
+
+On Linux, a valid absolute `XDG_CONFIG_HOME` selects the configuration root, with
+units in `systemd/user` below it. Otherwise the root is `$HOME/.config`.
+Relative XDG paths are ignored, as required by the
+[XDG specification](https://specifications.freedesktop.org/basedir/latest/).
+macOS uses `$HOME/Library/LaunchAgents`.
 
 Symlinked, shared-writable, hardlinked and non-owned service files are refused.
 The native Linux package currently qualifies the process-lock boundary. macOS

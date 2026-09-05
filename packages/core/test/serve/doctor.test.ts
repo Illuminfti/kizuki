@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openLedger } from "../../src/ledger/db";
@@ -49,6 +49,17 @@ afterEach(() => {
 });
 
 describe("serve doctor", () => {
+  test("malformed service intent is unknown and cannot hide an active service", () => {
+    const { path, db } = vault();
+    try {
+      writeFileSync(join(path, ".kizuki", "serve-intent"), "invalid-private-value\n", {mode: 0o600});
+      const report = inspectServeDoctor(db, path, {supervisor: host({kind: "systemd", state: "active", enabled: true, unit: "synthetic", detail: "active"})});
+      expect(report.ok).toBe(false);
+      expect(report.intent).toBe("unknown");
+      expect(report.failures).toContain("service intent unavailable or invalid");
+      expect(JSON.stringify(report)).not.toContain("invalid-private-value");
+    } finally { db.close(); }
+  });
   test("an expected installed supervisor cannot be unknown, stopped, or unenabled", () => {
     const { path, db } = vault();
     try {

@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHelpers } from "../helpers";
 import { fakeSystemd } from "./supervisor-fixture";
@@ -28,4 +28,25 @@ test("a production environment flag cannot invent an active supervisor", () => {
   const result = runCli({ ...env, TEST_SUPERVISOR_STATE: "absent", KIZUKI_SUPERVISOR_FIXTURE: "active" }, "serve", "status", "--json");
   expect(result.exitCode).toBe(1);
   expect(result.stdout).toContain('"state":"absent"');
+});
+
+test("public service installation uses XDG config directly even with empty HOME", () => {
+  const setup = tempVault();
+  const xdg = join(setup.root, "service-config");
+  const env = { ...fakeSystemd(setup.root, setup.env), HOME: "", XDG_CONFIG_HOME: xdg, KIZUKI_SUPERVISOR: "systemd" };
+  const installed = runCli(env, "serve", "--install", "--json");
+  expect(installed.exitCode).toBe(0);
+  const id = readFileSync(join(setup.vault, ".kizuki", "vault-id"), "utf8").trim();
+  const unit = join(xdg, "systemd", "user", `kizuki@${id}.service`);
+  expect(existsSync(unit)).toBe(true);
+  expect(existsSync(join(xdg, ".config"))).toBe(false);
+  const status = runCli(env, "serve", "status", "--json");
+  // The synthetic supervisor runs no rails: installation is visible, health remains red.
+  expect(status.exitCode).toBe(1);
+  const report = JSON.parse(status.stdout).data;
+  expect(report.supervisor.state).toBe("active");
+  expect(report.doctor.intent).toBe("installed");
+  expect(report.doctor.failures.every((failure: string) => /^rail .+: no receipt$/.test(failure))).toBe(true);
+  expect(runCli(env, "serve", "--uninstall").exitCode).toBe(0);
+  expect(existsSync(unit)).toBe(false);
 });

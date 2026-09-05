@@ -6,7 +6,6 @@ import {
   isRailId,
   queryServeService,
   readServePid,
-  realSupervisorHost,
   runRail,
   runServeDaemon,
   serveExecHint,
@@ -17,14 +16,8 @@ import { UsageError, parseArguments } from "../args";
 import { withVault } from "../context";
 import { jsonEnvelope } from "../output";
 import type { CliIo, Command } from "./index";
-import { serveArgs } from "../runtime";
+import { serveSupervisorHost } from "../service-host";
 import { createServeRuntime } from "../serve-runtime";
-
-function homeOf(io: CliIo): string {
-  return io.env.HOME && io.env.HOME.length > 0
-    ? io.env.HOME
-    : io.env.XDG_CONFIG_HOME && io.env.XDG_CONFIG_HOME.length > 0 ? io.env.XDG_CONFIG_HOME : "";
-}
 
 export const serveCommand: Command = {
   name: "serve",
@@ -40,7 +33,7 @@ export const serveCommand: Command = {
 
     return withVault(io, async (ctx) => {
       const kind = detectSupervisorKind(io.env);
-      const host = realSupervisorHost(kind, homeOf(io), serveArgs(ctx.vaultPath));
+      const host = serveSupervisorHost(io.env, ctx.vaultPath);
 
       if (parsed.flags.has("--install")) {
         if (kind === "none") {

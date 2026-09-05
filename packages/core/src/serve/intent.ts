@@ -9,7 +9,8 @@ export function serveIntentPath(vaultPath: string): string {
 export function readServeIntent(vaultPath: string): ServeIntent {
   const path = serveIntentPath(vaultPath);
   const value = serviceFile(path)?.trim() ?? "none";
-  return isServeIntent(value) ? value : "none";
+  if (!isServeIntent(value)) throw new Error("service intent is invalid");
+  return value;
 }
 
 export function writeServeIntent(vaultPath: string, intent: ServeIntent): void {

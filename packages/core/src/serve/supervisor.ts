@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { loadServeConfig } from "./config";
 import { readServeIntent, writeServeIntent } from "./intent";
@@ -25,6 +25,7 @@ import type {
 export interface SupervisorHost {
   readonly kind: SupervisorKind;
   readonly home: string;
+  readonly configHome?: string;
   readonly execStart: string | readonly string[];
   query(vaultId: string): SupervisorStatus;
   /** Activate the current unit bytes, including replacement of an older running definition. */
@@ -61,10 +62,12 @@ export function realSupervisorHost(
   kind: SupervisorKind,
   home: string,
   execStart: string | readonly string[],
+  options: { configHome?: string } = {},
 ): SupervisorHost {
   return {
     kind,
     home,
+    ...(options.configHome === undefined ? {} : { configHome: options.configHome }),
     execStart,
     query(vaultId: string): SupervisorStatus {
       if (kind === "none") {
@@ -131,7 +134,7 @@ export function realSupervisorHost(
         const loaded = runCommand(["launchctl", "bootstrap", `gui/${process.getuid?.() ?? 0}`, unitPath]);
         return {
           ok: loaded.ok,
-          detail: loaded.ok ? "loaded" : loaded.stderr || loaded.stdout || "bootstrap failed",
+          detail: loaded.ok ? "loaded" : "service bootstrap failed",
         };
       }
       return { ok: false, detail: "no supervisor" };
@@ -139,7 +142,7 @@ export function realSupervisorHost(
     disable(unitName: string) {
       if (kind === "systemd") {
         const result = runCommand(["systemctl", "--user", "disable", "--now", unitName]);
-        return { ok: result.ok, detail: result.stderr || result.stdout || "disabled" };
+        return { ok: result.ok, detail: result.ok ? "disabled" : "service disable failed" };
       }
       if (kind === "launchd") {
         const result = runCommand([
@@ -147,7 +150,7 @@ export function realSupervisorHost(
           "bootout",
           `gui/${process.getuid?.() ?? 0}/${unitName}`,
         ]);
-        return { ok: result.ok, detail: result.stderr || result.stdout || "unloaded" };
+        return { ok: result.ok, detail: result.ok ? "unloaded" : "service unload failed" };
       }
       return { ok: true, detail: "no supervisor" };
     },
@@ -162,9 +165,9 @@ export function queryServeService(
 }
 
 interface ServiceChange {
-  readonly version: 1;
+  readonly version: 2;
   readonly kind: SupervisorKind;
-  readonly home_hash: string;
+  readonly identity_hash: string;
   readonly previous_unit: string | null;
   readonly previous_intent: ServeIntent;
   readonly previous_enabled: boolean;
@@ -172,11 +175,18 @@ interface ServiceChange {
 
 function servicePaths(vaultPath: string, host: SupervisorHost) {
   const vaultId = ensureVaultId(vaultPath);
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(vaultId)) throw new Error("invalid vault identity for a user service");
   const unit = host.kind === "systemd" ? systemdUnitName(vaultId) : launchdLabel(vaultId);
-  const path = host.kind === "systemd" ? systemdUnitPath(host.home, vaultId) : launchdPlistPath(host.home, vaultId);
-  serviceDirectory(host.home, dirname(path));
+  const anchor = host.kind === "systemd" && host.configHome !== undefined ? host.configHome : host.home;
+  if (!isAbsolute(anchor)) throw new Error("service home must be an absolute directory");
+  const path = host.kind === "systemd" ? systemdUnitPath(host.home, vaultId, host.configHome) : launchdPlistPath(host.home, vaultId);
+  serviceDirectory(anchor, dirname(path));
   serviceDirectory(vaultPath, join(vaultPath, ".kizuki"));
-  return { vaultId, unit, path, journal: join(vaultPath, ".kizuki", "service-change.json") };
+  const identityHash = createHash("sha256").update(JSON.stringify({
+    vault: resolve(vaultPath), vault_id: vaultId, kind: host.kind, unit, path: resolve(path),
+    home: host.home, config_home: host.configHome ?? null,
+  })).digest("hex");
+  return { vaultId, unit, path, identityHash, journal: join(vaultPath, ".kizuki", "service-change.json") };
 }
 
 function confirmedActive(status: SupervisorStatus): boolean { return status.state === "active" && status.enabled; }
@@ -191,13 +201,13 @@ function recoverChange(vaultPath: string, host: SupervisorHost, paths: ReturnTyp
   try {
     const value = JSON.parse(raw);
     if (value === null || typeof value !== "object" || Array.isArray(value) ||
-      Object.keys(value).sort().join(",") !== "home_hash,kind,previous_enabled,previous_intent,previous_unit,version" ||
-      value.version !== 1 || value.kind !== host.kind ||
-      value.home_hash !== createHash("sha256").update(host.home).digest("hex") ||
+      Object.keys(value).sort().join(",") !== "identity_hash,kind,previous_enabled,previous_intent,previous_unit,version" ||
+      value.version !== 2 || value.kind !== host.kind || value.identity_hash !== paths.identityHash ||
       !(value.previous_unit === null || typeof value.previous_unit === "string") ||
-      typeof value.previous_enabled !== "boolean" || !isServeIntent(value.previous_intent)) throw new Error();
+      typeof value.previous_enabled !== "boolean" || (value.previous_enabled && value.previous_unit === null) ||
+      !isServeIntent(value.previous_intent)) throw new Error();
     entry = value;
-  } catch { throw new Error("service recovery snapshot is invalid or belongs to another host"); }
+  } catch { throw new Error("service recovery snapshot is invalid or belongs to another vault or service location"); }
   const current = host.query(paths.vaultId);
   if (!confirmedStopped(current)) {
     if (!host.disable(paths.unit).ok || !confirmedStopped(host.query(paths.vaultId))) throw new Error("service recovery could not confirm stop; previous configuration retained");
@@ -219,8 +229,9 @@ function changeService<T>(vaultPath: string, host: SupervisorHost, operation: (p
   try {
     recoverChange(vaultPath, host, paths);
     const previous = host.query(paths.vaultId);
+    if (!confirmedActive(previous) && !confirmedStopped(previous)) throw new Error("service state is unknown or inconsistent; no service change made");
     const entry: ServiceChange = {
-      version: 1, kind: host.kind, home_hash: createHash("sha256").update(host.home).digest("hex"),
+      version: 2, kind: host.kind, identity_hash: paths.identityHash,
       previous_unit: serviceFile(paths.path), previous_intent: readServeIntent(vaultPath),
       previous_enabled: previous.enabled || previous.state === "active",
     };
