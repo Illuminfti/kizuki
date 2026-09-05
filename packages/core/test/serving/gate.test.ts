@@ -425,6 +425,29 @@ describe("authority is re-read on every served call", () => {
     expect(row?.query_shape["+truncated"]).toBe(1);
   });
 
+  test("numeric root keys cannot displace the exact serving truncation count", () => {
+    const ctx = live.agent("search-only");
+    for (const count of [32, 33]) {
+      const args = Object.fromEntries(Array.from({ length: count }, (_, index) => [String(index), index]));
+      expect(refusal(() => gate(ctx, "propose", args, emptyRun)).code).toBe("tool_not_granted");
+      const shape = listAudit(live.db, "search-only", { limit: 1 })[0]?.query_shape;
+      expect(Object.keys(shape ?? {})).toHaveLength(32);
+      expect(shape?.["+truncated"]).toBe(count === 32 ? undefined : 2);
+      expect(shape?.["31"]).toBe(count === 32 ? 31 : undefined);
+    }
+  });
+
+  test("nested truncation reserves space beside numeric root keys", () => {
+    const ctx = live.agent("search-only");
+    const args: Record<string, unknown> = Object.fromEntries(Array.from({ length: 32 }, (_, index) => [String(index), index]));
+    args["0"] = Array.from({ length: 65 }, (_, index) => index);
+    expect(refusal(() => gate(ctx, "propose", args, emptyRun)).code).toBe("tool_not_granted");
+    const shape = listAudit(live.db, "search-only", { limit: 1 })[0]?.query_shape;
+    expect(shape?.["+truncated"]).toBe(2);
+    expect(shape?.["31"]).toBeUndefined();
+    expect(Object.keys(shape ?? {})).toHaveLength(32);
+  });
+
   test("the reserved field is counted once after the leaf budget is exhausted", () => {
     const ctx = live.agent("search-only");
     const args = {

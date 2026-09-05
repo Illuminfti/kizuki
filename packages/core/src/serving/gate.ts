@@ -148,8 +148,13 @@ function boundedArguments(
   const budget: Budget = { leaves: AUDIT_LEAF_CAP, dropped: 0 };
   const shaped = boundedValue(args, 0, budget) as Record<string, unknown>;
   if (budget.dropped === 0) return shaped;
-  // Put trusted omission evidence before caller entries so the shared audit
-  // layer's own width cap cannot discard it. Caller keys cannot replace it.
+  // The shared shaper accepts 32 root entries. Reserve one for omission
+  // evidence: integer-index keys enumerate before it regardless of insertion.
+  const keys = Object.keys(shaped);
+  for (const key of keys.slice(AUDIT_KEY_CAP - 1)) {
+    delete shaped[key];
+    budget.dropped += 1;
+  }
   const result = Object.create(null) as Record<string, unknown>;
   result[TRUNCATION_KEY] = budget.dropped;
   return Object.defineProperties(result, Object.getOwnPropertyDescriptors(shaped));
