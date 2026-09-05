@@ -7,6 +7,8 @@ import type { CaptureEvent } from "../contracts/event";
 import type { ClaimDraft, ProducerPort, QuotedEvent } from "../contracts/producer";
 import { predicateIds } from "../claims/predicates";
 import { historicalClaimReplaySignature, listClaims } from "../claims/store";
+import type { InsertClaimInput } from "../claims/store";
+import { compareRfc3339 } from "../agents/time";
 import { readCheckpoint, writeCheckpoint } from "../ledger/checkpoints";
 import { readEvent, readSince } from "../ledger/ledger";
 import type { LedgerCursor } from "../ledger/ledger";
@@ -99,8 +101,39 @@ function legacyIntegrity(batch: DurableExtractBatch): string {
     batch.drafts.map(d => [d.kind,d.subject,d.predicate,d.object,d.polarity,d.body,d.valid_from,d.valid_to,d.confidence,d.sensitivity,d.event_ids]),
   ])).digest("hex");
 }
-function historicalClaimSignatures(drafts: readonly ClaimDraft[], modelRef: string | null): string[] {
-  return drafts.map(draft => historicalClaimReplaySignature({
+function observedStart(db: Database, eventIds: readonly string[]): string {
+  let latest: string | undefined;
+  for (const id of eventIds) {
+    const event = db.query<{ observed_at: string }, [string]>(
+      "SELECT observed_at FROM events WHERE event_id=?",
+    ).get(id);
+    if (event === null) throw new Error("produced claim source observation is unavailable");
+    const observed = event.observed_at;
+    let compared = compareRfc3339(observed, "source observed_at", latest ?? observed, "source observed_at");
+    // The shared comparator aliases a leap second to the following second.
+    // At that boundary the leap second always precedes the ordinary second,
+    // regardless of either fractional part.
+    const observedLeap = /:60(?:\.|[Zz+-])/.test(observed);
+    if (latest !== undefined && observedLeap !== /:60(?:\.|[Zz+-])/.test(latest) &&
+        compareRfc3339(observed.replace(/\.\d+/, ""), "source observed_at", latest.replace(/\.\d+/, ""), "source observed_at") === 0) {
+      compared = observedLeap ? -1 : 1;
+    }
+    // A multi-source claim is known as of its latest supporting observation.
+    // Equivalent instants use a stable original spelling, independent of citation order.
+    if (latest === undefined || compared > 0 || (compared === 0 && observed < latest)) latest = observed;
+  }
+  if (latest === undefined) throw new Error("produced claim source observation is unavailable");
+  return latest;
+}
+
+/** Materialization and historical replay authority must bind the same time. */
+export function producedClaimInput(
+  db: Database,
+  draft: ClaimDraft,
+  producer: InsertClaimInput["producer"],
+  modelRef: string | null,
+): InsertClaimInput {
+  return {
     kind: draft.kind,
     subject: draft.subject,
     predicate: draft.predicate,
@@ -109,14 +142,17 @@ function historicalClaimSignatures(drafts: readonly ClaimDraft[], modelRef: stri
     body: draft.body,
     provenance: [...draft.event_ids],
     subjects: [draft.subject],
-    producer: "model",
+    producer,
     model_ref: modelRef,
     confidence: draft.confidence,
     taint: "quoted",
     sensitivity: draft.sensitivity,
-    ...(draft.valid_from === null ? {} : { valid_from: draft.valid_from }),
+    valid_from: draft.valid_from ?? observedStart(db, draft.event_ids),
     ...(draft.valid_to === null ? {} : { valid_to: draft.valid_to }),
-  }));
+  };
+}
+function historicalClaimSignatures(db: Database, drafts: readonly ClaimDraft[], modelRef: string | null): string[] {
+  return drafts.map(draft => historicalClaimReplaySignature(producedClaimInput(db, draft, "model", modelRef)));
 }
 function interval(db: Database, previous: string | null, boundary: LedgerCursor): CaptureEvent[] {
   const events = readSince(db, parseCursor(previous), EXTRACT_BATCH).events;
@@ -361,7 +397,7 @@ function readStoredExtractBatch(db: Database, enforceConsent: boolean, producer?
       historical_source_write: bindHistoricalSourceWrite(
         db,
         sent,
-        historicalClaimSignatures(parsed.claims, row.model_ref),
+        historicalClaimSignatures(db, parsed.claims, row.model_ref),
         authorizationEpoch!,
       ),
     } : {}) };
