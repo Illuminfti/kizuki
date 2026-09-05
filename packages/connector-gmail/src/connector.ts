@@ -187,10 +187,14 @@ export class GmailConnector implements Connector {
         }
     }
     private async tokenWait<T>(start: () => Promise<T>, budget: Budget, generation: number): Promise<T> {
+        const timeoutMs = Math.min(5000, budget.remaining());
         this.pendingTokens++;
-        const pending = Promise.resolve().then(start).finally(() => { this.pendingTokens--; });
+        const pending = Promise.resolve().then(() => {
+            this.assertGeneration(generation);
+            return start();
+        }).finally(() => { this.pendingTokens--; });
         try {
-            const result = await withDeadline(pending, Math.min(5000, budget.remaining()), "Gmail token deadline");
+            const result = await withDeadline(pending, timeoutMs, "Gmail token deadline");
             this.assertGeneration(generation);
             return result;
         }
