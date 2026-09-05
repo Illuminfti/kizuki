@@ -98,6 +98,16 @@ function isBusy(lease: LeaseRow, process: LeaseProcess, now: string): boolean {
   }
   // RFC 0002 §11.3: a live holder PID is BUSY. boot_id distinguishes a
   // post-reboot reuse of the same number; a still-alive PID is never stolen.
+  // A holder recorded under a different boot cannot be alive, whatever the
+  // PID says: the machine it ran on is gone, so reclaim instead of trusting
+  // PID liveness against the current boot's process table.
+  // The PID fallback is process-local, not evidence of a different boot.
+  // In particular, two live Darwin processes normally have different values.
+  if (
+    lease.holder_boot_id !== process.boot_id &&
+    lease.holder_boot_id.length > 0 && process.boot_id.length > 0 &&
+    !lease.holder_boot_id.startsWith("pid:") && !process.boot_id.startsWith("pid:")
+  ) return false;
   if (process.isAlive(lease.holder_pid)) return true;
   const staleAfter = HEARTBEAT_SECONDS * LEASE_RECLAIM_HEARTBEATS;
   return ageSeconds(lease.heartbeat_at, now) < staleAfter;
@@ -108,17 +118,19 @@ export function reclaimDeadLease(
   name: string,
   process: LeaseProcess,
 ): LeaseRow | null {
-  const existing = readLease(db, name);
-  if (existing === null) return null;
-  const now = process.now();
-  if (isBusy(existing, process, now)) {
-    throw new ServeDaemonError("lease_busy", "a live holder lease is never stolen");
-  }
-  if (process.isAlive(existing.holder_pid) && existing.holder_boot_id === process.boot_id) {
-    return null;
-  }
-  db.query("DELETE FROM leases WHERE name = ?").run(name);
-  return existing;
+  return db.transaction(() => {
+    const existing = readLease(db, name);
+    if (existing === null) return null;
+    const now = process.now();
+    if (isBusy(existing, process, now)) {
+      throw new ServeDaemonError("lease_busy", "a live holder lease is never stolen");
+    }
+    if (process.isAlive(existing.holder_pid) && existing.holder_boot_id === process.boot_id) {
+      return null;
+    }
+    db.query("DELETE FROM leases WHERE name = ?").run(name);
+    return existing;
+  }).immediate();
 }
 
 export function acquireLease(
@@ -127,28 +139,30 @@ export function acquireLease(
   name = WRITER_LEASE,
   ttl_s = HEARTBEAT_SECONDS * LEASE_RECLAIM_HEARTBEATS,
 ): LeaseAcquireResult {
-  if (!tableExists(db, "leases")) {
-    return { acquired: false, lease: null, reason: "missing-table" };
-  }
-  const now = process.now();
-  const existing = readLease(db, name);
-  if (existing !== null) {
-    if (
-      existing.holder_pid === process.pid &&
-      existing.holder_boot_id === process.boot_id
-    ) {
-      heartbeatLease(db, process, name);
-      return { acquired: true, lease: readLease(db, name), reason: "acquired" };
+  return db.transaction((): LeaseAcquireResult => {
+    if (!tableExists(db, "leases")) {
+      return { acquired: false, lease: null, reason: "missing-table" };
     }
-    if (isBusy(existing, process, now)) {
-      return { acquired: false, lease: existing, reason: "busy" };
+    const now = process.now();
+    const existing = readLease(db, name);
+    if (existing !== null) {
+      if (
+        existing.holder_pid === process.pid &&
+        existing.holder_boot_id === process.boot_id
+      ) {
+        heartbeatLease(db, process, name);
+        return { acquired: true, lease: readLease(db, name), reason: "acquired" };
+      }
+      if (isBusy(existing, process, now)) {
+        return { acquired: false, lease: existing, reason: "busy" };
+      }
+      reclaimDeadLease(db, name, process);
+      const after = insertLease(db, name, process, now, ttl_s);
+      return { acquired: true, lease: after, reason: "reclaimed" };
     }
-    reclaimDeadLease(db, name, process);
-    const after = insertLease(db, name, process, now, ttl_s);
-    return { acquired: true, lease: after, reason: "reclaimed" };
-  }
-  const lease = insertLease(db, name, process, now, ttl_s);
-  return { acquired: true, lease, reason: "acquired" };
+    const lease = insertLease(db, name, process, now, ttl_s);
+    return { acquired: true, lease, reason: "acquired" };
+  }).immediate();
 }
 
 function insertLease(
@@ -174,20 +188,22 @@ export function heartbeatLease(
   process: LeaseProcess,
   name = WRITER_LEASE,
 ): void {
-  const existing = readLease(db, name);
-  if (existing === null) {
-    throw new ServeDaemonError("lease_missing", "cannot heartbeat a missing lease");
-  }
-  if (
-    existing.holder_pid !== process.pid ||
-    existing.holder_boot_id !== process.boot_id
-  ) {
-    throw new ServeDaemonError("lease_busy", "a live holder lease is never stolen");
-  }
-  db.query("UPDATE leases SET heartbeat_at = ? WHERE name = ?").run(
-    process.now(),
-    name,
-  );
+  return db.transaction(() => {
+    const existing = readLease(db, name);
+    if (existing === null) {
+      throw new ServeDaemonError("lease_missing", "cannot heartbeat a missing lease");
+    }
+    if (
+      existing.holder_pid !== process.pid ||
+      existing.holder_boot_id !== process.boot_id
+    ) {
+      throw new ServeDaemonError("lease_busy", "a live holder lease is never stolen");
+    }
+    db.query("UPDATE leases SET heartbeat_at = ? WHERE name = ?").run(
+      process.now(),
+      name,
+    );
+  }).immediate();
 }
 
 export function releaseLease(
@@ -195,15 +211,17 @@ export function releaseLease(
   process: LeaseProcess,
   name = WRITER_LEASE,
 ): void {
-  const existing = readLease(db, name);
-  if (existing === null) return;
-  if (
-    existing.holder_pid !== process.pid ||
-    existing.holder_boot_id !== process.boot_id
-  ) {
-    throw new ServeDaemonError("lease_busy", "a live holder lease is never stolen");
-  }
-  db.query("DELETE FROM leases WHERE name = ?").run(name);
+  return db.transaction(() => {
+    const existing = readLease(db, name);
+    if (existing === null) return;
+    if (
+      existing.holder_pid !== process.pid ||
+      existing.holder_boot_id !== process.boot_id
+    ) {
+      throw new ServeDaemonError("lease_busy", "a live holder lease is never stolen");
+    }
+    db.query("DELETE FROM leases WHERE name = ?").run(name);
+  }).immediate();
 }
 
 export function thisProcess(now: () => string = () => new Date().toISOString()): LeaseProcess {

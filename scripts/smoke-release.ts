@@ -3,17 +3,25 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { verifyChecksumManifest } from "./release-artifacts";
 
+import { selectedReleaseTarget } from "./release-targets";
+import { parseBuildInfo } from "./stranger-proof";
+const target = selectedReleaseTarget();
+
 const root = resolve(import.meta.dir, "..");
 const version = (await Bun.file(resolve(root, "packages/cli/package.json")).json() as {
   version: string;
 }).version;
-const release = resolve(root, "dist", `kizuki-${version}`, "bun-linux-x64-baseline");
+const release = resolve(root, "dist", `kizuki-${version}`, target.target);
 const cli = join(release, "kizuki");
 const mcp = join(release, "kizuki-mcp");
 
 for (const required of [cli, mcp, join(release, "SHA256SUMS"), join(release, "README.txt"), join(release, "BUILD.json")]) {
   if (!existsSync(required)) throw new Error(`release artifact is missing: ${required}`);
 }
+
+const build = parseBuildInfo(join(release, "BUILD.json"));
+if (build.target !== target.target || build.bun_version !== Bun.version) throw new Error("artifact target or Bun version mismatch");
+verifyChecksumManifest(release, ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"]);
 
 function run(command: string, args: string[], env: Record<string, string>): string {
   const result = Bun.spawnSync([command, ...args], { env, stderr: "pipe", stdout: "pipe" });
