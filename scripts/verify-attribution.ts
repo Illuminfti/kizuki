@@ -8,7 +8,8 @@ interface AttributionFailure {
 }
 
 const delimiter = /[\s<>"'()[\]{}|]/;
-const urlContinuation = /[A-Za-z0-9._~:/?#@%&=+,;$!-]/;
+const tokenCharacter = /[\p{L}\p{N}\p{M}_]/u;
+const urlContinuation = /[\p{L}\p{N}\p{M}._~:/?#@%&=+,;$!-]/u;
 
 function requiredEnvironment(name: string): string {
   const value = process.env[name];
@@ -38,6 +39,28 @@ function schemeStart(text: string, lower: string, offset: number): number | null
   return relative < 0 ? null : tokenStart + relative;
 }
 
+function characterBefore(text: string, offset: number): string | undefined {
+  if (offset === 0) return undefined;
+  const lastCodeUnit = text.charCodeAt(offset - 1);
+  const start =
+    lastCodeUnit >= 0xdc00 && lastCodeUnit <= 0xdfff && offset > 1
+      ? offset - 2
+      : offset - 1;
+  return text.slice(start, offset);
+}
+
+function characterAt(text: string, offset: number): string | undefined {
+  const codePoint = text.codePointAt(offset);
+  return codePoint === undefined ? undefined : String.fromCodePoint(codePoint);
+}
+
+function hasTokenBoundaries(text: string, offset: number, length: number): boolean {
+  return (
+    !tokenCharacter.test(characterBefore(text, offset) ?? "") &&
+    !tokenCharacter.test(characterAt(text, offset + length) ?? "")
+  );
+}
+
 export function validateAttributionText(
   path: string,
   text: string,
@@ -51,13 +74,18 @@ export function validateAttributionText(
 
   const lower = text.toLowerCase();
   const failures: AttributionFailure[] = [];
+  let hasExactCredit = false;
+  let hasCanonicalUrl = false;
   let offset = 0;
   while ((offset = lower.indexOf(identifier, offset)) >= 0) {
     const urlStart = schemeStart(text, lower, offset);
     let valid = false;
 
     if (urlStart === null) {
-      valid = text.slice(offset, offset + exactSpelling.length) === exactSpelling;
+      valid =
+        text.slice(offset, offset + exactSpelling.length) === exactSpelling &&
+        hasTokenBoundaries(text, offset, exactSpelling.length);
+      hasExactCredit ||= valid;
     } else {
       const expectedOffset = urlStart + canonicalUrl.length - identifier.length;
       const candidate = text.slice(urlStart, urlStart + canonicalUrl.length);
@@ -68,6 +96,7 @@ export function validateAttributionText(
         candidate === canonicalUrl &&
         (before === undefined || !urlContinuation.test(before)) &&
         (after === undefined || !urlContinuation.test(after));
+      hasCanonicalUrl ||= valid;
     }
 
     if (!valid) {
@@ -81,6 +110,22 @@ export function validateAttributionText(
       });
     }
     offset += identifier.length;
+  }
+  if (!hasExactCredit) {
+    failures.push({
+      path,
+      line: 1,
+      column: 1,
+      reason: "public attribution is missing the exact credit",
+    });
+  }
+  if (!hasCanonicalUrl) {
+    failures.push({
+      path,
+      line: 1,
+      column: 1,
+      reason: "public attribution is missing the canonical URL",
+    });
   }
   return failures;
 }
