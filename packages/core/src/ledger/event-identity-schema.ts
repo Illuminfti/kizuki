@@ -1,7 +1,9 @@
 import type { Database } from "bun:sqlite";
 import { EVENT_LIMITS } from "../contracts/event";
-import { classifyEventOrigin } from "./event-origin";
+import { classifyNewEventOrigin } from "./event-origin";
 import { EventRecordError, eventFromRow, type EventRow } from "./event-record";
+import { computeOriginBinding, nativeRequestDigest } from "./event-origin-binding";
+import { assertLegacyOriginUnconsumed } from "./legacy-origin-preflight";
 import { isRfc3339 } from "../util/time";
 
 const HASH_CHECK = (column: string): string =>
@@ -46,6 +48,9 @@ export function applyEventIdentityV16(db: Database): void {
     ALTER TABLE events ADD COLUMN content_hash_version INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE events ADD COLUMN text_hash TEXT NOT NULL DEFAULT '';
     ALTER TABLE events ADD COLUMN origin TEXT NOT NULL DEFAULT 'external' CHECK(origin IN ('external','self'));
+    ALTER TABLE events ADD COLUMN origin_binding_version INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE events ADD COLUMN origin_binding_kind TEXT NOT NULL DEFAULT '';
+    ALTER TABLE events ADD COLUMN origin_binding TEXT NOT NULL DEFAULT '';
     ALTER TABLE native_owner_evidence ADD COLUMN event_content_hash TEXT NOT NULL DEFAULT '';
     UPDATE native_owner_evidence SET event_content_hash=(SELECT content_hash FROM events WHERE event_id=native_owner_evidence.event_id);
     CREATE INDEX canon_loop_before_hash ON canon_receipts(before_hash) WHERE writer='loop';
@@ -58,39 +63,58 @@ export function applyEventIdentityV16(db: Database): void {
     CREATE INDEX canon_machine_before_hash ON canon_machine_byte_intents(before_hash);
     CREATE INDEX canon_machine_after_hash ON canon_machine_byte_intents(after_hash);
   `);
+  bindLegacyEventOrigins(db);
+  installEventIdentityGuards(db);
+}
+
+/** The only compatibility route; callers own an unpublished immediate transaction. */
+export function bindLegacyEventOrigins(db: Database): void {
+  if (!db.inTransaction) throw new EventRecordError();
   using page = db.prepare<EventRow, [string]>("SELECT * FROM events WHERE event_id>? ORDER BY event_id LIMIT 32");
-  using update = db.prepare("UPDATE events SET content_hash_version=1,text_hash=?,origin=? WHERE event_id=?");
+  using update = db.prepare(`UPDATE events SET content_hash_version=1,text_hash=?,origin=?,
+    origin_binding_version=1,origin_binding_kind='legacy',origin_binding=? WHERE event_id=?`);
   let after = "";
   for (;;) {
     const rows = page.all(after);
     if (rows.length === 0) break;
     for (const row of rows) {
-      const event = eventFromRow(row, "legacy");
-      const origin = classifyEventOrigin(db, event);
-      update.run(event.text_hash, origin, event.event_id);
+      const event = eventFromRow(row, db, "legacy");
+      const nativeDigest = nativeRequestDigest(db, event.event_id);
+      const origin = nativeDigest === null ? classifyNewEventOrigin(db, event) : "external";
+      if (origin === "self" && !event.text.includes("KIZUKI CONTEXT v1")) {
+        assertLegacyOriginUnconsumed(db, row);
+      }
+      update.run(event.text_hash, origin, computeOriginBinding({ ...event, origin }, row.accepted_at, "legacy", nativeDigest), event.event_id);
       after = event.event_id;
     }
   }
+}
+
+export function installEventIdentityGuards(db: Database): void {
   const invalid = `typeof(NEW.content_hash_version)!='integer' OR NEW.content_hash_version NOT IN (1,2)
-    OR NOT ${HASH_CHECK("NEW.text_hash")} OR NEW.origin NOT IN ('external','self')`;
+    OR NOT ${HASH_CHECK("NEW.text_hash")} OR NEW.origin NOT IN ('external','self')
+    OR typeof(NEW.origin_binding_version)!='integer' OR NEW.origin_binding_version!=1
+    OR NEW.origin_binding_kind NOT IN ('capture','native','legacy') OR NOT ${HASH_CHECK("NEW.origin_binding")}`;
   db.exec(`
     CREATE TRIGGER events_identity_insert BEFORE INSERT ON events WHEN ${invalid}
       BEGIN SELECT RAISE(ABORT,'event identity fields are required'); END;
-    CREATE TRIGGER events_identity_update BEFORE UPDATE OF content_hash_version,text_hash,origin ON events WHEN ${invalid}
-      OR (OLD.origin='self' AND NEW.origin='external' AND NOT EXISTS (
-        SELECT 1 FROM native_owner_evidence n WHERE n.event_id=OLD.event_id AND n.origin='correction'
-        AND NEW.connector_id='kizuki.owner' AND n.event_content_hash=NEW.content_hash
-        AND n.recorded_at=NEW.observed_at
-        AND NOT EXISTS(SELECT 1 FROM source_event_bindings b WHERE b.event_id=OLD.event_id)))
-      BEGIN SELECT RAISE(ABORT,'event identity annotation is invalid'); END;
+    CREATE TRIGGER events_identity_update BEFORE UPDATE ON events WHEN
+      NEW.origin IS NOT OLD.origin OR NEW.origin_binding_version IS NOT OLD.origin_binding_version
+      OR NEW.origin_binding_kind IS NOT OLD.origin_binding_kind OR NEW.origin_binding IS NOT OLD.origin_binding
+      OR NEW.accepted_at IS NOT OLD.accepted_at OR NEW.event_id IS NOT OLD.event_id
+      OR NEW.content_hash IS NOT OLD.content_hash OR NEW.content_hash_version IS NOT OLD.content_hash_version
+      OR NEW.text_hash IS NOT OLD.text_hash
+      BEGIN SELECT RAISE(ABORT,'event origin binding is immutable'); END;
     CREATE TRIGGER native_owner_hash_insert BEFORE INSERT ON native_owner_evidence WHEN NOT ${HASH_CHECK("NEW.event_content_hash")}
       BEGIN SELECT RAISE(ABORT,'native owner event hash is required'); END;
-    CREATE TRIGGER native_owner_hash_update BEFORE UPDATE OF event_content_hash ON native_owner_evidence WHEN NOT ${HASH_CHECK("NEW.event_content_hash")}
-      BEGIN SELECT RAISE(ABORT,'native owner event hash is invalid'); END;
-    CREATE TRIGGER canon_loop_hash_insert BEFORE INSERT ON canon_receipts WHEN NEW.writer='loop' AND (
+    CREATE TRIGGER native_owner_hash_update BEFORE UPDATE ON native_owner_evidence WHEN
+      NEW.event_id IS NOT OLD.event_id OR NEW.origin IS NOT OLD.origin OR NEW.request_digest IS NOT OLD.request_digest
+      OR NEW.recorded_at IS NOT OLD.recorded_at OR NEW.event_content_hash IS NOT OLD.event_content_hash
+      BEGIN SELECT RAISE(ABORT,'native owner proof is immutable'); END;
+    CREATE TRIGGER IF NOT EXISTS canon_loop_hash_insert BEFORE INSERT ON canon_receipts WHEN NEW.writer='loop' AND (
       NOT ${HASH_CHECK("NEW.after_hash")} OR (NEW.before_hash IS NOT NULL AND NOT ${HASH_CHECK("NEW.before_hash")}))
       BEGIN SELECT RAISE(ABORT,'machine byte registry is invalid'); END;
-    CREATE TRIGGER canon_loop_hash_update BEFORE UPDATE OF writer,before_hash,after_hash ON canon_receipts WHEN NEW.writer='loop' AND (
+    CREATE TRIGGER IF NOT EXISTS canon_loop_hash_update BEFORE UPDATE OF writer,before_hash,after_hash ON canon_receipts WHEN NEW.writer='loop' AND (
       NOT ${HASH_CHECK("NEW.after_hash")} OR (NEW.before_hash IS NOT NULL AND NOT ${HASH_CHECK("NEW.before_hash")}))
       BEGIN SELECT RAISE(ABORT,'machine byte registry is invalid'); END;
   `);

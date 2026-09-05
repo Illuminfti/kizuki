@@ -55,7 +55,7 @@ test("self-only frontier advances without calling the producer", async () => {
   db.close();
 });
 
-test("a pending decision filters self-supported drafts without another model call", async () => {
+test("a pending decision retains causally external drafts after a later intent without another model call", async () => {
   const { path, db } = fixture();
   const external = putEvent(db, { source_record_id: "origin-external" });
   const laterSelf = putEvent(db, { source_record_id: "origin-later-self" });
@@ -73,11 +73,11 @@ test("a pending decision filters self-supported drafts without another model cal
   await expect(runWritePass(db, path, options)).rejects.toThrow("synthetic interruption");
   expect(calls.value).toBe(1);
   db.exec("DROP TRIGGER fail_mixed");
-  db.query("UPDATE events SET origin='self' WHERE event_id=?").run(laterSelf);
+  commitMachineByteIntent(db, { receipt_id: ulid(), before_hash: null, after_hash: sha256Hex("Grace runs partnerships at Acme.") }, () => undefined);
   const replay = await runWritePass(db, path, options);
   expect(calls.value).toBe(1);
   expect(replay.errors).toEqual([]);
-  expect(db.query("SELECT 1 FROM claims WHERE subject='person:mixed'").get()).toBeNull();
+  expect(db.query("SELECT 1 FROM claims WHERE subject='person:mixed'").get()).not.toBeNull();
   expect(db.query("SELECT 1 FROM extract_batches").get()).toBeNull();
   expect(readExtractCursor(db)).toContain(laterSelf);
   db.close();
@@ -103,7 +103,7 @@ test("a mixed self and external frontier files only the external draft", async (
   } finally { db.close(); }
 });
 
-test("deferred input becoming self during the model call keeps the original cursor and completes the queue", async () => {
+test("a later intent preserves external deferred evidence and completes the original queue", async () => {
   const { path, db } = fixture();
   try {
     const external = putEvent(db, { source_record_id: "deferred-external", text: "Grace works at Acme." });
@@ -126,7 +126,7 @@ test("deferred input becoming self during the model call keeps the original curs
     expect(result.errors).toEqual([]);
     expect(db.query("SELECT 1 FROM extract_deferred_inputs").get()).toBeNull();
     expect(db.query("SELECT 1 FROM extract_batches").get()).toBeNull();
-    expect(db.query("SELECT 1 FROM claims WHERE subject='person:late'").get()).toBeNull();
+    expect(db.query("SELECT 1 FROM claims WHERE subject='person:late'").get()).not.toBeNull();
     expect(db.query("SELECT 1 FROM claims WHERE subject='person:grace'").get()).not.toBeNull();
     expect(readExtractCursor(db)).toBe(checkpoint);
     expect(calls.value).toBe(2);

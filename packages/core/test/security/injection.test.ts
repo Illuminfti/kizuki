@@ -33,6 +33,9 @@ const CAPTURE: CaptureEvent = {
   content_hash_version: 2,
   text_hash: sha256Hex(INJECTION_TEXT),
   origin: "external",
+    origin_binding_version: 1,
+    origin_binding_kind: "capture",
+    origin_binding: "0".repeat(64),
 };
 
 const CLOSED_DRAFT_KEYS = [

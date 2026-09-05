@@ -12,7 +12,7 @@ import { compareRfc3339 } from "../agents/time";
 import { readCheckpoint, writeCheckpoint } from "../ledger/checkpoints";
 import { readEvent, readSince } from "../ledger/ledger";
 import type { LedgerCursor } from "../ledger/ledger";
-import { classifyEventOrigin, refreshEventOrigin } from "../ledger/event-origin";
+import { validateEventOrigin } from "../ledger/event-origin";
 import { EXTRACT_BATCH, MODEL_PRODUCER_ID, planModelExtraction } from "../producer";
 
 const EXTRACT_SOURCE_KEY = "extract";
@@ -191,14 +191,14 @@ function historicalEligible(event: CaptureEvent): boolean {
 }
 
 function extractEligible(db: Database, event: CaptureEvent): boolean {
-  return !event.deleted && refreshEventOrigin(db, event).origin === "external";
+  return !event.deleted && validateEventOrigin(db, event).origin === "external";
 }
 
 function filingDrafts(db: Database, drafts: readonly ClaimDraft[]): ClaimDraft[] {
   return drafts.filter(draft => draft.event_ids.every(eventId => {
     const event = readEvent(db, eventId);
     if (event === null) throw new Error("durable extraction input is missing");
-    return refreshEventOrigin(db, event).origin === "external";
+    return validateEventOrigin(db, event).origin === "external";
   }));
 }
 function orderedSubset(ids: readonly string[], order: ReadonlyMap<string, number>): boolean {
@@ -245,7 +245,7 @@ function validateInputPartition(
   const order = new Map(eligibleIds.map((id, index) => [id, index]));
   const union = new Set([...modelIds, ...deferredIds]);
   if (union.size !== modelIds.length + deferredIds.length ||
-      eligible.some(event => !union.has(event.event_id) && classifyEventOrigin(db, event) !== "self") ||
+      eligible.some(event => !union.has(event.event_id) && validateEventOrigin(db, event).origin !== "self") ||
       !orderedSubset(modelIds, order) ||
       !orderedSubset(deferredIds, order)) {
     throw new Error("durable extraction input partition is corrupt");
@@ -297,7 +297,7 @@ function insertDeferred(db: Database, inputs: readonly DeferredInput[]): void {
   for (const input of inputs) {
     const event = readEvent(db, input.event_id);
     if (event === null) throw new Error("deferred extraction input is missing");
-    if (refreshEventOrigin(db, event).origin === "self") {
+    if (validateEventOrigin(db, event).origin === "self") {
       deleteDeferred(db, [input.event_id]);
     } else insert.run(input.event_id, input.source_key, input.checked_revision, input.checked_binding_digest);
   }
@@ -413,7 +413,7 @@ function readStoredExtractBatch(db: Database, enforceConsent: boolean, producer?
   const externalSent = sent.filter(id => {
     const event = readEvent(db, id);
     if (event === null) throw new Error("durable extraction input is missing");
-    return refreshEventOrigin(db, event).origin === "external";
+    return validateEventOrigin(db, event).origin === "external";
   });
   const authorizationEpoch = enforceConsent ? sourcePolicyEpoch(db) : null;
   if (enforceConsent) {

@@ -1,7 +1,7 @@
 import { recordSourceStoreWrite } from "../ledger/source-stores";
 import { historicalSourceWriteAllowed, sourceEventsAllowed, requireSourceEvents, sourcePolicyEpoch, isLocalSourcePort, sourceSensitivity } from "../ledger/source-grants";
 import type { Database } from "bun:sqlite";
-import { refreshEventOrigin, requireExternalEvents } from "../ledger/event-origin";
+import { validateEventOrigin, requireExternalEvents } from "../ledger/event-origin";
 import { eventFromRow, type EventRow } from "../ledger/event-record";
 import type { Sensitivity } from "../agents/types";
 import type { RetrievalDoc, RetrievalPort, RetrievalQuery } from "../contracts/retrieval";
@@ -299,7 +299,7 @@ function loadEventFacts(db: Database, ids: readonly string[]): EventFacts[] {
       event_id: row.event_id,
       connector_id: row.connector_id,
       text: row.text,
-      origin: refreshEventOrigin(db, eventFromRow(row)).origin,
+      origin: validateEventOrigin(db, eventFromRow(row, db)).origin,
       taint: db.query("SELECT 1 FROM native_owner_evidence WHERE event_id=? AND origin='correction'").get(row.event_id) !== null ? "owner" : "untrusted",
     }));
 }

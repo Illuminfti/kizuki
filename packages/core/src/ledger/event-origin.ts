@@ -1,7 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { CaptureEvent } from "../contracts/event";
 import { sha256Hex } from "../util/hash";
-import { isRfc3339 } from "../util/time";
 import { isUlid } from "../util/ulid";
 import { eventFromRow, type EventRow } from "./event-record";
 
@@ -19,43 +18,23 @@ export class EventOriginError extends Error {
 
 export class SelfOriginError extends Error {
   readonly code = "self_origin_evidence";
-  constructor() { super("model evidence has machine origin"); }
+  constructor() { super("evidence has machine origin"); }
 }
 
 function hash(value: unknown): value is string {
   return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 }
 
-/** A connector label cannot create the internal native correction proof. */
-function isNativeOwnerEvent(db: Database, eventId: string): boolean {
-  using statement = db.prepare<{
-    connector_id: string; origin: string; request_digest: string; recorded_at: string; filing_state: string;
-    event_content_hash: string; content_hash: string; observed_at: string; source_bound: number;
-  }, [string]>(`SELECT e.connector_id,n.origin,n.request_digest,n.recorded_at,n.filing_state,
-      n.event_content_hash,e.content_hash,e.observed_at,
-      EXISTS(SELECT 1 FROM source_event_bindings b WHERE b.event_id=n.event_id) AS source_bound
-      FROM native_owner_evidence n LEFT JOIN events e ON e.event_id=n.event_id WHERE n.event_id=?`);
-  const proof = statement.get(eventId);
-  if (proof === null) return false;
-  if (proof.connector_id !== "kizuki.owner" || proof.origin !== "correction" ||
-      !hash(proof.request_digest) || !isRfc3339(proof.recorded_at) || proof.source_bound !== 0 ||
-      proof.recorded_at !== proof.observed_at || !hash(proof.event_content_hash) ||
-      proof.event_content_hash !== proof.content_hash ||
-      !["recorded", "filed", "failed"].includes(proof.filing_state)) throw new EventOriginError();
-  return true;
-}
-
-/** Caller supplies the transaction fence; missing/corrupt registry fails closed. */
-export function classifyEventOrigin(db: Database,
-  event: Pick<CaptureEvent, "event_id" | "text" | "text_hash" | "origin">,
+/** Only new admission reads the registry, under SQLite's write order. */
+export function classifyNewEventOrigin(db: Database,
+  event: Pick<CaptureEvent, "text" | "text_hash">,
 ): "external" | "self" {
+  if (!db.inTransaction) throw new EventOriginError();
   try { return classify(db, event); } catch { throw new EventOriginError(); }
 }
 
-function classify(db: Database, event: Pick<CaptureEvent, "event_id" | "text" | "text_hash" | "origin">): "external" | "self" {
-  if (!hash(event.text_hash) || sha256Hex(event.text) !== event.text_hash ||
-      (event.origin !== "external" && event.origin !== "self")) throw new EventOriginError();
-  if (isNativeOwnerEvent(db, event.event_id)) return "external";
+function classify(db: Database, event: Pick<CaptureEvent, "text" | "text_hash">): "external" | "self" {
+  if (!hash(event.text_hash) || sha256Hex(event.text) !== event.text_hash) throw new EventOriginError();
   using statement = db.prepare<{ before_hash: string | null; after_hash: string }, [string, string, string, string]>(`
     SELECT before_hash,after_hash FROM canon_receipts WHERE writer='loop' AND before_hash=?
     UNION ALL SELECT before_hash,after_hash FROM canon_receipts WHERE writer='loop' AND after_hash=?
@@ -65,7 +44,7 @@ function classify(db: Database, event: Pick<CaptureEvent, "event_id" | "text" | 
   const matching = statement.get(event.text_hash, event.text_hash, event.text_hash, event.text_hash);
   if (matching !== null && (!hash(matching.after_hash) ||
       (matching.before_hash !== null && !hash(matching.before_hash)))) throw new EventOriginError();
-  return event.origin === "self" || event.text.includes("KIZUKI CONTEXT v1") ||
+  return event.text.includes("KIZUKI CONTEXT v1") ||
     (event.text_hash !== ABSENT_BYTE_HASH && matching !== null) ? "self" : "external";
 }
 
@@ -92,21 +71,25 @@ export function commitMachineByteIntent(db: Database, intent: MachineByteIntent,
   }).immediate();
 }
 
-/** Only the annotation changes; accepted payload and revision hash are immutable. */
-export function refreshEventOrigin(db: Database, event: CaptureEvent): CaptureEvent {
-  const origin = classifyEventOrigin(db, event);
-  if (origin === event.origin) return event;
-  using update = db.prepare("UPDATE events SET origin=? WHERE event_id=?");
-  update.run(origin, event.event_id);
-  return { ...event, origin };
+/** Validate the immutable admission stamp; later intents cannot restamp evidence. */
+export function validateEventOrigin(db: Database, event: CaptureEvent): CaptureEvent {
+  using select = db.prepare<EventRow, [string]>("SELECT * FROM events WHERE event_id=?");
+  const row = select.get(event.event_id);
+  if (row === null) throw new EventOriginError();
+  const stored = eventFromRow(row, db);
+  if (event.content_hash !== stored.content_hash || event.content_hash_version !== stored.content_hash_version ||
+      event.text_hash !== stored.text_hash || event.origin !== stored.origin ||
+      event.origin_binding_version !== stored.origin_binding_version || event.origin_binding_kind !== stored.origin_binding_kind ||
+      event.origin_binding !== stored.origin_binding) throw new EventOriginError();
+  return stored;
 }
 
-/** Used at the final model claim and public writer transaction boundaries. */
+/** Used at authoritative claim and positive canon-write boundaries. */
 export function requireExternalEvents(db: Database, eventIds: readonly string[]): void {
   using statement = db.prepare<EventRow, [string]>("SELECT * FROM events WHERE event_id=?");
   for (const eventId of eventIds) {
     const row = statement.get(eventId);
     if (row === null) throw new EventOriginError();
-    if (refreshEventOrigin(db, eventFromRow(row)).origin === "self") throw new SelfOriginError();
+    if (eventFromRow(row, db).origin === "self") throw new SelfOriginError();
   }
 }

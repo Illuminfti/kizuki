@@ -7,6 +7,10 @@ import type {
   ProposalKind,
 } from "../contracts/proposal";
 import { tableExists } from "../ledger/schema";
+import { requireExternalEvents } from "../ledger/event-origin";
+import { readEvent } from "../ledger/ledger";
+import { requireSourceEvents } from "../ledger/source-grants";
+import { cloneExactJson } from "../util/validate";
 import { ulid } from "../util/ulid";
 
 /**
@@ -238,6 +242,40 @@ function updateCompatClaim(
   ).run(compatStatusToClaim(status), retracted, proposalId);
 }
 
+/** A source deletion can retract its own receipted page even when its text is self. */
+export function isSourceTombstoneProposal(db: Database, input: ProposalInput): boolean {
+  if (input.kind !== "deletion" || input.producer !== "deterministic" ||
+      input.provenance.length !== 1 || typeof input.target !== "string" ||
+      input.confidence !== 1 || (input.subjects?.length ?? 0) !== 0 ||
+      Object.keys(input.frontmatter).sort().join(",") !== "x-connector,x-page-proposal,x-source-record-id") return false;
+  const tombstone = readEvent(db, input.provenance[0]!);
+  if (tombstone === null || !tombstone.deleted ||
+      input.frontmatter["x-connector"] !== tombstone.connector_id ||
+      input.frontmatter["x-source-record-id"] !== tombstone.source_record_id ||
+      typeof input.frontmatter["x-page-proposal"] !== "string") return false;
+  requireSourceEvents(db, [tombstone.event_id], { owner: true, purpose: "derive" });
+  const pagePath = `${input.target}.md`;
+  if (input.body !== `Source record \`${tombstone.source_record_id}\` was deleted at ` +
+      `\`${tombstone.connector_id}\`; canon page \`${pagePath}\` cites it.`) return false;
+  const prior = db.query<{ provenance: string }, [string, string]>(
+    `SELECT p.provenance FROM proposals p
+       JOIN canon_receipts r ON EXISTS (SELECT 1 FROM json_each(r.claim_ids) c WHERE c.value=p.proposal_id)
+      WHERE p.proposal_id=? AND p.status='promoted' AND p.kind NOT IN ('deletion', 'purge_review')
+        AND r.page_path=? LIMIT 1`,
+  ).get(input.frontmatter["x-page-proposal"], pagePath);
+  if (prior === null) return false;
+  const binding = db.query<{ source_key: string }, [string]>(
+    "SELECT source_key FROM source_event_bindings WHERE event_id=?",
+  );
+  const sourceKey = binding.get(tombstone.event_id)?.source_key ?? null;
+  return parseStringArray(prior.provenance, "provenance").some((id) => {
+    const event = readEvent(db, id);
+    return event !== null && !event.deleted && event.connector_id === tombstone.connector_id &&
+      event.source_record_id === tombstone.source_record_id &&
+      (binding.get(id)?.source_key ?? null) === sourceKey;
+  });
+}
+
 /**
  * Idempotent file. Refiling identical content is a duplicate, not an error.
  * Owner rejection no longer poisons a body hash (RFC 0002 §18.2).
@@ -246,6 +284,15 @@ export function fileProposal(
   db: Database,
   input: ProposalInput,
 ): FileProposalResult {
+  const errors: string[] = [];
+  const snapshot = cloneExactJson(input, "proposal", {
+    maxDepth: 32, maxKeysPerObject: 512, maxArrayLength: 4096,
+    maxStringBytes: 4_194_304, maxKeyBytes: 2048, maxTotalBytes: 8_388_608,
+  }, errors);
+  if (snapshot === undefined || snapshot === null || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    throw new StagingError("proposal: bounded exact JSON data is required");
+  }
+  input = snapshot as unknown as ProposalInput;
   validateInput(input);
   initStaging(db);
 
@@ -257,6 +304,7 @@ export function fileProposal(
     : [...input.provenance];
 
   const file = db.transaction((): FileProposalResult => {
+    if (!isSourceTombstoneProposal(db, input)) requireExternalEvents(db, provenance);
     const existing = input.kind === "purge_review"
       ? db
           .query(

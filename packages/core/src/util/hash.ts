@@ -37,6 +37,11 @@ function sortDeep(value: unknown): unknown {
   return value;
 }
 
+/** Core's canonical JSON ordering, shared by revision and admission bindings. */
+export function canonicalJson(value: unknown): string {
+  return JSON.stringify(sortDeep(value));
+}
+
 /**
  * Canonical JSON over the identity fields with object keys sorted at every
  * depth. Array order is significant: `subjects` is a sequence, not a set.
@@ -46,7 +51,7 @@ export function canonicalSerializeLegacy(event: CaptureEventInput): string {
   for (const field of HASHED_FIELDS) {
     subset[field] = event[field];
   }
-  return JSON.stringify(sortDeep(subset));
+  return canonicalJson(subset);
 }
 
 export function canonicalSerialize(event: CaptureEventInput): string {
@@ -55,7 +60,7 @@ export function canonicalSerialize(event: CaptureEventInput): string {
   subset["sensitivity_hint"] = event.sensitivity_hint ?? null;
   subset["attachments"] = [...event.attachments].sort((a, b) =>
     a.attachment_id < b.attachment_id ? -1 : a.attachment_id > b.attachment_id ? 1 : 0);
-  return JSON.stringify(sortDeep(subset));
+  return canonicalJson(subset);
 }
 
 /** Historical compatibility only. New acceptance never chooses this version. */

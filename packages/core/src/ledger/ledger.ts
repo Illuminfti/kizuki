@@ -9,7 +9,8 @@ import type {
 import { canonicalSerialize, computeContentHash, computeLegacyContentHash, sha256Hex } from "../util/hash";
 import { isUlid, ulid } from "../util/ulid";
 import { EventRecordError, eventFromRow as fromRow, type EventRow } from "./event-record";
-import { EventOriginError, classifyEventOrigin, refreshEventOrigin } from "./event-origin";
+import { EventOriginError, classifyNewEventOrigin } from "./event-origin";
+import { computeOriginBinding, nativeRequestDigest } from "./event-origin-binding";
 
 export type AcceptErrorKind = "validation" | "infrastructure";
 
@@ -56,7 +57,10 @@ const EVENT_COLUMNS = `
   accepted_at,
   content_hash_version,
   text_hash,
-  origin
+  origin,
+  origin_binding_version,
+  origin_binding_kind,
+  origin_binding
 `;
 
 function errorText(error: unknown): string {
@@ -88,12 +92,10 @@ export function accept(
         kind: "validation",
       };
     }
-    const acceptedAt = new Date().toISOString();
 
     return db.transaction((): AcceptResult => {
       if (deps.source !== undefined) { normalized = authorizeSourceCapture(db, normalized, deps.source); contentHash = computeContentHash(normalized); }
       const textHash = sha256Hex(normalized.text);
-      const origin = classifyEventOrigin(db, { event_id: eventId, text: normalized.text, text_hash: textHash, origin: "external" });
       let duplicate = db
         .query<EventRow, [string, string, string]>(
           `
@@ -111,16 +113,16 @@ export function accept(
           contentHash,
         );
       if (duplicate !== null && (duplicate.content_hash_version !== 2 ||
-          canonicalSerialize(fromRow(duplicate)) !== canonicalSerialize(normalized))) throw new EventRecordError();
+          canonicalSerialize(fromRow(duplicate, db)) !== canonicalSerialize(normalized))) throw new EventRecordError();
       if (duplicate === null) {
         using statement = db.prepare<EventRow, [string, string, string]>(`SELECT ${EVENT_COLUMNS} FROM events
           WHERE connector_id=? AND source_record_id=? AND content_hash=? AND content_hash_version=1 LIMIT 1`);
         const legacy = statement.get(normalized.connector_id, normalized.source_record_id, computeLegacyContentHash(normalized));
-        if (legacy !== null && canonicalSerialize(fromRow(legacy)) === canonicalSerialize(normalized)) duplicate = legacy;
+        if (legacy !== null && canonicalSerialize(fromRow(legacy, db)) === canonicalSerialize(normalized)) duplicate = legacy;
       }
       if (duplicate !== null) {
         if (deps.source !== undefined) bindSourceEvent(db, duplicate.event_id, deps.source, true);
-        refreshEventOrigin(db, fromRow(duplicate));
+        fromRow(duplicate, db);
         return { status: "duplicate" };
       }
 
@@ -141,47 +143,8 @@ export function accept(
         };
       }
 
-      db.query<never, (string | number | null)[]>(
-        `
-          INSERT INTO events (
-            event_id,
-            connector_id,
-            source_record_id,
-            kind,
-            occurred_at,
-            observed_at,
-            text,
-            subjects,
-            sensitivity_hint,
-            deleted,
-            attachments,
-            metadata,
-            content_hash,
-            accepted_at,
-            content_hash_version,
-            text_hash,
-            origin
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-      ).run(
-        eventId,
-        normalized.connector_id,
-        normalized.source_record_id,
-        normalized.kind,
-        normalized.occurred_at,
-        normalized.observed_at,
-        normalized.text,
-        JSON.stringify(normalized.subjects),
-        normalized.sensitivity_hint ?? null,
-        normalized.deleted ? 1 : 0,
-        JSON.stringify(normalized.attachments),
-        JSON.stringify(normalized.metadata),
-        contentHash,
-        acceptedAt,
-        2,
-        textHash,
-        origin,
-      );
+      const origin = classifyNewEventOrigin(db, { text: normalized.text, text_hash: textHash });
+      insertBoundEvent(db, normalized, eventId, origin, "capture", null);
 
       if (deps.source !== undefined) bindSourceEvent(db, eventId, deps.source);
       const stored = db
@@ -192,7 +155,7 @@ export function accept(
       if (stored === null) {
         throw new Error(`stored event ${eventId} could not be read back`);
       }
-      return { status: "stored", event: fromRow(stored) };
+      return { status: "stored", event: fromRow(stored, db) };
     }).immediate();
   } catch (error) {
     return {
@@ -201,6 +164,52 @@ export function accept(
       kind: isInfrastructureError(error) ? "infrastructure" : "validation",
     };
   }
+}
+
+/** Private insertion primitive: callers already own the write transaction. */
+function insertBoundEvent(db: Database, input: CaptureEventInput, eventId: string,
+  origin: CaptureEvent["origin"], kind: CaptureEvent["origin_binding_kind"], requestDigest: string | null,
+): void {
+  const acceptedAt = new Date().toISOString();
+  const identity = { event_id: eventId, content_hash_version: 2 as const,
+    content_hash: computeContentHash(input), text_hash: sha256Hex(input.text), origin };
+  using insert = db.prepare(`INSERT INTO events (${EVENT_COLUMNS}) VALUES (${Array(20).fill("?").join(",")})`);
+  insert.run(eventId, input.connector_id, input.source_record_id, input.kind, input.occurred_at, input.observed_at,
+    input.text, JSON.stringify(input.subjects), input.sensitivity_hint ?? null, input.deleted ? 1 : 0,
+    JSON.stringify(input.attachments), JSON.stringify(input.metadata), identity.content_hash, acceptedAt, 2,
+    identity.text_hash, origin, 1, kind, computeOriginBinding(identity, acceptedAt, kind, requestDigest));
+}
+
+/** Internal Core native operation. Public capture has no exemption parameter. */
+export function recordNativeCorrectionEvent(db: Database, input: CaptureEventInput, requestDigest: string): {
+  event_id: string; duplicate: boolean;
+} {
+  const checked = validateEventInput(input);
+  if (!checked.ok || checked.value.connector_id !== "kizuki.owner" || !/^[a-f0-9]{64}$/.test(requestDigest)) {
+    throw new Error("invalid native correction recording");
+  }
+  if (db.inTransaction) throw new Error("native correction recording requires a top-level transaction");
+  const event = checked.value;
+  return db.transaction(() => {
+    using existing = db.prepare<EventRow, [string, string]>(`SELECT * FROM events
+      WHERE connector_id=? AND source_record_id=? ORDER BY accepted_at,event_id LIMIT 1`);
+    const prior = existing.get(event.connector_id, event.source_record_id);
+    if (prior !== null) {
+      const stored = fromRow(prior, db);
+      if (nativeRequestDigest(db, stored.event_id) !== requestDigest) {
+        throw new Error("correction recording conflicts with existing evidence");
+      }
+      return { event_id: stored.event_id, duplicate: true };
+    }
+    const eventId = ulid();
+    insertBoundEvent(db, event, eventId, "external", "native", requestDigest);
+    using proof = db.prepare(`INSERT INTO native_owner_evidence
+      (event_id,origin,request_digest,recorded_at,filing_state,event_content_hash) VALUES (?,'correction',?,?,'recorded',?)`);
+    proof.run(eventId, requestDigest, event.observed_at, computeContentHash(event));
+    const stored = readEvent(db, eventId);
+    if (stored === null) throw new Error("native correction recording failed");
+    return { event_id: stored.event_id, duplicate: false };
+  }).immediate();
 }
 
 function isInfrastructureError(error: unknown): boolean {
@@ -220,7 +229,7 @@ export function readEvent(db: Database, eventId: string): CaptureEvent | null {
   const row = db.query<EventRow, [string]>(
     `SELECT ${EVENT_COLUMNS} FROM events WHERE event_id = ?`,
   ).get(eventId);
-  return row === null ? null : fromRow(row);
+  return row === null ? null : fromRow(row, db);
 }
 
 export function readSince(
@@ -260,7 +269,7 @@ export function readSince(
 
   const last = rows.at(-1);
   return {
-    events: rows.map(row => fromRow(row)),
+    events: rows.map(row => fromRow(row, db)),
     cursor:
       last === undefined
         ? null
@@ -332,7 +341,7 @@ function replayPage(
     .all(...bindings);
   const last = rows.at(-1);
   return {
-    events: rows.map(row => fromRow(row)),
+    events: rows.map(row => fromRow(row, db)),
     cursor:
       last === undefined
         ? null
