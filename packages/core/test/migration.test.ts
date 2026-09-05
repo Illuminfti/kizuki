@@ -879,7 +879,7 @@ describe("openLedger migrations", () => {
         { layer: "graph", status: "degraded" },
         { layer: "search", status: "degraded" },
       ]);
-      expect(searchResult(upgraded, "stale")).toEqual({
+      expect(searchResult(upgraded, "stale", { ceiling: "private" })).toEqual({
         hits: [],
         degraded: ["index-degraded"],
       });
@@ -930,7 +930,7 @@ describe("openLedger migrations", () => {
 
       const reopened = openLedger(path);
       expect(schemaVersion(reopened)).toBe(15);
-      expect(searchResult(reopened, "kettleword")).toEqual({
+      expect(searchResult(reopened, "kettleword", { ceiling: "private" })).toEqual({
         hits: [
           expect.objectContaining({
             doc_id: "page:fact:tea",
@@ -972,7 +972,7 @@ describe("openLedger migrations", () => {
       first.close();
 
       const reopened = openLedger(path);
-      expect(searchResult(reopened, "kettleword")).toEqual({
+      expect(searchResult(reopened, "kettleword", { ceiling: "private" })).toEqual({
         hits: [],
         degraded: ["index-degraded"],
       });

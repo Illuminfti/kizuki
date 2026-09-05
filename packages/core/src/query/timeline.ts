@@ -1,7 +1,6 @@
 import type { Database } from "bun:sqlite";
-import { SENSITIVITY_ORDER } from "../agents/types";
 import type { Sensitivity } from "../agents/types";
-import { ceilingSql, instantBound, instantSql } from "./sql";
+import { ceilingSql, instantBound, instantSql, requireCeiling } from "./sql";
 
 export interface TimelineOptions {
   day?: string;
@@ -10,7 +9,7 @@ export interface TimelineOptions {
   subject?: string;
   connector_id?: string;
   kind?: string;
-  ceiling?: Sensitivity;
+  ceiling: Sensitivity;
   limit?: number;
 }
 
@@ -68,12 +67,13 @@ function validLimit(limit: number): number {
   return limit;
 }
 
-export function timeline(
-  db: Database,
-  opts: TimelineOptions = {},
-): TimelineEntry[] {
+/** Shared bounded selection; audit reads identities, never event previews. */
+function timelinePlan(
+  opts: Omit<TimelineOptions, "ceiling">,
+  ceiling: number | null,
+): { tail: string | null; bindings: (string | number)[] } {
   const limit = validLimit(opts.limit ?? 200);
-  if (limit === 0) return [];
+  if (limit === 0) return { tail: null, bindings: [] };
 
   const clauses = ["events.deleted = 0"];
   const bindings: (string | number)[] = [];
@@ -109,11 +109,22 @@ export function timeline(
     clauses.push("events.kind = ?");
     bindings.push(opts.kind);
   }
-  if (opts.ceiling !== undefined) {
+  if (ceiling !== null) {
     clauses.push(ceilingSql("events.sensitivity_hint"));
-    bindings.push(SENSITIVITY_ORDER[opts.ceiling]);
+    bindings.push(ceiling);
   }
   bindings.push(limit);
+
+  return {
+    tail: `FROM events WHERE ${clauses.join(" AND ")} ORDER BY ${OCCURRED_AT_INSTANT}, events.event_id LIMIT ?`,
+    bindings,
+  };
+}
+
+export function timeline(db: Database, opts: TimelineOptions): TimelineEntry[] {
+  const ceiling = requireCeiling(opts?.ceiling);
+  const plan = timelinePlan(opts, ceiling);
+  if (plan.tail === null) return [];
 
   const rows = db
     .query<TimelineRow, (string | number)[]>(
@@ -125,12 +136,9 @@ export function timeline(
          subjects,
          coalesce(sensitivity_hint, 'unlabeled') AS sensitivity,
          text
-       FROM events
-       WHERE ${clauses.join(" AND ")}
-       ORDER BY ${OCCURRED_AT_INSTANT}, events.event_id
-       LIMIT ?`,
+       ${plan.tail}`,
     )
-    .all(...bindings);
+    .all(...plan.bindings);
 
   return rows.map((row) => ({
     event_id: row.event_id,
@@ -144,4 +152,12 @@ export function timeline(
     taint: "quoted",
     text_preview: preview(row.text),
   }));
+}
+
+/** Internal audit identities only. Deliberately excluded from public exports. */
+export function timelineAuditCandidates(db: Database, opts: Omit<TimelineOptions, "ceiling">): string[] {
+  const plan = timelinePlan(opts, null);
+  return plan.tail === null ? [] : db
+    .query<{ event_id: string }, (string | number)[]>(`SELECT event_id ${plan.tail}`)
+    .all(...plan.bindings).map(row => row.event_id);
 }

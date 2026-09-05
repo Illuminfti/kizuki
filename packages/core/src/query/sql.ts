@@ -1,4 +1,4 @@
-import { SENSITIVITY_ORDER } from "../agents/types";
+import { SENSITIVITY_ORDER, isSensitivity } from "../agents/types";
 import type { Sensitivity } from "../agents/types";
 import { isRfc3339 } from "../util/time";
 
@@ -52,4 +52,12 @@ export function ceilingSql(column: string): string {
     .map((label) => `WHEN '${label}' THEN ${SENSITIVITY_ORDER[label]}`)
     .join(" ");
   return `CASE ${column} ${branches} ELSE NULL END <= ?`;
+}
+
+/** Public queries must validate policy before any shortcut or database read. */
+export function requireCeiling(value: unknown): number {
+  if (!isSensitivity(value)) {
+    throw new RangeError("query ceiling must be public, personal, or private");
+  }
+  return SENSITIVITY_ORDER[value];
 }

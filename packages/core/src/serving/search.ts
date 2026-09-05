@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { AuditDenial, Grant } from "../agents";
 import { bareRetrievalId } from "../retrieval/ids";
-import { searchResult } from "../search/query";
+import { searchResult, searchAuditCandidates } from "../search/query";
 import type { SearchHit, SearchOptions } from "../search/query";
 import {
   enumOf,
@@ -19,8 +19,8 @@ import { auditArguments, gateAsync } from "./gate";
 import type { Served } from "./gate";
 import {
   eventDecision,
-  liveEventIds,
   quotedChunk,
+  readServableEvents,
 } from "./ledger";
 import type { CanonChunk, Envelope, QuotedChunk, ServeContext } from "./types";
 import { retrievalCandidates } from "./retrieval";
@@ -50,8 +50,8 @@ interface Classification {
 }
 
 /**
- * Classifies one pass of hits. `collect` is false for the ceiling-free pass,
- * whose only job is to say how much the ceiling hid: a row that would be
+ * Classifies one pass of identities. `collect` is false for audit candidates,
+ * whose only job is to say how much policy hid: a row that would be
  * served there is already in the served pass or was pushed out by the limit,
  * and either way it is not a denial.
  */
@@ -64,7 +64,7 @@ function classify(
   collect: boolean,
 ): Classification {
   const result: Classification = { canon: [], quoted: [], withheld: [] };
-  const live = liveEventIds(
+  const auditFacts = collect ? null : readServableEvents(
     db,
     hits.filter((hit) => hit.scope === "ledger").map((hit) => bareRetrievalId(hit.doc_id)),
   );
@@ -90,15 +90,15 @@ function classify(
       continue;
     }
 
-    if (!live.has(bareRetrievalId(hit.doc_id))) continue;
-    const source = currentQuotedSource(db, bareRetrievalId(hit.doc_id));
-    if (source === null) continue;
+    const quoted = collect ? currentQuotedSource(db, bareRetrievalId(hit.doc_id)) : null;
+    const source = quoted ?? auditFacts?.get(bareRetrievalId(hit.doc_id));
+    if (source === undefined) continue;
     const decision = eventDecision(grant, source, index.sourceContext);
     if (!decision.allow) {
       result.withheld.push({ id: source.event_id, reason: decision.reason });
       continue;
     }
-    if (collect) result.quoted.push(quotedChunk(source, decision.sensitivity));
+    if (quoted !== null) result.quoted.push(quotedChunk(quoted, decision.sensitivity));
   }
 
   return result;
@@ -138,7 +138,7 @@ export async function serveSearch(
       args.until === undefined ? undefined : rfc3339("until", args.until),
     );
 
-    const base: SearchOptions = {
+    const base: Omit<SearchOptions, "ceiling"> = {
       scope,
       limit: rows,
       ...(types === undefined ? {} : { types }),
@@ -155,7 +155,7 @@ export async function serveSearch(
       ...base,
       ceiling: grant.ceiling,
     });
-    const hiddenHits = searchResult(ctx.db, query, base);
+    const hiddenHits = searchAuditCandidates(ctx.db, query, base);
     const served = classify(
       ctx.db,
       index,
@@ -168,7 +168,7 @@ export async function serveSearch(
       ctx.db,
       index,
       grant,
-      hiddenHits.hits,
+      hiddenHits.candidates,
       seen,
       false,
     );

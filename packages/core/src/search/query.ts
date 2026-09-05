@@ -1,18 +1,17 @@
 import type { Database } from "bun:sqlite";
-import { SENSITIVITY_ORDER } from "../agents/types";
 import type { Sensitivity } from "../agents/types";
 import { MAX_RETRIEVAL_LIMIT } from "../contracts/retrieval";
 import type { RetrievalAuthority } from "../contracts/retrieval";
 import { readDerivedMeta } from "../derived-meta";
 import { tableExists } from "../ledger/schema";
-import { ceilingSql, instantBound, instantSql } from "../query/sql";
+import { ceilingSql, instantBound, instantSql, requireCeiling } from "../query/sql";
 import { placeholders } from "../util/sql";
 import type { DocScope } from "./indexer";
 
 export interface SearchOptions {
   scope?: DocScope | "all";
   limit?: number;
-  ceiling?: Sensitivity;
+  ceiling: Sensitivity;
   types?: string[];
   since?: string;
   until?: string;
@@ -50,6 +49,14 @@ const OCCURRED_AT_INSTANT = instantSql("search_docs.occurred_at");
 const HAS_TOKEN_CHAR = /[\p{L}\p{N}]/u;
 const MAX_QUERY_CHARS = 32_000;
 const MAX_FILTER = 1_000;
+// Weights include every positional FTS column, including UNINDEXED metadata.
+const RANK_SQL = "bm25(search_docs, 0, 0, 4.0, 1.0, 0, 0, 0, 0, 0, 0, 0, 0, 0)";
+
+interface SearchPlan {
+  tail: string | null;
+  bindings: (string | number)[];
+  degraded: string[];
+}
 
 function tokens(raw: string): string[] {
   const result: string[] = [];
@@ -134,22 +141,24 @@ function validFilters(values: string[] | undefined, field: string): string[] | u
   return values;
 }
 
-export function searchResult(
+/** Shared bounded selection; only the internal audit projection omits a ceiling. */
+function searchPlan(
   db: Database,
   query: string,
-  opts: SearchOptions = {},
-): SearchResult {
+  opts: Omit<SearchOptions, "ceiling">,
+  ceiling: number | null,
+): SearchPlan {
   const ftsQuery = toFtsQuery(validQueryText(query));
   const degraded: string[] = [];
   if (ftsQuery.length === 0) {
-    return { hits: [], degraded: ["query-empty"] };
+    return { tail: null, bindings: [], degraded: ["query-empty"] };
   }
   const limit = validLimit(opts.limit ?? 50);
   const types = validFilters(opts.types, "types");
   const subjects = validFilters(opts.subjects, "subjects");
   const excludePaths = validFilters(opts.excludePaths, "excludePaths");
   if (limit === 0 || types?.length === 0 || subjects?.length === 0) {
-    return { hits: [], degraded: [...degraded, "scope-empty"] };
+    return { tail: null, bindings: [], degraded: [...degraded, "scope-empty"] };
   }
 
   const meta = readDerivedMeta(db, "search");
@@ -157,7 +166,7 @@ export function searchResult(
     degraded.push(`index-${meta.status}`);
   }
   if (!tableExists(db, "search_docs")) {
-    return { hits: [], degraded: [...degraded, "index-degraded"] };
+    return { tail: null, bindings: [], degraded: [...degraded, "index-degraded"] };
   }
 
   const clauses = ["search_docs MATCH ?"];
@@ -166,9 +175,9 @@ export function searchResult(
     clauses.push("scope = ?");
     bindings.push(opts.scope);
   }
-  if (opts.ceiling !== undefined) {
+  if (ceiling !== null) {
     clauses.push(ceilingSql("search_docs.sensitivity"));
-    bindings.push(SENSITIVITY_ORDER[opts.ceiling]);
+    bindings.push(ceiling);
   }
   if (types !== undefined) {
     clauses.push(`page_type IN (${placeholders(types.length)})`);
@@ -199,8 +208,22 @@ export function searchResult(
   }
   bindings.push(limit);
 
-  // bm25() weights are positional over every declared column, UNINDEXED ones
-  // included: doc_id, scope, title, body, then the remaining metadata columns.
+  return {
+    tail: `FROM search_docs WHERE ${clauses.join(" AND ")} ORDER BY ${RANK_SQL}, scope, doc_id LIMIT ?`,
+    bindings,
+    degraded,
+  };
+}
+
+export function searchResult(
+  db: Database,
+  query: string,
+  opts: SearchOptions,
+): SearchResult {
+  const ceiling = requireCeiling(opts?.ceiling);
+  const plan = searchPlan(db, query, opts, ceiling);
+  if (plan.tail === null) return { hits: [], degraded: plan.degraded };
+
   const rows = db
     .query<SearchRow, (string | number)[]>(
       `SELECT
@@ -216,27 +239,39 @@ export function searchResult(
          connector_id,
          subjects,
          snippet(search_docs, 3, '[', ']', '…', 24) AS snippet,
-         bm25(search_docs, 0, 0, 4.0, 1.0, 0, 0, 0, 0, 0, 0, 0, 0, 0) AS rank
-       FROM search_docs
-       WHERE ${clauses.join(" AND ")}
-       ORDER BY rank, scope, doc_id
-       LIMIT ?`,
+         ${RANK_SQL} AS rank
+       ${plan.tail}`,
     )
-    .all(...bindings);
+    .all(...plan.bindings);
 
   return {
     hits: rows.map((row) => ({
       ...row,
       subjects: JSON.parse(row.subjects) as string[],
     })),
-    degraded,
+    degraded: plan.degraded,
+  };
+}
+
+/** Internal audit identities only. Deliberately excluded from public exports. */
+export function searchAuditCandidates(
+  db: Database,
+  query: string,
+  opts: Omit<SearchOptions, "ceiling">,
+): { candidates: Pick<SearchHit, "doc_id" | "scope">[]; degraded: string[] } {
+  const plan = searchPlan(db, query, opts, null);
+  return {
+    candidates: plan.tail === null ? [] : db
+      .query<Pick<SearchHit, "doc_id" | "scope">, (string | number)[]>(`SELECT doc_id, scope ${plan.tail}`)
+      .all(...plan.bindings),
+    degraded: plan.degraded,
   };
 }
 
 export function search(
   db: Database,
   query: string,
-  opts: SearchOptions = {},
+  opts: SearchOptions,
 ): SearchHit[] {
   return searchResult(db, query, opts).hits;
 }

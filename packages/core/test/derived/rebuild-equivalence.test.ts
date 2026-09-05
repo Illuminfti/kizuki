@@ -73,7 +73,7 @@ describe("derived rebuild equivalence", () => {
     refreshDerivedPage(db, kettle, vault.path);
     indexEvent(db, event);
 
-    const incrementalSearch = search(db, "tea")
+    const incrementalSearch = search(db, "tea", { ceiling: "private" })
       .map(({ doc_id }) => doc_id)
       .sort();
     const incrementalGraph = neighbors(db, "fact:tea")
@@ -82,7 +82,7 @@ describe("derived rebuild equivalence", () => {
 
     rebuildDerived(db, vault.path);
 
-    expect(search(db, "tea").map(({ doc_id }) => doc_id).sort()).toEqual(
+    expect(search(db, "tea", { ceiling: "private" }).map(({ doc_id }) => doc_id).sort()).toEqual(
       incrementalSearch,
     );
     expect(
@@ -144,7 +144,7 @@ describe("derived rebuild equivalence", () => {
       vault.path,
     );
     expect(neighbors(db, "fact:target").edges).toEqual([]);
-    expect(search(db, "Destination").map(({ doc_id }) => doc_id)).toEqual([]);
+    expect(search(db, "Destination", { ceiling: "private" }).map(({ doc_id }) => doc_id)).toEqual([]);
 
     writeCanonPage(
       vault.path,
@@ -260,7 +260,7 @@ describe("derived rebuild equivalence", () => {
     );
     storedEvent(db, "gone", { text: "keepword deleted", deleted: true });
     rebuildDerived(db, vault.path);
-    expect(search(db, "keepword").map(({ doc_id }) => doc_id)).toEqual([
+    expect(search(db, "keepword", { ceiling: "private" }).map(({ doc_id }) => doc_id)).toEqual([
       "page:fact:live",
     ]);
   });
@@ -297,7 +297,7 @@ describe("derived rebuild equivalence", () => {
       "See [[Tea]].",
     );
     rebuildDerived(db, vault.path);
-    expect(search(db, "secretword").map(({ doc_id }) => doc_id)).toEqual([
+    expect(search(db, "secretword", { ceiling: "private" }).map(({ doc_id }) => doc_id)).toEqual([
       "page:fact:tea",
     ]);
     expect(
@@ -317,8 +317,8 @@ describe("derived rebuild equivalence", () => {
         purged_claim_bodies: ["secretword"],
       },
     );
-    expect(search(db, "secretword")).toEqual([]);
-    expect(search(db, "keepword").map(({ doc_id }) => doc_id)).toEqual([
+    expect(search(db, "secretword", { ceiling: "private" })).toEqual([]);
+    expect(search(db, "keepword", { ceiling: "private" }).map(({ doc_id }) => doc_id)).toEqual([
       "page:fact:tea",
     ]);
     expect(
@@ -337,7 +337,7 @@ describe("derived rebuild equivalence", () => {
         purged_claim_bodies: ["keepword"],
       },
     );
-    expect(search(db, "keepword")).toEqual([]);
+    expect(search(db, "keepword", { ceiling: "private" })).toEqual([]);
     expect(neighbors(db, "fact:tea").edges).toEqual([]);
     expect(
       neighbors(db, "fact:kettle").edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`),
@@ -407,7 +407,7 @@ See [[Origin]].
         .edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`)
         .sort(),
     ).toEqual(targetOutgoing);
-    expect(search(db, "Origin").map(({ doc_id }) => doc_id).sort()).toEqual([
+    expect(search(db, "Origin", { ceiling: "private" }).map(({ doc_id }) => doc_id).sort()).toEqual([
       "page:fact:origin",
       "page:fact:target",
     ]);

@@ -165,6 +165,9 @@ Implemented on this revision:
   `kizuki agent add` CLI verb on this revision.
 
 Enforcement happens in the query engine, below the prompt layer.
+The public core search and timeline APIs require an explicit validated
+sensitivity ceiling; null or unlabeled records are never returned. See the
+[query ceiling contract and compatibility note](query-ceilings.md).
 
 ## Proactive (`kizuki serve`)
 
