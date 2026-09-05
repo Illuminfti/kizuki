@@ -186,7 +186,7 @@ function modelDoctor(
 ): ModelDoctor {
   const on = typeof modelRef === "string" && modelRef.length > 0;
   const unverified = !on && typeof configuredModelRef === "string" && configuredModelRef.length > 0;
-  const lastOk = [...receipts].reverse().find((receipt) => receipt.model.calls > 0);
+  const lastOk = [...receipts].reverse().find((receipt) => receipt.model.calls > 0 && receipt.model.usage_unknown !== true && receipt.model.unavailable === 0);
   const unavailable = receipts.reduce((sum, receipt) => sum + receipt.model.unavailable, 0);
   return {
     canon_writing: on ? "on" : unverified ? "unverified" : "off",

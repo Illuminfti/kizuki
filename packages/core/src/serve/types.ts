@@ -90,6 +90,8 @@ export interface LeaseRow {
 }
 
 export interface RunModelReport {
+  /** An interrupted producer attempt: token counts are lower bounds, not measured totals. */
+  readonly usage_unknown?: boolean;
   readonly calls: number;
   readonly input_tokens: number;
   readonly output_tokens: number;

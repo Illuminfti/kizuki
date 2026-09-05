@@ -30,9 +30,7 @@ describe("write-pass flock", () => {
     writeFileSync(join(directory, ".kizuki", "write-pass.lock"), "999999999\n");
     const lock = tryWriteFlock(directory);
     expect(lock).not.toBeNull();
-    expect(readFileSync(join(directory, ".kizuki", "write-pass.lock"), "utf8")).toBe(
-      `${process.pid}\n`,
-    );
+    expect(JSON.parse(readFileSync(join(directory, ".kizuki", "write-pass.lock"), "utf8"))).toMatchObject({ schema: "kizuki.writer-diagnostic/v1", pid: process.pid });
     lock?.release();
   });
 });
@@ -116,4 +114,17 @@ test("a crash after publishing PID diagnostics but before removing their tempora
   linkSync(temporary, join(directory, ".kizuki/write-pass.lock"));
   const lock = tryWriteFlock(directory); expect(lock).not.toBeNull(); lock?.release();
   expect(readFileSync(temporary, "utf8")).toBe("999999999\n");
+});
+
+test("failed diagnostic unlink does not strand native ownership behind a live PID", async () => {
+  const { chmodSync } = await import("node:fs");
+  const directory = mkdtempSync(join(tmpdir(), "kizuki-unlink-flock-")); dirs.push(directory);
+  const lock = tryWriteFlock(directory)!;
+  expect(lock).not.toBeNull();
+  try {
+    chmodSync(join(directory, ".kizuki"), 0o500);
+    expect(() => lock.release()).toThrow();
+  } finally { chmodSync(join(directory, ".kizuki"), 0o700); }
+  const recovered = tryWriteFlock(directory);
+  expect(recovered).not.toBeNull(); recovered?.release();
 });

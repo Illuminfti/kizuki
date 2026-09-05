@@ -129,9 +129,18 @@ export function completeDurableExtractBatch(db: Database, batch: DurableExtractB
 }
 
 /** Called inside the source purge transaction, before deleting ledger rows. */
-export function purgeExtractInputs(db: Database, eventIds: ReadonlySet<string>): void {
+export function purgeExtractInputs(db: Database, eventIds: ReadonlySet<string>, purge: { receipt_id: string; created_at: string }): void {
   if (!tableExists(db, "extract_batches")) return;
-  const batch = readDurableExtractBatch(db);
+  let batch: DurableExtractBatch | null;
+  try {
+    batch = readDurableExtractBatch(db);
+  } catch {
+    // Derived decisions cannot veto an owner purge. Do not parse or preserve
+    // corrupt content; the source transaction also commits this audit marker.
+    db.query("DELETE FROM extract_batches").run();
+    db.query("INSERT INTO extract_invalidations(purge_receipt_id,reason,created_at) VALUES (?, 'invalid_derived_journal', ?)").run(purge.receipt_id, purge.created_at);
+    batch = null;
+  }
   const previous = readExtractCursor(db);
   const previousBoundary = parseCursor(previous);
   let nextPrevious = previous;

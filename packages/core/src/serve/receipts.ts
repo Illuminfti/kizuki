@@ -86,6 +86,7 @@ function parseReceipt(value: unknown): RunReceipt | null {
     canon_writes: numberOr(value["canon_writes"], totals.canon_writes),
     canon_reverts: numberOr(value["canon_reverts"], totals.canon_reverts),
     model: {
+      ...(model["usage_unknown"] === true ? { usage_unknown: true } : {}),
       calls: numberOr(model["calls"], 0),
       input_tokens: numberOr(model["input_tokens"], 0),
       output_tokens: numberOr(model["output_tokens"], 0),

@@ -153,3 +153,82 @@ test("an incompatible schedule rolls back every additive runtime table", () => {
   expect(db.query("SELECT name FROM sqlite_master WHERE name='extract_usage'").all()).toHaveLength(0);
   db.close();
 });
+
+for (const corruption of ["integrity", "drafts"] as const) test(`owner purge discards corrupt ${corruption} with content-free audit`, async () => {
+  const f = fixture();
+  try {
+    f.db.exec("CREATE TRIGGER fail_b BEFORE INSERT ON claims WHEN NEW.subject = 'person:ada' BEGIN SELECT RAISE(ABORT, 'injected'); END");
+    await runRail(f.db, f.path, "sync", { hooks: f.hooks });
+    f.db.exec(corruption === "integrity" ? "UPDATE extract_batches SET integrity='corrupt'" : "UPDATE extract_batches SET drafts='not json'");
+    const corrupt = f.db.query("SELECT * FROM extract_batches").all();
+    f.db.exec("CREATE TRIGGER fail_purge BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT,'injected purge'); END");
+    expect(() => purgeEvents(f.db, f.path, { event_id: f.b }, "synthetic purge")).toThrow();
+    expect(f.db.query("SELECT * FROM extract_batches").all()).toEqual(corrupt);
+    expect(f.db.query("SELECT * FROM extract_invalidations").all()).toHaveLength(0);
+    f.db.exec("DROP TRIGGER fail_purge");
+    purgeEvents(f.db, f.path, { event_id: f.b }, "synthetic purge");
+    expect(f.db.query("SELECT event_id FROM events WHERE event_id=?").all(f.b)).toHaveLength(0);
+    expect(f.db.query("SELECT * FROM extract_batches").all()).toHaveLength(0);
+    const audit = f.db.query("SELECT * FROM extract_invalidations").all();
+    expect(audit).toHaveLength(1);
+    expect(JSON.stringify(audit)).not.toContain(f.b);
+    expect(JSON.stringify(audit)).not.toContain("person:ada");
+    expect(f.db.query("SELECT 1 FROM extract_invalidations i JOIN event_purges p ON i.purge_receipt_id=p.receipt_id").all()).toHaveLength(1);
+    expect(readExtractCursor(f.db)).toBeNull();
+    f.db.exec("DROP TRIGGER fail_b");
+    const receipt = await runRail(f.db, f.path, "sync", { hooks: { ...f.hooks, producer: { ...f.producer, produce: async () => ({ status: "ok", claims: [], usage: { calls: 1, input_tokens: 10, output_tokens: 1 } }) } } });
+    expect(receipt.errors).toEqual([]);
+    expect(listClaims(f.db, { status: "live", limit: 20 })).toHaveLength(1);
+  } finally { f.db.close(); }
+});
+
+test("killed producer attempt is durable, uncertain and counted separately from retry", async () => {
+  const f = fixture(); f.db.close();
+  const base = new URL("../../src/", import.meta.url).pathname;
+  const child = Bun.spawn([process.execPath, "--eval", `
+    const {openLedger}=await import(${JSON.stringify(base + "ledger/db.ts")});
+    const {runRail}=await import(${JSON.stringify(base + "serve/rails.ts")});
+    const db=openLedger(${JSON.stringify(join(f.path, ".kizuki/kizuki.db"))});
+    const producer={descriptor:${JSON.stringify(f.producer.descriptor)},health:async()=>({status:"ready",detail:{}}),close:async()=>{},produce:async()=>{console.log("entered");await Bun.stdin.text();throw new Error("interrupted");}};
+    await runRail(db,${JSON.stringify(f.path)},"sync",{hooks:{producer,claims:{db},model_ref:"model:original"}});
+  `], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+  try {
+    const reader = child.stdout.getReader();
+    expect(new TextDecoder().decode((await reader.read()).value)).toContain("entered"); reader.releaseLock();
+    child.kill("SIGKILL"); await child.exited;
+    const db = openLedger(join(f.path, ".kizuki/kizuki.db"));
+    try {
+      expect(db.query("SELECT * FROM extract_usage").all()).toHaveLength(1);
+      await runRail(db, f.path, "doctor-sweep");
+      const interrupted = listRunReceipts(db).find(r => r.model.calls > 0)!;
+      expect(interrupted.status).toBe("failed");
+      expect(interrupted.model).toMatchObject({ calls: 1, model_ref: "model:original", usage_unknown: true });
+      expect(interrupted.errors.join(" ")).toContain("unknown");
+      const { inspectServeDoctor } = await import("../../src/serve/doctor");
+      expect(inspectServeDoctor(db, f.path).model.last_success_at).toBeNull();
+      expect(readExtractCursor(db)).toBeNull();
+      await runRail(db, f.path, "sync", { hooks: { ...f.hooks, claims: { db } } });
+      expect(listRunReceipts(db).reduce((n, r) => n + r.model.calls, 0)).toBe(2);
+    } finally { db.close(); }
+  } finally { child.kill(); await child.exited; }
+}, 15_000);
+
+test("once SIGTERM finishes active sync without starting brief", async () => {
+  const f = fixture(); f.db.close();
+  const base = new URL("../../src/", import.meta.url).pathname;
+  const child = Bun.spawn([process.execPath, "--eval", `
+    const {openLedger}=await import(${JSON.stringify(base + "ledger/db.ts")});
+    const {runServeDaemon}=await import(${JSON.stringify(base + "serve/daemon.ts")});
+    const db=openLedger(${JSON.stringify(join(f.path, ".kizuki/kizuki.db"))});
+    await runServeDaemon(db,${JSON.stringify(f.path)},{once:true,http:false,rails:["sync","brief"],hooks:{sync:async()=>{console.log("entered");await Bun.stdin.text();return {events_synced:0,events_stored:0,events_duplicate:0,events_self_skipped:0,errors:[]};}}});db.close();
+  `], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+  try {
+    const reader = child.stdout.getReader();
+    expect(new TextDecoder().decode((await reader.read()).value)).toContain("entered"); reader.releaseLock();
+    child.kill("SIGTERM");
+    await Bun.sleep(30); child.stdin.end();
+    expect(await child.exited).toBe(0);
+    const db = openLedger(join(f.path, ".kizuki/kizuki.db"));
+    try { expect(listRunReceipts(db).map(r => r.rail)).toEqual(["sync"]); } finally { db.close(); }
+  } finally { child.kill(); await child.exited; }
+}, 15_000);

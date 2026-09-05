@@ -777,11 +777,12 @@ function purgeEventsLocked(
     }
 
     const purgedIds = new Set(candidates.map((row) => row.event_id));
-    purgeExtractInputs(db, purgedIds);
+    const purgedAt = nowIso(options.now);
+    const batchReceipt = mint(options.ids);
+    purgeExtractInputs(db, purgedIds, { receipt_id: batchReceipt, created_at: purgedAt });
     const { matched, holdPaths } = holdPathsFor(snapshot, purgedIds);
     assertSnapshotStillHolds(vaultPath, snapshot, holdPaths);
 
-    const purgedAt = nowIso(options.now);
     const receipts: PurgeReceipt[] = [];
     const insertReceipt = db.query<
       never,
@@ -795,7 +796,6 @@ function purgeEventsLocked(
       "DELETE FROM events WHERE event_id = ?",
     );
 
-    const batchReceipt = mint(options.ids);
     const holds: { page_path: string; proposal_id: string }[] = [];
     const holdReason =
       includeAliases && filter.subject_handle !== undefined

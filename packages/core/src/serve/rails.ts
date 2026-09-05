@@ -302,7 +302,7 @@ export async function runRail(
         const usage = JSON.parse(orphan.metrics) as Pick<RunReceipt, "model" | "claims_rejected" | "claims_extracted">;
         persistRunReceipt(db, vaultPath, { ...emptyRunTotals(), ...usage, run_id: orphan.run_id, rail: "sync",
           started_at: orphan.created_at, finished_at: orphan.created_at, status: "failed", stopped: null,
-          model: { ...usage.model, model_ref: orphan.model_ref }, errors: ["extraction interrupted after model decision"] });
+          model: { ...usage.model, model_ref: orphan.model_ref }, errors: [usage.model.usage_unknown === true ? "model attempt interrupted; token usage unknown" : "extraction interrupted after model decision"] });
       }
     } finally { recoveryLock.release(); }
   }
@@ -352,6 +352,7 @@ export async function runRail(
     if (usage !== null) {
       const metrics = JSON.parse(usage.metrics) as Pick<RunReceipt, "model" | "claims_rejected" | "claims_extracted">;
       partial = { ...partial, ...metrics, model: { ...metrics.model, model_ref: usage.model_ref } };
+      if (metrics.model.usage_unknown === true) partial = { ...partial, status: "failed", errors: [...(partial.errors ?? []), "model attempt interrupted; token usage unknown"] };
     }
     const finished = now();
     const receipt: RunReceipt = {

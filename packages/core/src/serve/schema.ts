@@ -16,6 +16,12 @@ import {
 export { SERVE_SCHEMA_VERSION };
 
 const TABLES = `
+CREATE TABLE IF NOT EXISTS extract_invalidations (
+  purge_receipt_id TEXT PRIMARY KEY,
+  reason TEXT NOT NULL CHECK (reason = 'invalid_derived_journal'),
+  created_at TEXT NOT NULL
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS canon_write_reservations (
   receipt_id TEXT PRIMARY KEY,
   day TEXT NOT NULL,

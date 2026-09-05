@@ -88,13 +88,15 @@ function observe(metrics: ProduceMetrics, result: ProduceResult, wallMs: number)
   }
 }
 
-function observedProducer(producer: ProducerPort, metrics: ProduceMetrics, record: (result: ProduceResult) => void): ProducerPort {
+function observedProducer(producer: ProducerPort, metrics: ProduceMetrics, record: (result?: ProduceResult) => void): ProducerPort {
   return {
     descriptor: producer.descriptor,
     health: () => producer.health(),
     close: () => producer.close(),
     async produce(input) {
       const started = performance.now();
+      // Commit intent before crossing the asynchronous external-effect boundary.
+      record();
       const result = await producer.produce(input);
       observe(metrics, result, Math.max(0, Math.round(performance.now() - started)));
       record(result);
@@ -212,8 +214,8 @@ async function runWritePassLocked(
     } else {
     const runId = options.run_id ?? ulid();
     const mined = await mineLiveDrafts(db, observedProducer(options.producer, metrics, (result) => {
-      db.query("INSERT INTO extract_usage(run_id,model_ref,metrics,created_at,holder_pid) VALUES (?,?,?,?,?)").run(
-        runId, options.model_ref ?? null, JSON.stringify({ ...metricResult(metrics), claims_extracted: result.status === "ok" ? result.claims.length : 0 }), new Date().toISOString(), process.pid,
+      db.query("INSERT INTO extract_usage(run_id,model_ref,metrics,created_at,holder_pid) VALUES (?,?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET metrics=excluded.metrics").run(
+        runId, options.model_ref ?? null, JSON.stringify(result === undefined ? { claims_rejected: {}, claims_extracted: 0, model: { ...metricResult(metrics).model, calls: 1, usage_unknown: true } } : { ...metricResult(metrics), claims_extracted: result.status === "ok" ? result.claims.length : 0 }), new Date().toISOString(), process.pid,
       );
     }));
     switch (mined.mined.status) {

@@ -112,6 +112,7 @@ export async function runServeDaemon(
         "journal-prune",
       ];
       for (const rail of listed) {
+        if (stopping) break;
         if (!isRailId(rail)) continue;
         await runRail(db, vaultPath, rail, {
           now: process.now,
