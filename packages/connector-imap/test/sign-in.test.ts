@@ -15,6 +15,7 @@ import {
   enrollConnection,
   openLedger,
   runBackfill,
+  setSourceGrant,
 } from "@kizuki/core";
 import type { SignInIo } from "@kizuki/core";
 import { IMAP_CONNECTOR_ID, createImapConnector } from "../src/connector";
@@ -378,6 +379,16 @@ describe("interactive sign-in", () => {
     const enroller = createImapConnector({}, { dial: memoryDialer(fake) });
 
     const saved = await enrollConnection(db, store, enroller, scriptedIo(HAPPY));
+    // Explicit synthetic owner consent; keep connector sensitivity authoritative.
+    setSourceGrant(db, {
+      source_key: saved.source_key, expected_revision: 0, operation_id: "fixture-grant",
+      policy: {
+        purposes: ["capture", "recall", "derive"],
+        allowed_fields: ["text", "subjects", "attachments", "metadata"],
+        retention: "persistent_owned_until_revoked", egress: "local_only",
+        sensitivity_floor: "public",
+      },
+    });
     const ref = saved.secret_refs[0] ?? "";
     const bytes = store.read(saved) ?? new Uint8Array();
     const connector = createImapConnector(

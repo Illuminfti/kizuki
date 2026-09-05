@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { openLedger, registerConnection, runBackfill, runToCompletion } from "@kizuki/core";
+import { openLedger, setSourceGrant, registerConnection, runBackfill, runToCompletion } from "@kizuki/core";
 import { parseCursor } from "../src/cursor";
 import { fixtureAccount } from "../src/fixture";
 import type { TelegramMessage } from "../src/api";
@@ -12,6 +12,16 @@ const SOURCE = "01JJ0000000000000000000000";
 function ledger() {
   const db = openLedger(":memory:");
   registerConnection(db, TELEGRAM_CONNECTOR_ID, SOURCE);
+  // Explicit synthetic owner consent; keep connector sensitivity authoritative.
+  setSourceGrant(db, {
+    source_key: SOURCE, expected_revision: 0, operation_id: "fixture-grant",
+    policy: {
+      purposes: ["capture", "recall", "derive"],
+      allowed_fields: ["text", "subjects", "attachments", "metadata"],
+      retention: "persistent_owned_until_revoked", egress: "local_only",
+      sensitivity_floor: "public",
+    },
+  });
   return db;
 }
 

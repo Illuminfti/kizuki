@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { DEFAULT_GRANT, openLedger, registerConnection, runToCompletion, timeline } from "@kizuki/core";
+import { DEFAULT_GRANT, openLedger, setSourceGrant, registerConnection, runToCompletion, timeline } from "@kizuki/core";
 import { TELEGRAM_CONNECTOR_ID } from "../src/map";
 import { connected } from "./helpers";
 
@@ -9,6 +9,16 @@ const SOURCE = "01JJ0000000000000000000000";
 function ledger() {
   const db = openLedger(":memory:");
   registerConnection(db, TELEGRAM_CONNECTOR_ID, SOURCE);
+  // Explicit synthetic owner consent; keep connector sensitivity authoritative.
+  setSourceGrant(db, {
+    source_key: SOURCE, expected_revision: 0, operation_id: "fixture-grant",
+    policy: {
+      purposes: ["capture", "recall", "derive"],
+      allowed_fields: ["text", "subjects", "attachments", "metadata"],
+      retention: "persistent_owned_until_revoked", egress: "local_only",
+      sensitivity_floor: "public",
+    },
+  });
   return db;
 }
 
