@@ -522,6 +522,7 @@ scans. There is no benchmark claim hidden in a test count.
 | [Migration](docs/legacy-import.md) | Bringing an existing wiki or event history into Kizuki. |
 | [Native build](docs/native-build.md) | Local binaries, checksums, and smoke tests. |
 | [Release acceptance](docs/release-acceptance.md) | Exact-artifact evidence inventory, missing gates, and the unfamiliar-user protocol. |
+| [Native recovery proof](docs/recovery-artifact-proof.md) | Copied-package synthetic retrieval, revocation and durable-decision recovery |
 
 ## Retrieval credit
 

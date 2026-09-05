@@ -1,5 +1,5 @@
 import {
-  cpSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync,
+  lstatSync, mkdirSync, mkdtempSync, realpathSync, readFileSync, rmSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -8,9 +8,9 @@ import {
   initAgents, listCanonReceipts, listClaims, listConnections, openLedger, readSince, setSourceGrant,
 } from "../packages/core/src/index";
 import type { CaptureEvent, Claim, Envelope, RunReceipt, SearchHit } from "../packages/core/src/index";
-import { verifyChecksumManifest } from "./release-artifacts";
+import { copyPackage, verifyPackage } from "./native-proof-evidence";
+import { openNativeMcp, runNativeCommand } from "./native-proof-process";
 import { releaseTarget, requireNativeHost } from "./release-targets";
-import { parseBuildInfo } from "./stranger-proof";
 import {
   canonicalJson, corpusDigest, loadCorpus, loadResponseSet,
   scoreExtraction, sha256, validateCorpus, validateResponseSet, writeQualityReport,
@@ -64,19 +64,11 @@ export function mapImportedEvidence(item: QualityCase, events: readonly Imported
 export function verifyNativeArtifact(path: string, sourceSha: string) {
   const stat = lstatSync(path);
   assert(stat.isDirectory() && !stat.isSymbolicLink(), "artifact must be a regular directory");
-  const buildPath = join(path, "BUILD.json");
-  assert(lstatSync(buildPath).size <= 1_048_576, "artifact BUILD.json exceeds fixture bound");
-  verifyChecksumManifest(path, ARTIFACT_NAMES);
-  const build = parseBuildInfo(buildPath);
+  const verified = verifyPackage(path, sourceSha), build = verified.build;
   requireNativeHost(releaseTarget(build.target));
   assert(Bun.version === PINNED_BUN && build.bun_version === Bun.version, `native fixture and artifact require Bun ${PINNED_BUN}`);
-  assert(build.source_sha === sourceSha, "artifact and evaluation source revisions differ");
-  const manifest = readFileSync(join(path, "SHA256SUMS"), "utf8");
-  const files = Object.fromEntries(manifest.trim().split("\n").map((line) => {
-    const [digest, name] = line.split("  ");
-    return [name!, digest!];
-  }));
-  return { build, files_sha256: files, checksum_manifest: manifest, manifest_sha256: sha256(manifest) };
+  return { build, files_sha256: Object.fromEntries(ARTIFACT_NAMES.map(name => [name, verified.package_sha256[name]!])),
+    checksum_manifest: verified.checksum_manifest, manifest_sha256: verified.package_sha256.SHA256SUMS! };
 }
 
 interface QueryData { hits: SearchHit[]; withheld: number }
@@ -153,7 +145,7 @@ export async function runNativeQuality(options: { artifact?: string } = {}) {
   const corpus = loadCorpus(join(import.meta.dir, "fixtures/extraction-quality-v1.json"));
   const scripted = loadResponseSet(join(import.meta.dir, "fixtures/extraction-quality-scripted-v1.json"), corpus);
   const persisted = persistedReference(corpus);
-  const root = mkdtempSync(join(tmpdir(), "kizuki-quality-native-"));
+  const root = mkdtempSync(join(realpathSync(tmpdir()), "kizuki-quality-native-"));
   const commands: CommandRecord[] = [];
   let executable = [process.execPath, join(SOURCE_ROOT, "packages/cli/src/main.ts")];
   let mcpExecutable = [process.execPath, join(SOURCE_ROOT, "packages/mcp/src/bin.ts")];
@@ -190,17 +182,13 @@ export async function runNativeQuality(options: { artifact?: string } = {}) {
   const env = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: join(root, "home"), KIZUKI_CONFIG: join(root, "config.toml"), KIZUKI_SUPERVISOR: "none", LANG: "C.UTF-8" };
 
   async function cli<T>(vault: string, args: string[], expectedExit = 0): Promise<T> {
-    const start = performance.now();
-    const child = Bun.spawn([...executable, ...args, "--vault", vault], { cwd: root, env, stdout: "pipe", stderr: "pipe" });
-    const timeout = setTimeout(() => child.kill("SIGKILL"), 20_000);
-    try {
-      const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-      assert(stdout.length <= 1_048_576 && stderr.length <= 65_536, "native command output exceeded fixture bound");
-      commands.push({ command: args.slice(0, 2).join(" "), exit_code: exitCode, wall_ms: performance.now() - start, output_sha256: sha256(stdout), output_kind: "stdout" });
-      assert(exitCode === expectedExit, `native ${vault.split("/").at(-2)} ${args[0]} failed (${exitCode}): ${stderr.slice(0, 300)}`);
-      if (expectedExit === 1) assert(stderr.includes("consent-required"), `native import did not refuse for missing consent: ${stderr.slice(0, 300)}`);
-      return (args.includes("--json") ? (JSON.parse(stdout) as { data: T }).data : stdout) as T;
-    } finally { clearTimeout(timeout); }
+    const result = await runNativeCommand([...executable, ...args, "--vault", vault], { cwd: root, env });
+    const { stdout, stderr, observation } = result;
+    commands.push({ command: args.slice(0, 2).join(" "), exit_code: observation.exit_code, wall_ms: observation.wall_ms, output_sha256: observation.stdout_sha256, output_kind: "stdout" });
+    assert(observation.fault === null, "native command exceeded proof process bounds");
+    assert(observation.exit_code === expectedExit, "native quality command returned unexpected exit");
+    if (expectedExit === 1) assert(stderr.includes("consent-required"), "native import did not refuse for missing consent");
+    return (args.includes("--json") ? (JSON.parse(stdout) as { data: T }).data : stdout) as T;
   }
 
   function withLedger<T>(vault: string, fn: (db: ReturnType<typeof openLedger>) => T): T {
@@ -209,62 +197,22 @@ export async function runNativeQuality(options: { artifact?: string } = {}) {
   }
 
   async function mcp(vault: string, calls: { name: string; arguments: Record<string, unknown> }[], token?: string): Promise<Envelope<unknown>[]> {
-    const start = performance.now();
-    const child = Bun.spawn([...mcpExecutable, "--vault", vault, ...(token === undefined ? ["--owner"] : ["--token-env", "QUALITY_AGENT_TOKEN"])], {
-      cwd: root, env: token === undefined ? env : { ...env, QUALITY_AGENT_TOKEN: token }, stdin: "pipe", stdout: "pipe", stderr: "pipe",
-    });
-    const timeout = setTimeout(() => child.kill("SIGKILL"), 20_000);
-    const reader = child.stdout.getReader(), decoder = new TextDecoder();
-    let buffered = "", bytes = 0, nextId = 0;
-    const stderr = (async () => {
-      let size = 0;
-      for await (const chunk of child.stderr) { size += chunk.length; if (size > 65_536) child.kill("SIGKILL"); }
-      return size;
-    })();
-    function send(value: unknown) { child.stdin.write(`${JSON.stringify(value)}\n`); child.stdin.flush(); }
-    async function rpc(method: string, params: unknown): Promise<unknown> {
-      const id = ++nextId;
-      send({ jsonrpc: "2.0", id, method, params });
-      for (;;) {
-        const newline = buffered.indexOf("\n");
-        if (newline >= 0) {
-          const line = buffered.slice(0, newline); buffered = buffered.slice(newline + 1);
-          if (!line) continue;
-          const message = JSON.parse(line) as { id?: unknown; result?: unknown; error?: unknown };
-          if (message.id !== id) continue;
-          assert(message.error === undefined, "native MCP protocol refused fixture request");
-          return message.result;
-        }
-        const chunk = await reader.read();
-        assert(!chunk.done, "native MCP ended before returning fixture response");
-        bytes += chunk.value.length;
-        assert(bytes <= 1_048_576, "native MCP output exceeded fixture bound");
-        buffered += decoder.decode(chunk.value, { stream: true });
-      }
-    }
+    const session = await openNativeMcp([...mcpExecutable, "--vault", vault, ...(token === undefined ? ["--owner"] : ["--token-env", "QUALITY_AGENT_TOKEN"])],
+      { cwd: root, env: token === undefined ? env : { ...env, QUALITY_AGENT_TOKEN: token } });
+    const results: Envelope<unknown>[] = [];
     try {
-      await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "kizuki-synthetic-quality", version: "1" } });
-      send({ jsonrpc: "2.0", method: "notifications/initialized" });
-      const results: Envelope<unknown>[] = [];
       for (const call of calls) {
-        const result = await rpc("tools/call", call) as { isError?: boolean; structuredContent?: Envelope<unknown> };
+        const result = await session.call(call.name, call.arguments) as { isError?: boolean; structuredContent?: Envelope<unknown> };
         assert(result.isError !== true && result.structuredContent !== undefined, "native MCP tool refused fixture request");
         results.push(result.structuredContent);
       }
-      child.stdin.end();
-      const code = await child.exited;
-      assert(code === 0 && await stderr <= 65_536, "native MCP session did not shut down cleanly");
-      commands.push({ command: `mcp ${token === undefined ? "owner" : "public"} ${calls.map((call) => call.name).join(",")}`,
-        exit_code: code, wall_ms: performance.now() - start, output_sha256: sha256(canonicalJson(results)), output_kind: "canonical_tool_results" });
-      return results;
     } finally {
-      child.stdin.end();
-      if (child.exitCode === null) child.kill("SIGKILL");
-      await child.exited;
-      await stderr;
-      reader.releaseLock();
-      clearTimeout(timeout);
+      const observation = await session.close();
+      assert(observation.exit_code === 0 && observation.fault === null, "native MCP session did not shut down cleanly");
+      commands.push({ command: `mcp ${token === undefined ? "owner" : "public"} ${calls.map(call => call.name).join(",")}`, exit_code: observation.exit_code,
+        wall_ms: observation.wall_ms, output_sha256: sha256(canonicalJson(results)), output_kind: "canonical_tool_results" });
     }
+    return results;
   }
 
   async function setup(item: QualityCase, name: string, localOnly = false) {
@@ -353,7 +301,7 @@ export async function runNativeQuality(options: { artifact?: string } = {}) {
   try {
     if (options.artifact !== undefined) {
       const expectedArtifact = verifyNativeArtifact(options.artifact, sourceSha);
-      const copy = join(root, "artifact"); cpSync(options.artifact, copy, { recursive: true, errorOnExist: true });
+      const copy = join(root, "artifact"); copyPackage(options.artifact, copy);
       artifactIdentity = verifyNativeArtifact(copy, sourceSha);
       assert(canonicalJson(artifactIdentity) === canonicalJson(expectedArtifact), "copied artifact identity differs from the verified source package");
       executable = [join(copy, "kizuki")]; mcpExecutable = [join(copy, "kizuki-mcp")];

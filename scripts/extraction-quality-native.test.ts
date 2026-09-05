@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadCorpus, sha256 } from "./evaluate-extraction";
 import { checksumManifest } from "./release-artifacts";
+import { copyPackage } from "./native-proof-evidence";
 import { nativeReleaseTarget } from "./release-targets";
 import {
   mapImportedEvidence, persistedReference, runNativeQuality, verifyNativeArtifact,
@@ -69,7 +70,7 @@ test("artifact identity binds copied MCP bytes even when CLI bytes and build met
   cpSync(path, copy, { recursive: true, errorOnExist: true });
   expect(verifyNativeArtifact(copy, sourceSha)).toEqual(original);
   writeFileSync(join(copy, "kizuki-mcp"), "different synthetic MCP executable");
-  expect(() => verifyNativeArtifact(copy, sourceSha)).toThrow("release checksum verification failed");
+  expect(() => verifyNativeArtifact(copy, sourceSha)).toThrow("package-checksum-mismatch");
   writeFileSync(join(copy, "SHA256SUMS"), checksumManifest(copy, artifactNames));
   const changed = verifyNativeArtifact(copy, sourceSha);
   expect(changed.build).toEqual(original.build);
@@ -147,3 +148,12 @@ test("the complete offline corpus uses native import, model filing, CLI and MCP 
     expect(result.passed).toBe(false);
   }
 }, 180_000);
+
+
+test("native proof copies exactly the registered package without traversing unrelated entries", () => {
+  const path = artifact(validBuild), copy = `${path}-bounded-copy`; directories.push(copy);
+  symlinkSync("/a/synthetic/unrelated/path", join(path, "unrelated-link"));
+  copyPackage(path, copy);
+  expect(verifyNativeArtifact(copy, sourceSha)).toEqual(verifyNativeArtifact(path, sourceSha));
+  expect(() => readFileSync(join(copy, "unrelated-link"))).toThrow();
+});

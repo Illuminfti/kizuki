@@ -23,7 +23,12 @@ bun run release:acceptance --profile rc --evidence /absolute/evidence/index.json
 bun run release:acceptance --profile 1.0 --evidence /absolute/evidence/index.json --out /absolute/evidence/new-1.0-report.json
 ```
 
-The parent output directory must already exist. The checker writes a new
+The parent output directory must already exist. Complete private bytes are
+synced before atomic publication without replacing an existing destination.
+The parent directory is synced even when temporary-file cleanup fails. A
+`published-report-cleanup-failed` or `published-report-durability-unconfirmed`
+error means complete output exists, but publication did not finish cleanly;
+do not retry the same output path. The checker writes a new
 private file exclusively, flushes it and its directory, and also emits the
 report JSON on stdout. Exit status is `0` for `GO`, `1` for a produced `NO-GO`
 report, and `2` for invalid arguments or failure to retain the output. A
@@ -79,6 +84,25 @@ loader between matching bounded snapshots. The inode-bound genesis means
 copying these files does not create a valid observation. Standalone status
 JSON is not evidence. See [fixture observation](qualification.md).
 
+`kizuki.acceptance-evidence/v2` has the same four keys plus required `recovery`.
+Each of at most two recovery references has exactly `producer` (fixed
+`kizuki.native-recovery-proof/v2`), `target`, `path` (the absolute receipt path)
+and `receipt_sha256`. Targets must be unique and have a successfully verified
+artifact entry in the same index. A v1 index remains readable and leaves all
+recovery subgates missing. Reports use `kizuki.acceptance-report/v2`.
+
+Generate these observations with the [native recovery producer](recovery-artifact-proof.md).
+The adapter binds the candidate source and tree, all five package files,
+original and copied package identity, native target, pinned Bun, fixed recipe,
+and the local registered generator files. Run the checker from that exact
+retained candidate checkout; an older or merely tree-equivalent generator
+cannot supply this evidence. Actual local generator/helper files must match
+the candidate Git blobs; reporting HEAD alone cannot register modified code.
+Unrelated local documentation or report files do not invalidate this check.
+It validates every fixed fixture child, native
+command, retained MCP session, ordered assertion, and cleanup result. Offline
+verification does not rerun any child or promote an old receipt.
+
 Unknown producers, schema keys, duplicate targets or JSON keys, noncanonical
 paths, digest mismatches and substituted steps fail closed. Limits are 16 KiB
 for the index, 1 MiB for a proof, 256 MiB per binary, 64 KiB per package text
@@ -91,7 +115,7 @@ participant identity or account details are copied into the report.
 
 ## Fixed gates
 
-The report always prints all 39 rows. `required` distinguishes the selected
+The report always prints all 49 rows. `required` distinguishes the selected
 profile's obligations. The three final operational rows are required only
 for `1.0`; the fixture diagnostic never supplies release credit. The RC
 profile does not accept 1.0.
@@ -100,6 +124,7 @@ profile does not accept 1.0.
 | --- | --- |
 | `evidence.index` | Closed index validation; implemented |
 | `artifact.<target>` for both targets | Local package and recorded fixture-step consistency; implemented with `automated-fixture-integrity` scope |
+| `automated.<subgate>.<target>` for five subgates on both targets | Fixed synthetic recovery observations; implemented, with zero calendar credit |
 | `native.<target>` for both targets | Trusted producer revision and native execution attestation; `UNVERIFIABLE` |
 | `lifecycle.<target>` for both targets | Actual normal install, upgrade, restart, reboot and uninstall; `NOT_IMPLEMENTED` |
 | `candidate.required-checks` | Exact-candidate required CI/check identities; adapter `NOT_IMPLEMENTED` |
@@ -121,6 +146,13 @@ profile does not accept 1.0.
 | `owner.final-cutover` | Current owner authority, reviewed parity/loss record, harness repoint and retained rollback; adapter `NOT_IMPLEMENTED` |
 | `diagnostic.fixture-observation` | Existing strict original-directory fixture observer; diagnostic only |
 
+The five automated subgates are `retrieval-authority-undo-restore`,
+`revocation-retained-session`, `revocation-owned-store-recovery`,
+`pending-decision-replay`, and `pending-backup-integrity`. Both profiles require
+all ten platform rows. They supply only the specified synthetic observations;
+none replaces a complete journey, real account, service lifecycle, human,
+independent review, native attestation or elapsed-observation gate.
+
 All eight journey adapters remain `NOT_IMPLEMENTED`, even where constituent
 product behavior or component tests exist. Adapter status describes acceptance
 evidence support, not whether a product feature exists.
@@ -138,10 +170,12 @@ Hashes establish local byte consistency under a trusted operator's custody.
 They do not authenticate a person, prove an actual account authorization,
 attest that JSON assertions describe an execution, or defend against a
 compromised host or a hostile process that controls the evidence directory.
-The existing artifact receipt has no producer revision or independent native
+The v1 artifact receipt has no producer revision or independent native
 attestation; the report records `producer_revision: null` and leaves the
-separate native gate unverifiable. A synthetic test package can satisfy byte
-consistency only. Its presence never establishes native or human acceptance.
+separate native gate unverifiable. The v2 recovery receipt adds registered generator identity and fixed synthetic
+observations under the same custody assumption. Neither format supplies
+independent execution or human attestation. Synthetic validator fixtures only
+qualify the evaluator; their metadata is not a native run.
 
 The report records the exact index digest, package/proof digests, closed
 policy digest and hashes of the local verifier files. Gate evidence digests

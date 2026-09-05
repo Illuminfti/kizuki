@@ -4,6 +4,10 @@ import { appendFileSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { evaluateRelease, parseAcceptanceArgs, writeAcceptanceReport } from "./go-no-go";
+import { registeredGenerator } from "./recovery-proof-receipt";
+import { syntheticScenario } from "./recovery-proof-test-fixtures";
+import { RECOVERY_RECIPE, RECOVERY_RECIPE_SHA256, RECOVERY_SUBGATES } from "./recovery-proof-recipe";
+import { PACKAGE_FILES, verifyPackage } from "./native-proof-evidence";
 import { initQualification } from "./qualification";
 import { initVault } from "../packages/core/src/vault/init";
 import { openLedger } from "../packages/core/src/ledger/db";
@@ -47,6 +51,77 @@ function fixture(platform = target) {
   save(); return { root, artifact, proof, indexPath, index, receipt, ref, save };
 }
 const gate = (result: ReturnType<typeof evaluateRelease>, id: string) => result.gates.find(row => row.id === id)!;
+
+test.each(["serialize", "write", "sync", "race"])("report publication keeps the final path intact across %s failure", (mode) => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-report-publication-")); roots.push(root);
+  const out = join(root, "report.json");
+  // Fault injection stays inside a child, so other tests retain the real fs module.
+  const script = `
+    import { mock } from "bun:test";
+    import * as fs from "node:fs";
+    const write = fs.writeFileSync, sync = fs.fsyncSync;
+    const mode = ${JSON.stringify(mode)}, out = ${JSON.stringify(out)};
+    let injected = false;
+    mock.module("node:fs", () => ({ ...fs,
+      writeFileSync(target, bytes, ...args) {
+        if (mode === "write" && !injected) {
+          injected = true; write(target, String(bytes).slice(0, 7), ...args); throw new Error("synthetic disk full");
+        }
+        return write(target, bytes, ...args);
+      },
+      fsyncSync(fd) {
+        if (mode === "sync" && !injected) { injected = true; throw new Error("synthetic sync failure"); }
+        if (mode === "race" && !injected) { injected = true; write(out, "competing report", { flag: "wx", mode: 0o600 }); }
+        return sync(fd);
+      },
+    }));
+    const { writeAcceptanceReport } = await import(${JSON.stringify(join(import.meta.dir, "go-no-go.ts"))});
+    const report = mode === "serialize" ? { toJSON() { throw new Error("synthetic serialization failure"); } } : { synthetic: true };
+    let failed = false;
+    try { writeAcceptanceReport(out, report); } catch { failed = true; }
+    process.stdout.write(JSON.stringify({ failed, files: fs.readdirSync(${JSON.stringify(root)}),
+      final: fs.existsSync(out) ? fs.readFileSync(out, "utf8") : null }));
+  `;
+  const child = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 10_000 });
+  expect(child.exitCode, child.stderr.toString()).toBe(0);
+  const result = JSON.parse(child.stdout.toString());
+  expect(result.failed).toBe(true);
+  expect(result.files).toEqual(mode === "race" ? ["report.json"] : []);
+  expect(result.final).toBe(mode === "race" ? "competing report" : null);
+});
+
+test.each(["unlink", "rmdir", "directory-sync"])("report publication identifies complete output after %s failure", (mode) => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-report-postpublication-")); roots.push(root);
+  const out = join(root, "report.json");
+  const script = `
+    import { mock } from "bun:test";
+    import * as fs from "node:fs";
+    const remove = fs.rmSync, rmdir = fs.rmdirSync, sync = fs.fsyncSync;
+    const mode = ${JSON.stringify(mode)}, out = ${JSON.stringify(out)};
+    let directorySyncAttempted = false;
+    mock.module("node:fs", () => ({ ...fs,
+      rmSync(path, options) { if (mode === "unlink") throw new Error("synthetic cleanup failure"); return remove(path, options); },
+      rmdirSync(path) { if (mode === "rmdir") throw new Error("synthetic cleanup failure"); return rmdir(path); },
+      fsyncSync(fd) {
+        if (fs.fstatSync(fd).isDirectory()) {
+          directorySyncAttempted = true;
+          if (mode === "directory-sync") throw new Error("synthetic directory sync failure");
+        }
+        return sync(fd);
+      },
+    }));
+    const { writeAcceptanceReport } = await import(${JSON.stringify(join(import.meta.dir, "go-no-go.ts"))});
+    let reason = null;
+    try { writeAcceptanceReport(out, { synthetic: true }); } catch (error) { reason = error.reason ?? error.message; }
+    process.stdout.write(JSON.stringify({ reason, directorySyncAttempted, final: JSON.parse(fs.readFileSync(out, "utf8")) }));
+  `;
+  const child = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 10_000 });
+  expect(child.exitCode, child.stderr.toString()).toBe(0);
+  const result = JSON.parse(child.stdout.toString());
+  expect(result.directorySyncAttempted).toBe(true);
+  expect(result.final).toEqual({ synthetic: true });
+  expect(result.reason).toBe(mode === "directory-sync" ? "published-report-durability-unconfirmed" : "published-report-cleanup-failed");
+});
 
 test("all fixed journeys, C3 connectors and separate 1.0 gates remain visible without evidence", () => {
   const f = fixture(); f.index.artifacts = []; f.save();
@@ -211,4 +286,54 @@ test("self-consistent packages must use the release policy Bun version, which is
   expect(gate(result, `artifact.${target}`).evidence_sha256).toBeNull();
   expect(result.supported_bun_version).toBe(readFileSync(join(import.meta.dir, "../.bun-version"), "utf8").trim());
   expect(result.verifier.find(item => item.file === ".bun-version")?.sha256).toBe(digest(readFileSync(join(import.meta.dir, "../.bun-version"))));
+});
+
+
+test("v1 and empty v2 indexes preserve all 49 obligations without manufacturing recovery credit", () => {
+  const f = fixture();
+  for (const schema of ["kizuki.acceptance-evidence/v1", "kizuki.acceptance-evidence/v2"]) {
+    writeFileSync(f.indexPath, JSON.stringify({ ...f.index, schema, ...(schema.endsWith("v2") ? { recovery: [] } : {}) }));
+    const report = evaluateRelease("1.0", f.indexPath);
+    expect(report.gates).toHaveLength(49); expect(report.recovery_evidence).toEqual([]);
+    expect(report.gates.filter(row => row.id.startsWith("automated.")).every(row => row.status === "MISSING" && row.required)).toBe(true);
+    expect(report.decision).toBe("NO-GO");
+  }
+});
+
+test("a bound recovery receipt supplies only five synthetic subgates; altered bytes and prerequisites supply none", () => {
+  const f = fixture(), generator = registeredGenerator();
+  f.index.candidate_source_sha = generator.source_sha; f.receipt.source_sha = generator.source_sha;
+  const build = JSON.parse(readFileSync(join(f.artifact, "BUILD.json"), "utf8")); build.source_sha = generator.source_sha;
+  writeFileSync(join(f.artifact, "BUILD.json"), JSON.stringify(build));
+  writeFileSync(join(f.artifact, "SHA256SUMS"), PACKAGE_FILES.slice(0, -1).map(name => `${digest(readFileSync(join(f.artifact, name)))}  ${name}`).join("\n") + "\n");
+  const artifact = verifyPackage(f.artifact, generator.source_sha); f.receipt.package_sha256 = artifact.package_sha256; f.save();
+  const receipt = { schema: "kizuki.native-recovery-proof/v2", candidate: { source_sha: generator.source_sha, source_tree_sha: generator.source_tree_sha },
+    artifact: { build: artifact.build, package_sha256: artifact.package_sha256, copied_package_sha256: artifact.package_sha256 }, generator,
+    host: { platform: "linux", arch: "x64" }, scope: "synthetic-native-recovery", recipe: { id: RECOVERY_RECIPE.id, version: 2, sha256: RECOVERY_RECIPE_SHA256 },
+    observation: { started_at: "2026-09-05T00:00:00.000Z", ended_at: "2026-09-05T00:00:00.010Z", elapsed_ms: 10 }, scenarios: [0, 1, 2].map(syntheticScenario), completion: { state: "complete", cleanup: "complete" } };
+  const path = join(f.root, "synthetic-recovery.json"); writeFileSync(path, JSON.stringify(receipt));
+  const ref = { producer: "kizuki.native-recovery-proof/v2", target, path, receipt_sha256: digest(readFileSync(path)) };
+  const index = { ...f.index, schema: "kizuki.acceptance-evidence/v2", recovery: [ref] };
+  writeFileSync(f.indexPath, JSON.stringify(index));
+  const report = evaluateRelease("rc", f.indexPath);
+  expect(report.gates.filter(row => row.id.startsWith("automated.") && row.status === "PASS").map(row => row.id)).toEqual(RECOVERY_SUBGATES.map(id => `automated.${id}.${target}`));
+  expect(report.recovery_evidence[0]?.calendar_credit_ms).toBe(0); expect(report.decision).toBe("NO-GO");
+  expect(gate(report, `native.${target}`).status).toBe("UNVERIFIABLE"); expect(gate(report, "journey.install-recover").status).toBe("NOT_IMPLEMENTED");
+  writeFileSync(path, JSON.stringify({ ...receipt, scope: "real-owner" }));
+  const mismatched = evaluateRelease("rc", f.indexPath);
+  expect(mismatched.recovery_evidence).toEqual([]); expect(mismatched.gates.filter(row => row.id.startsWith("automated.") && row.target === target).every(row => row.status === "FAIL" && row.evidence_sha256 === null)).toBe(true);
+  ref.receipt_sha256 = digest(readFileSync(path)); writeFileSync(f.indexPath, JSON.stringify(index));
+  expect(evaluateRelease("rc", f.indexPath).recovery_evidence).toEqual([]);
+  writeFileSync(path, JSON.stringify(receipt)); ref.receipt_sha256 = digest(readFileSync(path)); index.artifacts = []; writeFileSync(f.indexPath, JSON.stringify(index));
+  expect(gate(evaluateRelease("rc", f.indexPath), `automated.${RECOVERY_SUBGATES[0]}.${target}`).reason).toBe("recovery-artifact-prerequisite-missing");
+});
+
+test("recovery index rejects duplicate target, unknown producer, actor fields, and v2 omission", () => {
+  const f = fixture(), ref = { producer: "kizuki.native-recovery-proof/v2", target, path: join(f.root, "missing.json"), receipt_sha256: "b".repeat(64) };
+  for (const recovery of [[ref, ref], [{ ...ref, producer: "kizuki.synthetic-retrieval-proof/v1" }], [{ ...ref, actor: "owner" }]]) {
+    writeFileSync(f.indexPath, JSON.stringify({ ...f.index, schema: "kizuki.acceptance-evidence/v2", recovery }));
+    expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index").status).toBe("FAIL");
+  }
+  writeFileSync(f.indexPath, JSON.stringify({ ...f.index, schema: "kizuki.acceptance-evidence/v2" }));
+  expect(gate(evaluateRelease("rc", f.indexPath), "evidence.index").status).toBe("FAIL");
 });

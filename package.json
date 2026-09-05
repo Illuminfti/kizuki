@@ -11,6 +11,7 @@
     "build:release": "bun scripts/build-release.ts",
     "smoke:release": "bun scripts/smoke-release.ts",
     "proof:artifact": "bun scripts/stranger-proof.ts",
+    "proof:recovery": "bun scripts/recovery-artifact-proof.ts",
     "release:acceptance": "bun scripts/go-no-go.ts",
     "verify:network": "bun scripts/verify-network.ts",
     "ci:workflows": "bun scripts/verify-workflows.ts",
