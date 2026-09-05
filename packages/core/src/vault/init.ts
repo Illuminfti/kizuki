@@ -692,6 +692,9 @@ export function initVault(path: string, options: InitVaultOptions = {}): InitVau
 
   const createdRoot = mkdirPrivate(path);
   if (createdRoot) created.push("./");
+  // Adoption takes ownership of the vault boundary as well as its control
+  // tree. A writable parent would let another user replace the private tree.
+  else if (chmodPrivateDir(path)) repaired.push("./");
 
   try {
     for (const directory of [...CANON_LAYOUT, ...CONTROL_LAYOUT]) {

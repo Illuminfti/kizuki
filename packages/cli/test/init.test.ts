@@ -32,6 +32,7 @@ describe("init", () => {
     const env = isolatedEnv();
     const vault = join(tempDir(), "notes");
     mkdirSync(vault);
+    chmodSync(vault, 0o775);
     writeFileSync(join(vault, "inbox.md"), "a personal note\n");
 
     const refused = runCli(env, "init", vault, "--no-service");
@@ -39,16 +40,19 @@ describe("init", () => {
     expect(refused.stderr).toContain("pass --adopt to take ownership");
     expect(refused.stderr).toContain("entry inbox.md");
     expect(existsSync(join(vault, ".kizuki"))).toBe(false);
+    expect(statSync(vault).mode & 0o777).toBe(0o775);
 
     const dry = runCli(env, "init", vault, "--adopt", "--dry-run", "--no-service");
     expect(dry.exitCode).toBe(0);
     expect(dry.stdout).toContain("dry-run");
     expect(dry.stdout).toContain("entry inbox.md");
     expect(existsSync(join(vault, ".kizuki"))).toBe(false);
+    expect(statSync(vault).mode & 0o777).toBe(0o775);
 
     const adopted = runCli(env, "init", vault, "--adopt", "--no-service");
     expect(adopted.exitCode).toBe(0);
     expect(adopted.stdout).toContain("adopt entries=1");
+    expect(statSync(vault).mode & 0o777).toBe(0o700);
     expect(existsSync(join(vault, ".kizuki", "kizuki.db"))).toBe(true);
     expect(readFileSync(join(vault, "inbox.md"), "utf8")).toBe("a personal note\n");
     expect(JSON.parse(readFileSync(join(vault, ".kizuki", "init.json"), "utf8")).adopt.policy).toBe(
