@@ -704,6 +704,8 @@ export function listClaims(
     /** Only claims that carry a conflict key, which is what a correction retires. */
     keyed?: boolean;
     limit?: number;
+    /** Applied before the result limit; matching rows are streamed in query order. */
+    filter?: (claim: Claim) => boolean;
   } = {},
 ): Claim[] {
   if (!tableExists(db, "claims")) return [];
@@ -724,6 +726,27 @@ export function listClaims(
   if (opts.keyed === true) clauses.push("claim_key IS NOT NULL");
   const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
   const limit = opts.limit ?? 200;
+  if (opts.filter !== undefined) {
+    if (!Number.isSafeInteger(limit)) throw new TypeError("claim limit must be a safe integer");
+    if (limit === 0) return [];
+    const selected: Claim[] = [];
+    // The predicate may need database reads. Own this uncached statement and
+    // release it on exhaustion, an accepted-result limit, or a thrown filter.
+    const statement = db.prepare<ClaimRow, (string | number)[]>(
+      `SELECT * FROM claims${where} ORDER BY created_at, claim_id`,
+    );
+    try {
+      for (const row of statement.iterate(...params)) {
+        const claim = rowToClaim(row);
+        if (!opts.filter(claim)) continue;
+        selected.push(claim);
+        if (limit > 0 && selected.length >= limit) break;
+      }
+      return selected;
+    } finally {
+      statement.finalize();
+    }
+  }
   return db
     .query<ClaimRow, (string | number)[]>(
       `SELECT * FROM claims${where} ORDER BY created_at, claim_id LIMIT ?`,

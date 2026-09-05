@@ -49,7 +49,7 @@ describe("kizuki.producer.model", () => {
       id: MODEL_PRODUCER_ID,
       kind: "producer",
       contract: "kizuki.producer/v1",
-      contract_minor: 2,
+      contract_minor: 3,
       supports: ["model"],
       requires_lease: false,
       optional_package: null,
@@ -293,18 +293,44 @@ describe("kizuki.producer.model", () => {
     expect(byChars.batches.map((b) => b.events.map((e) => e.event_id))).toEqual([["A"], ["B", "C"]]);
   });
 
-  test("an event too large for one call is dropped and reported, never truncated", async () => {
+  test("an event too large for one call rejects before any request without dropping its tail", async () => {
     const huge = { ...GRACE_EVENT, event_id: "HUGE", text: "y".repeat(EXTRACT_INPUT_CHARS + 1) };
     const llm = scriptedLlm(() => responseText([draft()]));
     await withProducer(llm, async (producer) => {
       const result = await producer.produce(input([huge, GRACE_EVENT]));
-      expect(result.status).toBe("ok");
-      if (result.status !== "ok") return;
-      expect(result.dropped).toEqual([
-        { reason: "event_too_large", event_id: "HUGE", chars: EXTRACT_INPUT_CHARS + 1 },
-      ]);
-      expect(llm.requests).toHaveLength(1);
-      expect(llm.requests[0]!.messages[1]!.content).not.toContain("yyyy");
+      expect(result).toEqual({ status: "rejected", reason: "budget_exhausted",
+        usage: { calls: 0, input_tokens: 0, output_tokens: 0 },
+        diagnostic: { stage: "budget", rule: "max_quoted_chars", used: 0, requested: EXTRACT_INPUT_CHARS + 1, limit: EXTRACT_INPUT_CHARS } });
+      expect(llm.requests).toHaveLength(0);
+    });
+  });
+
+  test("all intended request reservations are checked before the first LLM call", async () => {
+    const llm = scriptedLlm(() => responseText([draft()]));
+    await withProducer(llm, async (producer) => {
+      const result = await producer.produce(input([
+        { ...GRACE_EVENT, text: "g".repeat(12_001) },
+        { ...TOM_EVENT, text: "t".repeat(12_001) },
+      ], { max_calls: 2, max_input_tokens: 8_000, max_output_tokens: 2_000 }));
+      expect(result).toEqual({ status: "rejected", reason: "budget_exhausted",
+        usage: { calls: 0, input_tokens: 0, output_tokens: 0 },
+        diagnostic: { stage: "budget", rule: "max_output_tokens", used: 0, requested: 2_001, limit: 2_000 } });
+      expect(llm.requests).toHaveLength(0);
+    });
+  });
+
+  test("a later request's input estimate cannot cause a paid partial batch", async () => {
+    const llm = scriptedLlm(() => responseText([draft()]));
+    await withProducer(llm, async (producer) => {
+      const result = await producer.produce(input([
+        { ...GRACE_EVENT, text: "g".repeat(16_000) },
+        { ...TOM_EVENT, text: "t".repeat(16_000) },
+      ], { max_calls: 2, max_input_tokens: 8_000, max_output_tokens: 20_000 }));
+      expect(result).toEqual({ status: "rejected", reason: "budget_exhausted",
+        usage: { calls: 0, input_tokens: 0, output_tokens: 0 },
+        diagnostic: { stage: "budget", rule: "max_input_tokens", used: 0, requested: expect.any(Number), limit: 8_000 } });
+      if (result.status === "rejected" && result.diagnostic?.stage === "budget") expect(result.diagnostic.requested).toBeGreaterThan(8_000);
+      expect(llm.requests).toHaveLength(0);
     });
   });
 
