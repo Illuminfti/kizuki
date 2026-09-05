@@ -1,7 +1,10 @@
 import {
   chmodSync,
   closeSync,
+  constants,
   existsSync,
+  fchmodSync,
+  fstatSync,
   fsyncSync,
   lstatSync,
   mkdirSync,
@@ -246,6 +249,8 @@ interface PathInfo {
   symlink: boolean;
   mode: number;
   uid: number;
+  dev: number;
+  ino: number;
 }
 
 function readPath(path: string): PathInfo {
@@ -256,6 +261,8 @@ function readPath(path: string): PathInfo {
     symlink: st.isSymbolicLink(),
     mode: Number(st.mode),
     uid: Number(st.uid),
+    dev: Number(st.dev),
+    ino: Number(st.ino),
   };
 }
 
@@ -282,7 +289,7 @@ function formatMode(mode: number): string {
   return ((mode & 0o777) + 0o1000).toString(8).slice(1);
 }
 
-function assertOwned(path: string, st: PathInfo): void {
+function assertOwned(path: string, st: Pick<PathInfo, "uid">): void {
   const uid = processUid();
   if (uid === null) return;
   if (st.uid !== uid) {
@@ -331,9 +338,21 @@ function chmodPrivateDir(path: string): boolean {
     );
   }
   assertOwned(path, st);
-  if ((st.mode & 0o777) === VAULT_DIR_MODE) return false;
-  chmodSync(path, VAULT_DIR_MODE);
-  return true;
+  const fd = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  try {
+    const opened = fstatSync(fd);
+    assertOwned(path, opened);
+    if (!opened.isDirectory() || opened.dev !== st.dev || opened.ino !== st.ino) {
+      throw new VaultInitError("symlink_escape", "vault directory changed during permission repair");
+    }
+    const changed = (opened.mode & 0o777) !== VAULT_DIR_MODE;
+    if (changed) { fchmodSync(fd, VAULT_DIR_MODE); fsyncSync(fd); }
+    const after = readPath(path);
+    if (after.symlink || !after.directory || after.dev !== opened.dev || after.ino !== opened.ino) {
+      throw new VaultInitError("symlink_escape", "vault directory changed during permission repair");
+    }
+    return changed;
+  } finally { closeSync(fd); }
 }
 
 function chmodPrivateFile(path: string): boolean {
