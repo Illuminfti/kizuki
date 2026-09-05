@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { initAgents, initGraph, initSearch, openLedger, resolvePort } from "@kizuki/core";
+import { initAgents, initGraph, initSearch, openLedger, bindFromConfig } from "@kizuki/core";
 import type { Principal, RetrievalPort } from "@kizuki/core";
 import { ownerPrincipal, principalFromToken } from "./principal";
 import { runStdio } from "./stdio";
@@ -49,11 +49,9 @@ function parse(argv: string[]): Options | null {
  * runs on the deterministic floor, which is what invariant 5 requires of
  * every served read.
  */
-function bindRetrieval(vault: string, id: string): RetrievalPort {
+async function bindRetrieval(vault: string, id: string): Promise<RetrievalPort> {
   const dataDir = join(vault, ".kizuki", "retrieval", id);
-  mkdirSync(dataDir, { recursive: true });
-  const registration = resolvePort<RetrievalPort>("retrieval", id);
-  return registration.factory({
+  const { port } = await bindFromConfig<RetrievalPort>("retrieval", { retrieval: id }, {
     vault_path: vault,
     data_dir: dataDir,
     config: {},
@@ -62,6 +60,7 @@ function bindRetrieval(vault: string, id: string): RetrievalPort {
     // stdout is the protocol channel; a port's own lines go to stderr.
     logger: (line) => process.stderr.write(`${line.level} ${line.message}\n`),
   });
+  return port;
 }
 
 function refuse(message: string): never {
@@ -105,11 +104,10 @@ export async function main(argv: string[]): Promise<void> {
   let retrieval: RetrievalPort | null = null;
   if (options.retrieval !== null) {
     try {
-      retrieval = bindRetrieval(options.vault, options.retrieval);
+      retrieval = await bindRetrieval(options.vault, options.retrieval);
     } catch {
       db.close();
-      // The id is the caller's own argument, so naming it leaks nothing.
-      refuse(`retrieval port not registered: ${options.retrieval}`);
+      refuse("retrieval port could not start");
     }
   }
 
@@ -124,8 +122,11 @@ export async function main(argv: string[]): Promise<void> {
       ...(retrieval === null ? {} : { retrieval }),
     });
   } finally {
-    if (retrieval !== null) await retrieval.close();
-    db.close();
+    try {
+      if (retrieval !== null) await retrieval.close();
+    } finally {
+      db.close();
+    }
   }
 }
 

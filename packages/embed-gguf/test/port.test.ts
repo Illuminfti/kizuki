@@ -246,12 +246,12 @@ describe("kizuki.embedding.gguf", () => {
     }
   });
 
-  test("registers and binds through the port registry", () => {
+  test("registers and binds through the port registry", async () => {
     const temporary = temporaryEmbed();
     cleanups.push(temporary.cleanup);
     const registry = new PortRegistry();
     registerGgufEmbedding(registry);
-    const bound = registry.bindFromConfig<EmbeddingPort>(
+    const bound = await registry.bindFromConfig<EmbeddingPort>(
       "embedding",
       { embedding: GGUF_EMBEDDING_ID },
       temporary.ctx,

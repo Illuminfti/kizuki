@@ -87,7 +87,8 @@ export interface Port {
   close(): Promise<void>;
 }
 
-export type PortFactory<T> = (ctx: PortContext) => T;
+/** A failed factory must release resources it acquired before rejecting. */
+export type PortFactory<T> = (ctx: PortContext) => T | Promise<T>;
 
 export class PortError extends Error {
   override readonly name = "PortError";

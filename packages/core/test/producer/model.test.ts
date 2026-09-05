@@ -391,7 +391,7 @@ describe("kizuki.producer.model", () => {
     expect(registry.listPorts("producer").map((d) => d.id)).toEqual([MODEL_PRODUCER_ID]);
     const temporary = temporaryProducerContext(MODEL_PRODUCER_DESCRIPTOR);
     try {
-      const bound = registry.bindFromConfig<ProducerPort>(
+      const bound = await registry.bindFromConfig<ProducerPort>(
         "producer",
         { producer: MODEL_PRODUCER_ID },
         temporary.ctx,
