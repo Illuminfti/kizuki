@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, expect, spyOn, test } from 'bun:test';
 import { createHelpers } from './helpers';
 const h = createHelpers();
 afterEach(h.cleanup);
@@ -14,7 +14,7 @@ import { ConnectionStateStore, getCheckpoint, listConnections, openLedger, revok
 import { createGmailConnector, inspectGmailState, GMAIL_SCOPES, type GmailConnectorConfig, type GmailConnectorDeps } from '@kizuki/connector-gmail';
 import { GmailFixture } from '../../connector-gmail/src/testing';
 import { runGmailConnect } from '../src/commands/connect-gmail';
-import { loadConnector, selectConnection } from '../src/connections';
+import { listHostConnections, loadConnector, selectConnection } from '../src/connections';
 import type { CliIo } from '../src/commands';
 function ownerIo(setup: ReturnType<typeof h.tempVault>) { const output: string[] = []; let prompts = 0; const io: CliIo = { env: { ...setup.env, KIZUKI_GMAIL_CLIENT_ID: 'synthetic-client', KIZUKI_GMAIL_CLIENT_SECRET_REF: 'env:SYNTHETIC_APP_SECRET', SYNTHETIC_APP_SECRET: 'synthetic-app-secret' }, vaultOverride: setup.vault, stdinIsTTY: true, stdoutIsTTY: true, stderrIsTTY: true, out: line => output.push(line), err: line => output.push(line), prompt: async () => { prompts++; throw Error('no prompts'); } }; return { io, output, prompts: () => prompts }; }
 function oauth(f: GmailFixture) { let reply!: (url: URL) => void, opens = 0, posts = 0; const callback = new Promise<URL>(resolve => { reply = resolve; }); const transport: OAuthTransport = { listen: async () => ({ redirect_uri: 'http://127.0.0.1:39123/callback', callback: () => callback, close: async () => { } }), postForm: async () => { posts++; return { status: 200, body: { access_token: 'synthetic-oauth-access', refresh_token: 'synthetic-oauth-refresh', expires_in: 3600, scope: GMAIL_SCOPES.join(' '), token_type: 'Bearer' } }; } }; return { create: (config: GmailConnectorConfig, deps: GmailConnectorDeps) => createGmailConnector(config, { ...deps, oauth: transport, fetch: f.fetch, now: f.now }), open: async (raw: string) => { opens++; const url = new URL(raw); expect(url.origin).toBe('https://accounts.google.com'); expect(url.searchParams.get('code_challenge_method')).toBe('S256'); expect(url.searchParams.get('scope')).toBe(GMAIL_SCOPES.join(' ')); const result = new URL('http://127.0.0.1:39123/callback'); result.searchParams.set('state', url.searchParams.get('state')!); result.searchParams.set('code', 'synthetic-code'); reply(result); }, counts: () => ({ opens, posts }) }; }
@@ -117,4 +117,33 @@ test('missing app configuration invokes no injected browser, factory or prompt',
     await expect(runGmailConnect(owner.io, { fields, json: true }, () => { }, () => { calls++; throw Error('unexpected'); }, async () => { calls++; })).rejects.toThrow('not configured');
     expect(calls).toBe(0);
     expect(owner.prompts()).toBe(0);
+});
+
+
+test('denied Gmail selection and enumeration never open protected state before capture admission', async () => {
+    const setup = h.tempVault(), owner = ownerIo(setup), f = new GmailFixture(1), sign = oauth(f);
+    await runGmailConnect(owner.io, { fields, json: true }, () => {}, sign.create, sign.open);
+    const db = openLedger(join(setup.vault, '.kizuki/kizuki.db'));
+    const store = new ConnectionStateStore(join(setup.vault, '.kizuki'));
+    try {
+        const source = listConnections(db)[0]!;
+        for (const revoked of [false, true]) {
+            if (revoked) {
+                grant(db, source.source_key);
+                revokeSourceGrant(db, {source_key: source.source_key, expected_revision: 1, operation_id: 'synthetic-state-read-revoke'});
+            }
+            let factories = 0;
+            const requests = f.requests.length;
+            const read = spyOn(store, 'read');
+            try {
+                const selected = selectConnection(db, store, 'kizuki.gmail', source.source_key);
+                await expect(loadConnector(selected, store, db, owner.io.env, () => { factories++; throw Error('unexpected factory'); })).rejects.toThrow('source_capture_denied');
+                const enumerated = listHostConnections(db, store).find(item => item.connection.source_key === source.source_key)!;
+                await expect(loadConnector(enumerated, store, db, owner.io.env, () => { factories++; throw Error('unexpected factory'); })).rejects.toThrow('source_capture_denied');
+                expect(read).not.toHaveBeenCalled();
+                expect(factories).toBe(0);
+                expect(f.requests.length).toBe(requests);
+            } finally { read.mockRestore(); }
+        }
+    } finally { db.close(); }
 });

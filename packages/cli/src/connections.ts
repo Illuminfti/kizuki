@@ -234,7 +234,10 @@ function inspectConnection(
     if (["kizuki.imap", "kizuki.telegram", "kizuki.gmail"].includes(connection.connector_id)) {
       const ref = connection.secret_refs[0];
       if (connection.secret_refs.length !== 1 || ref === undefined) throw new ConnectionError(`${connection.connector_id} connection state is missing`);
-      if (store.read(connection) === null) throw new ConnectionError(`${connection.connector_id} connection state is missing`);
+      // Gmail capture selection is metadata-only. loadConnector admits the
+      // source before reading credentials; explicit reauthorization reads its
+      // selected prior state in runGmailConnect under owner sign-in authority.
+      if (connection.connector_id !== "kizuki.gmail" && store.read(connection) === null) throw new ConnectionError(`${connection.connector_id} connection state is missing`);
       // Signed-in state is connector-owned opaque bytes. This small in-memory
       // descriptor exposes only the core-minted reference needed to build the
       // connector; it is never encoded or written as host state.
