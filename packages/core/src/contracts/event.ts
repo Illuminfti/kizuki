@@ -143,15 +143,23 @@ function isVisibleIdentifier(value: string): boolean {
   if (value.includes("\u034f")) return false;
   // A cluster is usable when it contains visible source content. This admits
   // native emoji selectors, joins and tag sequences without rewriting them.
-  return [...identifierSegmenter.segment(value)].every(({ segment }) => {
-    const chars = [...segment];
-    // Ordinary internal whitespace is valid in opaque source names; trimming
-    // above still excludes it at either edge and as the entire identifier.
-    if (chars.every((ch) => WHITE_SPACE.test(ch))) return true;
-    return chars.some((ch) =>
-      !MARK.test(ch) && !FORMAT.test(ch) && !DEFAULT_IGNORABLE.test(ch) && !WHITE_SPACE.test(ch),
-    );
-  });
+  // Most native source IDs are printable ASCII. Avoid allocating a grapheme
+  // iterator at all for those, including the permitted large importer IDs.
+  if (/^[\x20-\x7e]+$/.test(value)) return true;
+  for (const { segment } of identifierSegmenter.segment(value)) {
+    let whitespaceOnly = true;
+    let visible = false;
+    for (const ch of segment) {
+      if (WHITE_SPACE.test(ch)) continue;
+      whitespaceOnly = false;
+      if (!MARK.test(ch) && !FORMAT.test(ch) && !DEFAULT_IGNORABLE.test(ch)) {
+        visible = true;
+        break;
+      }
+    }
+    if (!whitespaceOnly && !visible) return false;
+  }
+  return true;
 }
 
 function checkString(
