@@ -1,36 +1,32 @@
 import type { PortContext, RetrievalPort } from "@kizuki/core";
-import { createEmbeddedRetrievalPort } from "./port";
+import { openEmbeddedRetrievalPort } from "./port";
 import type { EmbeddedRetrievalOptions } from "./port";
-
-/**
- * MCP and other long-lived surfaces hold one engine connection for the
- * process lifetime. Opening per tool call is forbidden.
- */
+/** One pending open as well as one ready connection per surface lifetime. */
 export class McpEngineSurface {
-  private port: RetrievalPort | undefined;
+  private opening: Promise<RetrievalPort> | undefined;
   engineOpens = 0;
-
-  async open(
-    ctx: PortContext,
-    options: EmbeddedRetrievalOptions = {},
-  ): Promise<RetrievalPort> {
-    if (this.port !== undefined) return this.port;
+  open(ctx: PortContext, options: EmbeddedRetrievalOptions = {}): Promise<RetrievalPort> {
+    if (this.opening !== undefined) {
+      return this.opening;
+    }
     this.engineOpens += 1;
-    this.port = createEmbeddedRetrievalPort(ctx, options);
-    return this.port;
+    this.opening = openEmbeddedRetrievalPort(ctx, options).catch(error => { this.opening = undefined; throw error; });
+    return this.opening;
   }
-
-  async invoke<T>(
-    ctx: PortContext,
-    options: EmbeddedRetrievalOptions,
-    operation: (port: RetrievalPort) => Promise<T>,
-  ): Promise<T> {
-    const port = await this.open(ctx, options);
-    return operation(port);
+  async invoke<T>(ctx: PortContext, options: EmbeddedRetrievalOptions, operation: (port: RetrievalPort) => Promise<T>): Promise<T> {
+    return operation(await this.open(ctx, options));
   }
-
   async close(): Promise<void> {
-    await this.port?.close();
-    this.port = undefined;
+    const opening = this.opening;
+    if (opening !== undefined) {
+      try {
+        await (await opening).close();
+      }
+      finally {
+        if (this.opening === opening) {
+          this.opening = undefined;
+        }
+      }
+    }
   }
 }
