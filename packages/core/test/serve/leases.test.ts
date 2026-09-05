@@ -40,6 +40,34 @@ afterEach(() => {
 });
 
 describe("leases", () => {
+  test("unknown boot identity cannot justify stealing a live holder", () => {
+    for (const [before, after] of [["pid:11", "pid:22"], ["boot-a", "pid:22"], ["pid:11", "boot-b"], ["", "boot-b"]]) {
+      const db = openDb();
+      try {
+        acquireLease(db, processAt(11, before!, [11]));
+        const contender = processAt(22, after!, [11, 22], "2026-09-03T01:00:00Z");
+        expect(acquireLease(db, contender).reason).toBe("busy");
+        expect(() => reclaimDeadLease(db, "writer", contender)).toThrow(ServeDaemonError);
+        expect(readLease(db, "writer")?.holder_pid).toBe(11);
+      } finally { db.close(); }
+    }
+  });
+
+  test("failed replacement preserves the prior boot lease for retry", () => {
+    const db = openDb();
+    try {
+      acquireLease(db, processAt(11, "boot-a", [11]));
+      const original = readLease(db, "writer");
+      db.exec("CREATE TRIGGER refuse_lease BEFORE INSERT ON leases BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END");
+      const contender = processAt(22, "boot-b", [11, 22]);
+      expect(() => acquireLease(db, contender)).toThrow("synthetic failure");
+      expect(readLease(db, "writer")).toEqual(original);
+      db.exec("DROP TRIGGER refuse_lease");
+      expect(acquireLease(db, contender).reason).toBe("reclaimed");
+      expect(readLease(db, "writer")?.holder_pid).toBe(22);
+    } finally { db.close(); }
+  });
+
   test("a live holder's lease is never stolen", () => {
     const db = openDb();
     const first = processAt(11, "boot-a", [11]);

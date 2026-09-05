@@ -90,7 +90,9 @@ describe("kizuki serve restart", () => {
     expect(result.stderr).toContain("live process");
   });
 
-  test("a container starts cleanly after a host reboot left the writer lease behind (#441)", () => {
+  // A PID fallback cannot prove a reboot; the core suite tests that it refuses
+  // to steal a live holder. This consumer case requires a native boot identity.
+  test.skipIf(readBootId().startsWith("pid:"))("a container starts cleanly after a host reboot left the writer lease behind (#441)", () => {
     // Simulates a host reboot without rebooting hardware: a lease row is left
     // by "the previous boot" holding this test process's own PID — which is
     // trivially alive, exactly like a container's PID 1 recurring across a
