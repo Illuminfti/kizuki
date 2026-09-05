@@ -907,6 +907,12 @@ function purgeEventsLocked(
   return outcome;
 }
 
+function ownedErasureProof(db:Database, receiptId:string, op:PurgeOp, at:string):AbsenceProof|null {
+  if(!tableExists(db,"source_retrieval_stores")) return null;
+  const proved=db.query("SELECT 1 FROM source_grants g JOIN source_retrieval_stores s ON s.source_key=g.source_key WHERE g.purge_receipt_id=? AND s.store_id=? AND s.status IN ('maintained','absent')").get(receiptId,`local:${op.store}`);
+  return proved===null ? null : {checked:op.ids.length,found:[],store:op.store,method:"owned-generation-erasure",at};
+}
+
 async function reconcileOps(
   db: Database,
   receiptId: string,
@@ -1117,7 +1123,7 @@ export async function runPurge(
   const binding = bindRetrieval(vaultPath, options.retrieval, clock);
   try {
   const retrievalStore =
-    binding.status === "not_configured" ? null : FTS5_RETRIEVAL_ID;
+    binding.status === "not_configured" ? null : binding.port?.descriptor.id ?? FTS5_RETRIEVAL_ID;
   const phase1 = purgeEventsLocked(db, vaultPath, filter, reason, {
     ...options,
     retrieval_store: retrievalStore,
@@ -1147,11 +1153,11 @@ export async function verifyPurge(
   const proofs: AbsenceProof[] = [];
   let ok = true;
   for (const op of ops) {
-    if (binding.port === null) {
+    if (binding.port === null && ownedErasureProof(db,receiptId,op,clock()) === null) {
       ok = false;
       continue;
     }
-    const proof = await binding.port.verifyAbsent(op.ids);
+    const proof = ownedErasureProof(db,receiptId,op,clock()) ?? await binding.port!.verifyAbsent(op.ids);
     proofs.push(proof);
     if (proof.found.length > 0) ok = false;
     if (proof.found.length === 0 && op.state !== "done") {

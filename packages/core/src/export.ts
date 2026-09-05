@@ -1612,7 +1612,7 @@ const SOURCE_BACKUP_TABLES = ["source_grants", "source_event_bindings", "source_
 type SourceBackupTable = typeof SOURCE_BACKUP_TABLES[number];
 const SOURCE_COLUMNS: Record<SourceBackupTable, readonly string[]> = {
   source_retrieval_stores: ["source_key", "store_id", "status"],
-  source_store_inventory: ["source_key", "checked", "payload_complete"],
+  source_store_inventory: ["source_key", "checked", "payload_complete", "erasure_report"],
   native_owner_evidence: ["event_id", "origin", "request_digest", "recorded_at", "filing_state"],
   source_grants: ["source_key", "connector_id", "revision", "status", "policy", "policy_digest", "updated_at", "revoke_operation", "purge_receipt_id"],
   source_event_bindings: ["event_id", "source_key", "grant_revision", "policy_digest"],
@@ -1630,7 +1630,7 @@ function assertSourceExport(db: Database): void {
   }
   // Native purge currently retains derived claim rows. Status alone cannot
   // authorize copying their payload after a source denial.
-  for (const row of db.query<{ provenance: string }, []>("SELECT provenance FROM claims").iterate()) {
+  for (const row of db.query<{ provenance: string }, []>("SELECT provenance FROM claims WHERE status!='purged' OR length(body)>0 OR object IS NOT NULL OR target IS NOT NULL OR subject IS NOT NULL OR predicate IS NOT NULL OR model_ref IS NOT NULL OR subjects!='[]' OR frontmatter!='{}'").iterate()) {
     const ids = JSON.parse(row.provenance) as string[];
     const managed = ids.filter(id => db.query("SELECT 1 FROM source_event_bindings WHERE event_id=?").get(id) !== null);
     if (!sourceEventsAllowed(db, managed, { owner: true, purpose: "export" })) throw new Error("source_export_denied");
@@ -1641,7 +1641,7 @@ function assertSourceExport(db: Database): void {
 }
 function restoreSourcePolicy(db: Database, backup: string, manifest: ExportManifest): void {
   for (const table of SOURCE_BACKUP_TABLES) {
-    const required = manifest.schema_versions.ledger >= (table === "native_owner_evidence" ? 12 : table === "source_retrieval_stores" || table === "source_store_inventory" ? 13 : 11);
+    const required = manifest.schema_versions.ledger >= (table === "native_owner_evidence" ? 12 : table === "source_store_inventory" ? 14 : table === "source_retrieval_stores" ? 13 : 11);
     const path = `ledger/${table}.jsonl`;
     if (required && manifest.files[path] === undefined) throw new Error("backup source policy stream missing");
     for (const row of streamRows(backup, path, required)) {

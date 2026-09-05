@@ -1,4 +1,10 @@
 import {
+  sourceErasureReport,
+  eraseSourcePayload,
+  maintainSourceSqlite,
+  type SourceErasureReport,
+} from "./source-erasure";
+import {
   bindSourceStoreId,
   sourceStoreStatuses,
   sourceStoresPending,
@@ -52,6 +58,7 @@ export interface SourceGrant {
   updated_at: string;
   revoke_operation: string | null;
   purge_receipt_id: string | null;
+  erasure: SourceErasureReport | null;
   retention_effects: {
     joint_derived_records: "whole_record_erasure";
     disposable_retrieval: "whole_generation_erasure";
@@ -84,7 +91,11 @@ export interface SourceGrantReceipt {
 }
 interface GrantRow extends Omit<
   SourceGrant,
-  "policy" | "purge_blockers" | "owned_retrieval" | "retention_effects"
+  | "policy"
+  | "purge_blockers"
+  | "owned_retrieval"
+  | "retention_effects"
+  | "erasure"
 > {
   policy: string;
 }
@@ -186,6 +197,7 @@ export function inspectSourceGrant(
   return {
     ...row,
     policy,
+    erasure: sourceErasureReport(db, row.source_key),
     retention_effects: {
       joint_derived_records: "whole_record_erasure",
       disposable_retrieval: "whole_generation_erasure",
@@ -383,6 +395,7 @@ export async function resumeSourceRevocation(
     fail("source_not_denied");
   const { runPurge, resumePurge, PurgeError, underPurgeFence } =
     await import("./purge");
+  db.exec("PRAGMA secure_delete=ON");
   const receiptId = grant.purge_receipt_id;
   const exists =
     db.query("SELECT 1 FROM event_purges WHERE receipt_id=?").get(receiptId) !==
@@ -408,11 +421,17 @@ export async function resumeSourceRevocation(
         },
       );
     }
+    await underPurgeFence(vaultPath, options, async () => {
+      eraseSourcePayload(db, vaultPath, grant.source_key);
+      await eraseOwnedSourceStores(
+        db,
+        grant.source_key,
+        options.ownedRetrieval,
+      );
+      maintainSourceSqlite(db, grant.source_key);
+    });
     const verified = await resumePurge(db, vaultPath, receiptId, options);
     if (!verified.ok) return inspectSourceGrant(db, row.source_key)!;
-    await underPurgeFence(vaultPath, options, () =>
-      eraseOwnedSourceStores(db, grant.source_key, options.ownedRetrieval),
-    );
   } catch (error) {
     if (error instanceof PurgeError && error.code === "canon_changed")
       return {

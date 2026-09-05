@@ -54,3 +54,7 @@ export function applySourceStoresV13(db: Database): void {
     ) STRICT;
   `);
 }
+
+export function applySourceErasureV14(db: Database): void {
+  db.exec("ALTER TABLE source_store_inventory ADD COLUMN erasure_report TEXT");
+}

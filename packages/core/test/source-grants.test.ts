@@ -202,9 +202,7 @@ describe("durable source grants", () => {
       expect(inspectSourceGrant(reopened, a)?.status).toBe("denied");
       const completed = await resumeSourceRevocation(reopened, dir, "revoke-a");
       expect(completed.status).toBe("denied");
-      expect(completed.purge_blockers).toContain(
-        "owned_payload_maintenance_pending",
-      );
+      expect(completed.purge_blockers).toContain("owned_retrieval_pending");
       expect(reopened.query("SELECT count(*) AS n FROM events").get()).toEqual({
         n: 1,
       });
@@ -491,7 +489,8 @@ test("revocation stays denied while a derived write is in flight and removes its
       retrieval: port,
     });
     expect(remaining.status).toBe("denied");
-    expect(remaining.purge_blockers).toContain("claim_payload_retained");
+    expect(remaining.purge_blockers).not.toContain("claim_payload_retained");
+    expect(remaining.purge_blockers).toContain("owned_retrieval_pending");
     expect(db.query("SELECT state FROM retrieval_ops").get()).toEqual({
       state: "cancelled",
     });
@@ -615,7 +614,15 @@ test("retained non-body claim payload cannot produce a completed purge", async (
     });
     const result = await resumeSourceRevocation(db, dir, "residual-payload");
     expect(result.status).toBe("denied");
-    expect(result.purge_blockers).toContain("claim_payload_retained");
+    expect(result.purge_blockers).not.toContain("claim_payload_retained");
+    expect(
+      db.query("SELECT subject,target,frontmatter,model_ref FROM claims").get(),
+    ).toEqual({
+      subject: null,
+      target: null,
+      frontmatter: "{}",
+      model_ref: null,
+    });
   } finally {
     db.close();
   }
@@ -1046,6 +1053,134 @@ test("owned-store omission is not absence and broken stores can be erased throug
   expect(erased.owned_retrieval).toEqual([
     { store_id: "local:broken", status: "maintained" },
   ]);
-  expect(erased.purge_blockers).toContain("owned_payload_maintenance_pending");
+  expect(erased.status).toBe("purged");
+  db.close();
+});
+
+test("native source erasure removes whole joint claims and SQLite payload while preserving independent evidence", async () => {
+  const { db, dir, a, b } = setup();
+  grant(db, a);
+  setSourceGrant(db, {
+    source_key: b,
+    expected_revision: 0,
+    operation_id: "grant-b-physical",
+    policy: policy(),
+  });
+  const secret = "SOURCE_ERASURE_UNIQUE_SYNTHETIC_5817";
+  const aa = accept(
+    db,
+    { ...event(), source_record_id: "a-physical", text: secret },
+    { source: { source_key: a, expected_revision: 1 } },
+  );
+  const bb = accept(
+    db,
+    {
+      ...event(),
+      source_record_id: "b-physical",
+      text: "Independent B evidence",
+    },
+    { source: { source_key: b, expected_revision: 1 } },
+  );
+  if (aa.status !== "stored" || bb.status !== "stored")
+    throw new Error("fixture failed");
+  const joint = await insertClaim(
+    { db },
+    claimInput(aa.event.event_id, {
+      body: secret,
+      subject: secret,
+      subjects: [secret],
+      object: secret,
+      target: secret,
+      frontmatter: { title: secret },
+      provenance: [aa.event.event_id, bb.event.event_id],
+    }),
+  );
+  const independent = await insertClaim(
+    { db },
+    claimInput(bb.event.event_id, {
+      body: "Independent B claim",
+      subject: "person:b",
+      subjects: ["person:b"],
+      object: "B employer",
+    }),
+  );
+  if (!("claim" in joint) || !("claim" in independent))
+    throw new Error("fixture claim failed");
+  revokeSourceGrant(db, {
+    source_key: a,
+    expected_revision: 1,
+    operation_id: "physical-revoke",
+  });
+  const done = await resumeSourceRevocation(db, dir, "physical-revoke", {
+    ownedRetrieval: {
+      stores: async () => ({ stores: [], absent_store_ids: [] }),
+    },
+  });
+  expect(done.status).toBe("purged");
+  expect(done.erasure?.affected_claim_ids).toContain(joint.claim.claim_id);
+  expect(
+    db
+      .query(
+        "SELECT body,subject,object,target,frontmatter FROM claims WHERE claim_id=?",
+      )
+      .get(joint.claim.claim_id),
+  ).toEqual({
+    body: "",
+    subject: null,
+    object: null,
+    target: null,
+    frontmatter: "{}",
+  });
+  expect(
+    db
+      .query("SELECT body FROM claims WHERE claim_id=?")
+      .get(independent.claim.claim_id),
+  ).toEqual({ body: "Independent B claim" });
+  expect(
+    db.query("SELECT text FROM events WHERE event_id=?").get(bb.event.event_id),
+  ).toEqual({ text: "Independent B evidence" });
+  const { readFileSync, existsSync } = await import("node:fs");
+  for (const suffix of ["", "-wal", "-shm"]) {
+    const path = join(dir, ".kizuki", "kizuki.db" + suffix);
+    if (existsSync(path))
+      expect(readFileSync(path).includes(Buffer.from(secret))).toBe(false);
+  }
+  db.close();
+});
+
+test("SQLite readers keep physical source completion pending until checkpoint can finish", async () => {
+  const { db, dir, a } = setup();
+  grant(db, a);
+  const accepted = accept(db, event(), {
+    source: { source_key: a, expected_revision: 1 },
+  });
+  if (accepted.status !== "stored") throw new Error("fixture failed");
+  const reader = openLedger(join(dir, ".kizuki", "kizuki.db"));
+  reader.exec("BEGIN");
+  reader.query("SELECT text FROM events").all();
+  revokeSourceGrant(db, {
+    source_key: a,
+    expected_revision: 1,
+    operation_id: "reader-revoke",
+  });
+  const options = {
+    ownedRetrieval: {
+      stores: async () => ({ stores: [], absent_store_ids: [] }),
+    },
+  };
+  const pending = await resumeSourceRevocation(
+    db,
+    dir,
+    "reader-revoke",
+    options,
+  );
+  expect(pending.status).toBe("denied");
+  expect(pending.erasure?.logical_absence).toBe(true);
+  expect(pending.erasure?.owned_file_maintenance).toBe("pending");
+  reader.exec("ROLLBACK");
+  reader.close();
+  const done = await resumeSourceRevocation(db, dir, "reader-revoke", options);
+  expect(done.status).toBe("purged");
+  expect(done.erasure?.owned_file_maintenance).toBe("complete");
   db.close();
 });

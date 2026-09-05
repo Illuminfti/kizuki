@@ -95,6 +95,9 @@ export function journalExtractBatch(db: Database, mined: MineResult, modelRef: s
 }
 
 export function readDurableExtractBatch(db: Database): DurableExtractBatch | null {
+  return readStoredExtractBatch(db, true);
+}
+function readStoredExtractBatch(db: Database, enforceConsent: boolean): DurableExtractBatch | null {
   const rows = db.query<{ previous_cursor: string; cursor: string; drafts: string; model_ref: string | null; input_ids: string | null; integrity: string | null; outcome: string }, []>(
     "SELECT * FROM extract_batches ORDER BY created_at, previous_cursor LIMIT 2",
   ).all();
@@ -111,7 +114,7 @@ export function readDurableExtractBatch(db: Database): DurableExtractBatch | nul
   const ids = events.map(event => event.event_id);
   if (row.input_ids !== null && row.input_ids !== JSON.stringify(ids)) throw new Error("durable extraction inputs changed");
   if (parsed.claims.some(draft => draft.event_ids.some(id => !ids.includes(id)))) throw new Error("durable extraction provenance is invalid");
-  for (const draft of parsed.claims) requireSourceEvents(db, draft.event_ids, { owner: false, purpose: "extract", model: true });
+  if (enforceConsent) for (const draft of parsed.claims) requireSourceEvents(db, draft.event_ids, { owner: false, purpose: "extract", model: true });
   const batch: DurableExtractBatch = { previous_cursor: row.previous_cursor || null, cursor, drafts: parsed.claims,
     model_ref: row.model_ref, input_ids: ids, outcome: row.outcome as DurableExtractBatch["outcome"] };
   if (row.integrity !== null && row.integrity !== integrity(batch)) throw new Error("durable extraction integrity mismatch");
@@ -137,7 +140,7 @@ export function purgeExtractInputs(db: Database, eventIds: ReadonlySet<string>, 
   if (!tableExists(db, "extract_batches")) return;
   let batch: DurableExtractBatch | null;
   try {
-    batch = readDurableExtractBatch(db);
+    batch = readStoredExtractBatch(db, false);
   } catch {
     // Derived decisions cannot veto an owner purge. Do not parse or preserve
     // corrupt content; the source transaction also commits this audit marker.
