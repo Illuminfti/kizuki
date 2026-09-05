@@ -1,28 +1,16 @@
-import { dlopen, FFIType, ptr, toArrayBuffer } from "bun:ffi";
+import { ptr } from "bun:ffi";
 import type { Stats } from "node:fs";
 import { closeSync, constants, fstatSync, fsyncSync, openSync, readSync } from "node:fs";
 import { tryAdvisoryFileLockFd, type AdvisoryFileLock } from "./advisory-file-lock";
 import { resolve } from "node:path";
+import { loadOwnedDirectoryNative } from "./owned-directory-native";
 
-// Qualified Linux x86_64 glibc ABI: bits/dirent.h has u64 ino/off,
-// u16 reclen at 16, u8 type at 18, followed by native d_name bytes at 19.
+// Qualified Linux x86_64 glibc ABI: getdents64 is syscall 217; linux_dirent64
+// has u64 ino/off, u16 reclen at 16, u8 type at 18, then d_name bytes at 19.
 // No ABI claim is made for Darwin or other libc/architecture combinations.
-let native: ReturnType<typeof load> | undefined;
-function load() {
-  if (process.platform !== "linux" || process.arch !== "x64") throw new Error("owned_directory_unsupported");
-  return dlopen("libc.so.6", {
-    openat: { args: [FFIType.i32, FFIType.ptr, FFIType.i32, FFIType.i32], returns: FFIType.i32 },
-    unlinkat: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
-    fcntl: { args: [FFIType.i32, FFIType.i32, FFIType.i32], returns: FFIType.i32 },
-    fdopendir: { args: [FFIType.i32], returns: FFIType.ptr },
-    readdir: { args: [FFIType.ptr], returns: FFIType.ptr },
-    closedir: { args: [FFIType.ptr], returns: FFIType.i32 },
-    __errno_location: { args: [], returns: FFIType.ptr },
-  });
-}
-function api() { return native ??= load(); }
+let native: ReturnType<typeof loadOwnedDirectoryNative> | undefined;
+function api() { return native ??= loadOwnedDirectoryNative(); }
 function fail(kind = "unsafe"): never { throw new Error(`owned_directory_${kind}`); }
-function errno() { const pointer = api().symbols.__errno_location(); if (!pointer) fail(); return new DataView(toArrayBuffer(pointer, 0, 4)); }
 function nameBytes(value: string | Buffer): Buffer {
   const bytes = typeof value === "string" ? Buffer.from(value) : value;
   if (!bytes.length || bytes.length > 255 || bytes.includes(0) || bytes.includes(47) || bytes.equals(Buffer.from(".")) || bytes.equals(Buffer.from(".."))) fail();
@@ -30,12 +18,10 @@ function nameBytes(value: string | Buffer): Buffer {
 }
 function childFd(parent: number, name: string | Buffer, directory = false): number | null {
   const bytes = nameBytes(name);
-  // Creating a JS memory view can change thread errno. Prepare it before
-  // the native operation and read that same view without allocating afterward.
-  const error = errno();
-  const fd = api().symbols.openat(parent, ptr(bytes), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK | 0x80000 /* Linux O_CLOEXEC */ | (directory ? constants.O_DIRECTORY : 0), 0);
+  const fd = api().symbols.openChild(parent, ptr(bytes), directory ? 1 : 0);
+  if (typeof fd !== "number" || !Number.isSafeInteger(fd) || fd > 0x7fffffff) fail("abi_invalid");
   if (fd >= 0) return fd;
-  if (error.getInt32(0, true) === 2) return null; // ENOENT, never ELOOP/ENOTDIR.
+  if (fd === -2 /* kernel ENOENT at this open */) return null;
   fail();
 }
 function openPath(path: string): number {
@@ -53,28 +39,30 @@ function identity(fd: number): OwnedDirectoryIdentity { const stat = fstatSync(f
 function same(a: OwnedDirectoryIdentity | null, b: OwnedDirectoryIdentity | null): boolean { return a === null ? b === null : b !== null && a.dev === b.dev && a.ino === b.ino; }
 function entries(fd: number, remaining: number, stopAtFirst = false): Buffer[] {
   const duplicate = api().symbols.fcntl(fd, 1030 /* Linux F_DUPFD_CLOEXEC */, 0); if (duplicate < 0) fail();
-  const directory = api().symbols.fdopendir(duplicate);
-  if (!directory) { closeSync(duplicate); fail(); }
   const result: Buffer[] = [];
   try {
+    const buffer = Buffer.alloc(16_384), address = ptr(buffer);
     for (;;) {
-      const error = errno();
-      error.setInt32(0, 0, true);
-      const entry = api().symbols.readdir(directory);
-      if (!entry) { if (error.getInt32(0, true) !== 0) fail(); break; }
-      const header = new DataView(toArrayBuffer(entry, 0, 19));
-      const length = header.getUint16(16, true);
-      if (length < 20 || length > 280) fail("abi_invalid");
-      const raw = Buffer.from(toArrayBuffer(entry, 19, length - 19));
-      const end = raw.indexOf(0); if (end < 1 || end > 255) fail("abi_invalid");
-      const name = Buffer.from(raw.subarray(0, end));
-      if (name.equals(Buffer.from(".")) || name.equals(Buffer.from(".."))) continue;
-      nameBytes(name);
-      if (result.length >= remaining) fail("bounds");
-      result.push(name);
-      if (stopAtFirst) break;
+      const count = api().symbols.syscall(217n, BigInt(duplicate), address, BigInt(buffer.length));
+      if (typeof count !== "number" || !Number.isSafeInteger(count) || count > buffer.length) fail("abi_invalid");
+      if (count < 0) fail();
+      if (count === 0) break;
+      for (let offset = 0; offset < count;) {
+        if (count - offset < 19) fail("abi_invalid");
+        const length = buffer.readUInt16LE(offset + 16);
+        if (length < 20 || length > 280 || offset + length > count) fail("abi_invalid");
+        const raw = buffer.subarray(offset + 19, offset + length);
+        const end = raw.indexOf(0); if (end < 1 || end > 255) fail("abi_invalid");
+        const name = Buffer.from(raw.subarray(0, end));
+        offset += length;
+        if (name.equals(Buffer.from(".")) || name.equals(Buffer.from(".."))) continue;
+        nameBytes(name);
+        if (result.length >= remaining) fail("bounds");
+        result.push(name);
+        if (stopAtFirst) return result;
+      }
     }
-  } finally { if (api().symbols.closedir(directory) !== 0) fail(); }
+  } finally { closeSync(duplicate); }
   return result;
 }
 /** Root capability never resolves deletion through a pathname or a /proc fd alias. */
@@ -92,8 +80,8 @@ export class OwnedDirectory {
   isEmpty(): boolean {
     this.assertCurrent();
     const dot = Buffer.from([46, 0]);
-    const fd = api().symbols.openat(this.fd, ptr(dot), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | 0x80000, 0);
-    if (fd < 0) fail();
+    const fd = api().symbols.openChild(this.fd, ptr(dot), 1);
+    if (typeof fd !== "number" || !Number.isSafeInteger(fd) || fd < 0 || fd > 0x7fffffff) fail();
     try {
       const before = fstatSync(fd, { bigint: true });
       if (!same({ dev: before.dev, ino: before.ino }, this.rootIdentity)) fail("identity_changed");
