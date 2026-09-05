@@ -435,6 +435,7 @@ describe("write pass", () => {
       producer: stubProducer({
         status: "unavailable",
         reason: "llm timeout",
+        usage: { calls: 0, input_tokens: 0, output_tokens: 0 },
       }),
     });
     // Never reached: status is "stopped", and no usage is claimed.

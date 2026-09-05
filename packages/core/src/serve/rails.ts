@@ -138,8 +138,6 @@ async function runSyncRail(
     model: { ...written.model, model_ref: hooks?.model_ref ?? null },
     stopped: written.stopped,
     errors,
-    // model_ref is filled in by runRail from the resolved hook, not here.
-    model: { ...written.model, wall_ms: 0, model_ref: null },
   };
 }
 
