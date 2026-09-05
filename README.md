@@ -139,7 +139,7 @@ need to label every captured record by hand.
 | IMAP email | `connect imap` | Interactive terminal enrollment; read-only mailbox access. |
 | Calendar files | `import ics --source PATH` | ICS file ingestion, not Google Calendar OAuth. |
 | Screenpipe text and transcripts | `connect screenpipe --source PATH` | Offline database adapter. Screenpipe must be fully stopped. |
-| An existing knowledge estate | `import import-legacy-wiki` or `import import-legacy-events`, with `--source PATH` | Owner-written mapping files; see [migration](docs/legacy-import.md). |
+| An existing knowledge estate | `import import-legacy-wiki` or `import import-legacy-events`, with `--source PATH` | One-shot importers with owner-written mapping files; see [migration](docs/legacy-import.md). |
 
 **Beeper.** Enable its Desktop API and create an approved connection token in
 **Beeper Desktop → Settings → Integrations**. Supply that token through an
