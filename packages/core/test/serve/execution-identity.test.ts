@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openLedger } from "../../src/ledger/db";
 import { initVault } from "../../src/vault/init";
-import { runServeDaemon } from "../../src/serve/daemon";
+import { runServeDaemon, readServePid, readServeProcessMarker } from "../../src/serve/daemon";
 import { runRail } from "../../src/serve/rails";
 import { listSchedules } from "../../src/serve/schema";
 import { listRunReceipts } from "../../src/serve/receipts";
@@ -27,4 +27,27 @@ test("scheduled, once and manual receipts retain distinct execution identities; 
     expect(scheduled.execution?.due_at).toBeString();
     expect(scheduled.execution?.instance_id).not.toBe(manual.execution?.instance_id);
   } finally { db.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+
+test("daemon marker binds exact instance, remains legacy-readable and preserves a replacement", async () => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-marker-")); initVault(root);
+  const db = openLedger(join(root, ".kizuki", "kizuki.db"));
+  const path = join(root, ".kizuki", "serve.pid");
+  try {
+    writeFileSync(path,"123\n"); expect(readServePid(root)).toBe(123); expect(readServeProcessMarker(root)).toBeNull();
+    writeFileSync(path,"123garbage"); expect(readServePid(root)).toBeNull();
+    let marker: ReturnType<typeof readServeProcessMarker> = null;
+    let ticks = 0;
+    await runServeDaemon(db,root,{http:false,shouldContinue:()=>{
+      marker=readServeProcessMarker(root);
+      expect(statSync(path).mode & 0o777).toBe(0o600);
+      if(ticks++===0)return true;
+      writeFileSync(path,JSON.stringify({...marker,instance_id:"replacement"}));
+      return false;
+    }});
+    const receipt = listRunReceipts(db)[0]!;
+    expect(receipt.execution?.instance_id).toBe(marker!.instance_id);
+    expect(readServeProcessMarker(root)?.instance_id).toBe("replacement");
+  } finally {db.close();rmSync(root,{recursive:true,force:true});}
 });
