@@ -7,7 +7,7 @@ import {
   listConnections,
   openLedger,
   setSourceGrant,
-  writeCheckpoint,
+  saveCheckpoint,
 } from "@kizuki/core";
 import type { ConnectionStateWriter, Connector, SignInIo } from "@kizuki/core";
 import { readdirSync } from "node:fs";
@@ -180,7 +180,10 @@ describe("IMAP interactive enrollment", () => {
     const connectorFor = (candidate: typeof state) => signedInConnector(async () => new TextDecoder().decode(serializeImapState(candidate)));
     try {
       const first = await enrollSignedInConnection(db, store, connectorFor(state), prompts([]));
-      writeCheckpoint(db, first.connector_id, first.source_key, "checkpoint");
+      saveCheckpoint(db, first.connector_id, first.source_key, "checkpoint", "sync", {
+        stored: 0, duplicates: 0, errors: [], proposals_created: 0, withdrawn: 0,
+        retractions_filed: 0, cursor: "checkpoint",
+      });
       const before = store.read(first)!;
       for (const candidate of [
         { ...state, username: "other@example.test" },

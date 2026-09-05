@@ -12,7 +12,8 @@ import { predicateIds } from "../claims/predicates";
 import { historicalClaimReplaySignature, listClaims } from "../claims/store";
 import type { InsertClaimInput, InsertClaimResult, PreparedClaimInsert } from "../claims/store";
 import { compareRfc3339 } from "../agents/time";
-import { readCheckpoint, writeCheckpoint } from "../ledger/checkpoints";
+import { readCheckpoint } from "../ledger/checkpoints";
+import { advanceExtractCheckpoint } from "./extract-checkpoint";
 import { readEvent, readSince } from "../ledger/ledger";
 import type { LedgerCursor } from "../ledger/ledger";
 import { validateEventOrigin, requireExternalEvents, SelfOriginError } from "../ledger/event-origin";
@@ -341,7 +342,7 @@ function deleteDeferred(db: Database, ids: readonly string[]): void {
 function completeDeferredInputs(db: Database, inputs: readonly DeferredInput[]): void {
   deleteDeferred(db, inputs.map(input => input.event_id));
   const last = inputs.at(-1);
-  if (last !== undefined) writeCheckpoint(db, MODEL_PRODUCER_ID, DEFERRED_SCAN_KEY, last.event_id);
+  if (last !== undefined) advanceExtractCheckpoint(db, DEFERRED_SCAN_KEY, last.event_id);
 }
 function queuedEvents(db: Database): CaptureEvent[] {
   const after = readCheckpoint(db, MODEL_PRODUCER_ID, DEFERRED_SCAN_KEY);
@@ -585,7 +586,7 @@ function matchingDurableBatch(db: Database, batch: DurableExtractBatch, producer
 
 function finishDurableBatch(db: Database, batch: DurableExtractBatch): void {
   insertDeferred(db, batch.deferred_inputs);
-  if (batch.mode === "frontier") writeCheckpoint(db, MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY, encodeCursor(batch.cursor));
+  if (batch.mode === "frontier") advanceExtractCheckpoint(db, EXTRACT_SOURCE_KEY, encodeCursor(batch.cursor));
   else completeDeferredInputs(db, batch.model_inputs);
   db.query("DELETE FROM extract_batches WHERE previous_cursor = ?").run(batch.previous_cursor ?? NULL_CURSOR);
 }
@@ -655,7 +656,7 @@ export function purgeExtractInputs(db: Database, eventIds: ReadonlySet<string>, 
     const surviving = candidates.find(row => !eventIds.has(row.event_id));
     nextPrevious = surviving === undefined ? null : encodeCursor(surviving);
     if (nextPrevious === null) db.query("DELETE FROM checkpoints WHERE connector_id=? AND source_key=?").run(MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY);
-    else writeCheckpoint(db, MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY, nextPrevious);
+    else advanceExtractCheckpoint(db, EXTRACT_SOURCE_KEY, nextPrevious);
   }
   if (batch === null) return;
   if (!batch.input_ids.some(id => eventIds.has(id)) && !batch.deferred_inputs.some(input => eventIds.has(input.event_id)) && nextPrevious === previous) return;
@@ -727,7 +728,7 @@ export function commitExtractCursor(db: Database, mined: MineResult): boolean {
       completeDeferredInputs(db, inputs);
     } else {
       insertDeferred(db, mined.deferred_inputs ?? []);
-      writeCheckpoint(db, MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY, encodeCursor(boundary));
+      advanceExtractCheckpoint(db, EXTRACT_SOURCE_KEY, encodeCursor(boundary));
     }
     return true;
   }).immediate();
@@ -776,7 +777,7 @@ export async function mineLiveDrafts(
       }
       // A denied-only page may rotate. A selected page advances its scan only
       // when the exact processed prefix is durably removed from the queue.
-      if (usable.length === 0) writeCheckpoint(db, MODEL_PRODUCER_ID, DEFERRED_SCAN_KEY, queued.at(-1)!.event_id);
+      if (usable.length === 0) advanceExtractCheckpoint(db, DEFERRED_SCAN_KEY, queued.at(-1)!.event_id);
     }).immediate();
     if (usable.length > 0) {
       mode = "deferred";
