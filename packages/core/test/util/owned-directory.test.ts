@@ -69,3 +69,34 @@ test("root replacement after maintenance precheck cannot create or lock outside 
     expect(readFileSync(join(f.outside, "store/canary"), "utf8")).toBe("SYNTHETIC_UNOWNED");
   } finally { cap.close(); }
 });
+
+test("emptiness starts a fresh directory scan on every call and sees new native entries", () => {
+  const f = fixture(), cap = openOwnedDirectory(f.owned);
+  try {
+    expect(cap.isEmpty()).toBe(false);
+    expect(cap.isEmpty()).toBe(false);
+    rmSync(join(f.owned, "store"), { recursive: true });
+    expect(cap.isEmpty()).toBe(true);
+    const raw = Buffer.concat([Buffer.from(f.owned + "/"), Buffer.from([0xff])]);
+    writeFileSync(raw, "SYNTHETIC_KEEP");
+    expect(cap.isEmpty()).toBe(false);
+    expect(cap.isEmpty()).toBe(false);
+    rmSync(raw);
+    symlinkSync(f.outside, join(f.owned, "unknown"));
+    expect(cap.isEmpty()).toBe(false);
+    expect(readFileSync(join(f.outside, "store/canary"), "utf8")).toBe("SYNTHETIC_UNOWNED");
+  } finally { cap.close(); }
+  expect(() => cap.isEmpty()).toThrow("closed");
+});
+
+test("emptiness refuses a root replaced during its observation", () => {
+  const f = fixture(); rmSync(join(f.owned, "store"), { recursive: true });
+  const cap = openOwnedDirectory(f.owned), original = cap.assertCurrent.bind(cap);
+  let swap = true;
+  cap.assertCurrent = () => {
+    original();
+    if (swap) { swap = false; renameSync(f.owned, join(f.root, "moved")); symlinkSync(f.outside, f.owned); }
+  };
+  try { expect(() => cap.isEmpty()).toThrow("identity"); }
+  finally { cap.close(); }
+});

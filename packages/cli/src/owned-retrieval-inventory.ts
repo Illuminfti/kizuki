@@ -1,6 +1,6 @@
 import { lstatSync, opendirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { bindLocalSourcePort, createFts5RetrievalPort, eraseOwnedFts5Generation, Fts5RetrievalPort, FTS5_RETRIEVAL_ID } from "@kizuki/core";
+import { bindLocalSourcePort, openOwnedDirectory, createFts5RetrievalPort, eraseOwnedFts5Generation, Fts5RetrievalPort, FTS5_RETRIEVAL_ID } from "@kizuki/core";
 import type { OwnedSourceRetrievalInventory, OwnedSourceRetrievalStore, PortContext, RetrievalPort } from "@kizuki/core";
 import { EmbeddedRetrievalPort, EMBEDDED_RETRIEVAL_ID, eraseOwnedEmbeddedGeneration, openEmbeddedRetrievalPort } from "@kizuki/retrieval-pg";
 
@@ -27,6 +27,7 @@ function context(vaultPath: string, id: string): PortContext {
 }
 export function createOwnedRetrievalInventory(vaultPath: string, current?: RetrievalPort): OwnedSourceRetrievalInventory & { close(): Promise<void>; diagnostic(): string | null } {
   const opened: RetrievalPort[] = [];
+  const emptyRoots: ReturnType<typeof openOwnedDirectory>[] = [];
   let listing: Awaited<ReturnType<OwnedSourceRetrievalInventory["stores"]>> | undefined;
   let closed = false;
   let diagnostic: string | null = null;
@@ -63,6 +64,28 @@ export function createOwnedRetrievalInventory(vaultPath: string, current?: Retri
           try { port = id === FTS5_RETRIEVAL_ID ? createFts5RetrievalPort(ctx) : await openEmbeddedRetrievalPort(ctx); opened.push(port); }
           catch { /* A busy or broken generation must remain reachable by SQL-free recovery. */ }
         }
+        // Init reserves an empty FTS directory even when only the ledger floor
+        // has ever run. It contains no generation and has no writer lock yet.
+        // Prove literal emptiness through a captured fd; never create SQL/locks
+        // or treat a missing store inside a nonempty root as proof of absence.
+        if (id === FTS5_RETRIEVAL_ID && current?.descriptor.id !== id && port === undefined) {
+          let emptyRoot: ReturnType<typeof openOwnedDirectory> | undefined;
+          try {
+            emptyRoot = openOwnedDirectory(ctx.data_dir);
+            if (emptyRoot.isEmpty()) {
+              const root = emptyRoot;
+              emptyRoots.push(root);
+              emptyRoot = undefined;
+              stores.push({ id: storeId, maintain: async () => {
+                try { return { owned_file_maintenance: root.isEmpty() ? "complete" : "pending" }; }
+                catch { return { owned_file_maintenance: "pending" }; }
+              } });
+              continue;
+            }
+          } catch { /* Unsupported or unverifiable roots retain pending maintenance. */ }
+          finally { emptyRoot?.close(); }
+        }
+
         const active = port;
         if (active) bindLocalSourcePort(active, { store_id: storeId });
         stores.push({ id: storeId, ...(active ? { port: active } : {}), maintain: async () => {
@@ -83,6 +106,7 @@ export function createOwnedRetrievalInventory(vaultPath: string, current?: Retri
     async close() {
       if (closed) return; closed = true;
       const results = await Promise.allSettled(opened.map(port => port.close()));
+      for (const root of emptyRoots) root.close();
       if (results.some(result => result.status === "rejected")) throw new OwnedRetrievalInventoryError();
     },
   };

@@ -48,7 +48,7 @@ function openPath(path: string): number {
 export interface OwnedDirectoryIdentity { readonly dev: bigint; readonly ino: bigint; }
 function identity(fd: number): OwnedDirectoryIdentity { const stat = fstatSync(fd, { bigint: true }); return { dev: stat.dev, ino: stat.ino }; }
 function same(a: OwnedDirectoryIdentity | null, b: OwnedDirectoryIdentity | null): boolean { return a === null ? b === null : b !== null && a.dev === b.dev && a.ino === b.ino; }
-function entries(fd: number, remaining: number): Buffer[] {
+function entries(fd: number, remaining: number, stopAtFirst = false): Buffer[] {
   const duplicate = api().symbols.fcntl(fd, 1030 /* Linux F_DUPFD_CLOEXEC */, 0); if (duplicate < 0) fail();
   const directory = api().symbols.fdopendir(duplicate);
   if (!directory) { closeSync(duplicate); fail(); }
@@ -68,6 +68,7 @@ function entries(fd: number, remaining: number): Buffer[] {
       nameBytes(name);
       if (result.length >= remaining) fail("bounds");
       result.push(name);
+      if (stopAtFirst) break;
     }
   } finally { if (api().symbols.closedir(directory) !== 0) fail(); }
   return result;
@@ -81,6 +82,23 @@ export class OwnedDirectory {
     if (this.closed) fail("closed");
     const current = openPath(this.path);
     try { if (!same(identity(current), this.rootIdentity)) fail("identity_changed"); } finally { closeSync(current); }
+  }
+  /** Read-only emptiness observation. A fresh description avoids inherited
+   * readdir offsets; at most one non-dot entry is read and retained. */
+  isEmpty(): boolean {
+    this.assertCurrent();
+    const dot = Buffer.from([46, 0]);
+    const fd = api().symbols.openat(this.fd, ptr(dot), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | 0x80000, 0);
+    if (fd < 0) fail();
+    try {
+      const before = fstatSync(fd, { bigint: true });
+      if (!same({ dev: before.dev, ino: before.ino }, this.rootIdentity)) fail("identity_changed");
+      const empty = entries(fd, 1, true).length === 0;
+      const after = fstatSync(fd, { bigint: true });
+      if (before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs || before.nlink !== after.nlink || before.size !== after.size) fail("identity_changed");
+      this.assertCurrent();
+      return empty;
+    } finally { closeSync(fd); }
   }
   childIdentity(name: string): OwnedDirectoryIdentity | null {
     this.assertCurrent(); const fd = childFd(this.fd, name, true);

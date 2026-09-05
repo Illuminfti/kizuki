@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { createFts5RetrievalPort, FTS5_RETRIEVAL_ID, openLedger, setSourceGrant } from "@kizuki/core";
+import { createFts5RetrievalPort, FTS5_RETRIEVAL_ID, openLedger, setSourceGrant, tryAdvisoryFileLock } from "@kizuki/core";
 import type { PortContext } from "@kizuki/core";
 import { openEmbeddedRetrievalPort, EMBEDDED_RETRIEVAL_ID } from "@kizuki/retrieval-pg";
 import { createOwnedRetrievalInventory } from "../src/owned-retrieval-inventory";
@@ -120,3 +120,68 @@ test("native CLI keeps busy FTS pending then recovers its corrupted store after 
   expect(JSON.parse(resumed.stdout).data.purge).toBe("complete");
   expect(existsSync(join(context.data_dir, "store"))).toBe(false);
 }, 15_000);
+
+
+test("an unused initialized FTS root proves empty maintenance without creating SQL", async () => {
+  const f = h.tempVault(), path = ctx(f.vault, FTS5_RETRIEVAL_ID).data_dir;
+  const inventory = createOwnedRetrievalInventory(f.vault);
+  try {
+    const item = (await inventory.stores()).stores.find(s => s.id === `local:${FTS5_RETRIEVAL_ID}`)!;
+    expect(item.port).toBeUndefined();
+    expect(await item.maintain!()).toEqual({ owned_file_maintenance: "complete" });
+    expect(existsSync(join(path, "store"))).toBe(false);
+    expect(existsSync(join(path, "writer.lock"))).toBe(false);
+  } finally { await inventory.close(); }
+});
+
+test("native resume completes with the ordinary unused initialized FTS directory", async () => {
+  const f = h.tempVault();
+  const enrollment = h.runCli(f.env, "connect", "markdown-folder", "--source", f.notes);
+  expect(enrollment.exitCode).toBe(0);
+  const source = enrollment.stdout.match(/source=([0-9A-HJKMNPQRSTVWXYZ]{26})/)![1]!;
+  const db = openLedger(join(f.vault, ".kizuki/kizuki.db"));
+  setSourceGrant(db, {source_key:source,expected_revision:0,operation_id:"empty-fixture-grant",policy:{purposes:["capture"],allowed_fields:["text","subjects","attachments","metadata"],retention:"persistent_owned_until_revoked",egress:"local_only",sensitivity_floor:"private"}}); db.close();
+  expect(h.runCli(f.env, "backfill", "markdown-folder").exitCode).toBe(0);
+  const run = (action: string, ...args: string[]) => h.runCli(f.env, "connect", action, "--source", source, "--operation-id", "empty-fixture-revoke", ...args, "--json");
+  expect(run("revoke", "--expected-revision", "1").exitCode).toBe(0);
+  const resumed = run("resume-revocation");
+  expect(resumed.exitCode, resumed.stdout + resumed.stderr).toBe(0);
+  expect(JSON.parse(resumed.stdout).data.purge).toBe("complete");
+  expect(existsSync(join(ctx(f.vault, FTS5_RETRIEVAL_ID).data_dir, "store"))).toBe(false);
+  expect(run("resume-revocation").exitCode).toBe(0);
+});
+
+
+test("empty-root maintenance refuses new contents and a held existing native lock", async () => {
+  const f = h.tempVault(), path = ctx(f.vault, FTS5_RETRIEVAL_ID).data_dir;
+  let inventory = createOwnedRetrievalInventory(f.vault);
+  try {
+    const item = (await inventory.stores()).stores.find(s => s.id === `local:${FTS5_RETRIEVAL_ID}`)!;
+    writeFileSync(join(path, "unknown"), "SYNTHETIC_KEEP");
+    expect(await item.maintain!()).toEqual({owned_file_maintenance:"pending"});
+    expect(readFileSync(join(path, "unknown"), "utf8")).toBe("SYNTHETIC_KEEP");
+  } finally { await inventory.close(); }
+  const g = h.tempVault(), data = ctx(g.vault, FTS5_RETRIEVAL_ID).data_dir;
+  const lock = tryAdvisoryFileLock(join(data, "writer.lock"))!;
+  inventory = createOwnedRetrievalInventory(g.vault);
+  try {
+    const item = (await inventory.stores()).stores.find(s => s.id === `local:${FTS5_RETRIEVAL_ID}`)!;
+    expect(item.port).toBeUndefined();
+    expect(await item.maintain!()).toEqual({owned_file_maintenance:"pending"});
+    expect(existsSync(join(data, "store"))).toBe(false);
+  } finally { await inventory.close(); lock.release(); }
+});
+
+
+test("an empty root replaced after inventory cannot be credited as maintained", async () => {
+  const f = h.tempVault(), path = ctx(f.vault, FTS5_RETRIEVAL_ID).data_dir;
+  const inventory = createOwnedRetrievalInventory(f.vault);
+  try {
+    const item = (await inventory.stores()).stores.find(s => s.id === `local:${FTS5_RETRIEVAL_ID}`)!;
+    renameSync(path, path + "-moved");
+    const outside = h.tempDir();
+    symlinkSync(outside, path);
+    expect(await item.maintain!()).toEqual({owned_file_maintenance:"pending"});
+    expect(existsSync(join(outside, "store"))).toBe(false);
+  } finally { await inventory.close(); }
+});
