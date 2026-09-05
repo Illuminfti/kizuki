@@ -34,6 +34,7 @@ export type {
   RailId,
   RailSpec,
   RunReceipt,
+  RunExecution,
   RunStatus,
   ScheduleRow,
   ServeConfig,
@@ -105,3 +106,5 @@ export { readServePid, runServeDaemon, servePidPath, serveStatus } from "./daemo
 export type { ServeDaemonOptions, ServeStatus } from "./daemon";
 export { SERVE_SURFACE_ID, createServeSurfacePort } from "./surface";
 export type { ServeSurfaceOptions } from "./surface";
+export { evaluateQualification, QUALIFICATION_WINDOW_MS } from "./qualification";
+export type { QualificationProfile, QualificationRail, QualificationReceipt, QualificationProcess, QualificationSample } from "./qualification";
