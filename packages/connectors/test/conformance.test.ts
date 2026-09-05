@@ -18,6 +18,7 @@ import {
   TELEGRAM_CONNECTOR_ID,
   TelegramConnector,
   WHATSAPP_IMPORT_CONNECTOR_ID,
+  X_ARCHIVE_CONNECTOR_ID,
   createIcsConnector,
   createImapConnector,
   getConnector,
@@ -58,6 +59,7 @@ import {
   memoryFetcher,
   okResult,
 } from "@kizuki/connector-ics/testing";
+import { writeFixtureArchive as writeXFixtureArchive } from "@kizuki/connector-x/testkit";
 
 const TELEGRAM_STATE_REF = "file:connections/01JJ0000000000000000000000.state";
 
@@ -69,6 +71,7 @@ interface Layout {
   whatsapp: string;
   pocket: string;
   omnivore: string;
+  xArchive: string;
   ics: string;
   wiki: string;
   removedWikiPage: string;
@@ -86,6 +89,7 @@ function layoutFor(root: string): Layout {
     whatsapp: path.join(root, "whatsapp"),
     pocket: path.join(root, "pocket.csv"),
     omnivore: path.join(root, "omnivore"),
+    xArchive: path.join(root, "x-archive"),
     ics: path.join(root, "team.ics"),
     wiki: path.join(root, "wiki"),
     removedWikiPage: path.join(root, "wiki", "notes", "plan.md"),
@@ -243,6 +247,11 @@ function batteryFor(
         getConnector(OMNIVORE_IMPORT_CONNECTOR_ID, { path: layout.omnivore }),
         { unavailable: missingPath(OMNIVORE_IMPORT_CONNECTOR_ID) },
       ),
+    [X_ARCHIVE_CONNECTOR_ID]: () =>
+      runConformance(
+        getConnector(X_ARCHIVE_CONNECTOR_ID, { path: layout.xArchive }),
+        { unavailable: missingPath(X_ARCHIVE_CONNECTOR_ID), backfillTwice: true },
+      ),
     [TELEGRAM_CONNECTOR_ID]: async () => {
       const telegram = new TelegramConnector(
         { state_ref: TELEGRAM_STATE_REF },
@@ -395,6 +404,7 @@ async function seedExports(layout: Layout): Promise<void> {
     await mkdir(path.dirname(target), { recursive: true });
     await writeFile(target, content);
   }
+  await writeXFixtureArchive(layout.xArchive);
   for (const file of LEGACY_WIKI_FIXTURE.files) {
     const target = path.join(layout.wiki, file.relpath);
     await mkdir(path.dirname(target), { recursive: true });

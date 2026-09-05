@@ -8,6 +8,7 @@ import {
   POCKET_IMPORT_CONNECTOR_ID,
   SCREENPIPE_CONNECTOR_ID,
   WHATSAPP_IMPORT_CONNECTOR_ID,
+  X_ARCHIVE_CONNECTOR_ID,
   getConnector,
   listConnectorDescriptors,
 } from "../src";
@@ -36,10 +37,27 @@ test("getConnector builds every snapshot importer", () => {
     [WHATSAPP_IMPORT_CONNECTOR_ID, { path: "/exports/chat" }],
     [POCKET_IMPORT_CONNECTOR_ID, { path: "/exports/pocket.csv" }],
     [OMNIVORE_IMPORT_CONNECTOR_ID, { path: "/exports/omnivore" }],
+    [X_ARCHIVE_CONNECTOR_ID, { path: "/exports/x-archive" }],
   ];
   for (const [id, config] of cases) {
     expect(getConnector(id, config).manifest().connector_id).toBe(id);
   }
+});
+
+test("X archive registry policy is local, posts-only, and personal", () => {
+  const manifest = getConnector(X_ARCHIVE_CONNECTOR_ID, { path: "/exports/x-archive" }).manifest();
+  expect(manifest.allowed_egress).toEqual([]);
+  expect(manifest.kinds).toEqual(["post"]);
+  expect(manifest.default_sensitivity).toBe("personal");
+  expect(manifest.sensitivity_floor).toBe("personal");
+  expect(manifest.capabilities).toMatchObject({
+    backfill: true,
+    sync: true,
+    tombstones: false,
+    purge: false,
+    fixture: true,
+  });
+  expect(manifest.capabilities.page_candidates).toBeUndefined();
 });
 
 test("the registry lists frozen port descriptors and rejects unknown ids", () => {
@@ -94,6 +112,7 @@ test("a snapshot importer without a path is refused", () => {
     WHATSAPP_IMPORT_CONNECTOR_ID,
     POCKET_IMPORT_CONNECTOR_ID,
     OMNIVORE_IMPORT_CONNECTOR_ID,
+    X_ARCHIVE_CONNECTOR_ID,
   ]) {
     try {
       getConnector(id, {});
