@@ -8,15 +8,20 @@ export async function startApp(io: CliIo, options: {
     open?: boolean;
     noService?: boolean;
 } = {}, launch: typeof openAppBrowser = openAppBrowser) {
-    const host = createAppHost(io, {}, options), server = startServeHttp({ mode: 'app', assets: appAssets, handle: host.handle });
+    let connected = false;
+    // Core authenticates requests before dispatching to this host; assets and
+    // unauthenticated traffic never enter the admitted-request callback.
+    const host = createAppHost(io, { onRequest: () => { connected = true; } }, options), server = startServeHttp({ mode: 'app', assets: appAssets, handle: host.handle });
     try {
         if (options.open !== false)
-            await launch(server.url + '/#token=' + server.token);
+            await launch(server.url + '/#token=' + server.token, () => connected);
     }
     catch {
-        await server.stop();
-        await host.close();
-        throw Error('app_browser_unavailable');
+        if (!connected) {
+            await server.stop();
+            await host.close();
+            throw Error('app_browser_unavailable');
+        }
     }
     return { url: server.url, async close() { await server.stop(); await host.close(); } };
 }

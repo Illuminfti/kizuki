@@ -28,6 +28,11 @@ test('native local app enrolls folder, requires consent, captures and queries wi
         const denied = await done((await call('capture', { source_key: source, mode: 'backfill' })).data.operation_id);
         expect(denied.state).toBe('failed');
         expect((await call('consent', { source_key: source, expected_revision: 0, operation_id: 'synthetic-app-grant', policy })).ok).toBe(true);
+        const staleGrant = await call('consent', { source_key: source, expected_revision: 0, operation_id: 'synthetic-stale-grant', policy });
+        expect(staleGrant.error.code).toBe('source_revision_conflict');
+        const staleRevoke = await done((await call('revoke', { source_key: source, expected_revision: 0, operation_id: 'synthetic-stale-revoke' })).data.operation_id);
+        expect(staleRevoke.error.code).toBe('source_revision_conflict');
+        expect((await call('sources')).data.sources[0].consent).toBe('active');
         const capture = await done((await call('capture', { source_key: source, mode: 'backfill' })).data.operation_id);
         expect(capture.state).toBe('succeeded');
         expect(capture.counts.stored).toBe(1);
@@ -75,6 +80,35 @@ test('app launcher embeds offline assets and never prints its session capability
     finally {
         await app.close();
     }
+});
+
+test.each(['authenticated', 'asset', 'unauthorized', 'malformed'])('launcher failure retains the host only after an %s client request', async kind => {
+    const env = h.isolatedEnv();
+    const io: CliIo = { env, vaultOverride: null, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false, out() {}, err() {}, prompt: async () => '' };
+    let origin = '', connected = false, app: Awaited<ReturnType<typeof startApp>> | undefined;
+    try {
+        try {
+            app = await startApp(io, { noService: true }, async (raw, observed) => {
+                const url = new URL(raw); origin = url.origin;
+                const token = url.hash.slice('#token='.length);
+                const response = kind === 'asset' ? await fetch(origin + '/') : await fetch(origin + '/app/v1/status', {
+                    method: 'POST', headers: {origin, authorization: 'Bearer ' + (kind === 'unauthorized' ? 'invalid' : token), 'content-type': 'application/json'},
+                    body: kind === 'malformed' ? '{' : '{}',
+                });
+                await response.arrayBuffer();
+                connected = observed?.() ?? false;
+                throw Error('synthetic opener failure after request');
+            });
+        } catch (error) { expect((error as Error).message).toBe('app_browser_unavailable'); }
+        expect(connected).toBe(kind === 'authenticated');
+        if (kind === 'authenticated') {
+            expect(app).toBeDefined();
+            expect((await fetch(origin + '/')).status).toBe(200);
+        } else {
+            expect(app).toBeUndefined();
+            await expect(fetch(origin + '/')).rejects.toThrow();
+        }
+    } finally { await app?.close(); }
 });
 test('first setup uses the visible default path without a supported supervisor and refuses unmarked adoption', async () => {
     const env = h.isolatedEnv(), io: CliIo = { env, vaultOverride: null, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false, out: () => { }, err: () => { }, prompt: async () => { throw Error(); } }, host = createAppHost(io);

@@ -23,6 +23,7 @@ export interface AppHostDeps {
     calendar?: GoogleCalendarFactory;
     openGoogleUrl?: (url: string) => Promise<void>;
     supervisor?: typeof serveSupervisorHost;
+    onRequest?: () => void;
 }
 class AppFailure extends Error {
     constructor(readonly code: string) { super(code); }
@@ -49,7 +50,7 @@ function sourceKey(value: unknown): string { const key = string(value, 26); if (
 function failure(error: unknown): AppError {
     if (error instanceof DuplicateSourceError) return { code: 'duplicate_identity', retryable: false };
     const code = error instanceof AppFailure ? error.code : error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
-    const allowed = ['invalid_request', 'no_vault', 'busy', 'unauthorized', 'consent_required', 'source_capture_denied', 'source_field_denied', 'revision_conflict', 'source_not_enrolled', 'misconfigured', 'identity_conflict', 'custody_unknown', 'service_unavailable'];
+    const allowed = ['invalid_request', 'no_vault', 'busy', 'unauthorized', 'consent_required', 'source_capture_denied', 'source_field_denied', 'revision_conflict', 'source_revision_conflict', 'source_not_enrolled', 'misconfigured', 'identity_conflict', 'custody_unknown', 'service_unavailable'];
     return { code: allowed.includes(code) ? code : 'unavailable', retryable: ['busy', 'unavailable', 'service_unavailable'].includes(code) };
 }
 const fullFields = ['text', 'subjects', 'metadata', 'attachments'];
@@ -341,6 +342,7 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
                 const input = object(await request.json());
                 if (Object.keys(input).some(key => !ROUTES[route as AppRoute].includes(key)))
                     throw new AppFailure('invalid_request');
+                deps.onRequest?.();
                 return Response.json({ ok: true, data: await execute(route as AppRoute, input) });
             }
             catch (error) {
