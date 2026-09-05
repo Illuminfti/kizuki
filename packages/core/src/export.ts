@@ -37,7 +37,7 @@ import { PURGE_SCHEMA_VERSION } from "./ledger/purge-schema";
 import { tableExists } from "./ledger/schema";
 import { SENSITIVITY_SCHEMA_VERSION } from "./sensitivity/schema";
 import { SERVE_SCHEMA_VERSION } from "./serve/types";
-import { validateDurableExtractStorage } from "./serve/extract";
+import { extractBatchFilingVersion, validateDurableExtractStorage } from "./serve/extract";
 import { readVaultId, vaultIdPath } from "./serve/vault-id";
 import { doctorVault } from "./vault/doctor";
 import { initVault } from "./vault/init";
@@ -1706,12 +1706,13 @@ function extractBatchValues(raw: Record<string, unknown>): readonly [
   const modelRef = boundedStoredString(raw.model_ref, "model_ref", 2_048, true);
   const createdAt = boundedStoredString(raw.created_at, "created_at", 64)!;
   const inputIds = boundedStoredString(raw.input_ids, "input_ids", 4_096, true);
-  const digest = boundedStoredString(raw.integrity, "integrity", 64, true);
+  const digest = boundedStoredString(raw.integrity, "integrity", 74, true);
   const outcome = boundedStoredString(raw.outcome, "outcome", 16)!;
   const mode = boundedStoredString(raw.batch_mode, "batch_mode", 16)!;
   const modelInputs = boundedStoredString(raw.model_inputs, "model_inputs", 8_192, true);
   const deferredInputs = boundedStoredString(raw.deferred_inputs, "deferred_inputs", 8_192, true);
-  if (!isRfc3339(createdAt) || (digest !== null && !/^[a-f0-9]{64}$/.test(digest)) ||
+  extractBatchFilingVersion(digest);
+  if (!isRfc3339(createdAt) ||
       !["ok", "purged"].includes(outcome) || !["frontier", "deferred"].includes(mode)) {
     throw new Error("invalid durable extraction backup value");
   }

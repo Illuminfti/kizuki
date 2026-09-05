@@ -23,6 +23,7 @@ import {
   type RunExecution,
 } from "./types";
 import { runWritePass } from "./write-pass";
+import { LegacyExtractReconciliationError } from "./extract";
 
 export interface RailSyncResult {
   readonly events_synced: number;
@@ -349,7 +350,8 @@ export async function runRail(
       }
     } catch (error) {
       if (error instanceof InjectedCrash) throw error;
-      partial = { status: "failed", errors: [redactReceiptError(error)] };
+      partial = { status: "failed", errors: [redactReceiptError(error)],
+        ...(error instanceof LegacyExtractReconciliationError ? { stopped: error.code } : {}) };
     }
 
     const usage = db.query<{ model_ref: string | null; metrics: string }, [string]>("SELECT model_ref,metrics FROM extract_usage WHERE run_id=?").get(runId);

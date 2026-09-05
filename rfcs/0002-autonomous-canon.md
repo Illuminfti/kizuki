@@ -880,6 +880,15 @@ outbox row commits together with the saved decision's deferred-input updates,
 frontier advancement and journal deletion. A later failure rolls all of those
 effects back; restart replays the saved decision without another producer call.
 
+That replay guarantee applies to decisions journaled with the domain-bound
+`atomic-v1:` integrity envelope. Pre-atomic pending decisions remain ambiguous
+because their writer could commit a structural corroboration without retaining
+the incoming provenance. They refuse effectful replay with
+`legacy_extraction_reconciliation_required`; storage-only export/restore and
+authorized purge retain the legacy version without granting replay authority.
+See [the recovery contract](../docs/extraction-recovery.md) for exact encoding,
+preservation, conservative loss of availability and separate-copy reconciliation.
+
 Retrieval publication runs after that commit and reads each claim's current
 status and evidence. An unavailable index leaves work pending. Purge or loss of
 source access during an upsert causes removal; failed removal remains pending

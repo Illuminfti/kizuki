@@ -31,6 +31,7 @@ import {
   mineLiveDrafts,
   producedClaimInput,
   readDurableExtractBatch,
+  requireAtomicExtractReplay,
   type DurableExtractBatch,
 } from "./extract";
 import { tryWriteFlock } from "./flock";
@@ -177,6 +178,7 @@ export async function runWritePass(
   options: WritePassOptions,
 ): Promise<WritePassResult> {
   if (options.claims !== undefined && options.claims.db !== db) throw new Error("claims ledger does not match write pass");
+  requireAtomicExtractReplay(db);
   const lock = tryWriteFlock(vaultPath);
   if (lock === null) {
     return {
@@ -370,11 +372,9 @@ async function fileProducedDrafts(
   batch: DurableExtractBatch,
   producer: ProducerPort,
 ): Promise<{ deduped: number; superseded: number } | null> {
-  const claimsIo = batch.historical_source_write === undefined ? io :
-    { ...io, historical_source_write: batch.historical_source_write };
   const prepared = [];
   for (const draft of batch.filing_drafts) {
-    prepared.push(await prepareClaimInsert(claimsIo, producedClaimInput(io.db, draft, "model", batch.model_ref)));
+    prepared.push(await prepareClaimInsert(io, producedClaimInput(io.db, draft, "model", batch.model_ref)));
   }
   const results = fileAndCompleteDurableExtractBatch(io.db, batch, producer, prepared);
   if (results === null) return null;

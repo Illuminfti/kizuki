@@ -25,6 +25,7 @@ import {
   mineLiveDrafts,
   readDurableExtractBatch,
   readExtractCursor,
+  validateDurableExtractStorage,
 } from "../src/serve/extract";
 import { initVault } from "../src/vault/init";
 import { validEvent } from "./fixtures";
@@ -122,7 +123,7 @@ function durableIntegrity(row: {
   drafts: string;
 }): string {
   const drafts = JSON.parse(row.drafts) as ClaimDraft[];
-  return createHash("sha256").update(JSON.stringify([
+  return "atomic-v1:" + createHash("sha256").update("kizuki.extract-filing/atomic-v1\0").update(JSON.stringify([
     row.previous_cursor || null,
     row.cursor,
     row.model_ref,
@@ -670,125 +671,40 @@ test("a managed journal cannot be downgraded to the null legacy manifest", async
     const row = db.query<any, []>("SELECT * FROM extract_batches").get()!;
     db.query("UPDATE extract_batches SET model_inputs=NULL,deferred_inputs=NULL,integrity=?")
       .run(legacyDurableIntegrity(row));
-    expect(() => readDurableExtractBatch(db, bound))
+    expect(() => validateDurableExtractStorage(db))
       .toThrow("durable extraction legacy input authority is corrupt");
     expect(readExtractCursor(db)).toBeNull();
     expect(db.query("SELECT 1 FROM extract_batches").get()).not.toBeNull();
   } finally { db.close(); }
 });
 
-test("an unbound historical null-manifest journal replays without a provider resend", async () => {
+test("an unbound historical null-manifest journal refuses replay without a provider resend", async () => {
   const { vault, db, source } = setup();
   try {
     const accepted = accept(db, { ...validEvent(), source_record_id: "historical-unbound" });
     if (accepted.status !== "stored") throw new Error("historical fixture capture failed");
     let calls = 0;
     const bound = bindSourceModelPort(producer({
-      status: "ok",
-      claims: [draft(accepted.event.event_id)],
-      usage: { calls: 1, input_tokens: 1, output_tokens: 1 },
+      status: "ok", claims: [draft(accepted.event.event_id)], usage: { calls: 1, input_tokens: 1, output_tokens: 1 },
     }, () => { calls += 1; }), { model_endpoint: endpoint, model: "fixture-model" });
-    const mined = await mineLiveDrafts(db, bound);
-    journalExtractBatch(db, mined, "historical-model-ref", bound);
-    db.query("UPDATE extract_batches SET model_inputs=NULL,deferred_inputs=NULL,input_ids=NULL,integrity=NULL").run();
-
+    journalExtractBatch(db, await mineLiveDrafts(db, bound), "historical-model-ref", bound);
+    db.exec("UPDATE extract_batches SET model_inputs=NULL,deferred_inputs=NULL,input_ids=NULL,integrity=NULL");
     db.query("INSERT INTO native_owner_evidence(event_id,origin,request_digest,recorded_at,filing_state,event_content_hash) VALUES (?,'correction',?,?,'recorded',?)")
       .run(accepted.event.event_id, "a".repeat(64), new Date().toISOString(), accepted.event.content_hash);
-    expect(() => readDurableExtractBatch(db, bound))
-      .toThrow("durable extraction legacy input authority is corrupt");
+    expect(() => validateDurableExtractStorage(db)).toThrow("durable extraction legacy input authority is corrupt");
     db.query("DELETE FROM native_owner_evidence WHERE event_id=?").run(accepted.event.event_id);
-
-    // A later, unrelated grant changes the global epoch. It cannot relabel the
-    // historical input or cause the already-sent decision to be regenerated.
+    // A later unrelated grant cannot turn historical ambiguity into replay authority.
     grant(db, source, remoteEgress(), "unrelated-later-grant");
-    const pending = readDurableExtractBatch(db, bound)!;
-    expect(pending.model_ref).toBe("historical-model-ref");
-    const replayAuthorization = pending.historical_source_write;
-    if (replayAuthorization === undefined) throw new Error("historical replay authorization missing");
-    expect(db.query<{ model_inputs: string | null; deferred_inputs: string | null; input_ids: string | null; integrity: string | null }, []>(
-      "SELECT model_inputs,deferred_inputs,input_ids,integrity FROM extract_batches",
-    ).get()).toMatchObject({ model_inputs: null, deferred_inputs: null });
-    expect(db.query<{ input_ids: string | null; integrity: string | null }, []>(
-      "SELECT input_ids,integrity FROM extract_batches",
-    ).get()).toMatchObject({ input_ids: expect.any(String), integrity: expect.any(String) });
-    await expect(insertClaim({ db, historical_source_write: replayAuthorization }, {
-      kind: "claim",
-      subject: "person:fixture",
-      predicate: "employment.role",
-      object: "fixture role",
-      polarity: "positive",
-      body: "Different text must not reuse the replay capability.",
-      valid_from: accepted.event.observed_at,
-      provenance: [accepted.event.event_id],
-      subjects: ["person:fixture"],
-      producer: "model",
-      model_ref: "historical-model-ref",
-      confidence: 0.7,
-      taint: "quoted",
-      sensitivity: "private",
-    })).rejects.toThrow("source_access_denied");
-    await expect(insertClaim({ db, historical_source_write: replayAuthorization }, {
-      kind: "claim",
-      subject: "person:fixture",
-      predicate: "employment.role",
-      object: "fixture role",
-      polarity: "positive",
-      body: "Synthetic model interpretation.",
-      provenance: [accepted.event.event_id],
-      valid_from: "2099-01-01T00:00:00Z",
-      subjects: ["person:fixture"],
-      producer: "model",
-      model_ref: "historical-model-ref",
-      confidence: 0.7,
-      taint: "quoted",
-      sensitivity: "private",
-    })).rejects.toThrow("source_access_denied");
-    let changedEpoch = false;
-    await expect(insertClaim({
-      db,
-      historical_source_write: replayAuthorization,
-      now: () => {
-        if (!changedEpoch) {
-          changedEpoch = true;
-          setSourceGrant(db, {
-            source_key: source,
-            expected_revision: 1,
-            operation_id: "change-epoch-during-legacy-filing",
-            policy: { ...policy(), purposes: [...policy().purposes, "audit"] },
-          });
-        }
-        return new Date().toISOString();
-      },
-    }, {
-      kind: "claim",
-      subject: "person:fixture",
-      predicate: "employment.role",
-      object: "fixture role",
-      polarity: "positive",
-      body: "Synthetic model interpretation.",
-      provenance: [accepted.event.event_id],
-      valid_from: accepted.event.observed_at,
-      subjects: ["person:fixture"],
-      producer: "model",
-      model_ref: "historical-model-ref",
-      confidence: 0.7,
-      taint: "quoted",
-      sensitivity: "private",
-    })).rejects.toThrow("source_access_denied");
-    expect(changedEpoch).toBe(true);
-    expect(listClaims(db, { status: "live", limit: 20 }).filter(claim => claim.producer === "model")).toEqual([]);
-
-    const replayed = await runWritePass(db, vault, {
-      budget: createBudgetTracker({ canon_writes_per_run: 8 }),
-      model_ref: "current-model-ref",
-      claims: { db },
-      producer: bound,
-    });
-    expect(replayed.errors).toEqual([]);
+    const before = db.query("SELECT * FROM extract_batches").all();
+    validateDurableExtractStorage(db);
+    expect(() => readDurableExtractBatch(db, bound)).toThrow("Legacy extraction needs reconciliation");
+    await expect(runWritePass(db, vault, {
+      budget: createBudgetTracker({ canon_writes_per_run: 8 }), model_ref: "current-model-ref", claims: { db }, producer: bound,
+    })).rejects.toThrow("Legacy extraction needs reconciliation");
     expect(calls).toBe(1);
-    expect(listClaims(db, { status: "live", limit: 20 }).filter(claim => claim.producer === "model"))
-      .toMatchObject([{ model_ref: "historical-model-ref" }]);
-    expect(db.query("SELECT 1 FROM extract_batches").get()).toBeNull();
+    expect(listClaims(db, { status: "live", limit: 20 }).filter(claim => claim.producer === "model")).toEqual([]);
+    expect(db.query("SELECT * FROM extract_batches").all()).toEqual(before);
+    expect(readExtractCursor(db)).toBeNull();
   } finally { db.close(); }
 });
 
@@ -807,7 +723,7 @@ test("a historical null-manifest draft cannot cite outside its authoritative int
     row.drafts = JSON.stringify([draft(outside.event.event_id)]);
     db.query("UPDATE extract_batches SET drafts=?,model_inputs=NULL,deferred_inputs=NULL,integrity=?")
       .run(row.drafts, legacyDurableIntegrity(row));
-    expect(() => readDurableExtractBatch(db, bound)).toThrow("durable extraction provenance is invalid");
+    expect(() => validateDurableExtractStorage(db)).toThrow("durable extraction provenance is invalid");
     expect(readExtractCursor(db)).toBeNull();
   } finally { db.close(); }
 });
@@ -831,7 +747,10 @@ test("purge keeps a surviving historical journal in its null-manifest form", asy
     purgeEvents(db, vault, { event_id: second.event.event_id }, "remove second historical input");
     expect(db.query("SELECT model_inputs,deferred_inputs,outcome FROM extract_batches").get())
       .toEqual({ model_inputs: null, deferred_inputs: null, outcome: "purged" });
-    expect(readDurableExtractBatch(db, bound)?.drafts).toEqual([draft(first.event.event_id)]);
+    expect(JSON.parse(db.query<{ drafts: string }, []>("SELECT drafts FROM extract_batches").get()!.drafts))
+      .toEqual([draft(first.event.event_id)]);
+    validateDurableExtractStorage(db);
+    expect(() => readDurableExtractBatch(db, bound)).toThrow("Legacy extraction needs reconciliation");
   } finally { db.close(); }
 });
 
@@ -939,7 +858,7 @@ test("backup restores an exact pending mixed-permission decision without another
   } finally { restored.close(); }
 });
 
-test("backup retains and replays the null representation of a historical journal", async () => {
+test("backup retains the exact null representation and refusal of a historical journal", async () => {
   const { vault, db, source } = setup();
   const accepted = accept(db, { ...validEvent(), source_record_id: "legacy-backup-input" });
   if (accepted.status !== "stored") throw new Error("legacy backup fixture failed");
@@ -951,31 +870,33 @@ test("backup retains and replays the null representation of a historical journal
   db.query("UPDATE extract_batches SET model_inputs=NULL,deferred_inputs=NULL,input_ids=NULL,integrity=NULL").run();
   grant(db, source, remoteEgress(), "unrelated-export-grant");
 
+  const before = db.query("SELECT * FROM extract_batches").all();
   const backup = `${vault}-legacy-pending-backup`;
   const target = `${vault}-legacy-pending-restored`;
   dirs.push(backup, target);
   try {
     exportVault(db, vault, backup);
+    expect(db.query("SELECT * FROM extract_batches").all()).toEqual(before);
     restoreVault(backup, target);
   } finally { db.close(); }
   const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
   try {
-    expect(restored.query("SELECT model_inputs,deferred_inputs FROM extract_batches").get())
-      .toEqual({ model_inputs: null, deferred_inputs: null });
+    expect(restored.query("SELECT * FROM extract_batches").all()).toEqual(before);
     let replayCalls = 0;
     const replay = bindSourceModelPort(producer({
       status: "ok", claims: [], usage: { calls: 1, input_tokens: 1, output_tokens: 1 },
     }, () => { replayCalls += 1; }), { model_endpoint: endpoint, model: "fixture-model" });
-    await runWritePass(restored, target, {
+    await expect(runWritePass(restored, target, {
       budget: createBudgetTracker({ canon_writes_per_run: 8 }),
       model_ref: "current-model",
       claims: { db: restored },
       producer: replay,
-    });
+    })).rejects.toThrow("Legacy extraction needs reconciliation");
     expect(calls).toBe(1);
     expect(replayCalls).toBe(0);
     expect(listClaims(restored, { status: "live", limit: 20 }).filter(claim => claim.producer === "model"))
-      .toMatchObject([{ model_ref: "legacy-backup-model" }]);
+      .toEqual([]);
+    expect(restored.query("SELECT * FROM extract_batches").all()).toEqual(before);
   } finally { restored.close(); }
 });
 
@@ -1000,6 +921,14 @@ test("restore refuses a malformed or missing required durable journal stream tra
     resignBackupFile(malformed, path, `${JSON.stringify(row)}\n`);
     expect(() => restoreVault(malformed, malformedTarget)).toThrow("durable extraction batch is corrupt");
     expect(existsSync(malformedTarget)).toBe(false);
+
+    const originalRow = db.query<Record<string, unknown>, []>("SELECT * FROM extract_batches").get()!;
+    for (const integrity of ["atomic-v2:" + "a".repeat(64), "atomic-v1:" + "A".repeat(64),
+      "atomic-v1:" + "a".repeat(65), "atomic-v1:" + "a".repeat(64)]) {
+      resignBackupFile(malformed, path, `${JSON.stringify({ ...originalRow, integrity })}\n`);
+      expect(() => restoreVault(malformed, malformedTarget)).toThrow();
+      expect(existsSync(malformedTarget)).toBe(false);
+    }
 
     exportVault(db, vault, missing);
     const manifestPath = join(missing, "manifest.json");
