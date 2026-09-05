@@ -23,6 +23,7 @@ describe("attribution verification", () => {
     expect(
       failures(`\`${exactCredit}\`, ${exactCredit}'s guide: [${exactCredit}](${canonicalUrl})`),
     ).toEqual([]);
+    expect(failures(`\`${exactCredit} ${canonicalUrl}\``)).toEqual([]);
   });
 
   test("keeps original offsets after unrelated Unicode prose", () => {
@@ -49,17 +50,31 @@ describe("attribution verification", () => {
     `${exactCredit}\u0301`,
     `${exactCredit}\u203FSuffix`,
     `${exactCredit}\u200DSuffix`,
+    `${exactCredit}\u00B7Suffix`,
+    `${exactCredit}\u0387Suffix`,
+    `${exactCredit}\u30FBSuffix`,
   ])("rejects an embedded credit in %p", (embeddedCredit) => {
     expect(failures(`[${exactCredit}](${canonicalUrl}) ${embeddedCredit}`)).toEqual([
       expect.objectContaining({ reason: "public attribution does not use the exact spelling" }),
     ]);
   });
 
-  test.each([
-    `𐐀${canonicalUrl}`,
-    `${canonicalUrl}𐐀`,
-  ])("rejects a canonical URL with a Unicode neighbour in %p", (neighbour) => {
-    expect(failures(`[${exactCredit}](${neighbour})`)).toEqual([
+  test.each(["‿", "‍", "😀", "𐐀"])(
+    "rejects a canonical URL with a Unicode neighbour %p",
+    (neighbour) => {
+      for (const url of [`${neighbour}${canonicalUrl}`, `${canonicalUrl}${neighbour}`]) {
+        expect(failures(`[${exactCredit}](${url})`)).toEqual([
+          expect.objectContaining({
+            reason: "public attribution URL is not the exact delimited canonical URL",
+          }),
+          expect.objectContaining({ reason: "public attribution is missing the canonical URL" }),
+        ]);
+      }
+    },
+  );
+
+  test("rejects a case-modified URL as a URL, not prose", () => {
+    expect(failures(`[${exactCredit}](HTTPS://example.invalid/AtlasCore)`)).toEqual([
       expect.objectContaining({
         reason: "public attribution URL is not the exact delimited canonical URL",
       }),

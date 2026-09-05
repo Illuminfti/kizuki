@@ -7,9 +7,8 @@ interface AttributionFailure {
   reason: string;
 }
 
-const delimiter = /[\s<>"'()[\]{}|]/;
-const tokenCharacter = /[\p{L}\p{N}\p{M}\p{Pc}\u200C\u200D]/u;
-const urlContinuation = /[\p{L}\p{N}\p{M}._~:/?#@%&=+,;$!-]/u;
+const delimiter = /[\s<>"'()[\]{}|`]/;
+const tokenCharacter = /[\p{ID_Continue}\u200C\u200D]/u;
 
 function requiredEnvironment(name: string): string {
   const value = process.env[name];
@@ -32,10 +31,10 @@ function schemeStart(text: string, offset: number): number | null {
     tokenStart -= 1;
   }
   const tokenPrefix = text.slice(tokenStart, offset);
-  const relative = Math.max(
-    tokenPrefix.lastIndexOf("https://"),
-    tokenPrefix.lastIndexOf("http://"),
-  );
+  let relative = -1;
+  for (const match of tokenPrefix.matchAll(/https?:\/\//giu)) {
+    relative = match.index ?? relative;
+  }
   return relative < 0 ? null : tokenStart + relative;
 }
 
@@ -62,6 +61,15 @@ function hasTokenBoundaries(text: string, offset: number, length: number): boole
   return (
     !tokenCharacter.test(characterBefore(text, offset) ?? "") &&
     !tokenCharacter.test(characterAt(text, offset + length) ?? "")
+  );
+}
+
+function hasUrlBoundaries(text: string, offset: number, length: number): boolean {
+  const before = characterBefore(text, offset);
+  const after = characterAt(text, offset + length);
+  return (
+    (before === undefined || delimiter.test(before)) &&
+    (after === undefined || delimiter.test(after))
   );
 }
 
@@ -93,13 +101,10 @@ export function validateAttributionText(
     } else {
       const expectedOffset = urlStart + canonicalUrl.length - identifier.length;
       const candidate = text.slice(urlStart, urlStart + canonicalUrl.length);
-      const before = characterBefore(text, urlStart);
-      const after = characterAt(text, urlStart + canonicalUrl.length);
       valid =
         offset === expectedOffset &&
         candidate === canonicalUrl &&
-        (before === undefined || !urlContinuation.test(before)) &&
-        (after === undefined || !urlContinuation.test(after));
+        hasUrlBoundaries(text, urlStart, canonicalUrl.length);
       hasCanonicalUrl ||= valid;
     }
 
