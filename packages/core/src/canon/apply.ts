@@ -804,23 +804,29 @@ export function applyPurgeRewrite(
 
 function finishSourceErasure(io: CanonIo, intent: SourceErasureIntent, page: VaultPage | null): void {
     const receipt = intent.receipt;
-    appendSourceErasureReceipt(io, receipt);
-    io.db.transaction(() => {
-        insertReceiptRow(io.db, receipt, "purge_review");
-        if (tableExists(io.db, "canon_holds"))
-            io.db.query("DELETE FROM canon_holds WHERE page_path=?").run(receipt.page_path);
-        if (intent.page_id !== null && !receipt.page_path.startsWith("archive/")) {
-            if (page === null)
-                io.db.query("DELETE FROM page_index WHERE page_id=?").run(intent.page_id);
-            else {
-                const subject = page.data["x-subject-id"];
-                upsertPageIndex(io.db, { page_id: intent.page_id, rel_path: receipt.page_path, subject_key: typeof subject === "string" ? subject : null, last_receipt: receipt.receipt_id, last_hash: receipt.after_hash });
-                if (typeof subject !== "string")
-                    io.db.query("UPDATE page_index SET subject_key=NULL WHERE page_id=?").run(intent.page_id);
+    const stream = appendSourceErasureReceipt(io, receipt);
+    try {
+        io.db.transaction(() => {
+            stream.verifyBinding();
+            insertReceiptRow(io.db, receipt, "purge_review");
+            if (tableExists(io.db, "canon_holds"))
+                io.db.query("DELETE FROM canon_holds WHERE page_path=?").run(receipt.page_path);
+            if (intent.page_id !== null && !receipt.page_path.startsWith("archive/")) {
+                if (page === null)
+                    io.db.query("DELETE FROM page_index WHERE page_id=?").run(intent.page_id);
+                else {
+                    const subject = page.data["x-subject-id"];
+                    upsertPageIndex(io.db, { page_id: intent.page_id, rel_path: receipt.page_path, subject_key: typeof subject === "string" ? subject : null, last_receipt: receipt.receipt_id, last_hash: receipt.after_hash });
+                    if (typeof subject !== "string")
+                        io.db.query("UPDATE page_index SET subject_key=NULL WHERE page_id=?").run(intent.page_id);
+                }
             }
-        }
-        io.db.query("DELETE FROM canon_source_erasure_intents WHERE page_path=?").run(receipt.page_path);
-    })();
+            io.db.query("DELETE FROM canon_source_erasure_intents WHERE page_path=?").run(receipt.page_path);
+            stream.verifyBinding();
+        }).immediate();
+    } finally {
+        stream.close();
+    }
     if (intent.page_id !== null && !receipt.page_path.startsWith("archive/")) {
         if (page === null)
             removeDerivedPage(io.db, intent.page_id, io.vault_path);

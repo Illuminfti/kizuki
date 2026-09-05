@@ -7,6 +7,11 @@ import { listCanonPagesReport, stringArray } from "../vault/pages";
 import { sha256Hex } from "../util/hash";
 import { rebuildDerived } from "../derived";
 
+/** Unique schema-compatible tombstone derived only from opaque identity, never old content. */
+export function sourceBodyTombstoneHash(table: "claims" | "proposals", id: string): string {
+  return sha256Hex(JSON.stringify(["kizuki.source-erased-body/v1", table, id]));
+}
+
 export interface SourceErasureReport {
   logical_absence: boolean;
   owned_file_maintenance: "pending" | "complete";
@@ -126,8 +131,8 @@ export function eraseSourcePayload(
       .map((row) => row.event_id),
   );
   const claims = db
-    .query<{ claim_id: string }, [string]>(
-      "SELECT DISTINCT c.claim_id FROM claims c JOIN json_each(c.provenance) p JOIN source_event_bindings b ON b.event_id=p.value WHERE b.source_key=? LIMIT 10001",
+    .query<{ claim_id: string; claim_key: string | null }, [string]>(
+      "SELECT DISTINCT c.claim_id,c.claim_key FROM claims c JOIN json_each(c.provenance) p JOIN source_event_bindings b ON b.event_id=p.value WHERE b.source_key=? LIMIT 10001",
     )
     .all(source);
   const proposals = db.query<{proposal_id:string},[string]>(
@@ -195,14 +200,14 @@ export function eraseSourcePayload(
         "DELETE FROM identity_links WHERE subject_a=? AND subject_b=?",
       ).run(row.subject_a, row.subject_b);
     for (const row of proposals)
-      db.query("UPDATE proposals SET body='',target=NULL,frontmatter='{}',subjects='[]',producer='deterministic',status='withdrawn' WHERE proposal_id=?").run(row.proposal_id);
+      db.query("UPDATE proposals SET body='',body_hash=?,target=NULL,frontmatter='{}',subjects='[]',producer='deterministic',status='withdrawn' WHERE proposal_id=?").run(sourceBodyTombstoneHash("proposals", row.proposal_id), row.proposal_id);
     for (const row of claims)
       db.query(
-        "UPDATE claims SET body='',object=NULL,target=NULL,subject=NULL,predicate=NULL,subjects='[]',frontmatter='{}',model_ref=NULL,producer='deterministic',status='purged' WHERE claim_id=?",
-      ).run(row.claim_id);
-    db.query(
-      "DELETE FROM claim_bindings WHERE claim_key IN (SELECT c.claim_key FROM claims c JOIN json_each(c.provenance) p JOIN source_event_bindings b ON b.event_id=p.value WHERE b.source_key=?) AND NOT EXISTS (SELECT 1 FROM claims c WHERE c.claim_key=claim_bindings.claim_key AND c.status!='purged')",
-    ).run(source);
+        "UPDATE claims SET body='',body_hash=?,claim_key=NULL,object=NULL,target=NULL,subject=NULL,predicate=NULL,subjects='[]',frontmatter='{}',model_ref=NULL,producer='deterministic',status='purged' WHERE claim_id=?",
+      ).run(sourceBodyTombstoneHash("claims", row.claim_id), row.claim_id);
+    // Capture keys before erasure, then remove only bindings with no surviving reference.
+    for (const key of new Set(claims.map(row => row.claim_key).filter((key): key is string => key !== null)))
+      db.query("DELETE FROM claim_bindings WHERE claim_key=? AND NOT EXISTS (SELECT 1 FROM claims WHERE claim_key=?)").run(key, key);
   }).immediate();
   rebuildDerived(db, vault);
   // DELETE plus VACUUM can retain obsolete tokens in live FTS5 segments.

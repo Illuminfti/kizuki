@@ -1,6 +1,7 @@
 import {
   sourceErasureReport,
   eraseSourcePayload,
+  sourceBodyTombstoneHash,
   maintainSourceSqlite,
   type SourceErasureReport,
 } from "./source-erasure";
@@ -722,15 +723,15 @@ function sourcePurgeBlockers(
       .get(sourceKey) !== null
   )
     blockers.push("retrieval_pending");
-  if (
-    db
-      .query(
-        `SELECT 1 FROM claims WHERE claim_id IN (${sourceClaims}) AND (length(body)>0 OR object IS NOT NULL OR target IS NOT NULL OR subject IS NOT NULL OR predicate IS NOT NULL OR model_ref IS NOT NULL OR subjects!='[]' OR frontmatter!='{}' OR producer NOT IN ('deterministic','model','llm','owner')) LIMIT 1`,
-      )
-      .get(sourceKey) !== null
-  )
+  const retainedClaims = db.query<{ claim_id: string; body_hash: string; payload: number }, [string]>(
+    `SELECT claim_id,body_hash,(length(body)>0 OR claim_key IS NOT NULL OR object IS NOT NULL OR target IS NOT NULL OR subject IS NOT NULL OR predicate IS NOT NULL OR model_ref IS NOT NULL OR subjects!='[]' OR frontmatter!='{}' OR producer NOT IN ('deterministic','model','llm','owner')) AS payload FROM claims WHERE claim_id IN (${sourceClaims}) LIMIT 10001`,
+  ).all(sourceKey);
+  if (retainedClaims.length > 10000 || retainedClaims.some(row => row.payload !== 0 || row.body_hash !== sourceBodyTombstoneHash("claims", row.claim_id)))
     blockers.push("claim_payload_retained");
-  if (db.query("SELECT 1 FROM proposals p JOIN json_each(p.provenance) e JOIN source_event_bindings b ON b.event_id=e.value WHERE b.source_key=? AND (length(p.body)>0 OR p.target IS NOT NULL OR p.frontmatter!='{}' OR p.subjects!='[]' OR p.producer!='deterministic') LIMIT 1").get(sourceKey) !== null)
+  const retainedProposals = db.query<{ proposal_id: string; body_hash: string; payload: number }, [string]>(
+    "SELECT DISTINCT p.proposal_id,p.body_hash,(length(p.body)>0 OR p.target IS NOT NULL OR p.frontmatter!='{}' OR p.subjects!='[]' OR p.producer!='deterministic') AS payload FROM proposals p JOIN json_each(p.provenance) e JOIN source_event_bindings b ON b.event_id=e.value WHERE b.source_key=? LIMIT 10001",
+  ).all(sourceKey);
+  if (retainedProposals.length > 10000 || retainedProposals.some(row => row.payload !== 0 || row.body_hash !== sourceBodyTombstoneHash("proposals", row.proposal_id)))
     blockers.push("proposal_payload_retained");
   if (
     db

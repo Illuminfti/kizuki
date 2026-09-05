@@ -1687,3 +1687,138 @@ test("native receipt creation is private under a permissive child-process umask"
   expect(child.exitCode).toBe(0);
   expect(Number(child.stdout.toString().trim())).toBe(0o600);
 });
+
+test("source purge replaces claim and compatibility body hashes with content-free unique tombstones", async () => {
+    const { db, dir, a } = setup();
+    grant(db, a);
+    const { runBatch } = await import("../src/index");
+    const { sha256Hex } = await import("../src/util/hash");
+    const first = accept(db, { ...event(), text: "yes" }, { source: { source_key: a, expected_revision: 1 } });
+    if (first.status !== "stored") throw new Error("synthetic capture failed");
+    const claim = await storeClaim(db, first.event.event_id, { body: "yes" });
+    runBatch(db, { events: [{ ...event(), source_record_id: "second", text: "no", subjects: [], metadata: {} }], cursor: null }, { page_candidates: false }, { source_key: a, expected_revision: 1 });
+    const originals = db.query<{ body_hash: string; body: string }, []>("SELECT body_hash,body FROM claims UNION ALL SELECT body_hash,body FROM proposals").all();
+    expect(originals.some(row => row.body_hash === sha256Hex("yes"))).toBe(true);
+    expect(originals.length).toBeGreaterThan(1);
+    const originalKeys = db.query<{claim_key:string}, []>("SELECT claim_key FROM claims WHERE claim_key IS NOT NULL").all().map(row => row.claim_key);
+    expect(originalKeys).toContain(sha256Hex("person:grace\0employment.works_at"));
+    db.query("INSERT INTO claim_bindings VALUES (?,?,?)").run(originalKeys[0]!, "synthetic-page", new Date().toISOString());
+    revokeSourceGrant(db, { source_key: a, expected_revision: 1, operation_id: "hash-erasure" });
+    const done = await resumeSourceRevocation(db, dir, "hash-erasure", { ownedRetrieval: { stores: async () => ({ stores: [], absent_store_ids: [] }) } });
+    expect(done.status).toBe("purged");
+    const remaining = db.query<{ body_hash: string }, []>("SELECT body_hash FROM claims UNION ALL SELECT body_hash FROM proposals").all().map(row => row.body_hash);
+    for (const row of originals) expect(remaining).not.toContain(row.body_hash);
+    expect(new Set(remaining).size).toBe(remaining.length);
+    expect(remaining.every(hash => /^[a-f0-9]{64}$/.test(hash))).toBe(true);
+    expect(db.query("SELECT claim_key FROM claims WHERE claim_key IS NOT NULL").all()).toEqual([]);
+    expect(db.query("SELECT * FROM claim_bindings").all()).toEqual([]);
+    const { readFileSync, existsSync } = await import("node:fs");
+    for (const suffix of ["", "-wal", "-shm"]) {
+        const file = join(dir, ".kizuki", `kizuki.db${suffix}`);
+        if (existsSync(file)) {
+            for (const row of originals) expect(readFileSync(file).includes(Buffer.from(row.body_hash))).toBe(false);
+            for (const key of originalKeys) expect(readFileSync(file).includes(Buffer.from(key))).toBe(false);
+        }
+    }
+    // A shape-valid residual hash must block completion, even with every text column empty.
+    db.query("UPDATE claims SET body_hash=? WHERE claim_id=?").run(sha256Hex("yes"), claim.claim_id);
+    expect(inspectSourceGrant(db, a)?.purge_blockers).toContain("claim_payload_retained");
+    const proposal = db.query<{proposal_id:string}, []>("SELECT proposal_id FROM proposals LIMIT 1").get()!;
+    db.query("UPDATE proposals SET body_hash=? WHERE proposal_id=?").run(sha256Hex("no"), proposal.proposal_id);
+    expect(inspectSourceGrant(db, a)?.purge_blockers).toContain("proposal_payload_retained");
+    db.close();
+});
+
+for (const replacement of ["symlink", "regular", "during-commit"] as const) {
+    test(`source erasure receipt retains checked stream identity across ${replacement} replacement`, async () => {
+        const { db, dir, a, b } = setup();
+        grant(db, a);
+        setSourceGrant(db, { source_key: b, expected_revision: 0, operation_id: "custody-b", policy: policy() });
+        const aa = accept(db, { ...event(), text: "A custody payload" }, { source: { source_key: a, expected_revision: 1 } });
+        const bb = accept(db, { ...event(), source_record_id: "b", text: "B custody evidence" }, { source: { source_key: b, expected_revision: 1 } });
+        if (aa.status !== "stored" || bb.status !== "stored") throw Error("synthetic capture failed");
+        const io = { db, vault_path: dir };
+        write(io, await storeClaim(db, aa.event.event_id, { body: "A custody payload" }));
+        write(io, await storeClaim(db, bb.event.event_id, { kind: "merge", predicate: null, object: null, body: "B independent custody payload" }));
+        const fs = await import("node:fs");
+        const { spyOn } = await import("bun:test");
+        const log = join(dir, ".kizuki", "receipts", "promotions.jsonl");
+        const old = join(dir, "checked-stream.jsonl");
+        const outside = join(dir, "unrelated-owner-file");
+        fs.writeFileSync(outside, "UNRELATED_OWNER_BYTES\n", { mode: 0o600 });
+        const inode = fs.lstatSync(log).ino;
+        const originalRead = fs.readFileSync;
+        const before = originalRead(log, "utf8");
+        let swapped = false;
+        const spy = spyOn(fs, "readFileSync").mockImplementation(((...args: Parameters<typeof fs.readFileSync>) => {
+            const result = originalRead(...args);
+            if (replacement !== "during-commit" && !swapped && typeof args[0] === "number" && fs.fstatSync(args[0]).ino === inode) {
+                swapped = true;
+                fs.renameSync(log, old);
+                if (replacement === "symlink") fs.symlinkSync(outside, log);
+                else fs.writeFileSync(log, "", { mode: 0o600 });
+            }
+            return result;
+        }) as typeof fs.readFileSync);
+        const originalQuery = db.query.bind(db);
+        const querySpy = replacement === "during-commit" ? spyOn(db, "query").mockImplementation(((sql: string) => {
+            const statement = originalQuery(sql);
+            if (!sql.includes("INSERT INTO canon_receipts")) return statement;
+            return { run: (...params: Parameters<typeof statement.run>) => {
+                const result = statement.run(...params);
+                if (!swapped) {
+                    swapped = true;
+                    fs.renameSync(log, old);
+                    fs.writeFileSync(log, "", { mode: 0o600 });
+                }
+                return result;
+            } };
+        }) as typeof db.query) : undefined;
+        try {
+            revokeSourceGrant(db, { source_key: a, expected_revision: 1, operation_id: "custody-revoke" });
+            const result = await resumeSourceRevocation(db, dir, "custody-revoke", { ownedRetrieval: { stores: async () => ({ stores: [], absent_store_ids: [] }) } });
+            expect(swapped).toBe(true);
+            expect(originalRead(outside, "utf8")).toBe("UNRELATED_OWNER_BYTES\n");
+            if (replacement === "during-commit") expect(originalRead(old, "utf8").startsWith(before)).toBe(true);
+            else expect(originalRead(old, "utf8")).toBe(before);
+            expect(result.status).toBe("denied");
+            expect(db.query("SELECT 1 FROM canon_source_erasure_intents").all().length).toBeGreaterThan(0);
+            const pending = db.query<{intent:string}, []>("SELECT intent FROM canon_source_erasure_intents").all().map(row => JSON.parse(row.intent));
+            for (const intent of pending) expect(db.query("SELECT 1 FROM canon_receipts WHERE receipt_id=?").get(intent.receipt.receipt_id)).toBeNull();
+            // Restore exactly the checked native stream, then native recovery reuses each fixed receipt ID.
+            fs.unlinkSync(log); fs.renameSync(old, log);
+            const retry = await resumeSourceRevocation(db, dir, "custody-revoke", { ownedRetrieval: { stores: async () => ({ stores: [], absent_store_ids: [] }) } });
+            expect(retry.status).toBe("purged");
+            const lines = originalRead(log, "utf8").trim().split("\n").map(line => JSON.parse(line));
+            for (const intent of pending) expect(lines.filter(row => row.receipt_id === intent.receipt.receipt_id)).toHaveLength(1);
+            expect(originalRead(outside, "utf8")).toBe("UNRELATED_OWNER_BYTES\n");
+        } finally {
+            querySpy?.mockRestore();
+            spy.mockRestore();
+            db.close();
+        }
+    });
+}
+
+test("clearing an A-derived claim key preserves a binding referenced by independent B", async () => {
+    const { db, dir, a, b } = setup();
+    grant(db, a);
+    setSourceGrant(db, { source_key: b, expected_revision: 0, operation_id: "shared-key-b", policy: policy() });
+    const aa = accept(db, { ...event(), text: "A fact" }, { source: { source_key: a, expected_revision: 1 } });
+    const bb = accept(db, { ...event(), source_record_id: "b", text: "Independent B fact" }, { source: { source_key: b, expected_revision: 1 } });
+    if (aa.status !== "stored" || bb.status !== "stored") throw Error("synthetic capture failed");
+    const aClaim = await storeClaim(db, aa.event.event_id, { body: "A derived fact", object: "A value" });
+    const bClaim = await storeClaim(db, bb.event.event_id, { body: "Independent B derived fact", object: "B value" });
+    expect(bClaim.claim_key).toBe(aClaim.claim_key);
+    const before = db.query("SELECT * FROM claims WHERE claim_id=?").get(bClaim.claim_id);
+    const binding = { key: bClaim.claim_key!, page: "independent-page", at: new Date().toISOString() };
+    db.query("INSERT INTO claim_bindings VALUES (?,?,?)").run(binding.key, binding.page, binding.at);
+    revokeSourceGrant(db, { source_key: a, expected_revision: 1, operation_id: "shared-key-revoke" });
+    const done = await resumeSourceRevocation(db, dir, "shared-key-revoke", { ownedRetrieval: { stores: async () => ({ stores: [], absent_store_ids: [] }) } });
+    expect(done.status).toBe("purged");
+    expect(db.query("SELECT claim_key FROM claims WHERE claim_id=?").get(aClaim.claim_id)).toEqual({claim_key:null});
+    expect(db.query("SELECT * FROM claims WHERE claim_id=?").get(bClaim.claim_id)).toEqual(before);
+    expect(db.query("SELECT * FROM claim_bindings WHERE claim_key=?").all(binding.key)).toEqual([{claim_key:binding.key,page_id:binding.page,bound_at:binding.at}]);
+    expect(db.query("SELECT 1 FROM events WHERE event_id=?").get(bb.event.event_id)).not.toBeNull();
+    db.close();
+});
