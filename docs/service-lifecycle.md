@@ -13,6 +13,9 @@ recording the opt-out. Neither command deletes the vault or captured evidence.
 Masking or disabling enablement does not establish that a service stopped.
 Unknown activity and transitional states retain the definition and installed
 intent; the command refuses to claim successful removal.
+Removing or restoring a systemd definition also reloads the manager's definition
+cache and checks the resulting runtime state before finalizing intent. A failed
+reload keeps recovery pending until a later invocation can prove restoration.
 
 Definitions and service intent use bounded private files, atomic replacement and
 directory synchronization. A process lock serializes changes for one vault. A

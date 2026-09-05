@@ -28,6 +28,8 @@ export interface SupervisorHost {
   readonly configHome?: string;
   readonly execStart: string | readonly string[];
   query(vaultId: string): SupervisorStatus;
+  /** Refresh changed definitions without enabling or starting a service. */
+  reload(): { ok: boolean; detail: string };
   /** Activate the current unit bytes, including replacement of an older running definition. */
   enable(unitPath: string, unitName: string): { ok: boolean; detail: string };
   disable(unitName: string): { ok: boolean; detail: string };
@@ -117,6 +119,11 @@ export function realSupervisorHost(
         enabled: printed.ok,
         detail: state === "unknown" ? "supervisor state could not be queried" : state,
       };
+    },
+    reload() {
+      if (kind !== "systemd") return { ok: true, detail: "no definition cache reload required" };
+      const result = runCommand(["systemctl", "--user", "daemon-reload"]);
+      return { ok: result.ok, detail: result.ok ? "definitions reloaded" : "service reload failed" };
     },
     enable(unitPath: string, unitName: string) {
       if (kind === "systemd") {
@@ -218,10 +225,13 @@ function recoverChange(vaultPath: string, host: SupervisorHost, paths: ReturnTyp
     if (!host.disable(paths.unit).ok || !confirmedStopped(host.query(paths.vaultId))) throw new Error("service recovery could not confirm stop; previous configuration retained");
   }
   replaceServiceFile(paths.path, entry.previous_unit);
+  if (!host.reload().ok) throw new Error("previous service definition reload remains unverified");
   if (entry.previous_enabled) {
     if (entry.previous_unit === null || !host.enable(paths.path, paths.unit).ok || !confirmedActive(host.query(paths.vaultId))) {
       throw new Error("previous service configuration restored but activation remains unverified");
     }
+  } else if (!confirmedStopped(host.query(paths.vaultId))) {
+    throw new Error("previous service definition restored but stopped state remains unverified");
   }
   writeServeIntent(vaultPath, entry.previous_intent);
   replaceServiceFile(paths.journal, null);
@@ -291,7 +301,10 @@ export function uninstallServeService(
     if (!confirmedStopped(status)) throw new Error("service stop was not confirmed");
     const removed = serviceFile(paths.path) !== null;
     replaceServiceFile(paths.path, null);
+    if (!host.reload().ok) throw new Error("service removal definition reload failed");
+    const refreshed = host.query(paths.vaultId);
+    if (!confirmedStopped(refreshed)) throw new Error("service removal stopped state remains unverified");
     writeServeIntent(vaultPath, "opted-out");
-    return { status, removed };
+    return { status: refreshed, removed };
   });
 }

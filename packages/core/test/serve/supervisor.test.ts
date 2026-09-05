@@ -19,6 +19,7 @@ function fixture() {
   const host: SupervisorHost = {
     kind: "systemd", home: root, execStart: ["/synthetic/kizuki-v1", "serve", "--vault", vault],
     query: () => ({ kind: "systemd", state, unit: "synthetic", enabled, detail: state }),
+    reload: () => ({ok: true, detail: "reloaded"}),
     enable: path => { activated.push(readFileSync(path, "utf8")); state = "active"; enabled = true; return { ok: true, detail: "active" }; },
     disable: () => { state = "disabled"; enabled = false; return { ok: true, detail: "disabled" }; },
   };
@@ -87,7 +88,7 @@ test("process exit after unit publication preserves a durable rollback snapshot"
     installServeService(${JSON.stringify(f.vault)}, {
       kind: "systemd", home: ${JSON.stringify(f.root)}, execStart: ["/synthetic/kizuki-v2", "serve"],
       query: () => ({kind:"systemd",state:"active",unit:"synthetic",enabled:true,detail:"active"}),
-      enable: () => process.exit(86), disable: () => ({ok:true,detail:"disabled"})
+      reload: () => ({ok:true,detail:"reloaded"}), enable: () => process.exit(86), disable: () => ({ok:true,detail:"disabled"})
     });`;
   const exited = Bun.spawnSync([process.execPath, "-e", code], { stdout: "pipe", stderr: "pipe" });
   expect(exited.exitCode).toBe(86);
@@ -137,7 +138,7 @@ test("recovery refuses identity or unit-location drift and retains the original 
     installServeService(${JSON.stringify(f.vault)}, {
       kind: "systemd", home: ${JSON.stringify(f.root)}, execStart: ["/synthetic/kizuki-v2", "serve"],
       query: () => ({kind:"systemd",state:"active",unit:"synthetic",enabled:true,detail:"active"}),
-      enable: () => process.exit(86), disable: () => ({ok:true,detail:"disabled"})
+      reload: () => ({ok:true,detail:"reloaded"}), enable: () => process.exit(86), disable: () => ({ok:true,detail:"disabled"})
     });`;
   expect(Bun.spawnSync([process.execPath, "-e", code], {stdout: "pipe", stderr: "pipe"}).exitCode).toBe(86);
   const journal = join(f.vault, ".kizuki", "service-change.json");
@@ -169,4 +170,33 @@ test("malformed intent and path-shaped vault IDs cannot initiate a service trans
   writeFileSync(join(f.vault, ".kizuki", "vault-id"), "../other\n");
   expect(() => installServeService(f.vault, f.host)).toThrow("invalid vault identity");
   expect(f.activated).toHaveLength(0);
+});
+
+test("rollback reloads restored disabled definitions without starting them", () => {
+  const f = fixture(); const first = installServeService(f.vault, f.host);
+  const original = readFileSync(first.unitPath!, "utf8");
+  f.setState("disabled"); writeServeIntent(f.vault, "opted-out");
+  let cached = original;
+  const changed: SupervisorHost = {...f.host, execStart:["/synthetic/kizuki-v2","serve"],
+    enable: path => {cached=readFileSync(path,"utf8");return {ok:false,detail:"activation failed"};},
+    reload: () => {cached=readFileSync(first.unitPath!,"utf8");return {ok:true,detail:"reloaded"};},
+  };
+  expect(() => installServeService(f.vault, changed)).toThrow("previous configuration restored");
+  expect(cached).toBe(original);
+  expect(f.host.query("synthetic").state).toBe("disabled");
+  expect(readServeIntent(f.vault)).toBe("opted-out");
+  expect(existsSync(join(f.vault,".kizuki","service-change.json"))).toBe(false);
+});
+
+test("rollback reloads deletion of a failed first-install definition", () => {
+  const f = fixture(); let path="", cached: string|null=null;
+  const changed: SupervisorHost = {...f.host,
+    enable: next => {path=next;cached=readFileSync(next,"utf8");return {ok:false,detail:"activation failed"};},
+    reload: () => {cached=existsSync(path)?readFileSync(path,"utf8"):null;return {ok:true,detail:"reloaded"};},
+  };
+  expect(() => installServeService(f.vault, changed)).toThrow("previous configuration restored");
+  expect(cached).toBe(null);
+  expect(existsSync(path)).toBe(false);
+  expect(readServeIntent(f.vault)).toBe("opted-out");
+  expect(existsSync(join(f.vault,".kizuki","service-change.json"))).toBe(false);
 });

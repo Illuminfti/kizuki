@@ -27,6 +27,7 @@ function host(status: SupervisorStatus): SupervisorHost {
     home: "/tmp",
     execStart: "kizuki serve",
     query: () => status,
+    reload: () => ({ ok: true, detail: "ok" }),
     enable: () => ({ ok: true, detail: "ok" }),
     disable: () => ({ ok: true, detail: "ok" }),
   };

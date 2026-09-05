@@ -74,3 +74,28 @@ test("masking or disabling enablement cannot prove a service stopped", () => {
     expect(JSON.parse(status.stdout).data.doctor.ok).toBe(false);
   }
 });
+
+test("uninstall refreshes the manager cache and failed refresh retains recoverable installed state", () => {
+  const setup = tempVault();
+  const xdg = join(setup.root, "cached-config"), cache = join(setup.root, "cached-definition");
+  const env = {...fakeSystemd(setup.root, setup.env), XDG_CONFIG_HOME: xdg, KIZUKI_SUPERVISOR: "systemd",
+    TEST_SUPERVISOR_CACHE: cache, TEST_SUPERVISOR_UNITS: join(xdg, "systemd", "user")};
+  const installed = runCli(env, "serve", "--install", "--json");
+  expect(installed.exitCode).toBe(0);
+  const unit = JSON.parse(installed.stdout).data.unitPath;
+  const original = readFileSync(unit, "utf8");
+  expect(readFileSync(cache, "utf8")).toBe(original);
+  const failed = runCli({...env, TEST_SUPERVISOR_FAIL: "daemon-reload"}, "serve", "--uninstall", "--json");
+  expect(failed.exitCode).toBe(1);
+  expect(failed.stderr).toContain("recovery is pending");
+  expect(readFileSync(unit, "utf8")).toBe(original);
+  expect(readFileSync(cache, "utf8")).toBe(original);
+  expect(readFileSync(join(setup.vault, ".kizuki", "serve-intent"), "utf8").trim()).toBe("installed");
+  expect(existsSync(join(setup.vault, ".kizuki", "service-change.json"))).toBe(true);
+  const removed = runCli(env, "serve", "--uninstall", "--json");
+  expect(removed.exitCode).toBe(0);
+  expect(JSON.parse(removed.stdout).data.status.state).toBe("absent");
+  expect(existsSync(unit)).toBe(false);
+  expect(readFileSync(cache, "utf8")).toBe("");
+  expect(existsSync(join(setup.vault, ".kizuki", "service-change.json"))).toBe(false);
+});

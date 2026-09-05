@@ -9,7 +9,16 @@ export function fakeSystemd(root: string, env: Record<string, string | undefined
 if [ "$TEST_SUPERVISOR_FAIL" = "$2" ]; then exit 1; fi
 state="\${TEST_SUPERVISOR_STATE:-$(cat "$TEST_SUPERVISOR_FILE")}"
 case "$2" in
-  daemon-reload) exit 0 ;;
+  daemon-reload)
+    if [ -n "$TEST_SUPERVISOR_CACHE" ]; then
+      : > "$TEST_SUPERVISOR_CACHE"
+      found=no
+      for unit in "$TEST_SUPERVISOR_UNITS"/*.service; do
+        if [ -f "$unit" ]; then cat "$unit" >> "$TEST_SUPERVISOR_CACHE"; found=yes; fi
+      done
+      if [ "$found" = no ] && [ "$state" != active ]; then printf 'absent\\n' > "$TEST_SUPERVISOR_FILE"; fi
+    fi
+    exit 0 ;;
   enable) printf 'enabled\\n' > "$TEST_SUPERVISOR_FILE"; exit 0 ;;
   restart) printf 'active\\n' > "$TEST_SUPERVISOR_FILE"; exit 0 ;;
   disable) printf 'disabled\\n' > "$TEST_SUPERVISOR_FILE"; exit 0 ;;
