@@ -470,6 +470,7 @@ describe("public surface", () => {
       "timeline",
       "toFtsQuery",
       "toolAllowed",
+      "tryAdvisoryFileLock",
       "ulid",
       "undoReceipt",
       "unifiedDiff",
