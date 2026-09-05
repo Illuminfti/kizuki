@@ -3,8 +3,7 @@ import { writeFileSync, symlinkSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { createHelpers } from "./helpers";
 
-// Temporary diagnostics for the CI-only native erasure failure; remove after repair.
-const h = createHelpers({ preload: join(import.meta.dir, "owned-retrieval-diagnostics-preload.ts") });
+const h = createHelpers();
 afterEach(h.cleanup);
 const policy = { purposes: ["capture", "recall", "session", "derive"], allowed_fields: ["text", "subjects", "attachments", "metadata"], retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "private" };
 function enrolled() {
