@@ -51,13 +51,13 @@ test("public service installation uses XDG config directly even with empty HOME"
   expect(existsSync(unit)).toBe(false);
 });
 
-test("masking or disabling enablement cannot prove a service stopped", () => {
-  for (const [enablement, activity, exit, expected] of [
+for (const [enablement, activity, exit, expected] of [
     ["masked", "active", "0", "active"],
     ["disabled", "unknown", "4", "unknown"],
     ["masked", "unknown", "4", "unknown"],
     ["disabled", "deactivating", "3", "unknown"],
   ] as const) {
+  test(`${enablement} enablement with ${activity} activity cannot prove a service stopped`, () => {
     const setup = tempVault();
     const env = {...fakeSystemd(setup.root, setup.env), KIZUKI_SUPERVISOR: "systemd"};
     const installed = runCli(env, "serve", "--install", "--json");
@@ -72,8 +72,8 @@ test("masking or disabling enablement cannot prove a service stopped", () => {
     expect(status.exitCode).toBe(1);
     expect(JSON.parse(status.stdout).data.supervisor.state).toBe(expected);
     expect(JSON.parse(status.stdout).data.doctor.ok).toBe(false);
-  }
-});
+  });
+}
 
 test("uninstall refreshes the manager cache and failed refresh retains recoverable installed state", () => {
   const setup = tempVault();
