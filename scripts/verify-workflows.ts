@@ -95,6 +95,18 @@ function validateJobs(
         reason: `job "${name}" runs the repository gate without checkout fetch-depth 0`,
       });
     }
+    if (path.endsWith("/ci.yml") && Array.isArray(steps)) {
+      const checkout = steps.find(step => isRecord(step) && typeof step["uses"] === "string" && step["uses"].startsWith("actions/checkout@"));
+      const settings = isRecord(checkout) ? checkout["with"] : undefined;
+      if ((checkout !== undefined || name === "test" || jobRunsHistoryScan(rawJob)) &&
+        (!isRecord(settings) || settings["ref"] !== "${{ github.event.pull_request.head.sha || github.sha }}")) {
+        failures.push({ path, reason: `job "${name}" must check out the immutable event head` });
+      }
+      if (name === "test" && (rawJob["if"] !== undefined || !steps.some(step =>
+        isRecord(step) && step["if"] === undefined && step["run"] === "bun scripts/ci-diff-check.ts"))) {
+        failures.push({ path, reason: "ci test must run the unconditional event-bound diff checker" });
+      }
+    }
   }
 
   if (path.endsWith("/ci.yml") || path.endsWith(".github/workflows/ci.yml")) {

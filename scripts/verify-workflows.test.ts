@@ -31,6 +31,7 @@ test("runtime, package metadata and resolved types share the checked-in Bun pin"
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+const pinnedRef = '${{ github.event.pull_request.head.sha || github.sha }}';
 const pinnedCheckout = "actions/checkout@11d5960a326750d5838078e36cf38b85af677262";
 const pinnedBun = "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6";
 
@@ -42,7 +43,7 @@ function ciWorkflow(overrides?: {
   const name = overrides?.name ?? "ci";
   const testSteps = overrides?.testSteps ??
     `      - uses: ${pinnedCheckout}
-        with: { fetch-depth: 0 }
+        with: { fetch-depth: 0, ref: "${pinnedRef}" }
       - uses: ${pinnedBun}
         with: { bun-version: 1.3.10 }
       - run: bun run verify`;
@@ -58,10 +59,22 @@ jobs:
     timeout-minutes: 10
     steps:
 ${testSteps}
+      - run: bun scripts/ci-diff-check.ts
 ${overrides?.extraJob ?? ""}`;
 }
 
 describe("workflow validation", () => {
+  test("the real workflow cannot disconnect the event-bound gate or restore mutable checkout refs", () => {
+    const path = ".github/workflows/ci.yml";
+    const current = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
+    const old = current.replaceAll("          ref: ${{ github.event.pull_request.head.sha || github.sha }}\n", "")
+      .replace("run: bun scripts/ci-diff-check.ts", "run: |\n          git fetch --no-tags origin main\n          git diff --check FETCH_HEAD...HEAD");
+    expect(validateWorkflowText(path, old).some(failure => failure.reason.includes("event head"))).toBe(true);
+    expect(validateWorkflowText(path, old).some(failure => failure.reason.includes("event-bound diff"))).toBe(true);
+    const skipped = current.replace("      - name: exact-head diff integrity", "      - if: false\n        name: exact-head diff integrity");
+    expect(validateWorkflowText(path, skipped).some(failure => failure.reason.includes("event-bound diff"))).toBe(true);
+  });
+
   test("accepts a SHA-pinned ci workflow with fetch-depth 0", () => {
     expect(validateWorkflowText(".github/workflows/ci.yml", ciWorkflow())).toEqual([]);
   });
@@ -108,7 +121,7 @@ describe("workflow validation", () => {
   test("rejects an unpinned action", () => {
     const text = ciWorkflow({
       testSteps: `      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with: { fetch-depth: 0, ref: "${pinnedRef}" }
       - run: bun run verify`,
     });
     expect(validateWorkflowText(".github/workflows/ci.yml", text)).toEqual([
@@ -119,7 +132,7 @@ describe("workflow validation", () => {
   test("rejects a verify job without fetch-depth 0", () => {
     const text = ciWorkflow({
       testSteps: `      - uses: ${pinnedCheckout}
-        with: { fetch-depth: 1 }
+        with: { fetch-depth: 1, ref: "${pinnedRef}" }
       - uses: ${pinnedBun}
         with: { bun-version: 1.3.10 }
       - run: bun run verify`,
@@ -146,7 +159,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: ${pinnedCheckout}
-        with: { fetch-depth: 0 }
+        with: { fetch-depth: 0, ref: "${pinnedRef}" }
       - run: bun test
 `;
     expect(validateWorkflowText(".github/workflows/ci.yml", withoutTest)).toEqual([
@@ -157,7 +170,7 @@ jobs:
   test("rejects skip-on-missing hashFiles conditions", () => {
     const text = ciWorkflow({
       testSteps: `      - uses: ${pinnedCheckout}
-        with: { fetch-depth: 0 }
+        with: { fetch-depth: 0, ref: "${pinnedRef}" }
       - uses: ${pinnedBun}
         with: { bun-version: 1.3.10 }
       - if: hashFiles('scripts/verify.sh') == ''
@@ -171,7 +184,7 @@ jobs:
   test("rejects bun-version latest", () => {
     const text = ciWorkflow({
       testSteps: `      - uses: ${pinnedCheckout}
-        with: { fetch-depth: 0 }
+        with: { fetch-depth: 0, ref: "${pinnedRef}" }
       - uses: ${pinnedBun}
         with: { bun-version: latest }
       - run: bun run verify`,
