@@ -23,11 +23,11 @@ function fixture() {
     git("add", "fixture.txt"); git("commit", "-qm", "Change fixture");
     return git("rev-parse", "HEAD");
   }
-  function check(name: string, event: unknown) {
+  function check(name: string, event: unknown, eventSha?: string) {
     const eventPath = join(root, "event.json");
     writeFileSync(eventPath, JSON.stringify(event));
     return Bun.spawnSync([process.execPath, script], {
-      cwd: root, env: { ...process.env, GITHUB_EVENT_NAME: name, GITHUB_EVENT_PATH: eventPath },
+      cwd: root, env: { ...process.env, GITHUB_EVENT_NAME: name, GITHUB_EVENT_PATH: eventPath, GITHUB_SHA: eventSha ?? "" },
       stdout: "pipe", stderr: "pipe",
     });
   }
@@ -67,4 +67,17 @@ test("clean push and initial clean tree pass with reported exact endpoints", () 
     expect(result.exitCode).toBe(0);
     expect(result.stdout.toString()).toContain(after);
   }
+});
+
+
+test("manual native proof binds explicit ancestor base and actual event SHA", () => {
+  const f = fixture(); const base = f.commit("clean\n"); const head = f.commit("new\n");
+  expect(f.check("workflow_dispatch", { inputs: { base_sha: base } }, head).exitCode).toBe(0);
+  for (const bad of ["", "HEAD~1", "0".repeat(40), "f".repeat(40), head]) {
+    expect(f.check("workflow_dispatch", { inputs: { base_sha: bad } }, head).exitCode).not.toBe(0);
+  }
+  expect(f.check("workflow_dispatch", { inputs: { base_sha: base } }, base).exitCode).not.toBe(0);
+  expect(f.check("workflow_dispatch", { inputs: { base_sha: base } }).exitCode).not.toBe(0);
+  f.git("checkout", "--detach", base); const sibling = f.commit("sibling\n"); f.git("checkout", "--detach", head);
+  expect(f.check("workflow_dispatch", { inputs: { base_sha: sibling } }, head).exitCode).not.toBe(0);
 });

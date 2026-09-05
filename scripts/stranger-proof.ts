@@ -4,9 +4,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { requireRegularFile, verifyChecksumManifest } from "./release-artifacts";
 
+import { releaseTarget, requireNativeHost, selectedReleaseTarget } from "./release-targets";
+
 const root = resolve(import.meta.dir, "..");
 const schema = "kizuki.artifact-proof/v1" as const;
-const target = "bun-linux-x64-baseline" as const;
+
 const packaged = ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"] as const;
 const CHILD_TIMEOUT_MS = 30_000;
 
@@ -32,6 +34,8 @@ interface ProofReceipt {
   host_platform: string;
   host_arch: string;
   binary_sha256: string;
+  bun_version: string;
+  package_sha256: Record<string, string>;
   paths: {
     executable: string;
     home: string;
@@ -68,7 +72,7 @@ export function parseProofArgs(args: readonly string[]): ProofArgs {
     throw new Error("artifact proof requires --report DIR so its receipt is retained");
   }
   return {
-    artifact: artifact ?? resolve(root, "dist", `kizuki-${packageVersion()}`, target),
+    artifact: artifact ?? resolve(root, "dist", `kizuki-${packageVersion()}`, selectedReleaseTarget().target),
     report,
   };
 }
@@ -133,7 +137,8 @@ function checkedArtifact(path: string): BuildInfo {
   for (const name of [...packaged, "SHA256SUMS"]) requireRegularFile(join(path, name));
   verifyChecksumManifest(path, packaged);
   const build = parseBuildInfo(join(path, "BUILD.json"));
-  if (build.target !== target) throw new Error(`artifact target is unsupported: ${build.target}`);
+  requireNativeHost(releaseTarget(build.target));
+  if (build.bun_version !== Bun.version) throw new Error("artifact Bun version mismatch");
   return build;
 }
 
@@ -234,6 +239,8 @@ export async function runArtifactProof(args: ProofArgs): Promise<string> {
       host_platform: process.platform,
       host_arch: process.arch,
       binary_sha256: sha256(executable),
+      bun_version: Bun.version,
+      package_sha256: Object.fromEntries([...packaged, "SHA256SUMS"].map(name => [name, sha256(join(copiedArtifact, name))])),
       paths: { executable, home, config, vault, restored_vault: restored },
       steps,
       failures,
@@ -247,6 +254,8 @@ export async function runArtifactProof(args: ProofArgs): Promise<string> {
       host_platform: process.platform,
       host_arch: process.arch,
       binary_sha256: safeSha256(join(copiedArtifact, "kizuki")),
+      bun_version: Bun.version,
+      package_sha256: {},
       paths: {
         executable: join(copiedArtifact, "kizuki"),
         home: join(execution, "home"),

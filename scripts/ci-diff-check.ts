@@ -36,6 +36,12 @@ function main(): void {
   } else if (kind === "push") {
     before = sha(event["before"]);
     after = sha(event["after"]);
+  } else if (kind === "workflow_dispatch") {
+    before = sha(record(event["inputs"])["base_sha"]);
+    after = sha(process.env["GITHUB_SHA"]);
+    if (before === ZERO || before === after) throw new Error("manual proof requires a distinct nonzero ancestor base");
+    git("rev-parse", "--verify", `${before}^{commit}`);
+    git("merge-base", "--is-ancestor", before, after);
   } else {
     throw new Error("unsupported CI event; define an explicit diff contract");
   }

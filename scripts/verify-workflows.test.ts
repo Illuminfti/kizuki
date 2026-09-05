@@ -201,3 +201,13 @@ jobs:
     expect(await validateTrackedWorkflows()).toEqual([]);
   });
 });
+
+
+test("manual macOS proof refuses automatic triggers, unbounded cost, and mutable checkouts", () => {
+  const path = ".github/workflows/macos-native.yml";
+  const text = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
+  expect(validateWorkflowText(path, text)).toEqual([]);
+  for (const bad of [text.replace("  workflow_dispatch:", "  push: {}\n  workflow_dispatch:"), text.replace("default: false", "default: true"), text.replace("timeout-minutes: 15", "timeout-minutes: 60"), text.replace("${{ github.event.pull_request.head.sha || github.sha }}", "main"), text.replace("bun scripts/ci-diff-check.ts", "echo skipped")]) {
+    expect(validateWorkflowText(path, bad).length).toBeGreaterThan(0);
+  }
+});

@@ -51,3 +51,33 @@ source checkout. Use `./kizuki` and `./kizuki-mcp` from the native package.
 If `kizuki serve --install` creates a user service, run it from the binary's
 final path; moving the executable later leaves that service pointing at the
 old path.
+
+## Manual macOS candidate gate
+
+The closed build registry accepts native Linux x64 baseline and native macOS
+Apple Silicon (`bun-darwin-arm64`). Build and proof refuse host/target mismatch;
+Intel macOS and other targets remain unsupported. The selected native host is
+the default; `KIZUKI_TARGET` can explicitly select only its matching registry
+entry. macOS checksums use `shasum -a 256 -c SHA256SUMS`.
+
+`.github/workflows/macos-native.yml` is manual-only, with one standard
+`macos-15` arm64 runner and a 15-minute timeout. It requires an exact ancestor
+`base_sha` and binds the checkout to the actual dispatch SHA. The default-false
+`existing_allowance_verified` input must remain false until existing allowance
+and spending limits prove that this run and artifact retention add no cost.
+Usage showing zero billed cost is not proof of remaining allowance. No runner
+was started as part of preparing this change.
+
+The job runs native filesystem, lock, config, terminal and plist checks, builds
+both binaries, and executes the package outside the checkout. It retains the
+package and content-free synthetic proof receipt in this repository for seven
+days. It does not load a launchd service, sign/notarize binaries, publish a
+release, or count as installed-service or human stranger evidence. Actual macOS
+execution is still a required verification gate until an exact-head receipt
+exists. Linux validation does not supply that receipt.
+
+The shared lock uses the OS system library on each target and retains the same
+native advisory locking and stable-inode ownership protocol. macOS daemon boot
+identity currently falls back to a PID string; this does not satisfy the strict
+calendar qualification UUID contract. macOS calendar qualification remains
+unqualified and no synthetic boot identity is generated here.

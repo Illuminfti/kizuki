@@ -95,7 +95,7 @@ function validateJobs(
         reason: `job "${name}" runs the repository gate without checkout fetch-depth 0`,
       });
     }
-    if (path.endsWith("/ci.yml") && Array.isArray(steps)) {
+    if ((path.endsWith("/ci.yml") || path.endsWith("/macos-native.yml")) && Array.isArray(steps)) {
       const checkouts = steps.filter(step => isRecord(step) && typeof step["uses"] === "string" && step["uses"].startsWith("actions/checkout@"));
       const exact = (checkout: unknown): boolean => {
         const settings = isRecord(checkout) ? checkout["with"] : undefined;
@@ -147,6 +147,26 @@ export function validateWorkflowText(path: string, text: string): WorkflowFailur
   if (path.endsWith("/ci.yml") || path.endsWith(".github/workflows/ci.yml")) {
     if (document["name"] !== "ci") {
       failures.push({ path, reason: 'ci.yml name must remain "ci"' });
+    }
+  }
+
+  if (path.endsWith("/macos-native.yml")) {
+    const trigger = document["on"];
+    const dispatch = isRecord(trigger) ? trigger["workflow_dispatch"] : undefined;
+    const inputs = isRecord(dispatch) ? dispatch["inputs"] : undefined;
+    const allowance = isRecord(inputs) ? inputs["existing_allowance_verified"] : undefined;
+    const base = isRecord(inputs) ? inputs["base_sha"] : undefined;
+    const jobs = document["jobs"];
+    const job = isRecord(jobs) ? jobs["native-arm64"] : undefined;
+    const steps = isRecord(job) ? job["steps"] : undefined;
+    if (!isRecord(trigger) || Object.keys(trigger).join() !== "workflow_dispatch" ||
+        !isRecord(allowance) || allowance["type"] !== "boolean" || allowance["default"] !== false || allowance["required"] !== true ||
+        !isRecord(base) || base["type"] !== "string" || base["required"] !== true ||
+        !isRecord(jobs) || Object.keys(jobs).join() !== "native-arm64" || !isRecord(job) ||
+        job["if"] !== "${{ inputs.existing_allowance_verified == true }}" || job["runs-on"] !== "macos-15" || job["timeout-minutes"] !== 15 || job["strategy"] !== undefined ||
+        !Array.isArray(steps) || !steps.some(step => isRecord(step) && step["if"] === undefined && step["run"] === "bun scripts/ci-diff-check.ts") ||
+        !steps.some(step => isRecord(step) && typeof step["uses"] === "string" && step["uses"].startsWith("actions/checkout@"))) {
+      failures.push({ path, reason: "macOS proof must remain manual, allowance-gated, bounded, and event-checked" });
     }
   }
 
