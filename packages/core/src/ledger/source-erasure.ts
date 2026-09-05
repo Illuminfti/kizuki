@@ -6,6 +6,7 @@ import { parseFrontmatter } from "../vault/frontmatter";
 import { listCanonPagesReport, stringArray } from "../vault/pages";
 import { sha256Hex } from "../util/hash";
 import { rebuildDerived } from "../derived";
+import { parseLegacyIdentityEvidence } from "../claims/identity";
 
 /** Unique schema-compatible tombstone derived only from opaque identity, never old content. */
 export function sourceBodyTombstoneHash(table: "claims" | "proposals", id: string): string {
@@ -21,6 +22,38 @@ export interface SourceErasureReport {
   affected_receipt_ids: string[];
   affected_identity_hashes: string[];
   retained_reasons: string[];
+}
+
+interface LegacyIdentityRow {
+  subject_a: string;
+  subject_b: string;
+  evidence: string;
+}
+
+function sourceSubjectRefs(db: Database, source: string): Set<string> {
+  const refs = new Set<string>();
+  const rows = db.query<{ subjects: string }, [string]>(
+    "SELECT e.subjects FROM events e JOIN source_event_bindings b ON b.event_id=e.event_id WHERE b.source_key=?",
+  ).all(source);
+  for (const row of rows) {
+    let subjects: unknown;
+    try { subjects = JSON.parse(row.subjects); } catch { continue; }
+    if (!Array.isArray(subjects)) continue;
+    for (const subject of subjects) {
+      if (typeof subject !== "object" || subject === null) continue;
+      const id = (subject as { subject_id?: unknown }).subject_id;
+      if (typeof id === "string") refs.add(id);
+    }
+  }
+  return refs;
+}
+
+function allLegacyIdentityRows(db: Database): LegacyIdentityRow[] {
+  const rows = db.query<LegacyIdentityRow, []>(
+    "SELECT subject_a, subject_b, evidence FROM identity_links LIMIT 10001",
+  ).all();
+  if (rows.length > 10000) throw new Error("identity link verification exceeded its bounded row limit");
+  return rows;
 }
 export function sourceErasureReport(
   db: Database,
@@ -138,11 +171,16 @@ export function eraseSourcePayload(
   const proposals = db.query<{proposal_id:string},[string]>(
     "SELECT DISTINCT p.proposal_id FROM proposals p JOIN json_each(p.provenance) e JOIN source_event_bindings b ON b.event_id=e.value WHERE b.source_key=? LIMIT 10001"
   ).all(source);
-  const links = db
-    .query<{ subject_a: string; subject_b: string }, [string, string]>(
-      "SELECT DISTINCT l.subject_a,l.subject_b FROM identity_links l JOIN json_each(l.evidence) p WHERE replace(p.value,'event:','') IN (SELECT event_id FROM source_event_bindings WHERE source_key=?) OR replace(p.value,'claim:','') IN (SELECT c.claim_id FROM claims c JOIN json_each(c.provenance) e JOIN source_event_bindings b ON b.event_id=e.value WHERE b.source_key=?) LIMIT 10001",
-    )
-    .all(source, source);
+  const subjectRefs = sourceSubjectRefs(db, source);
+  const claimIds = new Set(claims.map((row) => row.claim_id));
+  const links = allLegacyIdentityRows(db);
+  const erasedLinks = links.filter((row) => {
+    if (subjectRefs.has(row.subject_a) || subjectRefs.has(row.subject_b)) return true;
+    const parsed = parseLegacyIdentityEvidence(row.evidence);
+    return parsed.ok && parsed.refs.some((ref) =>
+      ref.kind === "event" ? ids.has(ref.id) : claimIds.has(ref.id),
+    );
+  });
   const report: SourceErasureReport = {
     logical_absence: false,
     owned_file_maintenance: "pending",
@@ -168,7 +206,7 @@ export function eraseSourcePayload(
     affected_identity_hashes: [
       ...new Set([
         ...(prior?.affected_identity_hashes ?? []),
-        ...links.map((row) =>
+        ...erasedLinks.map((row) =>
           sha256Hex(JSON.stringify([row.subject_a, row.subject_b])),
         ),
       ]),
@@ -195,7 +233,7 @@ export function eraseSourcePayload(
   if (report.retained_reasons.length > 0) return report;
   db.exec("PRAGMA secure_delete=ON");
   db.transaction(() => {
-    for (const row of links)
+    for (const row of erasedLinks)
       db.query(
         "DELETE FROM identity_links WHERE subject_a=? AND subject_b=?",
       ).run(row.subject_a, row.subject_b);
@@ -213,6 +251,21 @@ export function eraseSourcePayload(
   // DELETE plus VACUUM can retain obsolete tokens in live FTS5 segments.
   // Rebuild from the surviving content before compacting the owned SQLite files.
   db.exec("INSERT INTO search_docs(search_docs) VALUES ('rebuild')");
+  for (const row of allLegacyIdentityRows(db)) {
+    const parsed = parseLegacyIdentityEvidence(row.evidence);
+    if (!parsed.ok) {
+      report.retained_reasons.push("identity_evidence_unresolved");
+      break;
+    }
+    if (subjectRefs.has(row.subject_a) || subjectRefs.has(row.subject_b) || parsed.refs.some((ref) => ref.kind === "event" ? ids.has(ref.id) : claimIds.has(ref.id))) {
+      report.retained_reasons.push("identity_payload_retained");
+      break;
+    }
+  }
+  if (report.retained_reasons.length > 0) {
+    save(db, source, report);
+    return report;
+  }
   report.logical_absence = true;
   save(db, source, report);
   return report;

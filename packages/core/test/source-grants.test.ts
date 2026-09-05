@@ -1106,6 +1106,19 @@ test("native source erasure removes whole joint claims and SQLite payload while 
   );
   if (!("claim" in joint) || !("claim" in independent))
     throw new Error("fixture claim failed");
+  db.query(
+    `INSERT INTO identity_links
+       (subject_a, subject_b, score, evidence, status, decided_by, receipt_id, at)
+     VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`,
+  ).run(
+    "person:legacy-a",
+    "person:legacy-b",
+    1,
+    JSON.stringify([`event:${aa.event.event_id}`, `claim:${joint.claim.claim_id}`]),
+    "merged",
+    "forged",
+    "2026-09-05T00:00:00.000Z",
+  );
   await rebuildRetrieval(db, dir);
   expect(
     db
@@ -1132,6 +1145,7 @@ test("native source erasure removes whole joint claims and SQLite payload while 
   });
   expect(done.status).toBe("purged");
   expect(done.erasure?.affected_claim_ids).toContain(joint.claim.claim_id);
+  expect(db.query("SELECT 1 FROM identity_links").get()).toBeNull();
   expect(
     db
       .query(

@@ -9,6 +9,7 @@ import { applyPurgeRewrite } from "../canon/apply";
 import type { CanonIo } from "../canon";
 import { CanonWriteError } from "../canon/errors";
 import { getClaim, listClaims, markClaimsAfterPurge } from "../claims/store";
+import { parseLegacyIdentityEvidence } from "../claims/identity";
 import { PortError } from "../contracts/ports";
 import type { Claim } from "../contracts/proposal";
 import type { AbsenceProof, RetrievalPort } from "../contracts/retrieval";
@@ -41,6 +42,7 @@ export const PURGE_ERROR_CODES = [
   "delete_mismatch",
   "absence_failed",
   "canon_changed",
+  "identity_unsupported",
 ] as const;
 export type PurgeErrorCode = (typeof PURGE_ERROR_CODES)[number];
 
@@ -308,20 +310,14 @@ function emptyOutcome(): PurgeOutcome {
   };
 }
 
-function aliasSet(db: Database, ref: string): string[] {
-  if (!tableExists(db, "identity_links")) return [ref];
-  const rows = db
-    .query<{ subject_a: string; subject_b: string }, [string, string]>(
-      `SELECT subject_a, subject_b FROM identity_links
-        WHERE subject_a = ? OR subject_b = ?`,
-    )
-    .all(ref, ref);
-  const aliases = new Set<string>([ref]);
-  for (const row of rows) {
-    aliases.add(row.subject_a);
-    aliases.add(row.subject_b);
+function assertAliasExpansionUnavailable(filter: PurgeFilter, includeAliases: boolean): void {
+  if (includeAliases && filter.subject_handle !== undefined) {
+    throw new PurgeError(
+      "identity_unsupported",
+      "identity authority unavailable",
+      filter,
+    );
   }
-  return [...aliases];
 }
 
 function selector(
@@ -348,10 +344,7 @@ function selector(
     bindings.push(filter.source_record_id);
   }
   if (filter.subject_handle !== undefined) {
-    const refs =
-      includeAliases === true
-        ? aliasSet(db, filter.subject_handle)
-        : [filter.subject_handle];
+    const refs = [filter.subject_handle];
     const subjectClause = refs
       .map(
         () => `
@@ -492,6 +485,7 @@ export function previewPurge(
 ): PurgePreview {
   const normalized = normalizePurgeReason(reason);
   const includeAliases = options.include_aliases === true;
+  assertAliasExpansionUnavailable(filter, includeAliases);
   const candidates = loadCandidates(db, filter, includeAliases);
   const connectors = [...new Set(candidates.map((row) => row.connector_id))].sort();
   const matched =
@@ -730,6 +724,84 @@ function assertAbsent(db: Database, eventIds: readonly string[]): void {
   }
 }
 
+function rawSubjectRefs(db: Database, eventIds: readonly string[]): Set<string> {
+  const refs = new Set<string>();
+  if (eventIds.length === 0) return refs;
+  const rows = db.query<{ subjects: string }, string[]>(
+    `SELECT subjects FROM events WHERE event_id IN (${eventIds.map(() => "?").join(", ")})`,
+  ).all(...eventIds);
+  for (const row of rows) {
+    let subjects: unknown;
+    try { subjects = JSON.parse(row.subjects); } catch { continue; }
+    if (!Array.isArray(subjects)) continue;
+    for (const subject of subjects) {
+      if (typeof subject !== "object" || subject === null) continue;
+      const id = (subject as { subject_id?: unknown }).subject_id;
+      if (typeof id === "string") refs.add(id);
+    }
+  }
+  return refs;
+}
+
+interface LegacyIdentityRow {
+  subject_a: string;
+  subject_b: string;
+  evidence: string;
+}
+
+function eraseLegacyIdentityLinks(
+  db: Database,
+  eventIds: ReadonlySet<string>,
+  claimIds: ReadonlySet<string>,
+  subjectRefs: ReadonlySet<string>,
+): void {
+  if (!tableExists(db, "identity_links")) return;
+  const rows = db.query<LegacyIdentityRow, []>(
+    "SELECT subject_a, subject_b, evidence FROM identity_links LIMIT 10001",
+  ).all();
+  if (rows.length > 10000) {
+    throw new PurgeError("absence_failed", "identity link verification exceeded its bounded row limit");
+  }
+  const remove = db.query<never, [string, string]>(
+    "DELETE FROM identity_links WHERE subject_a = ? AND subject_b = ?",
+  );
+  for (const row of rows) {
+    const endpointErased = subjectRefs.has(row.subject_a) || subjectRefs.has(row.subject_b);
+    const parsed = parseLegacyIdentityEvidence(row.evidence);
+    const supportErased = parsed.ok && parsed.refs.some((ref) =>
+      ref.kind === "event" ? eventIds.has(ref.id) : claimIds.has(ref.id),
+    );
+    if (endpointErased || supportErased) remove.run(row.subject_a, row.subject_b);
+  }
+}
+
+function assertLegacyIdentityAbsent(
+  db: Database,
+  eventIds: ReadonlySet<string>,
+  claimIds: ReadonlySet<string>,
+  subjectRefs: ReadonlySet<string>,
+): void {
+  if (!tableExists(db, "identity_links")) return;
+  const rows = db.query<LegacyIdentityRow, []>(
+    "SELECT subject_a, subject_b, evidence FROM identity_links LIMIT 10001",
+  ).all();
+  if (rows.length > 10000) {
+    throw new PurgeError("absence_failed", "identity link verification exceeded its bounded row limit");
+  }
+  for (const row of rows) {
+    if (subjectRefs.has(row.subject_a) || subjectRefs.has(row.subject_b)) {
+      throw new PurgeError("absence_failed", "purge retained an erased identity endpoint");
+    }
+    const parsed = parseLegacyIdentityEvidence(row.evidence);
+    if (!parsed.ok) {
+      throw new PurgeError("absence_failed", "identity link evidence is malformed or unresolved");
+    }
+    if (parsed.refs.some((ref) => ref.kind === "event" ? eventIds.has(ref.id) : claimIds.has(ref.id))) {
+      throw new PurgeError("absence_failed", "purge retained erased identity support");
+    }
+  }
+}
+
 /**
  * Phase 1 — short SQLite transaction (RFC 0002 §13.1). Canon is scanned
  * before the write lock. Holds land before derived stores are touched.
@@ -760,6 +832,7 @@ function purgeEventsLocked(
   initPurgeOps(db);
   const recordedReason = normalizePurgeReason(reason);
   const includeAliases = options.include_aliases === true;
+  assertAliasExpansionUnavailable(filter, includeAliases);
   const existing = loadCandidates(db, filter, includeAliases);
   if (existing.length === 0) {
     if (options.allow_empty === true) return emptyOutcome();
@@ -785,6 +858,7 @@ function purgeEventsLocked(
     }
 
     const purgedIds = new Set(candidates.map((row) => row.event_id));
+    const subjectRefs = rawSubjectRefs(db, [...purgedIds]);
     const purgedAt = nowIso(options.now);
     const batchReceipt = mint(options.ids);
     purgeExtractInputs(db, purgedIds, { receipt_id: batchReceipt, created_at: purgedAt });
@@ -805,10 +879,7 @@ function purgeEventsLocked(
     );
 
     const holds: { page_path: string; proposal_id: string }[] = [];
-    const holdReason =
-      includeAliases && filter.subject_handle !== undefined
-        ? `${recordedReason} (aliases: ${aliasSet(db, filter.subject_handle).join(", ")})`
-        : recordedReason;
+    const holdReason = recordedReason;
 
     for (const relPath of holdPaths) {
       insertHold(db, relPath, batchReceipt, holdReason, purgedAt);
@@ -853,7 +924,20 @@ function purgeEventsLocked(
       }
     }
 
+    const citing = claimsCiting(db, eventIds);
+    eraseLegacyIdentityLinks(
+      db,
+      purgedIds,
+      new Set(citing.map((claim) => claim.claim_id)),
+      subjectRefs,
+    );
     markClaimsAfterPurge(db, purgedAt);
+    assertLegacyIdentityAbsent(
+      db,
+      purgedIds,
+      new Set(citing.map((claim) => claim.claim_id)),
+      subjectRefs,
+    );
 
     const withdrawn = new Set<string>();
     if (tableExists(db, "proposals")) {
@@ -864,7 +948,6 @@ function purgeEventsLocked(
       }
     }
 
-    const citing = claimsCiting(db, eventIds);
     const pageIds = matched.affected
       .map((page) => page.id)
       .filter((id) => id.length > 0);

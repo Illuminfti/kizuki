@@ -386,7 +386,7 @@ describe("RFC 0002 purge totality", () => {
     expect(rewrite?.page_action).toBe("edit");
   });
 
-  test("purge keyed on a subject does not follow identity links without the flag", () => {
+  test("raw subject purge works while alias expansion refuses before mutation", () => {
     const { db, vaultPath } = vault();
     const grace = storeEvent(db, {
       source_record_id: "grace.md",
@@ -441,15 +441,43 @@ describe("RFC 0002 purge totality", () => {
         .get(alias.event_id)?.event_id,
     ).toBe(alias.event_id);
 
-    const withFlag = purgeEvents(
+    expect(() => purgeEvents(
       db,
       vaultPath,
       { subject_handle: "person:grace" },
       "subject request",
       { include_aliases: true, now: () => AT },
-    );
-    expect(withFlag.receipts.map(({ event_id }) => event_id)).toEqual([
-      alias.event_id,
-    ]);
+    )).toThrow("identity authority unavailable");
+    expect(
+      db.query<{ event_id: string }, [string]>(
+        "SELECT event_id FROM events WHERE event_id = ?",
+      ).get(alias.event_id)?.event_id,
+    ).toBe(alias.event_id);
+  });
+
+  test("purge removes parsed legacy support and refuses to claim absence around malformed support", () => {
+    const { db, vaultPath } = vault();
+    const erased = storeEvent(db, {
+      source_record_id: "erased.md",
+      subjects: [{ subject_id: "person:erased", role: "about" }],
+    });
+    const untouched = storeEvent(db, { source_record_id: "untouched.md" });
+    db.query(
+      `INSERT INTO identity_links
+       (subject_a, subject_b, score, evidence, status, decided_by, receipt_id, at)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`,
+    ).run("person:legacy-a", "person:legacy-b", 1, JSON.stringify([`event:${erased.event_id}`]), "merged", "forged", AT);
+    const result = purgeEvents(db, vaultPath, { event_id: erased.event_id }, "remove support", { now: () => AT });
+    expect(result.receipts).toHaveLength(1);
+    expect(db.query("SELECT 1 FROM identity_links").get()).toBeNull();
+    db.query(
+      `INSERT INTO identity_links
+       (subject_a, subject_b, score, evidence, status, decided_by, receipt_id, at)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`,
+    ).run("person:malformed-a", "person:malformed-b", 1, "{", "merged", "forged", AT);
+    expect(() => purgeEvents(db, vaultPath, { event_id: untouched.event_id }, "must prove absence", { now: () => AT }))
+      .toThrow("identity link evidence is malformed or unresolved");
+    expect(db.query<{ event_id: string }, [string]>("SELECT event_id FROM events WHERE event_id=?").get(untouched.event_id)?.event_id)
+      .toBe(untouched.event_id);
   });
 });

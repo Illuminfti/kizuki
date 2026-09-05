@@ -4,27 +4,29 @@ import {
   listSubjectAliases,
   upsertIdentityLink,
 } from "../../src/claims/identity";
+import { ClaimError } from "../../src/claims/errors";
 import { insertClaim } from "../../src/claims/store";
 import { openLedger } from "../../src/ledger/db";
 import { eventFacts, putEvent } from "./helpers";
 
 describe("identity aliases and live conflicts", () => {
-  test("lists aliases without exposing private evidence text", () => {
+  test("retires caller-controlled identity mutation and alias authority", () => {
     const db = openLedger(":memory:");
-    upsertIdentityLink(db, {
-      subject_a: "person:ada",
-      subject_b: "person:ada.lovelace",
-      score: 0.92,
-      evidence: ["evt-synthetic"],
-      status: "candidate",
-      decided_by: "test",
-      at: "2026-09-04T00:00:00Z",
-    });
-    const aliases = listSubjectAliases(db, "person:ada");
-    expect(aliases).toEqual([
-      { subject: "person:ada.lovelace", score: 0.92, status: "candidate" },
-    ]);
-    expect(JSON.stringify(aliases)).not.toContain("evt-synthetic");
+    expect(() => upsertIdentityLink(db, {
+      subject_a: "person:ada", subject_b: "person:ada.lovelace", score: 1,
+      evidence: ["event:evt-synthetic"], status: "merged", decided_by: "forged",
+      receipt_id: "forged-receipt", at: "2026-09-04T00:00:00Z",
+    })).toThrow(ClaimError);
+    try { upsertIdentityLink(db, { subject_a: "person:ada", subject_b: "person:ada.lovelace", score: 1, evidence: ["event:evt-synthetic"], status: "merged", decided_by: "forged", at: "2026-09-04T00:00:00Z" }); }
+    catch (error) {
+      expect(error).toBeInstanceOf(ClaimError);
+      expect((error as ClaimError).code).toBe("identity_unsupported");
+      expect((error as Error).message).toContain("identity mutation API retired");
+    }
+    expect(db.query("SELECT 1 FROM identity_links").get()).toBeNull();
+    expect(() => listSubjectAliases(db, "person:ada")).toThrow(
+      "identity authority unavailable",
+    );
     db.close();
   });
 

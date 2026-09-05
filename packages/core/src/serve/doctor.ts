@@ -327,6 +327,7 @@ function storeDoctor(
     degraded.push("retrieval-ops-stale");
   }
   if (!purge.ok) degraded.push("purge-unhealthy");
+  degraded.push("identity-authority-unavailable");
   const search = readDerivedMeta(db, "search");
   const graph = readDerivedMeta(db, "graph");
   return {

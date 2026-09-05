@@ -1,11 +1,52 @@
 import type { Database } from "bun:sqlite";
-import { tableExists } from "../ledger/schema";
-import { isRfc3339 } from "../util/time";
 import type { Claim } from "../contracts/proposal";
+import { tableExists } from "../ledger/schema";
 import { claimsConflict, type ConflictClaim } from "./conflict";
 import { ClaimError } from "./errors";
-import { initClaims } from "./schema";
 import { listClaims } from "./store";
+
+export const LEGACY_IDENTITY_EVIDENCE_MAX_BYTES = 16_384;
+export const LEGACY_IDENTITY_EVIDENCE_MAX_REFS = 64;
+export const LEGACY_IDENTITY_EVIDENCE_ID_MAX_BYTES = 256;
+
+export interface LegacyIdentityEvidenceRef {
+  readonly kind: "event" | "claim";
+  readonly id: string;
+}
+
+export type LegacyIdentityEvidence =
+  | { readonly ok: true; readonly refs: readonly LegacyIdentityEvidenceRef[] }
+  | { readonly ok: false };
+
+const LEGACY_EVIDENCE_REF = /^(event|claim):([A-Za-z0-9][A-Za-z0-9._:/-]{0,255})$/;
+
+/**
+ * Legacy identity rows are inert history. Parse their stored support once and
+ * only admit exact typed references for cleanup and absence verification.
+ */
+export function parseLegacyIdentityEvidence(raw: unknown): LegacyIdentityEvidence {
+  if (typeof raw !== "string" || new TextEncoder().encode(raw).byteLength > LEGACY_IDENTITY_EVIDENCE_MAX_BYTES) {
+    return { ok: false };
+  }
+  let values: unknown;
+  try { values = JSON.parse(raw); } catch { return { ok: false }; }
+  if (!Array.isArray(values) || values.length === 0 || values.length > LEGACY_IDENTITY_EVIDENCE_MAX_REFS) {
+    return { ok: false };
+  }
+  const refs: LegacyIdentityEvidenceRef[] = [];
+  for (const value of values) {
+    if (typeof value !== "string" || new TextEncoder().encode(value).byteLength > LEGACY_IDENTITY_EVIDENCE_ID_MAX_BYTES) {
+      return { ok: false };
+    }
+    const match = LEGACY_EVIDENCE_REF.exec(value);
+    if (match === null) return { ok: false };
+    const kind = match[1];
+    const id = match[2];
+    if ((kind !== "event" && kind !== "claim") || id === undefined) return { ok: false };
+    refs.push({ kind, id });
+  }
+  return { ok: true, refs };
+}
 
 /** RFC 0002 §18.1: autonomous merge only at this score with two connectors. */
 export const IDENTITY_MERGE_MIN = 0.9;
@@ -58,157 +99,22 @@ export interface UpsertIdentityLinkInput {
   readonly at: string;
 }
 
-const SUBJECT = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$/;
-
-function refuse(field: string, rule: string): never {
-  throw new ClaimError("schema_invalid", `${field}: ${rule}`);
-}
-
-function subjectId(field: string, value: string): string {
-  if (!SUBJECT.test(value)) {
-    refuse(field, "must be a subject identifier");
-  }
-  return value;
-}
-
-function orderedPair(
-  left: string,
-  right: string,
-): { subject_a: string; subject_b: string } {
-  if (left === right) refuse("subject_b", "must name a different subject");
-  return left < right
-    ? { subject_a: left, subject_b: right }
-    : { subject_a: right, subject_b: left };
-}
-
 export function upsertIdentityLink(
-  db: Database,
-  input: UpsertIdentityLinkInput,
+  _db: Database,
+  _input: UpsertIdentityLinkInput,
 ): IdentityLink {
-  initClaims(db);
-  const left = subjectId("subject_a", input.subject_a);
-  const right = subjectId("subject_b", input.subject_b);
-  const pair = orderedPair(left, right);
-  if (
-    typeof input.score !== "number" ||
-    !Number.isFinite(input.score) ||
-    input.score < 0 ||
-    input.score > 1
-  ) {
-    refuse("score", "must be a number in [0, 1]");
-  }
-  if (
-    !Array.isArray(input.evidence) ||
-    input.evidence.length === 0 ||
-    !input.evidence.every((id) => typeof id === "string" && id.length > 0)
-  ) {
-    refuse("evidence", "must name at least one event or claim id");
-  }
-  if (
-    !(IDENTITY_LINK_STATUSES as readonly string[]).includes(input.status)
-  ) {
-    refuse("status", `must be one of ${IDENTITY_LINK_STATUSES.join(" | ")}`);
-  }
-  if (typeof input.decided_by !== "string" || input.decided_by.length === 0) {
-    refuse("decided_by", "must be a non-empty string");
-  }
-  if (!isRfc3339(input.at)) refuse("at", "must be an RFC3339 timestamp");
-  const receipt =
-    input.receipt_id === undefined || input.receipt_id === null
-      ? null
-      : input.receipt_id;
-  if (receipt !== null && receipt.length === 0) {
-    refuse("receipt_id", "must be null or a non-empty string");
-  }
-
-  db.query(
-    `INSERT INTO identity_links
-       (subject_a, subject_b, score, evidence, status, decided_by, receipt_id, at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT (subject_a, subject_b) DO UPDATE SET
-       score = excluded.score,
-       evidence = excluded.evidence,
-       status = excluded.status,
-       decided_by = excluded.decided_by,
-       receipt_id = excluded.receipt_id,
-       at = excluded.at`,
-  ).run(
-    pair.subject_a,
-    pair.subject_b,
-    input.score,
-    JSON.stringify([...input.evidence]),
-    input.status,
-    input.decided_by,
-    receipt,
-    input.at,
-  );
-
-  return {
-    ...pair,
-    score: input.score,
-    evidence: [...input.evidence],
-    status: input.status,
-    decided_by: input.decided_by,
-    receipt_id: receipt,
-    at: input.at,
-  };
+  throw new ClaimError("identity_unsupported", "identity mutation API retired");
 }
 
-/**
- * Soft aliases influence ranking and visibility. Rejected links stay out.
- * Merged links expand the set a correction or purge can name.
- */
+/** Legacy compatibility API: identity authority is unavailable in A0. */
 export function listSubjectAliases(
-  db: Database,
-  subject: string,
-  limit = 16,
-  canRead?: (link: IdentityLink) => boolean,
-  onInvalid?: (left: string, right: string) => void,
+  _db: Database,
+  _subject: string,
+  _limit = 16,
+  _canRead?: (link: IdentityLink) => boolean,
+  _onInvalid?: (left: string, right: string) => void,
 ): SubjectAlias[] {
-  if (!tableExists(db, "identity_links")) return [];
-  const bound = Number.isSafeInteger(limit) && limit > 0 ? limit : 16;
-  return db
-    .query<
-      {
-        subject_a: string;
-        subject_b: string;
-        score: number;
-        status: string;
-        evidence: string;
-        decided_by: string;
-        receipt_id: string | null;
-        at: string;
-      },
-      [string, string, number]
-    >(
-      `SELECT subject_a, subject_b, score, status, evidence, decided_by, receipt_id, at FROM identity_links
-        WHERE (subject_a = ? OR subject_b = ?)
-          AND status IN ('candidate', 'merged')
-        ORDER BY score DESC, subject_a, subject_b
-        LIMIT ?`,
-    )
-    .all(subject, subject, canRead === undefined ? bound : 400)
-    .filter((row) => {
-      if (canRead === undefined) return true;
-      const invalid = (): false => {
-        onInvalid?.(row.subject_a, row.subject_b);
-        return false;
-      };
-      if (typeof row.evidence !== "string" || row.evidence.length > 16_384) return invalid();
-      let evidence: unknown;
-      try { evidence = JSON.parse(row.evidence); } catch { return invalid(); }
-      if (!Array.isArray(evidence) || evidence.length === 0 ||
-          !evidence.every((id): id is string => typeof id === "string" && id.length > 0)) {
-        return invalid();
-      }
-      return canRead({ ...row, evidence, status: row.status as IdentityLinkStatus });
-    })
-    .slice(0, bound)
-    .map((row) => ({
-      subject: row.subject_a === subject ? row.subject_b : row.subject_a,
-      score: row.score,
-      status: row.status as IdentityLinkStatus,
-    }));
+  throw new ClaimError("identity_unsupported", "identity authority unavailable");
 }
 
 function toConflict(claim: Claim): ConflictClaim | null {

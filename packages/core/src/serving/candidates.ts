@@ -5,6 +5,7 @@ import type { Database } from "bun:sqlite";
 import { isMachineOriginPath } from "../canon/origin";
 import { listValidityGaps } from "../claims/gaps";
 import { listLiveConflicts, listSubjectAliases } from "../claims/identity";
+import { ClaimError } from "../claims/errors";
 import { listClaims } from "../claims/store";
 import { neighbors } from "../graph/graph";
 import { timeline } from "../query/timeline";
@@ -322,8 +323,16 @@ export async function collectPieces(
       (subject): subject is string => subject !== null,
     );
     const seenAlias = new Set<string>();
-    for (const root of aliasRoots.slice(0, 8)) {
-      for (const alias of listSubjectAliases(ctx.db, root, 8, reader.canReadAlias, reader.invalidAlias)) {
+    let identityUnavailable = false;
+    try {
+      listSubjectAliases(ctx.db, aliasRoots[0] ?? "", 8, reader.canReadAlias, reader.invalidAlias);
+    } catch (error) {
+      if (!(error instanceof ClaimError) || error.code !== "identity_unsupported") throw error;
+      identityUnavailable = true;
+    }
+    if (!identityUnavailable) {
+      for (const root of aliasRoots.slice(0, 8)) {
+        for (const alias of listSubjectAliases(ctx.db, root, 8, reader.canReadAlias, reader.invalidAlias)) {
         const key = JSON.stringify([root, alias.subject].sort());
         if (seenAlias.has(key)) continue;
         seenAlias.add(key);
@@ -336,8 +345,10 @@ export async function collectPieces(
             ` status=${alias.status}\n`,
           audit,
         });
+        }
       }
     }
+    if (identityUnavailable) nominated.degraded.push("identity-authority-unavailable");
     withheld.push(...reader.denied.values());
   }
 

@@ -49,6 +49,14 @@ afterEach(() => {
   for (const directory of dirs.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
+test("doctor names legacy identity authority as unavailable", () => {
+  const { path, db } = vault();
+  expect(inspectServeDoctor(db, path).stores.degraded).toContain(
+    "identity-authority-unavailable",
+  );
+  db.close();
+});
+
 describe("serve doctor", () => {
   test("malformed service intent is unknown and cannot hide an active service", () => {
     const { path, db } = vault();

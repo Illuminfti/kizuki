@@ -24,6 +24,7 @@ import { isPlainObject } from "../util/validate";
 import { getConnectorSensitivity } from "../sensitivity/store";
 import { getConnection } from "./connections";
 import { tableExists } from "./schema";
+import { parseLegacyIdentityEvidence } from "../claims/identity";
 
 export const SOURCE_PURPOSES = [
   "capture",
@@ -864,16 +865,28 @@ function sourcePurgeBlockers(
   ).all(sourceKey);
   if (retainedProposals.length > 10000 || retainedProposals.some(row => row.payload !== 0 || row.body_hash !== sourceBodyTombstoneHash("proposals", row.proposal_id)))
     blockers.push("proposal_payload_retained");
-  if (
-    db
-      .query(
-        `SELECT 1 FROM identity_links l JOIN json_each(l.evidence) e
-    WHERE replace(e.value,'event:','') IN (SELECT event_id FROM source_event_bindings WHERE source_key=?)
-       OR replace(e.value,'claim:','') IN (${sourceClaims}) LIMIT 1`,
-      )
-      .get(sourceKey, sourceKey) !== null
-  )
-    blockers.push("identity_payload_retained");
+  if (tableExists(db, "identity_links")) {
+    const eventIds = new Set(
+      db.query<{ event_id: string }, [string]>(
+        "SELECT event_id FROM source_event_bindings WHERE source_key=?",
+      ).all(sourceKey).map((row) => row.event_id),
+    );
+    const claimIds = new Set(retainedClaims.map((row) => row.claim_id));
+    const links = db.query<{ evidence: string }, []>(
+      "SELECT evidence FROM identity_links LIMIT 10001",
+    ).all();
+    if (
+      links.length > 10000 ||
+      links.some((row) => {
+        const parsed = parseLegacyIdentityEvidence(row.evidence);
+        return !parsed.ok || parsed.refs.some((ref) =>
+          ref.kind === "event" ? eventIds.has(ref.id) : claimIds.has(ref.id),
+        );
+      })
+    ) {
+      blockers.push("identity_payload_retained");
+    }
+  }
   if (
     db
       .query(

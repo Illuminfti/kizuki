@@ -295,9 +295,13 @@ is `undo`, and undo goes through the core receipt reverser.
 silently merged)" with:
 
 ```
-   (candidate links; merged autonomously only above the configured
-   threshold with independent corroboration; every merge receipted and
-   reversible; purge keyed on raw subject refs, never on merged identity).
+   (legacy identity links are inert until a separately reviewed, receipted
+   authority design exists; purge keyed on raw subject refs, never on merged
+   identity). The legacy mutation and alias APIs fail closed with a typed
+   unsupported condition. Alias-expanded purge refuses before planning;
+   ordinary raw-subject purge remains available. Legacy evidence accepts only
+   bounded exact `event:<id>` and `claim:<id>` references for cleanup and
+   absence verification. Import and restore preserve rows as inert history.
 ```
 
 **Append §11:**

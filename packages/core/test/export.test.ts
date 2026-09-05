@@ -25,6 +25,7 @@ import { saveCheckpoint } from "../src/ledger/connections";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "../src/ledger/db";
 import { accept } from "../src/ledger/ledger";
 import { purgeEvents } from "../src/ledger/purge";
+import { listSubjectAliases } from "../src/claims/identity";
 import { readVaultId } from "../src/serve/vault-id";
 import { initVault } from "../src/vault/init";
 import { validEvent } from "./fixtures";
@@ -664,6 +665,9 @@ describe("restoreVault", () => {
       evidence: '["evt-1"]',
       status: "merged",
     });
+    expect(() => listSubjectAliases(restored, "person:ada")).toThrow(
+      "identity authority unavailable",
+    );
     expect(
       restored
         .query<

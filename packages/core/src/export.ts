@@ -27,6 +27,7 @@ import {
   rowToReceipt,
 } from "./canon/receipts";
 import { CLAIMS_SCHEMA_VERSION, syncCompatProposals } from "./claims/schema";
+import { parseLegacyIdentityEvidence } from "./claims/identity";
 import { rebuildDerived } from "./derived";
 import { EVENT_LIMITS, type CaptureEvent } from "./contracts/event";
 import { isUlid, ulid } from "./util/ulid";
@@ -792,11 +793,17 @@ function* pageIdentityLinks(db: Database): Generator<Record<string, unknown>> {
     }
     if (rows.length === 0) break;
     for (const row of rows) {
+      const parsed = parseLegacyIdentityEvidence(row.evidence);
       yield {
         subject_a: row.subject_a,
         subject_b: row.subject_b,
         score: row.score,
-        evidence: JSON.parse(row.evidence) as unknown,
+        // A0 preserves legacy history without treating malformed support as
+        // authority. Valid typed references are serialized canonically; other
+        // legacy payload remains inert and byte-preserved for later cleanup.
+        evidence: parsed.ok
+          ? parsed.refs.map((ref) => `${ref.kind}:${ref.id}`)
+          : row.evidence,
         status: row.status,
         decided_by: row.decided_by,
         receipt_id: row.receipt_id,
@@ -1505,6 +1512,11 @@ function insertBinding(db: Database, raw: Record<string, unknown>): void {
 }
 
 function insertIdentityLink(db: Database, raw: Record<string, unknown>): void {
+  const rawEvidence = raw.evidence;
+  const evidence = typeof rawEvidence === "string"
+    ? rawEvidence
+    : JSON.stringify(rawEvidence ?? []);
+  const parsed = parseLegacyIdentityEvidence(evidence);
   db.query(
     `INSERT INTO identity_links
        (subject_a, subject_b, score, evidence, status, decided_by, receipt_id, at)
@@ -1513,7 +1525,9 @@ function insertIdentityLink(db: Database, raw: Record<string, unknown>): void {
     asString(raw.subject_a, "subject_a"),
     asString(raw.subject_b, "subject_b"),
     asNumber(raw.score, "score"),
-    JSON.stringify(raw.evidence ?? []),
+    parsed.ok
+      ? JSON.stringify(parsed.refs.map((ref) => `${ref.kind}:${ref.id}`))
+      : evidence,
     asString(raw.status, "status"),
     asString(raw.decided_by, "decided_by"),
     asStringOrNull(raw.receipt_id, "receipt_id"),
