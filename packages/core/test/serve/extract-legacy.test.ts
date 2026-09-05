@@ -411,7 +411,9 @@ test("a 128 MiB stored text refuses with bounded memory through guard, writer an
       expect(JSON.parse(child.stdout.toString())).toEqual({ error: "durable extraction batch is corrupt", hookCalls: 0 });
       // Includes Bun and all imported modules, with ample room above their
       // normal footprint. The rejected reader exceeded 580 MiB on this input.
-      expect(child.resourceUsage.maxRSS).toBeLessThan(192 * 1024 * 1024);
+      // Pinned Bun reports subprocess maxRSS in KiB on the Linux test runner.
+      const maxRssKiB = child.resourceUsage.maxRSS;
+      expect(maxRssKiB).toBeLessThan(192 * 1024);
     }
     expect(existsSync(join(f.vault, ".kizuki", "write-pass.flock"))).toBe(false);
     expect(f.calls.count).toBe(1);
