@@ -26,7 +26,7 @@ export interface CliHelpers {
   writeNotes(directory: string): { ada: string; grace: string; linus: string };
 }
 
-export function createHelpers(): CliHelpers {
+export function createHelpers(options: { preload?: string } = {}): CliHelpers {
   const directories: string[] = [];
 
   const tempDir = (prefix = "kizuki-cli-"): string => {
@@ -69,7 +69,7 @@ export function createHelpers(): CliHelpers {
       if (value !== undefined) spawnEnv[key] = value;
     }
 
-    const result = Bun.spawnSync([process.execPath, mainPath, ...args], {
+    const result = Bun.spawnSync([process.execPath, ...(options.preload ? ["--preload", options.preload] : []), mainPath, ...args], {
       env: spawnEnv,
       // Bun may initialize a HOME-relative cache before CLI config rejects HOME.
       cwd: isAbsolute(home) ? process.cwd() : tempDir("kizuki-cli-cwd-"),
