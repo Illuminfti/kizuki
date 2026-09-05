@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ulid } from "../src/util/ulid";
+import { isUlid, ulid } from "../src/util/ulid";
 
 const CROCKFORD = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 
@@ -73,6 +73,23 @@ describe("ulid", () => {
   });
 });
 
+describe("isUlid", () => {
+  test("accepts a generated id and a known fixture", () => {
+    expect(isUlid(ulid())).toBe(true);
+    expect(isUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV")).toBe(true);
+  });
+
+  test("rejects lowercase, short, overflowing, and ambiguous ids", () => {
+    expect(isUlid("01arz3ndektsv4rrffq69g5fav")).toBe(false);
+    expect(isUlid("01ARZ3NDEKTSV4RRFFQ69G5FA")).toBe(false);
+    expect(isUlid("81ARZ3NDEKTSV4RRFFQ69G5FAV")).toBe(false);
+    expect(isUlid("01ARZ3NDEKTSV4RRFFQ69G5FAI")).toBe(false);
+    expect(isUlid("01ARZ3NDEKTSV4RRFFQ69G5FAO")).toBe(false);
+    expect(isUlid(null)).toBe(false);
+    expect(isUlid(1)).toBe(false);
+  });
+});
+
 function decodeTime(id: string): number {
   const ENCODING = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
   let time = 0;
@@ -81,3 +98,46 @@ function decodeTime(id: string): number {
   }
   return time;
 }
+
+
+test("randomness overflow never regresses monotonic state", () => {
+  const modulePath = new URL("../src/util/ulid.ts", import.meta.url).pathname;
+  const script = `
+    const { ulid, isUlid } = await import(${JSON.stringify(modulePath)});
+    let time = 123456;
+    Date.now = () => time;
+    crypto.getRandomValues = (bytes) => { bytes.fill(255); return bytes; };
+    const first = ulid();
+    for (let i = 0; i < 3; i++) {
+      let refused = false;
+      try { ulid(); } catch { refused = true; }
+      if (!refused) throw new Error("overflow resumed with regressed randomness");
+    }
+    time += 1;
+    const later = ulid();
+    if (!isUlid(later) || later <= first) throw new Error("next-millisecond ordering failed");
+  `;
+  const result = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe" });
+  expect(result.exitCode).toBe(0);
+});
+
+test("random generation failure does not advance the committed timestamp", () => {
+  const modulePath = new URL("../src/util/ulid.ts", import.meta.url).pathname;
+  const script = `
+    const { ulid } = await import(${JSON.stringify(modulePath)});
+    let time = 123456;
+    Date.now = () => time;
+    let broken = false;
+    crypto.getRandomValues = (bytes) => { if (broken) throw new Error("random unavailable"); bytes.fill(1); return bytes; };
+    const first = ulid();
+    time += 1;
+    broken = true;
+    try { ulid(); } catch {}
+    time -= 1;
+    broken = false;
+    const next = ulid();
+    if (next.slice(0, 10) !== first.slice(0, 10) || next <= first) throw new Error("failed random generation committed state");
+  `;
+  const result = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe" });
+  expect(result.exitCode).toBe(0);
+});

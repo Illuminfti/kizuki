@@ -13,6 +13,7 @@ import {
   LedgerError,
   disconnect,
   getCheckpoint,
+  getConnection,
   inspectConnections,
   listConnectionRuns,
   listConnections,
@@ -20,6 +21,7 @@ import {
   saveCheckpoint,
 } from "../src/ledger/connections";
 import { ConnectionStateStore } from "../src/ledger/connection-state";
+import { isCoreUlid, journalSourceKey } from "../src/ledger/connection-state-files";
 import { openLedger } from "../src/ledger/db";
 import { scopedSecretResolver } from "../src/ledger/secret-scope";
 import { assertConnectorBrowserUrl } from "../src/ledger/sign-in-guard";
@@ -34,6 +36,44 @@ const SOURCE = "01JJ0000000000000000000001";
 const { temporary, cleanup } = temporaryDirectories("kizuki-connections-p1-");
 
 afterEach(cleanup);
+
+describe("canonical connection identifiers", () => {
+  test("accepts the 128-bit ULID boundaries and rejects impossible high digits", () => {
+    const db = openLedger(":memory:");
+    try {
+      for (const key of ["00000000000000000000000000", "7ZZZZZZZZZZZZZZZZZZZZZZZZZ"]) {
+        expect(registerConnection(db, "fixture", key).source_key).toBe(key);
+        expect(isCoreUlid(key)).toBe(true);
+        expect(journalSourceKey(`${key}.state.${key}.journal`)).toBe(key);
+      }
+      for (const first of "89ABCDEFGHJKMNPQRSTVWXYZ") {
+        const key = first + "0".repeat(25);
+        expect(() => registerConnection(db, "fixture", key)).toThrow(LedgerError);
+        expect(isCoreUlid(key)).toBe(false);
+        expect(journalSourceKey(`${key}.state.${SOURCE}.journal`)).toBeNull();
+        expect(journalSourceKey(`${SOURCE}.state.${key}.journal`)).toBeNull();
+      }
+      expect(listConnections(db)).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("refuses a non-canonical key persisted by an older schema", () => {
+    const db = openLedger(":memory:");
+    try {
+      registerConnection(db, "fixture", SOURCE);
+      const invalid = "8" + "0".repeat(25);
+      db.query("UPDATE connections SET source_key = ? WHERE source_key = ?").run(invalid, SOURCE);
+      expect(() => getConnection(db, "fixture", invalid)).toThrow(LedgerError);
+      expect(inspectConnections(db)).toEqual([
+        { ok: false, connector_id: "fixture", source_key: invalid, error: "connection source_key is not core-generated" },
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+});
 
 function database() {
   const db = openLedger(":memory:");

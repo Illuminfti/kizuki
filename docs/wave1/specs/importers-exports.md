@@ -725,7 +725,7 @@ row has the header's column count (`parse_error` naming the row).
 
 | field              | value                                                                                                                                           |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `source_record_id` | `url` (trimmed; > 4096 chars ⇒ `parse_error` naming the row); the 2nd, 3rd… identical url gets `#2`, `#3`                                       |
+| `source_record_id` | `url` (trimmed; > 4096 chars ⇒ `parse_error` naming the row); the 2nd, 3rd… identical url gets `#2`, `#3`. The event contract preserves this native id without hashing or truncation. |
 | `kind`             | `"bookmark"`                                                                                                                                    |
 | `occurred_at`      | `unixSecondsToIso(time_added, "<file> row <n>")`                                                                                                |
 | `text`             | `title` non-empty ? `` `${title}\n${url}` `` : `url`                                                                                            |
@@ -840,7 +840,7 @@ anything else dropped; `saved_at` = `isoToRfc3339(savedAt, "<where>[<i>].savedAt
 
 | field              | value                                                                                                                                                            |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `source_record_id` | `id`                                                                                                                                                             |
+| `source_record_id` | `id`; the event contract permits the export's 1 MiB native id plus its duplicate suffix without hashing or truncation.                                              |
 | `kind`             | `"bookmark"`                                                                                                                                                     |
 | `occurred_at`      | `saved_at`                                                                                                                                                       |
 | `text`             | non-empty parts of `[title, url, description, highlights]` joined with `"\n\n"`; `highlights` = the `highlights/<slug>.md` text with trailing whitespace trimmed |

@@ -245,9 +245,20 @@ function listMode(state: AuditState): AuditState {
 function reduceText(
   text: string,
   key: Key,
+  allowPaste = true,
 ): { text: string; submit: boolean; cancel: boolean } {
-  if (key.name === "char") {
-    const next = text + key.ch;
+  if (key.name === "paste" && !allowPaste) {
+    return { text, submit: false, cancel: false };
+  }
+  if (key.name === "char" || key.name === "paste") {
+    // Control bytes cannot synthesize submit/cancel keys.
+    const addition = key.name === "char"
+      ? key.ch
+      : [...key.text].filter((ch) => {
+          const cp = ch.codePointAt(0) ?? 0;
+          return cp >= 0x20 && cp !== 0x7f;
+        }).join("");
+    const next = text + addition;
     return {
       text: next.length > MAX_FILTER_NEEDLE ? next.slice(0, MAX_FILTER_NEEDLE) : next,
       submit: false,
@@ -421,7 +432,8 @@ export function reduce(state: AuditState, key: Key, viewport: Viewport): Step {
   }
 
   if (mode.name === "confirm") {
-    const r = reduceText(mode.text, key);
+    // Undo confirmation requires live keystrokes; paste must not authorize it.
+    const r = reduceText(mode.text, key, false);
     if (r.cancel) return step(listMode(state));
     if (r.submit) {
       if (r.text.trim() !== "yes") {

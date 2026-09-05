@@ -1,4 +1,5 @@
 export {
+  EVENT_LIMITS,
   EVENT_SCHEMA,
   SENSITIVITY_HINTS,
   SUBJECT_ROLES,
@@ -556,7 +557,7 @@ export type {
 
 export { canonicalSerialize, computeContentHash } from "./util/hash";
 export { isRfc3339 } from "./util/time";
-export { ulid } from "./util/ulid";
+export { isUlid, ulid } from "./util/ulid";
 export { isNonEmptyString, isPlainObject } from "./util/validate";
 export type { ValidationResult } from "./util/validate";
 

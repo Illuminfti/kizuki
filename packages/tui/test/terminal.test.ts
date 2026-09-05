@@ -175,4 +175,88 @@ describe("createTerminal", () => {
     stdin.emit("data", encoded.slice(1));
     expect(seen).toEqual(["気"]);
   });
+
+  test("enables bracketed paste and never turns pasted shortcuts into key events", () => {
+    const stdin = new FakeStdin();
+    const stdout = new FakeStdout();
+    const terminal = createTerminal(
+      stdin as unknown as NodeJS.ReadStream,
+      stdout as unknown as NodeJS.WriteStream,
+      { signals: null },
+    );
+    const seen: import("../src/keys").Key[] = [];
+    terminal.onKeys((keys) => seen.push(...keys));
+    terminal.enter();
+    stdin.emit("data", "\x1b[200~uq\x1b[201~");
+    terminal.leave();
+    expect(seen).toEqual([{ name: "paste", text: "uq" }]);
+    expect(stdout.writes.join("")).toContain(`${CSI}?2004h`);
+    expect(stdout.writes.join("")).toContain(`${CSI}?2004l`);
+  });
+
+  test("keeps delayed partial control input buffered and disposal drops it", async () => {
+    const stdin = new FakeStdin();
+    const stdout = new FakeStdout();
+    const terminal = createTerminal(
+      stdin as unknown as NodeJS.ReadStream,
+      stdout as unknown as NodeJS.WriteStream,
+      { signals: null },
+    );
+    const seen: import("../src/keys").Key[] = [];
+    const stop = terminal.onKeys((keys) => seen.push(...keys));
+    stdin.emit("data", "\x1b]0;");
+    await Bun.sleep(40);
+    stdin.emit("data", "uyes\r\x07");
+    expect(seen).toEqual([{ name: "unknown" }]);
+    stdin.emit("data", "\x1b[2");
+    await Bun.sleep(40);
+    stdin.emit("data", "00~uyes\r\x1b[201~");
+    expect(seen).toEqual([{ name: "unknown" }, { name: "paste", text: "uyes\r" }]);
+    stdin.emit("data", "\x1b[2");
+    stop();
+    await Bun.sleep(40);
+    stdin.emit("data", "00~uyes\r\x1b[201~");
+    expect(seen).toEqual([{ name: "unknown" }, { name: "paste", text: "uyes\r" }]);
+  });
+
+  test("quarantines oversized control sequences until their terminator", async () => {
+    const stdin = new FakeStdin();
+    const stdout = new FakeStdout();
+    const terminal = createTerminal(
+      stdin as unknown as NodeJS.ReadStream,
+      stdout as unknown as NodeJS.WriteStream,
+      { signals: null },
+    );
+    const seen: import("../src/keys").Key[] = [];
+    terminal.onKeys((keys) => seen.push(...keys));
+    stdin.emit("data", `\x1b]${"x".repeat(127)}`);
+    await Bun.sleep(40);
+    stdin.emit("data", "uyes\r\x1b");
+    stdin.emit("data", "\\z");
+    expect(seen).toEqual([{ name: "char", ch: "z" }]);
+
+    stdin.emit("data", `\x1b[${"1".repeat(127)}`);
+    await Bun.sleep(40);
+    stdin.emit("data", "uz");
+    expect(seen).toEqual([{ name: "char", ch: "z" }, { name: "char", ch: "z" }]);
+  });
+
+  test("keeps a delayed split string terminator quarantined", async () => {
+    const stdin = new FakeStdin();
+    const stdout = new FakeStdout();
+    const terminal = createTerminal(
+      stdin as unknown as NodeJS.ReadStream,
+      stdout as unknown as NodeJS.WriteStream,
+      { signals: null },
+    );
+    const seen: import("../src/keys").Key[] = [];
+    const stop = terminal.onKeys((keys) => seen.push(...keys));
+    stdin.emit("data", `\x1b]${"x".repeat(127)}`);
+    stdin.emit("data", "uyes\r\x1b");
+    await Bun.sleep(40);
+    expect(seen).toEqual([]);
+    stdin.emit("data", "\\z");
+    expect(seen).toEqual([{ name: "char", ch: "z" }]);
+    stop();
+  });
 });
