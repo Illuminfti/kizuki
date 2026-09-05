@@ -21,8 +21,10 @@ export interface CliIo {
   vaultOverride: string | null;
   stdinIsTTY: boolean;
   stdoutIsTTY: boolean;
+  stderrIsTTY: boolean;
   out(line: string): void;
   err(line: string): void;
+  prompt(question: string, opts?: { secret?: boolean }): Promise<string>;
 }
 
 export interface Command {

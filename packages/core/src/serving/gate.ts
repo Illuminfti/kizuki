@@ -51,6 +51,8 @@ export interface Served<T> {
   data?: T;
   /** Ids the call created, merged into the audited arguments. */
   audit_ids?: Record<string, string[]>;
+  /** Authorized claim metadata actually included in the text projection. */
+  audit_served?: AuditItem[];
 }
 
 export interface ServeCall {
@@ -270,7 +272,7 @@ function envelopeOf<T>(
     live.db,
     auditId,
     boundedArguments({ ...args, ...served.audit_ids }),
-    servedItems(served.canon, served.quoted),
+    [...servedItems(served.canon, served.quoted), ...(served.audit_served ?? [])],
     boundedForAudit(served.withheld),
   );
 

@@ -143,3 +143,19 @@ export function serializeImapState(state: ImapState): Uint8Array {
     }),
   );
 }
+
+/** Local, fixed diagnostic; neither mailbox nor credential can enter its message. */
+export class ImapIdentityMismatchError extends KizukiError {
+  constructor() {
+    super("misconfigured", "IMAP mailbox identity does not match the existing connection. Re-enter its server and username.");
+  }
+}
+
+/** Refuse replacing a source with another mailbox without revealing either identity. */
+export function assertSameImapIdentity(previous: Uint8Array, candidate: Uint8Array): void {
+  const before = parseImapState(new TextDecoder("utf-8", { fatal: true }).decode(previous));
+  const after = parseImapState(new TextDecoder("utf-8", { fatal: true }).decode(candidate));
+  if (before.host.toLowerCase() !== after.host.toLowerCase() || before.port !== after.port || before.username !== after.username) {
+    throw new ImapIdentityMismatchError();
+  }
+}

@@ -19,9 +19,13 @@ describe("connect catalog", () => {
     expect(h.runCli(env, "connect", "status").stdout).toContain("No sources connected yet.");
     const connected = h.runCli(env, "connect", "markdown-folder", "--source", notes);
     expect(connected.exitCode).toBe(0);
+    const sourceKey = connected.stdout.match(/source=([0-9A-HJKMNPQRSTVWXYZ]{26})/)?.[1];
+    expect(sourceKey).toBeDefined();
     const status = h.runCli(env, "connect", "status");
     expect(status.exitCode).toBe(0);
     expect(status.stdout).toContain("kizuki.markdown-folder");
+    expect(status.stdout).toContain("Source");
+    expect(status.stdout).toContain(sourceKey!);
     expect(status.stdout).toContain("not synced yet");
   });
 });

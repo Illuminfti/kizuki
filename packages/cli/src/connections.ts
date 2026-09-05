@@ -5,8 +5,14 @@ import type {
   Connection,
   HealthState,
   SecretResolver,
+  SignInIo,
 } from "@kizuki/core";
-import { ConnectionStateStore, isPlainObject, listConnections } from "@kizuki/core";
+import {
+  ConnectionStateStore,
+  enrollConnection,
+  isPlainObject,
+  listConnections,
+} from "@kizuki/core";
 import { REGISTRY, getConnector } from "@kizuki/connectors";
 import { errorText } from "./output";
 import { tokenResolver, validTokenRef } from "./secrets";
@@ -18,7 +24,8 @@ export interface HostConnectionState {
   connector_id: string;
   config:
     | { path: string; base_url?: never; token_secret_ref?: never }
-    | { base_url: string; token_secret_ref: string; path?: never };
+    | { base_url: string; token_secret_ref: string; path?: never }
+    | { secret_ref: string; path?: never; base_url?: never; token_secret_ref?: never };
 }
 
 export class ConnectionError extends Error {
@@ -34,7 +41,9 @@ export function encodeHostState(state: HostConnectionState): Uint8Array {
       connector_id: state.connector_id,
       config: state.config.path !== undefined
         ? { path: state.config.path }
-        : { base_url: state.config.base_url, token_secret_ref: state.config.token_secret_ref },
+        : state.config.base_url !== undefined
+          ? { base_url: state.config.base_url, token_secret_ref: state.config.token_secret_ref }
+          : { secret_ref: state.config.secret_ref },
     }),
   );
 }
@@ -86,6 +95,11 @@ export function decodeHostState(
     return { schema: HOST_STATE_SCHEMA, connector_id: connectorId,
       config: { base_url: endpoint, token_secret_ref: ref } };
   }
+  if (connectorId === "kizuki.imap") {
+    const ref = config["secret_ref"];
+    if (configKeys.length !== 1 || typeof ref !== "string" || !/^file:connections\/[0-9A-HJKMNPQRSTVWXYZ]{26}\.state$/.test(ref)) throw new ConnectionError("IMAP connection state requires a core-minted state reference");
+    return { schema: HOST_STATE_SCHEMA, connector_id: connectorId, config: { secret_ref: ref } };
+  }
   if (configKeys.length !== 1 || configKeys[0] !== "path") {
     throw new ConnectionError("connection state config has unexpected keys");
   }
@@ -116,7 +130,8 @@ export function listEnrollableConnectorIds(): string[] {
   return Object.keys(REGISTRY)
     .sort()
     .filter((id) => connectorAuthModes(id)?.includes("none") === true ||
-      (id === "kizuki.beeper" && connectorAuthModes(id)?.includes("secret_ref") === true));
+      (id === "kizuki.beeper" && connectorAuthModes(id)?.includes("secret_ref") === true) ||
+      (id === "kizuki.imap" && connectorAuthModes(id)?.includes("sign_in") === true));
 }
 
 function resolveRegisteredId(input: string): string | null {
@@ -161,6 +176,42 @@ export async function enrollHostConnection(
   }
 }
 
+/**
+ * Enroll a connector that mints its own opaque state during an interactive
+ * sign-in. The ledger owns both the durable filename and replacement
+ * transaction: CLI code never parses, copies, or persists this state.
+ */
+export async function enrollSignedInConnection(
+  db: Database,
+  store: ConnectionStateStore,
+  connector: Connector,
+  io: SignInIo,
+  sourceKey?: string,
+  verifyReplacement?: (previous: Uint8Array, candidate: Uint8Array) => void,
+): Promise<Connection> {
+  const manifest = connector.manifest();
+  if (!manifest.auth_modes.includes("sign_in") || connector.signIn === undefined) {
+    throw new ConnectionError(`${manifest.connector_id} does not support interactive sign-in`);
+  }
+  store.recover(db);
+  const existing = listConnections(db, { includeDisconnected: true }).filter(
+    (connection) => connection.connector_id === manifest.connector_id,
+  );
+  const previous = sourceKey === undefined
+    ? existing.length === 1 ? existing[0] : undefined
+    : existing.find((connection) => connection.source_key === sourceKey);
+  if (sourceKey !== undefined && previous === undefined) {
+    throw new ConnectionError(`no connection for ${manifest.connector_id} source=${sourceKey}`);
+  }
+  if (sourceKey === undefined && existing.length > 1) {
+    throw new ConnectionError(`several connections for ${manifest.connector_id}; select a source before re-signing in`);
+  }
+  if (previous !== undefined) {
+    return store.replace(db, previous, connector, io, verifyReplacement);
+  }
+  return enrollConnection(db, store, connector, io);
+}
+
 export interface HostConnection {
   connection: Connection;
   state: HostConnectionState | null;
@@ -172,6 +223,23 @@ function inspectConnection(
   connection: Connection,
 ): HostConnection {
   try {
+    if (connection.connector_id === "kizuki.imap") {
+      const ref = connection.secret_refs[0];
+      if (connection.secret_refs.length !== 1 || ref === undefined) throw new ConnectionError("IMAP connection state is missing");
+      if (store.read(connection) === null) throw new ConnectionError("IMAP connection state is missing");
+      // IMAP state is connector-owned opaque bytes. This small in-memory
+      // descriptor exposes only the core-minted reference needed to build the
+      // connector; it is never encoded or written as host state.
+      return {
+        connection,
+        state: {
+          schema: HOST_STATE_SCHEMA,
+          connector_id: connection.connector_id,
+          config: { secret_ref: ref },
+        },
+        problem: null,
+      };
+    }
     const bytes = store.read(connection);
     if (bytes === null) {
       return {
@@ -269,18 +337,36 @@ export function blocksEnrollment(state: HealthState): boolean {
 
 export async function loadConnector(
   selected: HostConnection,
+  store: ConnectionStateStore,
   env: Record<string, string | undefined> = process.env,
+  factory: (id: string, config?: unknown) => Connector = getConnector,
 ): Promise<Connector> {
   if (selected.state === null) {
     throw new ConnectionError(
       `${selected.connection.connector_id} source=${selected.connection.source_key}: ${selected.problem ?? "state missing"}; reconnect it`,
     );
   }
-  const connector = getConnector(
+  const connector = factory(
     selected.connection.connector_id,
     selected.state.config,
   );
-  const ref = selected.state.config.token_secret_ref;
-  await connector.connect(ref === undefined ? refuseSecrets : tokenResolver(ref, env));
+  const config = selected.state.config;
+  const ref = "token_secret_ref" in config
+    ? config.token_secret_ref
+    : "secret_ref" in config
+      ? config.secret_ref
+      : undefined;
+  if (selected.connection.connector_id === "kizuki.imap") {
+    const state = store.read(selected.connection);
+    if (state === null) throw new ConnectionError("IMAP connection state is missing");
+    await connector.connect(async (wanted) => {
+      if (wanted !== ref) {
+        throw new ConnectionError("unexpected connection state reference");
+      }
+      return new TextDecoder().decode(state);
+    });
+  } else {
+    await connector.connect(ref === undefined ? refuseSecrets : tokenResolver(ref, env));
+  }
   return connector;
 }

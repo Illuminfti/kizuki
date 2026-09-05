@@ -1,3 +1,5 @@
+import { MAX_AUDIT_ITEMS } from "../agents/types";
+import type { AuditDenial, AuditItem } from "../agents";
 import {
   enumOf,
   idList,
@@ -262,14 +264,15 @@ export function serveContextPacket(
       });
 
       let pieces: Piece[];
+      let withheld: AuditDenial[];
       try {
-        pieces = collectPieces(ctx, {
+        ({ pieces, withheld } = collectPieces(ctx, {
           include,
           ...(query === undefined ? {} : { query }),
           ...(subjects === undefined ? {} : { subjects }),
           ...(types === undefined ? {} : { types }),
           ...window,
-        });
+        }));
       } catch {
         // The cause stays inside core; the packet degrades instead of failing.
         return empty();
@@ -279,6 +282,7 @@ export function serveContextPacket(
       let estimate = tokens(header);
       const canon: CanonChunk[] = [];
       const quoted: QuotedChunk[] = [];
+      const audit = new Map<string, AuditItem>();
       const sections = { ...emptySections };
       let heading = "";
       for (const piece of pieces) {
@@ -289,10 +293,16 @@ export function serveContextPacket(
         // would make the packet depend on chunk order in a way a reader
         // cannot predict.
         if (estimate + cost > budget) break;
+        const freshAudit = (piece.audit ?? []).filter((item) => !audit.has(item.id));
+        const chunkCount = Number(piece.canon !== undefined) + Number(piece.quoted !== undefined);
+        // A compact gap can cite hundreds of intervals. Never serve a unit
+        // whose complete provenance audit cannot fit in one bounded row.
+        if (audit.size + canon.length + quoted.length + freshAudit.length + chunkCount > MAX_AUDIT_ITEMS) break;
         body += rendered;
         estimate += cost;
         heading = piece.heading;
         sections[piece.section] += 1;
+        for (const item of freshAudit) audit.set(item.id, item);
         if (piece.canon !== undefined) canon.push(piece.canon);
         if (piece.quoted !== undefined) quoted.push(piece.quoted);
       }
@@ -309,7 +319,8 @@ export function serveContextPacket(
       return {
         canon: unchanged ? [] : canon,
         quoted: unchanged ? [] : quoted,
-        withheld: [],
+        withheld,
+        audit_served: unchanged ? [] : [...audit.values()],
         data: {
           packet_md: packet,
           tokens_estimate: tokens(packet),

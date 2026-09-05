@@ -39,10 +39,10 @@ describe("release artifacts", () => {
 
   test("detects tampering with every checksummed package file", () => {
     const release = temp();
-    for (const name of ["kizuki", "kizuki-mcp", "README.txt"]) {
+    for (const name of ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"]) {
       writeFileSync(join(release, name), `${name}\n`, "utf8");
     }
-    const names = ["kizuki", "kizuki-mcp", "README.txt"];
+    const names = ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"];
     writeFileSync(join(release, "SHA256SUMS"), checksumManifest(release, names), "utf8");
     expect(() => verifyChecksumManifest(release, names)).not.toThrow();
     writeFileSync(join(release, "README.txt"), "changed\n", "utf8");

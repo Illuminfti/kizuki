@@ -2,6 +2,8 @@
 
 Kizuki can produce a local native package from this checkout. It is not a
 registry package, release signature, or proof of a supported 1.0 installer.
+The [artifact isolation proof](stranger-proof.md) adds deterministic evidence
+outside the checkout, but is not a human stranger proof.
 
 ## Build and verify
 
@@ -18,14 +20,19 @@ sha256sum -c SHA256SUMS
 ./kizuki-mcp --vault ./vault --owner
 ```
 
-The package contains `kizuki`, `kizuki-mcp`, `README.txt`, and
-`SHA256SUMS`. The checksum manifest covers all three package files. The build
-refuses to overwrite an existing target and stages output before publishing it.
+The package contains `kizuki`, `kizuki-mcp`, `README.txt`, `BUILD.json`, and
+`SHA256SUMS`. The checksum manifest covers the four package files. `BUILD.json`
+records the exact source SHA, target, and Bun runtime. The build refuses to
+overwrite an existing target and stages output before publishing it.
 
-`bun run smoke:release` runs the package outside the checkout with a synthetic
-vault. It proves version/help, init with `--no-service`, Markdown import,
-query, context packet, one no-HTTP serve pass, and MCP initialization plus
-`tools/list`.
+`bun run smoke:release` exercises the built package with a synthetic vault. It
+proves version/help, init with `--no-service`, Markdown import, query, context
+packet, one no-HTTP serve pass, and MCP initialization plus `tools/list`.
+
+`bun run proof:artifact -- --report /tmp/kizuki-artifact-proof` copies the
+checksummed package out of the checkout, uses a clean home and Kizuki config,
+and records a receipt for init, import, query, context, export, and
+clean-target restore.
 
 ## Support boundary
 

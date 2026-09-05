@@ -78,3 +78,24 @@ The connector design follows the local-first connection model described by
 [Sealgate Connect](https://sealgate.ai/connect.md) and uses Beeper's documented
 [Desktop API](https://developers.beeper.com/desktop-api/index.md) and
 [authentication model](https://developers.beeper.com/desktop-api/auth/index.md).
+
+## IMAP email
+
+IMAP enrollment is terminal-only because the mailbox password is never accepted
+as a command-line flag. Run this from an interactive local terminal:
+
+```bash
+kizuki connect imap --sensitivity private
+```
+
+Kizuki asks for the server, port, username, app password, and folders. The app
+password is hidden while typed. Standard input and output must be terminals, so
+piped input and automation cannot supply credentials. Kizuki keeps the resulting
+connector state in its owner-only connection-state store; it does not put mail
+credentials in config, CLI output, or the ledger. Re-running the command
+re-authenticates the existing IMAP source atomically, keeping its source key.
+If more than one IMAP source exists, choose the source key shown by `kizuki
+connect status`: `kizuki connect imap --source KEY`.
+
+After enrollment, run `kizuki backfill imap`. The connector uses TLS and reads
+mail without sending, deleting, moving, or marking messages read.
