@@ -959,3 +959,6 @@ export type {
   WritePassOptions,
   WritePassResult,
 } from "./serve";
+
+export { loadConfiguredRetrieval } from "./retrieval/config";
+export type { ConfiguredRetrieval } from "./retrieval/config";

@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
-import { initAgents, initGraph, initSearch, openLedger, bindFromConfig } from "@kizuki/core";
+import { join, resolve } from "node:path";
+import { initAgents, initGraph, initSearch, openLedger, PortRegistry, loadConfiguredRetrieval } from "@kizuki/core";
+import { registerEmbeddedRetrieval } from "@kizuki/retrieval-pg";
 import type { Principal, RetrievalPort } from "@kizuki/core";
 import { ownerPrincipal, principalFromToken } from "./principal";
 import { runStdio } from "./stdio";
@@ -40,7 +41,7 @@ function parse(argv: string[]): Options | null {
 
   if (vault === null) return null;
   if (owner === (tokenEnv !== null)) return null;
-  return { vault, tokenEnv, retrieval };
+  return { vault: resolve(vault), tokenEnv, retrieval };
 }
 
 /**
@@ -51,10 +52,12 @@ function parse(argv: string[]): Options | null {
  */
 async function bindRetrieval(vault: string, id: string): Promise<RetrievalPort> {
   const dataDir = join(vault, ".kizuki", "retrieval", id);
-  const { port } = await bindFromConfig<RetrievalPort>("retrieval", { retrieval: id }, {
+  const registry = new PortRegistry();
+  registerEmbeddedRetrieval(registry);
+  const { port } = await registry.bindFromConfig<RetrievalPort>("retrieval", { retrieval: id }, {
     vault_path: vault,
     data_dir: dataDir,
-    config: {},
+    config: loadConfiguredRetrieval(vault).config,
     secrets: () => Promise.reject(new Error("no secret is configured")),
     clock: () => new Date().toISOString(),
     // stdout is the protocol channel; a port's own lines go to stderr.
@@ -102,13 +105,14 @@ export async function main(argv: string[]): Promise<void> {
   }
 
   let retrieval: RetrievalPort | null = null;
-  if (options.retrieval !== null) {
-    try {
-      retrieval = await bindRetrieval(options.vault, options.retrieval);
-    } catch {
-      db.close();
-      refuse("retrieval port could not start");
+  try {
+    const selectedRetrieval = options.retrieval ?? loadConfiguredRetrieval(options.vault).id;
+    if (selectedRetrieval !== "kizuki.retrieval.fts5") {
+      retrieval = await bindRetrieval(options.vault, selectedRetrieval);
     }
+  } catch {
+    db.close();
+    refuse("retrieval port could not start");
   }
 
   // The handles close on the way out whatever happened: a transport that

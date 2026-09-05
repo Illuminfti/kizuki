@@ -42,13 +42,15 @@ export const contextCommand: Command = {
     return withVault(io, async (ctx) => {
       initAgents(ctx.db);
       const envelope = await serveContextPacket(
-        { db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER },
+        { db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER, ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }) },
         {
           purpose: rawPurpose as PacketPurpose,
           ...(budget === undefined ? {} : { budget_tokens: budget }),
           ...(query === undefined ? {} : { query }),
         },
       );
+      const retrievalDegraded = envelope.data?.retrieval_degraded ?? [];
+      if (retrievalDegraded.length > 0) io.err(`degraded=${retrievalDegraded.join(",")}`);
       const incomplete = envelope.data === undefined || envelope.denied.some(
         (entry) => entry.reason === "error",
       );
@@ -58,8 +60,8 @@ export const contextCommand: Command = {
         io.err("No matching context fits this packet. Try a broader --query or a larger --budget; use kizuki doctor to check your sources.");
       }
       if (parsed.flags.has("--json")) {
-        io.out(jsonEnvelope("context", incomplete ? "degraded" : "ok", envelope, {
-          degraded: incomplete ? ["context-unavailable"] : [],
+        io.out(jsonEnvelope("context", incomplete || retrievalDegraded.length > 0 ? "degraded" : "ok", envelope, {
+          degraded: incomplete ? ["context-unavailable", ...retrievalDegraded] : retrievalDegraded,
         }));
       } else if (envelope.data !== undefined) {
         io.out(envelope.data.packet_md);

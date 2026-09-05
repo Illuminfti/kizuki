@@ -8,6 +8,8 @@ import {
   openLedger,
   readVaultId,
 } from "@kizuki/core";
+import type { RetrievalPort } from "@kizuki/core";
+import { openConfiguredRetrieval } from "./retrieval-runtime";
 import type { CliIo } from "./commands/index";
 import {
   type KizukiConfig,
@@ -113,6 +115,7 @@ export interface VaultContext {
   vaultPath: string;
   db: Database;
   store: ConnectionStateStore;
+  retrieval?: RetrievalPort;
 }
 
 export async function withVault<T>(
@@ -126,9 +129,11 @@ export async function withVault<T>(
   );
   const db = openVaultDb(vaultPath);
   const store = new ConnectionStateStore(join(vaultPath, ".kizuki"));
+  let retrieval: RetrievalPort | undefined;
   try {
-    return await fn({ configPath: path, vaultPath, db, store });
+    retrieval = await openConfiguredRetrieval(vaultPath);
+    return await fn({ configPath: path, vaultPath, db, store, ...(retrieval === undefined ? {} : { retrieval }) });
   } finally {
-    db.close();
+    try { await retrieval?.close(); } finally { db.close(); }
   }
 }

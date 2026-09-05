@@ -20,6 +20,7 @@
         "@kizuki/connectors": "workspace:*",
         "@kizuki/core": "workspace:*",
         "@kizuki/embed-gguf": "workspace:*",
+        "@kizuki/retrieval-pg": "workspace:*",
         "@kizuki/tui": "workspace:*",
       },
     },
@@ -85,6 +86,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@kizuki/core": "workspace:*",
+        "@kizuki/retrieval-pg": "workspace:*",
         "@modelcontextprotocol/sdk": "1.30.0",
         "zod": "4.5.4",
       },

@@ -11,6 +11,7 @@
     "@kizuki/connector-imap": "workspace:*",
     "@kizuki/core": "workspace:*",
     "@kizuki/embed-gguf": "workspace:*",
-    "@kizuki/tui": "workspace:*"
+    "@kizuki/tui": "workspace:*",
+    "@kizuki/retrieval-pg": "workspace:*"
   }
 }

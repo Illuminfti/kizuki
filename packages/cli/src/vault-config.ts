@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   isPlainObject,
   loadConfiguredModelRef,
+  loadConfiguredRetrieval,
   loadServeConfig,
   type ServeConfig,
 } from "@kizuki/core";
@@ -13,7 +14,7 @@ const PORT_KEYS = ["retrieval", "embedding", "llm", "notifier", "surface"] as co
 type PortKey = (typeof PORT_KEYS)[number];
 
 const KNOWN_PORT_IDS: Readonly<Record<PortKey, readonly string[]>> = {
-  retrieval: ["kizuki.retrieval.fts5", "kizuki.retrieval.pg"],
+  retrieval: ["kizuki.retrieval.fts5", "kizuki.retrieval.embedded-pg", "kizuki.retrieval.pg"],
   embedding: ["kizuki.embedding.none", "kizuki.embedding.gguf"],
   llm: [
     "kizuki.llm.none",
@@ -103,6 +104,7 @@ export function loadVaultConfig(vaultPath: string): VaultConfig {
     surface: ["kizuki.surface.cli"],
     extra: Object.create(null) as Record<string, Record<string, unknown>>,
   };
+  ports.retrieval = loadConfiguredRetrieval(vaultPath).id;
   const sensitivity: VaultSensitivity = { default: "private" };
 
   if (!existsSync(path)) {
@@ -139,7 +141,7 @@ export function loadVaultConfig(vaultPath: string): VaultConfig {
     }
     if (typeof table["retrieval"] === "string") {
       assertKnownPort("retrieval", table["retrieval"], path);
-      ports.retrieval = table["retrieval"];
+      ports.retrieval = loadConfiguredRetrieval(vaultPath).id;
     }
     if (typeof table["embedding"] === "string") {
       assertKnownPort("embedding", table["embedding"], path);

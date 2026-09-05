@@ -46,6 +46,7 @@ function seedCanonPage(
     type: "fact",
     status,
     sensitivity: "personal",
+    taint: "clean",
     sources: ["event:fixture"],
   };
   const page: CanonPage = {
