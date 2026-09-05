@@ -74,6 +74,15 @@ export interface ClaimV2IdentityControl {
 
 export type ClaimV2Semantic = ClaimV2Assertion | ClaimV2IdentityControl;
 
+/** Durable meaning excludes the anchors owned by individual admissions. */
+export const CLAIM_MEANING_SCHEMA = "kizuki.claim-semantic/v1" as const;
+export type ClaimAssertionMeaning = Omit<ClaimV2Assertion,"schema"|"anchors"|"perspective"> & {
+  readonly schema:typeof CLAIM_MEANING_SCHEMA;
+  readonly perspective:Omit<ClaimV2Perspective,"anchors">;
+};
+export type ClaimControlMeaning = Omit<ClaimV2IdentityControl,"schema"> & {readonly schema:typeof CLAIM_MEANING_SCHEMA};
+export type ClaimMeaning = ClaimAssertionMeaning | ClaimControlMeaning;
+
 export type ClaimV2ValidationResult = {
   readonly ok: true;
   readonly value: ClaimV2Semantic;
@@ -161,19 +170,19 @@ export function validateClaimV2Semantic(input: unknown): ClaimV2ValidationResult
   return INVALID;
 }
 
-function validateAssertion(value: Record<string, unknown>): ClaimV2ValidationResult {
+function validateAssertion(value: Record<string, unknown>, anchored = true): ClaimV2ValidationResult {
   const keys = [
-    "schema", "discriminator", "subject", "predicate", "object", "perspective", "context", "polarity", "valid_from", "valid_to", "temporal_basis", "anchors"
+    "schema", "discriminator", "subject", "predicate", "object", "perspective", "context", "polarity", "valid_from", "valid_to", "temporal_basis", ...(anchored ? ["anchors"] : [])
   ];
   if (!exact(value, keys) ||
     !rawRef(value.subject) ||
     typeof value.predicate !== "string" ||
     !TOKEN.test(value.predicate) ||
     !isObject(value.object) ||
-    !isPerspective(value.perspective) ||
+    !isPerspective(value.perspective, anchored) ||
     !Array.isArray(value.context) ||
     !value.context.every(rawRef) ||
-    !anchors(value.anchors, 1)) {
+    (anchored && !anchors(value.anchors, 1))) {
     return INVALID;
   }
   if (value.polarity !== "positive" && value.polarity !== "negative") {
@@ -223,18 +232,18 @@ function isObject(value: unknown): value is ClaimV2Object {
     isVisibleIdentifier(value.ref.id);
 }
 
-function isPerspective(value: unknown): value is ClaimV2Perspective {
+function isPerspective(value: unknown, anchored = true): value is ClaimV2Perspective {
   if (!isPlainObject(value) || !exact(value, [
-    "holder", "speaker", "addressee", "mode", "interpretation", "anchors"
+    "holder", "speaker", "addressee", "mode", "interpretation", ...(anchored ? ["anchors"] : [])
   ]) ||
     !MODES.has(value.mode as ClaimV2Perspective["mode"]) ||
     (value.interpretation !== "explicit" &&
     value.interpretation !== "inferred") ||
-    !anchors(value.anchors, 0)) {
+    (anchored && !anchors(value.anchors, 0))) {
     return false;
   }
   const roles = [value.holder, value.speaker, value.addressee];
-  return roles.every(role => role === null || rawRef(role)) && (roles.every(role => role === null) || value.anchors.length > 0);
+  return roles.every(role => role === null || rawRef(role)) && (!anchored || roles.every(role => role === null) || (value.anchors as readonly TextAnchor[]).length > 0);
 }
 
 function validateIdentityControl(value: Record<string, unknown>): ClaimV2ValidationResult {
@@ -289,4 +298,24 @@ function isIdentityChange(value: unknown): value is IdentityChange {
     previous = key;
   }
   return true;
+}
+
+
+/** Same closed field validators as wire admission, with a distinct durable tag. */
+export function validateClaimMeaning(input:unknown): {ok:true;value:ClaimMeaning}|{ok:false} {
+  try {
+    const snapshot=cloneExactJson(input,"claim_meaning",SNAPSHOT_LIMITS,[]);
+    if(!isPlainObject(snapshot) || snapshot.schema!==CLAIM_MEANING_SCHEMA) return {ok:false};
+    const result=snapshot.discriminator==="assertion"?validateAssertion(snapshot,false):
+      snapshot.discriminator==="identity_control"?validateIdentityControl(snapshot):INVALID;
+    return result.ok?{ok:true,value:snapshot as unknown as ClaimMeaning}:{ok:false};
+  } catch { return {ok:false}; }
+}
+
+/** Admission and meaning are different records, never interchangeable casts. */
+export function claimMeaning(admission:ClaimV2Semantic):ClaimMeaning {
+  if(admission.discriminator==="identity_control") return {...admission,schema:CLAIM_MEANING_SCHEMA};
+  const {anchors:_anchors,perspective,...assertion}=admission;
+  const {anchors:_attribution,...viewpoint}=perspective;
+  return {...assertion,schema:CLAIM_MEANING_SCHEMA,perspective:viewpoint};
 }

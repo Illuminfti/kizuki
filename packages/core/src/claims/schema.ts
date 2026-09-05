@@ -1,9 +1,11 @@
 import type { Database } from "bun:sqlite";
 import { tableExists } from "../ledger/schema";
 import { claimKey } from "./hash";
+import { boundedClaimRows, decodeClaimV1, invalidStoredClaim } from "./record-storage";
+import { appendClaimTransition, claimProjection } from "./history";
 
 /** RFC 0002 §18.1 — claims-core widens durable state to schema v3. */
-export const CLAIMS_SCHEMA_VERSION = 3;
+export const CLAIMS_SCHEMA_VERSION = 4;
 
 const CLAIMS_TABLE = `
 CREATE TABLE IF NOT EXISTS claims (
@@ -143,15 +145,16 @@ function rewriteClaimStatuses(db: Database): void {
 }
 
 function backfillTemporal(db: Database): void {
+  const v1 = columnNames(db, "claims").has("claim_schema") ? "claim_schema='kizuki.claim/v1' AND " : "";
   db.exec(`
     UPDATE claims SET valid_from = created_at
-     WHERE valid_from IS NULL OR valid_from = '';
+     WHERE ${v1}(valid_from IS NULL OR valid_from = '');
     UPDATE claims SET asserted_at = created_at
-     WHERE asserted_at IS NULL OR asserted_at = '';
+     WHERE ${v1}(asserted_at IS NULL OR asserted_at = '');
     UPDATE claims SET sensitivity = 'private'
-     WHERE sensitivity IS NULL OR sensitivity = '';
+     WHERE ${v1}(sensitivity IS NULL OR sensitivity = '');
     UPDATE claims SET last_confirmed_at = created_at
-     WHERE last_confirmed_at IS NULL;
+     WHERE ${v1}last_confirmed_at IS NULL;
   `);
 }
 
@@ -255,7 +258,7 @@ export function syncCompatProposals(db: Database): void {
         ELSE status
       END,
       created_at, body_hash
-    FROM claims;
+    FROM claims ${columnNames(db, "claims").has("claim_schema") ? "WHERE claim_schema='kizuki.claim/v1'" : ""};
   `);
 }
 
@@ -299,7 +302,7 @@ export function applyClaimsV3(db: Database): void {
     backfillTemporal(db);
     rewriteClaimStatuses(db);
   }
-  db.exec(CLAIMS_INDEXES);
+  db.exec(columnNames(db, "claims").has("claim_schema") ? CLAIMS_INDEXES.replace("WHERE kind <> 'purge_review'", "WHERE claim_schema='kizuki.claim/v1' AND kind <> 'purge_review'") : CLAIMS_INDEXES);
   db.exec(SUPPORTING_TABLES);
   convertRejections(db);
   syncCompatProposals(db);
@@ -326,4 +329,141 @@ export function initClaims(db: Database): void {
     return;
   }
   applyClaimsV3(db);
+}
+
+
+const RICH_CHILDREN = `
+CREATE TABLE claim_v2_semantics (
+  claim_id TEXT PRIMARY KEY REFERENCES claims(claim_id),
+  semantic_key TEXT NOT NULL UNIQUE CHECK(length(semantic_key)=64 AND semantic_key NOT GLOB '*[^0-9a-f]*'),
+  conflict_key TEXT CHECK(conflict_key IS NULL OR (length(conflict_key)=64 AND conflict_key NOT GLOB '*[^0-9a-f]*')),
+  payload TEXT NOT NULL CHECK(octet_length(payload)<=262144)
+) STRICT;
+CREATE INDEX claim_v2_semantics_conflict ON claim_v2_semantics(conflict_key,claim_id);
+CREATE TABLE claim_v2_support (
+  support_key TEXT PRIMARY KEY CHECK(length(support_key)=64 AND support_key NOT GLOB '*[^0-9a-f]*'),
+  claim_id TEXT NOT NULL REFERENCES claims(claim_id),
+  admission TEXT NOT NULL CHECK(octet_length(admission)<=262144)
+) STRICT;
+CREATE INDEX claim_v2_support_claim ON claim_v2_support(claim_id,support_key);
+CREATE TABLE claim_v2_support_events (
+  support_key TEXT NOT NULL REFERENCES claim_v2_support(support_key) ON DELETE CASCADE,
+  event_id TEXT NOT NULL REFERENCES events(event_id),
+  PRIMARY KEY(support_key,event_id)
+) STRICT;
+CREATE INDEX claim_v2_support_events_event ON claim_v2_support_events(event_id,support_key);
+CREATE TABLE claim_v2_support_anchors (
+  support_key TEXT NOT NULL REFERENCES claim_v2_support(support_key) ON DELETE CASCADE,
+  event_id TEXT NOT NULL REFERENCES events(event_id),
+  start_utf16 INTEGER NOT NULL CHECK(start_utf16>=0),
+  end_utf16 INTEGER NOT NULL CHECK(end_utf16>start_utf16),
+  role TEXT NOT NULL CHECK(role IN ('assertion','attribution','subject','object','context','holder','speaker','addressee','control')),
+  ref_kind TEXT NOT NULL CHECK(ref_kind IN ('','supplied','occurrence')),
+  ref_id TEXT NOT NULL CHECK(octet_length(ref_id)<=1024),
+  CHECK((role IN ('assertion','attribution') AND ref_kind='' AND ref_id='') OR (role NOT IN ('assertion','attribution') AND ref_kind<>'' AND ref_id<>'')),
+  PRIMARY KEY(support_key,event_id,start_utf16,end_utf16,role,ref_kind,ref_id)
+) STRICT;
+CREATE INDEX claim_v2_support_anchors_event ON claim_v2_support_anchors(event_id,support_key);
+CREATE INDEX claim_v2_support_anchors_ref ON claim_v2_support_anchors(ref_kind,ref_id,support_key);
+CREATE TABLE claim_occurrences (
+  occurrence_id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL REFERENCES events(event_id),
+  label TEXT NOT NULL CHECK(octet_length(label) BETWEEN 1 AND 512),
+  payload TEXT NOT NULL CHECK(octet_length(payload)<=16384)
+) STRICT;
+CREATE INDEX claim_occurrences_event ON claim_occurrences(event_id,occurrence_id);
+CREATE TABLE claim_history (
+  sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+  transition_id TEXT NOT NULL UNIQUE,
+  claim_id TEXT NOT NULL REFERENCES claims(claim_id),
+  schema TEXT NOT NULL,
+  operation TEXT NOT NULL,
+  at TEXT NOT NULL,
+  before_projection TEXT CHECK(before_projection IS NULL OR octet_length(before_projection)<=262144),
+  after_projection TEXT CHECK(after_projection IS NULL OR octet_length(after_projection)<=262144),
+  receipt_id TEXT,
+  purge_ref TEXT,
+  integrity TEXT NOT NULL CHECK(length(integrity)=64 AND integrity NOT GLOB '*[^0-9a-f]*'),
+  CHECK((schema='kizuki.claim-transition/v1' AND operation IN
+    ('upgrade_baseline','assertion','support_addition','supersession','retraction','revert','reinstate','materialization','projection')
+    AND after_projection IS NOT NULL AND purge_ref IS NULL)
+    OR (schema='kizuki.claim-transition-purged/v1' AND operation='purged' AND before_projection IS NULL
+    AND after_projection IS NULL AND receipt_id IS NULL AND purge_ref IS NOT NULL))
+) STRICT;
+CREATE INDEX claim_history_claim ON claim_history(claim_id,sequence);
+CREATE TRIGGER claim_semantics_immutable BEFORE UPDATE ON claim_v2_semantics
+  BEGIN SELECT RAISE(ABORT,'claim meaning is immutable'); END;
+CREATE TRIGGER claim_support_immutable BEFORE UPDATE ON claim_v2_support
+  BEGIN SELECT RAISE(ABORT,'claim admission is immutable'); END;
+CREATE TRIGGER claim_occurrence_immutable BEFORE UPDATE ON claim_occurrences
+  BEGIN SELECT RAISE(ABORT,'claim occurrence is immutable'); END;
+CREATE TRIGGER claim_history_immutable BEFORE UPDATE ON claim_history
+  BEGIN SELECT RAISE(ABORT,'claim history is append only'); END;
+CREATE TRIGGER claim_history_delete BEFORE DELETE ON claim_history
+  WHEN NOT EXISTS(SELECT 1 FROM claims WHERE claim_id=OLD.claim_id AND status='purged')
+  BEGIN SELECT RAISE(ABORT,'claim history deletion requires physical purge'); END;
+`;
+
+/** Ledger 17: table copy and every child/index/baseline share the migration transaction. */
+export function applyClaimsV4(db:Database):void {
+  if(!db.inTransaction) return invalidStoredClaim();
+  // Admit bounded keyset pages before copying or parsing any historical payload.
+  let after="";
+  for(;;) {
+    const rows=boundedClaimRows(db,"WHERE claim_id>? ORDER BY claim_id",[after]);
+    if(rows.length===0) break;
+    for(const row of rows) { decodeClaimV1(row); after=row.claim_id; }
+  }
+  // Current v16 has no claim FKs, but defer NO ACTION references during the
+  // create/copy/swap so existing references still resolve to the same IDs.
+  // Unknown extension schemas with destructive FK actions need their own
+  // coordinated rebuild; a DROP must never cascade away somebody else's rows.
+  using destructiveStatement=db.prepare(`SELECT 1 FROM sqlite_master m,pragma_foreign_key_list(m.name) f
+    WHERE m.type='table' AND f.[table]='claims' AND f.on_delete NOT IN ('NO ACTION','RESTRICT') LIMIT 1`);
+  const destructive=destructiveStatement.get();
+  if(destructive!==null) return invalidStoredClaim();
+  using deferralStatement=db.prepare<{defer_foreign_keys:number},[]>("PRAGMA defer_foreign_keys");
+  const priorDeferral=deferralStatement.get()?.defer_foreign_keys??0;
+  db.exec("PRAGMA defer_foreign_keys=ON");
+  const columns=[...columnNames(db,"claims")].join(",");
+  const table=CLAIMS_TABLE.replace("IF NOT EXISTS claims", "claims_v4")
+    .replace("valid_from TEXT NOT NULL DEFAULT ''", "valid_from TEXT DEFAULT ''")
+    .replace("last_confirmed_at TEXT\n", `last_confirmed_at TEXT,
+      claim_schema TEXT NOT NULL DEFAULT 'kizuki.claim/v1',
+      temporal_basis TEXT,
+      purge_ref TEXT,
+      CHECK((claim_schema='kizuki.claim/v1' AND valid_from IS NOT NULL AND temporal_basis IS NULL AND purge_ref IS NULL)
+        OR (claim_schema='kizuki.claim/v2' AND (
+          (status='purged' AND purge_ref IS NOT NULL AND temporal_basis IS NULL AND valid_from IS NULL AND valid_to IS NULL
+            AND body='' AND frontmatter='{}' AND provenance='[]' AND subjects='[]' AND subject IS NULL AND predicate IS NULL
+            AND object IS NULL AND claim_key IS NULL AND target IS NULL AND model_ref IS NULL AND receipt_id IS NULL
+            AND superseded_by IS NULL AND producer='deterministic' AND sensitivity='private' AND authority='model_inference'
+            AND taint='quoted' AND confidence=0 AND corroboration=0 AND last_confirmed_at IS NULL)
+          OR (status<>'purged' AND purge_ref IS NULL AND (
+            (temporal_basis='unknown' AND valid_from IS NULL AND valid_to IS NULL)
+            OR (temporal_basis IN ('explicit','observed') AND valid_from IS NOT NULL)))))
+      )
+`);
+  db.exec(table);
+  db.exec(`INSERT INTO claims_v4(${columns}) SELECT ${columns} FROM claims;
+    DROP TABLE claims; ALTER TABLE claims_v4 RENAME TO claims;`);
+  db.exec(CLAIMS_INDEXES.replace("WHERE kind <> 'purge_review'", "WHERE claim_schema='kizuki.claim/v1' AND kind <> 'purge_review'"));
+  db.exec(RICH_CHILDREN);
+  const at=new Date().toISOString(); after="";
+  for(;;) {
+    const rows=boundedClaimRows(db,"WHERE claim_id>? ORDER BY claim_id",[after]);
+    if(rows.length===0) break;
+    for(const row of rows) {
+      const claim=decodeClaimV1(row);
+      appendClaimTransition(db,claim.claim_id,"upgrade_baseline",at,null,claimProjection(claim));
+      after=row.claim_id;
+    }
+  }
+  using foreignKeys=db.prepare("PRAGMA foreign_key_check");
+  if(foreignKeys.all().length!==0) return invalidStoredClaim();
+  // DROP leaves SQLite's deferred-violation counter set even after the exact
+  // parent is recreated. Clear only that debt after a full FK validation;
+  // foreign_keys remains ON throughout, and later writes enforce constraints.
+  db.exec("PRAGMA defer_foreign_keys=OFF");
+  if(priorDeferral===1) db.exec("PRAGMA defer_foreign_keys=ON");
 }

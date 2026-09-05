@@ -2,6 +2,7 @@ export const CLAIM_ERROR_CODES = [
   "identity_unsupported",
   "provenance_unresolved",
   "schema_invalid",
+  "schema_unsupported",
   "unknown_predicate",
   "space_mismatch",
 ] as const;

@@ -166,3 +166,12 @@ export function markScheduleRun(
       WHERE rail = ?`,
   ).run(finishedAt, nextRunAt, rail);
 }
+
+
+/** Explicit declarations preserve old bytes/digests; no legacy replay upgrade. */
+export function applyServeV9(db:Database):void {
+  db.exec(`ALTER TABLE extract_batches ADD COLUMN producer_contract TEXT NOT NULL DEFAULT 'kizuki.producer/v1';
+    ALTER TABLE extract_batches ADD COLUMN draft_schema TEXT NOT NULL DEFAULT 'kizuki.claim-draft/v1';
+    ALTER TABLE extract_batches ADD COLUMN integrity_version TEXT NOT NULL DEFAULT 'legacy-v1';
+    UPDATE extract_batches SET integrity_version=CASE WHEN integrity GLOB 'atomic-v1:*' THEN 'atomic-v1' ELSE 'legacy-v1' END;`);
+}
