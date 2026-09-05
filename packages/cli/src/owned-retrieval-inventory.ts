@@ -56,7 +56,10 @@ export function createOwnedRetrievalInventory(vaultPath: string, current?: Retri
           if (!current.ownsGeneration(vaultPath)) throw new OwnedRetrievalInventoryError();
           port = current;
         }
-        else {
+        else if (present(join(ctx.data_dir, "store"))) {
+          // A previous maintenance pass may have erased this generation while
+          // another store remained busy. Opening SQL here would recreate it.
+          // Retain the root's SQL-free maintenance handle for resumable proof.
           try { port = id === FTS5_RETRIEVAL_ID ? createFts5RetrievalPort(ctx) : await openEmbeddedRetrievalPort(ctx); opened.push(port); }
           catch { /* A busy or broken generation must remain reachable by SQL-free recovery. */ }
         }
