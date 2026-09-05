@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   OWNER,
+  OWNER_AGENT_GRANT,
   TOOLS,
   accept,
   addAgent,
@@ -29,14 +30,16 @@ export interface McpFixture {
   dispose: () => void;
 }
 
+const EXPLICIT_GRANT: Grant = { ...OWNER_AGENT_GRANT, tools: [...OWNER_AGENT_GRANT.tools] };
+
 const AGENTS: Record<string, Partial<Grant>> = {
-  "reader-personal": { ceiling: "personal", tools: [...TOOLS] },
-  "reader-private": { ceiling: "private", tools: [...TOOLS] },
-  "search-only": { ceiling: "private", tools: ["search"] },
-  slow: { ceiling: "private", rate_limit_per_minute: 2 },
+  "reader-personal": { ...EXPLICIT_GRANT, ceiling: "personal", tools: [...TOOLS] },
+  "reader-private": { ...EXPLICIT_GRANT, ceiling: "private", tools: [...TOOLS] },
+  "search-only": { ...EXPLICIT_GRANT, ceiling: "private", tools: ["search"] },
+  slow: { ...EXPLICIT_GRANT, ceiling: "private", rate_limit_per_minute: 2 },
   /** Nothing but the defaults, which do not include the relay. */
-  plain: { ceiling: "private" },
-  gone: { ceiling: "private" },
+  plain: {},
+  gone: { ...EXPLICIT_GRANT, ceiling: "private" },
 };
 
 function page(

@@ -10,6 +10,7 @@ import {
   TOOLS,
   addAgent,
   authenticate,
+  authorize,
   countAgents,
   getAgent,
   initAgents,
@@ -218,7 +219,7 @@ describe("grants", () => {
       until: null,
       tools: ["search", "get_page"],
       rate_limit_per_minute: 12,
-      relay_owner_corrections: true,
+      relay_owner_corrections: false,
     });
     db.close();
   });
@@ -334,6 +335,72 @@ describe("immutable grant constants", () => {
   });
 });
 
+describe("least-privilege enrollment", () => {
+  test("an authenticated default token has no tool or record authority", () => {
+    const db = agentsDb();
+    const { token } = addAgent(db, "new-agent");
+    const principal = authenticate(db, token);
+    expect(principal?.kind).toBe("agent");
+    expect(principal?.grant).toEqual(DEFAULT_GRANT);
+    for (const tool of TOOLS) expect(toolAllowed(principal?.grant ?? DEFAULT_GRANT, tool)).toBe(false);
+    for (const sensitivity of ["public", "personal", "private"] as const) {
+      expect(authorize(principal?.grant ?? DEFAULT_GRANT, {
+        id: sensitivity, sensitivity, type: "person", subjects: ["person:ada"],
+      }).allow).toBe(false);
+    }
+    db.close();
+  });
+
+  test("empty scopes deny while null scopes deliberately allow a named tool", () => {
+    const db = agentsDb();
+    const { token } = addAgent(db, "scoped-agent", { tools: ["search"] });
+    const empty = authenticate(db, token)?.grant ?? DEFAULT_GRANT;
+    expect(authorize(empty, {
+      id: "public-person", sensitivity: "public", type: "person", subjects: ["person:ada"],
+    })).toEqual({ allow: false, reason: "type_out_of_scope" });
+    setGrant(db, "scoped-agent", { types: ["person"], subjects: ["person:ada"] });
+    const scoped = authenticate(db, token)?.grant ?? DEFAULT_GRANT;
+    expect(authorize(scoped, {
+      id: "named-person", sensitivity: "public", type: "person", subjects: ["person:ada"],
+    })).toEqual({ allow: true });
+    expect(authorize(scoped, {
+      id: "other-person", sensitivity: "public", type: "person", subjects: ["person:grace"],
+    })).toEqual({ allow: false, reason: "subject_out_of_scope" });
+    setGrant(db, "scoped-agent", { types: null, subjects: null });
+    const unscoped = authenticate(db, token)?.grant ?? DEFAULT_GRANT;
+    expect(toolAllowed(unscoped, "search")).toBe(true);
+    expect(toolAllowed(unscoped, "timeline")).toBe(false);
+    expect(authorize(unscoped, {
+      id: "public-person", sensitivity: "public", type: "person", subjects: ["person:ada"],
+    })).toEqual({ allow: true });
+    db.close();
+  });
+
+  test("owner preset remains useful only when explicitly passed", () => {
+    const db = agentsDb();
+    const ordinary = authenticate(db, addAgent(db, "ordinary").token);
+    const ownerHarness = authenticate(db, addAgent(db, "owner-harness", OWNER_AGENT_GRANT).token);
+    expect(ordinary?.grant).toEqual(DEFAULT_GRANT);
+    expect(ownerHarness?.grant).toEqual(OWNER_AGENT_GRANT);
+    expect(OWNER.grant.tools).toEqual([...TOOLS]);
+    db.close();
+  });
+
+  test("an existing personal proposal grant remains exactly as stored", () => {
+    const db = agentsDb();
+    const legacy = addAgent(db, "legacy-agent", {
+      ...OWNER_AGENT_GRANT,
+      ceiling: "personal",
+      tools: [...OWNER_AGENT_GRANT.tools],
+    });
+    expect(authenticate(db, legacy.token)?.grant).toEqual({
+      ...OWNER_AGENT_GRANT,
+      ceiling: "personal",
+    });
+    db.close();
+  });
+});
+
 describe("stale principals", () => {
   test("reloads revocation and a reduced grant on the next resolve", () => {
     const db = agentsDb();
@@ -359,8 +426,8 @@ describe("stale principals", () => {
 });
 
 describe("propose versus correct authority", () => {
-  test("the default grant may propose and must not correct", () => {
-    expect(toolAllowed(DEFAULT_GRANT, "propose")).toBe(true);
+  test("the default grant may neither propose nor correct", () => {
+    expect(toolAllowed(DEFAULT_GRANT, "propose")).toBe(false);
     expect(toolAllowed(DEFAULT_GRANT, "correct")).toBe(false);
     expect(toolAllowed(OWNER.grant, "correct")).toBe(true);
     const db = agentsDb();
@@ -368,7 +435,7 @@ describe("propose versus correct authority", () => {
     const principal = authenticate(db, token);
     expect(toolAllowed(principal?.grant ?? DEFAULT_GRANT, "correct")).toBe(false);
     setGrant(db, "reader-1", {
-      tools: [...DEFAULT_GRANT.tools, "correct"],
+      tools: ["propose", "correct"],
       relay_owner_corrections: false,
     });
     expect(authenticate(db, token)?.grant.relay_owner_corrections).toBe(false);
@@ -402,7 +469,7 @@ describe("corrupt identity isolation", () => {
 
     const repaired = setGrant(db, "reader-bad", { tools: ["search"] });
     expect(repaired.tools).toEqual(["search"]);
-    expect(repaired.ceiling).toBe("personal");
+    expect(repaired.ceiling).toBe("public");
     expect(listQuarantinedAgents(db)).toEqual([]);
     expect(authenticate(db, bad.token)?.grant.tools).toEqual(["search"]);
     expect(countAgents(db)).toEqual({ total: 2, revoked: 0, quarantined: 0 });
@@ -450,7 +517,7 @@ describe("corrupt identity isolation", () => {
     expect(repaired.tools).toEqual(["search"]);
     expect(repaired.types).toEqual([]);
     expect(repaired.subjects).toEqual([]);
-    expect(repaired.ceiling).toBe("personal");
+    expect(repaired.ceiling).toBe("public");
     db.close();
   });
 

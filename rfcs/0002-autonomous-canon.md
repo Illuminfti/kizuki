@@ -1496,17 +1496,29 @@ so there is no window in which private text sits labeled public.
 
 ### 8.4 Agent ceilings
 
-`DEFAULT_GRANT.ceiling` stays `personal`. A new preset:
+Arbitrary-agent enrollment is inert: `DEFAULT_GRANT` is public, has empty
+tool/type/subject arrays, retains the rate limit of 60, and cannot relay owner
+corrections. An authenticated token therefore has no serving authority until
+an explicit grant names its tools and scopes. Empty arrays deny; `null` is the
+deliberate unscoped choice. Stored grants are not rewritten.
+
+`OWNER` remains the built-in private all-tool principal. A separate explicit
+preset for a harness the owner runs is:
 
 ```ts
 export const OWNER_AGENT_GRANT: Grant = {
-  ...DEFAULT_GRANT,
   ceiling: "private",
+  types: null,
+  subjects: null,
+  tools: ["search", "get_page", "query_entities", "timeline", "context_packet", "graph_neighbors", "system_health", "propose"],
+  rate_limit_per_minute: 60,
+  relay_owner_corrections: true,
 };
 ```
 
-created by `kizuki agent add <name> --owner-agent`, for harnesses the owner
-runs themselves. Enforcement is unchanged and stays in the query engine
+used only when a caller explicitly passes it, for harnesses the owner runs
+themselves. It is never an implicit fallback for `addAgent`. Enforcement is
+unchanged and stays in the query engine
 below the prompt layer: `authorize()` checks `held` first, then
 `missing_sensitivity`, then `above_ceiling`, then type, subject and time.
 A ceiling filter must **fail closed**: a scope that yields nothing returns
