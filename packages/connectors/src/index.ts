@@ -169,6 +169,7 @@ export {
 } from "./util";
 export {
   LEGACY_WIKI_CONNECTOR_ID,
+  LEGACY_WIKI_AUTH_MODES,
   LEGACY_WIKI_FIXTURE,
   LEGACY_WIKI_REPORT_SCHEMA,
   LegacyWikiConnector,
@@ -191,6 +192,7 @@ export type {
 } from "./import-legacy-wiki";
 export {
   LEGACY_EVENTS_CONNECTOR_ID,
+  LEGACY_EVENTS_AUTH_MODES,
   LEGACY_EVENTS_FIXTURE,
   LEGACY_EVENTS_REPORT_SCHEMA,
   LegacyEventsConnector,

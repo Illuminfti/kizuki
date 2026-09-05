@@ -45,6 +45,9 @@ import { rowToEvent } from "./rows";
 import { BATCH_ROWS, openJsonlSource, openSqliteSource } from "./source";
 import type { LegacyRowSource } from "./source";
 
+/** Authentication is source-independent even though emitted kinds need a mapping. */
+export const LEGACY_EVENTS_AUTH_MODES = Object.freeze(["none"] as const);
+
 /**
  * An importer for a previous event table, not live sync: it pages once through
  * an export the owner already has. A row edited in place after it was imported
@@ -114,7 +117,7 @@ export class LegacyEventsConnector implements Connector {
       // Every row leaves with a label, mapped or defaulted at the floor.
       emits_sensitivity_hint: true,
       ...policyForConnector(LEGACY_EVENTS_CONNECTOR_ID),
-      auth_modes: ["none"],
+      auth_modes: [...LEGACY_EVENTS_AUTH_MODES],
     });
   }
 

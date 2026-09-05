@@ -42,6 +42,9 @@ import type { ScanResult } from "./scan";
 export const LEGACY_WIKI_CURSOR_SCHEMA =
   "kizuki.legacy-wiki-cursor/v1" as const;
 
+/** Discovery can inspect authentication before an owner supplies the mapping. */
+export const LEGACY_WIKI_AUTH_MODES = Object.freeze(["none"] as const);
+
 const MANIFEST: Manifest = freezeManifest({
   schema: "kizuki.connector/v1",
   connector_id: LEGACY_WIKI_CONNECTOR_ID,
@@ -67,7 +70,7 @@ const MANIFEST: Manifest = freezeManifest({
   // source class carries; see `../legacy/sensitivity.ts`.
   emits_sensitivity_hint: true,
   ...policyForConnector(LEGACY_WIKI_CONNECTOR_ID),
-  auth_modes: ["none"],
+  auth_modes: [...LEGACY_WIKI_AUTH_MODES],
 });
 
 interface SnapshotEntry {
@@ -326,11 +329,11 @@ export class LegacyWikiConnector implements Connector {
   async connect(_resolve: SecretResolver): Promise<void> {}
 
   async backfill(cursor: Cursor | null): Promise<SyncBatch> {
-    const previous = cursor === null ? null : decodeCursor(cursor);
-    // A backfill is always a full walk, so it re-emits every page — and a full
-    // walk is the most conclusive evidence there is about the ones it did not.
+    // A fresh sweep emits every page. A returned snapshot resumes through the
+    // same diff path as sync, so a host draining batches can reach exhaustion.
+    if (cursor !== null) return this.sync(cursor);
     const { scan, events } = await this.#run([], {});
-    return this.#batch(previous, scan, events, events);
+    return this.#batch(null, scan, events, events);
   }
 
   async sync(cursor: Cursor | null): Promise<SyncBatch> {
