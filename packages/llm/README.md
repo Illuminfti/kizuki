@@ -65,6 +65,14 @@ An unrelated model or a run without a model attempt cannot clear a failure.
 attempt is newer than every attributable attempt. A later current-model
 attempt establishes its state; a later success retains the history warning
 without failing health. Durable receipt ordering handles equal timestamps.
+Model history uses an indexed window of the newest 10,000 sync receipts,
+independently of other rails. `history_truncated` discloses when historical
+success/failure fields and counts cover only that selected window. If runs
+without a current-model attempt fill the window and hide the deciding attempt,
+current health stays unverified. This includes a flood of other models' runs.
+Unreadable selected history also remains unknown until a later valid attempt
+establishes current state. The index includes run id so even a large group of
+equal timestamps preserves bounded selection and deterministic ordering.
 Diagnostics contain no provider prose, rejected field names, predicate values
 or raw responses. The claim JSON schema remains exact.
 

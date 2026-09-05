@@ -208,8 +208,10 @@ export interface ModelDoctor {
   /** Failure of the newest attributable attempt, independently of historical failures. */
   readonly current_failure: { readonly at: string; readonly detail: string } | null;
   readonly unattributed_receipts: number;
-  /** A possibly matching unattributed attempt is newer than the latest known attempt. */
+  /** Newer unreadable/ambiguous history or an omitted deciding attempt prevents current attribution. */
   readonly history_unverified: boolean;
+  /** Historical last_success, last_failure and counts describe only the selected receipt window. */
+  readonly history_truncated: boolean;
   readonly unavailable: number;
   readonly budget: Readonly<Record<string, { used: number; limit: number }>>;
   readonly detail: string;
