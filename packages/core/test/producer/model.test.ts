@@ -87,13 +87,18 @@ describe("kizuki.producer.model", () => {
     const llm = scriptedLlm(() => unavailableError());
     await withProducer(llm, async (producer) => {
       const result = await producer.produce(input([GRACE_EVENT]));
-      expect(result).toEqual({ status: "unavailable", reason: "llm unavailable" });
+      expect(result).toEqual({
+        status: "unavailable",
+        reason: "llm unavailable",
+        usage: { calls: 1, input_tokens: 0, output_tokens: 0 },
+      });
     });
     const timeout = scriptedLlm(() => new PortError("timeout", "model request timed out", true));
     await withProducer(timeout, async (producer) => {
       expect(await producer.produce(input([GRACE_EVENT]))).toEqual({
         status: "unavailable",
         reason: "llm timeout",
+        usage: { calls: 1, input_tokens: 0, output_tokens: 0 },
       });
     });
     const thrown = scriptedLlm(() => new Error("provider said: leak-me"));
@@ -101,6 +106,7 @@ describe("kizuki.producer.model", () => {
       expect(await producer.produce(input([GRACE_EVENT]))).toEqual({
         status: "unavailable",
         reason: "llm error",
+        usage: { calls: 1, input_tokens: 0, output_tokens: 0 },
       });
     });
   });
@@ -203,7 +209,11 @@ describe("kizuki.producer.model", () => {
     );
     await withProducer(llm, async (producer) => {
       const result = await producer.produce(input([GRACE_EVENT]));
-      expect(result).toMatchObject({ status: "rejected", reason: "provenance_not_cited" });
+      expect(result).toMatchObject({
+        status: "ok",
+        claims: [expect.objectContaining({ subject: "acme-mail:grace" })],
+        dropped: [expect.objectContaining({ reason: "unknown_subject", subject: "acme-mail:invented" })],
+      });
     });
   });
 

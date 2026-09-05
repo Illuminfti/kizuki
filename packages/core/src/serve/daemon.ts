@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import nodeProcess from "node:process";
 import { loadServeConfig } from "./config";
 import { startServeHttp } from "./http";
 import type { ServeHttpHandle } from "./http";
@@ -85,6 +86,13 @@ export async function runServeDaemon(
 
   let receipts = recovered.length;
   const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  // SIGTERM is the public stop mechanism.  Consume it here so an in-flight
+  // receipted write can reach its durable boundary, then leave the loop and
+  // release the writer lease/PID in the finally block below.
+  let stopping = false;
+  const requestStop = (): void => { stopping = true; };
+  nodeProcess.once("SIGTERM", requestStop);
+  nodeProcess.once("SIGINT", requestStop);
   try {
     if (options.once === true) {
       const rails =
@@ -113,7 +121,7 @@ export async function runServeDaemon(
       return { receipts, http };
     }
 
-    while (options.shouldContinue?.() ?? true) {
+    while (!stopping && (options.shouldContinue?.() ?? true)) {
       heartbeatLease(db, process);
       const due = dueRails(db, process.now());
       const rail = due[0];
@@ -126,10 +134,12 @@ export async function runServeDaemon(
         continue;
       }
       await sleep(1_000);
-      if (options.shouldContinue !== undefined && !options.shouldContinue()) break;
+      if (stopping || (options.shouldContinue !== undefined && !options.shouldContinue())) break;
     }
     return { receipts, http };
   } finally {
+    nodeProcess.off("SIGTERM", requestStop);
+    nodeProcess.off("SIGINT", requestStop);
     if (http !== null) await http.stop();
     releaseLease(db, process);
     clearPid(vaultPath);

@@ -477,7 +477,10 @@ export function createModelProducerPort(
         const outcome = await callModel(llm, messages, maxOutput, config.deadline_ms);
         usage.calls += 1;
         if (outcome.kind === "unavailable") {
-          return { status: "unavailable", reason: outcome.reason };
+          // A transport failure is not an empty call.  Preserve the charged
+          // attempt in the receipt so an unavailable model cannot masquerade
+          // as a rail that never contacted its configured port.
+          return { status: "unavailable", reason: outcome.reason, usage };
         }
         if (outcome.kind === "rejected") {
           return { status: "rejected", reason: outcome.reason, usage };
@@ -512,9 +515,6 @@ export function createModelProducerPort(
           if (!draft.event_ids.every((id) => batchEventIds.has(id))) {
             return { status: "rejected", reason: "provenance_not_cited", usage };
           }
-          if (!draft.event_ids.every((id) => subjectsByEvent.get(id)?.has(draft.subject) === true)) {
-            return { status: "rejected", reason: "provenance_not_cited", usage };
-          }
           if (containsVerbatimCapture(draft.body, sources)) {
             ctx.logger({
               level: "warn",
@@ -544,6 +544,9 @@ export function createModelProducerPort(
             dropped.push(item);
             drop(item);
             continue;
+          }
+          if (!draft.event_ids.every((id) => subjectsByEvent.get(id)?.has(draft.subject) === true)) {
+            return { status: "rejected", reason: "provenance_not_cited", usage };
           }
           claims.push(draft);
         }

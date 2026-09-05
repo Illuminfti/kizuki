@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createBudgetTracker } from "../../src/canon/budget";
-import { getClaim, reviveUncontestedSkipped } from "../../src/claims/store";
+import { getClaim, listClaims, reviveUncontestedSkipped } from "../../src/claims/store";
 import type { ProduceResult, ProducerPort } from "../../src/contracts/producer";
 import { openLedger } from "../../src/ledger/db";
 import { runRail } from "../../src/serve/rails";
@@ -117,6 +117,27 @@ describe("write pass", () => {
     expect(claim?.receipt_id).toBeString();
     expect(existsSync(join(path, "auto", "people", "grace.md"))).toBe(true);
     expect(existsSync(join(path, "people", "grace.md"))).toBe(false);
+    db.close();
+  });
+
+  test("a derived refresh failure retains the receipted canon-write count and charges its daily budget", async () => {
+    const { path, db } = vault();
+    const eventId = putEvent(db);
+    fileProposal(db, {
+      kind: "claim", target: "people/grace", body: "Grace runs partnerships at Acme.",
+      frontmatter: { type: "person", title: "Grace" }, provenance: [eventId], subjects: ["person:grace"],
+      producer: "deterministic", confidence: 0.8,
+    });
+    const { budget: _budget, ...hooks } = boundWriteOptions(db, createBudgetTracker({ canon_writes_per_run: 8 }));
+    const receipt = await runRail(db, path, "sync", {
+      hooks: {
+        ...hooks,
+        refresh: async () => { throw new Error("synthetic derived failure"); },
+      },
+    });
+    expect(receipt.status).toBe("degraded");
+    expect(receipt.canon_writes).toBe(1);
+    expect(db.query<{ used: number }, []>("SELECT used FROM budget_ledger WHERE name = 'canon_writes_per_day'").get()?.used).toBe(1);
     db.close();
   });
 
@@ -457,5 +478,36 @@ describe("write pass", () => {
       expect(db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM claims WHERE producer = 'model'").get()?.count).toBe(2);
       db.close();
     }
+  });
+
+  test("a partial filing retry replays the durable model output, never a new model decision", async () => {
+    const { path, db } = vault();
+    const grace = putEvent(db, { source_record_id: "journal-grace" });
+    const ada = putEvent(db, { source_record_id: "journal-ada" });
+    let calls = 0;
+    const producer: ProducerPort = {
+      ...stubProducer({ status: "ok", claims: [], usage: { calls: 0, input_tokens: 0, output_tokens: 0 } }),
+      produce: async () => {
+        calls += 1;
+        return {
+          status: "ok" as const,
+          claims: calls === 1 ? [
+            { kind: "claim" as const, subject: "person:grace", predicate: "employment.works_at", object: "Acme", polarity: "positive" as const, body: "Grace works at Acme.", valid_from: null, valid_to: null, confidence: 0.8, sensitivity: "personal" as const, event_ids: [grace] },
+            { kind: "claim" as const, subject: "person:ada", predicate: "employment.works_at", object: "Acme", polarity: "positive" as const, body: "Ada works at Acme.", valid_from: null, valid_to: null, confidence: 0.8, sensitivity: "personal" as const, event_ids: [ada] },
+          ] : [
+            { kind: "claim" as const, subject: "person:grace", predicate: "employment.works_at", object: "Acme", polarity: "positive" as const, body: "Grace works at Acme.", valid_from: null, valid_to: null, confidence: 0.8, sensitivity: "personal" as const, event_ids: [grace] },
+          ],
+          usage: { calls: 1, input_tokens: 1, output_tokens: 1 },
+        };
+      },
+    };
+    const options = { budget: createBudgetTracker({ canon_writes_per_run: 8 }), model_ref: "kizuki.llm.openai-compatible:synthetic@local", claims: { db }, producer };
+    db.exec("CREATE TRIGGER fail_ada BEFORE INSERT ON claims WHEN NEW.subject = 'person:ada' BEGIN SELECT RAISE(ABORT, 'injected'); END");
+    await expect(runWritePass(db, path, options)).rejects.toThrow("injected");
+    db.exec("DROP TRIGGER fail_ada");
+    await runWritePass(db, path, options);
+    expect(calls).toBe(1);
+    expect(listClaims(db, { status: "live", limit: 20 }).map((claim) => claim.subject)).toEqual(expect.arrayContaining(["person:grace", "person:ada"]));
+    db.close();
   });
 });

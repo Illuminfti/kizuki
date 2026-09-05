@@ -102,7 +102,15 @@ async function runSyncRail(
     ...(hooks?.producer === undefined ? {} : { producer: hooks.producer }),
     ...(hooks?.claims === undefined ? {} : { claims: hooks.claims }),
   });
-  const refreshed = hooks?.refresh === undefined ? [] : await hooks.refresh();
+  // Derived stores are rebuildable and run after the canon receipt.  Preserve
+  // the completed write-pass report when their refresh fails; replacing it
+  // with a zeroed failed rail would hide a real write and understate budget.
+  let refreshed: readonly string[];
+  try {
+    refreshed = hooks?.refresh === undefined ? [] : await hooks.refresh();
+  } catch (error) {
+    refreshed = [redactReceiptError(error)];
+  }
   const errors = [...synced.errors, ...written.errors, ...refreshed];
   let status: RunReceipt["status"] = "ok";
   if (written.stopped !== null) status = "stopped";
@@ -279,7 +287,13 @@ export async function runRail(
   const hooks = withResolvedModel(options.hooks);
   const config = loadServeConfig(vaultPath);
   const day = budgetDay(started);
-  const usedToday = readDailyBudget(db, day, "canon_writes_per_day");
+  // A process can die after a canon receipt is committed but before its run
+  // receipt is finalised.  Receipts are the authoritative lower bound for
+  // daily usage; retain the ledger if it is ahead for older data.
+  const receiptUsage = db.query<{ used: number }, [string]>(
+    "SELECT count(*) AS used FROM canon_receipts WHERE writer = 'loop' AND substr(at, 1, 10) = ?",
+  ).get(day)?.used ?? 0;
+  const usedToday = Math.max(readDailyBudget(db, day, "canon_writes_per_day"), receiptUsage);
   const budget = createBudgetTracker({
     canon_writes_per_run: config.canon_writes_per_run,
     canon_writes_per_day: {

@@ -49,6 +49,13 @@ CREATE TABLE IF NOT EXISTS budget_ledger (
   used REAL NOT NULL,
   PRIMARY KEY (day, name)
 ) STRICT;
+CREATE TABLE IF NOT EXISTS extract_batches (
+  previous_cursor TEXT PRIMARY KEY,
+  cursor TEXT NOT NULL,
+  drafts TEXT NOT NULL,
+  model_ref TEXT,
+  created_at TEXT NOT NULL
+) STRICT;
 `;
 
 export function applyServeV7(db: Database): void {
@@ -61,6 +68,16 @@ export function initServe(db: Database): void {
     applyServeV7(db);
     return;
   }
+  // v7 shipped before the durable extraction-output journal.  It is an
+  // additive table, so install it for existing vaults without re-running a
+  // destructive schema migration.
+  db.exec(`CREATE TABLE IF NOT EXISTS extract_batches (
+    previous_cursor TEXT PRIMARY KEY,
+    cursor TEXT NOT NULL,
+    drafts TEXT NOT NULL,
+    model_ref TEXT,
+    created_at TEXT NOT NULL
+  ) STRICT;`);
   seedSchedules(db);
 }
 

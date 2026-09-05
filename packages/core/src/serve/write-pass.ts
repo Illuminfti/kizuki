@@ -16,7 +16,13 @@ import {
   reviveUncontestedSkipped,
 } from "../claims/store";
 import type { ClaimsIo } from "../claims/store";
-import { commitExtractCursor, mineLiveDrafts } from "./extract";
+import {
+  commitExtractCursor,
+  completeDurableExtractBatch,
+  journalExtractBatch,
+  mineLiveDrafts,
+  readDurableExtractBatch,
+} from "./extract";
 import { tryWriteFlock } from "./flock";
 import { redactReceiptError } from "./receipts";
 
@@ -71,7 +77,9 @@ function observe(metrics: ProduceMetrics, result: ProduceResult, wallMs: number)
       count(metrics, result.reason);
       return;
     case "unavailable":
-      // An unavailable result has no usage payload, so do not invent calls.
+      metrics.calls += result.usage.calls;
+      metrics.input_tokens += result.usage.input_tokens;
+      metrics.output_tokens += result.usage.output_tokens;
       metrics.unavailable += 1;
       return;
   }
@@ -184,6 +192,16 @@ async function runWritePassLocked(
   const metrics = emptyMetrics();
 
   if (options.producer !== undefined && options.claims !== undefined) {
+    const pendingBatch = readDurableExtractBatch(db);
+    if (pendingBatch !== null) {
+      const filed = await fileProducedDrafts(options.claims, pendingBatch.drafts, "model", options.model_ref ?? null);
+      extracted = pendingBatch.drafts.length;
+      deduped += filed.deduped;
+      superseded += filed.superseded;
+      if (!completeDurableExtractBatch(db, pendingBatch)) {
+        errors.push("extract cursor changed before durable batch commit");
+      }
+    } else {
     const mined = await mineLiveDrafts(db, observedProducer(options.producer, metrics));
     switch (mined.mined.status) {
       case "unavailable":
@@ -199,6 +217,10 @@ async function runWritePassLocked(
         break;
       }
       case "ok": {
+        // Persist the accepted model output before the first claim write.  A
+        // retry must replay this exact decision, never ask a nondeterministic
+        // producer to regenerate a partially filed batch.
+        journalExtractBatch(db, mined, options.model_ref ?? null);
         const filed = await fileProducedDrafts(
           options.claims,
           mined.drafts,
@@ -208,7 +230,8 @@ async function runWritePassLocked(
         extracted = mined.mined.count;
         deduped += filed.deduped;
         superseded += filed.superseded;
-        if (!commitExtractCursor(db, mined)) {
+        const durable = readDurableExtractBatch(db);
+        if (durable === null || !completeDurableExtractBatch(db, durable)) {
           errors.push("extract cursor changed before commit");
         }
         break;
@@ -217,6 +240,7 @@ async function runWritePassLocked(
         const _exhaustive: never = mined.mined;
         return _exhaustive;
       }
+    }
     }
   }
 
@@ -238,6 +262,7 @@ async function runWritePassLocked(
   const pending = listUnwrittenLiveClaims(db, WRITE_PASS_SCAN);
   for (const claim of pending) {
     if (canonWrites >= WRITE_PASS_LIMIT) break;
+    const receiptsBefore = loopReceiptCount(db);
     try {
       const decision = segregateLoopDecision(resolveTarget(io, claim));
       if (decision.action === "skip") continue;
@@ -245,9 +270,16 @@ async function runWritePassLocked(
         writer: "loop",
         budget: options.budget,
       });
-      canonWrites += 1;
-      written += 1;
+      const committed = loopReceiptCount(db) - receiptsBefore;
+      canonWrites += committed;
+      written += committed;
     } catch (error) {
+      // Derived refresh happens after the canon receipt is durable.  Count a
+      // committed write even when that optional follow-up fails, so the run
+      // receipt and budget cannot hide it.
+      const committed = loopReceiptCount(db) - receiptsBefore;
+      canonWrites += committed;
+      written += committed;
       if (error instanceof BudgetExhausted) {
         stopped = error.stopped;
         break;
@@ -267,6 +299,12 @@ async function runWritePassLocked(
     stopped,
     errors,
   };
+}
+
+function loopReceiptCount(db: Database): number {
+  return db.query<{ count: number }, []>(
+    "SELECT count(*) AS count FROM canon_receipts WHERE writer = 'loop'",
+  ).get()?.count ?? 0;
 }
 
 async function fileProducedDrafts(

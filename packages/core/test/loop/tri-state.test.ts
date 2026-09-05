@@ -51,7 +51,7 @@ describe("extract tri-state cursor", () => {
     expect(readExtractCursor(db)).toBeNull();
     const mined = await mineLiveDrafts(
       db,
-      stubProducer({ status: "unavailable", reason: "llm unavailable" }),
+      stubProducer({ status: "unavailable", reason: "llm unavailable", usage: { calls: 0, input_tokens: 0, output_tokens: 0 } }),
     );
     expect(mined.mined.status).toBe("unavailable");
     expect(readExtractCursor(db)).toBeNull();
@@ -88,7 +88,7 @@ describe("extract tri-state cursor", () => {
     putEvent(db, { source_record_id: "one" });
     const unavailable = await mineLiveDrafts(
       db,
-      stubProducer({ status: "unavailable", reason: "llm unavailable" }),
+      stubProducer({ status: "unavailable", reason: "llm unavailable", usage: { calls: 0, input_tokens: 0, output_tokens: 0 } }),
     );
     const empty = await mineLiveDrafts(
       db,

@@ -41,6 +41,63 @@ export interface MineResult {
   readonly cursor: LedgerCursor | null;
 }
 
+export interface DurableExtractBatch {
+  readonly previous_cursor: string | null;
+  readonly cursor: LedgerCursor;
+  readonly drafts: readonly ClaimDraft[];
+}
+
+const NULL_CURSOR = "";
+
+/** A successful model decision is journaled before filing any individual draft. */
+export function journalExtractBatch(db: Database, mined: MineResult, modelRef: string | null): void {
+  if (mined.mined.status !== "ok" || mined.cursor === null) return;
+  db.query(
+    `INSERT OR IGNORE INTO extract_batches
+       (previous_cursor, cursor, drafts, model_ref, created_at) VALUES (?, ?, ?, ?, ?)`,
+  ).run(
+    mined.previous_cursor ?? NULL_CURSOR,
+    `${mined.cursor.accepted_at}\t${mined.cursor.event_id}`,
+    JSON.stringify(mined.drafts),
+    modelRef,
+    new Date().toISOString(),
+  );
+}
+
+function parseDrafts(raw: string): ClaimDraft[] | null {
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed as ClaimDraft[] : null;
+  } catch {
+    return null;
+  }
+}
+
+export function readDurableExtractBatch(db: Database): DurableExtractBatch | null {
+  const row = db.query<{ previous_cursor: string; cursor: string; drafts: string }, []>(
+    "SELECT previous_cursor, cursor, drafts FROM extract_batches ORDER BY created_at, previous_cursor LIMIT 1",
+  ).get();
+  if (row === null) return null;
+  const cursor = parseCursor(row.cursor);
+  const drafts = parseDrafts(row.drafts);
+  if (cursor === null || drafts === null) {
+    throw new Error("durable extraction batch is corrupt");
+  }
+  return { previous_cursor: row.previous_cursor || null, cursor, drafts };
+}
+
+/** Cursor and journal deletion commit together only after every draft is durable. */
+export function completeDurableExtractBatch(db: Database, batch: DurableExtractBatch): boolean {
+  const expected = batch.previous_cursor;
+  const cursor = `${batch.cursor.accepted_at}\t${batch.cursor.event_id}`;
+  return db.transaction(() => {
+    if (readExtractCursor(db) !== expected) return false;
+    writeCheckpoint(db, MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY, cursor);
+    const removed = db.query("DELETE FROM extract_batches WHERE previous_cursor = ?").run(expected ?? NULL_CURSOR);
+    return removed.changes === 1;
+  }).immediate();
+}
+
 function parseCursor(raw: string | null): LedgerCursor | null {
   if (raw === null || raw.length === 0) return null;
   const split = raw.indexOf("\t");
@@ -106,13 +163,19 @@ export async function mineLiveDrafts(
     return { mined: { status: "empty" }, drafts: [], previous_cursor, cursor: batch.cursor };
   }
 
-  const known = listClaims(db, { status: "live", keyed: true, limit: 32 });
   const subjects = new Set(usable.flatMap((event) => event.subjects.map((subject) => subject.subject_id)));
+  // Filter in SQLite before applying the shared packet cap.  Selecting the
+  // oldest global page first makes a mature, unrelated subject starve this
+  // batch of the context the producer needs to deduplicate it.
+  const known = [...subjects]
+    .sort()
+    .flatMap((subject) => listClaims(db, { status: "live", keyed: true, subject, limit: 32 }))
+    .slice(0, 32);
   const produced = await producer.produce({
     events: usable.map(quoted),
     context: {
       subjects: usable.flatMap((event) => event.subjects),
-      known_claims: known.filter((claim) => claim.subject !== null && subjects.has(claim.subject)).map((claim) => ({
+      known_claims: known.map((claim) => ({
         claim_id: claim.claim_id,
         subject: claim.subject,
         predicate: claim.predicate,

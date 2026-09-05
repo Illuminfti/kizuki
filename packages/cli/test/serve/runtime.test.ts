@@ -103,7 +103,7 @@ test("the shipped serve command syncs an enrolled changed source through its bou
       const receipts = listRunReceipts(afterUnavailable, { rail: "sync", limit: 20 });
       const latest = receipts.at(-1);
       expect(latest?.model.unavailable).toBe(1);
-      expect(latest?.model.calls).toBe(0);
+      expect(latest?.model.calls).toBe(1);
     } finally {
       afterUnavailable.close();
     }

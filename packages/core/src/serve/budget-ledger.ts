@@ -27,12 +27,12 @@ export function addDailyBudget(
   delta: number,
 ): number {
   if (!tableExists(db, "budget_ledger")) return 0;
-  const used = readDailyBudget(db, day, name) + delta;
+  if (!Number.isSafeInteger(delta) || delta < 0) throw new TypeError("budget delta must be a non-negative integer");
   db.query(
     `INSERT INTO budget_ledger (day, name, used) VALUES (?, ?, ?)
-     ON CONFLICT(day, name) DO UPDATE SET used = excluded.used`,
-  ).run(day, name, used);
-  return used;
+     ON CONFLICT(day, name) DO UPDATE SET used = budget_ledger.used + excluded.used`,
+  ).run(day, name, delta);
+  return readDailyBudget(db, day, name);
 }
 
 export function listDailyBudget(

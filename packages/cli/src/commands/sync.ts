@@ -1,4 +1,4 @@
-import { runToCompletion } from "@kizuki/core";
+import { runRail, runToCompletion } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
 import {
   ConnectionError,
@@ -10,22 +10,38 @@ import {
 import { withVault } from "../context";
 import { tryRefreshDerived } from "../derived";
 import { formatRunCounts } from "../output";
+import { createServeRuntime } from "../serve-runtime";
 import type { CliIo, Command } from "./index";
 
 export const syncCommand: Command = {
   name: "sync",
-  usage: "sync [connector] [--source PATH|KEY]",
+  usage: "sync [connector] [--source PATH|KEY] | sync --once",
   summary: "refresh selected sources until each connector reports exhaustion",
   async run(io: CliIo, args: string[]): Promise<number> {
-    const parsed = parseArguments(args, { options: ["--source"] });
+    const parsed = parseArguments(args, { flags: ["--once"], options: ["--source"] });
     if (parsed.positionals.length > 1) throw new UsageError(this.usage);
     const rawId = parsed.positionals[0];
     const source = parsed.options.get("--source");
     if (source !== undefined && rawId === undefined) {
       throw new UsageError("--source requires an explicit connector");
     }
+    if (parsed.flags.has("--once") && (rawId !== undefined || source !== undefined)) {
+      throw new UsageError("sync --once runs all enrolled sources and takes no connector selection");
+    }
 
     return withVault(io, async (ctx) => {
+      if (parsed.flags.has("--once")) {
+        // Foreground automation deliberately composes the same capability
+        // graph as `kizuki serve`; it is not a second ingest-only path.
+        const runtime = await createServeRuntime({ ...ctx, env: io.env, err: io.err });
+        try {
+          const receipt = await runRail(ctx.db, ctx.vaultPath, "sync", { hooks: runtime.hooks });
+          io.out(`sync events_stored=${receipt.events_stored} duplicates=${receipt.events_duplicate} errors=${receipt.errors.length}`);
+          return receipt.status === "failed" ? 1 : 0;
+        } finally {
+          await runtime.close();
+        }
+      }
       const connectorId =
         rawId === undefined ? undefined : resolveConnectorId(rawId);
       const targets =
