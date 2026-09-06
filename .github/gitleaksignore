@@ -6,3 +6,5 @@ dcf0d4a8def2ff530f2184fbe1e0bbc01cb76134:packages/core/test/connections.test.ts:
 7b751f9b9ceb2d0582b247ad2c642151dfd4fa15:packages/core/test/export.test.ts:generic-api-key:683
 # Historical ledger16 writer fixture: synthetic source_key ULID, not a credential.
 034e8cfaf92f782dac8a7aa6bf5e2bed0d7eeaf8:packages/core/test/fixtures/agent-enrollment-ledger16-claim.sql:generic-api-key:371
+# The same unchanged historical fixture after PR510 was squash-merged.
+af4665ffc7081d21b3e4df067b3584b1909b2c76:packages/core/test/fixtures/agent-enrollment-ledger16-claim.sql:generic-api-key:371
