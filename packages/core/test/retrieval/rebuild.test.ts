@@ -10,21 +10,21 @@ import type { Fixture } from "../serving/helpers";
 let fixture: Fixture | undefined;
 afterEach(() => fixture?.dispose());
 
-test("authoritative canon with no receipt has unknown dates and stable projections", () => {
-  fixture = serveFixture();
+test("recorded canon has receipt dates and stable projections", async () => {
+  fixture = await serveFixture();
   const docs = readRetrievalDocuments(fixture.db, fixture.vaultPath);
   const pages = docs.filter(doc => doc.kind === "page");
   expect(pages.length).toBeGreaterThan(0);
   for (const page of pages) {
-    expect(page.updated_at).toBeNull();
+    expect(Number.isFinite(Date.parse(page.updated_at ?? ""))).toBe(true);
     expect(page.occurred_at).toBeNull();
-    expect(page.authority).toBe("owner_authored");
+    expect(page.authority).toBe("model_inference");
   }
   expect(readRetrievalDocuments(fixture.db, fixture.vaultPath)).toEqual(docs);
 });
 
 test("unreadable canon refuses before the selected engine or lexical floor changes", async () => {
-  fixture = serveFixture();
+  fixture = await serveFixture();
   const before = fixture.db.query("SELECT * FROM search_documents ORDER BY doc_id").all();
   writeFileSync(join(fixture.vaultPath, "facts", "malformed.md"), "---\ninvalid: [\n---\nsecret");
   let called = false;
@@ -35,7 +35,7 @@ test("unreadable canon refuses before the selected engine or lexical floor chang
 });
 
 test("source byte limits refuse before a sparse oversized canon file can be read or swapped", async () => {
-  fixture = serveFixture();
+  fixture = await serveFixture();
   const path = join(fixture.vaultPath, "facts", "oversized.md");
   writeFileSync(path, "");
   truncateSync(path, 64 * 1024 * 1024 + 1);
@@ -46,7 +46,7 @@ test("source byte limits refuse before a sparse oversized canon file can be read
 });
 
 test("the default rebuild reconstructs its existing lexical floor", async () => {
-  fixture = serveFixture();
+  fixture = await serveFixture();
   const result = await rebuildRetrieval(fixture.db, fixture.vaultPath);
   expect(result.store).toBe("kizuki.retrieval.fts5");
   const actual = fixture.db.query<{ n: number }, []>("SELECT count(*) AS n FROM search_documents").get()!.n;
@@ -57,7 +57,7 @@ test("the default rebuild reconstructs its existing lexical floor", async () => 
 
 
 test("selected port reports its validated corpus including readable claims separately from floor rows", async () => {
-  fixture = serveFixture();
+  fixture = await serveFixture();
   const event = putEvent(fixture.db);
   const stored = await insertClaim({ db: fixture.db }, claimInput(event));
   if (stored.outcome !== "stored") throw new Error("synthetic claim was not stored");

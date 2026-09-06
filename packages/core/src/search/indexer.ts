@@ -1,4 +1,3 @@
-import { canonAuthorities } from "../canon/authority";
 import type { Database } from "bun:sqlite";
 import type { CaptureEvent } from "../contracts/event";
 import type { RetrievalAuthority } from "../contracts/retrieval";
@@ -15,6 +14,7 @@ import {
   stringArray,
 } from "../vault/pages";
 import type { CanonPage, SkippedPage } from "../vault/pages";
+import { projectablePageEvidence } from "../vault/provenance";
 import { initSearch } from "./schema";
 
 export type DocScope = "canon" | "ledger";
@@ -36,7 +36,6 @@ export interface SearchDocument {
 }
 
 export interface SearchRebuildInput {
-  authorities?: ReadonlyMap<string,RetrievalAuthority>;
   generation: string;
   pages: readonly CanonPage[];
   skipped: readonly SkippedPage[];
@@ -192,14 +191,7 @@ function insertFtsRow(db: Database, doc: SearchDocument): void {
   );
 }
 
-export function insertDoc(db: Database, doc: SearchDocument): void {
-  if (doc.scope === "canon") assertDerivedDiscoveryReady(db);
-  const held = readDerivedHolds(db).paths;
-  if (doc.scope === "canon" && held.has(doc.path)) {
-    deleteDoc(db, doc.scope, doc.docId);
-    markDerivedHeld(db, "search", held.size);
-    return;
-  }
+function insertDoc(db: Database, doc: SearchDocument): void {
   insertDocument(db, doc);
   insertFtsRow(db, doc);
 }
@@ -212,15 +204,19 @@ export function deleteDoc(db: Database, scope: DocScope, docId: string): void {
   db.query<never, [string]>("DELETE FROM search_docs WHERE doc_id = ?").run(id);
 }
 
-export function replacePage(db: Database, page: CanonPage, authority = canonAuthorities(db,[page]).get(page.relPath) ?? "model_inference"): void {
+export function replacePage(db: Database, page: CanonPage): void {
   assertDerivedDiscoveryReady(db);
   deleteDoc(db, "canon", page.id);
+  // A changed frontmatter identity must also withdraw the previous path row.
+  db.query("DELETE FROM search_documents WHERE scope='canon' AND path=?").run(page.relPath);
+  db.query("DELETE FROM search_docs WHERE scope='canon' AND path=?").run(page.relPath);
   const held = readDerivedHolds(db).paths;
-  if (!isLiveCanonPage(page) || held.has(page.relPath)) {
-    markDerivedHeld(db, "search", held.size);
+  const evidence = projectablePageEvidence(db, [page]).get(page.relPath);
+  if (evidence === undefined || held.has(page.relPath)) {
+    markDerivedHeld(db, "search", held.size + (isLiveCanonPage(page) && evidence === undefined ? 1 : 0));
     return;
   }
-  insertDoc(db, pageDocument(page,authority));
+  insertDoc(db, pageDocument(page, evidence.revision.authority));
 }
 
 function replaceEvent(db: Database, event: CaptureEvent): void {
@@ -265,41 +261,52 @@ function stampSearch(
   input: SearchRebuildInput,
   pageCount: number,
   eventCount: number,
+  withheld: number,
 ): DerivedStamp {
   const watermark = latestLedgerCursor(db);
-  const held = readDerivedHolds(db).paths.size;
   return {
     layer: "search",
     generation: input.generation,
     rebuilt_at: input.rebuilt_at,
     doc_count: pageCount + eventCount,
     source_count: input.pages.length + eventCount,
-    skipped_count: input.skipped.length + held,
-    status: input.skipped.length + held > 0 ? "degraded" : "ok",
+    skipped_count: input.skipped.length + withheld,
+    status: input.skipped.length + withheld > 0 ? "degraded" : "ok",
     ledger_watermark:
       watermark === null
         ? null
         : `${watermark.accepted_at}\t${watermark.event_id}`,
-    canon_hash: held > 0 ? null : input.canon_hash,
+    canon_hash: withheld > 0 ? null : input.canon_hash,
     port_id: "kizuki.retrieval.fts5",
     contract: "kizuki.retrieval/v1",
     space: null,
   };
 }
 
-/** FTS is a projection of search_documents. */
-export function projectSearchDocs(db: Database): void {
+/** Canon companion rows need a current page snapshot before FTS restoration. */
+export function projectSearchDocs(db: Database, pages: readonly CanonPage[] = []): number {
   assertDerivedDiscoveryReady(db);
   const held = readDerivedHolds(db).paths;
-  if (held.size > 0) {
-    db.exec("DELETE FROM search_documents WHERE scope='canon' AND path IN (SELECT page_path FROM canon_holds)");
+  const evidence = projectablePageEvidence(db, pages);
+  const prior = db.query<{ count: number }, []>("SELECT count(*) AS count FROM search_documents WHERE scope='canon'").get()!.count;
+  db.exec("DELETE FROM search_documents WHERE scope='canon'");
+  let withheld = held.size;
+  for (const page of pages) {
+    if (!isLiveCanonPage(page) || held.has(page.relPath)) continue;
+    const admitted = evidence.get(page.relPath);
+    if (admitted === undefined) { withheld += 1; continue; }
+    insertDocument(db, pageDocument(page, admitted.revision.authority));
   }
   db.exec("DELETE FROM search_docs");
   db.exec(
     `INSERT INTO search_docs (${DOCUMENT_COLUMNS})
      SELECT ${DOCUMENT_COLUMNS} FROM search_documents`,
   );
-  markDerivedHeld(db, "search", held.size);
+  // A schema-only recovery has no canon snapshot. Preserve ledger search and
+  // require a canon rebuild instead of trusting the old companion payload.
+  if (pages.length === 0) withheld = Math.max(withheld, prior);
+  markDerivedHeld(db, "search", withheld);
+  return withheld;
 }
 
 /** Rebuild the search layer. Caller owns the transaction. */
@@ -308,15 +315,11 @@ export function rebuildSearchLayer(
   input: SearchRebuildInput,
 ): SearchRebuildResult {
   assertDerivedDiscoveryReady(db);
-  const held = readDerivedHolds(db).paths;
-  const livePages = input.pages.filter(page => isLiveCanonPage(page) && !held.has(page.relPath));
   db.exec("DELETE FROM search_documents");
-  const authorities=input.authorities??canonAuthorities(db,livePages);
-  for (const page of livePages) insertDocument(db, pageDocument(page,authorities.get(page.relPath)??"model_inference"));
   for (const event of replayLive(db, {})) {
     insertDocument(db, eventDocument(event));
   }
-  projectSearchDocs(db);
+  const withheld = projectSearchDocs(db, input.pages);
   const counts = db
     .query<{ scope: string; count: number }, []>(
       "SELECT scope, count(*) AS count FROM search_documents GROUP BY scope",
@@ -324,14 +327,14 @@ export function rebuildSearchLayer(
     .all();
   const pageCount = counts.find(({ scope }) => scope === "canon")?.count ?? 0;
   const eventCount = counts.find(({ scope }) => scope === "ledger")?.count ?? 0;
-  stampDerived(db, stampSearch(db, input, pageCount, eventCount));
+  stampDerived(db, stampSearch(db, input, pageCount, eventCount, withheld));
   return {
     pages: pageCount,
     events: eventCount,
     skipped: [...input.skipped],
     rebuilt_at: input.rebuilt_at,
     generation: input.generation,
-    status: input.skipped.length + held.size > 0 ? "degraded" : "ok",
+    status: input.skipped.length + withheld > 0 ? "degraded" : "ok",
   };
 }
 

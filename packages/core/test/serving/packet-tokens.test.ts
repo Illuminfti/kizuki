@@ -7,7 +7,7 @@ import ranks from "js-tiktoken/ranks/cl100k_base";
 import { serveContextPacket } from "../../src/serving/packet";
 import { rebuildDerived } from "../../src/derived";
 import { ServeError } from "../../src/serving/types";
-import { page, serveFixture } from "./helpers";
+import { recordedPage, serveFixture } from "./helpers";
 import type { Fixture } from "./helpers";
 
 const encoding = new Tiktoken(ranks);
@@ -15,13 +15,13 @@ const count = (text: string) => encoding.encode(text, [], []).length;
 let fixture: Fixture | undefined;
 afterEach(() => fixture?.dispose());
 
-function live() {
-  fixture = serveFixture();
+async function live() {
+  fixture = await serveFixture();
   return fixture;
 }
 
 test("the mandatory header refuses an insufficient budget with its numeric minimum", async () => {
-  const f = live();
+  const f = await live();
   try {
     await serveContextPacket(f.owner(), { budget_tokens: 50, include: [] });
     throw new Error("expected header refusal");
@@ -33,7 +33,7 @@ test("the mandatory header refuses an insufficient budget with its numeric minim
 });
 
 test("the exact header boundary fits and an unchanged marker cannot overflow it", async () => {
-  const f = live();
+  const f = await live();
   const sample = (await serveContextPacket(f.owner(), { budget_tokens: 450, include: [] })).data!;
   const budget = count(sample.packet_md.replace("budget=450", "budget=55"));
   const first = (await serveContextPacket(f.owner(), { budget_tokens: budget, include: [] })).data!;
@@ -64,11 +64,11 @@ for (const prose of [
   "<|endoftext|><|fim_prefix|><|fim_suffix|>",
 ]) {
   test(`full packets count source text exactly: ${prose.slice(0, 12)}`, async () => {
-    const f = live();
-    page(f.vaultPath, "facts/token-test.md", {
+    const f = await live();
+    await recordedPage(f.db, f.vaultPath, "facts/token-test.md", {
       id: "fact:token-test", title: "Tokenizer fixture", type: "fact",
       status: "active", sensitivity: "public", taint: "clean",
-    }, prose.repeat(8));
+    }, prose.repeat(8), [f.events["public"] as string]);
     rebuildDerived(f.db, f.vaultPath);
     for (const budget of [80, 120, 200, 450, 2000]) {
       const data = (await serveContextPacket(f.owner(), {

@@ -56,27 +56,25 @@ export function readRetrievalDocuments(db: Database, vaultPath: string): Retriev
       "SELECT count(*) AS n,coalesce(sum(length(CAST(body AS BLOB))),0) AS bytes FROM claims WHERE status='live'",
     ).get()!;
     if (totals.n + claimTotal.n > MAX_REBUILD_RECORDS || totals.bytes + claimTotal.bytes > MAX_SOURCE_BYTES) tooLarge();
-    const index = loadCanon({ db, vaultPath, principal: OWNER });
+    const ctx = { db, vaultPath, principal: OWNER, sourcePurpose: "derive" as const };
+    const index = loadCanon(ctx);
     if (index.pages.length + totals.n + claimTotal.n > MAX_REBUILD_RECORDS) tooLarge();
     const docs: RetrievalDoc[] = [];
     for (const page of index.pages) {
       if (!isLiveCanonPage(page)) continue;
       const decision = pageDecision(index, OWNER.grant, page);
       if (!decision.allow) continue;
-      const receipt = db.query<{ at: string }, [string, string]>(
-        "SELECT at FROM canon_receipts WHERE page_path=? AND after_hash=? ORDER BY at DESC,receipt_id DESC LIMIT 1",
-      ).get(page.relPath, page.contentHash);
       docs.push({
         doc_id: `page:${page.id}`, kind: "page",
         title: typeof page.data["title"] === "string" ? page.data["title"] : page.id,
         text: page.body, sensitivity: decision.sensitivity, taint: decision.taint,
-        authority: index.authority.get(page.relPath) ?? "model_inference",
+        authority: decision.evidence.revision.authority,
         subjects: [...new Set([
           ...stringArray(page.data["subjects"]),
           ...(typeof page.data["x-subject-id"] === "string" ? [page.data["x-subject-id"]] : []),
         ])],
-        provenance: stringArray(page.data["sources"]), occurred_at: null,
-        updated_at: receipt !== null && isRfc3339(receipt.at) ? receipt.at : null,
+        provenance: decision.evidence.sourceIds, occurred_at: null,
+        updated_at: isRfc3339(decision.evidence.revision.at) ? decision.evidence.revision.at : null,
       });
     }
     for (const row of db.query<{ event_id: string; observed_at: string }, []>(
@@ -84,14 +82,14 @@ export function readRetrievalDocuments(db: Database, vaultPath: string): Retriev
     ).all()) {
       const source = currentQuotedSource(db, row.event_id);
       if (source === null) continue;
-      const access = eventDecision(OWNER.grant, source, { db, vaultPath, principal: OWNER });
+      const access = eventDecision(OWNER.grant, source, ctx);
       if (!access.allow) continue;
       docs.push({ doc_id: `event:${source.event_id}`, kind: "event", title: source.connector_id,
         text: source.text, sensitivity: access.sensitivity, taint: "quoted",
         authority: "connector_evidence", subjects: source.subjects, provenance: [source.event_id],
         occurred_at: source.occurred_at, updated_at: row.observed_at });
     }
-    const reader = claimReader(db, OWNER.grant);
+    const reader = claimReader(db, OWNER.grant, { owner: true, purpose: "derive" });
     for (const claim of listClaims(db, { status: "live", limit: MAX_REBUILD_RECORDS })) {
       if (reader.canRead(claim)) docs.push({ ...claimRetrievalDoc(claim), sensitivity: sourceSensitivity(db, claim.provenance, claim.sensitivity) });
     }

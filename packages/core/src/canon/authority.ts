@@ -16,6 +16,18 @@ interface Materialization {
 const MAX_PAGE_RECEIPTS = 4096;
 const MAX_CHAIN_DEPTH = 128;
 const HASH = /^[a-f0-9]{64}$/;
+export interface CanonRevisionBasis {
+  receipt_id: string;
+  after_hash: string;
+  at: string;
+  authority: AuthorityTier;
+}
+interface RevisionState {
+  authority: AuthorityTier;
+  basis: CanonRevisionBasis | null;
+}
+const UNRECORDED: RevisionState = { authority: "owner_authored", basis: null };
+const UNAVAILABLE: RevisionState = { authority: "model_inference", basis: null };
 function earlier(left: Materialization, right: Materialization): boolean {
   const a = Date.parse(left.at), b = Date.parse(right.at);
   return Number.isFinite(a) && Number.isFinite(b) && (a < b || (a === b && left.receipt_id < right.receipt_id));
@@ -53,7 +65,11 @@ export class CanonAuthorityResolver {
     }
   }
   resolve(path: string, hash: string): AuthorityTier {
-    return this.state(path, hash, null, new Set());
+    return this.state(path, hash, null, new Set()).authority;
+  }
+  /** Positive evidence never inherits the protective owner fallback. */
+  basis(path: string, hash: string): CanonRevisionBasis | null {
+    return this.state(path, hash, null, new Set()).basis;
   }
   /** The materialized state immediately before a receipt, including undo-of-undo. */
   before(receiptId: string): AuthorityTier {
@@ -61,27 +77,40 @@ export class CanonAuthorityResolver {
     if (receipt === undefined || receipt.before_hash === null || !isAuthorityTier(receipt.authority)) {
       return "model_inference";
     }
-    return this.state(receipt.page_path, receipt.before_hash, receipt, new Set([receiptId]));
+    return this.state(receipt.page_path, receipt.before_hash, receipt, new Set([receiptId])).authority;
   }
-  private state(path: string, hash: string, before: Materialization | null, seen: Set<string>): AuthorityTier {
+  private state(path: string, hash: string, before: Materialization | null, seen: Set<string>): RevisionState {
     if (!HASH.test(hash) || this.overflow.has(path) || seen.size >= MAX_CHAIN_DEPTH) {
-      return "model_inference";
+      return UNAVAILABLE;
     }
     const receipt = this.byPath.get(path)?.find(row => row.after_hash === hash && (before === null || earlier(row, before)));
     if (receipt === undefined) {
-      return "owner_authored";
+      return UNRECORDED;
     }
     if (seen.has(receipt.receipt_id) || !Number.isFinite(Date.parse(receipt.at)) || !isAuthorityTier(receipt.authority)) {
-      return "model_inference";
+      return UNAVAILABLE;
     }
     seen.add(receipt.receipt_id);
+    const recorded = (state: RevisionState): RevisionState => ({
+      authority: state.authority,
+      basis: state.basis === null ? null : {
+        receipt_id: receipt.receipt_id,
+        after_hash: receipt.after_hash,
+        at: receipt.at,
+        authority: state.authority,
+      },
+    });
     switch (receipt.receipt_kind) {
-      case "write": return receipt.reverts === null ? receipt.authority : "model_inference";
+      case "write": return receipt.reverts === null &&
+        (receipt.before_hash === null || HASH.test(receipt.before_hash)) ? {
+          authority: receipt.authority,
+          basis: { receipt_id: receipt.receipt_id, after_hash: receipt.after_hash, at: receipt.at, authority: receipt.authority },
+        } : UNAVAILABLE;
       case "purge_rewrite":
-        if (receipt.before_hash === null) {
-          return "model_inference";
+        if (receipt.before_hash === null || receipt.reverts !== null) {
+          return UNAVAILABLE;
         }
-        return this.state(path, receipt.before_hash, receipt, seen);
+        return recorded(this.state(path, receipt.before_hash, receipt, seen));
       case "revert": {
         const target = receipt.reverts === null ? undefined : this.byId.get(receipt.reverts);
         if (
@@ -90,12 +119,12 @@ export class CanonAuthorityResolver {
           receipt.after_hash !== target.before_hash || !isAuthorityTier(target.authority) ||
           seen.has(target.receipt_id)
         ) {
-          return "model_inference";
+          return UNAVAILABLE;
         }
         seen.add(target.receipt_id);
-        return this.state(path, target.before_hash, target, seen);
+        return recorded(this.state(path, target.before_hash, target, seen));
       }
-      default: return "model_inference";
+      default: return UNAVAILABLE;
     }
   }
 }

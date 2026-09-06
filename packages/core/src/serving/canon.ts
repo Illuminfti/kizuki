@@ -13,6 +13,7 @@ import {
   stringArray,
 } from "../vault/pages";
 import type { CanonPage, SkippedPage } from "../vault/pages";
+import { assessLivePageEvidence, type LivePageEvidence } from "../vault/provenance";
 import { PAGE_TAINTS } from "../vault/schema";
 import type { PageTaint } from "../vault/schema";
 import { ServeError } from "./types";
@@ -128,7 +129,7 @@ export function pageDecision(
   grant: Grant,
   page: CanonPage,
 ):
-  | { allow: true; sensitivity: Sensitivity; taint: PageTaint }
+  | { allow: true; sensitivity: Sensitivity; taint: PageTaint; evidence: Extract<LivePageEvidence, { admitted: true }> }
   | { allow: false; reason: DenyReason } {
   // Both labels are read first so the served chunk carries narrowed types
   // instead of casts. A page missing either is withheld from everyone, the
@@ -136,15 +137,17 @@ export function pageDecision(
   // it as canon would hand a reader capture dressed as produced prose.
   const sourceCtx = index.sourceContext;
   if (canonReadHeld(sourceCtx, page)) return { allow: false, reason: "held" };
-  if (!sourceEventsAllowed(sourceCtx.db, stringArray(page.data["sources"]), { owner: sourceCtx.principal.kind === "owner", purpose: sourceCtx.sourcePurpose ?? "recall" })) return { allow: false, reason: "held" };
+  const evidence = assessLivePageEvidence(sourceCtx.db, page);
+  if (!evidence.admitted) return { allow: false, reason: "held" };
+  if (!sourceEventsAllowed(sourceCtx.db, evidence.sourceIds, { owner: sourceCtx.principal.kind === "owner", purpose: sourceCtx.sourcePurpose ?? "recall" })) return { allow: false, reason: "held" };
   const original = sensitivity(page.data["sensitivity"]);
-  const label = original === null ? null : sourceSensitivity(sourceCtx.db, stringArray(page.data["sources"]), original);
+  const label = original === null ? null : sourceSensitivity(sourceCtx.db, evidence.sourceIds, original);
   if (label === null) return { allow: false, reason: "missing_sensitivity" };
   const taint = asTaint(page.data["taint"]);
   if (taint === null) return { allow: false, reason: "missing_taint" };
   const decision = authorize(grant, { ...pageServable(index, page), sensitivity: label });
   return decision.allow
-    ? { allow: true, sensitivity: label, taint }
+    ? { allow: true, sensitivity: label, taint, evidence }
     : { allow: false, reason: decision.reason };
 }
 
@@ -156,6 +159,11 @@ export function canonChunk(
   truncated: boolean,
 ): CanonChunk {
   assertCanonReadAdmission(index.sourceContext, page);
+  const evidence = assessLivePageEvidence(index.sourceContext.db, page);
+  if (!evidence.admitted || !sourceEventsAllowed(index.sourceContext.db, evidence.sourceIds, {
+    owner: index.sourceContext.principal.kind === "owner",
+    purpose: index.sourceContext.sourcePurpose ?? "recall",
+  })) throw new ServeError("held", "canon evidence unavailable");
   return {
     page_id: page.id,
     path: page.relPath,
@@ -163,7 +171,7 @@ export function canonChunk(
     type: stringField(page, "type") ?? "",
     sensitivity: decision.sensitivity,
     taint: decision.taint,
-    authority: index.authority.get(page.relPath) ?? null,
+    authority: evidence.revision.authority,
     subjects: stringArray(page.data["subjects"]),
     sources: stringArray(page.data["sources"]),
     excerpt,
