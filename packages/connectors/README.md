@@ -60,8 +60,8 @@ stores nothing new either, save for one case each importer states in its own
 limits: where an export saved the same url or item id twice, the repeats are
 numbered by their position in the file, so an export that dropped the earlier
 save re-stores the later one under the bare id. Removing imported data stays
-the owner's decision, made with `kizuki purge --event`, `--subject` or
-`--connector`, which deletes the rows
+the owner's decision, made with `kizuki purge --event`, `--connector`, or
+`--subject ID --connector ID --source KEY`, which deletes the rows
 physically and leaves a receipt. An importer's purge plan only reports which
 records such a purge would reach; the export file itself is yours and is never
 modified.
@@ -87,7 +87,8 @@ Each message becomes one `message` event, labeled `private` by the importer's
 own policy rather than by you. Its subjects are the sender and the chat, filed
 under the name shortened into a readable handle: `whatsapp:ada` for a
 participant called Ada, `whatsapp:chat:acme-planning` for a chat called Acme
-Planning. Those are the ids `kizuki purge --subject` takes. The importer
+Planning. Those are the raw IDs passed to `kizuki purge --subject` alongside
+the emitting `--connector` and enrolled `--source` key. The importer
 references media without opening or copying it: a file present beside the chat
 is recorded by name, type and size.
 

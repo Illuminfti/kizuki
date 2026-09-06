@@ -11,6 +11,7 @@ import { CanonWriteError } from "../canon/errors";
 import { getClaim, listClaims, markClaimsAfterPurge } from "../claims/store";
 import { collectLegacyPurgeSubjects, parseLegacyIdentityEvidence, resolveLegacyIdentityRef, scanLegacyIdentityRows } from "../claims/identity";
 import { PortError } from "../contracts/ports";
+import { EVENT_LIMITS } from "../contracts/event";
 import type { Claim } from "../contracts/proposal";
 import type { AbsenceProof, ProvenanceAbsenceProof, RetrievalPort } from "../contracts/retrieval";
 import { requireProvenanceErasure, validateAbsenceProof, validateProvenanceAbsenceProof, validateRetrievalMutationReport } from "../contracts/retrieval";
@@ -25,7 +26,8 @@ import {
 import { eventIdFromReference } from "../retrieval/ids";
 import { withdrawForTombstone } from "../staging/producers";
 import { sha256Hex } from "../util/hash";
-import { ulid } from "../util/ulid";
+import { isVisibleIdentifier } from "../util/opaque-identifier";
+import { isUlid, ulid } from "../util/ulid";
 import { parseFrontmatter } from "../vault/frontmatter";
 import { listCanonPagesReport } from "../vault/pages";
 import type { CanonPage } from "../vault/pages";
@@ -47,6 +49,8 @@ export const PURGE_ERROR_CODES = [
   "absence_failed",
   "canon_changed",
   "identity_unsupported",
+  "subject_namespace_required",
+  "subject_source_required",
 ] as const;
 export type PurgeErrorCode = (typeof PURGE_ERROR_CODES)[number];
 
@@ -125,7 +129,9 @@ export interface PurgeOutcome {
 export interface PurgeFilter {
   source_key?: string;
   event_id?: string;
+  /** Required with subject_handle; the raw subject's emitting namespace. */
   connector_id?: string;
+  /** Exact raw subject_id. Source-bound matches also require source_key. */
   subject_handle?: string;
   source_record_id?: string;
 }
@@ -338,6 +344,32 @@ function selector(
   filter: PurgeFilter,
   includeAliases: boolean,
 ): { where: string; bindings: string[] } {
+  if (filter.subject_handle !== undefined) {
+    if (
+      typeof filter.subject_handle !== "string" ||
+      filter.subject_handle.length === 0 ||
+      utf8Bytes(filter.subject_handle) > EVENT_LIMITS.subjectIdBytes ||
+      !isVisibleIdentifier(filter.subject_handle)
+    ) {
+      throw new PurgeError("invalid_filter", "purge subject must be an exact valid raw subject id", filter);
+    }
+    if (filter.connector_id === undefined) {
+      throw new PurgeError(
+        "subject_namespace_required",
+        "subject purge requires connector_id (--connector ID); a bare subject id has no namespace",
+        filter,
+      );
+    }
+    if (
+      typeof filter.connector_id !== "string" ||
+      filter.connector_id.length === 0 ||
+      utf8Bytes(filter.connector_id) > PURGE_CONNECTOR_ID_MAX ||
+      !isVisibleIdentifier(filter.connector_id) ||
+      (filter.source_key !== undefined && !isUlid(filter.source_key))
+    ) {
+      throw new PurgeError("invalid_filter", "purge subject namespace or source key is invalid", filter);
+    }
+  }
   const conditions: string[] = [];
   const bindings: string[] = [];
   if (filter.source_key !== undefined) {
@@ -357,19 +389,13 @@ function selector(
     bindings.push(filter.source_record_id);
   }
   if (filter.subject_handle !== undefined) {
-    const refs = [filter.subject_handle];
-    const subjectClause = refs
-      .map(
-        () => `
+    conditions.push(`
       EXISTS (
         SELECT 1
           FROM json_each(events.subjects) AS subject
          WHERE json_extract(subject.value, '$.subject_id') = ?
-      )`,
-      )
-      .join(" OR ");
-    conditions.push(`(${subjectClause})`);
-    bindings.push(...refs);
+      )`);
+    bindings.push(filter.subject_handle);
   }
   if (conditions.length === 0) {
     throw new PurgeError(
@@ -378,7 +404,26 @@ function selector(
       filter,
     );
   }
-  return { where: conditions.join(" AND "), bindings };
+  const where = conditions.join(" AND ");
+  if (
+    filter.subject_handle !== undefined &&
+    filter.source_key === undefined &&
+    tableExists(db, "source_event_bindings") &&
+    db.query(
+      `SELECT 1 FROM events
+        JOIN source_event_bindings subject_source ON subject_source.event_id=events.event_id
+        WHERE ${where} LIMIT 1`,
+    ).get(...bindings) !== null
+  ) {
+    // This checks the complete candidate set, before preview truncation, and
+    // runs again when loadCandidates selects inside the deletion transaction.
+    throw new PurgeError(
+      "subject_source_required",
+      "subject purge requires source_key (--source KEY) for source-bound evidence",
+      filter,
+    );
+  }
+  return { where, bindings };
 }
 
 function pageSources(raw: unknown): string[] | null {
