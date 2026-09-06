@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   closeSync,
@@ -16,7 +17,7 @@ import {
   unlinkSync,
   writeSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { sha256Hex } from "../util/hash";
 
 export const INIT_JOURNAL_SCHEMA = "kizuki.init/v1" as const;
@@ -127,7 +128,8 @@ confidence, a writer stamp, the model reference when a model produced
 the page, and before/after hashes. \`kizuki undo <receipt>\` reverses any write.
 `;
 
-const ROOT_GITIGNORE = ".kizuki/\n";
+const ROOT_GITIGNORE_RULE = "/.kizuki/";
+const ROOT_GITIGNORE = `${ROOT_GITIGNORE_RULE}\n`;
 const CONTROL_GITIGNORE = "*\n!.gitignore\n";
 
 const HISTORICAL_DOCTRINE: Readonly<Record<string, readonly string[]>> = {
@@ -152,6 +154,8 @@ export const VAULT_INIT_ERROR_CODES = [
   "symlink_escape",
   "inventory_limit",
   "owner_mismatch",
+  "tracked_control_state",
+  "git_status_unavailable",
 ] as const;
 export type VaultInitErrorCode = (typeof VAULT_INIT_ERROR_CODES)[number];
 
@@ -383,11 +387,11 @@ function chmodPrivateFile(path: string): boolean {
   return true;
 }
 
-function writePrivateFile(path: string, content: string): void {
+function writePrivateFile(path: string, content: string | Uint8Array): void {
   mkdirPrivate(dirname(path));
   const fd = openSync(path, "w", VAULT_FILE_MODE);
   try {
-    writeSync(fd, content);
+    writeSync(fd, typeof content === "string" ? Buffer.from(content) : content);
     fsyncSync(fd);
   } finally {
     closeSync(fd);
@@ -395,12 +399,71 @@ function writePrivateFile(path: string, content: string): void {
   chmodSync(path, VAULT_FILE_MODE);
 }
 
-function writeAtomicFile(path: string, content: string): void {
+function writeAtomicFile(path: string, content: string | Uint8Array): void {
   mkdirPrivate(dirname(path));
   const temporary = `${path}.tmp`;
   writePrivateFile(temporary, content);
   renameSync(temporary, path);
   chmodSync(path, VAULT_FILE_MODE);
+}
+
+function ensureRootGitIgnore(path: string): boolean {
+  const existing = readFileSync(path);
+  const text = existing.toString("utf8");
+  let protectedControl = false;
+  for (const line of text.split(/\r?\n/)) {
+    if (line.replace(/ +$/, "") === ROOT_GITIGNORE_RULE) protectedControl = true;
+    // Keep owner rules intact, but place the exclusion after any later
+    // negation so a preexisting rule cannot reopen the control directory.
+    else if (line.startsWith("!")) protectedControl = false;
+  }
+  if (protectedControl) return false;
+  const newline = text.includes("\r\n") ? "\r\n" : "\n";
+  const separator = existing.length === 0 || text.endsWith("\n") ? "" : newline;
+  writeAtomicFile(path, Buffer.concat([
+    existing,
+    Buffer.from(`${separator}${ROOT_GITIGNORE_RULE}${newline}`),
+  ]));
+  return true;
+}
+
+function assertControlNotTracked(path: string): void {
+  const root = resolve(path);
+  let repository = root;
+  while (lstatOrNull(join(repository, ".git")) === null) {
+    const parent = dirname(repository);
+    if (parent === repository) return;
+    repository = parent;
+  }
+  // Inspect this worktree's real index, independently of Git overrides in
+  // the caller's environment. The command never stages or removes files.
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")),
+  );
+  const control = relative(repository, join(root, ".kizuki")).split(sep).join("/");
+  let tracked: Buffer;
+  try {
+    tracked = execFileSync("git", [
+      "-C", repository, "ls-files", "--cached", "-z", "--",
+      `:(top,literal)${control}`,
+    ], {
+      env: { ...env, GIT_OPTIONAL_LOCKS: "0" },
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 5_000,
+      maxBuffer: 1_048_576,
+    });
+  } catch {
+    throw new VaultInitError(
+      "git_status_unavailable",
+      "cannot inspect the vault's Git index; initialization refused. Ensure Git is available and the repository is readable before retrying",
+    );
+  }
+  if (tracked.length !== 0) {
+    throw new VaultInitError(
+      "tracked_control_state",
+      "Git already tracks entries under .kizuki; initialization refused. Resolve tracked control files before retrying. Git's index and history were not changed",
+    );
+  }
 }
 
 function listRootNames(root: string): string[] {
@@ -712,6 +775,7 @@ export function initVault(path: string, options: InitVaultOptions = {}): InitVau
         throw new VaultInitError("not_a_directory", "vault path exists and is not a directory");
       }
     }
+    assertControlNotTracked(path);
     return {
       created,
       repaired,
@@ -723,6 +787,7 @@ export function initVault(path: string, options: InitVaultOptions = {}): InitVau
   }
 
   const { inventory, adopt } = classifyTarget(path, options);
+  assertControlNotTracked(path);
 
   const createdRoot = mkdirPrivate(path);
   if (createdRoot) created.push("./");
@@ -758,6 +823,13 @@ export function initVault(path: string, options: InitVaultOptions = {}): InitVau
       if (!existsSync(target)) {
         writeAtomicFile(target, content);
         created.push(relativePath);
+        continue;
+      }
+      if (relativePath === ".gitignore") {
+        if (chmodPrivateFile(target)) repaired.push(relativePath);
+        if (ensureRootGitIgnore(target) && !repaired.includes(relativePath)) {
+          repaired.push(relativePath);
+        }
         continue;
       }
       if (relativePath === "CANON.md" || relativePath === "SCHEMA.md") {
