@@ -1,10 +1,11 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { applyCanonWrite } from "../../src/canon/apply";
 import { createBudgetTracker } from "../../src/canon/budget";
 import { resolveTarget, type TargetDecision } from "../../src/canon/arbiter";
+import { CanonPageUnreadable } from "../../src/canon/store";
 import { countClaims, getClaim, insertClaim } from "../../src/claims/store";
 import { recordNativeCorrection } from "../../src/correction/evidence";
 import { openLedger } from "../../src/ledger/db";
@@ -13,6 +14,7 @@ import { accept, readSince } from "../../src/ledger/ledger";
 import { sha256Hex } from "../../src/util/hash";
 import { ulid } from "../../src/util/ulid";
 import { initVault } from "../../src/vault/init";
+import { archiveRelPath } from "../../src/vault/write";
 import type { Producer } from "../../src/contracts/proposal";
 import { eventFacts, FixtureVectorPort, putEvent } from "../claims/helpers";
 import { validEvent } from "../fixtures";
@@ -225,21 +227,53 @@ test.each(["before publication", "after publication"] as const)("a second proces
   } finally { recovered.close(); }
 });
 
-test("a failed loop write retains its byte intent and nested admission is rejected before bytes change", async () => {
+test("an unreadable loop target and nested admission are rejected before a byte intent", async () => {
   const { db, vault } = fixture();
   try {
     const source = putEvent(db);
     const claim = await storedClaim(db, source);
-    symlinkSync(join(vault, "missing-page"), join(vault, "blocked.md"));
-    expect(() => writeLoop(db, vault, claim, "blocked.md")).toThrow(/symlink/i);
-    expect(db.query("SELECT receipt_id FROM canon_machine_byte_intents").all()).toHaveLength(1);
-    expect(existsSync(join(vault, "blocked.md"))).toBe(false);
+    mkdirSync(join(vault, "blocked.md"));
+    expect(() => writeLoop(db, vault, claim, "blocked.md")).toThrow(CanonPageUnreadable);
+    expect(db.query("SELECT receipt_id FROM canon_machine_byte_intents").all()).toHaveLength(0);
+    expect(db.query("SELECT receipt_id FROM canon_receipts").all()).toHaveLength(0);
 
     const target = resolveTarget({ db, vault_path: vault }, claim);
     expect(() => db.transaction(() => applyCanonWrite({ db, vault_path: vault }, claim, target, {
       writer: "loop", budget: createBudgetTracker({ canon_writes_per_run: 4 }),
     }))()).toThrow("top-level transaction");
     expect(existsSync(join(vault, targetPath(target)))).toBe(false);
+    expect(db.query("SELECT receipt_id FROM canon_machine_byte_intents").all()).toHaveLength(0);
+  } finally { db.close(); }
+});
+
+test("a loop revision refused by an occupied archive retains its committed byte intent", async () => {
+  const { db, vault } = fixture();
+  try {
+    const first = writeLoop(db, vault, await storedClaim(db, putEvent(db)));
+    const before = readFileSync(join(vault, first.page_path), "utf8");
+    expect(db.query("SELECT receipt_id FROM canon_machine_byte_intents").all()).toHaveLength(0);
+    const claim = await storedClaim(db, putEvent(db, { source_record_id: "failed-revision" }), "deterministic", {
+      predicate: "contact.email", object: "grace@example.invalid", body: "Grace can be reached at grace@example.invalid.",
+    });
+    const receiptId = ulid();
+    const archive = join(vault, archiveRelPath(first.page_path, receiptId));
+    mkdirSync(join(vault, "archive"), { recursive: true });
+    writeFileSync(archive, "Existing synthetic archive bytes.");
+    const target = resolveTarget({ db, vault_path: vault }, claim);
+    expect(target.action).toBe("edit");
+    expect(() => applyCanonWrite({ db, vault_path: vault, ids: () => receiptId }, claim, target, {
+      writer: "loop", budget: createBudgetTracker({ canon_writes_per_run: 4 }),
+    })).toThrow("Refusing to overwrite an archive copy");
+    const intent = db.query<{ before_hash: string; after_hash: string }, [string]>(
+      "SELECT before_hash, after_hash FROM canon_machine_byte_intents WHERE receipt_id = ?",
+    ).get(receiptId);
+    expect(intent?.before_hash).toBe(sha256Hex(before));
+    expect(intent?.after_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(intent?.after_hash).not.toBe(intent?.before_hash);
+    expect(readFileSync(join(vault, first.page_path), "utf8")).toBe(before);
+    expect(readFileSync(archive, "utf8")).toBe("Existing synthetic archive bytes.");
+    expect(db.query("SELECT receipt_id FROM canon_receipts").all()).toHaveLength(1);
+    expect(db.query("SELECT receipt_id FROM canon_machine_byte_intents").all()).toHaveLength(1);
   } finally { db.close(); }
 });
 

@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { assertPageRelPath } from "../canon/paths";
+import { containedVaultFile } from "../vault/write";
 import { applyCanonWrite, createBudgetTracker, resolveTarget } from "../canon";
 import type { CanonIo, PageAction } from "../canon";
 import type { Claim } from "../contracts/proposal";
@@ -47,7 +48,8 @@ function canonIo(ctx: ServeContext): CanonIo {
 }
 
 function pageText(ctx: ServeContext, relPath: string): string {
-  const path = join(ctx.vaultPath, relPath);
+  assertPageRelPath(relPath);
+  const path = containedVaultFile(ctx.vaultPath, relPath);
   return existsSync(path) ? readFileSync(path, "utf8") : "";
 }
 

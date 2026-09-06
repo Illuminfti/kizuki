@@ -1,3 +1,4 @@
+import { assertReceiptPaths } from "./paths";
 import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -95,6 +96,7 @@ function parseJson<T>(raw: string, fallback: T): T {
 }
 
 export function rowToReceipt(row: CanonReceiptRow): CanonReceipt {
+  assertReceiptPaths(row);
   return {
     receipt_id: row.receipt_id,
     kind: row.receipt_kind as ReceiptKind,
@@ -135,6 +137,7 @@ interface LegacyLine {
 
 /** Same mapping the v4 migration applies to a `promotions` row (§18.1). */
 function fromLegacyLine(line: LegacyLine): CanonReceipt {
+  assertReceiptPaths({ page_path: line.page_path, archive_path: null });
   return {
     receipt_id: line.receipt_id,
     kind: "write",
@@ -171,7 +174,9 @@ export function parseReceiptLine(line: string): CanonReceipt {
   if (typeof parsed["proposal_id"] === "string" && !("claim_ids" in parsed)) {
     return fromLegacyLine(parsed as unknown as LegacyLine);
   }
-  return parsed as unknown as CanonReceipt;
+  const receipt = parsed as unknown as CanonReceipt;
+  assertReceiptPaths(receipt);
+  return receipt;
 }
 
 export function readReceiptsLog(vaultPath: string): CanonReceipt[] {
