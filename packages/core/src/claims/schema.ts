@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { tableExists } from "../ledger/schema";
-import { claimKey } from "./hash";
+import { canonicalizeProducer, isProducer } from "../contracts/proposal";
+import { claimKey, contentSignature } from "./hash";
 
 /** RFC 0002 §18.1 — claims-core widens durable state to schema v3. */
 export const CLAIMS_SCHEMA_VERSION = 3;
@@ -40,10 +41,6 @@ CREATE TABLE IF NOT EXISTS claims (
 `;
 
 const CLAIMS_INDEXES = `
-DROP INDEX IF EXISTS claims_idempotency;
-CREATE UNIQUE INDEX claims_idempotency
-  ON claims (kind, coalesce(target, ''), body_hash)
-  WHERE kind <> 'purge_review';
 CREATE INDEX IF NOT EXISTS claims_by_key ON claims(claim_key, status, valid_from);
 CREATE INDEX IF NOT EXISTS claims_by_status ON claims(status, created_at);
 CREATE INDEX IF NOT EXISTS claims_by_subject ON claims(subject, status);
@@ -103,12 +100,10 @@ CREATE TABLE IF NOT EXISTS proposals (
   confidence  REAL NOT NULL,
   status      TEXT NOT NULL,
   created_at  TEXT NOT NULL,
-  body_hash   TEXT NOT NULL
+  body_hash   TEXT NOT NULL,
+  content_hash TEXT NOT NULL DEFAULT ''
 ) STRICT;
 DROP INDEX IF EXISTS proposals_idempotency;
-CREATE UNIQUE INDEX proposals_idempotency
-  ON proposals (kind, coalesce(target, ''), body_hash)
-  WHERE kind <> 'purge_review';
 CREATE INDEX IF NOT EXISTS proposals_by_status
   ON proposals (status, created_at);
 `;
@@ -237,10 +232,13 @@ export function syncCompatProposals(db: Database): void {
   if (!tableExists(db, "proposals")) {
     db.exec(COMPAT_PROPOSALS);
   }
+  if (tableExists(db, "claims")) {
+    addColumn(db, "claims", "content_hash TEXT NOT NULL DEFAULT ''");
+  }
   db.exec(`
     INSERT OR IGNORE INTO proposals
       (proposal_id, kind, target, body, frontmatter, provenance, subjects,
-       producer, confidence, status, created_at, body_hash)
+       producer, confidence, status, created_at, body_hash, content_hash)
     SELECT
       claim_id, kind, target, body, frontmatter, provenance, subjects,
       CASE producer WHEN 'model' THEN 'llm' ELSE producer END,
@@ -254,9 +252,10 @@ export function syncCompatProposals(db: Database): void {
         WHEN 'reverted' THEN 'withdrawn'
         ELSE status
       END,
-      created_at, body_hash
+      created_at, body_hash, content_hash
     FROM claims;
   `);
+  applyLegacyStagingIdempotency(db);
 }
 
 function widenClaims(db: Database): void {
@@ -320,10 +319,247 @@ function claimsSurfaceReady(db: Database): boolean {
   );
 }
 
+function indexSql(db: Database, name: string): string | null {
+  const statement = db.prepare<{ sql: string | null }, [string]>(
+    "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
+  );
+  try {
+    return statement.get(name)?.sql ?? null;
+  } finally {
+    statement.finalize();
+  }
+}
+
+function backfillProposalContentHash(db: Database): void {
+  type ProposalHashRow = {
+    proposal_id: string;
+    kind: string;
+    target: string | null;
+    body: string;
+    frontmatter: string;
+    subjects: string;
+    producer: string;
+    confidence: number;
+    content_hash: string;
+  };
+  const select = db.prepare<ProposalHashRow, []>(
+    `SELECT proposal_id, kind, target, body, frontmatter, subjects,
+            producer, confidence, content_hash
+       FROM proposals`,
+  );
+  const update = db.prepare(
+    "UPDATE proposals SET content_hash = ? WHERE proposal_id = ?",
+  );
+  try {
+    for (const row of select.all()) {
+      let frontmatter: Record<string, unknown> = {};
+      let subjects: string[] = [];
+      try {
+        const parsed: unknown = JSON.parse(row.frontmatter);
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+          frontmatter = parsed as Record<string, unknown>;
+        }
+      } catch {
+        frontmatter = {};
+      }
+      try {
+        const parsed: unknown = JSON.parse(row.subjects);
+        if (Array.isArray(parsed) && parsed.every((item) => typeof item === "string")) {
+          subjects = parsed;
+        }
+      } catch {
+        subjects = [];
+      }
+      update.run(
+        contentSignature({
+          kind: row.kind,
+          target: row.target,
+          body: row.body,
+          frontmatter,
+          subjects,
+          producer: isProducer(row.producer)
+            ? canonicalizeProducer(row.producer)
+            : row.producer,
+          confidence: row.confidence,
+        }),
+        row.proposal_id,
+      );
+    }
+  } finally {
+    select.finalize();
+    update.finalize();
+  }
+}
+
+/**
+ * One occupant per signature, matching lookup: pending first, then
+ * oldest promoted. The same id stays pending/promoted and live.
+ */
+function keepSignatureOccupant(db: Database): void {
+  db.exec(`
+    CREATE TEMP TABLE signature_keepers (
+      content_hash TEXT PRIMARY KEY,
+      keeper_id TEXT NOT NULL
+    );
+  `);
+  try {
+    db.exec(`
+      INSERT INTO signature_keepers
+      SELECT content_hash, proposal_id FROM (
+        SELECT content_hash, proposal_id,
+               ROW_NUMBER() OVER (
+                 PARTITION BY content_hash
+                 ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'promoted' THEN 1 ELSE 2 END,
+                          created_at, proposal_id
+               ) AS rn
+          FROM proposals
+         WHERE content_hash <> '' AND status IN ('pending', 'promoted')
+      )
+      WHERE rn = 1;
+    `);
+    db.exec(`
+      UPDATE proposals
+         SET status = 'withdrawn'
+       WHERE status = 'pending'
+         AND content_hash <> ''
+         AND proposal_id NOT IN (SELECT keeper_id FROM signature_keepers);
+    `);
+    if (tableExists(db, "claims")) {
+      db.exec(`
+        INSERT OR IGNORE INTO signature_keepers
+        SELECT content_hash, claim_id FROM (
+          SELECT content_hash, claim_id,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY content_hash
+                   ORDER BY created_at, claim_id
+                 ) AS rn
+            FROM claims
+           WHERE status = 'live'
+             AND kind <> 'purge_review'
+             AND content_hash <> ''
+        )
+        WHERE rn = 1;
+      `);
+      db.exec(`
+        UPDATE claims
+           SET status = 'skipped',
+               retracted_at = COALESCE(retracted_at, created_at)
+         WHERE status = 'live'
+           AND kind <> 'purge_review'
+           AND content_hash <> ''
+           AND claim_id NOT IN (SELECT keeper_id FROM signature_keepers);
+      `);
+    }
+  } finally {
+    db.exec("DROP TABLE signature_keepers");
+  }
+}
+
+/**
+ * Pending-only content-signature idempotency for the legacy proposals
+ * projection, and live-only claims uniqueness so a withdrawn row cannot
+ * occupy the slot of later evidence. Unique indexes are dropped before
+ * hashes are rewritten so a remigration collapse cannot abort init.
+ */
+export function applyLegacyStagingIdempotency(db: Database): void {
+  if (!tableExists(db, "proposals")) return;
+  addColumn(db, "proposals", "content_hash TEXT NOT NULL DEFAULT ''");
+  db.exec("DROP INDEX IF EXISTS proposals_idempotency");
+  db.exec("DROP INDEX IF EXISTS proposals_signature");
+  backfillProposalContentHash(db);
+  if (tableExists(db, "claims")) {
+    addColumn(db, "claims", "content_hash TEXT NOT NULL DEFAULT ''");
+    db.exec("DROP INDEX IF EXISTS claims_idempotency");
+    db.exec("DROP INDEX IF EXISTS claims_signature_idempotency");
+    db.exec(
+      `UPDATE claims
+          SET content_hash = (
+            SELECT p.content_hash FROM proposals p
+             WHERE p.proposal_id = claims.claim_id
+          )
+        WHERE EXISTS (
+            SELECT 1 FROM proposals p
+             WHERE p.proposal_id = claims.claim_id AND p.content_hash <> ''
+          )`,
+    );
+  }
+  keepSignatureOccupant(db);
+  db.exec(
+    `CREATE UNIQUE INDEX proposals_signature
+       ON proposals (content_hash)
+       WHERE status = 'pending'`,
+  );
+  if (!tableExists(db, "claims")) return;
+  db.exec(
+    `CREATE UNIQUE INDEX claims_idempotency
+       ON claims (kind, coalesce(target, ''), body_hash)
+       WHERE status = 'live' AND kind <> 'purge_review'
+         AND (content_hash IS NULL OR content_hash = '')`,
+  );
+  db.exec(
+    `CREATE UNIQUE INDEX claims_signature_idempotency
+       ON claims (content_hash)
+       WHERE status = 'live' AND kind <> 'purge_review' AND content_hash <> ''`,
+  );
+}
+
+function stagingIdempotencyReady(db: Database): boolean {
+  if (!tableExists(db, "proposals") || !columnNames(db, "proposals").has("content_hash")) {
+    return false;
+  }
+  if (tableExists(db, "claims") && !columnNames(db, "claims").has("content_hash")) {
+    return false;
+  }
+  const proposalsSql = indexSql(db, "proposals_signature") ?? "";
+  const claimsSql = indexSql(db, "claims_idempotency") ?? "";
+  const signatureSql = indexSql(db, "claims_signature_idempotency") ?? "";
+  if (
+    !(
+      proposalsSql.includes("content_hash") &&
+      proposalsSql.includes("pending") &&
+      claimsSql.includes("content_hash") &&
+      signatureSql.includes("content_hash")
+    )
+  ) {
+    return false;
+  }
+  return !emptyLiveSignature(db);
+}
+
+function emptyLiveSignature(db: Database): boolean {
+  const proposals = db.prepare<{ ok: number }, []>(
+    `SELECT 1 AS ok FROM proposals
+      WHERE content_hash = '' AND status IN ('pending', 'promoted')
+      LIMIT 1`,
+  );
+  try {
+    if (proposals.get() !== null) return true;
+  } finally {
+    proposals.finalize();
+  }
+  if (!tableExists(db, "claims") || !columnNames(db, "claims").has("content_hash")) {
+    return false;
+  }
+  const claims = db.prepare<{ ok: number }, []>(
+    `SELECT 1 AS ok FROM claims
+      WHERE content_hash = ''
+        AND status = 'live'
+        AND kind <> 'purge_review'
+      LIMIT 1`,
+  );
+  try {
+    return claims.get() !== null;
+  } finally {
+    claims.finalize();
+  }
+}
+
 /** Cheap no-op once v3 exists. `applyClaimsV3` stays the migration path. */
 export function initClaims(db: Database): void {
-  if (claimsSurfaceReady(db)) {
-    return;
+  if (!claimsSurfaceReady(db)) {
+    applyClaimsV3(db);
   }
-  applyClaimsV3(db);
+  if (!stagingIdempotencyReady(db)) {
+    applyLegacyStagingIdempotency(db);
+  }
 }

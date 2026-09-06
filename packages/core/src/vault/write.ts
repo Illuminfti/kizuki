@@ -1,9 +1,8 @@
 import {
   closeSync,
   constants,
-  fstatSync,
-  copyFileSync,
   existsSync,
+  fstatSync,
   fsyncSync,
   lstatSync,
   mkdirSync,
@@ -14,15 +13,7 @@ import {
   unlinkSync,
   writeSync,
 } from "node:fs";
-import {
-  basename,
-  dirname,
-  extname,
-  join,
-  relative,
-  resolve,
-  sep,
-} from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { serializePage } from "./frontmatter";
 import type { VaultPage } from "./frontmatter";
 import { validatePage } from "./schema";
@@ -66,7 +57,10 @@ export class CanonWriteRefused extends Error {
       | "page_missing"
       | "page_changed"
       | "symlink"
-      | "expected_hash_required",
+      | "expected_hash_required"
+      | "write_verify_failed"
+      | "archive_exists"
+      | "parent_invalid",
     message: string,
   ) {
     super(message);
@@ -185,46 +179,134 @@ export function findVaultRoot(file: string): string {
   throw new Error(`cannot find vault root for ${file}`);
 }
 
-function nextArchivePath(vault: string, file: string): string {
-  const stem = basename(file, extname(file));
-  let timestamp = Date.now();
-  let candidate = join(vault, "archive", `${stem}.prev-${timestamp}.md`);
-  while (existsSync(candidate)) {
-    timestamp += 1;
-    candidate = join(vault, "archive", `${stem}.prev-${timestamp}.md`);
-  }
-  return candidate;
+/**
+ * Exclusive archive name: vault-relative path plus the receipt id. Two
+ * pages that share a basename cannot collide, and a second writer with a
+ * different receipt cannot choose the same path.
+ */
+export function archiveRelPath(relPath: string, receiptId: string): string {
+  return `archive/${relPath.replaceAll("/", "__")}--${receiptId}.md`;
 }
 
-function writeDurably(path: string, content: string, flag: "wx" | "w", mode?: number): void {
+function writeDurably(
+  path: string,
+  content: string | Uint8Array,
+  flag: "wx" | "w",
+  mode?: number,
+): void {
   const fd = openSync(path, flag, mode);
   try {
-    writeSync(fd, content);
+    if (typeof content === "string") writeSync(fd, content);
+    else writeSync(fd, content);
     fsyncSync(fd);
   } finally {
     closeSync(fd);
   }
 }
 
-function replaceAtomically(path: string, content: string, stamp: string, resumeExact = false): void {
+function vaultRelPath(vault: string, path: string): string {
+  const rel = relative(resolve(vault), resolve(path));
+  if (rel.startsWith("..") || isAbsolute(rel)) {
+    throw new CanonWriteRefused("parent_invalid", "Refusing to write outside the vault");
+  }
+  return rel.split(sep).join("/");
+}
+
+function ensureCanonParents(vault: string, filePath: string): void {
+  const rel = vaultRelPath(vault, filePath);
+  const parent = dirname(rel);
+  if (parent === "." || parent === "") return;
+  const segments = parent.split("/").filter((segment) => segment.length > 0);
+  let current = vault;
+  for (const segment of segments) {
+    if (segment === ".." || segment === ".kizuki" || segment === "archive") {
+      throw new CanonWriteRefused(
+        "parent_invalid",
+        "Refusing to create an unusable parent directory",
+      );
+    }
+    current = join(current, segment);
+    if (isSymlink(current)) {
+      throw new CanonWriteRefused("symlink", `Refusing to write through a symlink: ${current}`);
+    }
+    if (!existsSync(current)) {
+      mkdirSync(current, { mode: 0o700 });
+      continue;
+    }
+    if (!isDirectory(current)) {
+      throw new CanonWriteRefused(
+        "parent_invalid",
+        "Refusing to create a page under a non-directory",
+      );
+    }
+  }
+}
+
+function archiveExclusively(source: string, dest: string): void {
+  const prior = readFileSync(source);
+  try {
+    writeDurably(dest, prior, "wx");
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "EEXIST"
+    ) {
+      throw new CanonWriteRefused("archive_exists", "Refusing to overwrite an archive copy");
+    }
+    throw error;
+  }
+}
+
+function hashOnDisk(path: string, expected: string): string {
+  const written = readFileSync(path);
+  const afterHash = hashBytes(written);
+  if (afterHash !== expected) {
+    throw new CanonWriteRefused(
+      "write_verify_failed",
+      "bytes on disk do not match the bytes just written",
+    );
+  }
+  return afterHash;
+}
+
+function replaceAtomically(
+  path: string,
+  content: string,
+  stamp: string,
+  resumeExact = false,
+): void {
   const temp = join(dirname(path), `.${basename(path)}.${stamp}.tmp`);
   if (resumeExact && existsSync(temp)) {
     const before = lstatSync(temp);
     const fd = openSync(temp, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
       const stat = fstatSync(fd);
-      if (!stat.isFile() || before.isSymbolicLink() || stat.nlink !== 1 ||
-        stat.ino !== before.ino || stat.dev !== before.dev ||
-        stat.uid !== process.geteuid?.() || (stat.mode & 0o077) !== 0 ||
-        stat.size !== Buffer.byteLength(content) || readFileSync(fd,"utf8") !== content) {
+      if (
+        !stat.isFile() ||
+        before.isSymbolicLink() ||
+        stat.nlink !== 1 ||
+        stat.ino !== before.ino ||
+        stat.dev !== before.dev ||
+        stat.uid !== process.geteuid?.() ||
+        (stat.mode & 0o077) !== 0 ||
+        stat.size !== Buffer.byteLength(content) ||
+        readFileSync(fd, "utf8") !== content
+      ) {
         throw new CanonWriteRefused("page_changed", "source erasure temporary revision changed");
       }
       fsyncSync(fd);
-      const current=lstatSync(temp);
-      if(current.ino!==stat.ino || current.dev!==stat.dev || current.isSymbolicLink())
+      const current = lstatSync(temp);
+      if (current.ino !== stat.ino || current.dev !== stat.dev || current.isSymbolicLink()) {
         throw new CanonWriteRefused("page_changed", "source erasure temporary revision changed");
-    } finally { closeSync(fd); }
-  } else writeDurably(temp, content, "wx", resumeExact ? 0o600 : undefined);
+      }
+    } finally {
+      closeSync(fd);
+    }
+  } else {
+    writeDurably(temp, content, "wx", resumeExact ? 0o600 : undefined);
+  }
   try {
     renameSync(temp, path);
   } catch (error) {
@@ -236,6 +318,7 @@ function replaceAtomically(path: string, content: string, stamp: string, resumeE
 function deleteExistingPage(
   path: string,
   expectedHash: string | undefined,
+  receiptId: string,
   erasePrior = false,
 ): WriteOutcome {
   if (!existsSync(path)) {
@@ -267,14 +350,18 @@ function deleteExistingPage(
     return { archive_path: null, after_hash: ABSENT_PAGE_HASH };
   }
   const vault = findVaultRoot(path);
-  mkdirSync(join(vault, "archive"), { recursive: true });
-  const archive = nextArchivePath(vault, path);
-  copyFileSync(path, archive);
+  mkdirSync(join(vault, "archive"), { recursive: true, mode: 0o700 });
+  const archiveRel = archiveRelPath(vaultRelPath(vault, path), receiptId);
+  const archive = join(vault, archiveRel);
+  archiveExclusively(path, archive);
   unlinkSync(path);
-  return {
-    archive_path: relative(vault, archive).split(sep).join("/"),
-    after_hash: ABSENT_PAGE_HASH,
-  };
+  if (existsSync(path)) {
+    throw new CanonWriteRefused(
+      "write_verify_failed",
+      "bytes on disk do not match the bytes just written",
+    );
+  }
+  return { archive_path: archiveRel, after_hash: ABSENT_PAGE_HASH };
 }
 
 /**
@@ -301,6 +388,7 @@ export function writePage(
     return deleteExistingPage(
       path,
       opts.expected_hash,
+      cap.receipt_id,
       opts.erase_prior === true,
     );
   }
@@ -313,7 +401,9 @@ export function writePage(
     );
   }
   const content = serializePage(page);
+  const expectedHash = hashBytes(Buffer.from(content, "utf8"));
   const exists = existsSync(path);
+  const vault = findVaultRoot(path);
 
   if (exists && opts.revision !== true) {
     throw new CanonWriteRefused(
@@ -328,9 +418,9 @@ export function writePage(
         `Refusing to revise a missing page: ${path}`,
       );
     }
-    mkdirSync(dirname(path), { recursive: true });
+    ensureCanonParents(vault, path);
     writeDurably(path, content, "wx");
-    return { archive_path: null, after_hash: hashFile(path) };
+    return { archive_path: null, after_hash: hashOnDisk(path, expectedHash) };
   }
 
   if (opts.expected_hash === undefined) {
@@ -354,15 +444,16 @@ export function writePage(
     } finally {
       closeSync(fd);
     }
-    return { archive_path: null, after_hash: hashFile(path) };
+    return { archive_path: null, after_hash: hashOnDisk(path, expectedHash) };
   }
-  const vault = findVaultRoot(path);
-  mkdirSync(join(vault, "archive"), { recursive: true });
-  const archive = nextArchivePath(vault, path);
-  copyFileSync(path, archive);
+
+  mkdirSync(join(vault, "archive"), { recursive: true, mode: 0o700 });
+  const archiveRel = archiveRelPath(vaultRelPath(vault, path), cap.receipt_id);
+  const archive = join(vault, archiveRel);
+  archiveExclusively(path, archive);
   replaceAtomically(path, content, cap.receipt_id);
   return {
-    archive_path: relative(vault, archive).split(sep).join("/"),
-    after_hash: hashFile(path),
+    archive_path: archiveRel,
+    after_hash: hashOnDisk(path, expectedHash),
   };
 }

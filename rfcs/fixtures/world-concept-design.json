@@ -1,0 +1,1488 @@
+{
+  "schema": "kizuki.world-concept-design-fixture/v1",
+  "title": "Idempotency Concept: independent support, qualified identity and honest loss",
+  "status": "declared_design",
+  "created_at": "2026-09-05",
+  "evaluation_state": "not_run",
+  "scenario_relation": "Independent neutral development scenario. RFC 0004's Bayesian-updating example is separate.",
+  "authority": "This file is a test design and oracle, not a production ingress codec, accepted RFC, implementation, benchmark or release receipt.",
+  "source_material": [
+    {
+      "kind": "proposed_rfc",
+      "path": "../0004-living-epistemic-world-model.md",
+      "status": "proposed"
+    },
+    {
+      "kind": "work_packet",
+      "issue": 496
+    },
+    {
+      "kind": "preserved_design_snapshot",
+      "sha256": "019b08d809e65029ed809cbfc3dc83feedadd9ebd2cdef66df18ed661b0da8e8",
+      "use": "Original synthetic seed and independently reviewed expected outcomes. This repository copy makes subject-scope and runtime-generation semantics explicit; no product evaluation is inferred."
+    }
+  ],
+  "applicability": {
+    "declared_design": {
+      "meaning": "Every assertion is a proposed expectation requiring review; static fixture validation proves only internal consistency."
+    },
+    "current_core": {
+      "meaning": "Frozen existing-core evaluation baseline for source-faithful capture/history/lexical retrieval, correction, source grants and exact raw purge. The label current_core denotes that pinned comparison, not latest main. Assertions require actual supported-API adapters; this design file records no execution passes.",
+      "baseline_commit": "a96c5f4a4455d22fb4b40537c308c6d019a36d0d",
+      "evaluation_state": "not_run",
+      "limitations": [
+        "Unknown source occurrence r03 cannot be faithfully encoded in frozen current ingress; mark unsupported rather than inventing occurred_at.",
+        "Current-core historical comparison is isolated prefix replay, not an existing as-of API.",
+        "Source restriction uses existing subject grants. There is no per-principal source allowlist in the baseline."
+      ]
+    },
+    "future": {
+      "meaning": "Proposed rich support/Observation/identity/Concept/scoped-view/consolidation features are unavailable at the baseline. Keep their assertions unsupported until the exact implementation and adapters exist.",
+      "evaluation_state": "not_implemented",
+      "issues": [
+        482,
+        483,
+        484,
+        490,
+        503
+      ]
+    }
+  },
+  "harness_contract": {
+    "symbol_namespace": "All IDs below are fixture-local symbols, not real event IDs, source identities, handles, grants or bearer tokens.",
+    "ingress": "Adapters construct the existing frozen event envelope using synthetic connectors. This fixture object must never be admitted directly or used to widen production codecs.",
+    "admission_modes": [
+      {
+        "mode": "controlled_mechanics",
+        "meaning": "A future adapter prepares checked, fully grounded admissions from the current prefix to test deterministic lifecycle mechanics. Owner identity controls test only their explicit authority path."
+      },
+      {
+        "mode": "real_producer_quality",
+        "meaning": "Run the pinned configured producer on current-prefix source records only. Compare its independent output against the oracle. Do not seed claims or identity results in this mode; report unresolved/unsupported outcomes and false merges."
+      }
+    ],
+    "oracle_isolation": "Runner sends only released input records/control operations to the system under test. Future records, future controls, this oracle, provider draft and expected answers are inaccessible to retrieval, consolidation, tuning and prediction prompts.",
+    "historical_policy": "Semantic reconstruction uses records/controls available at known_at. Current authorization, erasure and restore validity are evaluated at delivery_at and can refuse disclosure of an otherwise historical answer.",
+    "input_slice_rule": "For a query, raw captures require Core accepted_at <= known_at; interpreted state additionally requires its own Core admitted_at/admission_seq <= the query boundary. Semantic controls require their own Core admission <= known_at. Source-observed or occurrence time cannot make later raw/semantic state known earlier. Current authorization/erasure/restore controls gate delivery at delivery_at without injecting later semantic content.",
+    "controls_are_trusted_calls": "Owner controls are authenticated harness operations with explicit narrow authority. Identical text captured in a source is untrusted data and has no control authority.",
+    "grounding": "Every expected support selection refers to one exact synthetic event version and full-text UTF-16 span. Production adapters must compute and verify the real admitted hash; fixture checksums must not substitute for product evidence.",
+    "currentness": "Unknown domain facts may appear in a complete view. Missing required dependencies, history or required context may not be hidden behind current/unchanged/empty success.",
+    "purity": "All people, sources, phrases and times are synthetic. No external accounts, private vaults or model calls are required to parse or validate this file.",
+    "source_restriction": "Restricted S4 uses existing subject-scope denial, not a new sensitivity enum or per-principal source ACL. Each source capture carries only its source-local raw subject. g1 initially grants all four; g2 excludes scope_s4. Both retain private ceiling. Actor mentions do not add a second granted ingress subject; identity resolution never expands that source scope. Source-global consent is checked independently.",
+    "recorded_time": "available_at is the trusted simulated release instant; sourceObservedAt/record_created_at/record_occurrence are source assertions. Only the Core clock may stamp accepted_at and admission recorded times. Controlled-mechanics schedule below uses simulated Core transactions. Real producer quality runs record actual accepted/admission times and never backdate them.",
+    "wire_projection": "Future wire codecs use typed principal-namespace opaque references for objects, claims, events/versions and receipts, without raw internal IDs or source hashes. An absent/purged/revoked/denied/wrong-namespace well-formed object reference yields the same fixed not_found; new_view_required is exclusively a view/cursor outcome. Closed envelope/v2 omits source_policy.epoch, denied counts and other global metadata on every read; narrow legacy contracts refuse fixed unsupported before candidate discovery.",
+    "view_token_ttl_seconds": 900,
+    "unknown_token": "Token tests use a configured reserved principal partition; no token quota/expiry is extended. Complete fresh reads for an unreserved principal may return current with view.status not_issued and cannot be used as a token baseline.",
+    "snapshot_lifetime": "Proposed snapshot/view repeatability lasts only while its cache token remains valid, with 900-second TTL and principal-local quota eviction. Restart/restore rotates the view runtime generation; durable authorization namespaces and supported random object-reference mappings are distinct."
+  },
+  "input": {
+    "actors": [
+      {
+        "id": "actor_ada",
+        "name": "Ada Vale"
+      },
+      {
+        "id": "actor_ben",
+        "name": "Ben Reed"
+      },
+      {
+        "id": "mention_ava",
+        "label": "A. Vale",
+        "identity": "unresolved_without_permitted_control"
+      }
+    ],
+    "sources": [
+      {
+        "id": "s1",
+        "label": "Synthetic Ada note",
+        "default_sensitivity": "private",
+        "lineage": "independent_root"
+      },
+      {
+        "id": "s2",
+        "label": "Synthetic Ben notebook",
+        "default_sensitivity": "private",
+        "lineage": "independent_root"
+      },
+      {
+        "id": "s3",
+        "label": "Synthetic captured forward",
+        "default_sensitivity": "private",
+        "lineage": "captured_copy_of_s1"
+      },
+      {
+        "id": "s4",
+        "label": "Synthetic restricted note",
+        "default_sensitivity": "private",
+        "lineage": "independent_identity_statement"
+      }
+    ],
+    "principals": [
+      {
+        "id": "g1",
+        "role": "synthetic_owner_controlled_client",
+        "scope": "Explicit scoped read and narrow correction relay; distinct from built-in OWNER. Owner-plane purge/restore is performed separately by the trusted isolated harness.",
+        "ceiling": "private",
+        "future_view_cache_reservation": "Explicit synthetic owner-plane reservation required before token comparison; no hidden-source-driven allocation.",
+        "expected_visible_source_refs": [
+          "s1",
+          "s2",
+          "s3",
+          "s4"
+        ],
+        "permitted_subject_refs": [
+          "scope_s1",
+          "scope_s2",
+          "scope_s3",
+          "scope_s4"
+        ]
+      },
+      {
+        "id": "g2",
+        "role": "synthetic_narrow_client",
+        "scope": "read",
+        "ceiling": "private",
+        "future_view_cache_reservation": "Explicit synthetic owner-plane reservation required before token comparison; no hidden-source-driven allocation.",
+        "expected_visible_source_refs": [
+          "s1",
+          "s2",
+          "s3"
+        ],
+        "permitted_subject_refs": [
+          "scope_s1",
+          "scope_s2",
+          "scope_s3"
+        ]
+      }
+    ],
+    "initial_policy_at": "2025-01-01T00:00:00Z",
+    "records": [
+      {
+        "id": "r01",
+        "source_ref": "s1",
+        "record_created_at": "2025-01-02T10:00:00Z",
+        "available_at": "2025-01-02T10:05:00Z",
+        "record_occurrence": {
+          "kind": "known",
+          "at": "2025-01-02T10:00:00Z"
+        },
+        "content": "Ada Vale reports: I read a definition of idempotency at 10:00 on 2 January 2025. Idempotency means repeating the same operation has the same effect as doing it once. Fixture marker: cobalt-teacup.",
+        "speaker_ref": "actor_ada",
+        "fidelity": "verbatim_text",
+        "source_observed_at": "2025-01-02T10:00:00Z",
+        "core_accepted_at": "2025-01-02T10:05:00Z",
+        "core_admission_seq": 1,
+        "raw_subject_refs": [
+          "scope_s1"
+        ]
+      },
+      {
+        "id": "r02",
+        "source_ref": "s2",
+        "record_created_at": "2025-01-03T11:00:00Z",
+        "available_at": "2025-01-03T11:05:00Z",
+        "record_occurrence": {
+          "kind": "known",
+          "at": "2025-01-03T11:00:00Z"
+        },
+        "content": "Ben Reed independently writes: In computing, idempotency means applying an operation repeatedly has the same effect as applying it once. Setting a flag to true is an example.",
+        "speaker_ref": "actor_ben",
+        "fidelity": "verbatim_text",
+        "source_observed_at": "2025-01-03T11:00:00Z",
+        "core_accepted_at": "2025-01-03T11:05:00Z",
+        "core_admission_seq": 3,
+        "raw_subject_refs": [
+          "scope_s2"
+        ]
+      },
+      {
+        "id": "r03",
+        "source_ref": "s2",
+        "record_created_at": null,
+        "available_at": "2025-01-03T11:10:00Z",
+        "record_occurrence": {
+          "kind": "unknown"
+        },
+        "content": "A. Vale asks: Should a copied account of the same retry count as independent evidence? The author and original question time are otherwise unknown.",
+        "mentioned_actor_ref": "mention_ava",
+        "fidelity": "verbatim_text",
+        "source_observed_at": null,
+        "core_accepted_at": "2025-01-03T11:10:00Z",
+        "core_admission_seq": 5,
+        "raw_subject_refs": [
+          "scope_s2"
+        ]
+      },
+      {
+        "id": "r04",
+        "source_ref": "s2",
+        "record_created_at": "2025-01-03T11:15:00Z",
+        "available_at": "2025-01-03T11:20:00Z",
+        "record_occurrence": {
+          "kind": "known",
+          "at": "2025-01-03T11:15:00Z"
+        },
+        "content": "Ben Reed writes: Idempotency is also the codename of our paper sculpture project. This project name does not refer to the computing concept.",
+        "speaker_ref": "actor_ben",
+        "fidelity": "verbatim_text",
+        "source_observed_at": "2025-01-03T11:15:00Z",
+        "core_accepted_at": "2025-01-03T11:20:00Z",
+        "core_admission_seq": 7,
+        "raw_subject_refs": [
+          "scope_s2"
+        ]
+      },
+      {
+        "id": "r05",
+        "source_ref": "s3",
+        "record_created_at": "2025-01-04T12:00:00Z",
+        "available_at": "2025-01-04T12:05:00Z",
+        "record_occurrence": {
+          "kind": "known",
+          "at": "2025-01-04T12:00:00Z"
+        },
+        "content": "Ada Vale reports: I read a definition of idempotency at 10:00 on 2 January 2025. Idempotency means repeating the same operation has the same effect as doing it once. Fixture marker: cobalt-teacup.",
+        "copied_from_ref": "r01",
+        "fidelity": "verbatim_text",
+        "copy_metadata": "This is a separate captured source record. Its capture time is not a second reading/exposure time.",
+        "source_observed_at": "2025-01-04T12:00:00Z",
+        "core_accepted_at": "2025-01-04T12:05:00Z",
+        "core_admission_seq": 10,
+        "raw_subject_refs": [
+          "scope_s3"
+        ]
+      },
+      {
+        "id": "r06",
+        "source_ref": "s4",
+        "record_created_at": "2025-01-05T13:00:00Z",
+        "available_at": "2025-01-05T13:05:00Z",
+        "record_occurrence": {
+          "kind": "known",
+          "at": "2025-01-05T13:00:00Z"
+        },
+        "content": "Restricted synthetic note: The A. Vale quoted in the notebook question is Ada Vale. The private label for Ada is Violet Sail. Fixture marker: violet-paperboat.",
+        "mentioned_actor_refs": [
+          "actor_ada",
+          "mention_ava"
+        ],
+        "fidelity": "verbatim_text",
+        "source_observed_at": "2025-01-05T13:00:00Z",
+        "core_accepted_at": "2025-01-05T13:05:00Z",
+        "core_admission_seq": 12,
+        "raw_subject_refs": [
+          "scope_s4"
+        ]
+      }
+    ],
+    "controls": [
+      {
+        "id": "ctl_merge_concept",
+        "kind": "owner_identity_confirmation",
+        "available_at": "2025-01-03T12:00:00Z",
+        "actor_ref": "g1",
+        "evidence_refs": [
+          "r01",
+          "r02"
+        ],
+        "scope": "Only the computing-Concept mentions in these two records.",
+        "mechanics_only": true,
+        "quality_mode": "Do not seed this control when scoring automatic cross-source identity; score that separate run independently.",
+        "core_admission_seq": 9
+      },
+      {
+        "id": "ctl_private_identity",
+        "kind": "owner_identity_confirmation",
+        "available_at": "2025-01-05T13:10:00Z",
+        "actor_ref": "g1",
+        "evidence_refs": [
+          "r03",
+          "r06"
+        ],
+        "scope": "Resolve this A. Vale question mention as Ada only where complete restricted support is permitted; attach Violet Sail only through r06.",
+        "mechanics_only": true,
+        "core_admission_seq": 14
+      },
+      {
+        "id": "ctl_job_prepare",
+        "kind": "prepare_consolidation_job",
+        "available_at": "2025-01-06T08:55:00Z",
+        "actor_ref": "g1",
+        "evidence_refs": [
+          "r01",
+          "r02",
+          "r05"
+        ],
+        "scope": "Prepare output about Ada's reported exposure from the exact pre-correction admissions and policy versions.",
+        "future_only": true,
+        "core_admission_seq": 15
+      },
+      {
+        "id": "ctl_correct_exposure",
+        "kind": "owner_exact_claim_correction",
+        "available_at": "2025-01-06T09:00:00Z",
+        "actor_ref": "g1",
+        "target_record_ref": "r01",
+        "scope": "Only Ada's reported learning.exposure interpretation, including its copied derivations; not either Concept definition or Ben's note.",
+        "replacement": "Ada saw only the title, without reading the definition, at 10:00 on 1 January 2025.",
+        "replacement_valid": {
+          "kind": "known",
+          "from": "2025-01-01T10:00:00Z",
+          "until": null
+        },
+        "fence": "Commit authority, supersession and invalidation together; do not rewrite raw r01 or r05.",
+        "core_admission_seq": 16
+      },
+      {
+        "id": "ctl_job_commit",
+        "kind": "attempt_stale_consolidation_commit",
+        "available_at": "2025-01-06T09:05:00Z",
+        "actor_ref": "g1",
+        "prepared_job_ref": "ctl_job_prepare",
+        "depends_on_refs": [
+          "ctl_correct_exposure"
+        ],
+        "scope": "Try to commit the saved pre-correction output; no fresh model call.",
+        "future_only": true,
+        "core_admission_seq": 17
+      },
+      {
+        "id": "ctl_revoke_s1",
+        "kind": "source_use_revocation",
+        "available_at": "2025-01-07T09:00:00Z",
+        "actor_ref": "g1",
+        "source_ref": "s1",
+        "scope": "Deny S1 use to both principals before subsequent delivery; custody can remain pending erasure.",
+        "core_admission_seq": 18
+      },
+      {
+        "id": "ctl_purge_s1",
+        "kind": "exact_raw_event_purge",
+        "available_at": "2025-01-07T09:10:00Z",
+        "actor_ref": "g1",
+        "selected_record_refs": [
+          "r01"
+        ],
+        "expected_selected_raw_event_count": 1,
+        "retained_raw_record_refs": [
+          "r02",
+          "r03",
+          "r04",
+          "r05",
+          "r06"
+        ],
+        "scope": "Erase selected raw event and dependent derived closure. S3's separately captured raw event is not in this selection. Receipt/tombstone uses the existing protocol.",
+        "core_admission_seq": 19
+      },
+      {
+        "id": "ctl_purge_copy",
+        "kind": "exact_raw_event_purge",
+        "available_at": "2025-01-07T09:20:00Z",
+        "actor_ref": "g1",
+        "selected_record_refs": [
+          "r05"
+        ],
+        "expected_selected_raw_event_count": 1,
+        "retained_raw_record_refs": [
+          "r02",
+          "r03",
+          "r04",
+          "r06"
+        ],
+        "scope": "Separately authorized expanded selection removes the captured copy and its dependent closure. Do not re-count r01 as newly erased.",
+        "core_admission_seq": 20
+      },
+      {
+        "id": "ctl_narrow_g1",
+        "kind": "grant_narrowing",
+        "available_at": "2025-01-07T09:30:00Z",
+        "actor_ref": "g1",
+        "principal_ref": "g1",
+        "scope": "Remove source-local raw subject scope_s4 from this client's existing subject grant. Owner source custody does not grant this client disclosure; no per-principal source allowlist is introduced.",
+        "core_admission_seq": 21,
+        "removed_subject_refs": [
+          "scope_s4"
+        ]
+      }
+    ],
+    "steps": [
+      {
+        "id": "step1",
+        "title": "Independent definitions, ambiguous person and distinct project homonym",
+        "release_until": "2025-01-03T13:00:00Z",
+        "released_record_refs": [
+          "r01",
+          "r02",
+          "r03",
+          "r04"
+        ],
+        "released_control_refs": [
+          "ctl_merge_concept"
+        ],
+        "query_refs": [
+          "q_before_interpretation",
+          "q_initial"
+        ]
+      },
+      {
+        "id": "step2",
+        "title": "Captured copy and invisible restricted identity change",
+        "release_until": "2025-01-05T14:00:00Z",
+        "released_record_refs": [
+          "r05",
+          "r06"
+        ],
+        "released_control_refs": [
+          "ctl_private_identity"
+        ],
+        "query_refs": [
+          "q_copy_before_private",
+          "q_narrow_after_private",
+          "q_owner_after_private"
+        ]
+      },
+      {
+        "id": "step3",
+        "title": "Exact retroactive correction and stale prepared output",
+        "release_until": "2025-01-06T10:00:00Z",
+        "released_record_refs": [],
+        "released_control_refs": [
+          "ctl_job_prepare",
+          "ctl_correct_exposure",
+          "ctl_job_commit"
+        ],
+        "query_refs": [
+          "q_before_correction_history",
+          "q_after_correction",
+          "q_stale_job"
+        ]
+      },
+      {
+        "id": "step4",
+        "title": "Revocation, precise raw purge selections and narrowed stale view",
+        "release_until": "2025-01-07T10:00:00Z",
+        "released_record_refs": [],
+        "released_control_refs": [
+          "ctl_revoke_s1",
+          "ctl_purge_s1",
+          "ctl_purge_copy",
+          "ctl_narrow_g1"
+        ],
+        "query_refs": [
+          "q_revoke",
+          "q_first_purge",
+          "q_copy_raw_retained",
+          "q_second_purge",
+          "q_erased_history",
+          "q_owner_before_narrow",
+          "q_narrowed_old_view",
+          "q_narrowed_fresh"
+        ]
+      }
+    ],
+    "queries": [
+      {
+        "id": "q_before_interpretation",
+        "principal_ref": "g1",
+        "known_at": "2025-01-02T10:05:30Z",
+        "delivery_at": "2025-01-03T13:00:00Z",
+        "valid_at": null,
+        "request": "Read history at an instant after raw capture but before the first controlled interpretation admission, even though later interpretation exists by delivery."
+      },
+      {
+        "id": "q_initial",
+        "principal_ref": "g1",
+        "known_at": "2025-01-03T13:00:00Z",
+        "delivery_at": "2025-01-03T13:00:00Z",
+        "valid_at": null,
+        "request": "Explain the computing Concept and what the sources show about Ada and Ben; identify the project and ambiguous question separately."
+      },
+      {
+        "id": "q_copy_before_private",
+        "principal_ref": "g2",
+        "known_at": "2025-01-05T13:04:00Z",
+        "delivery_at": "2025-01-05T13:04:00Z",
+        "valid_at": null,
+        "request": "Get the authorized Concept view and retain a complete baseline token if the future contract supports it."
+      },
+      {
+        "id": "q_narrow_after_private",
+        "principal_ref": "g2",
+        "known_at": "2025-01-05T13:11:00Z",
+        "delivery_at": "2025-01-05T13:11:00Z",
+        "valid_at": null,
+        "baseline_query_ref": "q_copy_before_private",
+        "request": "Revalidate the same normalized Concept query while the saved token is still within its fixed configured expiry."
+      },
+      {
+        "id": "q_owner_after_private",
+        "principal_ref": "g1",
+        "known_at": "2025-01-05T14:00:00Z",
+        "delivery_at": "2025-01-05T14:00:00Z",
+        "valid_at": null,
+        "request": "Read the question attribution with all current permitted support."
+      },
+      {
+        "id": "q_before_correction_history",
+        "principal_ref": "g1",
+        "known_at": "2025-01-05T14:00:00Z",
+        "delivery_at": "2025-01-06T09:01:00Z",
+        "valid_at": "2025-01-02T10:00:00Z",
+        "request": "What did the retained model know about Ada's reported exposure at the specified valid time, before the correction was available?"
+      },
+      {
+        "id": "q_after_correction",
+        "principal_ref": "g1",
+        "known_at": "2025-01-06T09:01:00Z",
+        "delivery_at": "2025-01-06T09:01:00Z",
+        "valid_at": "2025-01-01T10:00:00Z",
+        "request": "Read the exact corrected exposure and independent Concept definition now."
+      },
+      {
+        "id": "q_stale_job",
+        "principal_ref": "g1",
+        "known_at": "2025-01-06T09:06:00Z",
+        "delivery_at": "2025-01-06T09:06:00Z",
+        "valid_at": null,
+        "request": "Inspect the stale job result and authoritative current exposure."
+      },
+      {
+        "id": "q_revoke",
+        "principal_ref": "g1",
+        "known_at": "2025-01-07T09:01:00Z",
+        "delivery_at": "2025-01-07T09:01:00Z",
+        "valid_at": null,
+        "request": "Read immediately after S1 revocation, before erasure and asynchronous rebuilding finish."
+      },
+      {
+        "id": "q_first_purge",
+        "principal_ref": "g1",
+        "known_at": "2025-01-07T09:11:00Z",
+        "delivery_at": "2025-01-07T09:11:00Z",
+        "valid_at": null,
+        "request": "Inspect exact S1 purge completion and independently regenerated Concept state in a controlled clean evaluation store."
+      },
+      {
+        "id": "q_copy_raw_retained",
+        "principal_ref": "g1",
+        "known_at": "2025-01-07T09:12:00Z",
+        "delivery_at": "2025-01-07T09:12:00Z",
+        "valid_at": null,
+        "request": "Retrieve still-permitted S3 raw history and inspect its retained capture count."
+      },
+      {
+        "id": "q_second_purge",
+        "principal_ref": "g1",
+        "known_at": "2025-01-07T09:21:00Z",
+        "delivery_at": "2025-01-07T09:21:00Z",
+        "valid_at": null,
+        "request": "Inspect the separately authorized S3 purge and verify the complete independent Ben definition survives."
+      },
+      {
+        "id": "q_erased_history",
+        "principal_ref": "g1",
+        "known_at": "2025-01-03T13:00:00Z",
+        "delivery_at": "2025-01-07T09:22:00Z",
+        "valid_at": "2025-01-02T10:00:00Z",
+        "request": "Try to reconstruct Ada's erased historical assertion; current erasure restrictions apply."
+      },
+      {
+        "id": "q_owner_before_narrow",
+        "principal_ref": "g1",
+        "known_at": "2025-01-07T09:25:00Z",
+        "delivery_at": "2025-01-07T09:25:00Z",
+        "valid_at": null,
+        "request": "Retain a complete allowed question-attribution view with the future scoped token contract."
+      },
+      {
+        "id": "q_narrowed_old_view",
+        "principal_ref": "g1",
+        "known_at": "2025-01-07T09:31:00Z",
+        "delivery_at": "2025-01-07T09:31:00Z",
+        "valid_at": null,
+        "baseline_query_ref": "q_owner_before_narrow",
+        "request": "Compare the old view under the narrowed current grant."
+      },
+      {
+        "id": "q_narrowed_fresh",
+        "principal_ref": "g1",
+        "known_at": "2025-01-07T09:32:00Z",
+        "delivery_at": "2025-01-07T09:32:00Z",
+        "valid_at": null,
+        "request": "Obtain a fresh permitted view of the computing Concept and question."
+      }
+    ],
+    "controlled_admission_schedule": [
+      {
+        "id": "adm_r01",
+        "record_ref": "r01",
+        "admitted_at": "2025-01-02T10:06:00Z",
+        "mode": "controlled_mechanics_only",
+        "meaning": "Schedule checked grounded interpretation after capture; oracle payload is never sent to the real-producer-quality run.",
+        "core_admission_seq": 2
+      },
+      {
+        "id": "adm_r02",
+        "record_ref": "r02",
+        "admitted_at": "2025-01-03T11:06:00Z",
+        "mode": "controlled_mechanics_only",
+        "meaning": "Schedule checked grounded interpretation after capture; oracle payload is never sent to the real-producer-quality run.",
+        "core_admission_seq": 4
+      },
+      {
+        "id": "adm_r03",
+        "record_ref": "r03",
+        "admitted_at": "2025-01-03T11:11:00Z",
+        "mode": "controlled_mechanics_only",
+        "meaning": "Schedule checked grounded interpretation after capture; oracle payload is never sent to the real-producer-quality run.",
+        "core_admission_seq": 6
+      },
+      {
+        "id": "adm_r04",
+        "record_ref": "r04",
+        "admitted_at": "2025-01-03T11:21:00Z",
+        "mode": "controlled_mechanics_only",
+        "meaning": "Schedule checked grounded interpretation after capture; oracle payload is never sent to the real-producer-quality run.",
+        "core_admission_seq": 8
+      },
+      {
+        "id": "adm_r05",
+        "record_ref": "r05",
+        "admitted_at": "2025-01-04T12:06:00Z",
+        "mode": "controlled_mechanics_only",
+        "meaning": "Schedule checked grounded interpretation after capture; oracle payload is never sent to the real-producer-quality run.",
+        "core_admission_seq": 11
+      },
+      {
+        "id": "adm_r06",
+        "record_ref": "r06",
+        "admitted_at": "2025-01-05T13:06:00Z",
+        "mode": "controlled_mechanics_only",
+        "meaning": "Schedule checked grounded interpretation after capture; oracle payload is never sent to the real-producer-quality run.",
+        "core_admission_seq": 13
+      }
+    ],
+    "source_subjects": [
+      {
+        "id": "scope_s1",
+        "source_ref": "s1",
+        "raw_subject": "source:s1"
+      },
+      {
+        "id": "scope_s2",
+        "source_ref": "s2",
+        "raw_subject": "source:s2"
+      },
+      {
+        "id": "scope_s3",
+        "source_ref": "s3",
+        "raw_subject": "source:s3"
+      },
+      {
+        "id": "scope_s4",
+        "source_ref": "s4",
+        "raw_subject": "source:s4"
+      }
+    ]
+  },
+  "oracle": {
+    "visibility": "Development oracle only; never part of any system-under-test input. This fixture is not a held-out semantic-quality split.",
+    "status_vocabulary": "Use exact future ViewResult discriminators only where declared below. Current adapters retain their documented status vocabulary and record unsupported capability, not invented compatibility.",
+    "support_expectations": [
+      {
+        "id": "support_ada_definition",
+        "record_ref": "r01",
+        "meaning": "Attributable reported Concept definition; not proof of real-world mastery.",
+        "independence_root_refs": [
+          "r01"
+        ],
+        "valid": {
+          "kind": "unknown"
+        },
+        "span_utf16": {
+          "start": 0,
+          "end": 196
+        },
+        "event_version": 1,
+        "raw_available_at": "2025-01-02T10:05:00Z",
+        "admitted_at": "2025-01-02T10:06:00Z",
+        "admission_seq": 2,
+        "scheduled_admission_ref": "adm_r01"
+      },
+      {
+        "id": "support_ada_exposure",
+        "record_ref": "r01",
+        "meaning": "Ada reports reading a definition on 2 January; later exact owner correction supersedes this interpretation.",
+        "independence_root_refs": [
+          "r01"
+        ],
+        "valid": {
+          "kind": "known",
+          "from": "2025-01-02T10:00:00Z",
+          "until": null
+        },
+        "span_utf16": {
+          "start": 0,
+          "end": 196
+        },
+        "event_version": 1,
+        "raw_available_at": "2025-01-02T10:05:00Z",
+        "admitted_at": "2025-01-02T10:06:00Z",
+        "admission_seq": 2,
+        "scheduled_admission_ref": "adm_r01"
+      },
+      {
+        "id": "support_ben_definition",
+        "record_ref": "r02",
+        "meaning": "Complete independent computing-Concept definition and simple example, with Ben attribution and own Concept endpoint.",
+        "independence_root_refs": [
+          "r02"
+        ],
+        "valid": {
+          "kind": "unknown"
+        },
+        "span_utf16": {
+          "start": 0,
+          "end": 174
+        },
+        "event_version": 1,
+        "raw_available_at": "2025-01-03T11:05:00Z",
+        "admitted_at": "2025-01-03T11:06:00Z",
+        "admission_seq": 4,
+        "scheduled_admission_ref": "adm_r02"
+      },
+      {
+        "id": "support_question",
+        "record_ref": "r03",
+        "meaning": "Question text from unresolved A. Vale; uncertainty must not turn into a confirmed question answer, current fact or identity.",
+        "independence_root_refs": [
+          "r03"
+        ],
+        "valid": {
+          "kind": "unknown"
+        },
+        "span_utf16": {
+          "start": 0,
+          "end": 147
+        },
+        "event_version": 1,
+        "raw_available_at": "2025-01-03T11:10:00Z",
+        "admitted_at": "2025-01-03T11:11:00Z",
+        "admission_seq": 6,
+        "scheduled_admission_ref": "adm_r03"
+      },
+      {
+        "id": "support_homonym",
+        "record_ref": "r04",
+        "meaning": "Distinct existing project context named Idempotency; no generic Project API is required.",
+        "independence_root_refs": [
+          "r04"
+        ],
+        "valid": {
+          "kind": "unknown"
+        },
+        "span_utf16": {
+          "start": 0,
+          "end": 140
+        },
+        "event_version": 1,
+        "raw_available_at": "2025-01-03T11:20:00Z",
+        "admitted_at": "2025-01-03T11:21:00Z",
+        "admission_seq": 8,
+        "scheduled_admission_ref": "adm_r04"
+      },
+      {
+        "id": "support_copied_exposure",
+        "record_ref": "r05",
+        "prerequisite_support_refs": [
+          "support_ada_exposure"
+        ],
+        "meaning": "Copied reported exposure remains about 2 January, never copy creation on 4 January; this admission depends on the original support.",
+        "independence_root_refs": [
+          "r01"
+        ],
+        "valid": {
+          "kind": "known",
+          "from": "2025-01-02T10:00:00Z",
+          "until": null
+        },
+        "span_utf16": {
+          "start": 0,
+          "end": 196
+        },
+        "event_version": 1,
+        "raw_available_at": "2025-01-04T12:05:00Z",
+        "admitted_at": "2025-01-04T12:06:00Z",
+        "admission_seq": 11,
+        "scheduled_admission_ref": "adm_r05"
+      },
+      {
+        "id": "support_private_identity",
+        "record_ref": "r06",
+        "meaning": "Restricted source statement may support the narrow owner identity control and label; source statement is not independent real-world authorship proof.",
+        "independence_root_refs": [
+          "r06"
+        ],
+        "valid": {
+          "kind": "unknown"
+        },
+        "span_utf16": {
+          "start": 0,
+          "end": 159
+        },
+        "event_version": 1,
+        "raw_available_at": "2025-01-05T13:05:00Z",
+        "admitted_at": "2025-01-05T13:06:00Z",
+        "admission_seq": 13,
+        "scheduled_admission_ref": "adm_r06"
+      }
+    ],
+    "assertions": [
+      {
+        "id": "a_before_interpretation",
+        "query_ref": "q_before_interpretation",
+        "applicability": [
+          "declared_design",
+          "current_core",
+          "future"
+        ],
+        "evidence_refs": [
+          "r01"
+        ],
+        "semantic_control_refs": [],
+        "delivery_control_refs": [],
+        "expected": {
+          "current_core_baseline": "The accepted raw r01 can be retrieved as source-faithful evidence at this known_at.",
+          "future_admission_rule": "No later Observation, checked Concept/learning assertion or handle allocation is reconstructed as admitted at this boundary. Quoting raw text is not an already-admitted semantic interpretation.",
+          "known_at": "Core raw admission and semantic admission are separate gates; source timestamps confer neither."
+        },
+        "forbidden": [
+          "Using an interpretation admitted at 10:06 as known at 10:05:30.",
+          "Using delivery time or the fixture oracle to backfill historical interpreted state."
+        ]
+      },
+      {
+        "id": "a_initial_raw",
+        "query_ref": "q_initial",
+        "applicability": [
+          "declared_design",
+          "current_core"
+        ],
+        "evidence_refs": [
+          "r01",
+          "r02",
+          "r03",
+          "r04"
+        ],
+        "semantic_control_refs": [],
+        "delivery_control_refs": [],
+        "expected": {
+          "retained_raw_record_count": 4,
+          "record_versions": "Distinct source-faithful immutable captures with their own availability and attribution.",
+          "unknown_occurrence_refs": [
+            "r03"
+          ]
+        },
+        "forbidden": [
+          "Any future copy, restricted record, correction or purge content in the answer."
+        ]
+      },
+      {
+        "id": "a_initial_concept",
+        "query_ref": "q_initial",
+        "applicability": [
+          "declared_design",
+          "future"
+        ],
+        "evidence_refs": [
+          "r01",
+          "r02",
+          "r03",
+          "r04"
+        ],
+        "semantic_control_refs": [
+          "ctl_merge_concept"
+        ],
+        "delivery_control_refs": [],
+        "expected": {
+          "independent_definition_root_count": 2,
+          "concept_resolution": "Controlled owner-confirmation mode may group the two computing-Concept mentions using accepted A1 mechanics; automatic-quality mode must earn this separately.",
+          "ambiguous_actor_ref": "mention_ava",
+          "project_homonym": "Keep r04 distinct from the computing Concept.",
+          "learning": "Ada's reported exposure is independent of Ben's explanation; neither implies mastery, forgetting, importance or curiosity."
+        },
+        "forbidden": [
+          "Name-only person merge.",
+          "Project homonym merged with Concept.",
+          "Unknown A. Vale holder silently becomes owner or Ada.",
+          "Question-only evidence becomes a positive factual answer."
+        ]
+      },
+      {
+        "id": "a_copy",
+        "query_ref": "q_copy_before_private",
+        "applicability": [
+          "declared_design",
+          "future"
+        ],
+        "evidence_refs": [
+          "r01",
+          "r02",
+          "r03",
+          "r04",
+          "r05"
+        ],
+        "semantic_control_refs": [
+          "ctl_merge_concept"
+        ],
+        "delivery_control_refs": [],
+        "expected": {
+          "retained_raw_record_count": 5,
+          "independent_definition_root_count": 2,
+          "copy_record_created_at": "2025-01-04T12:00:00Z",
+          "copied_exposure_valid_from": "2025-01-02T10:00:00Z",
+          "view_token": "Future typed Ref<view> containing an opaque 43-character unpadded-base64url token from 32 random bytes, with server-side metadata and SHA-256 digest storage. No real token is stored in this fixture."
+        },
+        "forbidden": [
+          "Counting the copy as a third independent witness.",
+          "Moving Ada's learning event to copy creation/capture time.",
+          "Treating unknown dependence as proved independent."
+        ]
+      },
+      {
+        "id": "a_hidden_mutation",
+        "query_ref": "q_narrow_after_private",
+        "applicability": [
+          "declared_design",
+          "future"
+        ],
+        "evidence_refs": [
+          "r01",
+          "r02",
+          "r03",
+          "r04",
+          "r05"
+        ],
+        "semantic_control_refs": [
+          "ctl_merge_concept"
+        ],
+        "delivery_control_refs": [],
+        "compare_query_ref": "q_copy_before_private",
+        "expected": {
+          "view_status": "unchanged",
+          "preconditions": "Same principal, normalized query, purpose, scope, ceiling and schema; retained complete baseline issued at 13:04 and compared at 13:11 within the fixed 15-minute TTL. No other visible mutation. Never extend expiry to make this assertion pass.",
+          "equal_authorized_fields": [
+            "labels",
+            "groupings",
+            "anchored references",
+            "counts",
+            "rank",
+            "coverage",
+            "visible freshness",
+            "canonical data",
+            "all envelope metadata used for equality",
+            "typed authorized event/claim/receipt references"
+          ],
+          "authorization_namespace": "Unchanged by denied-only evidence/identity activity.",
+          "question_identity": "Still unresolved for g2."
+        },
+        "forbidden": [
+          "S4 name, label, canary, support IDs or denied counts in any response/error/debug envelope.",
+          "Global epochs or hidden cache generations force stale/new_view_required.",
+          "Cleartext token metadata.",
+          "Claiming constant-time behavior.",
+          "source_policy.epoch or denied counts leaked by ordinary recall/context/history envelopes.",
+          "A narrowed legacy client reaches candidate discovery instead of fixed unsupported-contract refusal."
+        ]
+      },
+      {
+        "id": "a_owner_identity",
+        "query_ref": "q_owner_after_private",
+        "applicability": [
+          "declared_design",
+          "future"
+        ],
+        "evidence_refs": [
+          "r03",
+          "r06"
+        ],
+        "semantic_control_refs": [
+          "ctl_private_identity"
+        ],
+        "delivery_control_refs": [],
+        "expected": {
+          "question_identity": "May resolve this mention to Ada through the exact permitted owner control and restricted support.",
+          "question_time": {
+            "kind": "unknown"
+          },
+          "label": "Violet Sail remains attributable to restricted r06.",
+          "epistemic_limit": "Owner control does not transform question text into demonstrated knowledge."
+        },
+        "forbidden": [
+          "Assigning the question r06's capture time.",
+          "Rewriting raw mention IDs or admitting model control text as owner authority."
+        ]
+      },
+      {
+        "id": "a_historical_before_correction",
+        "query_ref": "q_before_correction_history",
+        "applicability": [
+          "declared_design",
+          "future"
+        ],
+        "evidence_refs": [
+          "r01",
+          "r05"
+        ],
+        "semantic_control_refs": [],
+        "delivery_control_refs": [],
+        "expected": {
+          "historical_assertion": "The model then held Ada's reported 2 January reading exposure; preserve reported status and original validity.",
+          "known_at_limit": "The later owner correction is unavailable at this known_at and cannot alter this retained historical interpretation."
+        },
+        "forbidden": [
+          "Using the 6 January correction text or receipt as evidence already known on 5 January.",
+          "Replacing historical raw bytes or validity with capture time."
+        ]
+      },
+      {
+        "id": "a_correction",
+        "query_ref": "q_after_correction",
+        "applicability": [
+          "declared_design",
+          "future"
+        ],
+        "evidence_refs": [
+          "r01",
+          "r02",
+          "r05"
+        ],
+        "semantic_control_refs": [
+          "ctl_correct_exposure"
+        ],
+        "delivery_control_refs": [],
+        "expected": {
+          "authoritative_exposure": "Owner-corrected title-only exposure at 2025-01-01T10:00:00Z.",
+          "propagation": "Immediately supersede exact affected interpretation and hold stale dependents in the same authoritative correction path.",
+          "raw_records": "r01 and r05 remain unmodified source history.",
+          "independent_survivor": "Ben's definition/example and unrelated project evidence stay valid.",
+          "prose": "Useful permitted current description with attributable uncertainty; no obsolete reading assertion marked current."
+        },
+        "forbidden": [
+          "Waiting for consolidation before owner correction takes authority.",
+          "Treating title exposure as successful understanding/application/mastery.",
+          "Rewriting raw source statements."
+        ]
+      },
+      {
+        "id": "a_stale_job",
+        "query_ref": "q_stale_job",
+        "applicability": [
+          "declared_design",
+          "future"
+        ],
+        "evidence_refs": [
+          "r01",
+          "r02",
+          "r05"
+        ],
+        "semantic_control_refs": [
+          "ctl_job_prepare",
+          "ctl_correct_exposure",
+          "ctl_job_commit"
+        ],
+        "delivery_control_refs": [],
+        "expected": {
+          "stale_commit": "Refused after rechecking exact correction/evidence/policy fences; no accepted output or successful frontier for this stale attempt.",
+          "current_exposure": "Owner correction remains authoritative.",
+          "accounting": "Any actual prior model attempt retains real/unknown consumption; no refund-as-zero inference."
+        },
+        "forbidden": [
+          "Prepared output overwrites the correction.",
+          "Refusal relabeled successful empty consolidation."
+        ]
+      },
+      {
+        "id": "a_revoke",
+        "query_ref": "q_revoke",
+        "applicability": [
+          "declared_design",
+          "current_core",
+          "future"
+        ],
+        "evidence_refs": [
+          "r02",
+          "r03",
+          "r04",
+          "r05",
+          "r06"
+        ],
+        "semantic_control_refs": [
+          "ctl_private_identity"
+        ],
+        "delivery_control_refs": [
+          "ctl_revoke_s1"
+        ],
+        "expected": {
+          "current_core_baseline": "Existing source-use denial applies before later raw disclosure; raw custody may remain.",
+          "future_support_rule": "S1-dependent interpreted admissions and derived prose are held before delivery, including the dependent copied interpretation.",
+          "allowed_fresh_read": "Return independently rebuilt complete authorized data only when required dependencies are validated. While needed rebuilding is pending, explicit incomplete/unavailable is allowed.",
+          "raw_copy": "S3 raw custody remains separately selected and source-policy governed."
+        },
+        "forbidden": [
+          "Serving affected derived text marked current while merely scheduling invalidation.",
+          "Assuming source revocation physically erased raw data.",
+          "Treating S3's permitted raw copy as an independent survivor for the lost interpreted admission."
+        ]
+      },
+      {
+        "id": "a_first_purge_scope",
+        "query_ref": "q_first_purge",
+        "applicability": [
+          "declared_design",
+          "current_core",
+          "future"
+        ],
+        "evidence_refs": [
+          "r02",
+          "r03",
+          "r04",
+          "r05",
+          "r06"
+        ],
+        "semantic_control_refs": [],
+        "delivery_control_refs": [
+          "ctl_revoke_s1",
+          "ctl_purge_s1"
+        ],
+        "expected": {
+          "selected_raw_event_count": 1,
+          "total_fixture_raw_event_count_after": 5,
+          "retained_raw_record_refs": [
+            "r02",
+            "r03",
+            "r04",
+            "r05",
+            "r06"
+          ],
+          "future_derived_loss": "Remove S1-dependent admissions, observations/spans, identity bindings without surviving complete authority, labels/prose, content-bearing history/preimages/old digests, jobs/caches/replay inputs and other derived stores. Check store-specific receipts and tombstone linkage. Scrub every prior prose/archive/preimage and old receipt content/hash through the existing intent/journal writer, retaining only the accepted non-invertible tombstone protocol.",
+          "independent_survivor": "Regenerate computing-Concept definition from r02 with Ben's own complete endpoint/attribution. Surviving handle must have surviving permitted authority.",
+          "canary_scope": "cobalt-teacup remains in the separately retained raw r05. This operation cannot pass an estate-wide absence claim."
+        },
+        "forbidden": [
+          "Silently deleting r05 as though it were selected raw r01.",
+          "Retaining purged digests or source-derived IDs as history proof.",
+          "Reusing S1 wording and relabeling it Ben.",
+          "Automatically claiming detached backups, external clients or provider retention were erased."
+        ]
+      },
+      {
+        "id": "a_copy_raw_retained",
+        "query_ref": "q_copy_raw_retained",
+        "applicability": [
+          "declared_design",
+          "current_core"
+        ],
+        "evidence_refs": [
+          "r05"
+        ],
+        "semantic_control_refs": [],
+        "delivery_control_refs": [
+          "ctl_revoke_s1",
+          "ctl_purge_s1"
+        ],
+        "expected": {
+          "raw_record_ref": "r05",
+          "raw_record_created_at": "2025-01-04T12:00:00Z",
+          "content_contains": "cobalt-teacup",
+          "scope": "Source-faithful S3 raw retrieval is allowed by its own retained policy; it supplies no new independent root and cannot silently resurrect erased derived authority."
+        },
+        "forbidden": [
+          "Claiming S1-only purge removed every raw copy.",
+          "Conflating a separately captured raw event with an erasable derived cache row."
+        ]
+      },
+      {
+        "id": "a_second_purge",
+        "query_ref": "q_second_purge",
+        "applicability": [
+          "declared_design",
+          "current_core",
+          "future"
+        ],
+        "evidence_refs": [
+          "r02",
+          "r03",
+          "r04",
+          "r06"
+        ],
+        "semantic_control_refs": [],
+        "delivery_control_refs": [
+          "ctl_revoke_s1",
+          "ctl_purge_s1",
+          "ctl_purge_copy"
+        ],
+        "expected": {
+          "newly_selected_raw_event_count": 1,
+          "cumulative_selected_distinct_raw_event_count": 2,
+          "total_fixture_raw_event_count_after": 4,
+          "retained_raw_record_refs": [
+            "r02",
+            "r03",
+            "r04",
+            "r06"
+          ],
+          "independent_survivor": "r02 sustains its complete Concept definition/example with Ben attribution; r03/r04/r06 survive their own policies.",
+          "canary_scan": "After verified erasure completion, cobalt-teacup is absent from the defined managed system-under-test stores and retained replay/backup artifacts included in that explicit inventory. Oracle/input copies held outside the product are excluded and cannot be called purged.",
+          "reference_loss": "Well-formed unsupported erased object references return the fixed not_found shared by absent, revoked, denied and wrong-namespace references, with no old identifiers/counts/explanations; never reassigned silently to Ben."
+        },
+        "forbidden": [
+          "Counting the already-erased r01 as another new event deletion.",
+          "Claiming raw oracle/fixture files were physically erased.",
+          "Treating a shared general concept word as a purge canary."
+        ]
+      },
+      {
+        "id": "a_erased_history",
+        "query_ref": "q_erased_history",
+        "applicability": [
+          "declared_design",
+          "future"
+        ],
+        "evidence_refs": [],
+        "semantic_control_refs": [],
+        "delivery_control_refs": [
+          "ctl_revoke_s1",
+          "ctl_purge_s1",
+          "ctl_purge_copy"
+        ],
+        "expected": {
+          "history_result": "history_unavailable through the appropriate future history contract; unavailable with reason history through ViewResult when required.",
+          "disclosure": "Only permitted coverage bounds; current erasure overrides ability to serve past content.",
+          "unchanged": false
+        },
+        "forbidden": [
+          "Missing history treated as no change.",
+          "Reconstructing deleted history from hashes, fixture oracle or a fresh model.",
+          "Revealing erased IDs/details in an error."
+        ]
+      },
+      {
+        "id": "a_owner_baseline",
+        "query_ref": "q_owner_before_narrow",
+        "applicability": [
+          "declared_design",
+          "future"
+        ],
+        "evidence_refs": [
+          "r03",
+          "r06"
+        ],
+        "semantic_control_refs": [
+          "ctl_private_identity"
+        ],
+        "delivery_control_refs": [
+          "ctl_revoke_s1",
+          "ctl_purge_s1",
+          "ctl_purge_copy"
+        ],
+        "expected": {
+          "view_status": "current",
+          "preconditions": "Complete supported current projection and future scoped-view adapter available.",
+          "question_attribution": "Restricted owner-authorized resolution is still available before this grant is narrowed."
+        },
+        "forbidden": [
+          "Reusing an earlier token whose erased dependencies make its baseline invalid."
+        ]
+      },
+      {
+        "id": "a_narrowed_old_view",
+        "query_ref": "q_narrowed_old_view",
+        "applicability": [
+          "declared_design",
+          "future"
+        ],
+        "evidence_refs": [
+          "r02",
+          "r03",
+          "r04"
+        ],
+        "semantic_control_refs": [],
+        "delivery_control_refs": [
+          "ctl_revoke_s1",
+          "ctl_purge_s1",
+          "ctl_purge_copy",
+          "ctl_narrow_g1"
+        ],
+        "compare_query_ref": "q_owner_before_narrow",
+        "expected": {
+          "view_status": "new_view_required",
+          "payload": "Fixed response with no old identifiers, removed counts, private labels or detailed reason enumerating inaccessible state.",
+          "grant_check": "Current effective policy is validated before any bytes are serialized; a retained token is not a grant."
+        },
+        "forbidden": [
+          "unchanged",
+          "empty successful diff",
+          "old S4 content",
+          "old S4-derived person grouping",
+          "incrementing public global counters to explain the change"
+        ]
+      },
+      {
+        "id": "a_narrowed_fresh",
+        "query_ref": "q_narrowed_fresh",
+        "applicability": [
+          "declared_design",
+          "future"
+        ],
+        "evidence_refs": [
+          "r02",
+          "r03",
+          "r04"
+        ],
+        "semantic_control_refs": [],
+        "delivery_control_refs": [
+          "ctl_revoke_s1",
+          "ctl_purge_s1",
+          "ctl_purge_copy",
+          "ctl_narrow_g1"
+        ],
+        "expected": {
+          "fresh_view": "Ben's independent definition/example, distinct project context and question with unresolved A. Vale identity under this current grant.",
+          "coverage": "State actual retained permitted coverage. If the complete required projection cannot be built within budget, return explicit incomplete/unavailable.",
+          "forbidden_canary": "violet-paperboat"
+        },
+        "forbidden": [
+          "Violet Sail",
+          "Ada grouping derived solely from r06",
+          "hidden totals or hidden-source history"
+        ]
+      }
+    ]
+  },
+  "deferred_design_cases": [
+    {
+      "case": "Question object API",
+      "status": "future",
+      "meaning": "Initial Concept slice preserves source-faithful question text and unknown time. Durable open Question lifecycle awaits its own accepted registry/API."
+    },
+    {
+      "case": "Goals, two commitments, conflicting deadlines, skills and scoped procedures",
+      "status": "future",
+      "meaning": "Add independent oracle cases when contracts land; this four-step fixture proves none of them."
+    },
+    {
+      "case": "Completion claim, provider acknowledgement, independent wrong-version observation and later success",
+      "status": "future",
+      "meaning": "Separate evidence events and observed outcomes; no self-report implies achieved objective."
+    },
+    {
+      "case": "Expired/wrong-principal/wrong-scope cursor, restore view runtime generation and missing baseline history",
+      "status": "future",
+      "meaning": "Add isolated branches. Fixed new_view_required for invalid scoped baseline; no false unchanged. Restore invalidates live tokens before reads; partial pages never mix revisions."
+    },
+    {
+      "case": "Crash/restart, supported migration/export/restore and model-free rebuild equivalence",
+      "status": "current_core_baseline_then_future_extensions",
+      "meaning": "Baseline supported paths now; add rich dependency/handle/history streams only when implemented. Record exact target artifacts and purge/resurrection checks."
+    },
+    {
+      "case": "Same-name people, multilingual labels, source outage, missing coverage and unfamiliar-user trials",
+      "status": "future_fixture_expansion",
+      "meaning": "Required by the broader #496 workstream but not claimed covered by Ada/Ben/ambiguous-initials alone."
+    }
+  ],
+  "evaluation_plan": {
+    "state": "not_run",
+    "baselines": [
+      {
+        "name": "plain_source_history",
+        "status": "adapter_and_receipts_required"
+      },
+      {
+        "name": "lexical_retrieval",
+        "status": "adapter_and_receipts_required"
+      },
+      {
+        "name": "pinned_current_kizuki",
+        "commit": "a96c5f4a4455d22fb4b40537c308c6d019a36d0d",
+        "status": "adapter_and_receipts_required"
+      },
+      {
+        "name": "changed_kizuki",
+        "status": "future_exact_commit_required"
+      }
+    ],
+    "competitors": "Optional later isolated adapters for available, licensed, explicitly configured systems only. No accounts, credentials, paid calls or production dependencies are created by this fixture.",
+    "matching_fields": [
+      "corpus version and checksum",
+      "development versus held-out split",
+      "event availability prefix",
+      "exact source/grant scope",
+      "system revision and configuration",
+      "answering model and prompt",
+      "tokenizer and serialized input/output budget",
+      "seed where supported",
+      "hardware class",
+      "concurrency",
+      "warm/cold state",
+      "ingest/consolidation/maintenance/retry work"
+    ],
+    "comparison_rule": "Hold matched fields fixed wherever supported; systems requiring different model/hosting appear separately as end-to-end configurations. Unsupported and failed cases remain in the denominator.",
+    "proposed_safety_bounds": {
+      "candidate_claims": 128,
+      "raw_refs": 256,
+      "edges": 1024,
+      "traversal_depth": 4,
+      "response_bytes": 262144,
+      "packet_token_range": [
+        50,
+        2000
+      ],
+      "read_retries": 1,
+      "model_attempts_per_reserved_job": 1,
+      "status": "Proposed RFC engineering limits, not measured SLOs or qualified implementation."
+    },
+    "resource_budget_selection": "Freeze workload and matched baseline receipts first, then declare agreed CPU/memory/storage/latency/model-cost budgets before candidate evaluation. No retrospective relaxation; no numeric SLO is invented here.",
+    "measures": [
+      "per-case task success and failure",
+      "owner re-explanation/interventions",
+      "obsolete-assumption reuse",
+      "decisive-constraint recall at fixed serialization budget",
+      "attribution/support precision",
+      "honest abstention and gaps",
+      "identity false merges",
+      "perspective and valid/known time correctness",
+      "false completion",
+      "correction propagation lag",
+      "ingest lag",
+      "p50/p95 query latency",
+      "CPU time",
+      "peak RSS",
+      "storage growth",
+      "network requests and bytes",
+      "input/output model tokens, attempts and monetary cost where applicable"
+    ],
+    "hard_gates": [
+      "forbidden disclosure",
+      "permission bypass",
+      "lost authoritative data outside authorized purge",
+      "purge resurrection",
+      "broken existing contracts",
+      "stale state falsely marked current"
+    ],
+    "result_fields_required": [
+      "exact code artifact",
+      "fixture checksum",
+      "adapter configuration",
+      "capability supported/unsupported",
+      "case outcome and evidence",
+      "sample count",
+      "variation/uncertainty",
+      "judge/model dependence and disagreement",
+      "resource receipts",
+      "remaining limitations"
+    ],
+    "acceptance_limit": "Static JSON validation, seeded mechanics and synthetic transports do not establish real-producer quality, actual independent-client parity, unfamiliar-user acceptance, platform coverage or release readiness."
+  }
+}

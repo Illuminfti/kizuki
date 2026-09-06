@@ -1,3 +1,5 @@
+import { CANONICAL_FRONTMATTER_KEYS } from "./schema";
+
 export interface VaultPage {
   data: Record<string, unknown>;
   body: string;
@@ -173,15 +175,37 @@ function serializeValue(value: unknown, key: string): string {
   );
 }
 
+/**
+ * Canonical key order is the schema's closed keys, then remaining keys
+ * sorted. Hashing, writes, and tests all go through this function.
+ */
+export function canonicalizeFrontmatterKeys(
+  data: Record<string, unknown>,
+): string[] {
+  const seen = new Set<string>();
+  const keys: string[] = [];
+  for (const key of CANONICAL_FRONTMATTER_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(data, key)) continue;
+    keys.push(key);
+    seen.add(key);
+  }
+  for (const key of Object.keys(data).sort()) {
+    if (seen.has(key)) continue;
+    keys.push(key);
+  }
+  return keys;
+}
+
 export function serializePage(page: VaultPage): string {
   if (typeof page.body !== "string") {
     throw new TypeError("page body must be a string");
   }
+  const body = page.body.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const lines = ["---"];
-  for (const [key, value] of Object.entries(page.data)) {
+  for (const key of canonicalizeFrontmatterKeys(page.data)) {
     if (!KEY.test(key)) throw new TypeError(`invalid frontmatter key "${key}"`);
-    lines.push(`${key}: ${serializeValue(value, key)}`);
+    lines.push(`${key}: ${serializeValue(page.data[key], key)}`);
   }
   lines.push("---");
-  return `${lines.join("\n")}\n${page.body}`;
+  return `${lines.join("\n")}\n${body}`;
 }

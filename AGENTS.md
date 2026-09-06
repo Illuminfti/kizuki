@@ -174,6 +174,15 @@ The workspace uses TypeScript in strict mode and Bun. Inspect `package.json`,
 the lockfile, and CI on the checked-out revision before running commands. Match
 the Bun version pinned by the branch or handoff under review.
 
+Under WSL, run full-suite verification from a clone on the distribution's
+Linux filesystem, such as `~/src/kizuki`. Windows-mounted paths such as
+`/mnt/c` and `/mnt/d` add filesystem latency that can exhaust the existing
+tree-scan and subprocess test deadlines. Use those mounts only for focused
+checks; reproduce a timeout on the Linux filesystem before diagnosing a
+regression. Preserve the failing checkout and its changes, and record the
+exact tested commit and filesystem location. Do not widen timeouts to make a
+mounted full-suite run pass. See [Contributing](CONTRIBUTING.md#tests).
+
 Prefer repository-provided scripts. When `bun run verify` exists, it is the
 full repository gate. On revisions without that script, the baseline is:
 
@@ -351,6 +360,11 @@ Use the smallest set that covers the task. `orient-repository` comes first for
 all non-trivial work; `handoff-work` comes last when work continues elsewhere.
 Every skill is subordinate to `docs/CURRENT.md`, `docs/decision-log.md` and
 `rfcs/0002-autonomous-canon.md`; see `.agents/skills/README.md`.
+
+For narrow evidence, projection, World Slice, or GitHub-pickup questions, use
+the subordinate `.agents/OPERATING_SYSTEM.md` index and its catalogued domain
+skills. They supplement this workflow; generic work still uses the canonical
+orientation, implementation, review, and handoff skills above.
 
 ### Elegance
 

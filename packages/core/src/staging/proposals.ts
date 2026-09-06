@@ -1,7 +1,16 @@
 import { Database } from "bun:sqlite";
+import type { Sensitivity } from "../agents/types";
+import { contentSignature } from "../claims/hash";
 import { initClaims } from "../claims/schema";
-import { canonicalizeProducer, isProducer, PROPOSAL_KINDS } from "../contracts/proposal";
+import {
+  canonicalizeProducer,
+  isAuthorityTier,
+  isProducer,
+  PROPOSAL_KINDS,
+} from "../contracts/proposal";
 import type {
+  AuthorityTier,
+  ClaimTaint,
   FrontmatterValue,
   Producer,
   ProposalKind,
@@ -10,8 +19,11 @@ import { tableExists } from "../ledger/schema";
 import { requireExternalEvents } from "../ledger/event-origin";
 import { requiresSourceTombstoneBinding, requireSourceTombstoneProposal } from "../canon/source-tombstone";
 import type { SourceTombstoneContext } from "../canon/source-tombstone";
-import { cloneExactJson } from "../util/validate";
+import { labelClaimSensitivity } from "../sensitivity/store";
+import { stricter } from "../sensitivity/resolve";
+import { cloneExactJson, isNonEmptyString, isPlainObject } from "../util/validate";
 import { ulid } from "../util/ulid";
+import { NAMESPACED_SUBJECT_MAX } from "./subjects";
 
 /**
  * Compatibility seam over the claims table (RFC 0002 §4.3). New callers
@@ -29,6 +41,12 @@ export type StagingStatus = (typeof STAGING_STATUSES)[number];
 
 export type { FrontmatterScalar, FrontmatterValue } from "../contracts/proposal";
 
+const MAX_BODY_CHARS = 64_000;
+const MAX_FRONTMATTER_KEYS = 64;
+const MAX_SUBJECTS = 64;
+const MAX_PROVENANCE = 64;
+const FRONTMATTER_OWNED = new Set(["type", "title"]);
+
 export interface ProposalInput {
   kind: ProposalKind;
   /** Canon page this targets; null means the writer arbitrates. */
@@ -39,6 +57,9 @@ export interface ProposalInput {
   subjects?: string[];
   producer: Producer;
   confidence: number;
+  sensitivity?: Sensitivity;
+  taint?: ClaimTaint;
+  authority?: AuthorityTier;
 }
 
 export interface StagedProposal {
@@ -54,6 +75,10 @@ export interface StagedProposal {
   status: StagingStatus;
   created_at: string;
   body_hash: string;
+  content_hash: string;
+  sensitivity: Sensitivity;
+  taint: ClaimTaint;
+  authority: AuthorityTier;
 }
 
 export type FileProposalResult =
@@ -77,6 +102,7 @@ interface ProposalRow {
   status: string;
   created_at: string;
   body_hash: string;
+  content_hash: string;
 }
 
 export function initStaging(db: Database): void {
@@ -98,9 +124,28 @@ function nowRfc3339(): string {
   return new Date().toISOString();
 }
 
+function isFrontmatterValue(value: unknown): value is FrontmatterValue {
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return true;
+  }
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (item) =>
+        typeof item === "string" ||
+        typeof item === "number" ||
+        typeof item === "boolean",
+    )
+  );
+}
+
 function parseJsonObject(raw: string): Record<string, FrontmatterValue> {
   const parsed: unknown = JSON.parse(raw);
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+  if (!isPlainObject(parsed)) {
     throw new StagingError("frontmatter: stored value is not an object");
   }
   return parsed as Record<string, FrontmatterValue>;
@@ -114,7 +159,50 @@ function parseStringArray(raw: string, field: string): string[] {
   return parsed;
 }
 
-function rowToProposal(row: ProposalRow): StagedProposal {
+function uniqueStrings(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    if (seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
+function claimLabels(
+  db: Database,
+  proposalId: string,
+): {
+  sensitivity: Sensitivity;
+  taint: ClaimTaint;
+  authority: AuthorityTier;
+} {
+  const defaults = {
+    sensitivity: "private" as const,
+    taint: "quoted" as const,
+    authority: "connector_evidence" as const,
+  };
+  if (!tableExists(db, "claims")) return defaults;
+  const row = db
+    .query<
+      { sensitivity: string | null; taint: string; authority: string },
+      [string]
+    >(
+      "SELECT sensitivity, taint, authority FROM claims WHERE claim_id = ?",
+    )
+    .get(proposalId);
+  if (row === null) return defaults;
+  return {
+    sensitivity: (row.sensitivity ?? "private") as Sensitivity,
+    taint: row.taint === "clean" ? "clean" : "quoted",
+    authority: isAuthorityTier(row.authority)
+      ? row.authority
+      : "connector_evidence",
+  };
+}
+
+function rowToProposal(db: Database, row: ProposalRow): StagedProposal {
   return {
     proposal_id: row.proposal_id,
     kind: row.kind as ProposalKind,
@@ -128,6 +216,8 @@ function rowToProposal(row: ProposalRow): StagedProposal {
     status: row.status as StagingStatus,
     created_at: row.created_at,
     body_hash: row.body_hash,
+    content_hash: row.content_hash,
+    ...claimLabels(db, row.proposal_id),
   };
 }
 
@@ -140,12 +230,18 @@ function validateInput(input: ProposalInput): void {
   if (typeof input.body !== "string") {
     throw new StagingError("body: must be a string");
   }
+  if (input.body.length > MAX_BODY_CHARS) {
+    throw new StagingError(`body: must be at most ${MAX_BODY_CHARS} characters`);
+  }
   if (!Array.isArray(input.provenance) || input.provenance.length === 0) {
     throw new StagingError("provenance: must name at least one event_id");
   }
-  if (
-    !input.provenance.every((id) => typeof id === "string" && id.length > 0)
-  ) {
+  if (input.provenance.length > MAX_PROVENANCE) {
+    throw new StagingError(
+      `provenance: must name at most ${MAX_PROVENANCE} event_ids`,
+    );
+  }
+  if (!input.provenance.every(isNonEmptyString)) {
     throw new StagingError(
       "provenance: every entry must be a non-empty string",
     );
@@ -164,10 +260,145 @@ function validateInput(input: ProposalInput): void {
     throw new StagingError("confidence: must be a number in [0, 1]");
   }
   if (input.target !== undefined && input.target !== null) {
-    if (input.target.length === 0) {
+    if (typeof input.target !== "string" || input.target.length === 0) {
       throw new StagingError("target: must be null or a non-empty string");
     }
+    if (input.target.length > NAMESPACED_SUBJECT_MAX) {
+      throw new StagingError(
+        `target: must be at most ${NAMESPACED_SUBJECT_MAX} characters`,
+      );
+    }
   }
+  if (!isPlainObject(input.frontmatter)) {
+    throw new StagingError("frontmatter: must be a plain object");
+  }
+  const keys = Object.keys(input.frontmatter);
+  if (keys.length > MAX_FRONTMATTER_KEYS) {
+    throw new StagingError(
+      `frontmatter: must have at most ${MAX_FRONTMATTER_KEYS} keys`,
+    );
+  }
+  for (const key of keys) {
+    if (!FRONTMATTER_OWNED.has(key) && !key.startsWith("x-")) {
+      throw new StagingError(
+        `frontmatter: ${key} is unknown; extensions must start with "x-"`,
+      );
+    }
+    if (!isFrontmatterValue(input.frontmatter[key])) {
+      throw new StagingError(
+        "frontmatter: values must be scalars or scalar arrays",
+      );
+    }
+  }
+  const subjects = input.subjects ?? [];
+  if (!Array.isArray(subjects) || !subjects.every((item) => typeof item === "string")) {
+    throw new StagingError("subjects: must be a string array");
+  }
+  if (subjects.length > MAX_SUBJECTS) {
+    throw new StagingError(`subjects: must name at most ${MAX_SUBJECTS} ids`);
+  }
+  if (!subjects.every((id) => isNonEmptyString(id) && id.length <= NAMESPACED_SUBJECT_MAX)) {
+    throw new StagingError(
+      `subjects: every entry must be a non-empty string of at most ${NAMESPACED_SUBJECT_MAX} characters`,
+    );
+  }
+  if (input.taint !== undefined && input.taint !== "clean" && input.taint !== "quoted") {
+    throw new StagingError('taint: must be "clean" or "quoted"');
+  }
+  if (input.authority !== undefined && !isAuthorityTier(input.authority)) {
+    throw new StagingError("authority: must be a known authority tier");
+  }
+}
+
+function resolveProvenance(db: Database, ids: readonly string[]): void {
+  if (!tableExists(db, "events")) {
+    throw new StagingError("provenance: events table is missing");
+  }
+  const lookup = db.query<{ event_id: string }, [string]>(
+    "SELECT event_id FROM events WHERE event_id = ?",
+  );
+  for (const id of uniqueStrings(ids)) {
+    if (lookup.get(id) === null) {
+      throw new StagingError(
+        "provenance: one or more event_ids do not resolve in the ledger",
+      );
+    }
+  }
+}
+
+function loadEventFacts(
+  db: Database,
+  ids: readonly string[],
+): { connector_ids: string[]; hints: unknown[] } {
+  const lookup = db.query<
+    { connector_id: string; sensitivity_hint: string | null },
+    [string]
+  >("SELECT connector_id, sensitivity_hint FROM events WHERE event_id = ?");
+  const connector_ids: string[] = [];
+  const hints: unknown[] = [];
+  const seen = new Set<string>();
+  for (const id of uniqueStrings(ids)) {
+    const row = lookup.get(id);
+    if (row === null) continue;
+    hints.push(row.sensitivity_hint);
+    if (seen.has(row.connector_id)) continue;
+    seen.add(row.connector_id);
+    connector_ids.push(row.connector_id);
+  }
+  return { connector_ids, hints };
+}
+
+function resolveLabels(
+  db: Database,
+  input: ProposalInput,
+  provenance: readonly string[],
+): {
+  sensitivity: Sensitivity;
+  taint: ClaimTaint;
+  authority: AuthorityTier;
+} {
+  const facts = loadEventFacts(db, provenance);
+  const sensitivity = labelClaimSensitivity(db, {
+    connector_ids: facts.connector_ids,
+    event_hints: facts.hints,
+    ...(input.sensitivity === undefined
+      ? {}
+      : { model_label: input.sensitivity }),
+  }).sensitivity;
+  return {
+    sensitivity,
+    taint: input.taint ?? "quoted",
+    authority: input.authority ?? "connector_evidence",
+  };
+}
+
+function lookupSignatureRow(db: Database, contentHash: string): ProposalRow | null {
+  return db
+    .query(
+      `SELECT * FROM proposals
+        WHERE content_hash = ? AND status IN ('pending', 'promoted')
+        ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END,
+                 created_at, proposal_id
+        LIMIT 1`,
+    )
+    .get(contentHash) as ProposalRow | null;
+}
+
+function signatureOf(
+  input: Pick<
+    StagedProposal,
+    "kind" | "target" | "body" | "frontmatter" | "subjects" | "producer" | "confidence"
+  >,
+): string {
+  return contentSignature({
+    kind: input.kind,
+    target: input.target,
+    body: input.body,
+    frontmatter: input.frontmatter,
+    subjects: input.subjects,
+    producer: canonicalizeProducer(input.producer),
+    confidence: input.confidence,
+  });
 }
 
 function compatStatusToClaim(status: StagingStatus): string {
@@ -200,12 +431,12 @@ function insertCompatClaim(
   db.query(
     `INSERT OR IGNORE INTO claims
        (claim_id, kind, target, body, frontmatter, provenance, subjects,
-        producer, confidence, status, created_at, body_hash,
+        producer, confidence, status, created_at, body_hash, content_hash,
         subject, predicate, object, polarity, claim_key, authority,
         sensitivity, taint, model_ref, valid_from, valid_to, asserted_at,
         retracted_at, superseded_by, receipt_id, corroboration, last_confirmed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'positive', NULL,
-             'connector_evidence', 'private', 'quoted', NULL, ?, NULL, ?,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'positive', NULL,
+             ?, ?, ?, NULL, ?, NULL, ?,
              ?, NULL, NULL, 1, ?)`,
   ).run(
     proposal.proposal_id,
@@ -220,11 +451,76 @@ function insertCompatClaim(
     compatStatusToClaim(status),
     proposal.created_at,
     proposal.body_hash,
+    proposal.content_hash,
     subject,
+    proposal.authority,
+    proposal.sensitivity,
+    proposal.taint,
     proposal.created_at,
     proposal.created_at,
     status === "withdrawn" ? proposal.created_at : null,
     proposal.created_at,
+  );
+  if (
+    db.query("SELECT 1 FROM claims WHERE claim_id = ?").get(proposal.proposal_id) ===
+    null
+  ) {
+    throw new StagingError(
+      "claim: content signature already occupies a live row",
+    );
+  }
+}
+
+function corroborateCompatClaim(
+  db: Database,
+  proposal: StagedProposal,
+  provenance: readonly string[],
+  at: string,
+  bump: boolean,
+): void {
+  if (!tableExists(db, "claims")) return;
+  const live = db
+    .query<
+      { claim_id: string; provenance: string; corroboration: number; sensitivity: string | null },
+      [string]
+    >(
+      `SELECT claim_id, provenance, corroboration, sensitivity
+         FROM claims WHERE claim_id = ? AND status = 'live'`,
+    )
+    .get(proposal.proposal_id);
+  if (live === null) return;
+  const current = parseStringArray(live.provenance, "provenance");
+  const merged = uniqueStrings([...current, ...provenance]);
+  const sensitivity = stricter(
+    (live.sensitivity ?? "private") as Sensitivity,
+    proposal.sensitivity,
+  );
+  db.query(
+    `UPDATE claims
+        SET provenance = ?, corroboration = ?, last_confirmed_at = ?, sensitivity = ?
+      WHERE claim_id = ?`,
+  ).run(
+    JSON.stringify(merged),
+    bump ? live.corroboration + 1 : live.corroboration,
+    at,
+    sensitivity,
+    live.claim_id,
+  );
+}
+
+function vacateSignature(
+  db: Database,
+  proposalId: string,
+  contentHash: string,
+): void {
+  db.query("UPDATE proposals SET content_hash = ? WHERE proposal_id = ?").run(
+    contentHash,
+    proposalId,
+  );
+  if (!tableExists(db, "claims")) return;
+  db.query("UPDATE claims SET content_hash = ? WHERE claim_id = ?").run(
+    contentHash,
+    proposalId,
   );
 }
 
@@ -245,8 +541,9 @@ function updateCompatClaim(
 export { isSourceTombstoneProposal } from "../canon/source-tombstone";
 
 /**
- * Idempotent file. Refiling identical content is a duplicate, not an error.
- * Owner rejection no longer poisons a body hash (RFC 0002 §18.2).
+ * Idempotent file. Semantic fields form the content signature. A later
+ * sighting with new provenance corroborates the live row. A withdrawn or
+ * rejected historical row does not block improved evidence.
  */
 export function fileProposal(
   db: Database,
@@ -267,32 +564,56 @@ export function fileProposal(
 
   const bodyHash = hashBody(input.body);
   const target = input.target ?? null;
-  const targetKey = target ?? "";
   const provenance = input.kind === "purge_review"
     ? [...new Set(input.provenance)].sort()
-    : [...input.provenance];
+    : uniqueStrings(input.provenance);
+  resolveProvenance(db, provenance);
+  const subjects = [...(input.subjects ?? [])];
+  const labels = resolveLabels(db, input, provenance);
+  const contentHash = signatureOf({
+    kind: input.kind,
+    target,
+    body: input.body,
+    frontmatter: input.frontmatter,
+    subjects,
+    producer: input.producer,
+    confidence: input.confidence,
+  });
 
   const file = db.transaction((): FileProposalResult => {
     const sourceDeletion = requiresSourceTombstoneBinding(db, input);
     if (sourceDeletion) requireSourceTombstoneProposal(db, input, context);
     else requireExternalEvents(db, provenance);
-    const existing = input.kind === "purge_review"
-      ? db
-          .query(
-            `SELECT * FROM proposals
-              WHERE kind = ? AND coalesce(target, '') = ? AND body_hash = ?
-                AND provenance = ? AND status = 'pending'`,
-          )
-          .get(input.kind, targetKey, bodyHash, JSON.stringify(provenance)) as ProposalRow | null
-      : db
-          .query(
-            "SELECT * FROM proposals WHERE kind = ? AND coalesce(target, '') = ? AND body_hash = ?",
-          )
-          .get(input.kind, targetKey, bodyHash) as ProposalRow | null;
+    const existing = lookupSignatureRow(db, contentHash);
     if (existing !== null) {
-      const proposal = rowToProposal(existing);
-      if (sourceDeletion) requireSourceTombstoneProposal(db, proposal, context);
-      return { outcome: "duplicate", proposal };
+      const current = rowToProposal(db, existing);
+      if (signatureOf(current) === contentHash) {
+        if (sourceDeletion) requireSourceTombstoneProposal(db, current, context);
+        const merged = uniqueStrings([...current.provenance, ...provenance]);
+        const grew = merged.length !== current.provenance.length;
+        const sensitivity = stricter(current.sensitivity, labels.sensitivity);
+        if (grew) {
+          db.query(
+            "UPDATE proposals SET provenance = ? WHERE proposal_id = ?",
+          ).run(JSON.stringify(merged), current.proposal_id);
+        }
+        if (grew || sensitivity !== current.sensitivity) {
+          corroborateCompatClaim(
+            db,
+            { ...current, provenance: merged, sensitivity },
+            provenance,
+            nowRfc3339(),
+            grew,
+          );
+        }
+        return { outcome: "duplicate", proposal: rowToProposal(db, {
+          ...existing,
+          provenance: JSON.stringify(merged),
+        }) };
+      }
+      // The unique slot is the live signature. A pending row whose stored
+      // fields no longer hash to this content_hash does not occupy it.
+      vacateSignature(db, current.proposal_id, signatureOf(current));
     }
 
     const proposal: StagedProposal = {
@@ -302,19 +623,21 @@ export function fileProposal(
       body: input.body,
       frontmatter: input.frontmatter,
       provenance,
-      subjects: [...(input.subjects ?? [])],
+      subjects,
       producer: input.producer,
       confidence: input.confidence,
       status: "pending",
       created_at: nowRfc3339(),
       body_hash: bodyHash,
+      content_hash: contentHash,
+      ...labels,
     };
 
     db.query(
       `INSERT INTO proposals
          (proposal_id, kind, target, body, frontmatter, provenance, subjects,
-          producer, confidence, status, created_at, body_hash)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          producer, confidence, status, created_at, body_hash, content_hash)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       proposal.proposal_id,
       proposal.kind,
@@ -328,6 +651,7 @@ export function fileProposal(
       proposal.status,
       proposal.created_at,
       proposal.body_hash,
+      proposal.content_hash,
     );
     insertCompatClaim(db, proposal, "pending");
 
@@ -344,7 +668,7 @@ export function getProposal(
   const row = db
     .query("SELECT * FROM proposals WHERE proposal_id = ?")
     .get(proposalId) as ProposalRow | null;
-  return row === null ? null : rowToProposal(row);
+  return row === null ? null : rowToProposal(db, row);
 }
 
 export interface ListProposalsOptions {
@@ -374,7 +698,7 @@ export function listProposals(
       `SELECT * FROM proposals${where} ORDER BY created_at, proposal_id LIMIT ?`,
     )
     .all(...params, limit) as ProposalRow[];
-  return rows.map(rowToProposal);
+  return rows.map((row) => rowToProposal(db, row));
 }
 
 export function setProposalStatus(
@@ -388,14 +712,21 @@ export function setProposalStatus(
       `status: must be one of ${STAGING_STATUSES.join(" | ")}`,
     );
   }
-  if (status === "rejected" && (_reason === undefined || _reason.length === 0)) {
-    throw new StagingError("reason: rejection requires a reason");
+  if (status !== "withdrawn") {
+    throw new StagingError(
+      "status: legacy writes only withdraw pending rows; claim transitions are receipt-driven",
+    );
   }
 
   const apply = db.transaction((): StagedProposal => {
     const existing = getProposal(db, proposalId);
     if (existing === null) {
       throw new StagingError(`proposal ${proposalId} does not exist`);
+    }
+    if (existing.status !== "pending") {
+      throw new StagingError(
+        `status: cannot withdraw a ${existing.status} proposal`,
+      );
     }
     db.query("UPDATE proposals SET status = ? WHERE proposal_id = ?").run(
       status,

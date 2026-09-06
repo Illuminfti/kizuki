@@ -12,10 +12,10 @@ import { tableExists } from "../ledger/schema";
 import { ulid } from "../util/ulid";
 import { parseFrontmatter } from "../vault/frontmatter";
 import type { VaultPage } from "../vault/frontmatter";
-import { listCanonPagesReport } from "../vault/pages";
+import { fatalCanonSkips, listCanonPagesReport } from "../vault/pages";
 import type { RetrievalPort } from "../contracts/retrieval";
 import { hashBytes } from "../vault/write";
-import { RECEIPTS_PATH, latestReceiptForPage } from "./receipts";
+import { RECEIPTS_PATH, getCanonReceipt, latestReceiptForPage } from "./receipts";
 import type { CanonReceipt } from "./receipts";
 import { initCanon } from "./schema";
 import type { MachineByteIntent } from "../ledger/event-origin";
@@ -61,24 +61,34 @@ export interface ExistingPage {
   page: VaultPage;
 }
 
-/** Reconstructed from PR427: only an actual ENOENT means the page is absent. */
 export class CanonPageUnreadable extends Error {
   override readonly name = "CanonPageUnreadable";
-  constructor(readonly relPath: string, readonly code: string) {
+
+  constructor(
+    readonly relPath: string,
+    readonly code: string,
+  ) {
     super("canon page is unreadable");
   }
 }
+
+function fsCode(error: unknown): string {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    const code = error.code;
+    if (typeof code === "string" && /^[A-Z][A-Z0-9_]+$/.test(code)) return code;
+  }
+  return "EIO";
+}
+
+
 export function readPage(io: CanonIo, relPath: string): ExistingPage | null {
   const path = join(io.vault_path, relPath);
   let bytes: Buffer;
   try {
     bytes = readFileSync(path);
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") return null;
-    throw new CanonPageUnreadable(
-      relPath, typeof code === "string" && /^[A-Z][A-Z0-9_]+$/.test(code) ? code : "EIO",
-    );
+    if (fsCode(error) === "ENOENT") return null;
+    throw new CanonPageUnreadable(relPath, fsCode(error));
   }
   const content = bytes.toString("utf8");
   return {
@@ -223,6 +233,32 @@ export function deletePageIndex(db: Database, relPath: string): void {
   db.query("DELETE FROM page_index WHERE rel_path = ?").run(relPath);
 }
 
+/**
+ * page_index last_receipt/last_hash must agree with the receipt they name.
+ * A missing receipt or a hash that does not match that receipt is drift,
+ * not a hand edit (hand edits change the file, not the receipt row).
+ */
+export function inspectPageIndex(db: Database): string[] {
+  if (!tableExists(db, "page_index") || !tableExists(db, "canon_receipts")) return [];
+  const rows = db.query<PageIndexEntry, []>("SELECT * FROM page_index").all();
+  const failures: string[] = [];
+  for (const row of rows) {
+    if (row.last_receipt === null) continue;
+    const receipt = getCanonReceipt(db, row.last_receipt);
+    if (receipt === null) {
+      failures.push("page_index last_receipt missing");
+      continue;
+    }
+    if (receipt.page_path !== row.rel_path) {
+      failures.push("page_index last_receipt path mismatch");
+    }
+    if (receipt.after_hash !== row.last_hash) {
+      failures.push("page_index last_hash does not match receipt");
+    }
+  }
+  return failures;
+}
+
 function subjectKeyOf(data: Record<string, unknown>): string | null {
   const raw = data["x-subject-id"];
   return typeof raw === "string" && raw.length > 0 ? raw : null;
@@ -232,22 +268,50 @@ function subjectKeyOf(data: Record<string, unknown>): string | null {
  * `page_index` is derived state (architecture invariant 2): it is rebuilt
  * from the vault plus the receipt rows, and a rebuild is what a vault that
  * predates v4 runs once so the arbiter can see its pages.
+ * A named schema-invalid page stays in the index so the arbiter cannot fork
+ * its subject; serving still withholds it. A truncated or fatal walk refuses
+ * without wiping the existing index.
+ * `last_hash` is the latest receipt's `after_hash` when one exists, so
+ * doctor can distinguish receipt/index drift from a later hand edit.
  */
 export function rebuildPageIndex(io: CanonIo): { pages: number; skipped: number } {
   initCanon(io.db);
   const report = listCanonPagesReport(io.vault_path);
+  if (report.truncated || fatalCanonSkips(report.skipped).length > 0) {
+    throw new Error("canon is unreadable; page index rebuild refused");
+  }
   const rebuild = io.db.transaction((): number => {
     io.db.exec("DELETE FROM page_index");
     let count = 0;
-    for (const page of report.pages) {
+    const indexed = new Set<string>();
+    const put = (
+      pageId: string,
+      relPath: string,
+      data: Record<string, unknown>,
+      contentHash: string,
+    ): void => {
+      if (indexed.has(pageId)) return;
+      const latest = latestReceiptForPage(io.db, relPath);
       upsertPageIndex(io.db, {
-        page_id: page.id,
-        rel_path: page.relPath,
-        subject_key: subjectKeyOf(page.data),
-        last_receipt: latestReceiptForPage(io.db, page.relPath)?.receipt_id ?? null,
-        last_hash: page.contentHash,
+        page_id: pageId,
+        rel_path: relPath,
+        subject_key: subjectKeyOf(data),
+        last_receipt: latest?.receipt_id ?? null,
+        last_hash: latest?.after_hash ?? contentHash,
       });
+      indexed.add(pageId);
       count += 1;
+    };
+    for (const page of report.pages) {
+      put(page.id, page.relPath, page.data, page.contentHash);
+    }
+    for (const entry of report.skipped) {
+      if (entry.code !== "invalid") continue;
+      const existing = readPage(io, entry.relPath);
+      if (existing === null) continue;
+      const id = existing.page.data["id"];
+      if (typeof id !== "string" || id.length === 0) continue;
+      put(id, entry.relPath, existing.page.data, existing.hash);
     }
     return count;
   });

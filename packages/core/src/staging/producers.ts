@@ -10,6 +10,10 @@ import { fileProposal, setProposalStatus, StagingError } from "./proposals";
 import type { ProposalInput } from "./proposals";
 import { sourceTombstoneProposal, SourceTombstoneError } from "../canon/source-tombstone";
 import type { SourceTombstoneContext } from "../canon/source-tombstone";
+import { DETERMINISTIC_PRODUCER_BUDGET } from "./budget";
+import { encodeSubjectSegment, namespacedSubjectId } from "./subjects";
+
+export { DETERMINISTIC_PRODUCER_BUDGET };
 
 /**
  * The deterministic floor: claims derivable from an event with no model.
@@ -46,43 +50,76 @@ function entityProposal(
   subject: SubjectRef,
 ): ProposalInput {
   const handle = handleOf(subject.subject_id);
+  const subjectRef = namespacedSubjectId(event.connector_id, subject.subject_id);
   return {
     kind: "entity",
-    target: subject.subject_id,
-    // Stable per subject, so a second sighting dedupes onto this candidate
-    // instead of forking a second stub page for the same subject.
-    body: `Stub entity page for \`${subject.subject_id}\`.`,
+    target: subjectRef,
+    // Stable per namespaced subject, so a second sighting dedupes onto this
+    // candidate instead of forking a second stub page for the same subject.
+    body: `Stub entity page for \`${subjectRef}\`.`,
     frontmatter: {
       type: subjectPageType(subject.subject_id),
-      title: subject.display_name ?? handle,
+      title: handle,
       "x-handle": handle,
       "x-subject-id": subject.subject_id,
       "x-connector": event.connector_id,
+      ...(subject.display_name === undefined
+        ? {}
+        : { "x-display-name": subject.display_name }),
     },
     provenance: [event.event_id],
-    subjects: [subject.subject_id],
+    subjects: [subjectRef],
     producer: "deterministic",
     confidence: ENTITY_CONFIDENCE,
+    ...(event.sensitivity_hint === undefined
+      ? {}
+      : { sensitivity: event.sensitivity_hint }),
+    taint: "quoted",
+    authority: "connector_evidence",
   };
 }
 
+function captureNoteTarget(event: CaptureEvent): string {
+  const day = event.occurred_at.slice(0, 10);
+  const connector = encodeSubjectSegment(event.connector_id);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+    return `captures/${connector}`;
+  }
+  return `captures/${connector}/${day}`;
+}
+
 function captureNoteProposal(event: CaptureEvent): ProposalInput {
-  const header = `Captured from \`${event.connector_id}\` (${event.kind}) at ${event.occurred_at}.`;
+  const clipped =
+    event.text.length > DETERMINISTIC_PRODUCER_BUDGET.maxCaptureNoteChars
+      ? event.text.slice(0, DETERMINISTIC_PRODUCER_BUDGET.maxCaptureNoteChars)
+      : event.text;
+  const truncated =
+    clipped.length < event.text.length
+      ? " Quoted text truncated to the capture-note budget."
+      : "";
+  const header = `Captured from \`${event.connector_id}\` (${event.kind}) at ${event.occurred_at}.${truncated}`;
+  const subjects = event.subjects
+    .slice(0, DETERMINISTIC_PRODUCER_BUDGET.maxSubjectsPerEvent)
+    .map((subject) => namespacedSubjectId(event.connector_id, subject.subject_id));
   return {
     kind: "claim",
-    target: null,
-    body: `${header}\n\n${blockquote(event.text)}`,
+    target: captureNoteTarget(event),
+    body: `${header}\n\n${blockquote(clipped)}`,
     frontmatter: {
-      // "source" in the vault schema: a source-faithful capture, not owner prose.
       type: "source",
       title: `Capture from ${event.connector_id} at ${event.occurred_at}`,
       "x-connector": event.connector_id,
       "x-capture-kind": event.kind,
     },
     provenance: [event.event_id],
-    subjects: event.subjects.map((s) => s.subject_id),
+    subjects,
     producer: "deterministic",
     confidence: CAPTURE_CONFIDENCE,
+    ...(event.sensitivity_hint === undefined
+      ? {}
+      : { sensitivity: event.sensitivity_hint }),
+    taint: "quoted",
+    authority: "connector_evidence",
   };
 }
 
@@ -114,9 +151,14 @@ export function proposalsForEvent(
 
   const proposals: ProposalInput[] = [];
   const seen = new Set<string>();
-  for (const subject of event.subjects) {
-    if (seen.has(subject.subject_id)) continue;
-    seen.add(subject.subject_id);
+  const subjects = event.subjects.slice(
+    0,
+    DETERMINISTIC_PRODUCER_BUDGET.maxSubjectsPerEvent,
+  );
+  for (const subject of subjects) {
+    const key = namespacedSubjectId(event.connector_id, subject.subject_id);
+    if (seen.has(key)) continue;
+    seen.add(key);
     proposals.push(entityProposal(event, subject));
   }
 
@@ -125,10 +167,7 @@ export function proposalsForEvent(
     : null;
   if (candidate !== null && candidate.ok) {
     proposals.push(pageCandidateProposal(event, candidate.value));
-  } else {
-    // Fail closed: metadata that claims to be a page but does not validate —
-    // or that arrived from a source with no grant to mint one — becomes the
-    // blockquoted capture note, never a typed page.
+  } else if (event.text.trim().length > 0) {
     proposals.push(captureNoteProposal(event));
   }
   return proposals;

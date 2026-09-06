@@ -7,6 +7,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,6 +15,9 @@ import { join } from "node:path";
 import {
   DOCTRINE_VERSION,
   INIT_JOURNAL_SCHEMA,
+  MAX_CANON_DEPTH,
+  MAX_CANON_PAGE_BYTES,
+  MAX_FRONTMATTER_ARRAY_ITEMS,
   VaultInitError,
   assertVaultControl,
   doctorVault,
@@ -48,6 +52,7 @@ function validData(overrides: Record<string, unknown> = {}): Record<string, unkn
     type: "person",
     status: "active",
     sensitivity: "personal",
+    taint: "clean",
     sources: ["event:01", "source:notes"],
     ...overrides,
   };
@@ -310,10 +315,10 @@ describe("frontmatter", () => {
 });
 
 describe("validatePage", () => {
-  test("requires all five canon identity and policy keys", () => {
+  test("requires identity, policy, and taint keys", () => {
     const errors = validatePage({});
 
-    for (const key of ["id", "title", "type", "status", "sensitivity"]) {
+    for (const key of ["id", "title", "type", "status", "sensitivity", "taint"]) {
       expect(errors.some((error) => error.includes(key))).toBe(true);
     }
   });
@@ -338,6 +343,26 @@ describe("validatePage", () => {
       'nickname: unknown key; extensions must start with "x-"',
     );
     expect(validatePage(validData({ "x-whatever": "Enchantress" }))).toEqual([]);
+  });
+
+  test("rejects nested and prototype-shaped x- extension values", () => {
+    expect(validatePage(validData({ "x-nested": { inner: "no" } }))).toContain(
+      "x-nested: must be a string, finite number, boolean, or string array",
+    );
+    expect(validatePage(validData({ "x-list": [1, true] }))[0]).toMatch(
+      /x-list\[0\]: arrays may contain only strings/,
+    );
+    expect(validatePage(validData({ "x-constructor": "no" }))).toContain(
+      'x-constructor: unknown key; extensions must start with "x-"',
+    );
+    const allowed = Array.from(
+      { length: MAX_FRONTMATTER_ARRAY_ITEMS },
+      (_value, index) => `event:${index}`,
+    );
+    expect(validatePage(validData({ sources: allowed }))).toEqual([]);
+    expect(
+      validatePage(validData({ sources: [...allowed, "event:overflow"] })),
+    ).toContain(`sources: exceeds ${MAX_FRONTMATTER_ARRAY_ITEMS} items`);
   });
 });
 
@@ -448,5 +473,128 @@ describe("canon page discovery", () => {
     expect(listCanonPagesReport(vault).skipped.map(({ relPath }) => relPath)).toEqual([
       "facts/bad.md",
     ]);
+    expect(listCanonPagesReport(vault).skipped[0]?.code).toBe("parse");
+  });
+
+  test("withholds every page that shares an id", () => {
+    const vault = tempDir();
+    initVault(vault);
+    seedPage(join(vault, "facts", "one.md"), {
+      data: validData({ id: "fact:dup", type: "fact", title: "One" }),
+      body: "First.\n",
+    });
+    seedPage(join(vault, "facts", "two.md"), {
+      data: validData({ id: "fact:dup", type: "fact", title: "Two" }),
+      body: "Second.\n",
+    });
+
+    const report = listCanonPagesReport(vault);
+    expect(report.pages).toEqual([]);
+    expect(report.skipped.map(({ relPath }) => relPath)).toEqual([
+      "facts/one.md",
+      "facts/two.md",
+    ]);
+    expect(report.skipped.every((entry) => entry.code === "duplicate")).toBe(true);
+  });
+
+  test("a named schema-invalid page occupies its id so a later copy is withheld", () => {
+    const vault = tempDir();
+    initVault(vault);
+    seedPage(join(vault, "facts", "broken.md"), {
+      data: {
+        id: "fact:dup",
+        title: "Broken",
+        type: "fact",
+        status: "active",
+        sensitivity: "public",
+      },
+      body: "Missing taint.\n",
+    });
+    seedPage(join(vault, "facts", "copy.md"), {
+      data: validData({ id: "fact:dup", type: "fact", title: "Copy" }),
+      body: "Valid copy.\n",
+    });
+
+    const report = listCanonPagesReport(vault);
+    expect(report.pages).toEqual([]);
+    expect(report.skipped.map(({ relPath, code }) => ({ relPath, code }))).toEqual([
+      { relPath: "facts/broken.md", code: "duplicate" },
+      { relPath: "facts/copy.md", code: "duplicate" },
+    ]);
+  });
+
+  test("reports a page-shaped symlink as unreadable and does not follow a linked directory", () => {
+    const vault = tempDir();
+    initVault(vault);
+    seedPage(join(vault, "facts", "good.md"), {
+      data: validData({ id: "fact:good", type: "fact", title: "Good" }),
+      body: "A good note.\n",
+    });
+    const outside = tempDir();
+    seedPage(join(outside, "escape.md"), {
+      data: validData({ id: "fact:escape", type: "fact", title: "Escape" }),
+      body: "Outside the vault.\n",
+    });
+    mkdirSync(join(outside, "nested"));
+    seedPage(join(outside, "nested", "hidden.md"), {
+      data: validData({ id: "fact:hidden", type: "fact", title: "Hidden" }),
+      body: "Inside a linked directory.\n",
+    });
+    symlinkSync(join(outside, "escape.md"), join(vault, "facts", "alias.md"));
+    symlinkSync(join(outside, "nested"), join(vault, "facts", "linked"));
+
+    const report = listCanonPagesReport(vault);
+    expect(report.pages.map((page) => page.id)).toEqual(["fact:good"]);
+    expect(report.skipped).toEqual([
+      expect.objectContaining({ relPath: "facts/alias.md", code: "unreadable" }),
+    ]);
+  });
+
+  test("bounds file size and traversal depth", () => {
+    const vault = tempDir();
+    initVault(vault);
+    writeFileSync(join(vault, "facts", "huge.md"), "x".repeat(MAX_CANON_PAGE_BYTES + 1));
+    const deep = ["facts", ...Array.from({ length: MAX_CANON_DEPTH }, (_, index) => `d${index}`)];
+    const deepDir = join(vault, ...deep);
+    mkdirSync(deepDir, { recursive: true });
+    seedPage(join(deepDir, "too-deep.md"), {
+      data: validData({ id: "fact:deep", type: "fact", title: "Deep" }),
+      body: "Too deep.\n",
+    });
+
+    const report = listCanonPagesReport(vault);
+    expect(report.pages).toEqual([]);
+    expect(report.skipped.map(({ code }) => code).sort()).toEqual(["oversize", "too_deep"]);
+  });
+
+  test("serializes frontmatter in canonical key order", () => {
+    const serialized = serializePage({
+      data: {
+        sources: ["event:01"],
+        taint: "clean",
+        "x-note": "later",
+        sensitivity: "personal",
+        status: "active",
+        type: "fact",
+        title: "Order",
+        id: "fact:order",
+      },
+      body: "Body.\n",
+    });
+    expect(serialized).toBe(
+      [
+        "---",
+        'id: "fact:order"',
+        'title: "Order"',
+        'type: "fact"',
+        'status: "active"',
+        'sensitivity: "personal"',
+        'taint: "clean"',
+        'sources: ["event:01"]',
+        'x-note: "later"',
+        "---",
+        "Body.\n",
+      ].join("\n"),
+    );
   });
 });
