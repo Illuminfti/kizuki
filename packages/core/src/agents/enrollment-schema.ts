@@ -25,19 +25,26 @@ export function applyAgentEnrollmentV17(db: Database): void {
       cancelled_at TEXT CHECK (cancelled_at IS NULL OR cancelled_at GLOB '????-??-??T??:??:??.???Z'),
       CHECK (
         (state = 'reserved' AND generation IS NULL AND token_hash IS NULL AND credential_digest IS NULL
-          AND credential_size IS NULL AND file_dev IS NULL AND file_ino IS NULL)
+          AND credential_size IS NULL AND file_dev IS NULL AND file_ino IS NULL AND completed_at IS NULL AND cancelled_at IS NULL)
         OR
-        (state = 'cancelled' AND
+        (state = 'file_bound' AND generation IS NOT NULL AND length(generation) = 32 AND generation NOT GLOB '*[^0-9a-f]*'
+          AND token_hash IS NOT NULL AND length(token_hash) = 64 AND token_hash NOT GLOB '*[^0-9a-f]*'
+          AND credential_digest IS NOT NULL AND length(credential_digest) = 64 AND credential_digest NOT GLOB '*[^0-9a-f]*'
+          AND credential_size IS NOT NULL AND credential_size BETWEEN 1 AND 1024 AND file_dev IS NOT NULL AND file_ino IS NOT NULL
+          AND completed_at IS NULL AND cancelled_at IS NULL)
+        OR
+        (state = 'completed' AND generation IS NOT NULL AND length(generation) = 32 AND generation NOT GLOB '*[^0-9a-f]*'
+          AND token_hash IS NOT NULL AND length(token_hash) = 64 AND token_hash NOT GLOB '*[^0-9a-f]*'
+          AND credential_digest IS NOT NULL AND length(credential_digest) = 64 AND credential_digest NOT GLOB '*[^0-9a-f]*'
+          AND credential_size IS NOT NULL AND credential_size BETWEEN 1 AND 1024 AND file_dev IS NOT NULL AND file_ino IS NOT NULL
+          AND completed_at IS NOT NULL AND cancelled_at IS NULL)
+        OR
+        (state = 'cancelled' AND cancelled_at IS NOT NULL AND completed_at IS NULL AND
           ((generation IS NULL AND token_hash IS NULL AND credential_digest IS NULL AND credential_size IS NULL AND file_dev IS NULL AND file_ino IS NULL)
            OR (generation IS NOT NULL AND length(generation) = 32 AND generation NOT GLOB '*[^0-9a-f]*'
              AND token_hash IS NOT NULL AND length(token_hash) = 64 AND token_hash NOT GLOB '*[^0-9a-f]*'
              AND credential_digest IS NOT NULL AND length(credential_digest) = 64 AND credential_digest NOT GLOB '*[^0-9a-f]*'
-             AND credential_size BETWEEN 1 AND 1024 AND file_dev IS NOT NULL AND file_ino IS NOT NULL)))
-        OR
-        (state IN ('file_bound', 'completed') AND generation IS NOT NULL AND length(generation) = 32 AND generation NOT GLOB '*[^0-9a-f]*'
-          AND token_hash IS NOT NULL AND length(token_hash) = 64 AND token_hash NOT GLOB '*[^0-9a-f]*'
-          AND credential_digest IS NOT NULL AND length(credential_digest) = 64 AND credential_digest NOT GLOB '*[^0-9a-f]*'
-          AND credential_size BETWEEN 1 AND 1024 AND file_dev IS NOT NULL AND file_ino IS NOT NULL)
+             AND credential_size IS NOT NULL AND credential_size BETWEEN 1 AND 1024 AND file_dev IS NOT NULL AND file_ino IS NOT NULL)))
       )
     ) STRICT;
     CREATE UNIQUE INDEX agent_enrollments_live_name

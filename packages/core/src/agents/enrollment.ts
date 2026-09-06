@@ -108,7 +108,7 @@ function vaultDatabase(vaultPath: string): string {
     let cursor = root;
     for (;;) {
       const stat = lstatSync(cursor);
-      if (!stat.isDirectory() || stat.isSymbolicLink() || ((stat.mode & 0o022) !== 0 && !(stat.mode & 0o1000))) fail("vault_unavailable");
+      if (!stat.isDirectory() || stat.isSymbolicLink() || (uid !== undefined && stat.uid !== uid && stat.uid !== 0) || ((stat.mode & 0o022) !== 0 && !(stat.uid === 0 && (stat.mode & 0o1000) !== 0))) fail("vault_unavailable");
       const parent = dirname(cursor); if (parent === cursor) break; cursor = parent;
     }
     const controlStat = lstatSync(control), dbStat = lstatSync(path);
@@ -228,12 +228,12 @@ function createAndBind(db: DatabaseType, shape: RequestShape, parent: Credential
   } catch (error) { (held as CredentialFileInspection | null)?.close(); throw error; }
 }
 
-function activate(db: DatabaseType, row: EnrollmentRow, directory: CredentialDirectory, held: CredentialFileInspection, bytes: Uint8Array): EnrollmentRow {
+function activate(db: DatabaseType, row: EnrollmentRow, directory: CredentialDirectory, held: CredentialFileInspection, bytes: Uint8Array, publish: boolean): EnrollmentRow {
   return db.transaction(() => {
     const current = readRow(db, row.operation_id);
     if (current === null || current.state !== "file_bound" || current.generation !== row.generation || current.token_hash === null) fail("operation_conflict");
     const grant = normalizedGrant(JSON.parse(current.grant_json));
-    directory.writeComplete(held, bytes);
+    if (publish) directory.writeComplete(held, bytes); else directory.syncAndVerify(held, bytes);
     const now = new Date().toISOString();
     db.query<never, [string, string, string, string]>("INSERT INTO agents (agent_id, name, token_hash, created_at) VALUES (?, ?, ?, ?)").run(current.agent_id, current.name, current.token_hash, now);
     writeAgentGrant(db, current.agent_id, grant, now, 1);
@@ -273,6 +273,8 @@ export function previewAgentEnrollment(vaultPath: string, request: AgentEnrollme
       const existing = readRow(db, shape.request.operation_id);
       if (existing !== null && (existing.request_digest !== shape.requestDigest || existing.destination_digest !== shape.destinationDigest || existing.parent_dev !== directory.identity.dev || existing.parent_ino !== directory.identity.ino)) fail("operation_conflict");
       if (existing === null && (readByName(db, shape.request.name) !== null || getAgent(db, shape.request.name) !== null)) fail("name_conflict");
+      const destination = db.query<{ operation_id: string }, [string]>("SELECT operation_id FROM agent_enrollments WHERE destination_digest = ? AND state != 'cancelled'").get(shape.destinationDigest);
+      if (destination !== null && destination.operation_id !== shape.request.operation_id) fail("credential_conflict");
       const held = directory.inspect(shape.filename);
       if (held !== null) { held.close(); if (existing === null) fail("credential_conflict"); }
       return existing === null
@@ -314,8 +316,8 @@ export function enrollAgent(vaultPath: string, request: AgentEnrollmentRequest):
       held = created.held;
       let durable = false;
       try {
-        const completed = activate(db, created.bound, directory, held, created.bytes);
         durable = true;
+        const completed = activate(db, created.bound, directory, held, created.bytes, true);
         return result(completed, db, "ready", !reservation.inserted);
       } catch (error) {
         if (durable) {
@@ -337,7 +339,7 @@ export function enrollAgent(vaultPath: string, request: AgentEnrollmentRequest):
       if (row.credential_size === null || held.bytes.byteLength !== row.credential_size || digestBytes(held.bytes) !== expected) fail("recovery_required");
       const decoded = parseEnvelope(held.bytes);
       if (decoded === null || decoded.agent_id !== row.agent_id || decoded.operation_id !== row.operation_id || decoded.generation !== row.generation || hashAgentToken(decoded.token) !== row.token_hash) fail("recovery_required");
-      const completed = activate(db, row, directory, held, held.bytes);
+      const completed = activate(db, row, directory, held, held.bytes, false);
       return result(completed, db, "ready", true);
     } finally { held.close(); }
   } catch (error) {
@@ -366,7 +368,7 @@ export function revokeAgentEnrollment(vaultPath: string, name: string): AgentEnr
       return readRow(db, found.operation_id);
     }).immediate();
     if (row === null) return { schema: SCHEMA, operation_id: null, agent_id: getAgent(db, name)?.agent_id ?? null, name, status: "cancelled", authority: "none", credential: "absent", grant: null, grant_epoch: null, replayed: true };
-    return result(row, db, "incomplete", true);
+    return result(row, db, row.state === "completed" ? "stale" : "incomplete", true);
   } finally { db.close(); }
 }
 
