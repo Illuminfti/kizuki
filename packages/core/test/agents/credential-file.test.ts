@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, linkSync, lstatSync, mkdtempSync, renameSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import { chmodSync, linkSync, lstatSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openCredentialDirectory, type CredentialFileInspection } from "../../src/agents/credential-file";
@@ -14,22 +14,30 @@ function custodyPathIsQualified(path: string): boolean {
   if (process.platform !== "linux" || process.arch !== "x64" || process.geteuid === undefined) return false;
   const uid = BigInt(process.geteuid()); let current = "/";
   for (const part of path.split("/").filter(Boolean)) {
-    const stat = statSync(current, { bigint: true });
+    const stat = lstatSync(current, { bigint: true });
     if (!stat.isDirectory() || (stat.uid !== 0n && stat.uid !== uid)) return false;
     if ((stat.mode & 0o022n) !== 0n && (stat.mode & 0o1000n) === 0n) return false;
     current = join(current, part);
   }
-  const parent = statSync(current, { bigint: true });
+  const parent = lstatSync(current, { bigint: true });
   return parent.uid === uid && (parent.mode & 0o7777n) === 0o700n;
 }
 const probe = temporary();
 const canExerciseCustody = custodyPathIsQualified(probe);
 
 test.if(!canExerciseCustody)("refuses the uid-mapped ancestry instead of weakening custody", () => {
+  if (process.platform !== "linux" || process.arch !== "x64") {
+    expect(() => openCredentialDirectory(temporary())).toThrow("credential_file_unsupported");
+    return;
+  }
   expect(() => openCredentialDirectory(temporary())).toThrow("credential_file_unsafe");
   const uid = process.geteuid?.();
   if (uid === undefined) throw new Error("fixture");
   expect(statSync("/", { bigint: true }).uid).not.toBe(BigInt(uid));
+});
+
+test.if(process.env.GITHUB_ACTIONS === "true" && process.platform === "linux" && process.arch === "x64")("requires a qualified Linux CI filesystem", () => {
+  expect(canExerciseCustody).toBe(true);
 });
 
 test.if(canExerciseCustody)("creates, writes, syncs, and cleans up only a live creation", () => {
@@ -39,7 +47,7 @@ test.if(canExerciseCustody)("creates, writes, syncs, and cleans up only a live c
     expect(created.identity.dev).toMatch(/^[0-9]+$/); expect(created.identity.ino).toMatch(/^[0-9]+$/);
     directory.writeComplete(created, bytes); directory.syncAndVerify(created, bytes);
     const inspected = directory.inspect("credential"); if (inspected === null) throw new Error("fixture");
-    expect(inspected.bytes).toEqual(bytes); expect(() => directory.removeCreated(inspected)).toThrow("credential_file_handle");
+    expect(inspected.bytes).toEqual(bytes); expect(() => directory.removeCreated(inspected)).toThrow("credential_file_handle"); inspected.close();
     directory.removeCreated(created); expect(directory.inspect("credential")).toBeNull();
   } finally { directory.close(); }
 });
@@ -52,7 +60,8 @@ test.if(canExerciseCustody)("refuses forged, closed, cross-directory, unsafe-nam
     created.close(); expect(() => first.removeCreated(created)).toThrow("credential_file_handle");
     for (const name of ["", ".", "..", "a/b", "a\0b", "x".repeat(256)]) expect(() => first.inspect(name)).toThrow("credential_file_unsafe");
     writeFileSync(join(one, "existing"), "synthetic", { mode: 0o600 });
-    expect(() => first.create("existing")).toThrow(); expect(lstatSync(join(one, "existing")).isFile()).toBe(true);
+    expect(() => first.create("existing")).toThrow("credential_file_conflict"); expect(lstatSync(join(one, "existing")).isFile()).toBe(true);
+    expect(readFileSync(join(one, "existing"), "utf8")).toBe("synthetic");
   } finally { first.close(); second.close(); }
 });
 
@@ -85,7 +94,7 @@ test.if(canExerciseCustody)("refuses symlink, hard-link, changed creation metada
     expect(() => directory.inspect("held")).toThrow("credential_file_identity_changed"); rmSync(join(root, "held")); rmSync(join(root, "alias"));
     const changed = directory.create("changed"); writeFileSync(join(root, "changed"), new Uint8Array([9])); truncateSync(join(root, "changed"), 0);
     expect(() => directory.writeComplete(changed, new Uint8Array([1]))).toThrow("credential_file_changed"); directory.removeCreated(changed);
-    const moved = `${root}-moved`; renameSync(root, moved); symlinkSync(moved, root);
+    const moved = `${root}-moved`; roots.push(moved); renameSync(root, moved); symlinkSync(moved, root);
     expect(() => directory.create("after-move")).toThrow(/credential_file_(identity_changed|unsafe)/);
   } finally { directory.close(); }
 });

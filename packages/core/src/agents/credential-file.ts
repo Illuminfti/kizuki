@@ -235,13 +235,14 @@ export class CredentialDirectory {
 
   syncAndVerify(handle: CredentialFileInspection, expectedBytes: Uint8Array): void {
     if (!(expectedBytes instanceof Uint8Array) || expectedBytes.byteLength > MAX_CREDENTIAL_BYTES) fail("bounds");
+    const expected = Buffer.from(expectedBytes);
     const state = this.state(handle);
     this.assertCurrent();
     fileIsSafe(state.fd, state.identity);
     call(() => fsyncSync(state.fd));
     call(() => fsyncSync(this.#fd));
     const actual = this.verifyName(state.name, state.identity);
-    if (!Buffer.from(actual).equals(Buffer.from(expectedBytes))) fail("changed");
+    if (!Buffer.from(actual).equals(expected)) fail("changed");
     this.assertCurrent();
   }
 
