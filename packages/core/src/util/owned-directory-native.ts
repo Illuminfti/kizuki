@@ -33,6 +33,29 @@ long kizuki_stat_owned_child(int parent, const char *name, void *stat_buffer) {
     : "rcx", "r11", "memory", "cc");
   return result;
 }
+long kizuki_mkdir_owned_child(int parent, const char *name) {
+  long result;
+  __asm__ volatile ("syscall" : "=a"(result)
+    : "a"(258L), "D"((long)parent), "S"(name), "d"(0700L)
+    : "rcx", "r11", "memory", "cc");
+  return result;
+}
+long kizuki_rename_owned_child(int from_parent, const char *from_name,
+                              int to_parent, const char *to_name) {
+  long result;
+  register const char *destination __asm__("r10") = to_name;
+  __asm__ volatile ("syscall" : "=a"(result)
+    : "a"(264L), "D"((long)from_parent), "S"(from_name), "d"((long)to_parent), "r"(destination)
+    : "rcx", "r11", "memory", "cc");
+  return result;
+}
+long kizuki_unlink_owned_child(int parent, const char *name) {
+  long result;
+  __asm__ volatile ("syscall" : "=a"(result)
+    : "a"(263L), "D"((long)parent), "S"(name), "d"(0L)
+    : "rcx", "r11", "memory", "cc");
+  return result;
+}
 `;
 
 /** Fixed, sealed source needs no compiler executable, headers or writable path.
@@ -62,6 +85,9 @@ export function loadOwnedDirectoryNative() {
           kizuki_open_owned_child: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i64_fast },
           kizuki_create_credential_child: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.i64_fast },
           kizuki_stat_owned_child: { args: [FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i64_fast },
+          kizuki_mkdir_owned_child: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.i64_fast },
+          kizuki_rename_owned_child: { args: [FFIType.i32, FFIType.ptr, FFIType.i32, FFIType.ptr], returns: FFIType.i64_fast },
+          kizuki_unlink_owned_child: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.i64_fast },
         },
       });
       return {
@@ -72,6 +98,9 @@ export function loadOwnedDirectoryNative() {
           openChild: compiled.symbols.kizuki_open_owned_child,
           createCredentialChild: compiled.symbols.kizuki_create_credential_child,
           statChild: compiled.symbols.kizuki_stat_owned_child,
+          mkdirChild: compiled.symbols.kizuki_mkdir_owned_child,
+          renameChild: compiled.symbols.kizuki_rename_owned_child,
+          unlinkChild: compiled.symbols.kizuki_unlink_owned_child,
         },
       };
     } finally { closeSync(fd); }
