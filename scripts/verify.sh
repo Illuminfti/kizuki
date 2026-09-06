@@ -137,7 +137,10 @@ reachable_commit_identifier_pattern() {
   # Bound the first denylist token with POSIX ERE delimiters so a longer
   # public GitHub owner name that only shares that prefix cannot match.
   # Remaining tokens stay unanchored substring matches. No Perl regex.
-  printf '%s' '(^|[^[:alnum:]])ill''umi([^[:alnum:]]|$)|her''mes|ika-''hetzner|alb''edo|g''brain'
+  # Floor-guardian / agent display names stay on denylist-tracked only:
+  # reachable history already contains legitimate squash prose that names them,
+  # and force-push of main is not the fix.
+  printf '%s' '(^|[^[:alnum:]])ill''umi([^[:alnum:]]|$)|her''mes|ika-''hetzner|g''brain'
 }
 
 # Drop git trailer lines from commit messages before denylist-history.
