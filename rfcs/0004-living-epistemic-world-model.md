@@ -2,7 +2,12 @@
 
 Status: **Proposed — not binding and not implemented**. Date: 2026-09-05.
 Owner: Kizuki core. Design packet: #481.
-Implementation baseline: `a96c5f4a4455d22fb4b40537c308c6d019a36d0d`.
+Frozen source and evaluation baseline: `a96c5f4a4455d22fb4b40537c308c6d019a36d0d`.
+Reviewed integration base: `ad7ecca9902a97ac40fb8b28438df56c6d27a54e` (2026-09-06).
+The fixture pin deliberately preserves the earlier evaluation comparison; it
+is not a claim about the latest Core. Integration includes the newer inert
+agent grant and vault-clone identity behavior. Existing baseline receipts do
+not qualify those later bytes or any proposed world-model capability.
 
 This proposal reconciles the world-model epic (#497)
 with [RFC 0003](0003-rich-subject-foundation.md), which is merged as an explicitly
@@ -43,12 +48,24 @@ skills and outcome learning reuse these contracts in subsequent bounded packets.
 | RFC 0002 §6.5, §10.6 and §17, binding legacy packet | Machine-origin marker and model-free authorized reads | Explicit envelope/surface major negotiation below replaces all global epochs and denied counts for scoped clients; conditional/diff/as-of capabilities require their own implemented consumer tests |
 | RFC 0002 §7.1–7.2 and §16.4, binding undo and irreversible purge | Exact undo of retained bytes; one receipted writer; purge already irreversible | Extend the physical-purge exception to dependent prose, archived preimages, receipt hashes and linkage; erased receipt tombstones cannot undo or restore removed content |
 | RFC 0002 §13.1 and architecture invariant 14, binding purge verification | Exact selection while work remains; honest owned-store deletion proof | After selector erasure, report recorded completion separately from any new owned-generation absence audit; repeated verification cannot reconstruct erased target IDs or manufacture a fresh empty-target proof |
+| Existing IDs and backup compatibility | Preserve exact retained legacy IDs and payloads; keep frozen ingress unchanged | Terminal metadata requires immutable per-row Core allocation origin. Legacy/imported unverified identities cause `repair_required` before destructive work or terminal publication. Origin-aware native restore requires an explicit OWNER custody decision bound to the exact input; no syntax/self-hash inference |
 | RFC 0003 B1a, pure contracts implemented | Exact v1/v2 parsers, immutable raw refs, perspective, original validity, explicit producer-major binding, no public v2 writer | Keep anchored `kizuki.claim/v2` admission DTO unchanged; use a separately named private durable meaning codec, with explicit version dispatch |
 | RFC 0003 B1b–d, incomplete draft #500 | One shared claim writer and complete lifecycle merge group; original admission snapshots; atomic frontier/outbox effects | Resolve support-specific rendering, history erasure, dependency closure and typed readers below before exposing any durable v2 mutation |
 | RFC 0003 A1, proposed | Receipted raw-ref identity controls, bounded components, owner negative constraints, immutable assertions, undo and source fences | Add opaque handle allocation as receipted bookkeeping; never use handles to replace raw semantic keys; resolve identity separately for each permitted view |
 | RFC 0003 B2/C and issue #472, proposed | Real grounded producer, closed vocabulary, automatic identity qualification and authorized projections | Deliver the small Concept vocabulary and its required projections first; defer the broader taxonomy, not shared lifecycle correctness |
 | #476, owner product direction | UX/DX/AX parity, evidence, independent commitments, low ceremony | Later Concept-first direction supersedes Situation-first delivery; retain Situation work in #488 |
 | #480/#497/#496/#502/#503, owner direction | Partial/fallible understanding, cross-client continuity, day-one evaluation and bounded consolidation | Their diagrams are conceptual dependencies, not separate databases or a requirement that every read traverse canon |
+
+Canon erasure recovery temporarily excludes ordinary positive authority
+mutations globally, including owner correction, until its checked intent and
+maintenance finish. This preserves atomic recovery through the single writer.
+Corrections remain highest authority and receive a retryable refusal before
+mutation, with no queue or partial commit. `erasure_pending` is Core/OWNER-only;
+scoped mutation surfaces use the same fixed storage/writer-unavailable failure
+as ordinary writer contention, with no purge reason, IDs or counts and no read
+token invalidation. Shared operational availability and variable timing remain
+observable; they are not semantic revision signals. The parity fixture must
+compare hidden erasure-intent contention with ordinary writer contention.
 
 Canon is a durable projection produced only by the existing receipted writer.
 Authorized reads may use evidence, claims, canon and rebuildable indexes. A
@@ -617,16 +634,18 @@ base to extend, not proof that all erasure is already complete. Reuse that write
 capability, purge receipt and resumable journal; introduce no second log or chain.
 
 The new closed `kizuki.canon-receipt/v2` union has `state:"retained"` with the existing
-validated receipt fields (preserving `kind:"write"|"revert"|"purge_rewrite"`),
-or `state:"erased"` with only receipt ID, purge
-receipt ID, erased-at time, private sensitivity and fresh tombstone integrity.
+validated receipt fields and checked own-ID origin (preserving `kind:"write"|"revert"|"purge_rewrite"`),
+`state:"retained_after_erasure"` for an actual purge rewrite's independently
+supported current page with its preimage irreversibly removed, or
+`state:"erased"` with only receipt ID, purge
+receipt ID, eligible own-ID origin, erased-at time, private sensitivity and fresh tombstone integrity.
 An erased variant contains no page/archive path, claim/event ID, old digest,
 model/prompt, candidate text, supersession/retrieval/inverse/revert linkage or
 source-derived identifier. Existing `canon_receipts` rows and the same
 `promotions.jsonl` entries dispatch explicitly by codec/state discriminator.
 The migrated table requires existing payload columns for retained rows and
 requires them all null for erased rows; opaque receipt ID, codec/state, purge
-receipt ID, erased-at time, private sensitivity and new integrity are its only
+receipt ID, eligible own-ID origin, erased-at time, private sensitivity and new integrity are its only
 terminal fields. The existing operation `kind` is not overloaded as lifecycle. Read,
 audit, export, restore, recovery and undo all understand the tombstone before
 any writer can emit it. The regular write payload is not parsed through a cast.
@@ -634,11 +653,52 @@ Purge-journal opaque linkage validates tombstone integrity without retaining an
 old content digest as evidence. A1's similarly proposed receipt tombstone is
 extended consistently; it is not an already implemented protocol.
 
+The current-page arm sanitizes the **same actual purge-rewrite receipt** and
+retains only current postimage identity/hash, independently surviving support
+and authority, its eligible origin and purge linkage. It contains no old before
+hash or inverse and cannot undo the erased preimage. It is sensitive retained
+content, subject to current authorization and later purge. Existing page-index
+and source-purge discovery use this checked arm so a second purge can still
+find and erase the surviving page. A deletion outcome fully terminalizes both
+the original and newly written purge receipt. No synthetic second receipt or
+independent page-index authority fills a missing history link.
+
 The appendix defines the complete Purge6 replacement of the existing `event_purges` and `purge_ops` tables and their closed codecs. It persists exact batch membership, including the already-authorized source-root receipt for a zero-event revocation, before that source can later be regranted. One coordinator operation in the existing journal records every required store operation; receipt existence alone is only a reservation, never completion. After logical deletion and exact-target verification, the whole batch enters selector-free **pending maintenance** before owned SQLite/WAL/file maintenance; only then can it publish completion. All stores, holds, intents, backup/restore, rails and CLI consumers must adopt that protocol together.
 
 This explicitly amends RFC 0002 §13.1 and architecture invariant 14: `verifyPurge` distinguishes `pending`, historical `completed_at`, and genuinely newly observed `fresh_absence`. Completed exact-target operations cannot call `verifyAbsent([])` and present that as renewed deletion proof. A new full-owned-generation audit is valid only where the actual adapter proves that scope; it does not recover erased selectors.
 
 The retained event-purge journal is an explicit metadata exception: Core-generated event ULIDs preserve creation time and stable linkage, plus receipt/batch/completion metadata, without captured content or content fingerprints. It prevents replay of that exact event identity; equal content captured under a new ID is a separate record, with future ingress governed by source consent. The exception is not a claim that all IDs are random or unlinkable.
+
+ULID syntax does not establish that exception. Current injection/restore seams
+can accept caller-chosen claim, canon, purge-operation and even syntactically
+valid event identities. The appendix therefore adds immutable origin fields
+to their existing authoritative rows. Only prospective IDs minted by the
+sealed production allocator qualify as `core_allocated`; existing rows remain
+`legacy_unverified`, and untrusted retained imports are `imported_unverified`.
+Check the complete terminal retention closure, including referenced receipt
+parents, before the first destructive step. An ineligible required ID returns
+`repair_required`; it cannot be renamed, hashed, automatically promoted or
+silently removed from anti-resurrection history. Some legacy vaults therefore
+cannot adopt Purge6. This compatibility restriction is an explicit proposed
+decision, not an already available repair command or universal migration claim.
+
+An origin-aware native backup may preserve existing Core origin only when the
+authenticated OWNER explicitly accepts that exact frozen input's native-export
+custody and schema vector through the destination restore control channel.
+The decision is outside the archive data and bound to its computed exact bytes;
+it is owner attestation, not a cryptographic exporter signature. It never
+upgrades an unverified row or infers historic allocator calls from a manifest.
+Untrusted terminal backups refuse before publication. Coherent retained-only
+imports retain their bytes and downgrade origin through the declared codecs.
+No public restore option is advertised before that consumer is implemented.
+
+Pending proofs bind the complete private work list, a monotone work revision,
+its canonical digest, and the exact existing store/file/generation ownership.
+Catch-up invalidates the old proof transactionally; late asynchronous results
+cannot certify a changed list. The existing canon intent retains the exact
+planned replacement and policy snapshot for crash recovery. All these private
+bindings and original receipt material are scrubbed before selector-free
+maintenance, and no content-derived work digest enters terminal integrity.
 
 A generalized erasure intent references the existing exact-selection purge
 receipt and records bounded phases: hold/fence; erase dependent authority and
@@ -671,7 +731,7 @@ never claim a phrase has vanished from the vault while an unselected copy remain
 `state:"retained"` holds opaque receipt ID, exact raw-ref/handle pair, qualifying
 admission, Core stamp and integrity; `state:"erased"` wraps a terminal object
 with only opaque receipt/purge IDs, erasure time,
-private sensitivity and fresh tombstone integrity. Both are in the same
+eligible own-ID origin, private sensitivity and fresh tombstone integrity. Both are in the same
 allocation-receipt table; composite constraints and transaction validation bind
 the live record to its raw-ref, handle and qualifying admission. On erasure,
 remove those sensitive fields and dependency rows, then retain only the erased

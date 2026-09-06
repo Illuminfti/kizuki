@@ -9,8 +9,17 @@ const markdown = await Bun.file(mapPath).text();
 const sql = [...markdown.matchAll(/```sql\n([\s\S]*?)```/g)]
   .map((match) => match[1])
   .join("\n");
+function markedTextFragment(marker: string): string {
+  const matches = [...markdown.matchAll(new RegExp(`<!-- ${marker} -->\\n\`\`\`text\\n([\\s\\S]*?)\`\`\``, "g"))];
+  if (matches.length !== 1 || matches[0]?.[1] === undefined) throw new Error(`expected exactly one ${marker}`);
+  return matches[0][1];
+}
+const eventOriginTarget = markedTextFragment("events-id-origin-target-fragment");
+const eventOriginTrigger = markedTextFragment("events-id-origin-target-trigger");
 console.log(`APPENDIX_SHA256=${createHash("sha256").update(markdown).digest("hex")}`);
 console.log(`EXTRACTED_SQL_SHA256=${createHash("sha256").update(sql).digest("hex")}`);
+console.log(`EVENT_ORIGIN_TARGET_SHA256=${createHash("sha256").update(eventOriginTarget).digest("hex")}`);
+console.log(`EVENT_ORIGIN_TRIGGER_SHA256=${createHash("sha256").update(eventOriginTrigger).digest("hex")}`);
 
 const db = new Database(":memory:");
 db.exec(`
@@ -22,7 +31,8 @@ db.exec(`
     content_hash TEXT NOT NULL,
     text_hash TEXT NOT NULL,
     origin_binding TEXT NOT NULL,
-    accepted_at TEXT NOT NULL
+    accepted_at TEXT NOT NULL,
+${eventOriginTarget}
   ) STRICT;
   CREATE TABLE source_event_bindings(
     event_id TEXT PRIMARY KEY,
@@ -34,6 +44,7 @@ db.exec(`
   CREATE TABLE page_index(page_id TEXT PRIMARY KEY) STRICT;
   CREATE TABLE event_purges(receipt_id TEXT PRIMARY KEY) STRICT;
   CREATE TABLE canon_receipts(receipt_id TEXT PRIMARY KEY) STRICT;
+  ${eventOriginTrigger}
 `);
 db.exec(sql);
 console.log("DDL_PARSE_PASS");
@@ -97,9 +108,9 @@ for (const [table, forbidden] of [
 console.log("NO_UNSPECIFIED_WIRE_KEY_CUSTODY_PASS");
 
 db.exec(`
-  INSERT INTO core_authority_commits(admission_seq,admitted_at,operation_id) VALUES
-    (1,'2026-09-05T12:00:00.000Z','op1'),
-    (2,'2026-09-05T12:00:00.000Z','op2');
+  INSERT INTO core_authority_commits(admission_seq,admitted_at,operation_id,id_origin,id_allocator_version) VALUES
+    (1,'2026-09-05T12:00:00.000Z','00000000000000000000060001','core_allocated',1),
+    (2,'2026-09-05T12:00:00.000Z','00000000000000000000060002','core_allocated',1);
   INSERT INTO claims(claim_id) VALUES ('c1'),('c2');
   INSERT INTO claim_v2_support(
     support_id,claim_id,codec,support_key,admission_key,admission_seq,admitted_at,effect_ordinal,
@@ -123,8 +134,8 @@ console.log("CYCLE_TRIGGER_PASS");
 db.exec("INSERT INTO event_purges(receipt_id) VALUES ('p1'),('p2')");
 db.query(`
   INSERT INTO claims_v4(
-    claim_id,row_state,sensitivity,purge_receipt_id,erased_at,tombstone_integrity
-  ) VALUES ('dead','erased','private','p1','2026-09-05T12:00:00.000Z',?)
+    claim_id,id_origin,id_allocator_version,row_state,sensitivity,purge_receipt_id,erased_at,tombstone_integrity
+  ) VALUES ('00000000000000000000000001','core_allocated',1,'erased','private','p1','2026-09-05T12:00:00.000Z',?)
 `).run("0".repeat(64));
 console.log("TERMINAL_CLAIM_PASS");
 
@@ -151,11 +162,15 @@ function expectRejected(label: string, run: () => void, expectedMessage?: string
   }
   if ((label.startsWith("CLAIM_REQUIRED_NULL_") || label.startsWith("CANON_REQUIRED_NULL_") ||
        label.startsWith("CLAIM_") || label.startsWith("CANON_")) &&
-      !message.includes("CHECK constraint failed") && !message.includes("cannot store REAL value")) {
+      !label.endsWith("_IMMUTABLE") && !message.includes("CHECK constraint failed") &&
+      !message.includes("cannot store REAL value")) {
     throw new Error(`${label} failed for the wrong reason: ${message}`);
   }
   console.log(`${label}_REJECTED`);
 }
+expectRejected("CORE_COMMIT_ID_ORIGIN_IMMUTABLE", () => {
+  db.exec("UPDATE core_authority_commits SET id_origin='imported_unverified' WHERE admission_seq=1");
+}, "identifier origin is immutable");
 
 // Same evidence root may carry distinct checked assessments. SQL enforces the
 // keys/columns here; the closed preimages and assessment clamping remain writer
@@ -188,53 +203,38 @@ expectRejected("DUPLICATE_ADMISSION_KEY", () => {
 
 expectRejected("NULL_TERMINAL_INTEGRITY", () => {
   db.exec(`INSERT INTO claims_v4(
-    claim_id,row_state,sensitivity,purge_receipt_id,erased_at
-  ) VALUES ('bad-integrity','erased','private','p1','2026-09-05T12:00:00.000Z')`);
+    claim_id,id_origin,id_allocator_version,row_state,sensitivity,purge_receipt_id,erased_at
+  ) VALUES ('00000000000000000000000002','core_allocated',1,'erased','private','p1','2026-09-05T12:00:00.000Z')`);
 });
 expectRejected("NULL_TERMINAL_SENSITIVITY", () => {
   db.query(`INSERT INTO claims_v4(
-    claim_id,row_state,purge_receipt_id,erased_at,tombstone_integrity
-  ) VALUES ('bad-sensitivity','erased','p1','2026-09-05T12:00:00.000Z',?)`).run("0".repeat(64));
+    claim_id,id_origin,id_allocator_version,row_state,purge_receipt_id,erased_at,tombstone_integrity
+  ) VALUES ('00000000000000000000000003','core_allocated',1,'erased','p1','2026-09-05T12:00:00.000Z',?)`).run("0".repeat(64));
 });
+expectRejected("ERASED_CLAIM_UNVERIFIED_ORIGIN", () => {
+  db.query(`INSERT INTO claims_v4(
+    claim_id,id_origin,id_allocator_version,row_state,sensitivity,purge_receipt_id,erased_at,tombstone_integrity
+  ) VALUES ('00000000000000000000000004','legacy_unverified',NULL,'erased','private','p1',
+    '2026-09-05T12:00:00.000Z',?)`).run("0".repeat(64));
+}, "CHECK constraint failed");
 db.exec(`INSERT INTO claims_v4(
-  claim_id,row_state,record_codec,kind,body,frontmatter,provenance,subjects,
+  claim_id,id_origin,id_allocator_version,row_state,record_codec,kind,body,frontmatter,provenance,subjects,
   producer,confidence,status,created_at,body_hash,polarity,authority,sensitivity,
   taint,asserted_at,corroboration
-) VALUES ('v2-unknown','retained','kizuki.claim/v2','claim','','{}','[]','[]',
+) VALUES ('v2-unknown','legacy_unverified',NULL,'retained','kizuki.claim/v2','claim','','{}','[]','[]',
   'deterministic',1,'live','2026-09-05T12:00:00.000Z',
   'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
   'positive','owner_authored','private','clean','2026-09-05T12:00:00.000Z',1)`);
 console.log("V2_UNKNOWN_VALIDITY_PASS");
-expectRejected("V2_COMMON_BODY_NONEMPTY", () => {
-  db.exec(`INSERT INTO claims_v4(
-    claim_id,row_state,record_codec,kind,body,frontmatter,provenance,subjects,
-    producer,confidence,status,created_at,body_hash,polarity,authority,sensitivity,
-    taint,asserted_at,corroboration
-  ) VALUES ('v2-body','retained','kizuki.claim/v2','claim','rendered','{}','[]','[]',
-    'deterministic',1,'live','2026-09-05T12:00:00.000Z',
-    '0000000000000000000000000000000000000000000000000000000000000000',
-    'positive','owner_authored','private','clean','2026-09-05T12:00:00.000Z',1)`);
-});
-expectRejected("V2_COMMON_BODY_HASH_NONEMPTY", () => {
-  db.exec(`INSERT INTO claims_v4(
-    claim_id,row_state,record_codec,kind,body,frontmatter,provenance,subjects,
-    producer,confidence,status,created_at,body_hash,polarity,authority,sensitivity,
-    taint,asserted_at,corroboration
-  ) VALUES ('v2-hash','retained','kizuki.claim/v2','claim','','{}','[]','[]',
-    'deterministic',1,'live','2026-09-05T12:00:00.000Z',
-    '0000000000000000000000000000000000000000000000000000000000000000',
-    'positive','owner_authored','private','clean','2026-09-05T12:00:00.000Z',1)`);
-});
-expectRejected("V2_COMMON_FRONTMATTER_NONEMPTY", () => {
-  db.exec(`INSERT INTO claims_v4(
-    claim_id,row_state,record_codec,kind,body,frontmatter,provenance,subjects,
-    producer,confidence,status,created_at,body_hash,polarity,authority,sensitivity,
-    taint,asserted_at,corroboration
-  ) VALUES ('v2-frontmatter','retained','kizuki.claim/v2','claim','','{"title":"x"}','[]','[]',
-    'deterministic',1,'live','2026-09-05T12:00:00.000Z',
-    'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-    'positive','owner_authored','private','clean','2026-09-05T12:00:00.000Z',1)`);
-});
+for (const [label, assignment] of [
+  ["BODY_NONEMPTY", "body='rendered'"],
+  ["BODY_HASH_NONEMPTY", `body_hash='${"0".repeat(64)}'`],
+  ["FRONTMATTER_NONEMPTY", `frontmatter='{"title":"x"}'`],
+] as const) {
+  expectRejected(`V2_COMMON_${label}`, () => db.exec(
+    `UPDATE claims_v4 SET ${assignment} WHERE claim_id='v2-unknown'`,
+  ), "CHECK constraint failed");
+}
 
 db.exec("INSERT INTO claims(claim_id) VALUES ('time-offset'),('time-coarse-bad'),('time-fraction')");
 db.exec(`INSERT INTO claim_v2_semantics(
@@ -263,27 +263,19 @@ if (!("2026-01-01T00:00:00.9Z" > "2026-01-01T00:00:00.10Z")) {
 }
 db.exec("DELETE FROM claim_v2_semantics WHERE claim_id='time-fraction'");
 console.log("FRACTION_EXACT_RUNTIME_PREDICATE_REQUIRED_PASS");
-expectRejected("V1_NULL_VALID_FROM", () => {
-  db.exec(`INSERT INTO claims_v4(
-    claim_id,row_state,record_codec,kind,body,frontmatter,provenance,subjects,
-    producer,confidence,status,created_at,body_hash,polarity,authority,sensitivity,
-    taint,asserted_at,corroboration
-  ) VALUES ('v1-unknown','retained','kizuki.claim/v1','claim','','{}','[]','[]',
-    'deterministic',1,'live','2026-09-05T12:00:00.000Z',
-    'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-    'positive','owner_authored','private','clean','2026-09-05T12:00:00.000Z',1)`);
-});
 
 function insertRetainedClaim(
   claimId: string,
   overrides: Record<string, string | number | null> = {},
 ): void {
   const row = {
+    id_origin: "legacy_unverified",
+    id_allocator_version: null,
     kind: "claim",
     target: claimId,
     body: "retained",
     frontmatter: "{}",
-    provenance: '["e3"]',
+    provenance: '["00000000000000000000061001"]',
     subjects: "[]",
     producer: "deterministic",
     confidence: 1,
@@ -312,15 +304,15 @@ function insertRetainedClaim(
     ...overrides,
   } satisfies Record<string, string | number | null>;
   db.query(`INSERT INTO claims_v4(
-    claim_id,row_state,record_codec,kind,target,body,frontmatter,provenance,
+    claim_id,id_origin,id_allocator_version,row_state,record_codec,kind,target,body,frontmatter,provenance,
     subjects,producer,confidence,status,created_at,body_hash,subject,predicate,
     object,polarity,claim_key,authority,sensitivity,taint,model_ref,valid_from,
     valid_from_second,valid_to,valid_to_second,asserted_at,retracted_at,
     superseded_by,receipt_id,corroboration,
     last_confirmed_at
-  ) VALUES (?,'retained','kizuki.claim/v1',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,
+  ) VALUES (?,?,?,'retained','kizuki.claim/v1',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,
     ?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-      claimId, row.kind, row.target, row.body, row.frontmatter, row.provenance,
+      claimId, row.id_origin, row.id_allocator_version, row.kind, row.target, row.body, row.frontmatter, row.provenance,
       row.subjects, row.producer, row.confidence, row.status, row.created_at,
       row.body_hash, row.subject, row.predicate, row.object, row.polarity,
       row.claim_key, row.authority, row.sensitivity, row.taint, row.model_ref,
@@ -333,6 +325,27 @@ function insertRetainedClaim(
 
 insertRetainedClaim("retained-baseline", { status: "provenance_reduced" });
 console.log("RETAINED_CLAIM_BASELINE_PASS");
+expectRejected("V1_NULL_VALID_FROM", () => {
+  db.exec("UPDATE claims_v4 SET valid_from=NULL WHERE claim_id='retained-baseline'");
+}, "CHECK constraint failed");
+insertRetainedClaim("00000000000000000000006006", {
+  id_origin: "core_allocated", id_allocator_version: 1,
+});
+console.log("RETAINED_CORE_CLAIM_STRUCTURAL_PASS");
+
+expectRejected("RETAINED_CORE_CLAIM_NEEDS_VERSION", () => {
+  insertRetainedClaim("00000000000000000000006007", {
+    id_origin: "core_allocated", id_allocator_version: null,
+  });
+}, "CHECK constraint failed");
+expectRejected("RETAINED_CORE_CLAIM_NEEDS_CANONICAL_ULID", () => {
+  insertRetainedClaim("not-a-core-ulid", {
+    id_origin: "core_allocated", id_allocator_version: 1,
+  });
+}, "CHECK constraint failed");
+expectRejected("CLAIM_ID_ORIGIN_IMMUTABLE", () => {
+  db.exec("UPDATE claims_v4 SET id_origin='imported_unverified' WHERE claim_id='retained-baseline'");
+}, "identifier origin is immutable");
 for (const [label, override] of [
   ["CLAIM_KIND_ENUM", { kind: "other" }],
   ["CLAIM_STATUS_ENUM", { status: "purged" }],
@@ -358,6 +371,8 @@ function insertRetainedCanon(
   overrides: Record<string, string | number | null> = {},
 ): void {
   const row = {
+    id_origin: "legacy_unverified",
+    id_allocator_version: null,
     operation_kind: "write",
     claim_ids: "[]",
     provenance: "[]",
@@ -383,12 +398,12 @@ function insertRetainedCanon(
     ...overrides,
   } satisfies Record<string, string | number | null>;
   db.query(`INSERT INTO canon_receipts_v5(
-    receipt_id,row_state,operation_kind,claim_ids,provenance,sensitivity,
+    receipt_id,id_origin,id_allocator_version,row_state,operation_kind,claim_ids,provenance,sensitivity,
     page_path,kind,before_hash,after_hash,at,page_action,archive_path,writer,
     producer,model_ref,authority,confidence,taint,candidates,superseded,
     retrieval_ops,reverts,reverted_by
-  ) VALUES (?,'retained',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-      receiptId, row.operation_kind, row.claim_ids, row.provenance,
+  ) VALUES (?,?,?,'retained',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      receiptId, row.id_origin, row.id_allocator_version, row.operation_kind, row.claim_ids, row.provenance,
       row.sensitivity, row.page_path, row.kind, row.before_hash, row.after_hash,
       row.at, row.page_action, row.archive_path, row.writer, row.producer,
       row.model_ref, row.authority, row.confidence, row.taint, row.candidates,
@@ -398,6 +413,37 @@ function insertRetainedCanon(
 
 insertRetainedCanon("canon-baseline");
 console.log("RETAINED_CANON_BASELINE_PASS");
+expectRejected("CANON_ID_ORIGIN_IMMUTABLE", () => {
+  db.exec("UPDATE canon_receipts_v5 SET id_origin='imported_unverified' WHERE receipt_id='canon-baseline'");
+}, "identifier origin is immutable");
+const retainedAfterErasureCanon = {
+  receipt_id: "00000000000000000000000040", id_origin: "core_allocated", id_allocator_version: 1,
+  row_state: "retained_after_erasure", operation_kind: "purge_rewrite", claim_ids: "[]", provenance: "[]",
+  sensitivity: "private", page_path: "canon/sanitized.md", kind: "purge_review", before_hash: null,
+  after_hash: "a".repeat(64), at: "2026-09-05T12:00:00.000Z", page_action: "edit", archive_path: null,
+  writer: "loop", producer: "deterministic", model_ref: null, authority: "owner_authored", confidence: 1,
+  taint: "clean", candidates: null, superseded: null, retrieval_ops: null, reverts: null, reverted_by: null,
+  purge_receipt_id: "p1", erased_at: "2026-09-05T12:00:01.000Z", tombstone_integrity: null,
+  post_erasure_integrity: "b".repeat(64),
+} satisfies Record<string, string | number | null>;
+function insertRetainedAfterErasureCanon(
+  overrides: Record<string, string | number | null> = {},
+): void {
+  const row: Record<string, string | number | null> = {...retainedAfterErasureCanon, ...overrides};
+  const columns = Object.keys(row);
+  db.query(`INSERT INTO canon_receipts_v5(${columns.join(",")})
+    VALUES (${columns.map(() => "?").join(",")})`).run(...columns.map(column => row[column]!));
+}
+insertRetainedAfterErasureCanon();
+console.log("CANON_RETAINED_AFTER_ERASURE_STRUCTURAL_PASS");
+for (const [label, patch] of [
+  ["POST_ERASURE_BEFORE_HASH", {receipt_id: "00000000000000000000000041", before_hash: "c".repeat(64)}],
+  ["POST_ERASURE_REVERT", {receipt_id: "00000000000000000000000042", operation_kind: "revert"}],
+  ["POST_ERASURE_LEGACY_ORIGIN", {receipt_id: "00000000000000000000000043", id_origin: "legacy_unverified", id_allocator_version: null}],
+  ["POST_ERASURE_NO_INTEGRITY", {receipt_id: "00000000000000000000000044", post_erasure_integrity: null}],
+] as const) {
+  expectRejected(`CANON_${label}`, () => insertRetainedAfterErasureCanon(patch), "CHECK constraint failed");
+}
 expectRejected("NULL_RETAINED_OPERATION_KIND", () => {
   insertRetainedCanon("bad-operation-null", { operation_kind: null });
 });
@@ -420,11 +466,11 @@ for (const [label, override] of [
 }
 
 db.exec(`
-  INSERT INTO core_authority_commits(admission_seq,admitted_at,operation_id)
-    VALUES (3,'2026-09-05T12:00:00.000Z','op3');
+  INSERT INTO core_authority_commits(admission_seq,admitted_at,operation_id,id_origin,id_allocator_version)
+    VALUES (3,'2026-09-05T12:00:00.000Z','00000000000000000000060003','core_allocated',1);
   INSERT INTO claims(claim_id) VALUES ('c3');
-  INSERT INTO events(event_id,content_hash_version,content_hash,text_hash,origin_binding,accepted_at)
-    VALUES ('e3',2,'eh','th','ob','2026-09-05T11:59:00.000Z');
+  INSERT INTO events(event_id,content_hash_version,content_hash,text_hash,origin_binding,accepted_at,id_origin,id_allocator_version)
+    VALUES ('00000000000000000000061001',2,'eh','th','ob','2026-09-05T11:59:00.000Z','core_allocated',1);
   INSERT INTO claim_v2_semantics(
     claim_id,codec,semantic_key,valid_kind,payload
   ) VALUES ('c3','kizuki.claim-meaning/v1',lower(hex(randomblob(32))),'unknown','{}');
@@ -435,19 +481,19 @@ db.exec(`
     3,'2026-09-05T12:00:00.000Z',0,'observed','owner_authored',1,'private','{}','x');
   INSERT INTO claim_v2_support_events(
     support_id,event_id,event_hash_version,event_hash,text_hash,origin_binding,event_accepted_at
-  ) VALUES ('s3','e3',2,'eh','th','ob','2026-09-05T11:59:00.000Z');
+  ) VALUES ('s3','00000000000000000000061001',2,'eh','th','ob','2026-09-05T11:59:00.000Z');
   INSERT INTO claim_observations(
     observation_id,support_id,codec,fidelity,occurred_kind,source_observed_at,payload
   ) VALUES ('o3','s3','kizuki.observation-record/v1','verbatim_text','unknown',NULL,'{}');
   INSERT INTO claim_observation_evidence(
     evidence_id,support_id,observation_id,event_id,event_hash_version,event_hash,
     text_hash,origin_binding,event_accepted_at,evidence_kind,start_utf16,end_utf16
-  ) VALUES ('ev3','s3','o3','e3',2,'eh','th','ob',
+  ) VALUES ('ev3','s3','o3','00000000000000000000061001',2,'eh','th','ob',
     '2026-09-05T11:59:00.000Z','text_span',0,1);
   INSERT INTO claim_observation_evidence(
     evidence_id,support_id,observation_id,event_id,event_hash_version,event_hash,
     text_hash,origin_binding,event_accepted_at,evidence_kind,source_field
-  ) VALUES ('ev-meta','s3','o3','e3',2,'eh','th','ob',
+  ) VALUES ('ev-meta','s3','o3','00000000000000000000061001',2,'eh','th','ob',
     '2026-09-05T11:59:00.000Z','source_metadata','sender');
   INSERT INTO claim_meaning_endpoints(
     claim_id,endpoint_id,role,value_kind,raw_kind,raw_id
@@ -468,7 +514,7 @@ expectRejected("METADATA_EVIDENCE_WITH_SPAN", () => {
     evidence_id,support_id,observation_id,event_id,event_hash_version,event_hash,
     text_hash,origin_binding,event_accepted_at,evidence_kind,start_utf16,end_utf16,
     source_field
-  ) VALUES ('bad-meta','s3','o3','e3',2,'eh','th','ob',
+  ) VALUES ('bad-meta','s3','o3','00000000000000000000061001',2,'eh','th','ob',
     '2026-09-05T11:59:00.000Z','source_metadata',0,1,'sender')`);
 });
 expectRejected("MISMATCHED_RAW_ENDPOINT_OWNER", () => {
@@ -478,45 +524,49 @@ expectRejected("MISMATCHED_RAW_ENDPOINT_OWNER", () => {
 });
 expectRejected("NULL_RETAINED_CODEC", () => {
   db.query(`INSERT INTO semantic_allocation_receipts(
-    allocation_receipt_id,row_state,operation_kind,raw_kind,raw_id,handle_id,
+    allocation_receipt_id,id_origin,id_allocator_version,row_state,operation_kind,raw_kind,raw_id,handle_id,
     owner_claim_id,owner_support_id,owner_endpoint_id,owner_evidence_id,
     admission_seq,allocated_at,sensitivity,integrity
-  ) VALUES ('bad-codec','retained','allocate','supplied','raw-3',
+  ) VALUES ('bad-codec','legacy_unverified',NULL,'retained','allocate','supplied','raw-3',
     '0123456789abcdef0123456789abcdef','c3','s3',0,'ev3',3,
     '2026-09-05T12:00:00.000Z','private',?)`).run("0".repeat(64));
 });
 expectRejected("NULL_ALLOCATION_OPERATION_KIND", () => {
   db.query(`INSERT INTO semantic_allocation_receipts(
-    allocation_receipt_id,row_state,codec,raw_kind,raw_id,handle_id,
+    allocation_receipt_id,id_origin,id_allocator_version,row_state,codec,raw_kind,raw_id,handle_id,
     owner_claim_id,owner_support_id,owner_endpoint_id,owner_evidence_id,
     admission_seq,allocated_at,sensitivity,integrity
-  ) VALUES ('bad-allocation-operation','retained','kizuki.semantic-allocation/v1',
+  ) VALUES ('bad-allocation-operation','legacy_unverified',NULL,'retained','kizuki.semantic-allocation/v1',
     'supplied','raw-3','0123456789abcdef0123456789abcdef',
     'c3','s3',0,'ev3',3,'2026-09-05T12:00:00.000Z','private',?)`).run("0".repeat(64));
 });
-
+const coreAllocationId = "00000000000000000000000030";
 db.query(`INSERT INTO semantic_allocation_receipts(
-  allocation_receipt_id,row_state,codec,operation_kind,raw_kind,raw_id,handle_id,
+  allocation_receipt_id,id_origin,id_allocator_version,row_state,codec,operation_kind,raw_kind,raw_id,handle_id,
   owner_claim_id,owner_support_id,owner_endpoint_id,owner_evidence_id,
   admission_seq,allocated_at,sensitivity,integrity
-) VALUES ('allocation-1','retained','kizuki.semantic-allocation/v1','allocate',
+) VALUES (?,'core_allocated',1,'retained','kizuki.semantic-allocation/v1','allocate',
   'supplied','raw-3','0123456789abcdef0123456789abcdef','c3','s3',0,'ev3',3,
-  '2026-09-05T12:00:00.000Z','private',?)`).run("0".repeat(64));
-db.exec(`INSERT INTO semantic_binding_revalidations(
+  '2026-09-05T12:00:00.000Z','private',?)`).run(coreAllocationId, "0".repeat(64));
+expectRejected("ALLOCATION_ID_ORIGIN_IMMUTABLE", () => {
+  db.exec(`UPDATE semantic_allocation_receipts SET id_origin='legacy_unverified',id_allocator_version=NULL
+    WHERE allocation_receipt_id='00000000000000000000000030'`);
+}, "identifier origin is immutable");
+db.query(`INSERT INTO semantic_binding_revalidations(
   revalidation_id,raw_kind,raw_id,handle_id,allocation_receipt_id,
   allocation_receipt_state,owner_claim_id,owner_support_id,owner_endpoint_id,
   owner_evidence_id,admission_seq,revalidated_at,effect_ordinal,reason
 ) VALUES ('revalidation-1','supplied','raw-3',
-  '0123456789abcdef0123456789abcdef','allocation-1','retained','c3','s3',0,
-  'ev3',3,'2026-09-05T12:00:00.000Z',1,'initial')`);
-db.exec(`INSERT INTO semantic_bindings(
+  '0123456789abcdef0123456789abcdef',?,'retained','c3','s3',0,
+  'ev3',3,'2026-09-05T12:00:00.000Z',1,'initial')`).run(coreAllocationId);
+db.query(`INSERT INTO semantic_bindings(
   raw_kind,raw_id,binding_state,handle_id,allocation_receipt_id,
   allocation_receipt_state,current_revalidation_id,owner_claim_id,
   owner_support_id,owner_endpoint_id,owner_evidence_id
 ) VALUES ('supplied','raw-3','active','0123456789abcdef0123456789abcdef',
-  'allocation-1','retained','revalidation-1','c3','s3',0,'ev3')`);
-db.exec(`INSERT INTO core_authority_commits(admission_seq,admitted_at,operation_id)
-  VALUES (4,'2026-09-05T12:00:01.000Z','op4')`);
+  ?,'retained','revalidation-1','c3','s3',0,'ev3')`).run(coreAllocationId);
+db.exec(`INSERT INTO core_authority_commits(admission_seq,admitted_at,operation_id,id_origin,id_allocator_version)
+  VALUES (4,'2026-09-05T12:00:01.000Z','00000000000000000000060004','core_allocated',1)`);
 expectRejected("RETIRE_CURRENT_REVALIDATION", () => {
   db.exec(`INSERT INTO semantic_binding_revalidation_retirements(
     revalidation_id,admission_seq,retired_at,effect_ordinal,cause_kind
@@ -527,12 +577,12 @@ db.exec(`INSERT INTO semantic_binding_revalidation_retirements(
   revalidation_id,admission_seq,retired_at,effect_ordinal,cause_kind
 ) VALUES ('revalidation-1',4,'2026-09-05T12:00:01.000Z',0,'correction')`);
 expectRejected("REUSE_RETIRED_REVALIDATION", () => {
-  db.exec(`INSERT INTO semantic_bindings(
+  db.query(`INSERT INTO semantic_bindings(
     raw_kind,raw_id,binding_state,handle_id,allocation_receipt_id,
     allocation_receipt_state,current_revalidation_id,owner_claim_id,
     owner_support_id,owner_endpoint_id,owner_evidence_id
   ) VALUES ('supplied','raw-3','active','0123456789abcdef0123456789abcdef',
-    'allocation-1','retained','revalidation-1','c3','s3',0,'ev3')`);
+    ?,'retained','revalidation-1','c3','s3',0,'ev3')`).run(coreAllocationId);
 });
 expectRejected("MUTATE_HISTORICAL_REVALIDATION", () => {
   db.exec("UPDATE semantic_binding_revalidations SET reason='initial' WHERE revalidation_id='revalidation-1'");
@@ -550,31 +600,31 @@ db.query(`UPDATE semantic_allocation_receipts SET
   handle_id=NULL,owner_claim_id=NULL,owner_support_id=NULL,owner_endpoint_id=NULL,
   owner_evidence_id=NULL,admission_seq=NULL,allocated_at=NULL,sensitivity='private',
   purge_receipt_id='p1',erased_at='2026-09-05T12:00:02.000Z',integrity=?
-  WHERE allocation_receipt_id='allocation-1'`).run("1".repeat(64));
-db.exec(`INSERT INTO core_authority_commits(admission_seq,admitted_at,operation_id)
-  VALUES (5,'2026-09-05T12:00:02.000Z','op5')`);
+  WHERE allocation_receipt_id=?`).run("1".repeat(64), coreAllocationId);
+db.exec(`INSERT INTO core_authority_commits(admission_seq,admitted_at,operation_id,id_origin,id_allocator_version)
+  VALUES (5,'2026-09-05T12:00:02.000Z','00000000000000000000060005','core_allocated',1)`);
 expectRejected("SURVIVOR_REVALIDATION_PURGE_MISMATCH", () => {
-  db.exec(`INSERT INTO semantic_binding_revalidations(
+  db.query(`INSERT INTO semantic_binding_revalidations(
     revalidation_id,raw_kind,raw_id,handle_id,allocation_receipt_id,
     allocation_receipt_state,owner_claim_id,owner_support_id,owner_endpoint_id,
     owner_evidence_id,admission_seq,revalidated_at,effect_ordinal,reason,purge_receipt_id
   ) VALUES ('revalidation-bad-purge','supplied','raw-3',
-    '0123456789abcdef0123456789abcdef','allocation-1','erased','c3','s3',0,
-    'ev3',5,'2026-09-05T12:00:02.000Z',0,'independent_survivor','p2')`);
+    '0123456789abcdef0123456789abcdef',?,'erased','c3','s3',0,
+    'ev3',5,'2026-09-05T12:00:02.000Z',0,'independent_survivor','p2')`).run(coreAllocationId);
 });
-db.exec(`INSERT INTO semantic_binding_revalidations(
+db.query(`INSERT INTO semantic_binding_revalidations(
   revalidation_id,raw_kind,raw_id,handle_id,allocation_receipt_id,
   allocation_receipt_state,owner_claim_id,owner_support_id,owner_endpoint_id,
   owner_evidence_id,admission_seq,revalidated_at,effect_ordinal,reason,purge_receipt_id
 ) VALUES ('revalidation-2','supplied','raw-3',
-  '0123456789abcdef0123456789abcdef','allocation-1','erased','c3','s3',0,
-  'ev3',5,'2026-09-05T12:00:02.000Z',0,'independent_survivor','p1')`);
-db.exec(`INSERT INTO semantic_bindings(
+  '0123456789abcdef0123456789abcdef',?,'erased','c3','s3',0,
+  'ev3',5,'2026-09-05T12:00:02.000Z',0,'independent_survivor','p1')`).run(coreAllocationId);
+db.query(`INSERT INTO semantic_bindings(
   raw_kind,raw_id,binding_state,handle_id,allocation_receipt_id,
   allocation_receipt_state,current_revalidation_id,owner_claim_id,
   owner_support_id,owner_endpoint_id,owner_evidence_id
 ) VALUES ('supplied','raw-3','active','0123456789abcdef0123456789abcdef',
-  'allocation-1','erased','revalidation-2','c3','s3',0,'ev3')`);
+  ?,'erased','revalidation-2','c3','s3',0,'ev3')`).run(coreAllocationId);
 console.log("INDEPENDENT_SURVIVOR_PURGE_BINDING_PASS");
 
 db.exec(`INSERT INTO world_authorization_namespaces(
@@ -685,7 +735,7 @@ expectRejected("WIRE_COMMON_PRINCIPAL_MISMATCH", () => {
 db.exec(`
   INSERT INTO source_grants(source_key) VALUES ('source-1');
   INSERT INTO source_event_bindings(event_id,source_key,grant_revision,policy_digest)
-    VALUES ('e3','source-1',1,'policy-1');
+    VALUES ('00000000000000000000061001','source-1',1,'policy-1');
   INSERT INTO page_index(page_id) VALUES ('page-1');
   INSERT INTO canon_receipts(receipt_id) VALUES ('canon-1');
   INSERT INTO claim_occurrences(
@@ -694,7 +744,7 @@ db.exec(`
     label,payload
   ) VALUES (
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-    'e3',2,'eh','th','ob','2026-09-05T11:59:00.000Z','source-1',1,'policy-1',
+    '00000000000000000000061001',2,'eh','th','ob','2026-09-05T11:59:00.000Z','source-1',1,'policy-1',
     0,1,'x','{}');
 `);
 
@@ -723,12 +773,12 @@ const eventRef = insertWire("F", "event_version");
 db.query(`INSERT INTO world_wire_event_version_targets(
   namespace_id,principal_id,wire_ref,ref_kind,event_id,event_hash_version,
   event_hash,text_hash,origin_binding,event_accepted_at
-) VALUES ('namespace-000001','principal-1',?,'event_version','e3',2,'eh','th','ob',
+) VALUES ('namespace-000001','principal-1',?,'event_version','00000000000000000000061001',2,'eh','th','ob',
   '2026-09-05T11:59:00.000Z')`).run(eventRef);
 
 for (const [seed, variant, receiptId, table] of [
   ["G", "canon", "canon-1", "world_wire_canon_receipt_targets"],
-  ["H", "allocation", "allocation-1", "world_wire_allocation_receipt_targets"],
+  ["H", "allocation", coreAllocationId, "world_wire_allocation_receipt_targets"],
   ["I", "purge", "p1", "world_wire_purge_receipt_targets"],
 ] as const) {
   const receiptRef = insertWire(seed, "receipt");
@@ -765,7 +815,7 @@ db.query(`INSERT INTO world_wire_captured_subject_targets(
   supplied_text_hash,supplied_origin_binding,supplied_event_accepted_at,
   source_key,grant_revision,policy_digest
 ) VALUES ('namespace-000001','principal-1',?,'captured_subject','supplied','raw-3',
-  'e3',2,'eh','th','ob','2026-09-05T11:59:00.000Z','source-1',1,'policy-1')`)
+  '00000000000000000000061001',2,'eh','th','ob','2026-09-05T11:59:00.000Z','source-1',1,'policy-1')`)
   .run(capturedSuppliedRef);
 console.log("CAPTURED_SUPPLIED_RUNTIME_MEMBERSHIP_REQUIRED");
 
@@ -778,11 +828,13 @@ db.query(`INSERT INTO world_wire_raw_subject_targets(
 ) VALUES ('namespace-000001','principal-1',?,'raw_subject','occurrence',?,?),
   ('namespace-000001','principal-1',?,'raw_subject','supplied','raw-shared',NULL)`)
   .run(rawOccurrenceRef, "a".repeat(64), "a".repeat(64), rawSuppliedRef);
-db.exec(`INSERT INTO events VALUES
-  ('raw-event-A',2,'raw-eh-A','raw-th-A','raw-ob-A','2026-09-05T11:57:00.000Z'),
-  ('raw-event-B',2,'raw-eh-B','raw-th-B','raw-ob-B','2026-09-05T11:58:00.000Z');
+db.exec(`INSERT INTO events(
+  event_id,content_hash_version,content_hash,text_hash,origin_binding,accepted_at,id_origin,id_allocator_version
+) VALUES
+  ('00000000000000000000061002',2,'raw-eh-A','raw-th-A','raw-ob-A','2026-09-05T11:57:00.000Z','core_allocated',1),
+  ('00000000000000000000061003',2,'raw-eh-B','raw-th-B','raw-ob-B','2026-09-05T11:58:00.000Z','core_allocated',1);
   INSERT INTO source_event_bindings VALUES
-  ('raw-event-A','source-1',1,'policy-1'),('raw-event-B','source-1',1,'policy-1')`);
+  ('00000000000000000000061002','source-1',1,'policy-1'),('00000000000000000000061003','source-1',1,'policy-1')`);
 type RawMembership = {
   principal: string; ref: string; kind: string; rawId: string;
   occurrenceId: string | null; eventId: string; eventHash: string;
@@ -791,17 +843,17 @@ type RawMembership = {
 };
 const occurrenceMembership: RawMembership = {
   principal: "principal-1", ref: rawOccurrenceRef, kind: "occurrence", rawId: "a".repeat(64),
-  occurrenceId: "a".repeat(64), eventId: "e3", eventHash: "eh", textHash: "th",
+  occurrenceId: "a".repeat(64), eventId: "00000000000000000000061001", eventHash: "eh", textHash: "th",
   origin: "ob", acceptedAt: "2026-09-05T11:59:00.000Z",
   sourceKey: "source-1", revision: 1, policy: "policy-1",
 };
 const rawAMembership: RawMembership = {
   ...occurrenceMembership, ref: rawSuppliedRef, kind: "supplied", rawId: "raw-shared",
-  occurrenceId: null, eventId: "raw-event-A", eventHash: "raw-eh-A", textHash: "raw-th-A",
+  occurrenceId: null, eventId: "00000000000000000000061002", eventHash: "raw-eh-A", textHash: "raw-th-A",
   origin: "raw-ob-A", acceptedAt: "2026-09-05T11:57:00.000Z",
 };
 const rawBMembership: RawMembership = {
-  ...rawAMembership, eventId: "raw-event-B", eventHash: "raw-eh-B", textHash: "raw-th-B",
+  ...rawAMembership, eventId: "00000000000000000000061003", eventHash: "raw-eh-B", textHash: "raw-th-B",
   origin: "raw-ob-B", acceptedAt: "2026-09-05T11:58:00.000Z",
 };
 function insertRawMembership(value: RawMembership): void {
@@ -854,15 +906,15 @@ expectRejected("RAW_TARGET_DUPLICATE_SUBJECT", () => {
 }, "UNIQUE constraint failed");
 const rawSurvivorBefore = db.query<Record<string, string | number | null>, [string]>(
   "SELECT * FROM world_wire_raw_subject_memberships WHERE event_id=?",
-).get("raw-event-B");
+).get("00000000000000000000061003");
 db.transaction(() => {
-  db.exec(`DELETE FROM world_wire_raw_subject_memberships WHERE event_id='raw-event-A';
-    DELETE FROM source_event_bindings WHERE event_id='raw-event-A';
-    DELETE FROM events WHERE event_id='raw-event-A'`);
+  db.exec(`DELETE FROM world_wire_raw_subject_memberships WHERE event_id='00000000000000000000061002';
+    DELETE FROM source_event_bindings WHERE event_id='00000000000000000000061002';
+    DELETE FROM events WHERE event_id='00000000000000000000061002'`);
 })();
 const rawSurvivorAfter = db.query<Record<string, string | number | null>, [string]>(
   "SELECT * FROM world_wire_raw_subject_memberships WHERE event_id=?",
-).get("raw-event-B");
+).get("00000000000000000000061003");
 const retainedRawTargets = db.query<{ count: number }, [string]>(
   `SELECT count(*) AS count FROM world_wire_raw_subject_targets t
     JOIN world_wire_refs w USING(namespace_id,principal_id,wire_ref,ref_kind)
@@ -872,9 +924,9 @@ if (rawSurvivorBefore === null || JSON.stringify(rawSurvivorBefore) !== JSON.str
     retainedRawTargets !== 1) throw new Error("removing A changed surviving B or its stable raw-subject map");
 console.log("RAW_SUBJECT_REMOVE_A_PRESERVES_EXACT_B_AND_STABLE_MAP_PASS");
 db.transaction(() => {
-  db.exec(`DELETE FROM world_wire_raw_subject_memberships WHERE event_id='raw-event-B';
-    DELETE FROM source_event_bindings WHERE event_id='raw-event-B';
-    DELETE FROM events WHERE event_id='raw-event-B'`);
+  db.exec(`DELETE FROM world_wire_raw_subject_memberships WHERE event_id='00000000000000000000061003';
+    DELETE FROM source_event_bindings WHERE event_id='00000000000000000000061003';
+    DELETE FROM events WHERE event_id='00000000000000000000061003'`);
   db.query("DELETE FROM world_wire_raw_subject_targets WHERE wire_ref=?").run(rawSuppliedRef);
   db.query("DELETE FROM world_wire_refs WHERE wire_ref=?").run(rawSuppliedRef);
 })();
@@ -933,7 +985,7 @@ expectRejected("WIRE_EVENT_VERSION_MISMATCH", () => {
   db.query(`INSERT INTO world_wire_event_version_targets(
     namespace_id,principal_id,wire_ref,ref_kind,event_id,event_hash_version,
     event_hash,text_hash,origin_binding,event_accepted_at
-  ) VALUES ('namespace-000001','principal-1',?,'event_version','e3',2,'wrong','th',
+  ) VALUES ('namespace-000001','principal-1',?,'event_version','00000000000000000000061001',2,'wrong','th',
     'ob','2026-09-05T11:59:00.000Z')`).run(mismatched);
 });
 expectRejected("WIRE_RECEIPT_VARIANT_MISMATCH", () => {
@@ -977,7 +1029,7 @@ expectRejected("WIRE_CAPTURED_SUPPLIED_EVENT_MISMATCH", () => {
     supplied_text_hash,supplied_origin_binding,supplied_event_accepted_at,
     source_key,grant_revision,policy_digest
   ) VALUES ('namespace-000001','principal-1',?,'captured_subject','supplied','raw-3',
-    'e3',2,'wrong','th','ob','2026-09-05T11:59:00.000Z','source-1',1,'policy-1')`)
+    '00000000000000000000061001',2,'wrong','th','ob','2026-09-05T11:59:00.000Z','source-1',1,'policy-1')`)
     .run(mismatched);
 });
 expectRejected("WIRE_CLAIM_GROUP_MEMBER_MISSING", () => {
@@ -1040,8 +1092,10 @@ console.log('CROSS_OBSERVATION_ATTRIBUTION_ACCEPTED_BY_SQL_REQUIRES_DECLARED_COD
 // Purge 6 staged-table structural checks. The authority parents above are stubs;
 // '{}' below only exercises SQL object/phase arms, never a checked authority,
 // coordinator manifest, absence result, migration, or completion receipt codec.
-type PurgeSqlRow = Record<string, string | null>;
+type PurgeSqlRow = Record<string, string | number | null>;
 const purgeId = (value: number): string => value.toString().padStart(26, "0");
+const purgeWorkBinding = '{"synthetic":"structural-only"}';
+const purgeWorkDigest = "a".repeat(64);
 const sourceRootId = purgeId(1), eventRootId = purgeId(2);
 const eventChildId = purgeId(3), sourceChildId = purgeId(4);
 const sourceCoordinatorId = purgeId(21), eventCoordinatorId = purgeId(22);
@@ -1052,18 +1106,23 @@ function insertPurgeRow(table: "event_purges_v6" | "purge_ops_v6", row: PurgeSql
     .run(...columns.map(column => row[column]!));
 }
 const sourceRoot: PurgeSqlRow = {
-  receipt_id: sourceRootId, batch_receipt_id: sourceRootId, selection_kind: "source_root",
-  event_id: null, state: "pending", phase: "work", connector_id: null, reason: "synthetic source revoke",
+  receipt_id: sourceRootId, id_origin: "core_allocated", id_allocator_version: 1,
+  batch_receipt_id: sourceRootId, selection_kind: "source_root",
+  event_id: null, event_id_origin: null, event_id_allocator_version: null,
+  state: "pending", phase: "work", connector_id: null, reason: "synthetic source revoke",
   source_authority: "{}", created_at: "2026-09-05T12:00:00.000Z", done_at: null,
   sensitivity: "private", terminal_integrity: null,
 };
 const eventRoot: PurgeSqlRow = {
   ...sourceRoot, receipt_id: eventRootId, batch_receipt_id: eventRootId, selection_kind: "event",
-  event_id: purgeId(11), connector_id: "synthetic-connector", source_authority: null,
+  event_id: purgeId(11), event_id_origin: "core_allocated", event_id_allocator_version: 1,
+  connector_id: "synthetic-connector", source_authority: null,
 };
 const reservationCoordinator: PurgeSqlRow = {
-  op_id: sourceCoordinatorId, receipt_id: sourceRootId, store: "coordinator",
+  op_id: sourceCoordinatorId, id_origin: "core_allocated", id_allocator_version: 1,
+  receipt_id: sourceRootId, store: "coordinator",
   state: "pending", phase: "work", ids: "[]", proof: null, completion: null,
+  work_binding: null, work_revision: 0, work_digest: null,
   created_at: "2026-09-05T12:00:00.000Z", done_at: null, sensitivity: "private",
 };
 db.transaction(() => {
@@ -1085,9 +1144,11 @@ db.transaction(() => {
   insertPurgeRow("event_purges_v6", {...eventRoot,
     receipt_id: sourceChildId, batch_receipt_id: sourceRootId, event_id: purgeId(13)});
   insertPurgeRow("purge_ops_v6", {...reservationCoordinator,
-    op_id: eventCoordinatorId, receipt_id: eventRootId, ids: JSON.stringify([purgeId(11),purgeId(12)]), proof: "{}"});
+    op_id: eventCoordinatorId, receipt_id: eventRootId, ids: JSON.stringify([purgeId(11),purgeId(12)]),
+    work_binding: purgeWorkBinding, work_revision: 1, work_digest: purgeWorkDigest, proof: "{}"});
   insertPurgeRow("purge_ops_v6", {...reservationCoordinator,
-    op_id: eventWorkId, receipt_id: eventRootId, store: "ledger_sqlite", ids: JSON.stringify([purgeId(11),purgeId(12)])});
+    op_id: eventWorkId, receipt_id: eventRootId, store: "ledger_sqlite", ids: JSON.stringify([purgeId(11),purgeId(12)]),
+    work_binding: purgeWorkBinding, work_revision: 1, work_digest: purgeWorkDigest});
 })();
 if (db.query<{ count: number }, [string]>(
   "SELECT count(*) AS count FROM event_purges_v6 WHERE batch_receipt_id=?",
@@ -1101,6 +1162,9 @@ for (const [label, patch, expected] of [
   ["WORK_WITHOUT_REASON", {reason: null}, "CHECK constraint failed"],
   ["WORK_WITHOUT_PHASE", {phase: null}, "CHECK constraint failed"],
   ["PUBLIC_SENSITIVITY", {sensitivity: "public"}, "CHECK constraint failed"],
+  ["CORE_RECEIPT_BAD_ULID", {receipt_id: "legacy-receipt"}, "CHECK constraint failed"],
+  ["CORE_RECEIPT_MISSING_VERSION", {id_allocator_version: null}, "CHECK constraint failed"],
+  ["CORE_EVENT_MISSING_VERSION", {event_id_allocator_version: null}, "CHECK constraint failed"],
   ["MISSING_BATCH_ROOT", {batch_receipt_id: purgeId(999)}, "FOREIGN KEY constraint failed"],
 ] as const) {
   expectRejected(`PURGE6_${label}`, () => insertPurgeRow("event_purges_v6", {
@@ -1113,6 +1177,8 @@ const independentSourceRoot = {
 for (const [label, patch] of [
   ["SOURCE_ROOT_NOT_SELF_BATCHED", {batch_receipt_id: sourceRootId}],
   ["SOURCE_ROOT_HAS_EVENT", {event_id: purgeId(101)}],
+  ["SOURCE_ROOT_EVENT_ORIGIN", {event_id_origin: "core_allocated"}],
+  ["SOURCE_ROOT_EVENT_ORIGIN_VERSION", {event_id_allocator_version: 1}],
   ["SOURCE_ROOT_WITHOUT_AUTHORITY", {source_authority: null}],
   ["SOURCE_ROOT_WITH_CONNECTOR", {connector_id: "synthetic-connector"}],
   ["SOURCE_ROOT_AUTHORITY_ARRAY", {source_authority: "[]"}],
@@ -1122,6 +1188,22 @@ for (const [label, patch] of [
     ...independentSourceRoot,...patch,
   }), "CHECK constraint failed");
 }
+expectRejected("PURGE6_LEGACY_EVENT_COPIED_ORIGIN_CANNOT_TERMINALIZE", () => {
+  insertPurgeRow("event_purges_v6", {
+    ...eventRoot, receipt_id: purgeId(100), batch_receipt_id: purgeId(100), event_id: purgeId(101),
+    event_id_origin: "legacy_unverified", event_id_allocator_version: null,
+    state: "done", phase: null, connector_id: null, reason: null, source_authority: null,
+    done_at: "2026-09-05T12:02:00.000Z", terminal_integrity: "d".repeat(64),
+  });
+}, "CHECK constraint failed");
+expectRejected("PURGE6_LEGACY_RECEIPT_CANNOT_TERMINALIZE", () => {
+  insertPurgeRow("event_purges_v6", {
+    ...eventRoot, receipt_id: purgeId(102), batch_receipt_id: purgeId(102), event_id: purgeId(103),
+    id_origin: "legacy_unverified", id_allocator_version: null,
+    state: "done", phase: null, connector_id: null, reason: null, source_authority: null,
+    done_at: "2026-09-05T12:02:00.000Z", terminal_integrity: "d".repeat(64),
+  });
+}, "CHECK constraint failed");
 expectRejected("PURGE6_DUPLICATE_EVENT_ID", () => insertPurgeRow("event_purges_v6", {
   ...eventRoot,receipt_id: purgeId(100),
 }), "UNIQUE constraint failed: event_purges_v6.event_id");
@@ -1135,23 +1217,112 @@ for (const [label, patch, expected] of [
   ["OP_PROOF_ARRAY", {proof: "[]"}, "CHECK constraint failed"],
   ["OP_WORK_WITHOUT_IDS", {ids: null}, "CHECK constraint failed"],
   ["OP_WORK_WITHOUT_PHASE", {phase: null}, "CHECK constraint failed"],
-  ["OP_MAINTENANCE_WITH_TARGETS", {phase: "maintenance",ids: '["target"]',proof: "{}"}, "CHECK constraint failed"],
-  ["OP_MAINTENANCE_WITHOUT_PROOF", {phase: "maintenance",proof: null}, "CHECK constraint failed"],
+  ["OP_CORE_MISSING_VERSION", {id_allocator_version: null}, "CHECK constraint failed"],
+  ["OP_WORK_WITHOUT_BINDING", {work_binding: null}, "CHECK constraint failed"],
+  ["OP_WORK_ZERO_REVISION", {work_revision: 0}, "CHECK constraint failed"],
+  ["OP_WORK_WITHOUT_DIGEST", {work_digest: null}, "CHECK constraint failed"],
+  ["OP_WORK_BINDING_ARRAY", {work_binding: "[]"}, "CHECK constraint failed"],
+  ["OP_WORK_DIGEST_UPPERCASE", {work_digest: "A".repeat(64)}, "CHECK constraint failed"],
 ] as const) {
   expectRejected(`PURGE6_${label}`, () => insertPurgeRow("purge_ops_v6", {
-    ...reservationCoordinator,op_id: purgeId(100),store: "ledger_sqlite",...patch,
+    ...reservationCoordinator,op_id: purgeId(100),store: "ledger_sqlite",ids: '["target"]',
+    work_binding: purgeWorkBinding,work_revision: 1,work_digest: purgeWorkDigest,...patch,
   }), expected);
 }
+// Start each maintenance fault from a row accepted by the maintenance arm.
+const maintenanceOp: PurgeSqlRow = {
+  ...reservationCoordinator, op_id: purgeId(100), store: "ledger_sqlite",
+  phase: "maintenance", ids: "[]", proof: "{}",
+  work_binding: null, work_revision: null, work_digest: null,
+};
+db.exec("SAVEPOINT valid_maintenance");
+insertPurgeRow("purge_ops_v6", maintenanceOp);
+db.exec("ROLLBACK TO valid_maintenance; RELEASE valid_maintenance");
+console.log("PURGE6_MAINTENANCE_POSITIVE_BASELINE_STRUCTURAL_PASS");
+for (const [label, patch] of [
+  ["TARGETS", {ids: '["target"]'}],
+  ["NO_PROOF", {proof: null}],
+  ["WORK_BINDING", {work_binding: purgeWorkBinding}],
+  ["WORK_REVISION", {work_revision: 1}],
+  ["WORK_DIGEST", {work_digest: purgeWorkDigest}],
+] as const) {
+  expectRejected(`PURGE6_OP_MAINTENANCE_${label}`, () => insertPurgeRow("purge_ops_v6", {
+    ...maintenanceOp, ...patch,
+  }), "CHECK constraint failed");
+}
+expectRejected("PURGE6_LEGACY_OPERATION_CANNOT_TERMINALIZE", () => {
+  insertPurgeRow("purge_ops_v6", {
+    ...reservationCoordinator, op_id: purgeId(104), receipt_id: sourceRootId, store: "ledger_sqlite",
+    id_origin: "legacy_unverified", id_allocator_version: null,
+    state: "done", phase: null, ids: null, work_binding: null, work_revision: null, work_digest: null,
+    proof: null, completion: "{}", done_at: "2026-09-05T12:02:00.000Z",
+  });
+}, "CHECK constraint failed");
+db.transaction(() => {
+  db.query(`INSERT INTO canon_source_erasure_intents_v5(
+    page_path,purge_receipt_id,source_key,intent_revision,write_state,codec,intent,digest
+  ) VALUES ('canon/event.md',?,NULL,1,'staged','kizuki.canon-erasure-intent/v2','{}',?),
+    ('canon/source.md',?,'source-1',1,'staged','kizuki.canon-erasure-intent/v2','{}',?)`)
+    .run(eventRootId, "b".repeat(64), sourceRootId, "c".repeat(64));
+})();
+const canonIntentRows = db.query<{ eventRows: number; sourceRows: number }, [string, string]>(
+  `SELECT sum(source_key IS NULL) AS eventRows, sum(source_key IS NOT NULL) AS sourceRows
+   FROM canon_source_erasure_intents_v5 WHERE purge_receipt_id IN (?,?)`,
+).get(eventRootId, sourceRootId)!;
+if (canonIntentRows.eventRows !== 1 || canonIntentRows.sourceRows !== 1) {
+  throw new Error("canon source-erasure intent source-key arms did not persist distinctly");
+}
+console.log("PURGE6_CANON_INTENT_EVENT_AND_SOURCE_KEY_STRUCTURAL_PASS");
+for (const [label, patch, expected] of [
+  ["CANON_INTENT_UNKNOWN_PURGE", {purge_receipt_id: purgeId(999)}, "FOREIGN KEY constraint failed"],
+  ["CANON_INTENT_UNKNOWN_SOURCE", {source_key: "missing-source"}, "FOREIGN KEY constraint failed"],
+  ["CANON_INTENT_CODEC", {codec: "kizuki.canon-erasure-intent/v1"}, "CHECK constraint failed"],
+  ["CANON_INTENT_ARRAY", {intent: "[]"}, "CHECK constraint failed"],
+  ["CANON_INTENT_DIGEST", {digest: "D".repeat(64)}, "CHECK constraint failed"],
+  ["CANON_INTENT_EMPTY_PATH", {page_path: ""}, "CHECK constraint failed"],
+  ["CANON_INTENT_ZERO_REVISION", {intent_revision: 0}, "CHECK constraint failed"],
+  ["CANON_INTENT_UNSAFE_REVISION", {intent_revision: 9007199254740992}, "CHECK constraint failed"],
+  ["CANON_INTENT_UNKNOWN_WRITE_STATE", {write_state: "done"}, "CHECK constraint failed"],
+] as const) {
+  expectRejected(`PURGE6_${label}`, () => {
+    const baseIntentRow: PurgeSqlRow = {
+      page_path: `canon/bad-${label.toLowerCase()}.md`, purge_receipt_id: eventRootId,
+      source_key: null, intent_revision: 1, write_state: "staged", codec: "kizuki.canon-erasure-intent/v2", intent: "{}", digest: "e".repeat(64),
+    };
+    const row: PurgeSqlRow = {...baseIntentRow, ...patch};
+    const columns = Object.keys(row);
+    db.query(`INSERT INTO canon_source_erasure_intents_v5(${columns.join(",")})
+      VALUES (${columns.map(() => "?").join(",")})`).run(...columns.map(column => row[column]!));
+  }, expected);
+}
+for (const [label, assignment] of [
+  ["PAGE", "page_path='canon/other.md'"],
+  ["PURGE", `purge_receipt_id='${sourceRootId}'`],
+  ["SOURCE", "source_key='source-1'"],
+] as const) {
+  expectRejected(`PURGE6_CANON_INTENT_${label}_IMMUTABLE`, () => db.exec(
+    `UPDATE canon_source_erasure_intents_v5 SET ${assignment} WHERE page_path='canon/event.md'`,
+  ), "canon intent ownership is immutable");
+}
+// Valid SQL state progression does not prove the required full-digest CAS or
+// machine-byte admission; those remain production transaction obligations.
+db.exec(`UPDATE canon_source_erasure_intents_v5 SET write_state='admitted'
+  WHERE page_path='canon/event.md';
+  UPDATE canon_source_erasure_intents_v5 SET write_state='receipted'
+  WHERE page_path='canon/event.md'`);
+console.log("PURGE6_CANON_INTENT_WRITE_STATES_STRUCTURAL_PASS");
 db.transaction(() => {
   db.exec(`UPDATE event_purges_v6 SET phase='maintenance',connector_id=NULL,
     reason=NULL,source_authority=NULL`);
-  db.exec(`UPDATE purge_ops_v6 SET phase='maintenance',ids='[]',proof='{}'`);
+  db.exec(`UPDATE purge_ops_v6 SET phase='maintenance',ids='[]',proof='{}',
+    work_binding=NULL,work_revision=NULL,work_digest=NULL`);
 })();
 const pendingMaintenance = db.query<{ receipts: number; ops: number }, []>(
   `SELECT (SELECT count(*) FROM event_purges_v6 WHERE state='pending' AND phase='maintenance'
       AND connector_id IS NULL AND reason IS NULL AND source_authority IS NULL) AS receipts,
     (SELECT count(*) FROM purge_ops_v6 WHERE state='pending' AND phase='maintenance'
-      AND ids='[]' AND proof IS NOT NULL) AS ops`,
+      AND ids='[]' AND proof IS NOT NULL AND work_binding IS NULL
+      AND work_revision IS NULL AND work_digest IS NULL) AS ops`,
 ).get()!;
 if (pendingMaintenance.receipts !== 4 || pendingMaintenance.ops !== 3) {
   throw new Error("pending maintenance did not scrub SQL execution fields");
@@ -1192,11 +1363,30 @@ for (const [label, table, key, id, assignment] of [
   ["TERMINAL_OP_NO_COMPLETION", "purge_ops_v6", "op_id", eventWorkId, "completion=NULL"],
   ["TERMINAL_OP_NO_DONE_AT", "purge_ops_v6", "op_id", eventWorkId, "done_at=NULL"],
   ["TERMINAL_OP_PHASE", "purge_ops_v6", "op_id", eventWorkId, "phase='maintenance'"],
+  ["TERMINAL_OP_WORK_BINDING", "purge_ops_v6", "op_id", eventWorkId, "work_binding='{}'"],
+  ["TERMINAL_OP_WORK_REVISION", "purge_ops_v6", "op_id", eventWorkId, "work_revision=1"],
+  ["TERMINAL_OP_WORK_DIGEST", "purge_ops_v6", "op_id", eventWorkId, `work_digest='${"a".repeat(64)}'`],
 ] as const) {
   expectRejected(`PURGE6_${label}`, () => db.query(
     `UPDATE ${table} SET ${assignment} WHERE ${key}=?`,
   ).run(id), "CHECK constraint failed");
 }
+for (const [label, table, assignment, key, id] of [
+  ["RECEIPT_ORIGIN", "event_purges_v6", "id_origin='legacy_unverified'", "receipt_id", sourceRootId],
+  ["RECEIPT_COPIED_EVENT_ORIGIN", "event_purges_v6", "event_id_origin='legacy_unverified'", "receipt_id", eventRootId],
+  ["RECEIPT_BATCH", "event_purges_v6", `batch_receipt_id='${sourceRootId}'`, "receipt_id", eventRootId],
+  ["OP_ORIGIN", "purge_ops_v6", "id_origin='legacy_unverified'", "op_id", eventWorkId],
+  ["OP_PARENT", "purge_ops_v6", `receipt_id='${sourceRootId}'`, "op_id", eventWorkId],
+  ["OP_STORE", "purge_ops_v6", "store='graph'", "op_id", eventWorkId],
+] as const) {
+  expectRejected(`PURGE6_${label}_IDENTITY_IMMUTABLE`, () => db.query(
+    `UPDATE ${table} SET ${assignment} WHERE ${key}=?`,
+  ).run(id), "identifier origin is immutable");
+}
+expectRejected("EVENT_ID_ORIGIN_IMMUTABLE", () => {
+  db.exec("UPDATE events SET id_origin='imported_unverified',id_allocator_version=NULL WHERE event_id='00000000000000000000061001'");
+}, "identifier origin is immutable");
+console.log("PURGE6_ID_ORIGIN_IMMUTABILITY_STRUCTURAL_PASS");
 // SQL's uniqueness enforces at most one coordinator, not its existence or its
 // placement at a root. These accepted rows must be rejected by the closed
 // codecs/transaction validator; leave no such rows in this probe's final state.
@@ -1206,7 +1396,8 @@ insertPurgeRow("event_purges_v6", {...eventRoot,
 insertPurgeRow("purge_ops_v6", {...reservationCoordinator,
   op_id: purgeId(100),receipt_id: eventChildId});
 insertPurgeRow("purge_ops_v6", {...reservationCoordinator,
-  op_id: purgeId(101),receipt_id: eventRootId,store: "ledger_sqlite"});
+  op_id: purgeId(101),receipt_id: eventRootId,store: "ledger_sqlite",ids: "[]",
+  work_binding: purgeWorkBinding,work_revision: 1,work_digest: purgeWorkDigest});
 db.exec("ROLLBACK TO application_obligations; RELEASE application_obligations");
 console.log("PURGE6_ROOT_MEMBERSHIP_COORDINATOR_EXISTENCE_AND_EMPTY_NONCOORDINATOR_WORK_REQUIRE_APPLICATION_REJECTION");
 console.log("PURGE6_SOURCE_AUTHORITY_CODECS_MANIFEST_AGREEMENT_AND_REAL_MAINTENANCE_NOT_EXECUTED");

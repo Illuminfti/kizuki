@@ -5,7 +5,7 @@
   "evaluation_state": "not_run",
   "base": {
     "file": "world-concept-design.json",
-    "sha256": "1f96e15d9da0a99203acc44f8c7133e8839d734d5a08d64ffec4be864f0ce27b",
+    "sha256": "169e86dd3d458e5687e13a01530a326a84950e737f4f7702daccf05b10d5a61b",
     "start_after": "2025-01-07T10:00:00Z",
     "mutation": "This repository copy binds the explicit subject-scope version of the base fixture; scenario evidence, semantic assertions and purge selection are retained. The original separately reviewed snapshots remain preserved."
   },
