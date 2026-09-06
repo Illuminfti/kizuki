@@ -10,10 +10,6 @@ export function vaultIdPath(vaultPath: string): string {
   return join(vaultPath, VAULT_ID_PATH);
 }
 
-function vaultMachinePath(vaultPath: string): string {
-  return join(vaultPath, VAULT_MACHINE_PATH);
-}
-
 function readOwnedLine(path: string): string | null {
   if (!existsSync(path)) return null;
   const value = readFileSync(path, "utf8").split("\n")[0]?.trim() ?? "";
@@ -66,35 +62,29 @@ function writeOwnedFile(path: string, body: string, exclusive: boolean): void {
   }
 }
 
-function persistVaultId(vaultPath: string, id: string, exclusive: boolean): string {
-  writeOwnedFile(vaultIdPath(vaultPath), `${id}\n`, exclusive);
-  return readVaultId(vaultPath) ?? id;
-}
-
-function persistMachine(vaultPath: string, machineId: string): void {
-  writeOwnedFile(vaultMachinePath(vaultPath), `${machineId}\n`, false);
-}
-
-function mintVaultId(vaultPath: string, machineId: string | null): string {
-  const id = persistVaultId(vaultPath, ulid().toLowerCase(), true);
-  if (machineId !== null) persistMachine(vaultPath, machineId);
-  return id;
-}
-
 export function ensureVaultId(vaultPath: string, machineId: string | null = readMachineId()): string {
   const machine = bindingOf(machineId);
-  const existing = readVaultId(vaultPath);
-  if (existing === null) return mintVaultId(vaultPath, machine);
+  const idPath = vaultIdPath(vaultPath);
+  const machinePath = join(vaultPath, VAULT_MACHINE_PATH);
+  const existing = readOwnedLine(idPath);
 
-  const bound = readOwnedLine(vaultMachinePath(vaultPath));
+  if (existing === null) {
+    const id = ulid().toLowerCase();
+    writeOwnedFile(idPath, `${id}\n`, true);
+    if (machine !== null) writeOwnedFile(machinePath, `${machine}\n`, false);
+    return readOwnedLine(idPath) ?? id;
+  }
+
+  const bound = readOwnedLine(machinePath);
   if (bound === null) {
-    if (machine !== null) persistMachine(vaultPath, machine);
+    if (machine !== null) writeOwnedFile(machinePath, `${machine}\n`, false);
     return existing;
   }
   if (machine === null || bound === machine) return existing;
 
   // Id first, then binding: a crash remints again instead of keeping a cloned id.
-  const id = persistVaultId(vaultPath, ulid().toLowerCase(), false);
-  persistMachine(vaultPath, machine);
-  return id;
+  const id = ulid().toLowerCase();
+  writeOwnedFile(idPath, `${id}\n`, false);
+  writeOwnedFile(machinePath, `${machine}\n`, false);
+  return readOwnedLine(idPath) ?? id;
 }

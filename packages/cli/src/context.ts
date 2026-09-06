@@ -96,8 +96,6 @@ export function assertVault(path: string): string {
       `vault identity missing: ${absolutePath}; run: kizuki init ${absolutePath}`,
     );
   }
-  // Remint a snapshot-cloned identity once this volume lands on a new machine.
-  ensureVaultId(absolutePath);
   if (!existsSync(dbPath) || !statSync(dbPath).isFile()) {
     throw new Error(
       `vault ledger missing: ${absolutePath}; run: kizuki init ${absolutePath}`,
@@ -105,6 +103,8 @@ export function assertVault(path: string): string {
   }
   peekLedgerIdentity(dbPath);
   assertVaultControl(absolutePath);
+  // Remint a snapshot-cloned identity once this volume lands on a new machine.
+  ensureVaultId(absolutePath);
   return absolutePath;
 }
 
