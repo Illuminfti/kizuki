@@ -294,3 +294,47 @@ test("model identity digests are strict semantic evidence without copying the mo
  expect(JSON.stringify(project("a".repeat(64)))).not.toContain("model_ref_sha256");
  for(const invalid of ["SYNTHETIC_PRIVATE_IDENTITY", "A".repeat(64), "a".repeat(63), null, {}]) expect(()=>project(invalid)).toThrow("invalid receipt model identity");
 });
+
+test("identity and rail policy accept reordered keys and refuse a changed value",()=>{
+ const reverse=(value:Record<string,unknown>)=>Object.fromEntries(Object.entries(value).reverse());
+ const canonical=(value:unknown):string=>JSON.stringify(value,(_key,item)=>item&&typeof item==="object"&&!Array.isArray(item)?Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item);
+ const f=fixture();initQualification(f.artifact,f.proof,f.scope,f.out);
+ const path=join(f.out,"manifest.json"), original=readFileSync(path,"utf8"), manifest=JSON.parse(original);
+ const reordered={...manifest,identity:reverse(manifest.identity),profile:{...manifest.profile,rails:manifest.profile.rails.map((rail:Record<string,unknown>)=>reverse(rail))}};
+ const rewritten=JSON.stringify(reordered)+"\n";
+ expect(rewritten).not.toBe(original);
+ writeFileSync(path,rewritten);
+ expect(statusQualification(f.out).identity.source_sha).toBe("a".repeat(40));
+ expect(sampleQualification(f.out).issues).not.toContain("schedule-profile-changed");
+ const db=openLedger(join(f.vault,".kizuki/kizuki.db"));db.exec("UPDATE schedules SET period_s = period_s + 1");db.close();
+ expect(sampleQualification(f.out).issues).toContain("schedule-profile-changed");
+ const g=fixture();initQualification(g.artifact,g.proof,g.scope,g.out);
+ const changedPath=join(g.out,"manifest.json"), changed=JSON.parse(readFileSync(changedPath,"utf8"));
+ changed.identity.target="synthetic-other-target";
+ writeFileSync(changedPath,JSON.stringify(changed)+"\n");
+ const genesisPath=join(g.out,"genesis.json"), genesis=JSON.parse(readFileSync(genesisPath,"utf8"));
+ genesis.manifest_sha256=hash(canonical(changed));
+ writeFileSync(genesisPath,JSON.stringify(genesis)+"\n");
+ expect(()=>statusQualification(g.out)).toThrow("artifact or proof identity changed");
+});
+
+test("CLI maps JSON, filesystem and SQLite failures to content-free diagnostics",()=>{
+ const sentinel="NEUTRAL_INPUT_SENTINEL";
+ const f=fixture();
+ const cli=(args:string[])=>Bun.spawnSync([process.execPath,join(import.meta.dir,"qualification.ts"),...args],{stdout:"pipe",stderr:"pipe"});
+ const failed=(result:ReturnType<typeof cli>, diagnostic:string)=>{
+  expect(result.exitCode).toBe(1);
+  expect(result.stdout.toString()).toBe("");
+  expect(result.stderr.toString()).toBe(diagnostic+"\n");
+  expect(result.stderr.toString()).not.toContain(sentinel);
+ };
+ writeFileSync(f.scope,sentinel);
+ failed(cli(["init","--artifact",f.artifact,"--proof",f.proof,"--scope",f.scope,"--out",f.out]),"qualification json unreadable");
+ failed(cli(["status","--run",join(f.root,sentinel)]),"qualification filesystem unreadable");
+ writeFileSync(f.scope,JSON.stringify({scope:"fixture",vault:f.vault,brief_hour:7,timezone:"UTC",supervisor:"none"}));
+ for(const suffix of ["-wal","-shm","-journal"]) rmSync(join(f.vault,".kizuki/kizuki.db"+suffix),{force:true});
+ writeFileSync(join(f.vault,".kizuki/kizuki.db"),sentinel);
+ failed(cli(["init","--artifact",f.artifact,"--proof",f.proof,"--scope",f.scope,"--out",f.out]),"qualification sqlite unreadable");
+ const usage=cli([]);
+ expect(usage.exitCode).toBe(1);expect(usage.stdout.toString()).toBe("");expect(usage.stderr.toString()).toContain("usage: qualification.ts");
+});
