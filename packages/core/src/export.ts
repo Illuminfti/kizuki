@@ -592,7 +592,7 @@ function vaultInventory(db: Database, root: string): VaultInventory {
   function classify(path: string, rel: string, archive: boolean): void {
     const name = rel.split("/").at(-1)!;
     const doctrine = rel === "CANON.md" || rel === "SCHEMA.md";
-    if (!doctrine && (!name.endsWith(".md") || name === "CANON.md" || name === "SCHEMA.md")) {
+    if (!doctrine && !name.endsWith(".md")) {
       inventory.excluded_entries.unclassified++;
       return;
     }

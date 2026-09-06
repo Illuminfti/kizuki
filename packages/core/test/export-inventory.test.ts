@@ -57,6 +57,8 @@ describe("classified export inventory", () => {
     const { db, vault, backup, target } = fixture();
     const pages = [
       ["captures/note.md", "capture", "active"],
+      ["facts/CANON.md", "nested-canon-name", "active"],
+      ["facts/SCHEMA.md", "nested-schema-name", "draft"],
       ["people/Ada.md", "ada", "draft"],
       ["projects/older.md", "old", "archived"],
       ["projects/a.kizuki-backup-topic/note.md", "ordinary-backup-name", "active"],
@@ -71,7 +73,7 @@ describe("classified export inventory", () => {
     expect(manifest.schema).toBe("kizuki.backup/v3");
     expect(listing.schema).toBe("kizuki.export-inventory/v1");
     expect(listing.files.map(file => file.path)).toEqual([
-      "CANON.md", "SCHEMA.md", "captures/note.md", "people/Ada.md",
+      "CANON.md", "SCHEMA.md", "captures/note.md", "facts/CANON.md", "facts/SCHEMA.md", "people/Ada.md",
       "projects/a.kizuki-backup-topic/note.md", "projects/archive/note.md", "projects/older.md", "topics/ä note.md",
     ]);
     for (const item of listing.files) expect(manifest.files[`vault/${item.path}`]).toMatchObject({ sha256: item.sha256, size: item.size });

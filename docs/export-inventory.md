@@ -14,6 +14,7 @@ The selected files are:
   paths throughout the vault. Custom directories, `captures/`, and Unicode
   filenames remain supported; init's default directories are not an allowlist.
   A nested path such as `projects/archive/note.md` remains ordinary canon.
+  Validated nested `CANON.md` and `SCHEMA.md` pages are ordinary canon too.
 - Prior revisions in root `archive/` justified by canon receipt paths and hashes, including the
   modern encoded archive name and legacy `.prev-` names used by undo. Unavailable
   explicit archive references are counted in the inventory.
