@@ -36,6 +36,7 @@ import {
 import { contentSignature } from "./claims/hash";
 import { CLAIMS_SCHEMA_VERSION, syncCompatProposals } from "./claims/schema";
 import { canonicalizeProducer, isProducer } from "./contracts/proposal";
+import { validateAbsenceProof, validateProvenanceAbsenceProof } from "./contracts/retrieval";
 import { isPlainObject } from "./util/validate";
 import {
   LEGACY_IDENTITY_EVIDENCE_MAX_BYTES,
@@ -91,6 +92,18 @@ const EXPORT_INVENTORY = "export-inventory.json";
 const MAX_INVENTORY_ENTRIES = 100_000;
 const MAX_ERASURE_REPORT_BYTES = 2_000_000;
 const MAX_SOURCE_INVENTORY_ROW_BYTES = 6 * MAX_ERASURE_REPORT_BYTES + 1_024;
+const PURGE_HISTORY_COLUMNS = {
+  purge_batches: ["batch_id", "state", "created_at"],
+  purge_batch_receipts: ["receipt_id", "batch_id"],
+  purge_ops: ["op_id", "receipt_id", "store", "ids", "state", "proof", "created_at", "done_at"],
+} as const;
+type PurgeHistoryTable = keyof typeof PURGE_HISTORY_COLUMNS;
+const PURGE_HISTORY_TABLES = Object.keys(PURGE_HISTORY_COLUMNS) as PurgeHistoryTable[];
+const MAX_PURGE_IDS_BYTES = 16_777_216;
+const MAX_PURGE_PROOF_BYTES = 65_536;
+// Stored JSON is escaped once more in its enclosing JSONL record.
+const MAX_PURGE_OP_ROW_BYTES = 6 * (MAX_PURGE_IDS_BYTES + MAX_PURGE_PROOF_BYTES) + 65_536;
+const PURGE_HISTORY_RECOVERY_WARNING = "backup lacks complete historical purge batch membership or store evidence; unassigned receipts remain unverifiable and no membership was inferred";
 const FORBIDDEN_KEYS = new Set([
   "resolved_secret",
   "client_secret",
@@ -634,7 +647,8 @@ function vaultInventory(db: Database, root: string): VaultInventory {
     unavailable_archive_references: 0,
     recovery_limits: [
       "The v3 streams exclude credentials, opaque connection state and agent enrollment authority.",
-      "The v3 streams do not preserve all journals, holds, purge operations or run and audit history.",
+      "The v3 streams preserve completed purge batches and store obligations; pending purge work is refused. Other journals, holds and run or audit history are not preserved.",
+      ...(hasUnassignedPurgeReceipts(db) ? [PURGE_HISTORY_RECOVERY_WARNING] : []),
       "Selected files and database streams share one SQLite capture and the cooperating writer fence; manual edits and complete runtime recovery remain outside this guarantee.",
       "A complete manifest verifies this artifact's listed bytes; it does not assert complete runtime recovery.",
     ],
@@ -1606,6 +1620,7 @@ function exportVaultOwned(
       );
       writeStream(staging, "ledger/event_purges.jsonl", pagePurges(db), files, options.signal);
       for (const table of SOURCE_BACKUP_TABLES) writeStream(staging, `ledger/${table}.jsonl`, sourcePolicyRows(db, table), files, options.signal);
+      for (const table of PURGE_HISTORY_TABLES) writeStream(staging, `ledger/${table}.jsonl`, purgeHistoryRows(db, table), files, options.signal);
       writeStream(staging, "claims/claims.jsonl", pageClaims(db), files, options.signal);
       writeStream(
         staging,
@@ -1737,6 +1752,7 @@ function basenameSafe(path: string): string {
 
 function verifyFiles(root: string, manifest: ExportManifest): void {
   assertBackupFormat(manifest);
+  hasPurgeHistory(manifest);
   const expectedHash = signManifest({
     schema: manifest.schema,
     vault_id: manifest.vault_id,
@@ -1843,8 +1859,8 @@ function assertBackupFormat(manifest: ExportManifest): void {
     throw new Error("backup schema versions are invalid");
   }
   // Ledger17 adds explicit rail cursors; ledger16 keeps them in checkpoints.
-  // Ledger18 adds local enrollment custody. Ledger19 adds local purge recovery
-  // metadata; pending work is refused by the writer rather than serialized.
+  // Ledger18 adds local enrollment custody. Ledger19 adds purge batches;
+  // their completed history is optional in older v3 backups. Pending work is refused.
   // Future migrations must make their own explicit compatibility decision.
   if ((manifest.schema === BACKUP_SCHEMA || manifest.schema === V2_BACKUP_SCHEMA) &&
       versions.ledger !== 16 && versions.ledger !== 17 && versions.ledger !== 18 && versions.ledger !== 19) {
@@ -2276,7 +2292,9 @@ function* streamRows(
   const maxRowBytes = relativePath === "ledger/events.jsonl" ? MAX_EVENT_BACKUP_ROW_BYTES
     : relativePath === MACHINE_BYTE_INTENTS_BACKUP ? MAX_MACHINE_BYTE_INTENT_ROW_BYTES
     : relativePath === IDENTITY_BACKUP ? MAX_IDENTITY_BACKUP_ROW_BYTES
-    : relativePath === SOURCE_INVENTORY_BACKUP ? MAX_SOURCE_INVENTORY_ROW_BYTES : Infinity;
+    : relativePath === SOURCE_INVENTORY_BACKUP ? MAX_SOURCE_INVENTORY_ROW_BYTES
+    : relativePath === "ledger/purge_ops.jsonl" ? MAX_PURGE_OP_ROW_BYTES
+    : relativePath === "ledger/purge_batches.jsonl" || relativePath === "ledger/purge_batch_receipts.jsonl" ? 16_384 : Infinity;
   let rows = 0;
   for (const row of readJsonl(path, maxRowBytes)) {
     if (relativePath === IDENTITY_BACKUP && ++rows > LEGACY_IDENTITY_SCAN_MAX_ROWS) {
@@ -2413,6 +2431,7 @@ export function restoreVault(
           insertConnectorSensitivity(db, row);
         }
         restoreSourcePolicy(db, source, manifest);
+        restorePurgeHistory(db, source, manifest);
         let intentCount = 0;
         for (const row of streamRows(
           source,
@@ -2478,6 +2497,9 @@ export function restoreVault(
         ).length,
         doctor: doctor.counts,
         recovery_warnings: [
+          ...(!hasPurgeHistory(manifest) || hasUnassignedPurgeReceipts(db)
+            ? [PURGE_HISTORY_RECOVERY_WARNING]
+            : []),
           ...(manifest.schema_versions.serve < 8
             ? ["backup predates durable extraction recovery; an interrupted model decision was not preserved"]
             : []),
@@ -2580,12 +2602,146 @@ function assertSourceInventoryIdentityErasure(db: Database): void {
   for (const _row of boundedSourceInventoryRows(db)) { /* validate every bounded row */ }
 }
 
+function hasPurgeHistory(manifest: ExportManifest): boolean {
+  const entries = PURGE_HISTORY_TABLES.map(table => manifest.files[`ledger/${table}.jsonl`]);
+  const present = entries.filter(entry => entry !== undefined).length;
+  if (present === 0) return false;
+  if (present !== entries.length || manifest.schema !== BACKUP_SCHEMA || manifest.schema_versions.ledger !== 19 ||
+      entries.some(entry => entry === undefined || !Number.isSafeInteger(entry.count) || entry.count < 0 ||
+        !Number.isSafeInteger(entry.size) || entry.size < 0)) {
+    throw new Error("backup completed purge history streams are incomplete or incompatible");
+  }
+  return true;
+}
+
+function purgeColumnLimit(column: string): number {
+  if (column === "ids") return MAX_PURGE_IDS_BYTES;
+  if (column === "proof") return MAX_PURGE_PROOF_BYTES;
+  if (column === "store") return 4_096;
+  if (column === "state") return 16;
+  if (column === "created_at" || column === "done_at") return 64;
+  return 1_024;
+}
+
+function purgeHistoryValues(table: PurgeHistoryTable, row: Record<string, unknown>): string[] {
+  const columns = PURGE_HISTORY_COLUMNS[table];
+  if (Object.keys(row).sort().join() !== [...columns].sort().join()) {
+    throw new Error("invalid completed purge history row");
+  }
+  return columns.map(column => {
+    const value = row[column];
+    if (typeof value !== "string" || value.length === 0 || Buffer.byteLength(value, "utf8") > purgeColumnLimit(column) ||
+        ((column === "created_at" || column === "done_at") && !isRfc3339(value)) ||
+        (column === "state" && value !== (table === "purge_batches" ? "ready" : "done"))) {
+      throw new Error("invalid completed purge history value");
+    }
+    return value;
+  });
+}
+
+function* purgeHistoryRows(db: Database, table: PurgeHistoryTable): Generator<Record<string, unknown>> {
+  // Fixed table/column identifiers only. Refuse oversized stored text before it
+  // crosses into JavaScript, including JSON which must still be parsed below.
+  const fields = PURGE_HISTORY_COLUMNS[table].map(column =>
+    `CASE WHEN typeof(${column})='text' AND length(CAST(${column} AS BLOB))<=${purgeColumnLimit(column)} THEN CAST(${column} AS BLOB) ELSE NULL END AS ${column}`);
+  const order = table === "purge_batches" ? "created_at,batch_id"
+    : table === "purge_batch_receipts" ? "batch_id,receipt_id" : "created_at,op_id";
+  for (const stored of db.query<Record<string, Uint8Array | null>, []>(`SELECT ${fields.join()} FROM ${table} ORDER BY ${order}`).iterate()) {
+    const row: Record<string, unknown> = {};
+    for (const column of PURGE_HISTORY_COLUMNS[table]) {
+      const bytes = stored[column];
+      if (bytes === null || bytes === undefined) throw new Error("invalid completed purge history value");
+      try { row[column] = FATAL_UTF8.decode(bytes); }
+      catch { throw new Error("invalid completed purge history UTF-8"); }
+    }
+    purgeHistoryValues(table, row);
+    if (table === "purge_ops") validateCompletedPurgeOp(db, row);
+    yield row;
+  }
+}
+
+function purgeHistoryEventIds(db: Database, batchId: string): string[] {
+  const ids: string[] = [];
+  let bytes = 0;
+  for (const row of db.query<{ event_id: string | null }, [string, string]>(
+    `SELECT CASE WHEN length(CAST(event_id AS BLOB))<=1024 THEN event_id ELSE NULL END AS event_id FROM (
+       SELECT e.event_id FROM purge_batch_receipts m JOIN event_purges e USING(receipt_id) WHERE m.batch_id=?
+       UNION SELECT b.event_id FROM source_event_bindings b JOIN source_grants g USING(source_key) WHERE g.purge_receipt_id=?
+     ) ORDER BY event_id`,
+  ).iterate(batchId, batchId)) {
+    if (row.event_id === null || row.event_id.length === 0 ||
+        (bytes += Buffer.byteLength(row.event_id, "utf8") + 4) > MAX_PURGE_IDS_BYTES) {
+      throw new Error("completed purge provenance inventory exceeds its bound");
+    }
+    ids.push(row.event_id);
+  }
+  return ids;
+}
+
+function validateCompletedPurgeOp(db: Database, row: Record<string, unknown>): void {
+  let ids: unknown;
+  let raw: unknown;
+  try { ids = JSON.parse(row.ids as string); raw = JSON.parse(row.proof as string); }
+  catch { throw new Error("invalid completed purge operation JSON"); }
+  if (!Array.isArray(ids) || !ids.every(id => typeof id === "string" && id.length > 0 && id.length <= 4_096) ||
+      !isPlainObject(raw) || Object.keys(raw).sort().join() !== "at,checked,found,method,provenance,schema,store" ||
+      raw["schema"] !== "kizuki.purge-proof/v1" || !isPlainObject(raw["provenance"]) ||
+      Object.keys(raw["provenance"]).sort().join() !== "at,checked,found,method,scope,store") {
+    throw new Error("invalid completed purge operation proof");
+  }
+  const proof = validateAbsenceProof(raw, ids);
+  const provenance = validateProvenanceAbsenceProof(raw["provenance"], purgeHistoryEventIds(db, row.receipt_id as string));
+  if (proof.store !== row.store || provenance.store !== row.store || proof.found.length !== 0 || provenance.found.length !== 0) {
+    throw new Error("completed purge operation proof does not match its scope");
+  }
+}
+
+function assertCompletedPurgeHistory(db: Database): void {
+  if (db.query(`SELECT 1 FROM purge_batch_receipts m
+      LEFT JOIN event_purges e USING(receipt_id) LEFT JOIN purge_batches b USING(batch_id)
+      WHERE e.receipt_id IS NULL OR b.batch_id IS NULL LIMIT 1`).get() !== null ||
+      db.query(`SELECT 1 FROM purge_batches b WHERE
+        NOT EXISTS (SELECT 1 FROM purge_batch_receipts m WHERE m.receipt_id=b.batch_id AND m.batch_id=b.batch_id)
+        AND NOT EXISTS (SELECT 1 FROM source_grants g WHERE g.purge_receipt_id=b.batch_id AND g.status='purged') LIMIT 1`).get() !== null ||
+      db.query(`SELECT 1 FROM purge_batch_receipts m JOIN purge_batches b ON b.batch_id=m.receipt_id
+        WHERE m.batch_id!=b.batch_id LIMIT 1`).get() !== null ||
+      db.query(`SELECT 1 FROM purge_ops o LEFT JOIN purge_batches b ON b.batch_id=o.receipt_id
+        WHERE b.batch_id IS NULL LIMIT 1`).get() !== null) {
+    throw new Error("completed purge history has unresolved references");
+  }
+  for (const table of PURGE_HISTORY_TABLES) {
+    for (const _row of purgeHistoryRows(db, table)) { /* validate the current database cut */ }
+  }
+}
+
+function hasUnassignedPurgeReceipts(db: Database): boolean {
+  return db.query(`SELECT 1 FROM event_purges e WHERE NOT EXISTS
+    (SELECT 1 FROM purge_batch_receipts m WHERE m.receipt_id=e.receipt_id) LIMIT 1`).get() !== null;
+}
+
+function restorePurgeHistory(db: Database, backup: string, manifest: ExportManifest): void {
+  if (!hasPurgeHistory(manifest)) return;
+  for (const table of PURGE_HISTORY_TABLES) {
+    const columns = PURGE_HISTORY_COLUMNS[table];
+    const insert = db.query(`INSERT INTO ${table} (${columns.join()}) VALUES (${columns.map(() => "?").join()})`);
+    let count = 0;
+    const path = `ledger/${table}.jsonl`;
+    for (const row of streamRows(backup, manifest, path, true)) {
+      insert.run(...purgeHistoryValues(table, row));
+      count += 1;
+    }
+    if (count !== manifest.files[path]!.count) throw new Error("backup completed purge history count mismatch");
+  }
+  assertCompletedPurgeHistory(db);
+}
+
 function assertNoPendingPurgeExport(db: Database): void {
   if (db.query("SELECT 1 FROM canon_holds LIMIT 1").get() !== null ||
       (tableExists(db, "purge_ops") && db.query("SELECT 1 FROM purge_ops WHERE state!='done' LIMIT 1").get() !== null) ||
       db.query("SELECT 1 FROM purge_batches WHERE state!='ready' LIMIT 1").get() !== null) {
     throw new Error("purge_recovery_pending");
   }
+  assertCompletedPurgeHistory(db);
 }
 
 function assertSourceExport(db: Database): void {

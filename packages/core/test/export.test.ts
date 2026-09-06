@@ -289,6 +289,15 @@ function writeSignedManifest(
   return signed;
 }
 
+function legacyFiles(backup: string, current: Record<string, ExportManifestEntry>): Record<string, ExportManifestEntry> {
+  const files = { ...current };
+  for (const table of ["purge_batches", "purge_batch_receipts", "purge_ops"]) {
+    delete files[`ledger/${table}.jsonl`];
+    rmSync(join(backup, "ledger", `${table}.jsonl`));
+  }
+  return files;
+}
+
 function insertFixtureReceipt(
   db: ReturnType<typeof openLedger>,
   kind = "purge_review",
@@ -960,9 +969,9 @@ describe("restoreVault", () => {
       count: 1, size: payload.byteLength, mode: 0o600,
       sha256: new Bun.CryptoHasher("sha256").update(payload).digest("hex"),
     } };
-    writeSignedManifest(backup, { ...manifest, schema: "kizuki.backup/v2", files });
+    writeSignedManifest(backup, { ...manifest, schema: "kizuki.backup/v2", files: legacyFiles(backup, files) });
     const target = join(temporary("kizuki-restore-parent-"), "vault");
-    restoreVault(backup, target);
+    expect(restoreVault(backup, target).recovery_warnings.join(" ")).toContain("historical purge");
     const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
     expect(restored.query<{ evidence: string }, []>("SELECT evidence FROM identity_links").get()?.evidence)
       .toBe('["event:legacy-v2"]');
@@ -1159,16 +1168,16 @@ describe("restoreVault", () => {
     writeSignedManifest(backup, {
       ...manifest,
       schema: "kizuki.backup/v2",
-      files: {
+      files: legacyFiles(backup, {
         ...manifest.files,
         ["ledger/source_store_inventory.jsonl"]: {
           count: 1, size: payload.byteLength, mode: 0o600,
           sha256: new Bun.CryptoHasher("sha256").update(payload).digest("hex"),
         },
-      },
+      }),
     });
     const target = join(temporary("kizuki-restore-parent-"), "vault");
-    restoreVault(backup, target);
+    expect(restoreVault(backup, target).recovery_warnings.join(" ")).toContain("historical purge");
     const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
     expect(JSON.parse(restored.query<{ erasure_report: string }, [string]>(
       "SELECT erasure_report FROM source_store_inventory WHERE source_key=?",
@@ -1188,9 +1197,11 @@ describe("restoreVault", () => {
     const files = { ...manifest.files };
     delete files["claims/identity_links.jsonl"];
     delete files["ledger/connector_sensitivity.jsonl"];
-    writeSignedManifest(backup, { ...manifest, schema: "kizuki.backup/v2", files });
+    writeSignedManifest(backup, { ...manifest, schema: "kizuki.backup/v2", files: legacyFiles(backup, files) });
     const target = join(temporary("kizuki-restore-parent-"), "vault");
-    expect(restoreVault(backup, target).events).toBe(1);
+    const report = restoreVault(backup, target);
+    expect(report.events).toBe(1);
+    expect(report.recovery_warnings.join(" ")).toContain("historical purge");
     db.close();
   });
 

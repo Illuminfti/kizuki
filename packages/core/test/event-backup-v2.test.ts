@@ -70,6 +70,13 @@ function signManifest(backup: string, manifest: ExportManifest): void {
   chmodSync(join(backup, "manifest.json"), 0o600);
 }
 
+function removePurgeHistoryStreams(backup: string, manifest: ExportManifest): void {
+  for (const table of ["purge_batches", "purge_batch_receipts", "purge_ops"]) {
+    delete manifest.files[`ledger/${table}.jsonl`];
+    unlinkSync(join(backup, "ledger", `${table}.jsonl`));
+  }
+}
+
 function writeJsonl(
   backup: string,
   manifest: ExportManifest,
@@ -190,6 +197,7 @@ test("imports an exact legacy v1 record and annotates it under the v2 schema", (
     origin_binding_version: _bindingVersion, origin_binding_kind: _bindingKind, origin_binding: _binding, ...legacy } = current;
   legacy.content_hash = computeLegacyContentHash(input as ReturnType<typeof validEvent>);
   manifest.schema = LEGACY_BACKUP_SCHEMA;
+  removePurgeHistoryStreams(backup, manifest);
   manifest.schema_versions = { ...manifest.schema_versions, ledger: 15 };
   writeJsonl(backup, manifest, "ledger/events.jsonl", [legacy]);
   unlinkSync(join(backup, "ledger/canon-machine-byte-intents.jsonl"));
@@ -212,6 +220,7 @@ test("refuses a v1 envelope that carries a v2-only event field", () => {
   const { backup, db } = fixture();
   const manifest = readManifest(backup);
   manifest.schema = LEGACY_BACKUP_SCHEMA;
+  removePurgeHistoryStreams(backup, manifest);
   manifest.schema_versions = { ...manifest.schema_versions, ledger: 15 };
   unlinkSync(join(backup, "ledger/canon-machine-byte-intents.jsonl"));
   delete manifest.files["ledger/canon-machine-byte-intents.jsonl"];
@@ -265,6 +274,7 @@ test("roundtrips mixed legacy-bound v1 and capture-bound v2 events", () => {
     const { content_hash_version, text_hash, origin, origin_binding_version, origin_binding_kind, origin_binding, ...legacy } = current;
     legacy.content_hash = computeLegacyContentHash(validEvent());
     manifest.schema = LEGACY_BACKUP_SCHEMA;
+    removePurgeHistoryStreams(backup, manifest);
     manifest.schema_versions = { ...manifest.schema_versions, ledger: 15 };
     writeJsonl(backup, manifest, "ledger/events.jsonl", [legacy]);
     unlinkSync(join(backup, "ledger/canon-machine-byte-intents.jsonl"));
@@ -335,6 +345,7 @@ test("refuses a legacy envelope declaring the current ledger schema", () => {
   try {
     const manifest = readManifest(backup);
     manifest.schema = LEGACY_BACKUP_SCHEMA;
+    removePurgeHistoryStreams(backup, manifest);
     signManifest(backup, manifest);
     expect(() => verifyBackup(backup)).toThrow();
   } finally { db.close(); }
@@ -415,6 +426,7 @@ test("explicit legacy restore binds an original native proof to its unchanged v1
     unlinkSync(join(backup, "ledger/canon-machine-byte-intents.jsonl"));
     delete manifest.files["ledger/canon-machine-byte-intents.jsonl"];
     manifest.schema = LEGACY_BACKUP_SCHEMA;
+    removePurgeHistoryStreams(backup, manifest);
     manifest.schema_versions = { ...manifest.schema_versions, ledger: 15 };
     signManifest(backup, manifest);
     const target = join(temporary("kizuki-backup-legacy-native-"), "vault");
@@ -440,6 +452,7 @@ test.each(["safe unmatched frontier", "completed frontier", "ambiguous deferred 
       const { content_hash_version, text_hash, origin, origin_binding_version, origin_binding_kind, origin_binding, ...legacy } = current;
       legacy.content_hash = computeLegacyContentHash(validEvent());
       manifest.schema = LEGACY_BACKUP_SCHEMA;
+      removePurgeHistoryStreams(backup, manifest);
       manifest.schema_versions = { ...manifest.schema_versions, ledger: 15 };
       writeJsonl(backup, manifest, "ledger/events.jsonl", [legacy]);
       writeJsonl(backup, manifest, "canon/receipts.jsonl", [loopReceipt(validEvent().text,

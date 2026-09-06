@@ -60,6 +60,33 @@ ownership, and cancellation reads the native `AbortSignal` state.
 Existing source-erasure and purge-recovery refusals also run as an early
 read-only preflight before callbacks, path access or staging.
 
+Completed purge history is preserved in three additive v3 streams for ledger19:
+`ledger/purge_batches.jsonl`, `ledger/purge_batch_receipts.jsonl`, and
+`ledger/purge_ops.jsonl`. New exports always declare all three, including empty
+streams. They retain ready batch identities, exact receipt membership, and done
+operations with their original document IDs, store binding, proof and timestamps.
+Pending work, unresolved batch references and malformed completed proofs refuse
+export. Stored operation ID JSON is bounded to 16 MiB and proof JSON to 64 KiB;
+each operation's event provenance inventory is also bounded to 16 MiB. Larger
+history is refused rather than truncated. Rows are streamed in deterministic
+order without collecting the whole history in memory.
+
+Restore imports the three streams in the existing transaction after purge
+receipts and source grants. It rejects partial stream sets, duplicate identities,
+missing references, unfinished state, invalid proof scope and count mismatches
+before installing the restored vault. A batch without event receipts must have
+its actual completed source-grant anchor. Historical store proofs are retained
+as history: `purge --verify` still checks the recorded store obligation against
+its current binding. An unavailable store cannot become a successful empty
+operation list merely because a backup was restored.
+
+Older supported backups without these streams remain readable. Restore reports
+the missing historical batch and store evidence explicitly. Legitimate legacy
+purge receipts with no recorded batch stay unassigned, including when they occur
+alongside current completed batches; the export inventory and restore report
+state that their historical verification is unavailable. No membership is
+reconstructed from a matching time or reason.
+
 Publication uses the owned destination parent and a no-replace rename. An absent
 destination or the same owner-only empty directory can receive the export.
 The parent must be owned by the current user without group/other write access,
@@ -89,7 +116,8 @@ does not reinterpret their existing manifests.
 copied and verified. It does not assert complete runtime recovery or a coherent
 snapshot across manual filesystem writers. The current v3 streams still exclude credentials,
 opaque connection state and agent enrollment authority; they do not preserve
-all recovery journals, holds, purge operations, or run/access-audit history.
+all recovery journals, holds, or run/access-audit history. Completed purge batches
+and store obligations are preserved; pending purge work refuses export.
 Connection re-enrollment semantics remain separate work. Existing durable extraction streams are preserved without
 another model call. Review the inventory's limits and unavailable archive count
 before relying on an export for recovery.
