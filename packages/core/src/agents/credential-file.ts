@@ -1,5 +1,5 @@
 import { ptr } from "bun:ffi";
-import { closeSync, constants, fstatSync, fsyncSync, openSync, readSync, writeSync, type BigIntStats } from "node:fs";
+import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, openSync, readSync, writeSync, type BigIntStats } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { loadOwnedDirectoryNative } from "../util/owned-directory-native";
 
@@ -55,8 +55,8 @@ function validName(name: string): Buffer {
       bytes.equals(Buffer.from(".")) || bytes.equals(Buffer.from(".."))) fail();
   return Buffer.concat([bytes, Buffer.from([0])]);
 }
-function validFd(value: unknown): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > 0x7fffffff) fail("native");
+function nativeResult(value: unknown): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value > 0x7fffffff || value < -0x80000000) fail("native");
   return value;
 }
 function identity(fd: number): CredentialFileIdentity {
@@ -97,8 +97,9 @@ function ownerIsSafe(stat: BigIntStats, euid: bigint): boolean {
   return !writable || (stat.mode & 0o1000n) !== 0n;
 }
 function openChild(parent: number, name: string, directory: boolean): number {
-  const result = api().symbols.openChild(parent, ptr(validName(name)), directory ? 1 : 0);
-  return validFd(result);
+  const result = nativeResult(api().symbols.openChild(parent, ptr(validName(name)), directory ? 1 : 0));
+  if (result < 0) fail();
+  return result;
 }
 function openQualifiedParent(path: string): number {
   if (!isAbsolute(path) || resolve(path) !== path || path.split("/").length > 257) fail();
@@ -155,8 +156,7 @@ export class CredentialDirectory {
   }
 
   private openExisting(name: string): number | null {
-    const result = api().symbols.openChild(this.fd, ptr(validName(name)), 0);
-    if (typeof result !== "number" || !Number.isSafeInteger(result) || result > 0x7fffffff) fail("native");
+    const result = nativeResult(api().symbols.openChild(this.fd, ptr(validName(name)), 0));
     if (result === -2) return null;
     if (result < 0) fail();
     return result;
@@ -205,9 +205,12 @@ export class CredentialDirectory {
 
   create(name: string): CredentialFileInspection {
     this.assertCurrent();
-    const result = api().symbols.createCredentialChild(this.fd, ptr(validName(name)));
-    const fd = validFd(result);
+    const result = nativeResult(api().symbols.createCredentialChild(this.fd, ptr(validName(name))));
+    if (result === -17) fail("conflict");
+    if (result < 0) fail();
+    const fd = result;
     try {
+      call(() => fchmodSync(fd, 0o600));
       fileIsSafe(fd);
       const created = identity(fd), creation = call(() => fstatSync(fd, { bigint: true }));
       call(() => fsyncSync(fd));

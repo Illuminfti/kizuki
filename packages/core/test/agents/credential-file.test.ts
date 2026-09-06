@@ -56,6 +56,25 @@ test.if(canExerciseCustody)("refuses forged, closed, cross-directory, unsafe-nam
   } finally { first.close(); second.close(); }
 });
 
+test.if(canExerciseCustody)("creates exact mode despite a restrictive process umask", () => {
+  const source = JSON.stringify(join(import.meta.dir, "../../src/agents/credential-file.ts"));
+  const script = `
+    import * as fs from "node:fs";
+    import { join } from "node:path";
+    import { tmpdir } from "node:os";
+    const prior = process.umask(0o777);
+    try {
+      const { openCredentialDirectory } = await import(${source});
+      const root = fs.mkdtempSync(join(tmpdir(), "kizuki-credential-umask-")); fs.chmodSync(root, 0o700);
+      const directory = openCredentialDirectory(root), handle = directory.create("credential");
+      try { if ((fs.statSync(join(root, "credential")).mode & 0o777) !== 0o600) process.exit(2); directory.removeCreated(handle); }
+      finally { directory.close(); fs.rmSync(root, { recursive: true, force: true }); }
+    } finally { process.umask(prior); }
+  `;
+  const result = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe", timeout: 15_000 });
+  expect(result.exitCode, result.stderr.toString()).toBe(0);
+});
+
 test.if(canExerciseCustody)("refuses symlink, hard-link, changed creation metadata, and parent replacement", () => {
   const root = temporary(), directory = openCredentialDirectory(root);
   try {
