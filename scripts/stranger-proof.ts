@@ -217,12 +217,13 @@ export async function runArtifactProof(args: ProofArgs): Promise<string> {
   const engineObservations: ProofReceipt["engine_observations"] = { kizuki: null, kizuki_mcp: null };
   let packageHashes: Record<string, string> = {};
   try {
-    const build = checkedArtifact(args.artifact);
+    checkedArtifact(args.artifact);
+    cpSync(args.artifact, copiedArtifact, { recursive: true, dereference: false, errorOnExist: true });
+    // The copied snapshot supplies both provenance and the bytes we execute.
+    const build = checkedArtifact(copiedArtifact);
     sourceSha = build.source_sha;
     artifactTarget = build.target;
-    cpSync(args.artifact, copiedArtifact, { recursive: true, dereference: false, errorOnExist: true });
-    checkedArtifact(copiedArtifact);
-    packageHashes = Object.fromEntries([...packaged, "SHA256SUMS"].map(name => [name, sha256(join(args.artifact, name))]));
+    packageHashes = Object.fromEntries([...packaged, "SHA256SUMS"].map(name => [name, sha256(join(copiedArtifact, name))]));
     const requireUnchangedPackage = () => {
       for (const [name, digest] of Object.entries(packageHashes)) {
         if (sha256(join(args.artifact, name)) !== digest || sha256(join(copiedArtifact, name)) !== digest) {
