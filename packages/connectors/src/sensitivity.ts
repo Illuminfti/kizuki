@@ -1,11 +1,5 @@
+import { resolveSensitivity as resolveCoreSensitivity } from "@kizuki/core";
 import type { SensitivityHint } from "@kizuki/core";
-
-/** Least to most sensitive; the order a floor and a hint are compared in. */
-const SENSITIVITY_ORDER: readonly SensitivityHint[] = [
-  "public",
-  "personal",
-  "private",
-];
 
 /**
  * What a connector declares about the records it produces. The pair is
@@ -23,21 +17,18 @@ export interface SensitivityPolicy {
 }
 
 /**
- * The label a record carries, decided by the connector rather than asked of
- * the owner. A source's own hint is honored only upward: a claim below the
- * floor is raised to it instead of believed. Anything the policy cannot
- * place — no hint, or a value that is not a label — falls to the default, and
- * a source with no default at all is `private`, because a record whose
- * sensitivity is unknown must not be served more widely than one that said.
+ * Connector helper kept at `(policy, hint?)` for existing callers. Delegates
+ * to core `max(floor, default, upward event hint)`; a valid hint may only
+ * raise the connector default, and unknown or absent values fail closed to
+ * private.
  */
 export function resolveSensitivity(
   policy: Partial<SensitivityPolicy>,
   hint?: unknown,
 ): SensitivityHint {
-  const floor = policy.sensitivity_floor ?? "private";
-  const claimed = SENSITIVITY_ORDER.find((value) => value === hint);
-  if (claimed === undefined) return policy.default_sensitivity ?? "private";
-  return SENSITIVITY_ORDER.indexOf(claimed) < SENSITIVITY_ORDER.indexOf(floor)
-    ? floor
-    : claimed;
+  return resolveCoreSensitivity({
+    connector_floor: policy.sensitivity_floor,
+    connector_default: policy.default_sensitivity,
+    event_hint: hint,
+  }).sensitivity;
 }
