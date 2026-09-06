@@ -18,7 +18,6 @@ import type {
 } from "../contracts/ports";
 import { registerPort } from "../contracts/registry";
 import {
-  MAX_RETRIEVAL_LIMIT,
   RETRIEVAL_CONTRACT,
   RETRIEVAL_CONTRACT_MINOR,
   requireRetrievalCapability,
@@ -53,6 +52,7 @@ import { lockFtsGeneration, removeFtsGeneration, validateFtsGeneration } from ".
 import { openOwnedDirectory } from "../util/owned-directory";
 import type { OwnedDirectory } from "../util/owned-directory";
 import type { AdvisoryFileLock } from "../util/advisory-file-lock";
+import { eventIdFromReference } from "./ids";
 
 export const FTS5_RETRIEVAL_ID = "kizuki.retrieval.fts5";
 
@@ -405,16 +405,16 @@ export class Fts5RetrievalPort implements RetrievalPort {
 
   async remove(ids: readonly string[]): Promise<RetrievalMutationReport> {
     this.assertMutable();
+    const documents = JSON.stringify(ids);
+    const provenance = JSON.stringify([...new Set(ids.flatMap(id => [id, eventIdFromReference(id)]))]);
     this.db.transaction(() => {
-      const removeFts = this.db.query<never, [string]>(
-        "DELETE FROM search_docs WHERE doc_id = ?",
-      );
-      const removeDocs = this.db.query<never, [string]>(
-        "DELETE FROM search_documents WHERE doc_id = ?",
-      );
-      for (const id of ids) {
-        removeFts.run(id);
-        removeDocs.run(id);
+      for (const table of ["search_documents", "search_docs"] as const) {
+        this.db.query<never, [string, string]>(
+          `DELETE FROM ${table}
+            WHERE doc_id IN (SELECT value FROM json_each(?))
+               OR EXISTS (SELECT 1 FROM json_each(${table}.provenance) AS p
+                           WHERE p.value IN (SELECT value FROM json_each(?)))`,
+        ).run(documents, provenance);
       }
     }).immediate();
     return { processed: ids.length };
@@ -427,11 +427,26 @@ export class Fts5RetrievalPort implements RetrievalPort {
       if (group.length === 0) continue;
       found.push(
         ...this.db
-          .query<{ doc_id: string }, string[]>(
-            `SELECT doc_id FROM search_documents
-             WHERE doc_id IN (${placeholders(group.length)})`,
+          .query<{ doc_id: string }, [string]>(
+            `WITH requested(id, raw) AS (
+               SELECT value, CASE WHEN substr(value, 1, 6) = 'event:'
+                                  THEN substr(value, 7) ELSE value END
+                 FROM json_each(?)
+             )
+             SELECT DISTINCT r.id AS doc_id FROM requested AS r
+              WHERE EXISTS (
+                SELECT 1 FROM search_documents AS d
+                 WHERE d.doc_id = r.id OR EXISTS (
+                   SELECT 1 FROM json_each(d.provenance) AS p WHERE p.value IN (r.id, r.raw)
+                 )
+              ) OR EXISTS (
+                SELECT 1 FROM search_docs AS d
+                 WHERE d.doc_id = r.id OR EXISTS (
+                   SELECT 1 FROM json_each(d.provenance) AS p WHERE p.value IN (r.id, r.raw)
+                 )
+              ) ORDER BY doc_id`,
           )
-          .all(...group)
+          .all(JSON.stringify(group))
           .map(({ doc_id }) => doc_id),
       );
     }
@@ -439,7 +454,7 @@ export class Fts5RetrievalPort implements RetrievalPort {
       checked: ids.length,
       found,
       store: this.descriptor.id,
-      method: `lookup-limit-${MAX_RETRIEVAL_LIMIT}`,
+      method: "sql-docs-provenance-cascade",
       at: this.ctx.clock(),
     };
   }

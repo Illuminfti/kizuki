@@ -4,6 +4,7 @@ import type { CaptureEvent } from "../contracts/event";
 import type { RetrievalAuthority } from "../contracts/retrieval";
 import { stampDerived } from "../derived-meta";
 import type { DerivedStamp } from "../derived-meta";
+import { markDerivedHeld, readDerivedHolds } from "../derived-holds";
 import { latestLedgerCursor, replayLive } from "../ledger/ledger";
 import { retrievalDocId } from "../retrieval/ids";
 import { ulid } from "../util/ulid";
@@ -192,6 +193,12 @@ function insertFtsRow(db: Database, doc: SearchDocument): void {
 }
 
 export function insertDoc(db: Database, doc: SearchDocument): void {
+  const held = readDerivedHolds(db).paths;
+  if (doc.scope === "canon" && held.has(doc.path)) {
+    deleteDoc(db, doc.scope, doc.docId);
+    markDerivedHeld(db, "search", held.size);
+    return;
+  }
   insertDocument(db, doc);
   insertFtsRow(db, doc);
 }
@@ -206,7 +213,11 @@ export function deleteDoc(db: Database, scope: DocScope, docId: string): void {
 
 export function replacePage(db: Database, page: CanonPage, authority = canonAuthorities(db,[page]).get(page.relPath) ?? "model_inference"): void {
   deleteDoc(db, "canon", page.id);
-  if (!isLiveCanonPage(page)) return;
+  const held = readDerivedHolds(db).paths;
+  if (!isLiveCanonPage(page) || held.has(page.relPath)) {
+    markDerivedHeld(db, "search", held.size);
+    return;
+  }
   insertDoc(db, pageDocument(page,authority));
 }
 
@@ -254,19 +265,20 @@ function stampSearch(
   eventCount: number,
 ): DerivedStamp {
   const watermark = latestLedgerCursor(db);
+  const held = readDerivedHolds(db).paths.size;
   return {
     layer: "search",
     generation: input.generation,
     rebuilt_at: input.rebuilt_at,
     doc_count: pageCount + eventCount,
     source_count: input.pages.length + eventCount,
-    skipped_count: input.skipped.length,
-    status: input.skipped.length > 0 ? "degraded" : "ok",
+    skipped_count: input.skipped.length + held,
+    status: input.skipped.length + held > 0 ? "degraded" : "ok",
     ledger_watermark:
       watermark === null
         ? null
         : `${watermark.accepted_at}\t${watermark.event_id}`,
-    canon_hash: input.canon_hash,
+    canon_hash: held > 0 ? null : input.canon_hash,
     port_id: "kizuki.retrieval.fts5",
     contract: "kizuki.retrieval/v1",
     space: null,
@@ -275,11 +287,16 @@ function stampSearch(
 
 /** FTS is a projection of search_documents. */
 export function projectSearchDocs(db: Database): void {
+  const held = readDerivedHolds(db).paths;
+  if (held.size > 0) {
+    db.exec("DELETE FROM search_documents WHERE scope='canon' AND path IN (SELECT page_path FROM canon_holds)");
+  }
   db.exec("DELETE FROM search_docs");
   db.exec(
     `INSERT INTO search_docs (${DOCUMENT_COLUMNS})
      SELECT ${DOCUMENT_COLUMNS} FROM search_documents`,
   );
+  markDerivedHeld(db, "search", held.size);
 }
 
 /** Rebuild the search layer. Caller owns the transaction. */
@@ -287,7 +304,8 @@ export function rebuildSearchLayer(
   db: Database,
   input: SearchRebuildInput,
 ): SearchRebuildResult {
-  const livePages = input.pages.filter(isLiveCanonPage);
+  const held = readDerivedHolds(db).paths;
+  const livePages = input.pages.filter(page => isLiveCanonPage(page) && !held.has(page.relPath));
   db.exec("DELETE FROM search_documents");
   const authorities=input.authorities??canonAuthorities(db,livePages);
   for (const page of livePages) insertDocument(db, pageDocument(page,authorities.get(page.relPath)??"model_inference"));
@@ -309,7 +327,7 @@ export function rebuildSearchLayer(
     skipped: [...input.skipped],
     rebuilt_at: input.rebuilt_at,
     generation: input.generation,
-    status: input.skipped.length > 0 ? "degraded" : "ok",
+    status: input.skipped.length + held.size > 0 ? "degraded" : "ok",
   };
 }
 

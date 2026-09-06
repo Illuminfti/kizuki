@@ -5,6 +5,7 @@ import {
   PortError,
   PortRegistry,
   runRetrievalConformance,
+  validateAbsenceProof,
 } from "@kizuki/core";
 import type {
   RetrievalConformanceHarness,
@@ -261,5 +262,25 @@ describe("kizuki.retrieval.embedded-pg conformance", () => {
     await port.remove(["page:grace"]);
     const gone = await port.verifyAbsent(["page:grace"]);
     expect(gone.found).toEqual([]);
+  });
+
+  test("event removal cascades through raw and prefixed provenance without changing document identity", async () => {
+    const { port } = await openPort();
+    const base = SYNTHETIC_DOCS[0]!;
+    await port.upsert([
+      { ...base, doc_id: "page:derived-raw", provenance: ["atlas-source"] },
+      { ...base, doc_id: "page:derived-prefixed", provenance: ["event:atlas-source"] },
+      { ...base, doc_id: "page:atlas-source", provenance: ["other-source"] },
+      { ...base, doc_id: "page:unrelated", provenance: ["other-source"] },
+    ]);
+    const requested = ["event:atlas-source"];
+    const before = validateAbsenceProof(await port.verifyAbsent(requested), requested);
+    expect(before.found).toEqual(requested);
+    await port.remove(requested);
+    expect(validateAbsenceProof(await port.verifyAbsent(requested), requested).found).toEqual([]);
+    expect((await port.verifyAbsent(["page:derived-raw", "page:derived-prefixed"])).found).toEqual([]);
+    expect((await port.verifyAbsent(["page:atlas-source", "page:unrelated"])).found).toEqual(["page:atlas-source", "page:unrelated"]);
+    const neighbors = await port.neighbors({ entity_id: "person:grace" }, { hops: 1, limit: 100, ceiling: "private" });
+    expect(neighbors.edges.every(edge => !["page:derived-raw", "page:derived-prefixed"].includes(edge.from))).toBe(true);
   });
 });
