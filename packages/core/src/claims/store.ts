@@ -938,9 +938,9 @@ export async function prepareClaimInsert(
   io: ClaimsIo,
   input: InsertClaimInput,
 ): Promise<PreparedClaimInsert> {
-  assertInput(input);
   // A caller cannot alter the prepared draft while the semantic lookup waits.
   input = structuredClone(input);
+  assertInput(input);
   io = { ...io };
   const scope = { owner: canonicalizeProducer(input.producer) !== "model" && !input.producer.startsWith("agent:"),
     model: canonicalizeProducer(input.producer) === "model",

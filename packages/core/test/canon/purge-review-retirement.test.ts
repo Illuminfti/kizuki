@@ -37,6 +37,24 @@ test("retired purge-review proposal admission leaves compatibility tables unchan
   } finally { db.close(); }
 });
 
+test("claim admission validates one captured snapshot of ordinary input", async () => {
+  const fixture = canonFixture();
+  try {
+    const eventId = putEvent(fixture.db);
+    const input = claimInput(eventId);
+    let reads = 0;
+    Object.defineProperty(input, "kind", { enumerable: true, get: () => {
+      reads += 1;
+      return "claim";
+    } });
+    const result = await insertClaim({ db: fixture.db }, input);
+    expect(result.outcome).toBe("stored");
+    expect(reads).toBe(1);
+    if (result.outcome !== "stored") throw new Error("expected ordinary claim");
+    expect(getClaim(fixture.db, result.claim.claim_id)?.kind).toBe("claim");
+  } finally { fixture.dispose(); }
+});
+
 test("historical purge-review rows remain readable and inert before write preflight", async () => {
   const fixture = canonFixture();
   try {
