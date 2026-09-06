@@ -30,6 +30,11 @@ function run(command: string, args: string[], env: Record<string, string>): stri
   }
   return `${result.stdout}${result.stderr}`;
 }
+function runJson(command: string, args: string[], env: Record<string, string>): { stdout: string; stderr: string } {
+  const result = Bun.spawnSync([command, ...args], { env, stderr: "pipe", stdout: "pipe" });
+  if (result.exitCode !== 0) throw new Error("compiled JSON command failed");
+  return { stdout: result.stdout.toString(), stderr: result.stderr.toString() };
+}
 
 async function mcpSession(env: Record<string, string>, args: string[], requests: string[]): Promise<{ code: number; output: string; diagnostics: string }> {
   const child = Bun.spawn([mcp, ...args], { env, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
@@ -94,14 +99,19 @@ try {
     tools: ["search"], rate_limit_per_minute: 60, relay_owner_corrections: false }), { mode: 0o600 });
   const agentArgs = ["agent", "add", "reader-private", "--grant", grant, "--token-ref", `file:${credential}`,
     "--operation-id", "releaseagent01", "--vault", vault, "--json"];
-  const added = run(cli, agentArgs, env);
-  const replayed = run(cli, agentArgs, env);
+  const added = runJson(cli, agentArgs, env);
+  const replayed = runJson(cli, agentArgs, env);
   const envelope = JSON.parse(readFileSync(credential, "utf8")) as { token: string };
-  if (typeof envelope.token !== "string" || added.includes(envelope.token) || replayed.includes(envelope.token)) throw new Error("agent credential leaked");
+  const first = JSON.parse(added.stdout) as { status?: string; authority?: string; credential?: string; agent_id?: string | null; replayed?: boolean };
+  const retry = JSON.parse(replayed.stdout) as { status?: string; authority?: string; credential?: string; agent_id?: string | null; replayed?: boolean };
+  if (typeof envelope.token !== "string" || first.status !== "completed" || first.authority !== "active" || first.credential !== "ready" ||
+      retry.status !== "completed" || retry.authority !== "active" || retry.credential !== "ready" || retry.replayed !== true ||
+      first.agent_id === null || first.agent_id === undefined || first.agent_id !== retry.agent_id || `${added.stdout}${added.stderr}${replayed.stdout}${replayed.stderr}`.includes(envelope.token) ||
+      `${added.stdout}${added.stderr}${replayed.stdout}${replayed.stderr}`.includes(credential)) throw new Error("agent enrollment smoke failed");
   const agentRequests = [
     '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"release-smoke","version":"0"}}}',
     '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}',
-    '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search","arguments":{"query":"Ada"}}}',
+    '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search","arguments":{"query":"Ada","scope":"all"}}}',
     '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_page","arguments":{"path":"missing.md"}}}',
   ];
   const agentSession = await mcpSession(env, ["--vault", vault, "--token-ref", `file:${credential}`], agentRequests);
@@ -111,8 +121,8 @@ try {
       `${agentSession.output}${agentSession.diagnostics}`.includes(envelope.token)) throw new Error("agent MCP authorization smoke failed");
   const secondSession = await mcpSession(env, ["--vault", vault, "--token-ref", `file:${credential}`], agentRequests.slice(0, 3));
   if (secondSession.code !== 0 || !secondSession.output.includes("Ada") || `${secondSession.output}${secondSession.diagnostics}`.includes(envelope.token)) throw new Error("second agent MCP session failed");
-  const revoked = run(cli, ["agent", "revoke", "reader-private", "--vault", vault, "--json"], env);
-  if (revoked.includes(envelope.token)) throw new Error("agent revocation leaked credential");
+  const revoked = runJson(cli, ["agent", "revoke", "reader-private", "--vault", vault, "--json"], env);
+  if (`${revoked.stdout}${revoked.stderr}`.includes(envelope.token) || `${revoked.stdout}${revoked.stderr}`.includes(credential)) throw new Error("agent revocation leaked credential");
   const rejected = await mcpSession(env, ["--vault", vault, "--token-ref", `file:${credential}`], [agentRequests[0]!]);
   if (rejected.code === 0 || `${rejected.output}${rejected.diagnostics}`.includes(envelope.token)) throw new Error("revoked credential reconnected");
 
