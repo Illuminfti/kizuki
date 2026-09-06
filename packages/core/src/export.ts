@@ -2,6 +2,7 @@ import { isRfc3339 } from "./util/time";
 import { sourcePolicyEpoch, inspectSourceGrant, sourceEventsAllowed } from "./ledger/source-grants";
 import type { Database } from "bun:sqlite";
 import {
+  type Stats,
   chmodSync,
   closeSync,
   constants,
@@ -358,9 +359,11 @@ function copyHashed(
   mkdirPrivate(dirname(destination));
   const hasher = new Bun.CryptoHasher("sha256");
   const input = openSync(source, constants.O_RDONLY | constants.O_NOFOLLOW);
-  const output = openSync(destination, "wx", FILE_MODE);
+  let output: number | undefined;
   let size = 0;
   try {
+    requireSingleLinkRegularFile(input);
+    output = openSync(destination, "wx", FILE_MODE);
     const buf = Buffer.alloc(CHUNK);
     let read = readSync(input, buf);
     while (read > 0) {
@@ -373,10 +376,11 @@ function copyHashed(
       size += read;
       read = readSync(input, buf);
     }
+    requireSingleLinkRegularFile(input);
     fsyncSync(output);
   } finally {
     closeSync(input);
-    closeSync(output);
+    if (output !== undefined) closeSync(output);
   }
   chmodSync(destination, FILE_MODE);
   const result = { sha256: hasher.digest("hex"), size };
@@ -384,6 +388,12 @@ function copyHashed(
     throw new Error("export inventory file changed before copying completed");
   }
   return result;
+}
+
+function requireSingleLinkRegularFile(fd: number): Stats {
+  const info = fstatSync(fd);
+  if (!info.isFile() || info.nlink !== 1) throw new Error("backup file must be regular and singly linked");
+  return info;
 }
 
 function hashFile(path: string): { sha256: string; size: number } {
@@ -563,8 +573,8 @@ function vaultInventory(db: Database, root: string): VaultInventory {
   function readBounded(path: string): Buffer {
     const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
-      const info = fstatSync(fd);
-      if (!info.isFile() || info.size > MAX_CANON_PAGE_BYTES) throw new Error("export inventory file exceeds its bound");
+      const info = requireSingleLinkRegularFile(fd);
+      if (info.size > MAX_CANON_PAGE_BYTES) throw new Error("export inventory file exceeds its bound");
       inspectedBytes += info.size;
       if (inspectedBytes > MAX_CANON_WALK_BYTES) throw new Error("export inventory byte budget exceeded");
       const bytes = Buffer.alloc(info.size);
@@ -575,6 +585,7 @@ function vaultInventory(db: Database, root: string): VaultInventory {
         offset += read;
       }
       if (readSync(fd, Buffer.alloc(1), 0, 1, offset) !== 0) throw new Error("export inventory file changed while reading");
+      requireSingleLinkRegularFile(fd);
       return bytes;
     } finally { closeSync(fd); }
   }
@@ -659,7 +670,7 @@ function vaultInventory(db: Database, root: string): VaultInventory {
       }
       const path = join(directory, entry.name);
       const rel = posixRel(root, path);
-      if (entry.isDirectory()) walk(path, depth + 1, archive || entry.name === "archive");
+      if (entry.isDirectory()) walk(path, depth + 1, archive || rel === "archive");
       else {
         if (depth + 1 > MAX_CANON_DEPTH) throw new Error("export inventory depth exceeds its bound");
         classify(path, rel, archive);
@@ -667,6 +678,10 @@ function vaultInventory(db: Database, root: string): VaultInventory {
     }
   }
   walk(root, 0);
+  const doctrine = inventory.files.filter(file => file.kind === "doctrine");
+  if (doctrine.length !== 2 || !["CANON.md", "SCHEMA.md"].every(path => doctrine.some(file => file.path === path))) {
+    throw new Error("export inventory requires regular root doctrine files CANON.md and SCHEMA.md");
+  }
   inventory.files.sort((a, b) => compareCodeUnits(a.path, b.path));
   const selected = new Set(inventory.files.map(file => file.path));
   inventory.unavailable_archive_references = [...archiveHashes.keys()].filter(path => !selected.has(path)).length;

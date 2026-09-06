@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { undoReceipt } from "../src/canon/undo";
@@ -60,22 +60,26 @@ describe("classified export inventory", () => {
       ["people/Ada.md", "ada", "draft"],
       ["projects/older.md", "old", "archived"],
       ["projects/a.kizuki-backup-topic/note.md", "ordinary-backup-name", "active"],
+      ["projects/archive/note.md", "nested-archive-canon", "active"],
       ["topics/ä note.md", "unicode", "active"],
     ] as const;
     const expected = pages.map(([path, id, status]) => [path, putPage(vault, path, id, status)] as const);
     writeFileSync(join(vault, "CANON.md"), "# Owner doctrine\nKeep my exact words.\n");
+    writeFileSync(join(vault, "SCHEMA.md"), "# Owner schema\nPreserve these exact rules.\n");
     const manifest = exportVault(db, vault, backup);
     const listing = inventory(backup);
     expect(manifest.schema).toBe("kizuki.backup/v3");
     expect(listing.schema).toBe("kizuki.export-inventory/v1");
     expect(listing.files.map(file => file.path)).toEqual([
       "CANON.md", "SCHEMA.md", "captures/note.md", "people/Ada.md",
-      "projects/a.kizuki-backup-topic/note.md", "projects/older.md", "topics/ä note.md",
+      "projects/a.kizuki-backup-topic/note.md", "projects/archive/note.md", "projects/older.md", "topics/ä note.md",
     ]);
     for (const item of listing.files) expect(manifest.files[`vault/${item.path}`]).toMatchObject({ sha256: item.sha256, size: item.size });
     restoreVault(backup, target);
     for (const [path, bytes] of expected) expect(readFileSync(join(target, path), "utf8")).toBe(bytes);
     expect(readFileSync(join(target, "CANON.md"), "utf8")).toBe("# Owner doctrine\nKeep my exact words.\n");
+    expect(readFileSync(join(target, "SCHEMA.md"), "utf8")).toBe("# Owner schema\nPreserve these exact rules.\n");
+    expect(listing.files.find(file => file.path === "projects/archive/note.md")?.kind).toBe("canon");
     expect(listing.recovery_limits.join(" ")).toContain("does not assert complete runtime recovery");
   });
 
@@ -84,7 +88,7 @@ describe("classified export inventory", () => {
     putPage(vault, "facts/kept.md", "kept");
     putPage(vault, ".git/hidden.md", "git-data");
     putPage(vault, ".hidden/note.md", "hidden-data");
-    putPage(vault, "projects/archive/unrelated.md", "unrelated-nested-archive");
+    putPage(vault, "archive/unrelated.md", "unrelated-root-archive");
     putPage(vault, "old-export/vault/facts/copy.md", "old-copy");
     writeFileSync(join(vault, "old-export", "manifest.json"), JSON.stringify({ schema: "kizuki.backup/v3" }));
     writeFileSync(join(vault, "notes.txt"), "unrelated synthetic data\n");
@@ -96,6 +100,45 @@ describe("classified export inventory", () => {
     ]);
     expect(inventory(backup).excluded_entries).toMatchObject({ backup_containers: 1, links_or_special: 1, unclassified: 3 });
     expect(inventory(backup).excluded_entries.hidden).toBeGreaterThanOrEqual(3);
+  });
+
+  for (const doctrine of ["CANON.md", "SCHEMA.md"]) {
+    for (const state of ["missing", "symlink", "directory", "fifo"]) {
+      test(`refuses ${state} ${doctrine} before publishing an incomplete doctrine set`, () => {
+        const { db, root, vault, backup } = fixture();
+        const path = join(vault, doctrine);
+        rmSync(path);
+        if (state === "symlink") {
+          const other = join(root, "owned-doctrine.md");
+          writeFileSync(other, "# Benign owned fixture\n");
+          symlinkSync(other, path);
+        } else if (state === "directory") {
+          mkdirSync(path);
+        } else if (state === "fifo") {
+          const made = Bun.spawnSync(["mkfifo", path]);
+          if (made.exitCode !== 0) throw new Error("could not create synthetic FIFO fixture");
+        }
+        expect(() => exportVault(db, vault, backup)).toThrow("requires regular root doctrine files");
+        expect(existsSync(backup)).toBe(false);
+      });
+    }
+  }
+
+  test("refuses a candidate hardlinked to another owned fixture file", () => {
+    const { db, root, vault, backup } = fixture();
+    putPage(root, "owned-note.md", "owned-note");
+    linkSync(join(root, "owned-note.md"), join(vault, "facts", "linked-note.md"));
+    expect(() => exportVault(db, vault, backup)).toThrow("regular and singly linked");
+    expect(existsSync(backup)).toBe(false);
+  });
+
+  test("rechecks the selected file link count when copying begins", () => {
+    const { db, root, vault, backup } = fixture();
+    putPage(vault, "facts/note.md", "owned-note");
+    expect(() => exportVault(db, vault, backup, { onProgress(label) {
+      if (label === "inventory") linkSync(join(vault, "facts", "note.md"), join(root, "owned-note-link.md"));
+    } })).toThrow("regular and singly linked");
+    expect(existsSync(backup)).toBe(false);
   });
 
   test("writes the full hashed inventory before its first payload copy", () => {
