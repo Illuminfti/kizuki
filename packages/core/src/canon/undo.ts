@@ -22,6 +22,7 @@ import { PAGE_SENSITIVITIES } from "../vault/schema";
 import { ABSENT_PAGE_HASH, containedVaultFile, hashBytes, hashFile } from "../vault/write";
 import { assertArchiveRelPath, assertPageRelPath, assertReceiptPaths } from "./paths";
 import { applyRevertWrite } from "./apply";
+import { snapshotCanonIo } from "./io";
 import { UndoError } from "./errors";
 import {
   getCanonReceipt,
@@ -308,6 +309,7 @@ export async function undoReceipt(
   receiptId: string,
   opts: UndoReceiptOptions = {},
 ): Promise<CanonReceipt> {
+  io = snapshotCanonIo(io);
   const original = getCanonReceipt(io.db, receiptId);
   if (original === null) {
     throw new UndoError("receipt_unknown", `undo: receipt ${receiptId} is unknown`);

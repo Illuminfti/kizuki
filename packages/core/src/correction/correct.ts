@@ -1,6 +1,8 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { assertStoredPageRelPath } from "../canon/paths";
+import { snapshotCanonIo } from "../canon/io";
+import { containedVaultFile } from "../vault/write";
 import { toolAllowed } from "../agents/authorization";
 import { applyCanonWrite } from "../canon/apply";
 import { resolveTarget } from "../canon/arbiter";
@@ -40,14 +42,19 @@ function mintId(io: CorrectIo): string {
 }
 
 function canonIo(io: CorrectIo): CanonIo {
-  return {
-    db: io.db,
-    vault_path: io.vault_path,
-    ...(io.now === undefined ? {} : { now: io.now }),
-    ...(io.ids === undefined ? {} : { ids: io.ids }),
-    ...(io.retrieval === undefined ? {} : { retrieval: io.retrieval }),
-    ...(io.retrieval_store === undefined ? {} : { retrieval_store: io.retrieval_store }),
-  };
+  return snapshotCanonIo(io);
+}
+
+function snapshotCorrectIo(io: CorrectIo): CorrectIo {
+  const canon = snapshotCanonIo(io);
+  const { budget, producer, relay_owner_corrections, grant } = io;
+  return Object.freeze({
+    ...canon,
+    ...(budget === undefined ? {} : { budget }),
+    ...(producer === undefined ? {} : { producer }),
+    ...(relay_owner_corrections === undefined ? {} : { relay_owner_corrections }),
+    ...(grant === undefined ? {} : { grant }),
+  });
 }
 
 interface VaultPageBytes {
@@ -56,8 +63,15 @@ interface VaultPageBytes {
   data: Record<string, unknown>;
 }
 
+function activePagePath(relPath: string): string | null {
+  if (relPath === "") return null;
+  assertStoredPageRelPath(relPath);
+  return relPath.startsWith("archive/") ? null : relPath;
+}
+
 function readVaultPage(vaultPath: string, relPath: string): VaultPageBytes | null {
-  const path = join(vaultPath, relPath);
+  if (activePagePath(relPath) === null) return null;
+  const path = containedVaultFile(vaultPath, relPath);
   if (!existsSync(path)) return null;
   const content = readFileSync(path, "utf8");
   return {
@@ -137,13 +151,14 @@ function portableFrontmatter(live: Claim): Record<string, FrontmatterValue> {
 function pagePathForClaim(db: Database, claim: Claim): string | null {
   if (claim.receipt_id === null) return null;
   if (!tableExists(db, "canon_receipts")) return null;
-  return (
+  const path = (
     db
       .query<{ page_path: string }, [string]>(
         "SELECT page_path FROM canon_receipts WHERE receipt_id = ?",
       )
       .get(claim.receipt_id)?.page_path ?? null
   );
+  return path === null ? null : activePagePath(path);
 }
 
 function findOwnerEvent(db: Database, sourceId: string): string | null {
@@ -398,6 +413,7 @@ interface AffectedPage {
 function affectedPages(io: CorrectIo, group: Claim[], winner: Claim): AffectedPage[] {
   const seen = new Map<string, AffectedPage>();
   const add = (pageId: string, relPath: string, relevance: number): void => {
+    if (activePagePath(relPath) === null) return;
     const current = seen.get(relPath);
     if (current === undefined || relevance > current.relevance) {
       seen.set(relPath, { page_id: pageId, rel_path: relPath, relevance });
@@ -478,6 +494,7 @@ function affectedPages(io: CorrectIo, group: Claim[], winner: Claim): AffectedPa
  * `--claim` / `claim_key` resolve without a model.
  */
 export async function correct(io: CorrectIo, input: CorrectInput): Promise<CorrectResult> {
+  io = snapshotCorrectIo(io);
   assertStatement(input.statement);
   assertScope(input.scope);
   assertGrant(io);
