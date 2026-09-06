@@ -123,38 +123,87 @@ function validateJobs(
   return failures;
 }
 
+const UPLOAD_ARTIFACT_ACTION =
+  "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02";
+const SUCCESS_PRECONDITION = "${{ success() }}";
+const LINUX_PROOF_COMMAND =
+  'bun run build:release\nbun run smoke:release\nbun run proof:artifact -- --report "$RUNNER_TEMP/kizuki-artifact-proof"';
+const LINUX_RECEIPT_CHECK = 'test -f "$RUNNER_TEMP/kizuki-artifact-proof/receipt.json"';
+const LINUX_ARTIFACT_NAME = "linux-x64-${{ github.event.pull_request.head.sha || github.sha }}";
+const LINUX_ARTIFACT_PATH =
+  "dist/kizuki-*/bun-linux-x64-baseline/\n${{ runner.temp }}/kizuki-artifact-proof/receipt.json";
+const MACOS_PROOF_COMMAND =
+  'bun run build:release\nbun run smoke:release\nbun run proof:artifact -- --report "$RUNNER_TEMP/kizuki-macos-artifact-proof"';
+const MACOS_RECEIPT_CHECK = 'test -f "$RUNNER_TEMP/kizuki-macos-artifact-proof/receipt.json"';
+const MACOS_ARTIFACT_NAME = "macos-arm64-${{ github.sha }}";
+const MACOS_ARTIFACT_PATH =
+  "dist/kizuki-*/bun-darwin-arm64/\n${{ runner.temp }}/kizuki-macos-artifact-proof/receipt.json";
+
+function commandLines(value: unknown): string {
+  return typeof value === "string" ? value.trim().split("\n").map(line => line.trim()).join("\n") : "";
+}
+
+function isBareCommand(step: unknown, command: string): boolean {
+  return isRecord(step) && Object.keys(step).every(key => ["name", "run"].includes(key)) &&
+    commandLines(step["run"]) === command;
+}
+
+function isUploadArtifactStep(step: unknown): boolean {
+  return isRecord(step) && typeof step["uses"] === "string" &&
+    step["uses"].startsWith("actions/upload-artifact@");
+}
+
+function isNativeArtifactUpload(step: unknown, artifactName: string, artifactPath: string): boolean {
+  if (!isRecord(step) || !Object.keys(step).every(key => ["name", "uses", "with", "if"].includes(key)) ||
+      step["uses"] !== UPLOAD_ARTIFACT_ACTION || step["if"] !== SUCCESS_PRECONDITION ||
+      !isRecord(step["with"])) return false;
+  const actual = step["with"];
+  const expected: Record<string, unknown> = {
+    name: artifactName,
+    path: artifactPath,
+    "retention-days": 7,
+    "if-no-files-found": "error",
+  };
+  return Object.keys(actual).length === Object.keys(expected).length &&
+    Object.entries(expected).every(([key, value]) =>
+      typeof value === "string" ? commandLines(actual[key]) === value : actual[key] === value);
+}
+
 // This bounded manual proof has an ordered, closed execution contract. Names are
 // cosmetic; run bodies, action configuration and failure propagation are not.
 function hasMacNativeProof(document: Record<string, unknown>, job: Record<string, unknown>): boolean {
   const steps = job["steps"];
-  if (!Array.isArray(steps) || steps.length !== 8 || document["env"] !== undefined || document["defaults"] !== undefined ||
+  if (!Array.isArray(steps) || steps.length !== 9 || document["env"] !== undefined || document["defaults"] !== undefined ||
       job["defaults"] !== undefined || !isRecord(job["env"]) ||
       Object.keys(job["env"]).join() !== "KIZUKI_TARGET" || job["env"]["KIZUKI_TARGET"] !== "bun-darwin-arm64") return false;
-  const lines = (value: unknown): string => typeof value === "string" ? value.trim().split("\n").map(line => line.trim()).join("\n") : "";
-  const run = (index: number, command: string): boolean => {
-    const step = steps[index];
-    return isRecord(step) && Object.keys(step).every(key => ["name", "run"].includes(key)) && lines(step["run"]) === command;
-  };
   const action = (index: number, prefix: string, settings: Record<string, unknown>, condition?: string): boolean => {
     const step = steps[index];
     if (!isRecord(step) || !Object.keys(step).every(key => ["name", "uses", "with", "if"].includes(key)) ||
         typeof step["uses"] !== "string" || !step["uses"].startsWith(prefix + "@") || step["if"] !== condition || !isRecord(step["with"])) return false;
     const actual = step["with"];
     return Object.keys(actual).length === Object.keys(settings).length && Object.entries(settings).every(([key, value]) =>
-      typeof value === "string" ? lines(actual[key]) === value : actual[key] === value);
+      typeof value === "string" ? commandLines(actual[key]) === value : actual[key] === value);
   };
   return action(0, "actions/checkout", { "fetch-depth": 0, ref: "${{ github.event.pull_request.head.sha || github.sha }}" }) &&
-    run(1, "bash scripts/ci-restrict-origin-refs.sh") &&
+    isBareCommand(steps[1], "bash scripts/ci-restrict-origin-refs.sh") &&
     action(2, "oven-sh/setup-bun", { "bun-version": BUN_VERSION }) &&
-    run(3, "bun scripts/ci-diff-check.ts") &&
-    run(4, 'test "$(uname -s)" = Darwin\ntest "$(uname -m)" = arm64\nbun install --frozen-lockfile') &&
-    run(5, "bun run typecheck\nbun test scripts/release-targets.test.ts scripts/release-artifacts.test.ts scripts/stranger-proof.test.ts packages/core/test/serve/advisory-file-lock.test.ts packages/core/test/serve/flock.test.ts packages/core/test/serve/leases.test.ts packages/core/test/serve/units.test.ts packages/core/test/serve/service-arguments.test.ts packages/cli/test/config.test.ts packages/cli/test/terminal-prompt.test.ts packages/tui/test/terminal.test.ts packages/retrieval-pg/test/contention.test.ts scripts/native-platform.test.ts") &&
-    run(6, 'bun run build:release\nbun run smoke:release\nbun run proof:artifact -- --report "$RUNNER_TEMP/kizuki-macos-artifact-proof"') &&
-    action(7, "actions/upload-artifact", {
-      name: "macos-arm64-${{ github.sha }}",
-      path: "dist/kizuki-*/bun-darwin-arm64/\n${{ runner.temp }}/kizuki-macos-artifact-proof/receipt.json",
-      "retention-days": 7, "if-no-files-found": "error",
-    }, "${{ always() }}");
+    isBareCommand(steps[3], "bun scripts/ci-diff-check.ts") &&
+    isBareCommand(steps[4], 'test "$(uname -s)" = Darwin\ntest "$(uname -m)" = arm64\nbun install --frozen-lockfile') &&
+    isBareCommand(steps[5], "bun run typecheck\nbun test scripts/release-targets.test.ts scripts/release-artifacts.test.ts scripts/stranger-proof.test.ts packages/core/test/serve/advisory-file-lock.test.ts packages/core/test/serve/flock.test.ts packages/core/test/serve/leases.test.ts packages/core/test/serve/units.test.ts packages/core/test/serve/service-arguments.test.ts packages/cli/test/config.test.ts packages/cli/test/terminal-prompt.test.ts packages/tui/test/terminal.test.ts packages/retrieval-pg/test/contention.test.ts scripts/native-platform.test.ts") &&
+    isBareCommand(steps[6], MACOS_PROOF_COMMAND) &&
+    isBareCommand(steps[7], MACOS_RECEIPT_CHECK) &&
+    isNativeArtifactUpload(steps[8], MACOS_ARTIFACT_NAME, MACOS_ARTIFACT_PATH);
+}
+
+function hasLinuxNativeProof(job: Record<string, unknown>): boolean {
+  const steps = job["steps"];
+  if (!Array.isArray(steps)) return false;
+  const proofIndex = steps.findIndex(step => isBareCommand(step, LINUX_PROOF_COMMAND));
+  const receiptIndex = steps.findIndex(step => isBareCommand(step, LINUX_RECEIPT_CHECK));
+  const uploads = steps.map((step, index) => ({ step, index })).filter(({ step }) => isUploadArtifactStep(step));
+  return proofIndex >= 0 && receiptIndex > proofIndex && uploads.length === 1 &&
+    uploads[0].index > receiptIndex &&
+    isNativeArtifactUpload(uploads[0].step, LINUX_ARTIFACT_NAME, LINUX_ARTIFACT_PATH);
 }
 
 export function validateWorkflowText(path: string, text: string): WorkflowFailure[] {
@@ -181,6 +230,14 @@ export function validateWorkflowText(path: string, text: string): WorkflowFailur
   if (path.endsWith("/ci.yml") || path.endsWith(".github/workflows/ci.yml")) {
     if (document["name"] !== "ci") {
       failures.push({ path, reason: 'ci.yml name must remain "ci"' });
+    }
+    const jobs = document["jobs"];
+    const job = isRecord(jobs) ? jobs["test"] : undefined;
+    if (isRecord(job) && !hasLinuxNativeProof(job)) {
+      failures.push({
+        path,
+        reason: "ci test must verify the native proof receipt before retaining the Linux package",
+      });
     }
   }
 
