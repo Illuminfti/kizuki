@@ -11,7 +11,9 @@ import { KizukiError } from "../contracts/errors";
 import {
   assertCursorSize,
   getCheckpoint,
-  recordConnectorRun,
+  LedgerError,
+  type Checkpoint,
+  type ConnectionRun,
   requireActiveConnection,
   type ConnectionRunStatus,
 } from "../ledger/connections";
@@ -24,6 +26,7 @@ import type { ProducerGrants } from "../staging/producers";
 import { fileProposal } from "../staging/proposals";
 import type { SourceTombstoneContext } from "../canon/source-tombstone";
 import { DeadlineError, withDeadline } from "../util/deadline";
+import { ulid } from "../util/ulid";
 
 /**
  * What the manifest of the connector a batch came from grants that source.
@@ -291,26 +294,121 @@ function isUnavailable(error: unknown, batch: SyncBatch | null): boolean {
   return false;
 }
 
+function decodeAttemptedCursor(cursor: string): string | null {
+  try {
+    return assertCursorSize(cursor, "attempted_cursor");
+  } catch {
+    return null;
+  }
+}
+
+function persistCheckpointRow(
+  db: Database,
+  connector_id: string,
+  source_key: string,
+  cursor: string | null,
+  mode: "backfill" | "sync",
+  result: RunResult,
+): Checkpoint {
+  const at = new Date().toISOString();
+  db.query(
+    `INSERT INTO checkpoints
+       (connector_id, source_key, cursor, mode, updated_at, last_run_at, last_result)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (connector_id, source_key) DO UPDATE SET
+       cursor = excluded.cursor,
+       mode = excluded.mode,
+       updated_at = excluded.updated_at,
+       last_run_at = excluded.last_run_at,
+       last_result = excluded.last_result`,
+  ).run(connector_id, source_key, cursor, mode, at, at, JSON.stringify(result));
+  const checkpoint = getCheckpoint(db, connector_id, source_key);
+  if (checkpoint === null) throw new LedgerError("saved checkpoint was not found");
+  return checkpoint;
+}
+
+/**
+ * The one ingest write path: bind to the live connection, store resume
+ * state, and append an immutable run receipt. last_result.cursor is the
+ * cursor that was actually committed.
+ */
 function persistRun(
   db: Database,
   connector_id: string,
   source_key: string,
   mode: "backfill" | "sync",
-  previous: string | null,
-  attempted: string | null,
+  previous_cursor: string | null,
+  attempted_cursor: string | null,
   result: RunResult,
   status: ConnectionRunStatus,
 ): RunResult {
-  return recordConnectorRun(
-    db,
-    connector_id,
-    source_key,
-    mode,
-    previous,
-    attempted,
-    result,
-    status,
-  ).checkpoint.last_result;
+  const committed_cursor =
+    status === "ok" ? assertCursorSize(attempted_cursor, "attempted_cursor") : previous_cursor;
+  const storedResult: RunResult = {
+    stored: result.stored,
+    duplicates: result.duplicates,
+    errors: result.errors,
+    proposals_created: result.proposals_created,
+    withdrawn: result.withdrawn,
+    retractions_filed: result.retractions_filed,
+    cursor: committed_cursor,
+  };
+  const started = new Date().toISOString();
+  return db
+    .transaction((): RunResult => {
+      requireActiveConnection(db, connector_id, source_key);
+      const checkpoint = persistCheckpointRow(
+        db,
+        connector_id,
+        source_key,
+        committed_cursor,
+        mode,
+        storedResult,
+      );
+      const run: ConnectionRun = {
+        run_id: ulid(),
+        connector_id,
+        source_key,
+        mode,
+        started_at: started,
+        finished_at: checkpoint.last_run_at,
+        previous_cursor,
+        attempted_cursor:
+          attempted_cursor === null
+            ? null
+            : attempted_cursor === committed_cursor
+              ? committed_cursor
+              : decodeAttemptedCursor(attempted_cursor),
+        committed_cursor,
+        stored: storedResult.stored,
+        duplicates: storedResult.duplicates,
+        errors: storedResult.errors,
+        status,
+      };
+      db.query(
+        `INSERT INTO connection_runs
+           (run_id, connector_id, source_key, mode, started_at, finished_at,
+            previous_cursor, attempted_cursor, committed_cursor,
+            stored, duplicates, errors, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        run.run_id,
+        run.connector_id,
+        run.source_key,
+        run.mode,
+        run.started_at,
+        run.finished_at,
+        run.previous_cursor,
+        run.attempted_cursor,
+        run.committed_cursor,
+        run.stored,
+        run.duplicates,
+        JSON.stringify(run.errors),
+        run.status,
+      );
+      return checkpoint.last_result;
+    })
+    .immediate();
 }
 
 async function runConnector(

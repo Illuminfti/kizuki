@@ -22,7 +22,6 @@ import {
   type ExportManifestEntry,
 } from "../src/export";
 import { readRailCursor, writeRailCursor } from "../src/ledger/checkpoints";
-import { saveCheckpoint } from "../src/ledger/connections";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "../src/ledger/db";
 import { accept } from "../src/ledger/ledger";
 import { revokeSourceGrant, resumeSourceRevocation, setSourceGrant } from "../src/ledger/source-grants";
@@ -74,7 +73,9 @@ function populated() {
     new Date().toISOString(),
     "fixture@1",
   );
-  saveCheckpoint(db, "fixture", sourceKey, "next", "sync", {
+  // Seed an archived checkpoint/run snapshot for read and round-trip tests.
+  const checkpointAt = new Date().toISOString();
+  const checkpointResult = {
     stored: 1,
     duplicates: 0,
     errors: [],
@@ -82,7 +83,16 @@ function populated() {
     withdrawn: 0,
     retractions_filed: 0,
     cursor: "next",
-  });
+  };
+  db.query(`INSERT INTO checkpoints
+    (connector_id, source_key, cursor, mode, updated_at, last_run_at, last_result)
+    VALUES ('fixture', ?, ?, 'sync', ?, ?, ?)`)
+    .run(sourceKey, "next", checkpointAt, checkpointAt, JSON.stringify(checkpointResult));
+  db.query(`INSERT INTO connection_runs
+    (run_id, connector_id, source_key, mode, started_at, finished_at,
+     previous_cursor, attempted_cursor, committed_cursor, stored, duplicates, errors, status)
+    VALUES (?, 'fixture', ?, 'sync', ?, ?, NULL, ?, ?, ?, 0, '[]', 'ok')`)
+    .run(sourceKey, sourceKey, checkpointAt, checkpointAt, "next", "next", checkpointResult.stored);
   writeFileSync(join(vaultPath, "notes.txt"), "plain vault file\n");
   writeFileSync(join(vaultPath, "z-last.txt"), "z\n");
   writeFileSync(join(vaultPath, "ä-umlaut.txt"), "ae\n");

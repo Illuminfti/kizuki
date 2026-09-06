@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { setSourceGrant } from "../src/ledger/source-grants";
 import { openLedger } from "../src/ledger/db";
+import { runBackfill } from "../src/ingest/run";
+import { connector } from "./connections-helpers";
 import {
   readCheckpoint,
   readRailCursor,
@@ -9,18 +11,16 @@ import {
 import {
   getCheckpoint,
   registerConnection,
-  saveCheckpoint,
 } from "../src/ledger/connections";
 
-const result = (cursor: string) => ({
-  stored: 1,
-  duplicates: 0,
-  errors: [],
-  proposals_created: 0,
-  withdrawn: 0,
-  retractions_filed: 0,
-  cursor,
-});
+function backfillConnector(cursor: string) {
+  const base = connector(async () => ({ display: "fixture" }));
+  return {
+    ...base,
+    manifest: () => ({ ...base.manifest(), capabilities: { ...base.manifest().capabilities, backfill: true } }),
+    backfill: async () => ({ events: [], cursor }),
+  };
+}
 
 function connectedSource(db: ReturnType<typeof openLedger>, source: string): void {
   registerConnection(db, "fixture", source);
@@ -40,12 +40,14 @@ describe("checkpoints", () => {
     db.close();
   });
 
-  test("a recorded connector run writes one matching checkpoint receipt", () => {
+  test("a recorded connector run writes one matching checkpoint receipt", async () => {
     const db = openLedger(":memory:");
     const source = "01JJ0000000000000000000001";
     connectedSource(db, source);
 
-    saveCheckpoint(db, "fixture", source, "from-recorded-run", "backfill", result("from-recorded-run"));
+    const result = await runBackfill(db, backfillConnector("from-recorded-run"), "fixture", source);
+    expect(result.errors).toEqual([]);
+    expect(getCheckpoint(db, "fixture", source)?.last_result).toEqual(result);
 
     expect(readCheckpoint(db, "fixture", source)).toBe("from-recorded-run");
     expect(getCheckpoint(db, "fixture", source)).toMatchObject({ source_key: source, cursor: "from-recorded-run", mode: "backfill" });
@@ -79,26 +81,19 @@ describe("checkpoints", () => {
     db.close();
   });
 
-  test("connector checkpoints stay on the connections foreign key", () => {
+  test("connector checkpoints stay on the connections foreign key", async () => {
     const db = openLedger(":memory:");
     const source = "01JJ0000000000000000000001";
     registerConnection(db, "fixture", source);
     setSourceGrant(db, { source_key: source, expected_revision: 0, operation_id: "fixture-" + source, policy: { purposes: ["capture", "recall", "derive"], allowed_fields: ["text", "subjects", "attachments", "metadata"], retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "public" } });
-    saveCheckpoint(db, "fixture", source, "from-rich-api", "backfill", {
-      stored: 1,
-      duplicates: 0,
-      errors: [],
-      proposals_created: 0,
-      withdrawn: 0,
-      retractions_filed: 0,
-      cursor: "from-rich-api",
-    });
+    const result = await runBackfill(db, backfillConnector("from-runner"), "fixture", source);
+    expect(result.errors).toEqual([]);
     expect(getCheckpoint(db, "fixture", source)).toMatchObject({
       source_key: source,
-      cursor: "from-rich-api",
+      cursor: "from-runner",
       mode: "backfill",
     });
-    expect(readCheckpoint(db, "fixture", source)).toBe("from-rich-api");
+    expect(readCheckpoint(db, "fixture", source)).toBe("from-runner");
     expect(
       db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM checkpoints").get(),
     ).toEqual({ count: 1 });
