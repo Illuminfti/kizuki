@@ -25,9 +25,10 @@ bun run proof:artifact -- --report /tmp/kizuki-artifact-proof
 Pass `--artifact DIR` to check a different artifact directory. The artifact
 must contain a valid `BUILD.json` and checksum manifest.
 
-This is not a human stranger proof, a model/canon proof, live-connector
-qualification, or a substitute for the seven-day rail observation and
-fourteen-day estate-parity cutover required for 1.0. It is automated evidence
+This does not establish human stranger acceptance, a model/canon proof, or
+live-connector qualification. Seven- and fourteen-day observation are optional
+post-readiness diagnostics under the [current decision](https://github.com/Illuminfti/kizuki/issues/403).
+It is automated evidence
 that the built artifact can perform the deterministic local recovery path
 outside its source checkout.
 

@@ -184,7 +184,7 @@ test.each([0, 1])("v2 engine records preserve doctor exit %d without granting na
   }
   expect(result.decision).toBe("NO-GO");
   expect(result.release_1_0_accepted).toBe(false);
-  for (const file of ["scripts/artifact-proof.ts", "packages/core/src/ledger/runtime.ts"]) {
+  for (const file of ["scripts/artifact-proof.ts", "scripts/artifact-engine.ts", "packages/core/src/ledger/runtime.ts"]) {
     expect(result.verifier.find(entry => entry.file === file)?.sha256).toBe(digest(readFileSync(join(import.meta.dir, "..", file))));
   }
 });

@@ -3,8 +3,12 @@
 Evidence date: 6 September 2026. The checked-in acceptance checker inventories
 the fixed RC and 1.0 obligations and validates the supported local evidence.
 The current producer set cannot establish release `GO`: independent review,
-native installed-service execution, live accounts, unfamiliar-user acceptance,
-owner observation and estate cutover lack reviewed evidence adapters.
+native installed-service execution, live accounts and unfamiliar-user acceptance
+lack reviewed evidence adapters. The current readiness bar is a stranger who
+can install and use the product, zero live P0 findings, and honest installation.
+The [current campaign decision](https://github.com/Illuminfti/kizuki/issues/403)
+supersedes seven- and fourteen-day calendar gates. Longer observation remains
+an optional diagnostic after readiness; operational cutover requires its own authority.
 
 This is release tooling. It does not add a canon review or promotion step to
 the product. The owner corrects beliefs and uses receipt undo.
@@ -114,10 +118,10 @@ participant identity or account details are copied into the report.
 
 ## Fixed gates
 
-The report always prints all 41 rows. `required` distinguishes the selected
-profile's obligations. The three final operational rows are required only
-for `1.0`; the fixture diagnostic never supplies release credit. The RC
-profile does not accept 1.0.
+The report always prints all 41 rows. Both profiles require the same readiness
+obligations. The three superseded operational rows and the fixture diagnostic
+have `required: false`; they never supply release credit. Only the `1.0` profile
+can set `release_1_0_accepted` after every required row passes.
 
 | Gates | Required proof and current adapter status |
 | --- | --- |
@@ -140,9 +144,9 @@ profile does not accept 1.0.
 | `journey.install-recover` | Both native packages and lifecycles, backup/clean restore and unfamiliar-user proof |
 | `connector.<id>` for all fifteen C3 entries | Per-provider/file conformance and applicable real-source evidence; adapters `NOT_IMPLEMENTED` |
 | `human.unfamiliar-user` | Non-author, fresh machine, zero coaching and fifteen-minute milestone; adapter `NOT_IMPLEMENTED` |
-| `owner.seven-day-rails` | Real supervised owner observation covering 604800000 ms and every due rail; producer `NOT_IMPLEMENTED` |
-| `estate.fourteen-day-parity` | Paired real estate evidence covering 1209600000 ms and day-seven owner review; producer `NOT_IMPLEMENTED` |
-| `owner.final-cutover` | Current owner authority, reviewed parity/loss record, harness repoint and retained rollback; adapter `NOT_IMPLEMENTED` |
+| `owner.seven-day-rails` | Optional post-readiness diagnostic; `NOT_IMPLEMENTED`, `superseded-readiness-gate` |
+| `estate.fourteen-day-parity` | Optional post-readiness diagnostic; `NOT_IMPLEMENTED`, `superseded-readiness-gate` |
+| `owner.final-cutover` | Separate operational decision; `NOT_IMPLEMENTED`, `superseded-readiness-gate` |
 | `diagnostic.fixture-observation` | Existing strict original-directory fixture observer; diagnostic only |
 
 All eight journey adapters remain `NOT_IMPLEMENTED`, even where constituent
@@ -184,10 +188,11 @@ Retain failed attempts and unresolved findings with the candidate; future
 adapters must validate their complete disposition before granting acceptance.
 An offline report cannot discover a finding created after its input snapshot.
 
-Seven and fourteen dated files do not prove those elapsed intervals. Fixture
-window completion, synthetic clocks, unit tests and agent concurrency do not
-qualify owner rails or estate parity. Artifact changes need a new observation
-unless a separate reviewed carry-forward policy exists; none exists here.
+For optional observation, seven and fourteen dated files do not prove those
+elapsed intervals. Fixture window completion, synthetic clocks, unit tests and
+agent concurrency do not qualify owner rails or estate parity. An artifact
+change requires a new optional observation if that diagnostic is being pursued;
+there is no reviewed carry-forward policy. These intervals do not block readiness.
 The [unfamiliar-user protocol](unfamiliar-user-proof.md) defines a future human
 run, and does not itself produce a trusted passing receipt.
 

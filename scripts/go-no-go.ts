@@ -40,7 +40,7 @@ const CONNECTORS = [
 const POLICY = { schema: "kizuki.acceptance-policy/v2", sqlite_engine: SQLITE_ENGINE_POLICY, supported_bun_version: SUPPORTED_BUN_VERSION, targets: TARGETS, journeys: JOURNEYS, connectors: CONNECTORS, limits: LIMITS,
   post_ready_observation_ms: { owner: 604800000, estate: 1209600000 }, unfamiliar_user_ms: 900000,
   deferred_connectors: ["composio", "whatsapp-business-api"], carry_forward: false, fixture_release_credit: false };
-const VERIFIER_FILES = [".bun-version", "scripts/go-no-go.ts", "scripts/artifact-proof.ts", "packages/core/src/ledger/runtime.ts", "scripts/stranger-proof.ts", "scripts/release-targets.ts", "scripts/release-artifacts.ts", "scripts/qualification.ts", "packages/core/src/serve/qualification.ts", "packages/core/src/serve/receipts.ts", "packages/core/src/serve/types.ts"];
+const VERIFIER_FILES = [".bun-version", "scripts/go-no-go.ts", "scripts/artifact-proof.ts", "scripts/artifact-engine.ts", "packages/core/src/ledger/runtime.ts", "scripts/stranger-proof.ts", "scripts/release-targets.ts", "scripts/release-artifacts.ts", "scripts/qualification.ts", "packages/core/src/serve/qualification.ts", "packages/core/src/serve/receipts.ts", "packages/core/src/serve/types.ts"];
 
 class EvidenceError extends Error { constructor(readonly reason: string) { super(reason); } }
 function reject(reason: string): never { throw new EvidenceError(reason); }

@@ -4,8 +4,10 @@
 not install, start, or schedule anything. A caller must separately authorize any
 observation and invoke each sample. Owner estate and human-use qualification are
 not implemented by this harness and are always reported `not-observed`;
-`release_qualified` is always false. Seven days of fixtures do not satisfy the
-estate shadow, owner review, normal-week usefulness, or retirement inventory gates.
+`release_qualified` is always false. Seven days of fixtures do not establish real
+estate or human-use evidence. The [current readiness decision](https://github.com/Illuminfti/kizuki/issues/403)
+supersedes seven- and fourteen-day calendar gates; this observer remains an
+optional post-readiness diagnostic with its historical timing contract unchanged.
 
 Create a scope file for a synthetic vault only:
 
