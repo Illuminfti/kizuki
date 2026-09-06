@@ -5,8 +5,8 @@ import {
   addAgent,
   authenticate,
   initAgents,
-  listClaims,
   listConnections,
+  readSince,
   listAgents,
   openLedger,
   revokeAgent,
@@ -102,11 +102,18 @@ test("synthetic InMemoryTransport clients preserve scoped correction continuity 
   const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
   try {
     initAgents(db);
+    const importedEvents = readSince(db, null, 100).events;
+    const selectedEvent = importedEvents.find((entry) => entry.text.includes(marker));
+    const independentEvent = importedEvents.find((entry) => entry.text.includes(controlMarker));
+    if (selectedEvent === undefined || independentEvent === undefined) throw new Error("public ledger reader missing imported fixtures");
+    const selectedSubject = selectedEvent.subjects[0]?.subject_id;
+    const controlSubject = independentEvent.subjects[0]?.subject_id;
+    if (selectedSubject === undefined || controlSubject === undefined) throw new Error("fixture event missing native document subject");
     const project = "project:two-client-continuity";
     const aToken = addAgent(db, "continuity-a", {
-      ...readGrant, subjects: null, tools: ["timeline", "context_packet", "propose", "correct"], relay_owner_corrections: true,
+      ...readGrant, subjects: [selectedSubject, controlSubject, project], tools: ["timeline", "context_packet", "propose", "correct"], relay_owner_corrections: true,
     }).token;
-    const bToken = addAgent(db, "continuity-b", { ...readGrant, subjects: [project] }).token;
+    const bToken = addAgent(db, "continuity-b", { ...readGrant, subjects: [selectedSubject, project] }).token;
     const principal = (token: string): Principal => {
       const value = authenticate(db, token);
       if (value === null) throw new Error("synthetic principal did not authenticate");
@@ -147,7 +154,7 @@ test("synthetic InMemoryTransport clients preserve scoped correction continuity 
     sameEnvelope(corrected);
     const correction = envelopeOf(corrected).data as { claim_id: string; event_id: string; superseded: { claim_id: string }[] };
     expect(correction.superseded.map((entry) => entry.claim_id)).toEqual([claimId]);
-    expect(listClaims(db, { subject: project }).find((claim) => claim.claim_id === correction.claim_id)?.authority).toBe("owner_correction");
+    expect(envelopeOf(corrected).data).toMatchObject({ receipt_id: null });
     const retry = await call(a, "correct", correctionArgs);
     sameEnvelope(retry);
     expect(envelopeOf(retry).data).toMatchObject({ claim_id: correction.claim_id, event_id: correction.event_id });
@@ -158,6 +165,7 @@ test("synthetic InMemoryTransport clients preserve scoped correction continuity 
       });
       sameEnvelope(refreshed);
       expect(packet(envelopeOf(refreshed)).packet_md).toContain("active");
+      expect(packet(envelopeOf(refreshed)).packet_md).toContain("owner_correction");
       expect(packet(envelopeOf(refreshed)).packet_md).not.toContain("blocked");
     }
     const forbidden = await call(b, "correct", correctionArgs);
@@ -228,9 +236,8 @@ test("synthetic InMemoryTransport clients preserve scoped correction continuity 
     expect(afterRevoke).not.toContain(marker);
     expect(afterRevoke).not.toContain(event.event_id);
     const controlTimeline = await call(a, "timeline", {});
+    sameEnvelope(controlTimeline);
     expect(JSON.stringify(envelopeOf(controlTimeline))).toContain(controlMarker);
     expect(JSON.stringify(envelopeOf(controlTimeline))).toContain(controlEvent.event_id);
-    const claims = listClaims(db, { subject: project });
-    expect(claims.find((claim) => claim.claim_id === correction.claim_id)?.receipt_id).toBeNull();
   } finally { db.close(); }
 }, 30_000);
