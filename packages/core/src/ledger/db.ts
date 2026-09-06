@@ -219,9 +219,13 @@ function migrate(db: Database): void {
   }).immediate();
 }
 
-export function openLedger(dbPath: string): Database {
+export function openLedger(dbPath: string, options: { busyTimeoutMs?: number } = {}): Database {
+  const timeout = options.busyTimeoutMs ?? 0;
+  if (!Number.isSafeInteger(timeout) || timeout < 0 || timeout > 5000) throw new TypeError("invalid ledger busy timeout");
   const db = new Database(dbPath);
   try {
+    // Apply before migrations: concurrent process startup is a writer too.
+    db.exec(`PRAGMA busy_timeout = ${timeout}`);
     db.exec("PRAGMA journal_mode = WAL");
     db.exec("PRAGMA foreign_keys = ON");
     migrate(db);

@@ -1,3 +1,4 @@
+import { credentialCustodyQualified } from "./custody-fixture";
 import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -13,7 +14,7 @@ function fixture() {
   const request = { operation_id: "enroll-flow-0001", name: "flow-agent", token_ref: `file:${join(credentials, "agent.json")}`, grant: { ceiling: "public" as const, types: [], subjects: [], since: null, until: null, tools: [], rate_limit_per_minute: 60, relay_owner_corrections: false } };
   return { vault, dbPath, request, clean: () => { rmSync(vault, { recursive: true, force: true }); rmSync(credentials, { recursive: true, force: true }); } };
 }
-describe("agent enrollment flow", () => {
+describe.if(credentialCustodyQualified)("agent enrollment flow", () => {
   test("creates one durable credential and replays the completed operation", () => {
     const f = fixture(); try {
       expect(previewAgentEnrollment(f.vault, f.request).status).toBe("preview");
@@ -43,7 +44,7 @@ describe("agent enrollment flow", () => {
       db.query("UPDATE agent_enrollments SET state = 'file_bound', completed_at = NULL WHERE operation_id = ?").run(f.request.operation_id);
       db.close();
       writeFileSync(f.request.token_ref.slice(5), "{\n"); chmodSync(f.request.token_ref.slice(5), 0o600);
-      expect(() => enrollAgent(f.vault, f.request)).toThrow("recovery_required");
+      expect(enrollAgent(f.vault, f.request)).toMatchObject({ status: "pending", authority: "none", credential: "incomplete" });
       const reopened = openLedger(f.dbPath); expect(reopened.query("SELECT 1 FROM agents WHERE agent_id = ?").get(first.agent_id)).toBeNull(); reopened.close();
     } finally { f.clean(); }
   });

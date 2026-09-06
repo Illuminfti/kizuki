@@ -24,14 +24,14 @@ if (build.target !== target.target || build.bun_version !== Bun.version) throw n
 verifyChecksumManifest(release, ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"]);
 
 function run(command: string, args: string[], env: Record<string, string>): string {
-  const result = Bun.spawnSync([command, ...args], { env, stderr: "pipe", stdout: "pipe" });
+  const result = Bun.spawnSync([command, ...args], { env, stderr: "pipe", stdout: "pipe", timeout: 30_000 });
   if (result.exitCode !== 0) {
     throw new Error("compiled command failed");
   }
   return `${result.stdout}${result.stderr}`;
 }
 function runJson(command: string, args: string[], env: Record<string, string>): { stdout: string; stderr: string } {
-  const result = Bun.spawnSync([command, ...args], { env, stderr: "pipe", stdout: "pipe" });
+  const result = Bun.spawnSync([command, ...args], { env, stderr: "pipe", stdout: "pipe", timeout: 30_000 });
   if (result.exitCode !== 0) throw new Error("compiled JSON command failed");
   return { stdout: result.stdout.toString(), stderr: result.stderr.toString() };
 }
@@ -99,35 +99,43 @@ try {
     tools: ["search"], rate_limit_per_minute: 60, relay_owner_corrections: false }), { mode: 0o600 });
   const agentArgs = ["agent", "add", "reader-private", "--grant", grant, "--token-ref", `file:${credential}`,
     "--operation-id", "releaseagent01", "--vault", vault, "--json"];
-  const added = runJson(cli, agentArgs, env);
-  const replayed = runJson(cli, agentArgs, env);
-  const envelope = JSON.parse(readFileSync(credential, "utf8")) as { token: string };
-  type Enrollment = { schema?: string; status?: string; authority?: string; credential?: string; agent_id?: string | null; replayed?: boolean };
-  const first = JSON.parse(added.stdout) as { schema?: string; status?: string; data?: Enrollment };
-  const retry = JSON.parse(replayed.stdout) as { schema?: string; status?: string; data?: Enrollment };
-  if (typeof envelope.token !== "string" || first.schema !== "kizuki.cli.agent/v1" || first.status !== "ok" || first.data?.schema !== "kizuki.agent-enrollment/v1" ||
-      first.data.status !== "completed" || first.data.authority !== "active" || first.data.credential !== "ready" || retry.schema !== "kizuki.cli.agent/v1" || retry.status !== "ok" ||
-      retry.data?.schema !== "kizuki.agent-enrollment/v1" || retry.data.status !== "completed" || retry.data.authority !== "active" || retry.data.credential !== "ready" || retry.data.replayed !== true ||
-      first.data.agent_id === null || first.data.agent_id === undefined || first.data.agent_id !== retry.data.agent_id || `${added.stdout}${added.stderr}${replayed.stdout}${replayed.stderr}`.includes(envelope.token) ||
-      `${added.stdout}${added.stderr}${replayed.stdout}${replayed.stderr}`.includes(credential)) throw new Error("agent enrollment smoke failed");
-  const agentRequests = [
-    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"release-smoke","version":"0"}}}',
-    '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}',
-    '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search","arguments":{"query":"Ada","scope":"all"}}}',
-    '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_page","arguments":{"path":"missing.md"}}}',
-  ];
-  const agentSession = await mcpSession(env, ["--vault", vault, "--token-ref", `file:${credential}`], agentRequests);
-  const responses = agentSession.output.trim().split("\n").filter(Boolean).map(line => JSON.parse(line) as { id?: number; result?: unknown });
-  if (agentSession.code !== 0 || !responses.some(response => response.id === 2 && JSON.stringify(response.result).includes("Ada")) ||
-      !responses.some(response => response.id === 3 && JSON.stringify(response.result).includes("tool_not_granted")) ||
-      `${agentSession.output}${agentSession.diagnostics}`.includes(envelope.token) || `${agentSession.output}${agentSession.diagnostics}`.includes(credential)) throw new Error("agent MCP authorization smoke failed");
-  const secondSession = await mcpSession(env, ["--vault", vault, "--token-ref", `file:${credential}`], agentRequests.slice(0, 3));
-  if (secondSession.code !== 0 || !secondSession.output.includes("Ada") || `${secondSession.output}${secondSession.diagnostics}`.includes(envelope.token) || `${secondSession.output}${secondSession.diagnostics}`.includes(credential)) throw new Error("second agent MCP session failed");
-  const revoked = runJson(cli, ["agent", "revoke", "reader-private", "--vault", vault, "--json"], env);
-  const revokedResult = JSON.parse(revoked.stdout) as { schema?: string; status?: string; data?: Enrollment };
-  if (revokedResult.schema !== "kizuki.cli.agent/v1" || revokedResult.status !== "ok" || revokedResult.data?.authority !== "revoked" || `${revoked.stdout}${revoked.stderr}`.includes(envelope.token) || `${revoked.stdout}${revoked.stderr}`.includes(credential)) throw new Error("agent revocation smoke failed");
-  const rejected = await mcpSession(env, ["--vault", vault, "--token-ref", `file:${credential}`], [agentRequests[0]!]);
-  if (rejected.code === 0 || `${rejected.output}${rejected.diagnostics}`.includes(envelope.token) || `${rejected.output}${rejected.diagnostics}`.includes(credential)) throw new Error("revoked credential reconnected");
+  if (process.platform === "linux" && process.arch === "x64") {
+    const added = runJson(cli, agentArgs, env);
+    const replayed = runJson(cli, agentArgs, env);
+    const envelope = JSON.parse(readFileSync(credential, "utf8")) as { token: string };
+    type Enrollment = { schema?: string; status?: string; authority?: string; credential?: string; agent_id?: string | null; replayed?: boolean };
+    const first = JSON.parse(added.stdout) as { schema?: string; status?: string; data?: Enrollment };
+    const retry = JSON.parse(replayed.stdout) as { schema?: string; status?: string; data?: Enrollment };
+    if (typeof envelope.token !== "string" || first.schema !== "kizuki.cli.agent/v1" || first.status !== "ok" || first.data?.schema !== "kizuki.agent-enrollment/v1" ||
+        first.data.status !== "completed" || first.data.authority !== "active" || first.data.credential !== "ready" || retry.schema !== "kizuki.cli.agent/v1" || retry.status !== "ok" ||
+        retry.data?.schema !== "kizuki.agent-enrollment/v1" || retry.data.status !== "completed" || retry.data.authority !== "active" || retry.data.credential !== "ready" || retry.data.replayed !== true ||
+        first.data.agent_id === null || first.data.agent_id === undefined || first.data.agent_id !== retry.data.agent_id || `${added.stdout}${added.stderr}${replayed.stdout}${replayed.stderr}`.includes(envelope.token) ||
+        `${added.stdout}${added.stderr}${replayed.stdout}${replayed.stderr}`.includes(credential)) throw new Error("agent enrollment smoke failed");
+    const agentRequests = [
+      '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"release-smoke","version":"0"}}}',
+      '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}',
+      '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search","arguments":{"query":"Ada","scope":"all"}}}',
+      '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_page","arguments":{"path":"missing.md"}}}',
+    ];
+    const agentSession = await mcpSession(env, ["--vault", vault, "--token-ref", `file:${credential}`], agentRequests);
+    const responses = agentSession.output.trim().split("\n").filter(Boolean).map(line => JSON.parse(line) as { id?: number; result?: unknown });
+    if (agentSession.code !== 0 || !responses.some(response => response.id === 2 && JSON.stringify(response.result).includes("Ada")) ||
+        !responses.some(response => response.id === 3 && JSON.stringify(response.result).includes("tool_not_granted")) ||
+        `${agentSession.output}${agentSession.diagnostics}`.includes(envelope.token) || `${agentSession.output}${agentSession.diagnostics}`.includes(credential)) throw new Error("agent MCP authorization smoke failed");
+    const secondSession = await mcpSession(env, ["--vault", vault, "--token-ref", `file:${credential}`], agentRequests.slice(0, 3));
+    if (secondSession.code !== 0 || !secondSession.output.includes("Ada") || `${secondSession.output}${secondSession.diagnostics}`.includes(envelope.token) || `${secondSession.output}${secondSession.diagnostics}`.includes(credential)) throw new Error("second agent MCP session failed");
+    const revoked = runJson(cli, ["agent", "revoke", "reader-private", "--vault", vault, "--json"], env);
+    const revokedResult = JSON.parse(revoked.stdout) as { schema?: string; status?: string; data?: Enrollment };
+    if (revokedResult.schema !== "kizuki.cli.agent/v1" || revokedResult.status !== "ok" || revokedResult.data?.authority !== "revoked" || `${revoked.stdout}${revoked.stderr}`.includes(envelope.token) || `${revoked.stdout}${revoked.stderr}`.includes(credential)) throw new Error("agent revocation smoke failed");
+    const rejected = await mcpSession(env, ["--vault", vault, "--token-ref", `file:${credential}`], [agentRequests[0]!]);
+    if (rejected.code === 0 || `${rejected.output}${rejected.diagnostics}`.includes(envelope.token) || `${rejected.output}${rejected.diagnostics}`.includes(credential)) throw new Error("revoked credential reconnected");
+  } else {
+    const refused = Bun.spawnSync([cli, ...agentArgs], { env, stdout: "pipe", stderr: "pipe" });
+    const response = JSON.parse(refused.stdout.toString()) as { status?: string; error?: { code?: string } };
+    if (refused.exitCode !== 1 || response.status !== "error" || response.error?.code !== "unsupported_platform" || existsSync(credential)) {
+      throw new Error("unsupported credential platform did not refuse safely");
+    }
+  }
 
   const session = Bun.spawn([mcp, "--vault", vault, "--owner"], {
     env,

@@ -1348,7 +1348,10 @@ function assertBackupFormat(manifest: ExportManifest): void {
   if (typeof versions !== "object" || versions === null || !Number.isSafeInteger(versions.ledger)) {
     throw new Error("backup schema versions are invalid");
   }
-  if ((manifest.schema === BACKUP_SCHEMA || manifest.schema === V2_BACKUP_SCHEMA) && versions.ledger !== LEDGER_SCHEMA_VERSION) {
+  // Ledger17 adds only local agent enrollment custody, outside these streams.
+  // Future migrations must make their own explicit compatibility decision.
+  if ((manifest.schema === BACKUP_SCHEMA || manifest.schema === V2_BACKUP_SCHEMA) &&
+      versions.ledger !== 16 && versions.ledger !== 17) {
     throw new Error("current backup ledger schema is invalid");
   }
   if (manifest.schema === LEGACY_BACKUP_SCHEMA && (versions.ledger < 1 || versions.ledger > 15)) {

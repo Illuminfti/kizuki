@@ -4,7 +4,8 @@ import { closeSync, writeFileSync } from "node:fs";
 // Linux x86_64 only. Return the kernel's signed result directly: consulting
 // libc errno after returning through FFI can observe a later runtime operation.
 // The fixed flags are RDONLY | NOFOLLOW | NONBLOCK | CLOEXEC, optionally
-// DIRECTORY. Neither the caller nor the source can request file creation.
+// DIRECTORY. The read helper cannot create; credential creation has its own
+// fixed exclusive-create helper below.
 const source = `
 long kizuki_open_owned_child(int parent, const char *name, int directory) {
   long result;
@@ -21,6 +22,14 @@ long kizuki_create_credential_child(int parent, const char *name) {
   register long mode __asm__("r10") = 0600;
   __asm__ volatile ("syscall" : "=a"(result)
     : "a"(257L), "D"((long)parent), "S"(name), "d"(flags), "r"(mode)
+    : "rcx", "r11", "memory", "cc");
+  return result;
+}
+long kizuki_stat_owned_child(int parent, const char *name, void *stat_buffer) {
+  long result;
+  register long flags __asm__("r10") = 0x100L;
+  __asm__ volatile ("syscall" : "=a"(result)
+    : "a"(262L), "D"((long)parent), "S"(name), "d"(stat_buffer), "r"(flags)
     : "rcx", "r11", "memory", "cc");
   return result;
 }
@@ -52,6 +61,7 @@ export function loadOwnedDirectoryNative() {
         symbols: {
           kizuki_open_owned_child: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i64_fast },
           kizuki_create_credential_child: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.i64_fast },
+          kizuki_stat_owned_child: { args: [FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i64_fast },
         },
       });
       return {
@@ -61,6 +71,7 @@ export function loadOwnedDirectoryNative() {
           ...libc.symbols,
           openChild: compiled.symbols.kizuki_open_owned_child,
           createCredentialChild: compiled.symbols.kizuki_create_credential_child,
+          statChild: compiled.symbols.kizuki_stat_owned_child,
         },
       };
     } finally { closeSync(fd); }

@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { openLedger } from "../../src/ledger/db";
 import { addAgent, revokeAgent } from "../../src/agents/identity";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const HASH = "a".repeat(64);
 const FILE_HASH = "b".repeat(64);
@@ -16,6 +19,28 @@ function reservation(db: ReturnType<typeof openLedger>, state: "reserved" | "fil
 }
 
 describe("agent enrollment migration", () => {
+  test("upgrades a reconstructed ledger16 layout without changing existing authority", () => {
+    const root = mkdtempSync(join(tmpdir(), "kizuki-enrollment-migration-")), path = join(root, "ledger.db");
+    const old = openLedger(path);
+    let before: string;
+    const authority = (db: ReturnType<typeof openLedger>) => JSON.stringify(["agents", "agent_grants", "agent_audit"].map(table => db.query(`SELECT * FROM ${table}`).all()));
+    try {
+      old.exec("DROP TRIGGER agent_enrollments_block_legacy_agent_insert; DROP TRIGGER agent_enrollments_block_token_update; DROP TABLE agent_enrollments; UPDATE schema_version SET version=16");
+      addAgent(old, "legacy-migration");
+      before = authority(old);
+    } finally { old.close(); }
+    try {
+      const migrated = openLedger(path);
+      try {
+        expect(authority(migrated) === before, "migration preserves every existing authority row").toBe(true);
+        expect(migrated.query("SELECT version FROM schema_version").get()).toEqual({ version: 17 });
+        expect(migrated.query("SELECT count(*) AS n FROM agent_enrollments").get()).toEqual({ n: 0 });
+        expect(migrated.query("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'agent_enrollments_%' ORDER BY name").all()).toEqual([
+          { name: "agent_enrollments_block_legacy_agent_insert" }, { name: "agent_enrollments_block_token_update" },
+        ]);
+      } finally { migrated.close(); }
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
   test("keeps a reservation inert and blocks legacy enrollment collisions", () => {
     const db = openLedger(":memory:");
     try {
@@ -41,6 +66,23 @@ describe("agent enrollment migration", () => {
       reservation(db, "reserved");
       db.query("UPDATE agent_enrollments SET state = 'cancelled', cancelled_at = ?, updated_at = ? WHERE operation_id = ?").run(NOW, NOW, "operation-0001");
       expect(() => addAgent(db, "reserved-agent")).not.toThrow();
+    } finally { db.close(); }
+  });
+
+  test("token updates cannot acquire any non-cancelled enrollment hash", () => {
+    const db = openLedger(":memory:");
+    try {
+      const { agent } = addAgent(db, "rotation-agent");
+      reservation(db, "file_bound");
+      const before = db.query("SELECT token_hash FROM agents WHERE agent_id = ?").get(agent.agent_id);
+      const update = () => db.query("UPDATE agents SET token_hash = ? WHERE agent_id = ?").run(HASH, agent.agent_id);
+      expect(update).toThrow("reservation conflicts");
+      db.query("UPDATE agent_enrollments SET state = 'completed', completed_at = ?").run(NOW);
+      expect(update).toThrow("reservation conflicts");
+      expect(db.query("SELECT token_hash FROM agents WHERE agent_id = ?").get(agent.agent_id)).toEqual(before);
+      // Cancellation releases a pending generation's hash reservation.
+      db.query("UPDATE agent_enrollments SET state = 'cancelled', completed_at = NULL, cancelled_at = ?").run(NOW);
+      expect(update).not.toThrow();
     } finally { db.close(); }
   });
 

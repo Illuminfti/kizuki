@@ -12,6 +12,7 @@ const IMPLEMENTED_NON_GATE_VERBS = [
   "sync",
   "import",
   "models",
+  "agent",
   "audit",
   "tell",
   "undo",

@@ -13,6 +13,16 @@ export interface CredentialFileIdentity {
   readonly ino: string;
 }
 
+export interface CredentialFileObservation extends CredentialFileIdentity {
+  readonly size: string;
+  readonly mode: string;
+  readonly uid: string;
+  readonly gid: string;
+  readonly nlink: string;
+  readonly mtime_ns: string;
+  readonly ctime_ns: string;
+}
+
 export interface CredentialFileInspection {
   readonly identity: CredentialFileIdentity;
   /** A bounded observation only; verification always rereads the inode. */
@@ -71,6 +81,11 @@ function sameBigStat(before: BigIntStats, after: BigIntStats): boolean {
   return before.dev === after.dev && before.ino === after.ino && before.size === after.size &&
     before.mode === after.mode && before.uid === after.uid && before.nlink === after.nlink &&
     before.mtimeNs === after.mtimeNs && before.ctimeNs === after.ctimeNs;
+}
+function observation(stat: BigIntStats): CredentialFileObservation {
+  return Object.freeze({ dev: stat.dev.toString(), ino: stat.ino.toString(), size: stat.size.toString(),
+    mode: stat.mode.toString(), uid: stat.uid.toString(), gid: stat.gid.toString(), nlink: stat.nlink.toString(),
+    mtime_ns: stat.mtimeNs.toString(), ctime_ns: stat.ctimeNs.toString() });
 }
 function fileIsSafe(fd: number, expected?: CredentialFileIdentity): void {
   const stat = call(() => fstatSync(fd, { bigint: true }));
@@ -155,6 +170,11 @@ export class CredentialDirectory {
   }
   get identity(): CredentialFileIdentity { return this.#identity; }
 
+  observe(): CredentialFileObservation {
+    this.assertCurrent();
+    return observation(call(() => fstatSync(this.#fd, { bigint: true })));
+  }
+
   private assertCurrent(): void {
     if (!directories.has(this) || this.#closed) fail("closed");
     const current = openQualifiedParent(this.#path);
@@ -197,6 +217,9 @@ export class CredentialDirectory {
 
   inspect(name: string): CredentialFileInspection | null {
     this.assertCurrent();
+    const metadata = this.inspectFileIdentity(name);
+    if (metadata === null) return null;
+    if (BigInt(metadata.size) < 0n || BigInt(metadata.size) > BigInt(MAX_CREDENTIAL_BYTES)) fail("bounds");
     const fd = this.openExisting(name);
     if (fd === null) return null;
     try {
@@ -210,20 +233,25 @@ export class CredentialDirectory {
     }
   }
 
-  /** Bounded metadata check for qualified non-credential control files. */
-  inspectFileIdentity(name: string): CredentialFileIdentity | null {
+  /** Never open/close SQLite files: close(2) would drop its POSIX write locks. */
+  inspectFileIdentity(name: string): CredentialFileObservation | null {
     this.assertCurrent();
-    const fd = this.openExisting(name);
-    if (fd === null) return null;
-    try {
-      const before = call(() => fstatSync(fd, { bigint: true }));
-      fileIsSafe(fd);
-      const after = call(() => fstatSync(fd, { bigint: true }));
-      if (!sameBigStat(before, after)) fail("changed");
-      const found = Object.freeze({ dev: before.dev.toString(), ino: before.ino.toString() });
-      this.assertCurrent();
-      return found;
-    } finally { call(() => closeSync(fd)); }
+    // Linux x86_64 newfstatat writes the fixed 144-byte kernel stat layout.
+    // The platform guard in api() is mandatory for these offsets and syscall.
+    const bytes = new Uint8Array(144);
+    const status = nativeResult(api().symbols.statChild(this.#fd, ptr(validName(name)), ptr(bytes)));
+    if (status === -2) return null;
+    if (status < 0) fail();
+    const view = new DataView(bytes.buffer);
+    const mode = view.getUint32(24, true), uid = view.getUint32(28, true), nlink = view.getBigUint64(16, true);
+    if ((mode & 0o170000) === 0o120000) fail();
+    if ((mode & 0o170000) !== 0o100000 || (mode & 0o7777) !== 0o600 || BigInt(uid) !== euid() || nlink !== 1n) fail("identity_changed");
+    const found = Object.freeze({ dev: view.getBigUint64(0, true).toString(), ino: view.getBigUint64(8, true).toString(),
+      size: view.getBigInt64(48, true).toString(), mode: mode.toString(), uid: uid.toString(), gid: view.getUint32(32, true).toString(), nlink: nlink.toString(),
+      mtime_ns: (view.getBigInt64(88, true) * 1_000_000_000n + view.getBigInt64(96, true)).toString(),
+      ctime_ns: (view.getBigInt64(104, true) * 1_000_000_000n + view.getBigInt64(112, true)).toString() });
+    this.assertCurrent();
+    return found;
   }
 
   create(name: string): CredentialFileInspection {

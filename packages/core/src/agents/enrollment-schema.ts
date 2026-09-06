@@ -64,5 +64,14 @@ export function applyAgentEnrollmentV17(db: Database): void {
     BEGIN
       SELECT RAISE(ABORT, 'agent enrollment reservation conflicts with agent insert');
     END;
+    CREATE TRIGGER agent_enrollments_block_token_update
+    BEFORE UPDATE OF token_hash ON agents
+    WHEN EXISTS (
+      SELECT 1 FROM agent_enrollments
+       WHERE state != 'cancelled' AND token_hash = NEW.token_hash
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'agent enrollment reservation conflicts with token update');
+    END;
   `);
 }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyAgentsV9 } from "../src/agents/schema";
@@ -10,7 +10,7 @@ import { applyClaimsV3, initClaims } from "../src/claims/schema";
 import { neighbors } from "../src/graph/graph";
 import { initGraph } from "../src/graph/schema";
 import { applyConnectionsV8 } from "../src/ledger/connections-schema";
-import { openLedger } from "../src/ledger/db";
+import { LEDGER_SCHEMA_VERSION, openLedger } from "../src/ledger/db";
 import { tableExists } from "../src/ledger/schema";
 import { initSearch } from "../src/search/schema";
 import { searchResult } from "../src/search/query";
@@ -119,6 +119,24 @@ const V2_SCHEMA = `
 `;
 
 describe("openLedger migrations", () => {
+  test("keeps the existing zero wait default and permits a bounded startup wait", () => {
+    const legacy = openLedger(":memory:"), contender = openLedger(":memory:", { busyTimeoutMs: 5000 });
+    try {
+      expect(legacy.query("PRAGMA busy_timeout").get()).toEqual({ timeout: 0 });
+      expect(contender.query("PRAGMA busy_timeout").get()).toEqual({ timeout: 5000 });
+    } finally { legacy.close(); contender.close(); }
+  });
+
+  test("rejects invalid startup waits before creating a database", () => {
+    const root = mkdtempSync(join(tmpdir(), "kizuki-ledger-timeout-")), path = join(root, "ledger.db");
+    try {
+      for (const busyTimeoutMs of [-1, 5001, 1.5, NaN, Infinity, "5000"] as number[]) {
+        expect(() => openLedger(path, { busyTimeoutMs })).toThrow("invalid ledger busy timeout");
+        expect(existsSync(path)).toBe(false);
+      }
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
   test("applies the current migrations and enables foreign keys", () => {
     const db = openLedger(":memory:");
     expect(schemaVersion(db)).toBeGreaterThanOrEqual(3);
@@ -323,7 +341,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(16);
+      expect(schemaVersion(upgraded)).toBe(LEDGER_SCHEMA_VERSION);
       const tables = upgraded
         .query<{ name: string }, []>(
           "SELECT name FROM sqlite_master WHERE type = 'table'",
@@ -456,7 +474,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(16);
+      expect(schemaVersion(upgraded)).toBe(LEDGER_SCHEMA_VERSION);
       const receipts = upgraded
         .query<
           {
@@ -582,8 +600,8 @@ describe("openLedger migrations", () => {
       legacy.close();
       const upgraded = openLedger(path);
       expect(columns(upgraded, "canon_receipts")).toEqual(freshColumns);
-      expect(schemaVersion(fresh)).toBe(16);
-      expect(schemaVersion(upgraded)).toBe(16);
+      expect(schemaVersion(fresh)).toBe(LEDGER_SCHEMA_VERSION);
+      expect(schemaVersion(upgraded)).toBe(LEDGER_SCHEMA_VERSION);
       expect(columns(fresh, "connector_sensitivity")).toEqual([
         "at",
         "connector_id",
@@ -621,7 +639,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(16);
+      expect(schemaVersion(upgraded)).toBe(LEDGER_SCHEMA_VERSION);
       expect(
         upgraded
           .query<{ name: string }, []>(
@@ -709,7 +727,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(16);
+      expect(schemaVersion(upgraded)).toBe(LEDGER_SCHEMA_VERSION);
       const grant = upgraded
         .query<
           { relay_owner_corrections: number; grant_epoch: number },
@@ -739,7 +757,7 @@ describe("openLedger migrations", () => {
       leftover.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(16);
+      expect(schemaVersion(upgraded)).toBe(LEDGER_SCHEMA_VERSION);
       const tables = upgraded
         .query<{ name: string }, []>(
           "SELECT name FROM sqlite_master WHERE type = 'table'",
@@ -782,7 +800,7 @@ describe("openLedger migrations", () => {
       leftover.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(16);
+      expect(schemaVersion(upgraded)).toBe(LEDGER_SCHEMA_VERSION);
       expect(
         upgraded
           .query<{ name: string }, [string]>("SELECT name FROM pragma_table_info(?)")
@@ -855,7 +873,7 @@ describe("openLedger migrations", () => {
       legacy.close();
 
       const upgraded = openLedger(path);
-      expect(schemaVersion(upgraded)).toBe(16);
+      expect(schemaVersion(upgraded)).toBe(LEDGER_SCHEMA_VERSION);
       expect(
         upgraded
           .query<{ name: string }, [string]>("SELECT name FROM pragma_table_info(?)")
@@ -936,7 +954,7 @@ describe("openLedger migrations", () => {
       first.close();
 
       const reopened = openLedger(path);
-      expect(schemaVersion(reopened)).toBe(16);
+      expect(schemaVersion(reopened)).toBe(LEDGER_SCHEMA_VERSION);
       expect(searchResult(reopened, "kettleword", { ceiling: "private" })).toEqual({
         hits: [
           expect.objectContaining({
@@ -1020,7 +1038,7 @@ describe("openLedger migrations", () => {
       first.close();
 
       const reopened = openLedger(path);
-      expect(schemaVersion(reopened)).toBe(16);
+      expect(schemaVersion(reopened)).toBe(LEDGER_SCHEMA_VERSION);
       expect(
         reopened
           .query<{ name: string }, [string]>(

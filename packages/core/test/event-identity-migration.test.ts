@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openLedger } from "../src/ledger/db";
+import { LEDGER_SCHEMA_VERSION, openLedger } from "../src/ledger/db";
 import { accept, count, readSince } from "../src/ledger/ledger";
 import { computeLegacyContentHash, sha256Hex } from "../src/util/hash";
 import { validEvent } from "./fixtures";
@@ -25,6 +25,9 @@ function legacyFixture(size = 1) {
     db.query("UPDATE events SET content_hash=? WHERE event_id=?").run(computeLegacyContentHash(input), stored.event.event_id);
   }
   db.exec(`
+    DROP TRIGGER agent_enrollments_block_legacy_agent_insert;
+    DROP TRIGGER agent_enrollments_block_token_update;
+    DROP TABLE agent_enrollments;
     DROP TRIGGER events_identity_insert;
     DROP TRIGGER canon_loop_hash_insert; DROP TRIGGER canon_loop_hash_update;
     DROP TRIGGER native_owner_hash_insert; DROP TRIGGER native_owner_hash_update;
@@ -50,7 +53,7 @@ describe("event identity migration", () => {
     try {
       const db = openLedger(f.path);
       try {
-        expect(db.query("SELECT version FROM schema_version").get()).toEqual({ version: 16 });
+        expect(db.query("SELECT version FROM schema_version").get()).toEqual({ version: LEDGER_SCHEMA_VERSION });
         const rows = db.query<Record<string, unknown>, []>("SELECT * FROM events ORDER BY event_id").all();
         expect(rows.map(({ content_hash_version, text_hash, origin, origin_binding_version, origin_binding_kind, origin_binding, ...row }) => row)).toEqual(old);
         expect(rows.every(row => row["content_hash_version"] === 1 && row["origin"] === "external" && row["text_hash"] === sha256Hex(validEvent().text))).toBe(true);
