@@ -3,6 +3,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { createHelpers } from "../helpers";
+import { LEDGER_SCHEMA_VERSION } from "../../../core/src/ledger/db";
 
 const { cleanup, runCli, tempVault } = createHelpers();
 afterEach(cleanup);
@@ -22,7 +23,7 @@ test("doctor JSON accepts a genuine migrated v1 event without hiding unrelated h
   expect(result.stderr).toBe("");
   const envelope = JSON.parse(result.stdout);
   expect(envelope.data.ledger).toEqual({
-    ok: true, schema_version: 18, quick_check: "ok",
+    ok: true, schema_version: LEDGER_SCHEMA_VERSION, quick_check: "ok",
     integrity_check: "ok", sampled_events: 1, failures: [],
   });
   // The historical synthetic connector has no installed configuration. Keep

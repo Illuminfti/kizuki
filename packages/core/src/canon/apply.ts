@@ -19,6 +19,7 @@ import type {
 } from "../contracts/proposal";
 import { AUTHORITY_TIERS } from "../contracts/proposal";
 import { tableExists } from "../ledger/schema";
+import { eventIdFromReference } from "../retrieval/ids";
 import { refreshDerivedPage, removeDerivedPage } from "../derived";
 import type { VaultPage } from "../vault/frontmatter";
 import type { CanonPage } from "../vault/pages";
@@ -737,8 +738,9 @@ export function applyPurgeRewrite(
     });
   }
   const prior = existingSources(existing.page);
+  const purgedEvents = new Set(input.purged_event_ids.map(eventIdFromReference));
   const remainingSources = prior.filter(
-    (source) => !input.purged_event_ids.includes(source),
+    (source) => !purgedEvents.has(eventIdFromReference(source)),
   );
   const body =
     input.source_erasure === undefined
@@ -778,7 +780,7 @@ export function applyPurgeRewrite(
   const next = { data, body: body.length === 0 ? "\n" : body };
   const expectedAfter = hashBytes(Buffer.from(serializePage(next)));
   commitMachineByteIntent(io.db, { receipt_id: receiptId, before_hash: existing.hash, after_hash: expectedAfter }, () => {
-    requireSourceEvents(io.db, existingSources(next), { owner: true, purpose: "derive" });
+    requireSourceEvents(io.db, existingSources(next).map(eventIdFromReference), { owner: true, purpose: "derive" });
   });
   const outcome = writePage(
     cap,

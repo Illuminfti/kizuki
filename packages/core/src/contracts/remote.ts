@@ -20,6 +20,9 @@ import type {
 } from "./ports";
 import {
   validateAbsenceProof,
+  PROVENANCE_ERASURE_CAPABILITY,
+  validateProvenanceAbsenceProof,
+  validateProvenanceEventIds,
   validateGraphResult,
   validateRetrievalMutationReport,
   validateRetrievalQuery,
@@ -28,6 +31,7 @@ import {
 import type {
   EntityRef,
   GraphQueryOptions,
+  AbsenceProof,
   RetrievalDoc,
   RetrievalPort,
 } from "./retrieval";
@@ -681,6 +685,12 @@ export async function createRemoteRetrievalPort(
     );
   }
   const client = await connectRemotePort(context, options);
+  const boundProof = <T extends AbsenceProof>(proof: T): T => {
+    if (proof.store !== client.describedRemote.id) {
+      throw new PortError("unavailable", "remote proof does not name its authenticated store", false);
+    }
+    return { ...proof, store: client.descriptor.id };
+  };
   return {
     descriptor: client.descriptor,
     upsert: async (docs: readonly RetrievalDoc[]) => {
@@ -700,8 +710,20 @@ export async function createRemoteRetrievalPort(
     verifyAbsent: async (ids) => {
       validIds(ids);
       const value = await client.invoke("verifyAbsent", [ids]);
-      return validateAbsenceProof(value, ids);
+      return boundProof(validateAbsenceProof(value, ids));
     },
+    ...(client.descriptor.supports.includes(PROVENANCE_ERASURE_CAPABILITY) ? {
+      removeByProvenance: async (eventIds: readonly string[]) => {
+        validateProvenanceEventIds(eventIds);
+        const value = await client.invoke("removeByProvenance", [eventIds]);
+        return validateRetrievalMutationReport(value);
+      },
+      verifyProvenanceAbsent: async (eventIds: readonly string[]) => {
+        validateProvenanceEventIds(eventIds);
+        const value = await client.invoke("verifyProvenanceAbsent", [eventIds]);
+        return boundProof(validateProvenanceAbsenceProof(value, eventIds));
+      },
+    } : {}),
     neighbors: async (
       entity: EntityRef,
       graphOptions: GraphQueryOptions,

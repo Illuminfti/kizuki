@@ -10,11 +10,14 @@ import { SENSITIVITY_ORDER } from "../../src/agents/types";
 import {
   MAX_RETRIEVAL_LIMIT,
   RETRIEVAL_CONTRACT,
+  PROVENANCE_ERASURE_CAPABILITY,
+  validateProvenanceEventIds,
   requireRetrievalCapability,
   validateRetrievalQuery,
 } from "../../src/contracts/retrieval";
 import type {
   AbsenceProof,
+  ProvenanceAbsenceProof,
   GraphResult,
   RetrievalDoc,
   RetrievalMutationReport,
@@ -159,6 +162,28 @@ export class ReferenceRetrievalPort implements RetrievalPort {
       store: this.descriptor.id,
       method: `lookup-limit-${MAX_RETRIEVAL_LIMIT}`,
       at: this.ctx.clock(),
+    };
+  }
+
+  async removeByProvenance(eventIds: readonly string[]): Promise<RetrievalMutationReport> {
+    requireRetrievalCapability(this.descriptor, PROVENANCE_ERASURE_CAPABILITY);
+    validateProvenanceEventIds(eventIds);
+    const references = new Set(eventIds.flatMap(id => [id, `event:${id}`]));
+    for (const [id, doc] of this.docs) {
+      if (doc.provenance.some(ref => references.has(ref))) this.docs.delete(id);
+    }
+    this.persist();
+    return { processed: eventIds.length };
+  }
+
+  async verifyProvenanceAbsent(eventIds: readonly string[]): Promise<ProvenanceAbsenceProof> {
+    requireRetrievalCapability(this.descriptor, PROVENANCE_ERASURE_CAPABILITY);
+    validateProvenanceEventIds(eventIds);
+    const remaining = new Set([...this.docs.values()].flatMap(doc => [...doc.provenance]));
+    return {
+      checked: eventIds.length,
+      found: eventIds.filter(id => remaining.has(id) || remaining.has(`event:${id}`)),
+      store: this.descriptor.id, method: "reference-event-provenance", at: this.ctx.clock(), scope: "event-provenance/v1",
     };
   }
 

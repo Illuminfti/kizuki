@@ -9,6 +9,7 @@ import { openLedger } from "../../src/ledger/db";
 import { validEvent } from "../fixtures";
 import type {
   AbsenceProof,
+  ProvenanceAbsenceProof,
   RetrievalDoc,
   RetrievalMutationReport,
   RetrievalPort,
@@ -19,7 +20,7 @@ import type {
   PortDescriptor,
   PortHealth,
 } from "../../src/contracts/ports";
-import { RETRIEVAL_CONTRACT } from "../../src/contracts/retrieval";
+import { RETRIEVAL_CONTRACT, PROVENANCE_ERASURE_CAPABILITY, requireRetrievalCapability, validateProvenanceEventIds } from "../../src/contracts/retrieval";
 import {
   CLAIM_DEDUP_MIN,
   FIXTURE_EMBEDDING_SPACE,
@@ -117,14 +118,14 @@ export class FixtureVectorPort implements RetrievalPort {
   private readonly healthStatus: PortHealth["status"];
 
   constructor(
-    opts: { vector?: boolean; health?: PortHealth["status"] } = {},
+    opts: { vector?: boolean; health?: PortHealth["status"]; provenanceErasure?: boolean } = {},
   ) {
     this.descriptor = {
       id: "test.kizuki.retrieval.fixture",
       kind: "retrieval",
       contract: RETRIEVAL_CONTRACT,
       contract_minor: 0,
-      supports: opts.vector === false ? ["lexical"] : ["lexical", "vector"],
+      supports: [...(opts.vector === false ? ["lexical"] : ["lexical", "vector"]), ...(opts.provenanceErasure ? [PROVENANCE_ERASURE_CAPABILITY] : [])],
       requires_lease: false,
       optional_package: null,
     };
@@ -170,6 +171,24 @@ export class FixtureVectorPort implements RetrievalPort {
       store: this.descriptor.id,
       method: "map-lookup",
       at: FIXED_NOW,
+    };
+  }
+
+  async removeByProvenance(ids: readonly string[]): Promise<RetrievalMutationReport> {
+    requireRetrievalCapability(this.descriptor, PROVENANCE_ERASURE_CAPABILITY);
+    validateProvenanceEventIds(ids);
+    const references = new Set(ids.flatMap(id => [id, `event:${id}`]));
+    for (const [id, doc] of this.docs) if (doc.provenance.some(ref => references.has(ref))) this.docs.delete(id);
+    return { processed: ids.length };
+  }
+
+  async verifyProvenanceAbsent(ids: readonly string[]): Promise<ProvenanceAbsenceProof> {
+    requireRetrievalCapability(this.descriptor, PROVENANCE_ERASURE_CAPABILITY);
+    validateProvenanceEventIds(ids);
+    return {
+      scope: "event-provenance/v1", checked: ids.length,
+      found: ids.filter(id => [...this.docs.values()].some(doc => doc.provenance.includes(id) || doc.provenance.includes(`event:${id}`))),
+      store: this.descriptor.id, method: "map-event-provenance", at: FIXED_NOW,
     };
   }
 
