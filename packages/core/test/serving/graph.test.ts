@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { rebuildGraph } from "../../src/graph/graph";
@@ -7,16 +7,16 @@ import type { GraphArgs, GraphData } from "../../src/serving/graph";
 import { ServeError } from "../../src/serving/types";
 import type { Envelope } from "../../src/serving/types";
 import { serializePage } from "../../src/vault/frontmatter";
-import { serveFixture, storeEvent } from "./helpers";
+import { recordedPage, serveFixture, storeEvent } from "./helpers";
 import type { Fixture } from "./helpers";
 
 let fixture: Fixture;
 
-beforeAll(() => {
-  fixture = serveFixture();
+beforeEach(async () => {
+  fixture = await serveFixture();
 });
 
-afterAll(() => {
+afterEach(() => {
   fixture.dispose();
 });
 
@@ -75,16 +75,18 @@ describe("serveGraph", () => {
     expect(limited.denied).toEqual([{ reason: "above_ceiling", count: 1 }]);
   });
 
-  test("a source edge to a retracted record is dropped, a live one kept", () => {
+  test("a page with a retracted source loses all positive source edges", () => {
     const envelope = serveGraph(fixture.owner(), {
       id: "fact:sourced",
       kinds: ["source"],
     });
-    expect(targets(envelope)).toEqual([fixture.events["public"] as string]);
-    expect(envelope.denied).toEqual([]);
+    expect(targets(envelope)).toEqual([]);
+    expect(envelope.denied).toEqual([{ reason: "held", count: 1 }]);
+    const live = serveGraph(fixture.owner(), { id: "person:ada", kinds: ["source"] });
+    expect(targets(live)).toContain(fixture.events["public"] as string);
   });
 
-  test("a namespaced source dest is authorized or counted, not dropped", () => {
+  test("a namespaced source dest is authorized or counted, not dropped", async () => {
     const eventId = storeEvent(
       fixture.db,
       "namespaced-source",
@@ -93,23 +95,21 @@ describe("serveGraph", () => {
       "person:ada",
       "private",
     );
-    writeFileSync(
-      join(fixture.vaultPath, "facts/namespaced-source.md"),
-      serializePage({
-        data: {
-          id: "fact:namespaced-source",
-          title: "Namespaced source",
-          type: "fact",
-          status: "active",
-          sensitivity: "public",
-          taint: "clean",
-          sources: [`event:${eventId}`],
-        },
-        body: "Cites a namespaced ledger record.",
-      }),
-      "utf8",
-    );
+    await recordedPage(fixture.db, fixture.vaultPath, "facts/namespaced-source.md", {
+      id: "fact:namespaced-source",
+      title: "Namespaced source",
+      type: "fact",
+      status: "active",
+      sensitivity: "public",
+      taint: "clean",
+    }, "Cites a namespaced ledger record.", [fixture.events["public"] as string]);
     rebuildGraph(fixture.db, fixture.vaultPath);
+
+    // Exercise the consumer's source check with a namespaced derived edge.
+    // The public root retains its real public receipt; no receipt is fabricated.
+    fixture.db.query(`UPDATE graph_edges SET dst = ?, dest_sensitivity = 'private'
+      WHERE src = 'fact:namespaced-source' AND kind = 'source'`)
+      .run(`event:${eventId}`);
 
     const owner = serveGraph(fixture.owner(), {
       id: "fact:namespaced-source",
@@ -187,54 +187,33 @@ describe("serveGraph", () => {
     ).toBe("invalid_arguments");
   });
 
-  test("a public reader is not capped by private incoming edges", () => {
-    writeFileSync(
-      join(fixture.vaultPath, "facts/cap-hub.md"),
-      serializePage({
-        data: {
-          id: "fact:cap-hub",
-          title: "Cap hub",
-          type: "fact",
-          status: "active",
-          sensitivity: "public",
-          taint: "clean",
-        },
-        body: "A public hub.",
-      }),
-      "utf8",
-    );
+  test("a public reader is not capped by private incoming edges", async () => {
+    await recordedPage(fixture.db, fixture.vaultPath, "facts/cap-hub.md", {
+      id: "fact:cap-hub",
+      title: "Cap hub",
+      type: "fact",
+      status: "active",
+      sensitivity: "public",
+      taint: "clean",
+    }, "A public hub.", [fixture.events["public"] as string]);
     for (let index = 0; index < 100; index += 1) {
-      writeFileSync(
-        join(fixture.vaultPath, `facts/cap-secret-${index}.md`),
-        serializePage({
-          data: {
-            id: `fact:aaa-secret-${index}`,
-            title: `Secret ${index}`,
-            type: "fact",
-            status: "active",
-            sensitivity: "private",
-            taint: "clean",
-          },
-          body: "See [[Cap hub]].",
-        }),
-        "utf8",
-      );
+      await recordedPage(fixture.db, fixture.vaultPath, `facts/cap-secret-${index}.md`, {
+        id: `fact:aaa-secret-${index}`,
+        title: `Secret ${index}`,
+        type: "fact",
+        status: "active",
+        sensitivity: "private",
+        taint: "clean",
+      }, "See [[Cap hub]].", [fixture.events["public"] as string]);
     }
-    writeFileSync(
-      join(fixture.vaultPath, "facts/cap-open.md"),
-      serializePage({
-        data: {
-          id: "fact:zzz-open",
-          title: "Open neighbor",
-          type: "fact",
-          status: "active",
-          sensitivity: "public",
-          taint: "clean",
-        },
-        body: "See [[Cap hub]].",
-      }),
-      "utf8",
-    );
+    await recordedPage(fixture.db, fixture.vaultPath, "facts/cap-open.md", {
+      id: "fact:zzz-open",
+      title: "Open neighbor",
+      type: "fact",
+      status: "active",
+      sensitivity: "public",
+      taint: "clean",
+    }, "See [[Cap hub]].", [fixture.events["public"] as string]);
     rebuildGraph(fixture.db, fixture.vaultPath);
 
     const owner = serveGraph(fixture.owner(), {
@@ -258,22 +237,15 @@ describe("serveGraph", () => {
     expect(JSON.stringify(limited)).not.toContain("aaa-secret");
   });
 
-  test("a leftover wikilink stays prose when an archived page shares the title", () => {
-    writeFileSync(
-      join(fixture.vaultPath, "facts/ghost-link.md"),
-      serializePage({
-        data: {
-          id: "fact:ghost-link",
-          title: "Ghost link",
-          type: "fact",
-          status: "active",
-          sensitivity: "public",
-          taint: "clean",
-        },
-        body: "See [[Ghost]].",
-      }),
-      "utf8",
-    );
+  test("a leftover wikilink stays prose when an archived page shares the title", async () => {
+    await recordedPage(fixture.db, fixture.vaultPath, "facts/ghost-link.md", {
+      id: "fact:ghost-link",
+      title: "Ghost link",
+      type: "fact",
+      status: "active",
+      sensitivity: "public",
+      taint: "clean",
+    }, "See [[Ghost]].", [fixture.events["public"] as string]);
     writeFileSync(
       join(fixture.vaultPath, "facts/ghost.md"),
       serializePage({
@@ -301,58 +273,37 @@ describe("serveGraph", () => {
     expect(envelope.denied).toEqual([]);
   });
 
-  test("a public reader is not capped by private outgoing dests", () => {
+  test("a public reader is not capped by private outgoing dests", async () => {
     const destLinks = [
       ...Array.from({ length: 100 }, (_value, index) => `[[Out secret ${index}]]`),
       "[[Out open]]",
     ].join(" ");
-    writeFileSync(
-      join(fixture.vaultPath, "facts/out-hub.md"),
-      serializePage({
-        data: {
-          id: "fact:out-hub",
-          title: "Out hub",
-          type: "fact",
-          status: "active",
-          sensitivity: "public",
-          taint: "clean",
-        },
-        body: destLinks,
-      }),
-      "utf8",
-    );
+    await recordedPage(fixture.db, fixture.vaultPath, "facts/out-hub.md", {
+      id: "fact:out-hub",
+      title: "Out hub",
+      type: "fact",
+      status: "active",
+      sensitivity: "public",
+      taint: "clean",
+    }, destLinks, [fixture.events["public"] as string]);
     for (let index = 0; index < 100; index += 1) {
-      writeFileSync(
-        join(fixture.vaultPath, `facts/out-secret-${index}.md`),
-        serializePage({
-          data: {
-            id: `fact:aaa-out-secret-${index}`,
-            title: `Out secret ${index}`,
-            type: "fact",
-            status: "active",
-            sensitivity: "private",
-            taint: "clean",
-          },
-          body: "A private dest.",
-        }),
-        "utf8",
-      );
+      await recordedPage(fixture.db, fixture.vaultPath, `facts/out-secret-${index}.md`, {
+        id: `fact:aaa-out-secret-${index}`,
+        title: `Out secret ${index}`,
+        type: "fact",
+        status: "active",
+        sensitivity: "private",
+        taint: "clean",
+      }, "A private dest.", [fixture.events["public"] as string]);
     }
-    writeFileSync(
-      join(fixture.vaultPath, "facts/out-open.md"),
-      serializePage({
-        data: {
-          id: "fact:zzz-out-open",
-          title: "Out open",
-          type: "fact",
-          status: "active",
-          sensitivity: "public",
-          taint: "clean",
-        },
-        body: "A public dest.",
-      }),
-      "utf8",
-    );
+    await recordedPage(fixture.db, fixture.vaultPath, "facts/out-open.md", {
+      id: "fact:zzz-out-open",
+      title: "Out open",
+      type: "fact",
+      status: "active",
+      sensitivity: "public",
+      taint: "clean",
+    }, "A public dest.", [fixture.events["public"] as string]);
     rebuildGraph(fixture.db, fixture.vaultPath);
 
     const owner = serveGraph(fixture.owner(), {
@@ -376,7 +327,7 @@ describe("serveGraph", () => {
     expect(JSON.stringify(limited)).not.toContain("aaa-out-secret");
   });
 
-  test("a public reader is not capped by private source dests", () => {
+  test("a public reader is not capped by private source dests", async () => {
     const eventIds: string[] = [];
     for (let index = 0; index < 100; index += 1) {
       eventIds.push(
@@ -390,38 +341,35 @@ describe("serveGraph", () => {
         ),
       );
     }
-    writeFileSync(
-      join(fixture.vaultPath, "facts/source-hub.md"),
-      serializePage({
-        data: {
-          id: "fact:source-hub",
-          title: "Source hub",
-          type: "fact",
-          status: "active",
-          sensitivity: "public",
-          taint: "clean",
-          sources: eventIds,
-        },
-        body: "See [[Source open]].",
-      }),
-      "utf8",
-    );
-    writeFileSync(
-      join(fixture.vaultPath, "facts/source-open.md"),
-      serializePage({
-        data: {
-          id: "fact:zzz-source-open",
-          title: "Source open",
-          type: "fact",
-          status: "active",
-          sensitivity: "public",
-          taint: "clean",
-        },
-        body: "A public dest.",
-      }),
-      "utf8",
-    );
+    await recordedPage(fixture.db, fixture.vaultPath, "facts/source-hub.md", {
+      id: "fact:source-hub",
+      title: "Source hub",
+      type: "fact",
+      status: "active",
+      sensitivity: "public",
+      taint: "clean",
+    }, "See [[Source open]].", [fixture.events["public"] as string]);
+    await recordedPage(fixture.db, fixture.vaultPath, "facts/source-open.md", {
+      id: "fact:zzz-source-open",
+      title: "Source open",
+      type: "fact",
+      status: "active",
+      sensitivity: "public",
+      taint: "clean",
+    }, "A public dest.", [fixture.events["public"] as string]);
     rebuildGraph(fixture.db, fixture.vaultPath);
+
+    // Isolate cap/filter behavior in the disposable projection. A real public
+    // page cannot carry private provenance; its recorded revision stays intact.
+    const publicSource = fixture.events["public"] as string;
+    for (const eventId of eventIds) {
+      fixture.db.query(`INSERT INTO graph_edges
+        SELECT src, ?, kind, sensitivity, 'private', taint, authority, provenance, valid_from, valid_to
+        FROM graph_edges WHERE src = 'fact:source-hub' AND kind = 'source' AND dst = ?`)
+        .run(eventId, publicSource);
+    }
+    fixture.db.query(`DELETE FROM graph_edges
+      WHERE src = 'fact:source-hub' AND kind = 'source' AND dst = ?`).run(publicSource);
 
     const owner = serveGraph(fixture.owner(), { id: "fact:source-hub" });
     expect(owner.data?.edges).toHaveLength(100);
@@ -446,26 +394,19 @@ describe("serveGraph", () => {
     expect(JSON.stringify(limited)).not.toContain(eventIds[0]);
   });
 
-  test("the edge list is capped and reports the truncation", () => {
+  test("the edge list is capped and reports the truncation", async () => {
     const links = Array.from(
       { length: 520 },
       (_value, index) => `[[target-${index}]]`,
     ).join(" ");
-    writeFileSync(
-      join(fixture.vaultPath, "facts/many.md"),
-      serializePage({
-        data: {
-          id: "fact:many",
-          title: "Many kettle links",
-          type: "fact",
-          status: "active",
-          sensitivity: "public",
-          taint: "clean",
-        },
-        body: links,
-      }),
-      "utf8",
-    );
+    await recordedPage(fixture.db, fixture.vaultPath, "facts/many.md", {
+      id: "fact:many",
+      title: "Many kettle links",
+      type: "fact",
+      status: "active",
+      sensitivity: "public",
+      taint: "clean",
+    }, links, [fixture.events["public"] as string]);
     rebuildGraph(fixture.db, fixture.vaultPath);
 
     const envelope = serveGraph(fixture.owner(), {

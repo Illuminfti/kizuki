@@ -1,19 +1,17 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { insertClaim } from "../../src/claims/store";
 import { serveGetPage } from "../../src/serving/page";
 import type { GetPageArgs } from "../../src/serving/page";
 import { ServeError } from "../../src/serving/types";
-import { serializePage } from "../../src/vault/frontmatter";
 import { write } from "../canon/helpers";
-import { serveFixture } from "./helpers";
+import { recordedPage, serveFixture } from "./helpers";
 import type { Fixture } from "./helpers";
 
 let fixture: Fixture;
 
-beforeAll(() => {
-  fixture = serveFixture();
+beforeAll(async () => {
+  fixture = await serveFixture();
 });
 
 afterAll(() => {
@@ -99,23 +97,12 @@ describe("serveGetPage", () => {
     expect(envelope.denied).toEqual([{ reason: "above_ceiling", count: 1 }]);
   });
 
-  test("a long body is truncated on a code point, never inside a pair", () => {
+  test("a long body is truncated on a code point, never inside a pair", async () => {
     const body = `${"a".repeat(65_535)}\u{1F600}tail`;
-    writeFileSync(
-      join(fixture.vaultPath, "facts/long.md"),
-      serializePage({
-        data: {
-          id: "fact:long",
-          title: "Long kettle note",
-          type: "fact",
-          status: "active",
-          sensitivity: "public",
-          taint: "clean",
-        },
-        body,
-      }),
-      "utf8",
-    );
+    await recordedPage(fixture.db, fixture.vaultPath, "facts/long.md", {
+      id: "fact:long", title: "Long kettle note", type: "fact", status: "active",
+      sensitivity: "public", taint: "clean",
+    }, body, [fixture.events["public"] as string]);
 
     const chunk = serveGetPage(fixture.owner(), { id: "fact:long" }).canon[0];
     expect(chunk?.truncated).toBe(true);
@@ -148,10 +135,10 @@ describe("serveGetPage", () => {
     const written = serveGetPage(fixture.owner(), { path: receipt.page_path });
     expect(receipt.page_path).toBe("facts/receipted.md");
     expect(written.canon[0]?.authority).toBe(receipt.authority);
-    // RFC 0002 section 5.1: unmatched owner-controlled bytes are owner-authored.
+    // The ordinary fixture page also exposes its real model receipt tier.
     expect(
       serveGetPage(fixture.owner(), { id: "person:ada" }).canon[0]?.authority,
-    ).toBe("owner_authored");
+    ).toBe("model_inference");
   });
 });
 
