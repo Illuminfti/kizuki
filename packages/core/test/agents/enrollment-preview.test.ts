@@ -30,11 +30,16 @@ function footprint(path: string): unknown {
 }
 
 describe.if(credentialCustodyQualified)("agent enrollment preview", () => {
-  test("refuses a current version with a missing required ledger index without effects", () => {
+  for (const [name, sql] of [
+    ["missing ledger index", "DROP INDEX events_occurred_idx"],
+    ["missing enrollment table", "DROP TABLE agent_enrollments"],
+    ["missing enrollment index", "DROP INDEX agent_enrollments_live_name"],
+    ["weakened enrollment guard", "DROP TRIGGER agent_enrollments_block_legacy_agent_insert; CREATE TRIGGER agent_enrollments_block_legacy_agent_insert BEFORE INSERT ON agents BEGIN SELECT 1; END"],
+  ] as const) test(`refuses a current version with ${name} without effects`, () => {
     const f = fixture();
     try {
       const db = openLedger(f.dbPath);
-      db.exec("DROP INDEX events_occurred_idx"); db.close(true);
+      db.exec(sql); db.close(true);
       const before = [footprint(f.vault), footprint(f.credentialDir)];
       let error: unknown;
       try { previewAgentEnrollment(f.vault, request(join(f.credentialDir, "credential.json"))); }

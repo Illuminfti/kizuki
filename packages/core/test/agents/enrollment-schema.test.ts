@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { openLedger } from "../../src/ledger/db";
+import { assertLedgerSchema } from "../../src/ledger/integrity";
+import { LedgerStoreError } from "../../src/ledger/errors";
 import { addAgent, revokeAgent } from "../../src/agents/identity";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,6 +21,32 @@ function reservation(db: ReturnType<typeof openLedger>, state: "reserved" | "fil
 }
 
 describe("agent enrollment migration", () => {
+  const corruptions = [
+    ...["agent_enrollments_live_name", "agent_enrollments_live_destination", "agent_enrollments_pending_token"].map(name => ({ name: `missing ${name}`, sql: `DROP INDEX ${name}` })),
+    ...["agent_enrollments_block_legacy_agent_insert", "agent_enrollments_block_token_update"].map(name => ({ name: `missing ${name}`, sql: `DROP TRIGGER ${name}` })),
+    { name: "missing enrollment table", sql: "DROP TABLE agent_enrollments" },
+    { name: "non-unique live-name index", sql: "DROP INDEX agent_enrollments_live_name; CREATE INDEX agent_enrollments_live_name ON agent_enrollments(name) WHERE state != 'cancelled'" },
+    { name: "no-op insert guard", sql: "DROP TRIGGER agent_enrollments_block_legacy_agent_insert; CREATE TRIGGER agent_enrollments_block_legacy_agent_insert BEFORE INSERT ON agents BEGIN SELECT 1; END" },
+    { name: "no-op token guard", sql: "DROP TRIGGER agent_enrollments_block_token_update; CREATE TRIGGER agent_enrollments_block_token_update BEFORE UPDATE OF token_hash ON agents BEGIN SELECT 1; END" },
+    { name: "unconstrained enrollment table", sql: "DROP TABLE agent_enrollments; CREATE TABLE agent_enrollments(operation_id TEXT PRIMARY KEY) STRICT" },
+  ];
+  for (const { name, sql } of corruptions) test(`refuses current ledger authority with ${name}`, () => {
+    const root = mkdtempSync(join(tmpdir(), "kizuki-enrollment-corrupt-")), path = join(root, "ledger.db");
+    try {
+      const db = openLedger(path);
+      try {
+        reservation(db, "reserved");
+        db.exec(sql);
+        const before = db.query("SELECT type,name,sql FROM sqlite_master ORDER BY type,name").all();
+        expect(() => assertLedgerSchema(db, 18)).toThrow(LedgerStoreError);
+        expect(db.query("SELECT type,name,sql FROM sqlite_master ORDER BY type,name").all()).toEqual(before);
+      } finally { db.close(true); }
+      let reopened: ReturnType<typeof openLedger> | undefined;
+      try { expect(() => { reopened = openLedger(path); }).toThrow(LedgerStoreError); }
+      finally { reopened?.close(true); }
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
   test("upgrades a reconstructed ledger17 layout without changing existing authority", () => {
     const root = mkdtempSync(join(tmpdir(), "kizuki-enrollment-migration-")), path = join(root, "ledger.db");
     const old = openLedger(path);

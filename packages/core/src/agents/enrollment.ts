@@ -336,7 +336,7 @@ export function previewAgentEnrollment(vaultPath: string, request: AgentEnrollme
       using versionQuery = db.prepare<{ version: number }, []>("SELECT version FROM schema_version LIMIT 2");
       const versions = versionQuery.all();
       if (versions.length !== 1 || !Number.isSafeInteger(versions[0]!.version) || versions[0]!.version > LEDGER_SCHEMA_VERSION) fail("vault_unavailable");
-      if (versions[0]!.version < LEDGER_SCHEMA_VERSION || !tableExists(db, "agent_enrollments")) fail("migration_required");
+      if (versions[0]!.version < LEDGER_SCHEMA_VERSION) fail("migration_required");
       assertLedgerSchema(db, LEDGER_SCHEMA_VERSION);
       const existing = readRow(db, shape.request.operation_id);
       if (existing === null) {

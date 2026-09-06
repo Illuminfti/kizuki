@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { assertAgentEnrollmentSchema } from "../agents/enrollment-schema";
 import { LedgerStoreError } from "./errors";
 import { LEDGER_DOCTOR_ROW_CAP } from "./limits";
 import { decodeEventRow, type EventRow } from "./event-row";
@@ -161,6 +162,7 @@ export function assertLedgerSchema(db: Database, expectedVersion: number): void 
   if (!checkpointSql.includes("REFERENCES connections")) {
     throw new LedgerStoreError("corrupt", "checkpoints lack a connections foreign key");
   }
+  if (expectedVersion >= 18) assertAgentEnrollmentSchema(db);
 }
 
 function boundedCheck(db: Database, pragma: "quick_check" | "integrity_check"): string {

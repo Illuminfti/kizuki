@@ -1,8 +1,10 @@
 import type { Database } from "bun:sqlite";
+import { LedgerStoreError } from "../ledger/errors";
+import { oneShotGet } from "../ledger/schema";
 
-/** Local-only enrollment custody.  Portable backup deliberately omits it. */
-export function applyAgentEnrollmentV18(db: Database): void {
-  db.exec(`
+// Migration and read-only validation share every authority constraint.
+const SCHEMA_OBJECTS = [
+  { type: "table", name: "agent_enrollments", sql: `
     CREATE TABLE agent_enrollments (
       operation_id TEXT PRIMARY KEY CHECK (length(operation_id) BETWEEN 8 AND 64 AND substr(operation_id,1,1) GLOB '[A-Za-z0-9]' AND operation_id NOT GLOB '*[^A-Za-z0-9_-]*'),
       request_digest TEXT NOT NULL CHECK (length(request_digest) = 64 AND request_digest NOT GLOB '*[^0-9a-f]*'),
@@ -46,13 +48,17 @@ export function applyAgentEnrollmentV18(db: Database): void {
              AND credential_digest IS NOT NULL AND length(credential_digest) = 64 AND credential_digest NOT GLOB '*[^0-9a-f]*'
              AND credential_size IS NOT NULL AND credential_size BETWEEN 1 AND 1024 AND file_dev IS NOT NULL AND file_ino IS NOT NULL)))
       )
-    ) STRICT;
+    ) STRICT` },
+  { type: "index", name: "agent_enrollments_live_name", sql: `
     CREATE UNIQUE INDEX agent_enrollments_live_name
-      ON agent_enrollments(name) WHERE state != 'cancelled';
+      ON agent_enrollments(name) WHERE state != 'cancelled'` },
+  { type: "index", name: "agent_enrollments_live_destination", sql: `
     CREATE UNIQUE INDEX agent_enrollments_live_destination
-      ON agent_enrollments(destination_digest) WHERE state != 'cancelled';
+      ON agent_enrollments(destination_digest) WHERE state != 'cancelled'` },
+  { type: "index", name: "agent_enrollments_pending_token", sql: `
     CREATE UNIQUE INDEX agent_enrollments_pending_token
-      ON agent_enrollments(token_hash) WHERE token_hash IS NOT NULL AND state != 'cancelled';
+      ON agent_enrollments(token_hash) WHERE token_hash IS NOT NULL AND state != 'cancelled'` },
+  { type: "trigger", name: "agent_enrollments_block_legacy_agent_insert", sql: `
     CREATE TRIGGER agent_enrollments_block_legacy_agent_insert
     BEFORE INSERT ON agents
     WHEN EXISTS (
@@ -63,7 +69,8 @@ export function applyAgentEnrollmentV18(db: Database): void {
     )
     BEGIN
       SELECT RAISE(ABORT, 'agent enrollment reservation conflicts with agent insert');
-    END;
+    END` },
+  { type: "trigger", name: "agent_enrollments_block_token_update", sql: `
     CREATE TRIGGER agent_enrollments_block_token_update
     BEFORE UPDATE OF token_hash ON agents
     WHEN EXISTS (
@@ -72,6 +79,22 @@ export function applyAgentEnrollmentV18(db: Database): void {
     )
     BEGIN
       SELECT RAISE(ABORT, 'agent enrollment reservation conflicts with token update');
-    END;
-  `);
+    END` },
+] as const;
+
+/** Local-only enrollment custody. Portable backup deliberately omits it. */
+export function applyAgentEnrollmentV18(db: Database): void {
+  for (const object of SCHEMA_OBJECTS) db.exec(object.sql);
+}
+
+/** Refuse missing or weakened authority objects; never repair during inspection. */
+export function assertAgentEnrollmentSchema(db: Database): void {
+  const normalized = (sql: string): string => sql.trim().replace(/;$/, "").replace(/\s+/g, " ");
+  for (const object of SCHEMA_OBJECTS) {
+    const row = oneShotGet<{ sql: string | null }>(db,
+      "SELECT sql FROM sqlite_master WHERE type = ? AND name = ?", object.type, object.name);
+    if (row?.sql === null || row?.sql === undefined || normalized(row.sql) !== normalized(object.sql)) {
+      throw new LedgerStoreError("corrupt", "agent enrollment schema does not match its authority constraints");
+    }
+  }
 }
