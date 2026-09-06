@@ -272,7 +272,7 @@ async function collect(
     id: hold.proposal_id,
   }));
 
-  const vault = doctorVault(vaultPath);
+  const vault = doctorVault(vaultPath, ctx.db);
   const ledger = inspectLedgerHealth(ctx.db, { full: fullIntegrity });
   const problems = vault.pages.flatMap((page) =>
     page.errors.map((error) => ({ page: page.page, error })),
