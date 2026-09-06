@@ -1,6 +1,10 @@
 import {
   RETRIEVAL_CAPABILITIES,
   RETRIEVAL_CONTRACT,
+  PROVENANCE_ERASURE_CAPABILITY,
+  requireProvenanceErasure,
+  validateAbsenceProof,
+  validateProvenanceAbsenceProof,
   validateRetrievalDoc,
 } from "../retrieval";
 import type {
@@ -94,6 +98,37 @@ export async function runRetrievalConformance(
     });
     if (narrow.hits.length !== 0) {
       failures.push("retrieval: an empty scope widened");
+    }
+
+    if (port.descriptor.supports.includes(PROVENANCE_ERASURE_CAPABILITY)) {
+      requireProvenanceErasure(port);
+      const template = harness.fixtures.docs[0];
+      if (template === undefined) throw new Error("provenance conformance needs a document fixture");
+      const eventId = "conformance-erasure-event";
+      const dependentIds = ["page:conformance-raw-support", "claim:conformance-prefixed-support"];
+      const independentId = `page:${eventId}`;
+      await port.upsert([
+        { ...template, kind: "page", doc_id: dependentIds[0]!, provenance: [eventId] },
+        { ...template, kind: "claim", doc_id: dependentIds[1]!, provenance: [`event:${eventId}`] },
+        { ...template, kind: "page", doc_id: independentId, provenance: ["conformance-independent-event"] },
+      ]);
+      // Exact-ID v1 callers never request a provenance cascade implicitly.
+      await port.remove([`event:${eventId}`]);
+      const exact = validateAbsenceProof(await port.verifyAbsent([`event:${eventId}`]), [`event:${eventId}`]);
+      const before = validateProvenanceAbsenceProof(await port.verifyProvenanceAbsent([eventId]), [eventId]);
+      if (exact.found.length !== 0 || before.store !== port.descriptor.id || before.found.length !== 1) {
+        failures.push("retrieval: exact identity and event provenance are not distinct proof scopes");
+      }
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const removed = await port.removeByProvenance([eventId]);
+        const proof = validateProvenanceAbsenceProof(await port.verifyProvenanceAbsent([eventId]), [eventId]);
+        const docs = validateAbsenceProof(await port.verifyAbsent([...dependentIds, independentId]), [...dependentIds, independentId]);
+        if (removed.processed !== 1 || proof.store !== port.descriptor.id || proof.found.length !== 0 ||
+            docs.found.length !== 1 || docs.found[0] !== independentId) {
+          failures.push("retrieval: provenance erasure did not remove every dependent document or preserve independent identity");
+        }
+      }
+      await port.remove([...dependentIds, independentId]);
     }
 
     if (!port.descriptor.supports.includes("vector")) {

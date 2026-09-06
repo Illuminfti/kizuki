@@ -1160,6 +1160,7 @@ export function exportVault(
   throwIfAborted(options.signal);
   const sourceEpoch = sourcePolicyEpoch(db);
   assertSourceExport(db);
+  assertNoPendingPurgeExport(db);
   const source = resolve(vaultPath);
   const destination = resolve(outDir);
   assertSeparated(source, destination);
@@ -1270,6 +1271,7 @@ export function exportVault(
     writePrivateFile(join(staging, "manifest.json"), Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`));
     verifyFiles(staging, manifest);
     assertSourceExport(db);
+    assertNoPendingPurgeExport(db);
     unlinkSync(join(staging, INCOMPLETE));
     fsyncDirectory(staging);
     installStaging(staging, destination);
@@ -1394,10 +1396,11 @@ function assertBackupFormat(manifest: ExportManifest): void {
     throw new Error("backup schema versions are invalid");
   }
   // Ledger17 adds explicit rail cursors; ledger16 keeps them in checkpoints.
-  // Ledger18 adds only local agent enrollment custody, outside these streams.
+  // Ledger18 adds local enrollment custody. Ledger19 adds local purge recovery
+  // metadata; pending work is refused by the writer rather than serialized.
   // Future migrations must make their own explicit compatibility decision.
   if ((manifest.schema === BACKUP_SCHEMA || manifest.schema === V2_BACKUP_SCHEMA) &&
-      versions.ledger !== 16 && versions.ledger !== 17 && versions.ledger !== 18) {
+      versions.ledger !== 16 && versions.ledger !== 17 && versions.ledger !== 18 && versions.ledger !== 19) {
     throw new Error("current backup ledger schema is invalid");
   }
   if (manifest.schema === LEGACY_BACKUP_SCHEMA && (versions.ledger < 1 || versions.ledger > 15)) {
@@ -2115,6 +2118,14 @@ function* boundedSourceInventoryRows(db: Database): Generator<Record<string, unk
 
 function assertSourceInventoryIdentityErasure(db: Database): void {
   for (const _row of boundedSourceInventoryRows(db)) { /* validate every bounded row */ }
+}
+
+function assertNoPendingPurgeExport(db: Database): void {
+  if (db.query("SELECT 1 FROM canon_holds LIMIT 1").get() !== null ||
+      (tableExists(db, "purge_ops") && db.query("SELECT 1 FROM purge_ops WHERE state!='done' LIMIT 1").get() !== null) ||
+      db.query("SELECT 1 FROM purge_batches WHERE state!='ready' LIMIT 1").get() !== null) {
+    throw new Error("purge_recovery_pending");
+  }
 }
 
 function assertSourceExport(db: Database): void {

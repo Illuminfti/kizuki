@@ -1,8 +1,8 @@
 import { removeOwnedGeneration, validateOwnedGeneration } from "./owned-generation";
 import { existsSync, lstatSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { openOwnedDirectory, PortError, validatePortDescriptor, validateRetrievalDoc, validateRetrievalQuery, SENSITIVITY_ORDER } from "@kizuki/core";
-import type { OwnedDirectory, AbsenceProof, EmbeddingPort, EmbeddingSpace, EntityRef, GraphQueryOptions, GraphResult, PortContext, PortDescriptor, PortHealth, RetrievalDoc, RetrievalMutationReport, RetrievalPort, RetrievalQuery, RetrievalResult } from "@kizuki/core";
+import { openOwnedDirectory, PortError, validatePortDescriptor, validateProvenanceEventIds, validateRetrievalDoc, validateRetrievalQuery, SENSITIVITY_ORDER } from "@kizuki/core";
+import type { OwnedDirectory, AbsenceProof, ProvenanceAbsenceProof, EmbeddingPort, EmbeddingSpace, EntityRef, GraphQueryOptions, GraphResult, PortContext, PortDescriptor, PortHealth, RetrievalDoc, RetrievalMutationReport, RetrievalPort, RetrievalQuery, RetrievalResult } from "@kizuki/core";
 import { EMBEDDED_RETRIEVAL_DESCRIPTOR } from "./descriptor";
 import { WriterLease } from "./lease";
 import type { LeaseReceipt } from "./lease";
@@ -158,17 +158,20 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
     });
   }
   async remove(ids: readonly string[]): Promise<RetrievalMutationReport> {
+    return this.removeMatching(ids, false);
+  }
+  async removeByProvenance(eventIds: readonly string[]): Promise<RetrievalMutationReport> {
+    validateProvenanceEventIds(eventIds);
+    return this.removeMatching(eventIds, true);
+  }
+  private async removeMatching(ids: readonly string[], byProvenance: boolean): Promise<RetrievalMutationReport> {
     this.assertMutable();
-    // Document identity stays namespaced; event support may use either the
-    // raw ledger ID or its event reference in an older projection.
-    const provenance = [...new Set(ids.flatMap(id =>
-      id.startsWith("event:") ? [id, id.slice("event:".length)] : [id],
-    ))];
+    const values = byProvenance ? [...new Set(ids.flatMap(id => [id, `event:${id}`]))] : [...ids];
     await this.store.run(async () => {
       this.assertMutable();
       await this.assertAvailable();
       return this.store.transaction(async (tx) => {
-        await tx.query("DELETE FROM retrieval_docs WHERE doc_id=ANY($1::text[]) OR provenance && $2::text[]", [[...ids], provenance]);
+        await tx.query(`DELETE FROM retrieval_docs WHERE ${byProvenance ? "provenance && $1::text[]" : "doc_id=ANY($1::text[])"}`, [values]);
         if (this.checkpoint !== null && (await tx.query(
           "SELECT 1 FROM retrieval_docs WHERE doc_id=$1", [this.checkpoint.doc_id],
         )).rows.length === 0) {
@@ -181,6 +184,13 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
     return { processed: ids.length };
   }
   async verifyAbsent(ids: readonly string[]): Promise<AbsenceProof> {
+    return this.verifyMatching(ids, false);
+  }
+  async verifyProvenanceAbsent(eventIds: readonly string[]): Promise<ProvenanceAbsenceProof> {
+    validateProvenanceEventIds(eventIds);
+    return { ...await this.verifyMatching(eventIds, true), scope: "event-provenance/v1" };
+  }
+  private async verifyMatching(ids: readonly string[], byProvenance: boolean): Promise<AbsenceProof> {
     this.assertOpen();
     const found = await this.store.run(async () => {
       await this.assertAvailable();
@@ -190,15 +200,10 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
            FROM unnest($1::text[]) AS requested(id)
           WHERE EXISTS (
             SELECT 1 FROM retrieval_docs AS d
-             WHERE d.doc_id = requested.id
-                OR d.provenance && CASE
-                  WHEN left(requested.id, 6) = 'event:'
-                  THEN ARRAY[requested.id, substring(requested.id FROM 7)]
-                  ELSE ARRAY[requested.id]
-                END
+             WHERE ${byProvenance ? "d.provenance && ARRAY[requested.id, 'event:' || requested.id]" : "d.doc_id = requested.id"}
           ) ORDER BY doc_id`, [[...ids]])).rows.map(row => row.doc_id);
     });
-    return { checked: ids.length, found, store: this.descriptor.id, method: "sql-docs-provenance-cascade", at: this.ctx.clock() };
+    return { checked: ids.length, found, store: this.descriptor.id, method: byProvenance ? "sql-event-provenance" : "sql-exact-documents", at: this.ctx.clock() };
   }
   async neighbors(entity: EntityRef, options: GraphQueryOptions): Promise<GraphResult> {
     this.assertOpen();

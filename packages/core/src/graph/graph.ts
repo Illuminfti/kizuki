@@ -6,7 +6,7 @@ import { MAX_RETRIEVAL_LIMIT } from "../contracts/retrieval";
 import type { RetrievalAuthority } from "../contracts/retrieval";
 import { readDerivedMeta, stampDerived } from "../derived-meta";
 import type { DerivedStamp } from "../derived-meta";
-import { markDerivedHeld, readDerivedHolds } from "../derived-holds";
+import { assertDerivedDiscoveryReady, markDerivedHeld, readDerivedHolds } from "../derived-holds";
 import { latestLedgerCursor } from "../ledger/ledger";
 import { tableExists } from "../ledger/schema";
 import { bareRetrievalId } from "../retrieval/ids";
@@ -312,6 +312,7 @@ export function replacePageEdges(
   pages: readonly CanonPage[],
   authorities = canonAuthorities(db,pages),
 ): void {
+  assertDerivedDiscoveryReady(db);
   const held = graphHoldSnapshot(db, pages);
   db.exec("DELETE FROM graph_edges");
   // A missing held page leaves its title aliases unknown. Withhold this
@@ -419,6 +420,7 @@ export function refreshPageEdges(
   skipped: number,
   authorities = canonAuthorities(db,pages),
 ): void {
+  assertDerivedDiscoveryReady(db);
   const held = graphHoldSnapshot(db, [page, ...pages]);
   if (!held.complete) {
     db.exec("DELETE FROM graph_edges");
@@ -455,6 +457,7 @@ export function removePageEdges(
   pages: readonly CanonPage[],
   skipped: number,
 ): void {
+  assertDerivedDiscoveryReady(db);
   const held = graphHoldSnapshot(db, pages);
   if (!held.complete) {
     db.exec("DELETE FROM graph_edges");
@@ -515,6 +518,7 @@ export function rebuildGraphLayer(
   db: Database,
   input: GraphRebuildInput,
 ): GraphRebuildResult {
+  assertDerivedDiscoveryReady(db);
   const held = readDerivedHolds(db, input.pages);
   const live = input.pages.filter(page => isLiveCanonPage(page) && !held.paths.has(page.relPath));
   replacePageEdges(db, input.pages,input.authorities===undefined?canonAuthorities(db,live):new Map(input.authorities));

@@ -20,12 +20,15 @@ import { registerPort } from "../contracts/registry";
 import {
   RETRIEVAL_CONTRACT,
   RETRIEVAL_CONTRACT_MINOR,
+  PROVENANCE_ERASURE_CAPABILITY,
+  validateProvenanceEventIds,
   requireRetrievalCapability,
   validateRetrievalDoc,
   validateRetrievalQuery,
 } from "../contracts/retrieval";
 import type {
   AbsenceProof,
+  ProvenanceAbsenceProof,
   EntityRef,
   GraphQueryOptions,
   GraphResult,
@@ -52,7 +55,6 @@ import { lockFtsGeneration, removeFtsGeneration, validateFtsGeneration } from ".
 import { openOwnedDirectory } from "../util/owned-directory";
 import type { OwnedDirectory } from "../util/owned-directory";
 import type { AdvisoryFileLock } from "../util/advisory-file-lock";
-import { eventIdFromReference } from "./ids";
 
 export const FTS5_RETRIEVAL_ID = "kizuki.retrieval.fts5";
 
@@ -61,7 +63,7 @@ export const FTS5_RETRIEVAL_DESCRIPTOR = {
   kind: "retrieval",
   contract: RETRIEVAL_CONTRACT,
   contract_minor: RETRIEVAL_CONTRACT_MINOR,
-  supports: ["lexical"],
+  supports: ["lexical", PROVENANCE_ERASURE_CAPABILITY],
   requires_lease: true,
   optional_package: null,
 } as const satisfies PortDescriptor;
@@ -404,46 +406,54 @@ export class Fts5RetrievalPort implements RetrievalPort {
   }
 
   async remove(ids: readonly string[]): Promise<RetrievalMutationReport> {
+    return this.removeMatching(ids, false);
+  }
+
+  async removeByProvenance(eventIds: readonly string[]): Promise<RetrievalMutationReport> {
+    validateProvenanceEventIds(eventIds);
+    return this.removeMatching(eventIds, true);
+  }
+
+  private removeMatching(ids: readonly string[], byProvenance: boolean): RetrievalMutationReport {
     this.assertMutable();
-    const documents = JSON.stringify(ids);
-    const provenance = JSON.stringify([...new Set(ids.flatMap(id => [id, eventIdFromReference(id)]))]);
+    const values = JSON.stringify(byProvenance ? ids.flatMap(id => [id, `event:${id}`]) : ids);
     this.db.transaction(() => {
       for (const table of ["search_documents", "search_docs"] as const) {
-        this.db.query<never, [string, string]>(
-          `DELETE FROM ${table}
-            WHERE doc_id IN (SELECT value FROM json_each(?))
-               OR EXISTS (SELECT 1 FROM json_each(${table}.provenance) AS p
-                           WHERE p.value IN (SELECT value FROM json_each(?)))`,
-        ).run(documents, provenance);
+        const condition = byProvenance
+          ? `EXISTS (SELECT 1 FROM json_each(${table}.provenance) AS p WHERE p.value IN (SELECT value FROM json_each(?)))`
+          : "doc_id IN (SELECT value FROM json_each(?))";
+        this.db.query<never, [string]>(`DELETE FROM ${table} WHERE ${condition}`).run(values);
       }
     }).immediate();
     return { processed: ids.length };
   }
 
   async verifyAbsent(ids: readonly string[]): Promise<AbsenceProof> {
+    return this.verifyMatching(ids, false);
+  }
+
+  async verifyProvenanceAbsent(eventIds: readonly string[]): Promise<ProvenanceAbsenceProof> {
+    validateProvenanceEventIds(eventIds);
+    return { ...this.verifyMatching(eventIds, true), scope: "event-provenance/v1" };
+  }
+
+  private verifyMatching(ids: readonly string[], byProvenance: boolean): AbsenceProof {
     this.assertOpen();
     const found: string[] = [];
+    const condition = byProvenance
+      ? "EXISTS (SELECT 1 FROM json_each(d.provenance) AS p WHERE p.value IN (r.id, 'event:' || r.id))"
+      : "d.doc_id = r.id";
     for (const group of chunks(ids, LOOKUP_CHUNK)) {
       if (group.length === 0) continue;
       found.push(
         ...this.db
           .query<{ doc_id: string }, [string]>(
-            `WITH requested(id, raw) AS (
-               SELECT value, CASE WHEN substr(value, 1, 6) = 'event:'
-                                  THEN substr(value, 7) ELSE value END
-                 FROM json_each(?)
-             )
+            `WITH requested(id) AS (SELECT value FROM json_each(?))
              SELECT DISTINCT r.id AS doc_id FROM requested AS r
               WHERE EXISTS (
-                SELECT 1 FROM search_documents AS d
-                 WHERE d.doc_id = r.id OR EXISTS (
-                   SELECT 1 FROM json_each(d.provenance) AS p WHERE p.value IN (r.id, r.raw)
-                 )
+                SELECT 1 FROM search_documents AS d WHERE ${condition}
               ) OR EXISTS (
-                SELECT 1 FROM search_docs AS d
-                 WHERE d.doc_id = r.id OR EXISTS (
-                   SELECT 1 FROM json_each(d.provenance) AS p WHERE p.value IN (r.id, r.raw)
-                 )
+                SELECT 1 FROM search_docs AS d WHERE ${condition}
               ) ORDER BY doc_id`,
           )
           .all(JSON.stringify(group))
@@ -454,7 +464,7 @@ export class Fts5RetrievalPort implements RetrievalPort {
       checked: ids.length,
       found,
       store: this.descriptor.id,
-      method: "sql-docs-provenance-cascade",
+      method: byProvenance ? "sql-event-provenance" : "sql-exact-documents",
       at: this.ctx.clock(),
     };
   }
