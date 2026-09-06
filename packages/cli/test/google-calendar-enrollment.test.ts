@@ -10,7 +10,8 @@ test('public GoogleCalendar command refuses missing operator app configuration b
 });
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { ConnectionStateStore, getCheckpoint, listConnections, openLedger, revokeSourceGrant, runToCompletion, setSourceGrant, type OAuthTransport } from '@kizuki/core';
+import { ConnectionStateStore, getCheckpoint, listConnections, revokeSourceGrant, runToCompletion, setSourceGrant, type OAuthTransport } from '@kizuki/core';
+import { openLedger } from '@kizuki/core/testing';
 import { createGoogleCalendarConnector, inspectGoogleCalendarState, GOOGLE_CALENDAR_SCOPES, type GoogleCalendarConnectorConfig, type GoogleCalendarConnectorDeps } from '@kizuki/connector-google-calendar';
 import { CalendarFixture } from '../../connector-google-calendar/src/testing';
 import { runGoogleCalendarConnect } from '../src/commands/connect-google-calendar';

@@ -119,10 +119,10 @@ const V2_SCHEMA = `
 `;
 
 describe("openLedger migrations", () => {
-  test("keeps the existing zero wait default and permits a bounded startup wait", () => {
+  test("keeps the existing one-second wait default and permits a bounded startup wait", () => {
     const legacy = openLedger(":memory:"), contender = openLedger(":memory:", { busyTimeoutMs: 5000 });
     try {
-      expect(legacy.query("PRAGMA busy_timeout").get()).toEqual({ timeout: 0 });
+      expect(legacy.query("PRAGMA busy_timeout").get()).toEqual({ timeout: 1000 });
       expect(contender.query("PRAGMA busy_timeout").get()).toEqual({ timeout: 5000 });
     } finally { legacy.close(); contender.close(); }
   });
@@ -153,6 +153,7 @@ describe("openLedger migrations", () => {
     ).toEqual(expect.arrayContaining([
       "canon_holds",
       "checkpoints",
+      "rail_cursors",
       "claim_bindings",
       "claim_supersessions",
       "claims",

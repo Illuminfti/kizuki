@@ -10,7 +10,8 @@ test('public Gmail command refuses missing operator app configuration before int
 });
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { ConnectionStateStore, getCheckpoint, listConnections, openLedger, revokeSourceGrant, runToCompletion, setSourceGrant, type OAuthTransport } from '@kizuki/core';
+import { ConnectionStateStore, getCheckpoint, listConnections, revokeSourceGrant, runToCompletion, setSourceGrant, type OAuthTransport } from '@kizuki/core';
+import { openLedger } from '@kizuki/core/testing';
 import { createGmailConnector, inspectGmailState, GMAIL_SCOPES, type GmailConnectorConfig, type GmailConnectorDeps } from '@kizuki/connector-gmail';
 import { GmailFixture } from '../../connector-gmail/src/testing';
 import { runGmailConnect } from '../src/commands/connect-gmail';

@@ -8,7 +8,8 @@ import { sha256 } from "./hash";
 import { TOOLS, type Grant, type Principal } from "./types";
 import { ulid } from "../util/ulid";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "../ledger/db";
-import { tableExists } from "../ledger/schema";
+import { assertLedgerSchema } from "../ledger/integrity";
+import { oneShotGet as readOne, tableExists } from "../ledger/schema";
 
 const SCHEMA = "kizuki.agent-enrollment/v1" as const;
 const ENVELOPE_SCHEMA = "kizuki.agent-credential/v1";
@@ -66,12 +67,6 @@ function safeError(error: unknown): never {
 function digestBytes(value: Uint8Array): string { return new Bun.CryptoHasher("sha256").update(value).digest("hex"); }
 function sameIdentity(left: CredentialFileIdentity, right: CredentialFileIdentity): boolean { return left.dev === right.dev && left.ino === right.ino; }
 function boundIdentity(left: CredentialFileIdentity, dev: string | null, ino: string | null): boolean { return left.dev === dev && left.ino === ino; }
-function readOne<T>(db: Database, sql: string, ...bindings: (string | number | null)[]): T | null {
-  // Bun's query cache does not own statements beyond its capacity. Explicit
-  // statement lifetime is required before a close/reopen can release SQLite.
-  using statement = db.prepare<T, (string | number | null)[]>(sql);
-  return statement.get(...bindings);
-}
 function absolutePath(value: unknown): value is string {
   return typeof value === "string" && value.length <= 4096 && Buffer.byteLength(value) <= 4096 &&
     Buffer.from(value).toString() === value && !value.includes("\0") && isAbsolute(value) && resolve(value) === value && value.split("/").length <= 257;
@@ -342,6 +337,7 @@ export function previewAgentEnrollment(vaultPath: string, request: AgentEnrollme
       const versions = versionQuery.all();
       if (versions.length !== 1 || !Number.isSafeInteger(versions[0]!.version) || versions[0]!.version > LEDGER_SCHEMA_VERSION) fail("vault_unavailable");
       if (versions[0]!.version < LEDGER_SCHEMA_VERSION || !tableExists(db, "agent_enrollments")) fail("migration_required");
+      assertLedgerSchema(db, LEDGER_SCHEMA_VERSION);
       const existing = readRow(db, shape.request.operation_id);
       if (existing === null) {
         checkNewRequest(db, shape, directory);

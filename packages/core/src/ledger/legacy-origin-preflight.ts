@@ -35,10 +35,31 @@ function validateHistory(db: Database, table: "claims" | "canon_receipts" | "ext
   if (invalid.get() !== null) refuse();
 }
 
+function readExtractResumeCursor(
+  db: Database,
+  key: string,
+): { cursor: string | null; bytes: number | null; type: string } | null {
+  const sql = `SELECT
+    CASE WHEN typeof(cursor)='text' AND length(CAST(cursor AS BLOB))<=256 THEN cursor ELSE NULL END AS cursor,
+    length(CAST(cursor AS BLOB)) AS bytes,typeof(cursor) AS type`;
+  if (tableExists(db, "rail_cursors")) {
+    using rails = db.prepare<{ cursor: string | null; bytes: number | null; type: string }, [string]>(
+      `${sql} FROM rail_cursors WHERE rail='kizuki.producer.model' AND source_key=?`,
+    );
+    const row = rails.get(key);
+    if (row !== null) return row;
+  }
+  if (!tableExists(db, "checkpoints")) return null;
+  using checkpoints = db.prepare<{ cursor: string | null; bytes: number | null; type: string }, [string]>(
+    `${sql} FROM checkpoints WHERE connector_id='kizuki.producer.model' AND source_key=?`,
+  );
+  return checkpoints.get(key);
+}
+
 /**
  * All candidates share one private SQLite relation in the enclosing migration.
- * Global provenance, checkpoints and pending decisions are checked once for the
- * whole candidate set, never once per matching event.
+ * Global provenance, extract resume tokens and pending decisions are checked
+ * once for the whole candidate set, never once per matching event.
  */
 export function assertLegacyOriginsUnconsumed(db: Database): void {
   for (const table of ["claims", "canon_receipts"] as const) {
@@ -56,26 +77,20 @@ export function assertLegacyOriginsUnconsumed(db: Database): void {
   }
 
   let frontier: { accepted_at: string; event_id: string } | null = null;
-  if (tableExists(db, "checkpoints")) {
-    using select = db.prepare<{ cursor: string | null; bytes: number | null; type: string }, [string]>(`SELECT
-      CASE WHEN typeof(cursor)='text' AND length(CAST(cursor AS BLOB))<=256 THEN cursor ELSE NULL END AS cursor,
-      length(CAST(cursor AS BLOB)) AS bytes,typeof(cursor) AS type FROM checkpoints
-      WHERE connector_id='kizuki.producer.model' AND source_key=?`);
-    const checkpoint = select.get("extract");
-    if (checkpoint !== null && checkpoint.type !== "null") {
-      if (checkpoint.type !== "text" || checkpoint.bytes === null || checkpoint.bytes > 256 || checkpoint.cursor === null) refuse();
-      const parts = checkpoint.cursor.split("\t");
-      if (parts.length !== 2 || !isRfc3339(parts[0]!) || !isUlid(parts[1]!)) refuse();
-      frontier = { accepted_at: parts[0]!, event_id: parts[1]! };
-      // Preserve extraction's actual SQLite text ordering and ID tie-breaker.
-      using passed = db.prepare(`SELECT 1 FROM ${LEGACY_ORIGIN_CANDIDATES}
-        WHERE accepted_at<? OR (accepted_at=? AND event_id<=?) LIMIT 1`);
-      if (passed.get(frontier.accepted_at, frontier.accepted_at, frontier.event_id) !== null) refuse();
-    }
-    // A scan marker without the frontier cannot distinguish a consumed source
-    // from a still-deferred policy check. Its payload is not needed as proof.
-    if (frontier === null && select.get("extract-deferred-scan") !== null) refuse();
+  const extractCursor = readExtractResumeCursor(db, "extract");
+  if (extractCursor !== null && extractCursor.type !== "null") {
+    if (extractCursor.type !== "text" || extractCursor.bytes === null || extractCursor.bytes > 256 || extractCursor.cursor === null) refuse();
+    const parts = extractCursor.cursor.split("\t");
+    if (parts.length !== 2 || !isRfc3339(parts[0]!) || !isUlid(parts[1]!)) refuse();
+    frontier = { accepted_at: parts[0]!, event_id: parts[1]! };
+    // Preserve extraction's actual SQLite text ordering and ID tie-breaker.
+    using passed = db.prepare(`SELECT 1 FROM ${LEGACY_ORIGIN_CANDIDATES}
+      WHERE accepted_at<? OR (accepted_at=? AND event_id<=?) LIMIT 1`);
+    if (passed.get(frontier.accepted_at, frontier.accepted_at, frontier.event_id) !== null) refuse();
   }
+  // A scan marker without the frontier cannot distinguish a consumed source
+  // from a still-deferred policy check. Its payload is not needed as proof.
+  if (frontier === null && readExtractResumeCursor(db, "extract-deferred-scan") !== null) refuse();
 
   if (tableExists(db, "extract_deferred_inputs")) {
     using rebound = db.prepare(`SELECT 1 FROM extract_deferred_inputs d

@@ -40,6 +40,49 @@ function legacyFixture(size = 1) {
     ALTER TABLE events DROP COLUMN origin_binding_version;
     ALTER TABLE events DROP COLUMN origin_binding_kind;
     ALTER TABLE events DROP COLUMN origin_binding;
+    CREATE TABLE events_v15 (
+      event_id TEXT PRIMARY KEY,
+      connector_id TEXT NOT NULL,
+      source_record_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      occurred_at TEXT NOT NULL,
+      observed_at TEXT NOT NULL,
+      text TEXT NOT NULL,
+      subjects TEXT NOT NULL,
+      sensitivity_hint TEXT,
+      deleted INTEGER NOT NULL,
+      attachments TEXT NOT NULL,
+      metadata TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      accepted_at TEXT NOT NULL,
+      UNIQUE(connector_id, source_record_id, content_hash)
+    );
+    INSERT INTO events_v15
+      SELECT event_id, connector_id, source_record_id, kind,
+             occurred_at, observed_at, text, subjects, sensitivity_hint,
+             deleted, attachments, metadata, content_hash, accepted_at
+        FROM events;
+    DROP TABLE events;
+    ALTER TABLE events_v15 RENAME TO events;
+    CREATE INDEX events_accepted_order_idx ON events(accepted_at, event_id);
+    CREATE INDEX events_connector_idx ON events(connector_id);
+    CREATE INDEX events_kind_idx ON events(kind);
+    CREATE TABLE checkpoints_v15 (
+      connector_id TEXT NOT NULL,
+      source_key TEXT NOT NULL,
+      cursor TEXT,
+      mode TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_run_at TEXT NOT NULL,
+      last_result TEXT NOT NULL,
+      PRIMARY KEY (connector_id, source_key)
+    );
+    INSERT INTO checkpoints_v15
+      SELECT connector_id, source_key, cursor, mode, updated_at, last_run_at, last_result
+        FROM checkpoints;
+    DROP TABLE checkpoints;
+    ALTER TABLE checkpoints_v15 RENAME TO checkpoints;
+    DROP TABLE IF EXISTS rail_cursors;
     UPDATE schema_version SET version=15;
   `);
   return { root, path, db };
@@ -167,6 +210,28 @@ function frontier(db: Database, cursor: string, key = "extract"): void {
 function position(db: Database): { event_id: string; accepted_at: string } {
   return db.query<{ event_id: string; accepted_at: string }, []>("SELECT event_id,accepted_at FROM events").get()!;
 }
+
+test("v17 event rebuild keeps pending deferred extract rows", () => {
+  const f = legacyFixture();
+  const row = position(f.db);
+  f.db.query("INSERT INTO extract_deferred_inputs VALUES (?, '01ARZ3NDEKTSV4RRFFQ69G5FAV', 1, ?)")
+    .run(row.event_id, "a".repeat(64));
+  const deferred = f.db.query("SELECT * FROM extract_deferred_inputs").all();
+  f.db.close();
+  try {
+    const db = openLedger(f.path);
+    try {
+      expect(db.query("SELECT version FROM schema_version").get()).toEqual({
+        version: LEDGER_SCHEMA_VERSION,
+      });
+      expect(db.query("SELECT * FROM extract_deferred_inputs").all()).toEqual(deferred);
+    } finally {
+      db.close();
+    }
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
 
 test("legacy receipt match without derived effects receives one stable legacy binding", () => {
   const f = legacyFixture();

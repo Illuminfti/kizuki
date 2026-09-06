@@ -2,14 +2,9 @@ import { fixtureConsent } from "./helpers";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-  accept,
-  indexPage,
-  initSearch,
-  openLedger,
-  serializePage,
-} from "@kizuki/core";
+import { accept, indexPage, initSearch, serializePage } from "@kizuki/core";
 import type { CanonPage, SearchHit } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { createHelpers } from "./helpers";
 
 const { cleanup, runCli, tempVault } = createHelpers();

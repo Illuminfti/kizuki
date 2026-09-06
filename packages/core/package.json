@@ -4,7 +4,9 @@
   "module": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./contracts": "./src/contracts/index.ts"
+    "./contracts": "./src/contracts/index.ts",
+    "./internal": "./src/internal.ts",
+    "./testing": "./src/testing.ts"
   },
   "dependencies": {
     "js-tiktoken": "1.0.21"

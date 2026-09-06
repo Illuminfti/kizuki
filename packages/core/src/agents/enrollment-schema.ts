@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 
 /** Local-only enrollment custody.  Portable backup deliberately omits it. */
-export function applyAgentEnrollmentV17(db: Database): void {
+export function applyAgentEnrollmentV18(db: Database): void {
   db.exec(`
     CREATE TABLE agent_enrollments (
       operation_id TEXT PRIMARY KEY CHECK (length(operation_id) BETWEEN 8 AND 64 AND substr(operation_id,1,1) GLOB '[A-Za-z0-9]' AND operation_id NOT GLOB '*[^A-Za-z0-9_-]*'),

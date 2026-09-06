@@ -8,13 +8,9 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  ConnectionStateStore,
-  KizukiError,
-  enrollConnection,
-  openLedger,
-} from "@kizuki/core";
+import { ConnectionStateStore, KizukiError, enrollConnection } from "@kizuki/core";
 import type { Cursor, SignInIo } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { createIcsConnector } from "../src/connector";
 import { FIXTURE_ICS, FIXTURE_NOW } from "../src/fixture";
 import { parseIcsState } from "../src/state";

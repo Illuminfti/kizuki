@@ -2,7 +2,8 @@ import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { openLedger, rotateToken, setGrant, type AgentEnrollmentResult, type Grant } from "@kizuki/core";
+import { rotateToken, setGrant, type AgentEnrollmentResult, type Grant } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { createHelpers, type CliResult } from "./helpers";
 
 const { cleanup, isolatedEnv, runCli, tempDir, tempVault } = createHelpers();

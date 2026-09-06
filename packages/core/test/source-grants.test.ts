@@ -27,7 +27,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   accept,
-  openLedger,
   registerConnection,
   disconnect,
   initVault,
@@ -39,6 +38,7 @@ import {
   resumeSourceRevocation,
   sourcePolicyEpoch,
 } from "../src/index";
+import { openLedger } from "../src/ledger/db";
 import { validEvent } from "./fixtures";
 import { ulid } from "../src/util/ulid";
 const dirs: string[] = [];
@@ -823,7 +823,9 @@ test("a crashed rebuild releases kernel ownership and reopened source revocation
     const sourceModule = new URL("../src/index.ts", import.meta.url).pathname;
     const fixtureModule = new URL("./claims/helpers.ts", import.meta.url)
       .pathname;
-    const script = `import { openLedger, bindLocalSourcePort, rebuildRetrieval } from ${JSON.stringify(sourceModule)};
+    const dbModule = new URL("../src/ledger/db.ts", import.meta.url).pathname;
+    const script = `import { bindLocalSourcePort, rebuildRetrieval } from ${JSON.stringify(sourceModule)};
+      import { openLedger } from ${JSON.stringify(dbModule)};
       import { FixtureVectorPort } from ${JSON.stringify(fixtureModule)};
       const dir=${JSON.stringify(dir)};
       const db=openLedger(dir+'/.kizuki/kizuki.db');
@@ -1737,7 +1739,9 @@ test("native receipt creation is private under a permissive child-process umask"
   const core=join(import.meta.dir,"../src/index.ts");
   const helpers=join(import.meta.dir,"canon/helpers.ts");
   const fixtures=join(import.meta.dir,"fixtures.ts");
-  const code=`import {initVault,openLedger,accept} from ${JSON.stringify(core)};
+  const dbModule=join(import.meta.dir,"../src/ledger/db.ts");
+  const code=`import {initVault,accept} from ${JSON.stringify(core)};
+    import {openLedger} from ${JSON.stringify(dbModule)};
     import {write,storeClaim} from ${JSON.stringify(helpers)};
     import {validEvent} from ${JSON.stringify(fixtures)};
     import {lstatSync} from 'node:fs'; import {join} from 'node:path';

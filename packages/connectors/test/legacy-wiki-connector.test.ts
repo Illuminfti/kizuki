@@ -14,8 +14,9 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { initVault, isPlainObject, openLedger, runBatch } from "@kizuki/core";
+import { initVault, isPlainObject, runBatch } from "@kizuki/core";
 import type { CaptureEventInput } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { KizukiError } from "../src/errors";
 import { InMemoryLedger } from "../src/ledger";
 import {

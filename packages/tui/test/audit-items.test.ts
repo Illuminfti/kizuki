@@ -2,18 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  accept,
-  applyCanonWrite,
-  createBudgetTracker,
-  initVault,
-  insertClaim,
-  listAuditReceipts,
-  openLedger,
-  resolveTarget,
-  undoReceipt,
-} from "@kizuki/core";
+import { accept, applyCanonWrite, createBudgetTracker, initVault, insertClaim, listAuditReceipts, resolveTarget, undoReceipt } from "@kizuki/core";
 import type { CaptureEventInput, Claim, InsertClaimInput } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { toAuditItem } from "../src/app";
 
 const temporary: string[] = [];

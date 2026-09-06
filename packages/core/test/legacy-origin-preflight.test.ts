@@ -87,8 +87,8 @@ describe("bounded legacy-origin contamination preflight", () => {
     try {
       const original = db.query("SELECT * FROM events ORDER BY event_id").all();
       if (kind === "oversized checkpoint") {
-        db.query(`INSERT INTO checkpoints(connector_id,source_key,cursor,mode,updated_at,last_run_at,last_result)
-          VALUES ('kizuki.producer.model','extract',?,'incremental','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','ok')`).run("x".repeat(257));
+        db.query(`INSERT INTO rail_cursors(rail,source_key,cursor,updated_at)
+          VALUES ('kizuki.producer.model','extract',?,'2026-01-01T00:00:00Z')`).run("x".repeat(257));
       } else {
         db.query(`INSERT INTO extract_batches(previous_cursor,cursor,drafts,model_ref,created_at)
           VALUES ('','','{}',NULL,'2026-01-01T00:00:00Z')`).run();

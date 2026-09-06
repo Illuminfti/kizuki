@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { getRunReceipt, openLedger, readBootId, recoverRunJournal } from "@kizuki/core";
+import { getRunReceipt, readBootId, recoverRunJournal } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { createHelpers } from "../helpers";
 
 const { cleanup, runCli, tempVault } = createHelpers();

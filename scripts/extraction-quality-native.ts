@@ -5,9 +5,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   EXTRACTION_SYSTEM_PROMPT, addAgent, authenticate, authorize, toolAllowed,
-  initAgents, listClaims, listConnections, openLedger, readSince, receiptsForClaim, setSourceGrant,
+  initAgents, listClaims, listConnections, readSince, receiptsForClaim, setSourceGrant,
 } from "../packages/core/src/index";
 import type { CaptureEvent, Claim, Envelope, RunReceipt, SearchHit } from "../packages/core/src/index";
+import { openLedger } from "../packages/core/src/ledger/db";
 import { verifyChecksumManifest } from "./release-artifacts";
 import { releaseTarget, requireNativeHost } from "./release-targets";
 import { parseBuildInfo } from "./stranger-proof";

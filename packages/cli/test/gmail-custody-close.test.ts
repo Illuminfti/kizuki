@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { join } from "node:path";
-import { ConnectionStateStore, listConnections, openLedger, setSourceGrant } from "@kizuki/core";
+import { ConnectionStateStore, listConnections, setSourceGrant } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { createGmailConnector, GMAIL_CONNECTOR_ID, GMAIL_SCOPES, type GmailConnectorConfig } from "@kizuki/connector-gmail";
 import { encodeState, parseState } from "../../connector-gmail/src/state";
 import { GmailFixture } from "../../connector-gmail/src/testing";

@@ -15,6 +15,7 @@ import {
   requireActiveConnection,
   type ConnectionRunStatus,
 } from "../ledger/connections";
+import { LedgerStoreError } from "../ledger/errors";
 import { accept } from "../ledger/ledger";
 import { resolveSensitivity } from "../sensitivity/resolve";
 import { getConnectorSensitivity } from "../sensitivity/store";
@@ -41,10 +42,6 @@ export interface RunResult {
   withdrawn: number;
   retractions_filed: number;
   cursor: string | null;
-}
-
-export class InfrastructureError extends Error {
-  override readonly name = "InfrastructureError";
 }
 
 function errorText(error: unknown): string {
@@ -84,11 +81,17 @@ function processEvent(
       };
       const accepted = accept(db, input, source === undefined ? {} : { source });
       if (accepted.status === "error") {
-        if (accepted.kind === "infrastructure") {
-          throw new InfrastructureError(accepted.error);
+        switch (accepted.kind) {
+          case "infrastructure":
+            throw new LedgerStoreError("infrastructure", accepted.error);
+          case "validation":
+            result.errors.push(accepted.error);
+            return result;
+          default: {
+            const _exhaustive: never = accepted.kind;
+            throw new LedgerStoreError("infrastructure", String(_exhaustive));
+          }
         }
-        result.errors.push(accepted.error);
-        return result;
       }
       if (accepted.status === "duplicate") {
         result.duplicates = 1;
@@ -169,7 +172,9 @@ export function runBatch(
       result.retractions_filed += event.retractions_filed;
     } catch (error) {
       result.errors.push(errorText(error));
-      if (error instanceof InfrastructureError) return result;
+      if (error instanceof LedgerStoreError) {
+        return result;
+      }
     }
   }
 

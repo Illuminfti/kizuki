@@ -1,7 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { ConnectionStateStore, setSourceGrant, revokeSourceGrant, getCheckpoint, listConnections, openLedger, runToCompletion } from "@kizuki/core";
+import { ConnectionStateStore, setSourceGrant, revokeSourceGrant, getCheckpoint, listConnections, runToCompletion } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { TelegramConnector, ScriptedTelegramApi, fixtureAccount, FIXTURE_CREDENTIALS, FIXTURE_SESSION, parseState } from "@kizuki/connector-telegram";
 import { runTelegramConnect } from "../src/commands/connect-telegram";
 import { closeHostConnector, loadConnector, selectConnection } from "../src/connections";

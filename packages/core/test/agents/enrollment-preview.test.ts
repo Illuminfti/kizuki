@@ -30,6 +30,21 @@ function footprint(path: string): unknown {
 }
 
 describe.if(credentialCustodyQualified)("agent enrollment preview", () => {
+  test("refuses a current version with a missing required ledger index without effects", () => {
+    const f = fixture();
+    try {
+      const db = openLedger(f.dbPath);
+      db.exec("DROP INDEX events_occurred_idx"); db.close(true);
+      const before = [footprint(f.vault), footprint(f.credentialDir)];
+      let error: unknown;
+      try { previewAgentEnrollment(f.vault, request(join(f.credentialDir, "credential.json"))); }
+      catch (caught) { error = caught; }
+      expect(error).toBeInstanceOf(AgentEnrollmentError);
+      expect((error as AgentEnrollmentError).code).toBe("enrollment_unavailable");
+      expect([footprint(f.vault), footprint(f.credentialDir)]).toEqual(before);
+    } finally { f.clean(); }
+  });
+
   for (const readFails of [false, true]) test(`normalizes real strict-close failure after ${readFails ? "a failed" : "a successful"} preview read`, () => {
     const f = fixture();
     try {

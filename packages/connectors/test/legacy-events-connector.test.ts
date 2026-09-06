@@ -10,8 +10,9 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { initVault, listClaims, openLedger, setSourceGrant, registerConnection, runBackfill, runSync } from "@kizuki/core";
+import { initVault, listClaims, setSourceGrant, registerConnection, runBackfill, runSync } from "@kizuki/core";
 import { getCheckpoint } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { KizukiError } from "../src/errors";
 import { InMemoryLedger } from "../src/ledger";
 import {

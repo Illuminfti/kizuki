@@ -3,8 +3,9 @@ import type { Database } from "bun:sqlite";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { openLedger, setSourceGrant, registerConnection, replay, runBackfill, runSync } from "@kizuki/core";
+import { setSourceGrant, registerConnection, replay, runBackfill, runSync } from "@kizuki/core";
 import type { CaptureEvent, Connector } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import {
   OMNIVORE_FIXTURE_FILES,
   createOmnivoreImportConnector,

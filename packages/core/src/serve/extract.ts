@@ -12,7 +12,7 @@ import { predicateIds } from "../claims/predicates";
 import { historicalClaimReplaySignature, listClaims } from "../claims/store";
 import type { InsertClaimInput, InsertClaimResult, PreparedClaimInsert } from "../claims/store";
 import { compareRfc3339 } from "../agents/time";
-import { readCheckpoint } from "../ledger/checkpoints";
+import { readRailCursor } from "../ledger/checkpoints";
 import { advanceExtractCheckpoint } from "./extract-checkpoint";
 import { readEvent, readSince } from "../ledger/ledger";
 import type { LedgerCursor } from "../ledger/ledger";
@@ -345,7 +345,7 @@ function completeDeferredInputs(db: Database, inputs: readonly DeferredInput[]):
   if (last !== undefined) advanceExtractCheckpoint(db, DEFERRED_SCAN_KEY, last.event_id);
 }
 function queuedEvents(db: Database): CaptureEvent[] {
-  const after = readCheckpoint(db, MODEL_PRODUCER_ID, DEFERRED_SCAN_KEY);
+  const after = readRailCursor(db, MODEL_PRODUCER_ID, DEFERRED_SCAN_KEY);
   const queryAfter = db.query<DeferredInput, [string, number]>(
     "SELECT event_id,source_key,checked_revision,checked_binding_digest FROM extract_deferred_inputs WHERE event_id>? ORDER BY event_id LIMIT ?",
   );
@@ -655,7 +655,7 @@ export function purgeExtractInputs(db: Database, eventIds: ReadonlySet<string>, 
     ).all(previousBoundary.accepted_at, previousBoundary.accepted_at, previousBoundary.event_id);
     const surviving = candidates.find(row => !eventIds.has(row.event_id));
     nextPrevious = surviving === undefined ? null : encodeCursor(surviving);
-    if (nextPrevious === null) db.query("DELETE FROM checkpoints WHERE connector_id=? AND source_key=?").run(MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY);
+    if (nextPrevious === null) db.query("DELETE FROM rail_cursors WHERE rail=? AND source_key=?").run(MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY);
     else advanceExtractCheckpoint(db, EXTRACT_SOURCE_KEY, nextPrevious);
   }
   if (batch === null) return;
@@ -699,7 +699,7 @@ function quoted(event: CaptureEvent): QuotedEvent {
 }
 
 export function readExtractCursor(db: Database): string | null {
-  return readCheckpoint(db, MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY);
+  return readRailCursor(db, MODEL_PRODUCER_ID, EXTRACT_SOURCE_KEY);
 }
 
 /**

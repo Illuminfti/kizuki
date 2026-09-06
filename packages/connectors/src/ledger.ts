@@ -1,4 +1,5 @@
-import { accept, computeContentHash, openLedger, validateEventInput } from "@kizuki/core";
+import { accept, computeContentHash, validateEventInput } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/internal";
 import type { CaptureEvent, CaptureEventInput } from "@kizuki/core";
 import type { Database } from "bun:sqlite";
 import { errorMessage } from "./util";

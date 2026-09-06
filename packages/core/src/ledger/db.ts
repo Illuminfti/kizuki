@@ -7,18 +7,24 @@ import { applyDerivedV10 } from "../derived";
 import { applyServeV7, initServe } from "../serve/schema";
 import { applySensitivityV6 } from "../sensitivity/schema";
 import { applyConnectionsV8 } from "./connections-schema";
+import { LedgerStoreError } from "./errors";
+import {
+  assertLedgerSchema,
+  inspectLedgerHealth,
+  readSchemaVersion,
+} from "./integrity";
+import type { LedgerHealth } from "./integrity";
+import { LEDGER_BUSY_TIMEOUT_MS } from "./limits";
 import { applyPurgeV5 } from "./purge-schema";
 import { applyEventIdentityV16 } from "./event-identity-schema";
-import { applyAgentEnrollmentV17 } from "../agents/enrollment-schema";
+import { applyAgentEnrollmentV18 } from "../agents/enrollment-schema";
+import { oneShotAll, oneShotRun, tableColumns, tableExists } from "./schema";
+import { applyLedgerV16 } from "./schema-v16";
 
 interface Migration {
   version: number;
   sql?: string;
   apply?: (db: Database) => void;
-}
-
-interface SchemaVersionRow {
-  version: number;
 }
 
 const MIGRATIONS: readonly Migration[] = [
@@ -173,38 +179,76 @@ const MIGRATIONS: readonly Migration[] = [
   { version: 14, apply: applySourceErasureV14 },
   { version: 15, apply: applySourceReceiptIntegrityV15 },
   { version: 16, apply: applyEventIdentityV16 },
-  { version: 17, apply: applyAgentEnrollmentV17 },
+  { version: 17, apply: applyLedgerV16 },
+  { version: 18, apply: applyAgentEnrollmentV18 },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
 
-function migrate(db: Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS schema_version (
-      version INTEGER NOT NULL
-    );
-    INSERT INTO schema_version(version)
-      SELECT 0
-      WHERE NOT EXISTS (SELECT 1 FROM schema_version);
-  `);
+function schemaVersionHasId(db: Database): boolean {
+  return tableColumns(db, "schema_version").includes("id");
+}
 
-  const current =
-    db
-      .query<SchemaVersionRow, []>("SELECT version FROM schema_version LIMIT 1")
-      .get()?.version ?? 0;
-  const latest = MIGRATIONS.at(-1)?.version ?? 0;
+function insertVersion(db: Database, version: number): void {
+  if (schemaVersionHasId(db)) {
+    oneShotRun(db, "INSERT INTO schema_version(id, version) VALUES (1, ?)", version);
+    return;
+  }
+  oneShotRun(db, "INSERT INTO schema_version(version) VALUES (?)", version);
+}
+
+function repairSchemaVersion(db: Database): void {
+  if (!tableExists(db, "schema_version")) {
+    db.exec(`
+      CREATE TABLE schema_version (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        version INTEGER NOT NULL CHECK (version >= 0)
+      ) STRICT;
+    `);
+    insertVersion(db, 0);
+    return;
+  }
+
+  const rows = oneShotAll<{ version: number }>(db, "SELECT version FROM schema_version");
+  if (rows.length === 0) {
+    insertVersion(db, 0);
+    return;
+  }
+  const versions = [...new Set(rows.map((row) => row.version))];
+  if (versions.length !== 1) {
+    throw new LedgerStoreError("corrupt", "schema_version has conflicting values");
+  }
+  const version = versions[0];
+  if (version === undefined || !Number.isInteger(version) || version < 0) {
+    throw new LedgerStoreError("corrupt", "schema_version is not an integer");
+  }
+  if (rows.length > 1) {
+    db.exec("DELETE FROM schema_version");
+    insertVersion(db, version);
+  }
+}
+
+function writeSchemaVersion(db: Database, version: number): void {
+  oneShotRun(db, "UPDATE schema_version SET version = ?", version);
+}
+
+function migrate(db: Database): void {
+  repairSchemaVersion(db);
+  const current = readSchemaVersion(db);
+  const latest = LEDGER_SCHEMA_VERSION;
   if (current > latest) {
-    throw new Error(
+    throw new LedgerStoreError(
+      "corrupt",
       `ledger schema version ${current} is newer than supported version ${latest}`,
     );
   }
 
   const pending = MIGRATIONS.filter(({ version }) => version > current);
   if (pending.length === 0) {
-    // Same-version derived schema still needs a wipe.
     db.transaction(() => {
       applyDerivedV10(db);
     }).immediate();
+    assertLedgerSchema(db, latest);
     return;
   }
 
@@ -212,15 +256,14 @@ function migrate(db: Database): void {
     for (const migration of pending) {
       if (migration.sql !== undefined) db.exec(migration.sql);
       migration.apply?.(db);
-      db.query<never, [number]>("UPDATE schema_version SET version = ?").run(
-        migration.version,
-      );
+      writeSchemaVersion(db, migration.version);
     }
   }).immediate();
+  assertLedgerSchema(db, latest);
 }
 
 export function openLedger(dbPath: string, options: { busyTimeoutMs?: number } = {}): Database {
-  const timeout = options.busyTimeoutMs ?? 0;
+  const timeout = options.busyTimeoutMs ?? LEDGER_BUSY_TIMEOUT_MS;
   if (!Number.isSafeInteger(timeout) || timeout < 0 || timeout > 5000) throw new TypeError("invalid ledger busy timeout");
   const db = new Database(dbPath);
   try {
@@ -236,4 +279,14 @@ export function openLedger(dbPath: string, options: { busyTimeoutMs?: number } =
     db.close();
     throw error;
   }
+}
+
+export function inspectOpenLedgerHealth(
+  db: Database,
+  opts: { full?: boolean } = {},
+): LedgerHealth {
+  return inspectLedgerHealth(db, {
+    ...(opts.full === undefined ? {} : { full: opts.full }),
+    expectedVersion: LEDGER_SCHEMA_VERSION,
+  });
 }

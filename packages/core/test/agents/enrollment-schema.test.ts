@@ -19,13 +19,13 @@ function reservation(db: ReturnType<typeof openLedger>, state: "reserved" | "fil
 }
 
 describe("agent enrollment migration", () => {
-  test("upgrades a reconstructed ledger16 layout without changing existing authority", () => {
+  test("upgrades a reconstructed ledger17 layout without changing existing authority", () => {
     const root = mkdtempSync(join(tmpdir(), "kizuki-enrollment-migration-")), path = join(root, "ledger.db");
     const old = openLedger(path);
     let before: string;
     const authority = (db: ReturnType<typeof openLedger>) => JSON.stringify(["agents", "agent_grants", "agent_audit"].map(table => db.query(`SELECT * FROM ${table}`).all()));
     try {
-      old.exec("DROP TRIGGER agent_enrollments_block_legacy_agent_insert; DROP TRIGGER agent_enrollments_block_token_update; DROP TABLE agent_enrollments; UPDATE schema_version SET version=16");
+      old.exec("DROP TRIGGER agent_enrollments_block_legacy_agent_insert; DROP TRIGGER agent_enrollments_block_token_update; DROP TABLE agent_enrollments; UPDATE schema_version SET version=17");
       addAgent(old, "legacy-migration");
       before = authority(old);
     } finally { old.close(); }
@@ -33,7 +33,7 @@ describe("agent enrollment migration", () => {
       const migrated = openLedger(path);
       try {
         expect(authority(migrated) === before, "migration preserves every existing authority row").toBe(true);
-        expect(migrated.query("SELECT version FROM schema_version").get()).toEqual({ version: 17 });
+        expect(migrated.query("SELECT version FROM schema_version").get()).toEqual({ version: 18 });
         expect(migrated.query("SELECT count(*) AS n FROM agent_enrollments").get()).toEqual({ n: 0 });
         expect(migrated.query("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'agent_enrollments_%' ORDER BY name").all()).toEqual([
           { name: "agent_enrollments_block_legacy_agent_insert" }, { name: "agent_enrollments_block_token_update" },
