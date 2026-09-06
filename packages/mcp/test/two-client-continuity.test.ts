@@ -168,14 +168,22 @@ test("synthetic InMemoryTransport clients preserve scoped correction continuity 
       expect(packet(envelopeOf(refreshed)).packet_md).toContain("owner_correction");
       expect(packet(envelopeOf(refreshed)).packet_md).not.toContain("blocked");
     }
+    const privateValues = [
+      marker, project, "blocked", "active", selectedSubject, event.event_id,
+      claimId, correction.claim_id, correction.event_id, correctionArgs.statement,
+      setup.vault, setup.notes,
+    ];
+    const assertPrivateValuesAbsent = (result: Parameters<typeof envelopeOf>[0]) => {
+      const serialized = JSON.stringify(result);
+      for (const value of privateValues) expect(serialized).not.toContain(value);
+      expect(serialized).not.toContain('"cause"');
+    };
+
     const forbidden = await call(b, "correct", correctionArgs);
     expect(forbidden.isError).toBe(true);
     expect(errorOf(forbidden).error).toBe("tool_not_granted");
     expect(JSON.parse(forbidden.content[0]!.text)).toEqual({ error: "tool_not_granted", message: "tool not granted", retry_after_seconds: null });
-    const forbiddenEnvelope = JSON.stringify(forbidden);
-    expect(forbiddenEnvelope).not.toContain("cause");
-    expect(forbiddenEnvelope).not.toContain(setup.vault);
-    expect(forbiddenEnvelope).not.toContain(marker);
+    assertPrivateValuesAbsent(forbidden);
 
     const latestB = await call(b, "context_packet", {
       subjects: [project], include: ["claims"], purpose: "correction", budget_tokens: 500,
@@ -189,27 +197,14 @@ test("synthetic InMemoryTransport clients preserve scoped correction continuity 
     expect(outOfScope.isError).toBe(true);
     expect(errorOf(outOfScope).error).toBe("subject_out_of_scope");
     expect(JSON.parse(outOfScope.content[0]!.text)).toEqual({ error: "subject_out_of_scope", message: "subjects outside the grant", retry_after_seconds: null });
-    const outOfScopeEnvelope = JSON.stringify(outOfScope);
-    expect(outOfScopeEnvelope).not.toContain(marker);
-    expect(outOfScopeEnvelope).not.toContain(setup.vault);
-    expect(outOfScopeEnvelope).not.toContain(setup.notes);
-    expect(outOfScopeEnvelope).not.toContain("cause");
+    assertPrivateValuesAbsent(outOfScope);
     const narrowed = await call(b, "context_packet", {
       include: ["claims"], purpose: "correction", budget_tokens: 500,
       capabilities: ["delta"], retain_prefix: true, prior_hash: beforeNarrow.packet_hash, epoch: beforeNarrow.claims_epoch,
     });
     sameEnvelope(narrowed);
     expect(packet(envelopeOf(narrowed)).delivery).toBe("full");
-    const narrowedEnvelope = JSON.stringify(narrowed);
-    expect(narrowedEnvelope).not.toContain("active");
-    expect(narrowedEnvelope).not.toContain(marker);
-    expect(narrowedEnvelope).not.toContain(project);
-    expect(narrowedEnvelope).not.toContain("blocked");
-    expect(narrowedEnvelope).not.toContain(event.event_id);
-    expect(narrowedEnvelope).not.toContain(selectedSubject);
-    expect(narrowedEnvelope).not.toContain(claimId);
-    expect(narrowedEnvelope).not.toContain(correction.claim_id);
-    expect(narrowedEnvelope).not.toContain(correction.event_id);
+    assertPrivateValuesAbsent(narrowed);
     const aStillAllowed = await call(a, "context_packet", { subjects: [project], include: ["claims"], budget_tokens: 500 });
     expect(packet(envelopeOf(aStillAllowed)).packet_md).toContain("active");
 
@@ -222,29 +217,19 @@ test("synthetic InMemoryTransport clients preserve scoped correction continuity 
     const reconnectedPacket = await call(reconnectedB, "context_packet", { include: ["claims"], budget_tokens: 500 });
     sameEnvelope(reconnectedPacket);
     expect(packet(envelopeOf(reconnectedPacket)).delivery).toBe("full");
+    assertPrivateValuesAbsent(reconnectedPacket);
 
     revokeAgent(db, "continuity-b");
     const revoked = await call(reconnectedB, "context_packet", { subjects: [project], include: ["claims"], budget_tokens: 500 });
     expect(revoked.isError).toBe(true);
     expect(errorOf(revoked).error).toBe("unknown_agent");
     expect(JSON.parse(revoked.content[0]!.text)).toEqual({ error: "unknown_agent", message: "unknown agent", retry_after_seconds: null });
-    const revokedEnvelope = JSON.stringify(revoked);
-    expect(revokedEnvelope).not.toContain("cause");
-    expect(revokedEnvelope).not.toContain(setup.vault);
-    expect(revokedEnvelope).not.toContain(marker);
+    assertPrivateValuesAbsent(revoked);
 
     revokeSourceGrant(db, { source_key: selectedSourceKey!, expected_revision: 1, operation_id: "two-client-source-revoke" });
     const sourceDenied = await call(a, "context_packet", { subjects: [project], include: ["claims"], budget_tokens: 500 });
     sameEnvelope(sourceDenied);
-    const afterRevoke = JSON.stringify(sourceDenied);
-    expect(afterRevoke).not.toContain("active");
-    expect(afterRevoke).not.toContain(project);
-    expect(afterRevoke).not.toContain("blocked");
-    expect(afterRevoke).not.toContain(marker);
-    expect(afterRevoke).not.toContain(event.event_id);
-    expect(afterRevoke).not.toContain(selectedSubject);
-    expect(afterRevoke).not.toContain(claimId);
-    expect(afterRevoke).not.toContain(correction.claim_id);
+    assertPrivateValuesAbsent(sourceDenied);
     const controlTimeline = await call(a, "timeline", {});
     sameEnvelope(controlTimeline);
     expect(JSON.stringify(envelopeOf(controlTimeline))).toContain(controlMarker);
