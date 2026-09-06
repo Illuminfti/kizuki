@@ -1,10 +1,12 @@
 import { afterEach, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   addAgent,
   authenticate,
   initAgents,
+  listClaims,
+  listConnections,
   openLedger,
   revokeAgent,
   revokeSourceGrant,
@@ -59,23 +61,24 @@ async function client(ctx: ServeContext) {
 
 test("synthetic InMemoryTransport clients preserve scoped correction continuity and revoke live access", async () => {
   const setup = h.tempVault();
-  const original = readFileSync(join(setup.notes, "ada.md"), "utf8");
+  const selectedNote = join(setup.notes, "two-client-source.md");
+  const marker = "two-client-payload-marker";
+  writeFileSync(selectedNote, `Project two-client-continuity is blocked. ${marker}\n`);
+  const original = readFileSync(selectedNote, "utf8");
   const denied = h.runCli(setup.env, "import", "markdown-folder", "--source", setup.notes);
   expect(denied.exitCode).toBe(1);
   expect(denied.stderr).toContain("connect grant --source");
 
   const consentDb = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
   try {
-    const enrolled = consentDb.query<{ source_key: string }, []>(
-      "SELECT source_key FROM connections LIMIT 1",
-    ).get();
-    if (enrolled === null) throw new Error("denied import did not enroll selected source");
+    const enrolled = listConnections(consentDb)[0];
+    if (enrolled === undefined) throw new Error("denied import did not enroll selected source");
     setSourceGrant(consentDb, { source_key: enrolled.source_key, expected_revision: 0,
       operation_id: "two-client-import", policy });
   } finally { consentDb.close(); }
   const imported = h.runCli(setup.env, "import", "markdown-folder", "--source", setup.notes);
   expect(imported.exitCode, imported.stderr).toBe(0);
-  expect(readFileSync(join(setup.notes, "ada.md"), "utf8")).toBe(original);
+  expect(readFileSync(selectedNote, "utf8")).toBe(original);
 
   const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
   try {
@@ -143,20 +146,29 @@ test("synthetic InMemoryTransport clients preserve scoped correction continuity 
     expect(forbidden.isError).toBe(true);
     expect(errorOf(forbidden).error).toBe("tool_not_granted");
 
-    const beforeNarrow = packet(envelopeOf(initial));
+    const latestB = await call(b, "context_packet", {
+      subjects: [project], include: ["claims"], purpose: "correction", budget_tokens: 500,
+    });
+    const beforeNarrow = packet(envelopeOf(latestB));
+    expect(beforeNarrow.packet_md).toContain("active");
     setGrant(db, "continuity-b", { subjects: [], tools: ["context_packet"] });
     const outOfScope = await call(b, "context_packet", {
       subjects: [project], include: ["claims"], purpose: "correction", budget_tokens: 500,
     });
     expect(outOfScope.isError).toBe(true);
     expect(errorOf(outOfScope).error).toBe("subject_out_of_scope");
+    expect(JSON.stringify(envelopeOf(outOfScope))).not.toContain(project);
     const narrowed = await call(b, "context_packet", {
       include: ["claims"], purpose: "correction", budget_tokens: 500,
       capabilities: ["delta"], retain_prefix: true, prior_hash: beforeNarrow.packet_hash, epoch: beforeNarrow.claims_epoch,
     });
     sameEnvelope(narrowed);
     expect(packet(envelopeOf(narrowed)).delivery).toBe("full");
-    expect(packet(envelopeOf(narrowed)).packet_md).not.toContain("active");
+    const narrowedEnvelope = JSON.stringify(envelopeOf(narrowed));
+    expect(narrowedEnvelope).not.toContain("active");
+    expect(narrowedEnvelope).not.toContain(marker);
+    expect(narrowedEnvelope).not.toContain(claimId);
+    expect(narrowedEnvelope).not.toContain(correction.event_id);
     const aStillAllowed = await call(a, "context_packet", { subjects: [project], include: ["claims"], budget_tokens: 500 });
     expect(packet(envelopeOf(aStillAllowed)).packet_md).toContain("active");
 
@@ -169,5 +181,7 @@ test("synthetic InMemoryTransport clients preserve scoped correction continuity 
     const sourceDenied = await call(a, "context_packet", { subjects: [project], include: ["claims"], budget_tokens: 500 });
     sameEnvelope(sourceDenied);
     expect(packet(envelopeOf(sourceDenied)).packet_md).not.toContain("active");
+    const claims = listClaims(db, { subject: project });
+    expect(claims.find((claim) => claim.claim_id === correction.claim_id)?.receipt_id).toBeNull();
   } finally { db.close(); }
 }, 30_000);
