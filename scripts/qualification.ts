@@ -1,5 +1,5 @@
 /** Explicit, one-shot fixture observation. This script never starts a daemon. */
-import { Database } from "bun:sqlite";
+import { Database, SQLiteError } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, parse } from "node:path";
@@ -233,7 +233,7 @@ function collect(manifest: Manifest, known: Map<string,string>): QualificationSa
   });
   const current = schedules(manifest.vault);
   if (loadServeConfig(manifest.vault).brief_hour !== manifest.profile.brief_hour) issues.push("schedule-profile-changed");
-  if (JSON.stringify(current.map(({next_run_at, ...r}) => r)) !== JSON.stringify(manifest.profile.rails.map(({next_run_at,...r}) => r))) issues.push("schedule-profile-changed");
+  if (canonical(current.map(({next_run_at, ...r}) => r)) !== canonical(manifest.profile.rails.map(({next_run_at,...r}) => r))) issues.push("schedule-profile-changed");
   let processBinding: QualificationSample["process"] = null;
   const db = openObservationDb(manifest.vault);
   try {
@@ -291,7 +291,7 @@ export function sampleQualification(runInput: string) {
     let rejected = false;
     let failureReason = "artifact-verification-failed";
     try {
-      if (JSON.stringify(verifyArtifact(manifest.artifact,manifest.proof)) !== JSON.stringify(manifest.identity)) throw new Error("artifact or proof identity changed");
+      if (canonical(verifyArtifact(manifest.artifact,manifest.proof)) !== canonical(manifest.identity)) throw new Error("artifact or proof identity changed");
       failureReason = "collector-unexpected-failure";
       const known = new Map(entries.flatMap((e) => e.sample.receipts.map((r) => [r.run_id,r.sha256] as const)));
       sample = collect(manifest,known);
@@ -309,11 +309,18 @@ export function sampleQualification(runInput: string) {
 }
 export function statusQualification(run: string) {
   const {manifest,entries} = load(run);
-  if (JSON.stringify(verifyArtifact(manifest.artifact,manifest.proof)) !== JSON.stringify(manifest.identity)) throw new Error("artifact or proof identity changed");
+  if (canonical(verifyArtifact(manifest.artifact,manifest.proof)) !== canonical(manifest.identity)) throw new Error("artifact or proof identity changed");
   const latest = entries.at(-1)?.sample;
   const now = anchor();
   const age = latest ? qualificationDate(now.at) - qualificationDate(latest.at) : null;
   return {...evaluateQualification(manifest.profile,entries.map((e)=>e.sample)), qualification_id:manifest.qualification_id,policy_sha256:manifest.policy_sha256,identity:manifest.identity, samples:entries.length, last_observed_at:latest?.at ?? null, observation_age_ms:age, continuity_current:latest !== undefined && latest.boot_id === now.boot_id && age !== null && age >= 0 && age <= manifest.profile.max_gap_ms};
+}
+function cliDiagnostic(error: unknown): string {
+  if (error instanceof ArtifactProofError) return error.reason;
+  if (error instanceof SyntaxError) return "qualification json unreadable";
+  if (error instanceof SQLiteError) return "qualification sqlite unreadable";
+  if (error instanceof Error && typeof (error as NodeJS.ErrnoException).syscall === "string") return "qualification filesystem unreadable";
+  return error instanceof Error ? error.message : "qualification failed";
 }
 if (import.meta.main) {
   try {
@@ -325,5 +332,5 @@ if (import.meta.main) {
     else if ((command === "sample" || command === "status") && [...flags.keys()].join() === "--run") result=command === "sample" ? sampleQualification(flags.get("--run")!) : statusQualification(flags.get("--run")!);
     else throw new Error("usage: qualification.ts init --artifact DIR --proof FILE --scope FILE --out NEWDIR | sample --run DIR | status --run DIR");
     console.log(JSON.stringify(result,null,2));
-  } catch (error) { console.error(error instanceof Error ? error.message : "qualification failed"); process.exitCode=1; }
+  } catch (error) { console.error(cliDiagnostic(error)); process.exitCode=1; }
 }
