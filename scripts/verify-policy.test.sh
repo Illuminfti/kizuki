@@ -23,7 +23,7 @@ mkdir -p "$fixture_root/docs" "$fixture_root/packages"
 exact_name='G''Brain'
 name_re='g''brain'
 canonical_url='https://github.com/garrytan/g''brain'
-printf '# Credits\n\n%s\n' "$exact_name" >"$fixture_root/README.md"
+printf '# Credits\n\n[%s](%s)\n' "$exact_name" "$canonical_url" >"$fixture_root/README.md"
 printf '# Upstream policy\n\n[%s](%s)\n' "$exact_name" "$canonical_url" >"$fixture_root/docs/upstream-policy.md"
 git -C "$fixture_root" add README.md docs/upstream-policy.md
 
