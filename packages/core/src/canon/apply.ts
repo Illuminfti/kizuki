@@ -431,13 +431,13 @@ export function applyCanonWrite(
   }
   const supplied: Claim[] = Array.isArray(claim) ? [...(claim as readonly Claim[])] : [claim as Claim];
   assertBatch(supplied);
-  // Historical rows remain readable, but only the dedicated purge pipeline can rewrite holds.
-  if (supplied.some((item) => item.kind === "purge_review")) {
-    throw new CanonWriteError("claim_kind_retired", "purge_review cannot authorize an ordinary canon write");
-  }
   const target = targetOf(decision);
   const claims = persistedClaims(io, supplied);
   const primary = assertBatch(claims);
+  // Historical rows remain readable, but only the dedicated purge pipeline can rewrite holds.
+  if (primary.kind === "purge_review") {
+    throw new CanonWriteError("claim_kind_retired", "purge_review cannot authorize an ordinary canon write");
+  }
 
   const existing = readPage(io, target.rel_path);
   const pageId = target.page_id ?? mintId(io);

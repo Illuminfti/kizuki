@@ -55,7 +55,7 @@ test("claim admission validates one captured snapshot of ordinary input", async 
   } finally { fixture.dispose(); }
 });
 
-test("historical purge-review rows remain readable and inert before write preflight", async () => {
+test("historical purge-review rows remain readable and inert before byte admission", async () => {
   const fixture = canonFixture();
   try {
     const { db, io, vault } = fixture;
@@ -83,12 +83,19 @@ test("historical purge-review rows remain readable and inert before write prefli
     const filesBefore = readdirSync(vault, { recursive: true }).sort();
     const budget = createBudgetTracker({ canon_writes_per_run: 1 });
     for (const supplied of [historical, [historical]]) {
-      try {
-        applyCanonWrite(io, supplied, { action: "skip", reason: "duplicate" }, { writer: "loop", budget });
-        throw new Error("expected retired-kind refusal");
-      } catch (error) {
-        expect(error).toBeInstanceOf(CanonWriteError);
-        expect((error as CanonWriteError).code).toBe("claim_kind_retired");
+      for (const decision of [
+        { action: "skip", reason: "duplicate" },
+        { action: "create", rel_path: "people/fixture.md" },
+      ] as const) {
+        try {
+          applyCanonWrite(io, supplied, decision, { writer: "loop", budget });
+          throw new Error("expected retired-kind refusal");
+        } catch (error) {
+          expect(error).toBeInstanceOf(CanonWriteError);
+          expect((error as CanonWriteError).code).toBe(
+            decision.action === "skip" ? "nothing_to_write" : "claim_kind_retired",
+          );
+        }
       }
     }
     expect(budget.usage().canon_writes_per_run.used).toBe(0);
