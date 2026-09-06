@@ -67,6 +67,7 @@ interface EnrollmentRow {
 }
 
 interface RequestShape { request: AgentEnrollmentRequest; parent: string; filename: string; destinationDigest: string; requestDigest: string; }
+interface ReservedEnrollment { row: EnrollmentRow; inserted: boolean; }
 
 function fail(code: AgentEnrollmentErrorCode): never { throw new AgentEnrollmentError(code); }
 function digest(value: string): string { return sha256(value); }
@@ -178,28 +179,27 @@ function credentialFor(row: EnrollmentRow, db: DatabaseType, parent: string, fil
   } catch { return "conflict"; } finally { directory.close(); }
 }
 
-function reserve(db: DatabaseType, shape: RequestShape, parent: CredentialFileIdentity): EnrollmentRow {
+function reserve(db: DatabaseType, shape: RequestShape, parent: CredentialFileIdentity): ReservedEnrollment {
   return db.transaction(() => {
     const existing = readRow(db, shape.request.operation_id);
     if (existing !== null) {
       if (existing.request_digest !== shape.requestDigest || existing.destination_digest !== shape.destinationDigest || existing.parent_dev !== parent.dev || existing.parent_ino !== parent.ino) fail("operation_conflict");
-      return existing;
+      return { row: existing, inserted: false };
     }
-    if (readByName(db, shape.request.name) !== null || getAgent(db, shape.request.name) !== null) fail("name_conflict");
+    const agentId = ulid();
+    if (readByName(db, shape.request.name) !== null || getAgent(db, shape.request.name) !== null || db.query<{ agent_id: string }, [string]>("SELECT agent_id FROM agents WHERE agent_id = ?").get(agentId) !== null) fail("name_conflict");
     const collision = db.query<{ n: number }, [string]>("SELECT count(*) AS n FROM agent_enrollments WHERE destination_digest = ? AND state != 'cancelled'").get(shape.destinationDigest);
     if ((collision?.n ?? 0) !== 0) fail("credential_conflict");
     const now = new Date().toISOString();
-    const agentId = ulid();
     db.query<never, [string, string, string, string, string, string, string, string, string, string]>(`INSERT INTO agent_enrollments (operation_id, request_digest, destination_digest, agent_id, name, grant_json, state, parent_dev, parent_ino, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'reserved', ?, ?, ?, ?)`)
       .run(shape.request.operation_id, shape.requestDigest, shape.destinationDigest, agentId, shape.request.name, canonical(shape.request.grant), parent.dev, parent.ino, now, now);
     const row = readRow(db, shape.request.operation_id);
     if (row === null) fail("enrollment_unavailable");
-    return row;
+    return { row, inserted: true };
   }).immediate();
 }
-
 function bind(db: DatabaseType, row: EnrollmentRow, parent: CredentialFileIdentity, identity: CredentialFileIdentity, bytes: Uint8Array, token: string, generation: string): EnrollmentRow {
-  return db.transaction(() => {
+  const work = () => {
     const current = readRow(db, row.operation_id);
     if (current === null || (current.state !== "reserved" && current.state !== "file_bound") || current.parent_dev !== parent.dev || current.parent_ino !== parent.ino) fail("operation_conflict");
     const conflict = db.query<{ n: number }, [string, string, string]>("SELECT count(*) AS n FROM agents WHERE name = ? OR agent_id = ? OR token_hash = ?").get(current.name, current.agent_id, hashAgentToken(token));
@@ -209,7 +209,23 @@ function bind(db: DatabaseType, row: EnrollmentRow, parent: CredentialFileIdenti
     const bound = readRow(db, row.operation_id);
     if (bound === null) fail("enrollment_unavailable");
     return bound;
-  }).immediate();
+  };
+  return db.inTransaction ? work() : db.transaction(work).immediate();
+}
+
+function createAndBind(db: DatabaseType, shape: RequestShape, parent: CredentialDirectory, row: EnrollmentRow): { bound: EnrollmentRow; held: CredentialFileInspection; bytes: Uint8Array } {
+  let held: CredentialFileInspection | null = null;
+  try {
+    return db.transaction(() => {
+      const current = readRow(db, row.operation_id);
+      if (current === null || current.state !== "reserved" || current.parent_dev !== parent.identity.dev || current.parent_ino !== parent.identity.ino) fail("recovery_required");
+      held = parent.create(shape.filename);
+      const generation = Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString("hex");
+      const token = generateAgentToken(), bytes = envelope(current.agent_id, current.operation_id, generation, token);
+      const bound = bind(db, current, parent.identity, held.identity, bytes, token, generation);
+      return { bound, held, bytes };
+    }).exclusive();
+  } catch (error) { (held as CredentialFileInspection | null)?.close(); throw error; }
 }
 
 function activate(db: DatabaseType, row: EnrollmentRow, directory: CredentialDirectory, held: CredentialFileInspection, bytes: Uint8Array): EnrollmentRow {
@@ -279,33 +295,38 @@ export function enrollAgent(vaultPath: string, request: AgentEnrollmentRequest):
     const journal = db.query<{ journal_mode: string }, []>("PRAGMA journal_mode").get()?.journal_mode;
     const synchronous = db.query<{ synchronous: number }, []>("PRAGMA synchronous").get()?.synchronous;
     if (journal !== "wal" || synchronous === undefined || synchronous < 2) fail("enrollment_unavailable");
-    const row = reserve(db, shape, directory.identity);
+    const prior = readRow(db, shape.request.operation_id);
+    const preexisting = directory.inspect(shape.filename);
+    if (preexisting !== null) { preexisting.close(); if (prior === null) fail("credential_conflict"); }
+    const reservation = reserve(db, shape, directory.identity); const row = reservation.row;
     if (row.state === "cancelled") return result(row, db, credentialFor(row, db, shape.parent, shape.filename), true);
     if (row.state === "completed") return result(row, db, credentialFor(row, db, shape.parent, shape.filename), true);
     let held: CredentialFileInspection | null;
     try { held = directory.inspect(shape.filename); } catch { fail("credential_unsafe"); }
     if (row.state === "reserved" || held === null) {
-      if (row.state === "reserved" && held !== null) { held.close(); fail("recovery_required"); }
-      try { held = directory.create(shape.filename); }
+      held?.close();
+      let created: { bound: EnrollmentRow; held: CredentialFileInspection; bytes: Uint8Array };
+      try { created = createAndBind(db, shape, directory, row); }
       catch (error) {
         if (error instanceof Error && error.message.includes("conflict")) fail("credential_conflict");
-        fail("credential_unsafe");
+        throw error;
       }
-      const generation = Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString("hex");
-      const token = generateAgentToken(); const bytes = envelope(row.agent_id, row.operation_id, generation, token);
-      const bound = bind(db, row, directory.identity, held.identity, bytes, token, generation);
+      held = created.held;
       let durable = false;
       try {
-        const completed = activate(db, bound, directory, held, bytes);
+        const completed = activate(db, created.bound, directory, held, created.bytes);
         durable = true;
-        return result(completed, db, "ready", false);
+        return result(completed, db, "ready", !reservation.inserted);
       } catch (error) {
         if (durable) {
           // SQLite reports a COMMIT exception after the outcome may already be
           // durable. Re-read before any cleanup or retry classification.
-          const observed = readRow(db, bound.operation_id);
+          // A commit exception has no trustworthy connection-local outcome.
+          // Reopen before the authoritative operation observation or cleanup.
+          db.close(); db = openLedger(dbPath);
+          const observed = readRow(db, created.bound.operation_id);
           if (observed?.state === "completed") return result(observed, db, "ready", true);
-          cleanupAfterConfirmedActivationRollback(db, directory, held, bound);
+          cleanupAfterConfirmedActivationRollback(db, directory, held, created.bound);
         }
         throw error;
       } finally { held.close(); }
