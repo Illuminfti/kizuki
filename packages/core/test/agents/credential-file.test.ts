@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, truncateSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openCredentialDirectory, type CredentialFileInspection } from "../../src/agents/credential-file";
@@ -100,6 +100,10 @@ test.if(canExerciseCustody)("refuses symlink, hard-link, changed creation metada
     expect(() => directory.inspect("held")).toThrow("credential_file_identity_changed"); rmSync(join(root, "held")); rmSync(join(root, "alias"));
     const changed = directory.create("changed"); writeFileSync(join(root, "changed"), new Uint8Array([9]));
     expect(() => directory.writeComplete(changed, new Uint8Array([1]))).toThrow("credential_file_changed"); directory.removeCreated(changed);
+    const restored = directory.create("restored"), restoredPath = join(root, "restored");
+    writeFileSync(restoredPath, new Uint8Array([9])); truncateSync(restoredPath, 0);
+    const shifted = new Date(Date.now() + 10_000); utimesSync(restoredPath, shifted, shifted);
+    expect(() => directory.writeComplete(restored, new Uint8Array([1]))).toThrow("credential_file_changed"); directory.removeCreated(restored);
     const moved = `${root}-moved`; roots.push(moved); renameSync(root, moved); symlinkSync(moved, root);
     expect(() => directory.create("after-move")).toThrow(/credential_file_(identity_changed|unsafe)/);
   } finally { directory.close(); }

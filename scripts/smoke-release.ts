@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { verifyChecksumManifest } from "./release-artifacts";
@@ -26,9 +26,22 @@ verifyChecksumManifest(release, ["kizuki", "kizuki-mcp", "README.txt", "BUILD.js
 function run(command: string, args: string[], env: Record<string, string>): string {
   const result = Bun.spawnSync([command, ...args], { env, stderr: "pipe", stdout: "pipe" });
   if (result.exitCode !== 0) {
-    throw new Error(`${command} ${args.join(" ")} exited ${result.exitCode}: ${result.stderr}`);
+    throw new Error("compiled command failed");
   }
   return `${result.stdout}${result.stderr}`;
+}
+
+async function mcpSession(env: Record<string, string>, args: string[], requests: string[]): Promise<{ code: number; output: string }> {
+  const child = Bun.spawn([mcp, ...args], { env, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+  for (const request of requests) child.stdin.write(`${request}\n`);
+  child.stdin.end();
+  const output = new Response(child.stdout).text();
+  const stderr = new Response(child.stderr).text();
+  const timeout = new Promise<never>((_, reject) => setTimeout(() => { child.kill("SIGKILL"); reject(new Error("MCP smoke timed out")); }, 15_000));
+  const code = await Promise.race([child.exited, timeout]);
+  const [stdout, diagnostics] = await Promise.all([output, stderr]);
+  if (diagnostics.length > 16_384) throw new Error("MCP smoke diagnostics overflow");
+  return { code, output: stdout };
 }
 
 const rootTemp = mkdtempSync(join(tmpdir(), "kizuki-release-smoke-"));
@@ -67,6 +80,28 @@ try {
   const context = run(cli, ["context", "--query", "Ada", "--vault", vault], env);
   if (!context.includes("Ada")) throw new Error("imported note is missing from compiled context");
   run(cli, ["serve", "--once", "--no-http", "--vault", vault], env);
+
+  const grant = join(rootTemp, "agent-grant.json");
+  const credential = join(rootTemp, "agent-credential");
+  writeFileSync(grant, JSON.stringify({ ceiling: "private", types: null, subjects: null, since: null, until: null,
+    tools: ["search"], rate_limit_per_minute: 60, relay_owner_corrections: false }), { mode: 0o600 });
+  const agentArgs = ["agent", "add", "reader-private", "--grant", grant, "--token-ref", `file:${credential}`,
+    "--operation-id", "releaseagent01", "--vault", vault, "--json"];
+  const added = run(cli, agentArgs, env);
+  const replayed = run(cli, agentArgs, env);
+  const envelope = JSON.parse(readFileSync(credential, "utf8")) as { token: string };
+  if (typeof envelope.token !== "string" || added.includes(envelope.token) || replayed.includes(envelope.token)) throw new Error("agent credential leaked");
+  const agentRequests = [
+    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"release-smoke","version":"0"}}}',
+    '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search","arguments":{"query":"Ada"}}}',
+    '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"correct","arguments":{}}}',
+  ];
+  const agentSession = await mcpSession(env, ["--vault", vault, "--token-ref", `file:${credential}`], agentRequests);
+  if (agentSession.code !== 0 || !agentSession.output.includes("Ada") || !agentSession.output.includes("tool_not_granted") || agentSession.output.includes(envelope.token)) throw new Error("agent MCP authorization smoke failed");
+  const revoked = run(cli, ["agent", "revoke", "reader-private", "--vault", vault, "--json"], env);
+  if (revoked.includes(envelope.token)) throw new Error("agent revocation leaked credential");
+  const rejected = await mcpSession(env, ["--vault", vault, "--token-ref", `file:${credential}`], [agentRequests[0]!]);
+  if (rejected.code === 0 || rejected.output.includes(envelope.token)) throw new Error("revoked credential reconnected");
 
   const session = Bun.spawn([mcp, "--vault", vault, "--owner"], {
     env,
