@@ -2,7 +2,8 @@ import { test, expect } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ConnectionStateStore, createStatePersister, getConnection, getCheckpoint, openLedger, runToCompletion, setSourceGrant, replayLive } from '@kizuki/core';
+import { ConnectionStateStore, createStatePersister, getConnection, getCheckpoint, runToCompletion, setSourceGrant, replayLive } from '@kizuki/core';
+import { openLedger } from '@kizuki/core/testing';
 import { WhoopFixture } from '../src/testing';
 import { WHOOP_ID } from '../src/state';
 for (const changed of [false, true])
@@ -87,7 +88,7 @@ test('actual child exit after durable witness before acceptance resumes without 
         db.close();
         const script = join(root, 'crash.ts');
         const { writeFileSync } = await import('node:fs');
-        writeFileSync(script, `import {openLedger,ConnectionStateStore,getConnection,createStatePersister,runToCompletion} from ${JSON.stringify(join(import.meta.dir, '../../core/src/index.ts'))};import {WhoopFixture} from ${JSON.stringify(join(import.meta.dir, '../src/testing.ts'))};const db=openLedger(${JSON.stringify(join(root, 'ledger.db'))}),store=new ConnectionStateStore(${JSON.stringify(root)}),connection=getConnection(db,'kizuki.whoop',${JSON.stringify(source)}),handle=createStatePersister(db,store,connection),f=new WhoopFixture(2);f.state=store.read(connection);const port=await f.connected({persist:async bytes=>{await handle.persist(bytes);if(JSON.parse(new TextDecoder().decode(bytes)).pending?.issued>0)process.exit(17)}});await runToCompletion(db,port,'kizuki.whoop',${JSON.stringify(source)},'backfill');process.exit(19);`);
+        writeFileSync(script, `import {ConnectionStateStore,getConnection,createStatePersister,runToCompletion} from ${JSON.stringify(join(import.meta.dir, '../../core/src/index.ts'))};import {openLedger} from ${JSON.stringify(join(import.meta.dir, '../../core/src/ledger/db.ts'))};import {WhoopFixture} from ${JSON.stringify(join(import.meta.dir, '../src/testing.ts'))};const db=openLedger(${JSON.stringify(join(root, 'ledger.db'))}),store=new ConnectionStateStore(${JSON.stringify(root)}),connection=getConnection(db,'kizuki.whoop',${JSON.stringify(source)}),handle=createStatePersister(db,store,connection),f=new WhoopFixture(2);f.state=store.read(connection);const port=await f.connected({persist:async bytes=>{await handle.persist(bytes);if(JSON.parse(new TextDecoder().decode(bytes)).pending?.issued>0)process.exit(17)}});await runToCompletion(db,port,'kizuki.whoop',${JSON.stringify(source)},'backfill');process.exit(19);`);
         const child = Bun.spawnSync([process.execPath, script], {
             stdout: 'pipe', stderr: 'pipe'
         });

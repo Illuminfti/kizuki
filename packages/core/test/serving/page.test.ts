@@ -80,9 +80,7 @@ describe("serveGetPage", () => {
   test("an unlabeled page is withheld from the owner too", () => {
     const envelope = serveGetPage(fixture.owner(), { id: "fact:unlabeled" });
     expect(envelope.canon).toEqual([]);
-    expect(envelope.denied).toEqual([
-      { reason: "missing_sensitivity", count: 1 },
-    ]);
+    expect(envelope.denied).toEqual([]);
   });
 
   test("a held page reports the hold", () => {

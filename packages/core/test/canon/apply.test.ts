@@ -9,7 +9,12 @@ import { CanonWriteError } from "../../src/canon/errors";
 import { RECEIPTS_PATH, listCanonReceipts, readReceiptsLog } from "../../src/canon/receipts";
 import { getClaim } from "../../src/claims/store";
 import type { Claim } from "../../src/contracts/proposal";
+import { proposalsForEvent } from "../../src/staging/producers";
 import { parseFrontmatter } from "../../src/vault/frontmatter";
+import { MAX_FRONTMATTER_ARRAY_ITEMS } from "../../src/vault/schema";
+import { subjectPageType } from "../../src/vault/subject-type";
+import { eventFacts } from "../claims/helpers";
+import { event } from "../staging/helpers";
 import { canonFixture, putEvent, storeClaim, write } from "./helpers";
 import type { CanonFixture } from "./helpers";
 
@@ -317,6 +322,115 @@ describe("applyCanonWrite", () => {
     expect(second.claim_ids).toHaveLength(1);
     expect(page.data["id"]).toBe(
       parseFrontmatter(readFileSync(join(vault, created.page_path), "utf8")).data["id"],
+    );
+  });
+
+  test("a single-subject capture note keeps the entity page type the subject chose", async () => {
+    const { db, io, vault } = fixture();
+    const subject = "calendar:standup";
+    const expectedType = subjectPageType(subject);
+    expect(expectedType).toBe("topic");
+
+    const captured = event({
+      connector_id: "kizuki.google-calendar",
+      kind: "calendar_event",
+      subjects: [{ subject_id: subject, role: "about", display_name: "standup" }],
+    });
+    const proposals = proposalsForEvent(captured);
+    const entityInput = proposals.find((item) => item.kind === "entity");
+    const noteInput = proposals.find((item) => item.kind === "claim");
+    if (entityInput === undefined || noteInput === undefined) {
+      throw new Error("deterministic floor must emit an entity and a capture note");
+    }
+    expect(entityInput.frontmatter["type"]).toBe(expectedType);
+    expect(noteInput.frontmatter["type"]).toBe("source");
+    expect(noteInput.target).toBe("captures/kizuki.google-calendar/2026-02-28");
+
+    const eventId = putEvent(db);
+    const created = write(
+      io,
+      await storeClaim(db, eventId, {
+        kind: "entity",
+        target: entityInput.target ?? subject,
+        subject,
+        subjects: entityInput.subjects ?? [subject],
+        predicate: null,
+        object: null,
+        body: entityInput.body,
+        frontmatter: entityInput.frontmatter,
+      }),
+    );
+    expect(parseFrontmatter(readFileSync(join(vault, created.page_path), "utf8")).data["type"]).toBe(
+      expectedType,
+    );
+
+    const note = await storeClaim(db, eventId, {
+      kind: "claim",
+      target: null,
+      subject,
+      subjects: noteInput.subjects ?? [subject],
+      predicate: null,
+      object: null,
+      body: noteInput.body,
+      frontmatter: noteInput.frontmatter,
+    });
+    expect(resolveTarget(io, note)).toEqual({
+      action: "edit",
+      page_id: expect.any(String),
+      rel_path: created.page_path,
+      reason: "subject",
+    });
+    write(io, note);
+    expect(parseFrontmatter(readFileSync(join(vault, created.page_path), "utf8")).data["type"]).toBe(
+      expectedType,
+    );
+  });
+
+  test("refuses a revision that would grow sources past the frontmatter cap before admission", async () => {
+    const { db, io, vault } = fixture();
+    const events = Array.from({ length: MAX_FRONTMATTER_ARRAY_ITEMS }, () => putEvent(db));
+    const created = write(
+      io,
+      await storeClaim(db, events[0]!, {
+        provenance: events,
+        events: events.map((eventId) => eventFacts(eventId)),
+      }),
+    );
+    const path = join(vault, created.page_path);
+    const before = readFileSync(path);
+    expect(parseFrontmatter(before.toString("utf8")).data["sources"]).toHaveLength(
+      MAX_FRONTMATTER_ARRAY_ITEMS,
+    );
+
+    const extra = putEvent(db);
+    const overflow = await storeClaim(db, extra, {
+      kind: "edit",
+      predicate: null,
+      object: null,
+      body: "Grace still runs partnerships at Acme.",
+      frontmatter: {},
+      provenance: [extra],
+      events: [eventFacts(extra)],
+    });
+    const refused = attempt(() => write(io, overflow));
+    expect(code(refused)).toBe("frontmatter_invalid");
+    expect(String(refused)).toContain(`sources: exceeds ${MAX_FRONTMATTER_ARRAY_ITEMS} items`);
+    expect(readFileSync(path)).toEqual(before);
+    expect(db.query("SELECT 1 FROM canon_machine_byte_intents").get()).toBeNull();
+    expect(getClaim(db, overflow.claim_id)?.receipt_id).toBeNull();
+
+    const sameSources = await storeClaim(db, events[0]!, {
+      kind: "edit",
+      predicate: null,
+      object: null,
+      body: "Grace continues to run partnerships at Acme.",
+      frontmatter: {},
+      provenance: [events[0]!],
+      events: [eventFacts(events[0]!)],
+    });
+    write(io, sameSources);
+    expect(parseFrontmatter(readFileSync(path, "utf8")).data["sources"]).toHaveLength(
+      MAX_FRONTMATTER_ARRAY_ITEMS,
     );
   });
 });

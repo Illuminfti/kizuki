@@ -107,7 +107,7 @@ Unknown frontmatter keys must use the \`x-*\` extension namespace.
 
 const SCHEMA_DOCTRINE_V1_REVIEWED_MISSING = `# Page schema
 
-Every page requires \`id\`, \`title\`, \`type\`, \`status\`, and \`sensitivity\` frontmatter.
+Every page requires \`id\`, \`title\`, \`type\`, \`status\`, \`sensitivity\`, and \`taint\` frontmatter.
 Canon is reviewed Markdown; staging belongs in the database.
 Every page carries \`sensitivity\` and \`taint\`; a page missing
 either is never served to anyone, including you.

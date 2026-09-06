@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { ConnectionStateStore, createStatePersister, getConnection, getCheckpoint, openLedger, runToCompletion, setSourceGrant } from "@kizuki/core";
+import { ConnectionStateStore, createStatePersister, getConnection, getCheckpoint, runToCompletion, setSourceGrant } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { GMAIL_CONNECTOR_ID } from "../src/index";
 import { GmailFixture } from "../src/testing";
 test("native runToCompletion reopens persisted deletion observation after lost state-write response, before tombstone", async () => {

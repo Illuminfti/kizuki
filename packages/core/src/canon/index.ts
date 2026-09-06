@@ -45,7 +45,7 @@ export type {
 export { undoReceipt } from "./undo";
 export type { UndoReceiptOptions } from "./undo";
 export { CANON_SCHEMA_VERSION, applyCanonV4, initCanon } from "./schema";
-export { rebuildPageIndex } from "./store";
+export { CanonPageUnreadable, inspectPageIndex, rebuildPageIndex } from "./store";
 export type { CanonIo, PageIndexEntry } from "./store";
 export {
   AUTO_CANON_PREFIX,

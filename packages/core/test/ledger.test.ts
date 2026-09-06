@@ -181,7 +181,11 @@ describe("readSince", () => {
     expect(pageSizes).toEqual([100, 100, 50]);
     expect(seen).toEqual(expected);
     expect(new Set(seen).size).toBe(250);
-    expect(cursor).toBeNull();
+    expect(cursor).not.toBeNull();
+    const drained = readSince(db, cursor, 100);
+    expect(drained.events).toEqual([]);
+    expect(drained.exhausted).toBe(true);
+    expect(drained.cursor).toEqual(cursor);
     db.close();
   });
 });

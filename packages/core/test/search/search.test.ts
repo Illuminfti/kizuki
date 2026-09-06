@@ -2,14 +2,14 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { stampDerived } from "../../src/derived-meta";
 import { MAX_RETRIEVAL_LIMIT } from "../../src/contracts/retrieval";
+import { stampDerived } from "../../src/derived-meta";
 import { indexEvent, indexPage, rebuildSearch, removeDoc } from "../../src/search/indexer";
 import { search, searchResult, toFtsQuery } from "../../src/search/query";
 import { initSearch } from "../../src/search/schema";
+import { computeContentHash, sha256Hex } from "../../src/util/hash";
 import { serializePage } from "../../src/vault/frontmatter";
 import type { CanonPage } from "../../src/vault/pages";
-import { computeContentHash, sha256Hex } from "../../src/util/hash";
 import { computeOriginBinding } from "../../src/ledger/event-origin-binding";
 import { searchDb, storedEvent, tempVault } from "./helpers";
 
@@ -35,6 +35,7 @@ function page(
       type: "fact",
       status: "active",
       sensitivity: "personal",
+      taint: "clean",
       ...overrides,
     },
     body,
@@ -214,6 +215,7 @@ describe("search rebuild", () => {
         type: "fact",
         status: "active",
         sensitivity: "personal",
+        taint: "clean",
       },
       "A copper kettle whistles.",
     );
@@ -247,6 +249,7 @@ describe("search rebuild", () => {
         type: "fact",
         status: "active",
         sensitivity: "public",
+        taint: "clean",
       },
       "repeatable",
     );
@@ -504,6 +507,7 @@ describe("search live eligibility and identity", () => {
         type: "fact",
         status: "active",
         sensitivity: "public",
+        taint: "clean",
       },
       "liveword",
     );
@@ -516,6 +520,7 @@ describe("search live eligibility and identity", () => {
         type: "fact",
         status: "archived",
         sensitivity: "public",
+        taint: "clean",
       },
       "liveword archived",
     );
@@ -554,6 +559,7 @@ describe("search live eligibility and identity", () => {
         type: "fact",
         status: "active",
         sensitivity: "public",
+        taint: "clean",
       },
       "okword",
     );

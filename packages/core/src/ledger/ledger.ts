@@ -1,16 +1,19 @@
 import type { Database } from "bun:sqlite";
 import { authorizeSourceCapture, bindSourceEvent, type SourceAdmission } from "./source-grants";
 import { validateEventInput } from "../contracts/event";
-import { tableExists } from "./schema";
 import type {
   CaptureEvent,
   CaptureEventInput,
 } from "../contracts/event";
 import { canonicalSerialize, computeContentHash, computeLegacyContentHash, sha256Hex } from "../util/hash";
+import { isRfc3339 } from "../util/time";
 import { isUlid, ulid } from "../util/ulid";
 import { EventRecordError, eventFromRow as fromRow, type EventRow } from "./event-record";
 import { EventOriginError, classifyNewEventOrigin } from "./event-origin";
 import { computeOriginBinding, nativeRequestDigest } from "./event-origin-binding";
+import { classifySqliteFailure, LedgerStoreError } from "./errors";
+import { LEDGER_ID_MAX, LEDGER_KIND_MAX, MAX_READ_SINCE, REPLAY_PAGE_SIZE } from "./limits";
+import { tableExists } from "./schema";
 
 export type AcceptErrorKind = "validation" | "infrastructure";
 
@@ -27,6 +30,13 @@ export interface AcceptDependencies {
 export interface LedgerCursor {
   accepted_at: string;
   event_id: string;
+}
+
+export interface LedgerPage {
+  events: CaptureEvent[];
+  /** Last committed token. Null only means beginning-of-stream. */
+  cursor: LedgerCursor | null;
+  exhausted: boolean;
 }
 
 export interface ReplayFilter {
@@ -63,8 +73,15 @@ const EVENT_COLUMNS = `
   origin_binding
 `;
 
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function decodeStored(row: EventRow, db: Database): CaptureEvent {
+  try {
+    return fromRow(row, db);
+  } catch (error) {
+    if (error instanceof EventRecordError || error instanceof EventOriginError) {
+      throw new LedgerStoreError("corrupt", error.message, { cause: error });
+    }
+    throw error;
+  }
 }
 
 export function accept(
@@ -153,15 +170,25 @@ export function accept(
         )
         .get(eventId);
       if (stored === null) {
-        throw new Error(`stored event ${eventId} could not be read back`);
+        throw new LedgerStoreError("corrupt", "stored event could not be read back");
       }
-      return { status: "stored", event: fromRow(stored, db) };
+      return { status: "stored", event: decodeStored(stored, db) };
     }).immediate();
   } catch (error) {
+    const infra = classifySqliteFailure(error);
+    if (infra !== null) throw infra;
+    if (error instanceof LedgerStoreError) throw error;
+    if (error instanceof EventRecordError || error instanceof EventOriginError) {
+      return {
+        status: "error",
+        error: error.message,
+        kind: "infrastructure",
+      };
+    }
     return {
       status: "error",
-      error: errorText(error),
-      kind: isInfrastructureError(error) ? "infrastructure" : "validation",
+      error: error instanceof Error ? error.message : String(error),
+      kind: "validation",
     };
   }
 }
@@ -212,16 +239,33 @@ export function recordNativeCorrectionEvent(db: Database, input: CaptureEventInp
   }).immediate();
 }
 
-function isInfrastructureError(error: unknown): boolean {
-  if (error instanceof EventRecordError || error instanceof EventOriginError) return true;
-  const code =
-    error instanceof Error && "code" in error && typeof error.code === "string"
-      ? error.code
-      : "";
-  const text = error instanceof Error ? error.message : String(error);
-  return /SQLITE_(BUSY|LOCKED|CORRUPT|IOERR|FULL|CANTOPEN|READONLY|NOTADB|CONSTRAINT_FOREIGNKEY)/.test(
-    `${code} ${text}`,
-  );
+function assertReadLimit(limit: number): void {
+  if (!Number.isInteger(limit) || limit < 0) {
+    throw new LedgerStoreError("usage", "readSince limit must be a non-negative integer");
+  }
+  if (limit > MAX_READ_SINCE) {
+    throw new LedgerStoreError(
+      "usage",
+      `readSince limit must be at most ${MAX_READ_SINCE}`,
+    );
+  }
+}
+
+function pageFromRows(
+  rows: EventRow[],
+  limit: number,
+  previous: LedgerCursor | null,
+  db: Database,
+): LedgerPage {
+  const last = rows.at(-1);
+  return {
+    events: rows.map((row) => decodeStored(row, db)),
+    cursor:
+      last === undefined
+        ? previous
+        : { accepted_at: last.accepted_at, event_id: last.event_id },
+    exhausted: rows.length < limit,
+  };
 }
 
 /** Internal authoritative lookup used by bounded deferred extraction replay. */
@@ -229,18 +273,18 @@ export function readEvent(db: Database, eventId: string): CaptureEvent | null {
   const row = db.query<EventRow, [string]>(
     `SELECT ${EVENT_COLUMNS} FROM events WHERE event_id = ?`,
   ).get(eventId);
-  return row === null ? null : fromRow(row, db);
+  return row === null ? null : decodeStored(row, db);
 }
 
 export function readSince(
   db: Database,
   cursor: LedgerCursor | null,
   limit: number,
-): { events: CaptureEvent[]; cursor: LedgerCursor | null } {
-  if (!Number.isInteger(limit) || limit < 0) {
-    throw new RangeError("readSince limit must be a non-negative integer");
+): LedgerPage {
+  assertReadLimit(limit);
+  if (limit === 0) {
+    return { events: [], cursor, exhausted: true };
   }
-  if (limit === 0) return { events: [], cursor: null };
 
   const rows =
     cursor === null
@@ -267,17 +311,41 @@ export function readSince(
           )
           .all(cursor.accepted_at, cursor.accepted_at, cursor.event_id, limit);
 
-  const last = rows.at(-1);
-  return {
-    events: rows.map(row => fromRow(row, db)),
-    cursor:
-      last === undefined
-        ? null
-        : { accepted_at: last.accepted_at, event_id: last.event_id },
-  };
+  return pageFromRows(rows, limit, cursor, db);
 }
 
-const REPLAY_PAGE = 500;
+function assertIdentifier(value: string, label: string, max: number): string {
+  if (value.length === 0 || value.length > max) {
+    throw new LedgerStoreError("usage", `${label} length must be 1..${max}`);
+  }
+  if ([...value].some((ch) => ch.charCodeAt(0) < 32)) {
+    throw new LedgerStoreError("usage", `${label} contains a control character`);
+  }
+  return value;
+}
+
+export function normalizeReplayFilter(filter: ReplayFilter): ReplayFilter {
+  const out: ReplayFilter = {};
+  if (filter.connector_id !== undefined) {
+    if (typeof filter.connector_id !== "string") {
+      throw new LedgerStoreError("usage", "connector_id must be a string");
+    }
+    out.connector_id = assertIdentifier(filter.connector_id, "connector_id", LEDGER_ID_MAX);
+  }
+  if (filter.kind !== undefined) {
+    if (typeof filter.kind !== "string") {
+      throw new LedgerStoreError("usage", "kind must be a string");
+    }
+    out.kind = assertIdentifier(filter.kind, "kind", LEDGER_KIND_MAX);
+  }
+  if (filter.since !== undefined) {
+    if (!isRfc3339(filter.since)) {
+      throw new LedgerStoreError("usage", "since must be an RFC3339 timestamp");
+    }
+    out.since = filter.since;
+  }
+  return out;
+}
 
 const LIVE_PREDICATE = `
   events.deleted = 0
@@ -296,15 +364,13 @@ const LIVE_PREDICATE = `
   )
 `;
 
-function replayPage(
-  db: Database,
+function replayWhere(
   filter: ReplayFilter,
   cursor: LedgerCursor | null,
   liveOnly: boolean,
-): { events: CaptureEvent[]; cursor: LedgerCursor | null } {
+): { sql: string; bindings: Array<string | number> } {
   const conditions: string[] = [];
-  const bindings: (string | number)[] = [];
-
+  const bindings: Array<string | number> = [];
   if (filter.connector_id !== undefined) {
     conditions.push("events.connector_id = ?");
     bindings.push(filter.connector_id);
@@ -324,28 +390,9 @@ function replayPage(
     );
     bindings.push(cursor.accepted_at, cursor.accepted_at, cursor.event_id);
   }
-
-  const where =
-    conditions.length === 0 ? "" : `WHERE ${conditions.join(" AND ")}`;
-  bindings.push(REPLAY_PAGE);
-  const rows = db
-    .query<EventRow, (string | number)[]>(
-      `
-        SELECT ${EVENT_COLUMNS}
-        FROM events
-        ${where}
-        ORDER BY events.accepted_at, events.event_id
-        LIMIT ?
-      `,
-    )
-    .all(...bindings);
-  const last = rows.at(-1);
   return {
-    events: rows.map(row => fromRow(row, db)),
-    cursor:
-      last === undefined
-        ? null
-        : { accepted_at: last.accepted_at, event_id: last.event_id },
+    sql: conditions.length === 0 ? "" : `WHERE ${conditions.join(" AND ")}`,
+    bindings,
   };
 }
 
@@ -354,13 +401,25 @@ function* replayPages(
   filter: ReplayFilter,
   liveOnly: boolean,
 ): IterableIterator<CaptureEvent> {
+  const normalized = normalizeReplayFilter(filter);
   let cursor: LedgerCursor | null = null;
   for (;;) {
-    const page = replayPage(db, filter, cursor, liveOnly);
-    if (page.events.length === 0) return;
-    for (const event of page.events) yield event;
-    if (page.cursor === null || page.events.length < REPLAY_PAGE) return;
-    cursor = page.cursor;
+    const where = replayWhere(normalized, cursor, liveOnly);
+    const rows = db
+      .query<EventRow, Array<string | number>>(
+        `
+          SELECT ${EVENT_COLUMNS}
+          FROM events
+          ${where.sql}
+          ORDER BY events.accepted_at, events.event_id
+          LIMIT ?
+        `,
+      )
+      .all(...where.bindings, REPLAY_PAGE_SIZE);
+    for (const row of rows) yield decodeStored(row, db);
+    const last = rows.at(-1);
+    if (last === undefined || rows.length < REPLAY_PAGE_SIZE) return;
+    cursor = { accepted_at: last.accepted_at, event_id: last.event_id };
   }
 }
 

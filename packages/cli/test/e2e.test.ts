@@ -2,7 +2,8 @@ import { fixtureConsent } from "./helpers";
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { listClaims, listConnections, openLedger } from "@kizuki/core";
+import { listClaims, listConnections } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { createHelpers } from "./helpers";
 
 const { cleanup, runCli, tempVault } = createHelpers();
@@ -37,8 +38,12 @@ describe("kizuki CLI stranger loop", () => {
       expect(new Set(entities.flatMap((claim) => claim.subjects)).size).toBe(3);
       for (const entity of entities) {
         expect(entity.frontmatter["type"]).toBe("topic");
-        expect(entity.subjects[0]).toMatch(/^markdown-folder:[a-f0-9]{64}$/);
-        expect(entity.frontmatter["x-subject-id"]).toBe(entity.subjects[0]);
+        expect(entity.subjects[0]).toMatch(
+          /^kizuki\.markdown-folder\/markdown-folder\/[a-f0-9]{64}$/,
+        );
+        expect(entity.frontmatter["x-subject-id"]).toMatch(
+          /^markdown-folder:[a-f0-9]{64}$/,
+        );
         expect(entity.authority).toBe("connector_evidence");
         expect(entity.provenance).toHaveLength(1);
       }

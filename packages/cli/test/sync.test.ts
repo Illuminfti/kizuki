@@ -3,7 +3,8 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { unlinkSync } from "node:fs";
-import { applyCanonWrite, createBudgetTracker, listClaims, listConnections, openLedger, resolveTarget, setSourceGrant } from "@kizuki/core";
+import { applyCanonWrite, createBudgetTracker, listClaims, listConnections, resolveTarget, setSourceGrant } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { createHelpers } from "./helpers";
 
 const { cleanup, runCli, tempVault, writeNotes } = createHelpers();

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import * as core from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 
 const methods = ["search", "searchResult", "timeline"] as const;
 type Method = (typeof methods)[number];
@@ -42,7 +43,7 @@ for (const method of methods) {
 }
 
 test("every public query ceiling withholds null, unknown and unlabeled rows in the actual ledger/index", () => {
-  const db = core.openLedger(":memory:");
+  const db = openLedger(":memory:");
   try {
     core.initSearch(db);
     for (const label of ["public", "personal", "private", "unlabeled", "unknown", null]) {
@@ -54,6 +55,7 @@ test("every public query ceiling withholds null, unknown and unlabeled rows in t
       if (result.status !== "stored") throw Error("synthetic event must be accepted");
       core.indexEvent(db, result.event);
       // Corrupt/missing labels are confined to this synthetic fixture.
+      db.exec("PRAGMA ignore_check_constraints = ON");
       db.query("UPDATE events SET sensitivity_hint = ? WHERE event_id = ?").run(label, result.event.event_id);
       db.query("UPDATE search_docs SET sensitivity = ? WHERE doc_id = ?").run(label, `event:${result.event.event_id}`);
     }

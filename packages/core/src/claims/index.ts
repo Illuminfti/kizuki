@@ -43,7 +43,7 @@ export {
 export type { DedupMode } from "./dedup";
 
 export { ClaimError } from "./errors";
-export { claimKey, hashBody, normalizeObject } from "./hash";
+export { claimKey, contentSignature, hashBody, normalizeObject } from "./hash";
 export {
   PREDICATE_REGISTRY,
   getPredicate,
@@ -52,7 +52,12 @@ export {
   predicateIds,
 } from "./predicates";
 export type { PredicateCardinality, PredicateSpec } from "./predicates";
-export { CLAIMS_SCHEMA_VERSION, applyClaimsV3, initClaims } from "./schema";
+export {
+  CLAIMS_SCHEMA_VERSION,
+  applyClaimsV3,
+  applyLegacyStagingIdempotency,
+  initClaims,
+} from "./schema";
 export {
   IDENTITY_LINK_STATUSES,
   IDENTITY_MERGE_MIN,

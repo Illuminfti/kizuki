@@ -143,8 +143,13 @@ describe("extract tri-state cursor", () => {
     const path = join(directory, "vault");
     initVault(path);
     const db = openLedger(join(path, ".kizuki", "kizuki.db"));
-    expect(accept(db, { ...validEvent(), source_record_id: "deleted", text: "deleted source", deleted: true }).status)
-      .toBe("stored");
+    const tombstone = accept(db, {
+      ...validEvent(),
+      source_record_id: "deleted",
+      text: "deleted source",
+      deleted: true,
+    });
+    if (tombstone.status !== "stored") throw new Error("tombstone fixture failed");
     putEvent(db, { source_record_id: "context", text: "KIZUKI CONTEXT v1\nprincipal=owner" });
     putEvent(db, { source_record_id: "live", text: "live source" });
     let seen = [] as readonly string[];

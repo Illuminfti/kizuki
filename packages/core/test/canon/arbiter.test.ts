@@ -346,6 +346,7 @@ describe("resolveTarget", () => {
           type: "person",
           status: "active",
           sensitivity: "personal",
+          taint: "clean",
           "x-subject-id": "person:grace",
         },
         body: "Hand-written page.\n",

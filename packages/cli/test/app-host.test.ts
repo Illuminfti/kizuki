@@ -196,7 +196,8 @@ test('browser owner enrollment uses native SignInIo with false TTY flags and ret
         await host.close();
     }
 });
-import { accept, applyCanonWrite, createBudgetTracker, insertClaim, openLedger, resolveTarget } from '@kizuki/core';
+import { accept, applyCanonWrite, createBudgetTracker, insertClaim, resolveTarget } from '@kizuki/core';
+import { openLedger } from '@kizuki/core/testing';
 import { existsSync } from 'node:fs';
 test('app activity and undo route through the existing native receipted writer', async () => {
     const setup = h.tempVault(), db = openLedger(join(setup.vault, '.kizuki/kizuki.db'));

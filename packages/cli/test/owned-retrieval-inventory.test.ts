@@ -1,7 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { createFts5RetrievalPort, FTS5_RETRIEVAL_ID, openLedger, setSourceGrant, tryAdvisoryFileLock } from "@kizuki/core";
+import { createFts5RetrievalPort, FTS5_RETRIEVAL_ID, setSourceGrant, tryAdvisoryFileLock } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import type { PortContext } from "@kizuki/core";
 import { openEmbeddedRetrievalPort, EMBEDDED_RETRIEVAL_ID } from "@kizuki/retrieval-pg";
 import { createOwnedRetrievalInventory } from "../src/owned-retrieval-inventory";

@@ -30,6 +30,22 @@ a SQLite-only rule for derived retrieval (D13); an owner-started daemon
 | `write-rfc` | Changing architecture, authority, durable state, or a binding contract |
 | `handoff-work` | Stopping, transferring, or preserving a lane |
 
+## Domain guidance skills
+
+These are narrow supplements, not standing policy or replacements for the
+operating skills. See `.agents/OPERATING_SYSTEM.md` for a concise orientation
+index.
+
+| Skill | Use when | Compose with |
+| --- | --- | --- |
+| `epistemic-integrity` | Turning evidence into claims, inferences, perspectives, hypotheses, forecasts, summaries, or context | `architecture-design` or `api-contract-design`; use `test-strategy` for proof |
+| `issue-pickup-execution` | An assigned GitHub issue or work packet needs a bounded lane | `orient-repository` then `implement-change`; use `review-change` and `handoff-work` as applicable |
+| `longitudinal-evaluation` | Designing replay fixtures, memory-quality checks, stale-state tests, outcome learning, or a release gauntlet | `test-strategy`; add `performance-engineering` or `release-readiness` when applicable |
+| `provenance-invalidation` | Changing correction, supersession, purge, source deletion, revisions, dependency graphs, caches, or rebuildability | `architecture-design`, `reliability-engineering`, and `test-strategy` |
+| `ux-dx-ax-parity` | Changing a public capability, CLI/MCP/API contract, error model, or product surface | `api-contract-design`; add `mcp-tool-design` or `cli-terminal-ux` for that surface |
+| `world-model-architecture` | Designing world-model ontology, temporal state, perspectives, World Slices, diffs, hypotheses, or Knowledge Atlas work | `architecture-design`, `epistemic-integrity`, and `provenance-invalidation` |
+| `world-slice-design` | Designing task-aware context, context packets, relevance packing, token budgets, freshness, deltas, or agent context | `world-model-architecture`, `mcp-tool-design`, and `security-privacy-review` |
+
 ## Engineering craft skills
 
 | Skill | Use when |

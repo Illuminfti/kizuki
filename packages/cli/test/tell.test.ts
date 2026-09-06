@@ -1,15 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-  accept,
-  applyCanonWrite,
-  createBudgetTracker,
-  insertClaim,
-  openLedger,
-  resolveTarget,
-} from "@kizuki/core";
+import { accept, applyCanonWrite, createBudgetTracker, insertClaim, resolveTarget } from "@kizuki/core";
 import type { CaptureEventInput, Claim, InsertClaimInput } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { createHelpers } from "./helpers";
 
 const { cleanup, runCli, tempVault } = createHelpers();

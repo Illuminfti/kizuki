@@ -11,6 +11,7 @@ export type CanonWriteErrorCode =
   | "provenance_unresolved"
   | "frontmatter_reserved"
   | "frontmatter_conflict"
+  | "frontmatter_invalid"
   | "page_type_invalid"
   | "target_invalid"
   | "writer_invalid"

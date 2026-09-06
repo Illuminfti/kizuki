@@ -1,5 +1,8 @@
 import { setSourceGrant } from "../src/ledger/source-grants";
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   Connector,
   HealthReport,
@@ -254,6 +257,50 @@ describe("runBatch", () => {
       cursor: "page-2",
     });
     expect(listProposals(db)).toHaveLength(2);
+    db.close();
+  });
+
+  test("a multi-event batch lands in the main sqlite file after close", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-ingest-wal-"));
+    const dbPath = join(directory, "ledger.sqlite");
+    try {
+      const db = openLedger(dbPath);
+      initStaging(db);
+      const events = Array.from({ length: 15 }, (_, i) => ({
+        ...validEvent(),
+        source_record_id: `rec-${i}`,
+        text: `wal-batch-marker ${i}`,
+      }));
+      const result = runBatch(db, { events, cursor: null }, NOTHING);
+      expect(result.errors).toEqual([]);
+      expect(result.stored).toBe(15);
+      db.close();
+      expect(readFileSync(dbPath).includes(Buffer.from("wal-batch-marker"))).toBe(
+        true,
+      );
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("a corrupt stored duplicate aborts the batch and does not store later events", () => {
+    const db = database();
+    runBatch(db, { events: [validEvent()], cursor: "one" }, NOTHING);
+    db.exec("DROP TRIGGER events_identity_update; UPDATE events SET origin='self'");
+    const result = runBatch(
+      db,
+      {
+        events: [validEvent(), { ...validEvent(), source_record_id: "rec-2" }],
+        cursor: "two",
+      },
+      NOTHING,
+    );
+    expect(result.stored).toBe(0);
+    expect(result.duplicates).toBe(0);
+    expect(result.errors.some((error) => /invalid|corrupt|origin/i.test(error))).toBe(true);
+    expect(
+      db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM events").get()?.count,
+    ).toBe(1);
     db.close();
   });
 

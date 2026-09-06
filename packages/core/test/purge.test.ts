@@ -297,6 +297,7 @@ describe("purgeEvents", () => {
     ]);
     expect(outcome.uncertain_pages.sort()).toEqual([
       "facts/bad-sources.md",
+      "facts/first.md",
       "facts/second.md",
     ]);
     expect(outcome.rewritten.map(({ page_path }) => page_path)).toEqual([
@@ -309,7 +310,7 @@ describe("purgeEvents", () => {
         )
         .all()
         .map(({ page_path }) => page_path),
-    ).toEqual(["facts/bad-sources.md"]);
+    ).toEqual(["facts/bad-sources.md", "facts/first.md"]);
     expect(readFileSync(join(vaultPath, "facts", "second.md"), "utf8")).not.toContain(
       target.event_id,
     );

@@ -7,8 +7,8 @@ interface AttributionFailure {
   reason: string;
 }
 
-const delimiter = /[\s<>"'()[\]{}|]/;
-const urlContinuation = /[A-Za-z0-9._~:/?#@%&=+,;$!-]/;
+const delimiter = /[\s<>"'()[\]{}|`]/;
+const tokenCharacter = /[\p{ID_Continue}\u200C\u200D]/u;
 
 function requiredEnvironment(name: string): string {
   const value = process.env[name];
@@ -25,17 +25,52 @@ function location(text: string, offset: number): { line: number; column: number 
   return { line, column: offset - lastNewline };
 }
 
-function schemeStart(text: string, lower: string, offset: number): number | null {
+function schemeStart(text: string, offset: number): number | null {
   let tokenStart = offset;
   while (tokenStart > 0 && !delimiter.test(text[tokenStart - 1] ?? "")) {
     tokenStart -= 1;
   }
-  const tokenPrefix = lower.slice(tokenStart, offset);
-  const relative = Math.max(
-    tokenPrefix.lastIndexOf("https://"),
-    tokenPrefix.lastIndexOf("http://"),
-  );
+  const tokenPrefix = text.slice(tokenStart, offset);
+  let relative = -1;
+  for (const match of tokenPrefix.matchAll(/https?:\/\//giu)) {
+    relative = match.index ?? relative;
+  }
   return relative < 0 ? null : tokenStart + relative;
+}
+
+function literalPattern(text: string): RegExp {
+  return new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "giu");
+}
+
+function characterBefore(text: string, offset: number): string | undefined {
+  if (offset === 0) return undefined;
+  const lastCodeUnit = text.charCodeAt(offset - 1);
+  const start =
+    lastCodeUnit >= 0xdc00 && lastCodeUnit <= 0xdfff && offset > 1
+      ? offset - 2
+      : offset - 1;
+  return text.slice(start, offset);
+}
+
+function characterAt(text: string, offset: number): string | undefined {
+  const codePoint = text.codePointAt(offset);
+  return codePoint === undefined ? undefined : String.fromCodePoint(codePoint);
+}
+
+function hasTokenBoundaries(text: string, offset: number, length: number): boolean {
+  return (
+    !tokenCharacter.test(characterBefore(text, offset) ?? "") &&
+    !tokenCharacter.test(characterAt(text, offset + length) ?? "")
+  );
+}
+
+function hasUrlBoundaries(text: string, offset: number, length: number): boolean {
+  const before = characterBefore(text, offset);
+  const after = characterAt(text, offset + length);
+  return (
+    (before === undefined || delimiter.test(before)) &&
+    (after === undefined || delimiter.test(after))
+  );
 }
 
 export function validateAttributionText(
@@ -49,25 +84,28 @@ export function validateAttributionText(
     throw new Error("canonical URL must end with the attribution identifier");
   }
 
-  const lower = text.toLowerCase();
   const failures: AttributionFailure[] = [];
-  let offset = 0;
-  while ((offset = lower.indexOf(identifier, offset)) >= 0) {
-    const urlStart = schemeStart(text, lower, offset);
+  let hasExactCredit = false;
+  let hasCanonicalUrl = false;
+  for (const match of text.matchAll(literalPattern(exactSpelling))) {
+    const offset = match.index;
+    if (offset === undefined) continue;
+    const urlStart = schemeStart(text, offset);
     let valid = false;
 
     if (urlStart === null) {
-      valid = text.slice(offset, offset + exactSpelling.length) === exactSpelling;
+      valid =
+        text.slice(offset, offset + exactSpelling.length) === exactSpelling &&
+        hasTokenBoundaries(text, offset, exactSpelling.length);
+      hasExactCredit ||= valid;
     } else {
       const expectedOffset = urlStart + canonicalUrl.length - identifier.length;
       const candidate = text.slice(urlStart, urlStart + canonicalUrl.length);
-      const before = text[urlStart - 1];
-      const after = text[urlStart + canonicalUrl.length];
       valid =
         offset === expectedOffset &&
         candidate === canonicalUrl &&
-        (before === undefined || !urlContinuation.test(before)) &&
-        (after === undefined || !urlContinuation.test(after));
+        hasUrlBoundaries(text, urlStart, canonicalUrl.length);
+      hasCanonicalUrl ||= valid;
     }
 
     if (!valid) {
@@ -80,7 +118,22 @@ export function validateAttributionText(
           : "public attribution URL is not the exact delimited canonical URL",
       });
     }
-    offset += identifier.length;
+  }
+  if (!hasExactCredit) {
+    failures.push({
+      path,
+      line: 1,
+      column: 1,
+      reason: "public attribution is missing the exact credit",
+    });
+  }
+  if (!hasCanonicalUrl) {
+    failures.push({
+      path,
+      line: 1,
+      column: 1,
+      reason: "public attribution is missing the canonical URL",
+    });
   }
   return failures;
 }

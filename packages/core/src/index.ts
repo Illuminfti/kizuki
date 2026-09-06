@@ -478,10 +478,14 @@ export type {
   VaultInitErrorCode,
 } from "./vault/init";
 export {
+  CANONICAL_FRONTMATTER_KEYS,
+  MAX_FRONTMATTER_ARRAY_ITEMS,
+  MAX_FRONTMATTER_STRING_CHARS,
   PAGE_SENSITIVITIES,
   PAGE_STATUSES,
   PAGE_TAINTS,
   PAGE_TYPES,
+  validateFrontmatterValue,
   validatePage,
 } from "./vault/schema";
 export type {
@@ -490,7 +494,7 @@ export type {
   PageTaint,
   PageType,
 } from "./vault/schema";
-export { WRITERS, isWriter } from "./vault/write";
+export { WRITERS, archiveRelPath, isWriter } from "./vault/write";
 export type { CanonWriteCapability, Writer } from "./vault/write";
 
 export {
@@ -504,10 +508,12 @@ export {
   RECEIPT_KINDS,
   applyCanonV4,
   applyCanonWrite,
+  CanonPageUnreadable,
   chooseCandidate,
   createBudgetTracker,
   getCanonReceipt,
   initCanon,
+  inspectPageIndex,
   latestReceiptForPage,
   laterReceiptsForPage,
   listAuditReceipts,
@@ -545,12 +551,22 @@ export type {
 } from "./canon";
 export type { WritePageOptions } from "./vault/write";
 export {
+  MAX_CANON_DEPTH,
+  MAX_CANON_PAGES,
+  MAX_CANON_PAGE_BYTES,
+  MAX_CANON_WALK_BYTES,
+  SCAN_FAILURE_CODES,
   findPageById,
   isLiveCanonPage,
   listCanonPages,
   listCanonPagesReport,
 } from "./vault/pages";
-export type { CanonPage, CanonPageReport, SkippedPage } from "./vault/pages";
+export type {
+  CanonPage,
+  CanonPageReport,
+  ScanFailureCode,
+  SkippedPage,
+} from "./vault/pages";
 export { readDerivedMeta, stampDerived } from "./derived-meta";
 export type {
   DerivedLayer,
@@ -565,12 +581,30 @@ export { isUlid, ulid } from "./util/ulid";
 export { isNonEmptyString, isPlainObject } from "./util/validate";
 export type { ValidationResult } from "./util/validate";
 
-export { openLedger } from "./ledger/db";
-export { readCheckpoint } from "./ledger/checkpoints";
+export { inspectOpenLedgerHealth as inspectLedgerHealth } from "./ledger/db";
+export {
+  LEDGER_BUSY_TIMEOUT_MS,
+  LEDGER_DOCTOR_ROW_CAP,
+  LEDGER_ID_MAX,
+  LEDGER_KIND_MAX,
+  MAX_READ_SINCE,
+  REPLAY_PAGE_SIZE,
+} from "./ledger/limits";
+export {
+  LEDGER_STORE_ERROR_CODES,
+  LedgerStoreError,
+  isLedgerStoreError,
+} from "./ledger/errors";
+export {
+  readCheckpoint,
+  readRailCursor,
+  writeRailCursor,
+} from "./ledger/checkpoints";
 export {
   accept,
   count,
   latestLedgerCursor,
+  normalizeReplayFilter,
   readSince,
   replay,
   replayLive,
@@ -580,8 +614,10 @@ export type {
   AcceptErrorKind,
   AcceptResult,
   LedgerCursor,
+  LedgerPage,
   ReplayFilter,
 } from "./ledger/ledger";
+export type { LedgerHealth, LedgerHealthFailure } from "./ledger/integrity";
 export {
   PURGE_CONNECTOR_ID_MAX,
   PURGE_ERROR_CODES,
@@ -666,7 +702,10 @@ export {
   runSync,
   runToCompletion,
 } from "./ingest/run";
-export { proposalsForEvent } from "./staging/producers";
+export {
+  DETERMINISTIC_PRODUCER_BUDGET,
+  proposalsForEvent,
+} from "./staging/producers";
 export { BACKUP_SCHEMA, exportVault, restoreVault, verifyBackup } from "./export";
 export type {
   BackupSchemaVersions,

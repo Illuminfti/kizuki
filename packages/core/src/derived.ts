@@ -24,6 +24,7 @@ import { initSearch } from "./search/schema";
 import { ulid } from "./util/ulid";
 import {
   canonPagesHash,
+  fatalCanonSkips,
   isLiveCanonPage,
   listCanonPagesReport,
 } from "./vault/pages";
@@ -76,7 +77,9 @@ export function rebuildDerived(
   vaultPath: string,
 ): DerivedRebuildResult {
   const report = listCanonPagesReport(vaultPath);
-  if (report.skipped.length > 0) throw new Error("canon is unreadable; derived rebuild refused");
+  if (fatalCanonSkips(report.skipped).length > 0) {
+    throw new Error("canon is unreadable; derived rebuild refused");
+  }
   const live = report.pages.filter(isLiveCanonPage);
   const generation = ulid();
   const rebuiltAt = new Date().toISOString();

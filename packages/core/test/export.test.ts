@@ -21,13 +21,16 @@ import {
   type ExportManifest,
   type ExportManifestEntry,
 } from "../src/export";
+import { readRailCursor, writeRailCursor } from "../src/ledger/checkpoints";
 import { saveCheckpoint } from "../src/ledger/connections";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "../src/ledger/db";
 import { accept } from "../src/ledger/ledger";
 import { revokeSourceGrant, resumeSourceRevocation, setSourceGrant } from "../src/ledger/source-grants";
 import { purgeEvents } from "../src/ledger/purge";
 import { listSubjectAliases } from "../src/claims/identity";
+import { fileProposal } from "../src/staging/proposals";
 import { readVaultId } from "../src/serve/vault-id";
+import { serializePage } from "../src/vault/frontmatter";
 import { initVault } from "../src/vault/init";
 import { validEvent } from "./fixtures";
 
@@ -84,7 +87,20 @@ function populated() {
   writeFileSync(join(vaultPath, "z-last.txt"), "z\n");
   writeFileSync(join(vaultPath, "ä-umlaut.txt"), "ae\n");
   mkdirSync(join(vaultPath, "people"), { recursive: true });
-  writeFileSync(join(vaultPath, "people", "Ada.md"), "---\nid: ada\n---\n");
+  writeFileSync(
+    join(vaultPath, "people", "Ada.md"),
+    serializePage({
+      data: {
+        id: "ada",
+        title: "Ada",
+        type: "person",
+        status: "active",
+        sensitivity: "public",
+        taint: "clean",
+      },
+      body: "",
+    }),
+  );
   writeFileSync(join(vaultPath, ".kizuki", "private-state"), "excluded\n");
   return { db, vaultPath, remainingEventId: second.event.event_id, sourceKey };
 }
@@ -134,6 +150,74 @@ function insertFixtureClaim(
     1,
     null,
   );
+}
+
+function fileSplitSignatures(
+  db: ReturnType<typeof openLedger>,
+  eventId: string,
+) {
+  const shared = {
+    kind: "claim" as const,
+    target: "facts/same-body",
+    body: "same body",
+    provenance: [eventId],
+    subjects: ["person:ada"],
+    producer: "deterministic" as const,
+    confidence: 1,
+  };
+  const first = fileProposal(db, {
+    ...shared,
+    frontmatter: { type: "fact", title: "one" },
+  });
+  const second = fileProposal(db, {
+    ...shared,
+    frontmatter: { type: "fact", title: "two" },
+  });
+  if (first.outcome !== "stored" || second.outcome !== "stored") {
+    throw new Error("expected two stored split-signature claims");
+  }
+  return { first: first.proposal, second: second.proposal, shared };
+}
+
+function liveSplitSignatures(db: ReturnType<typeof openLedger>) {
+  return db
+    .query<{ claim_id: string; content_hash: string }, []>(
+      `SELECT claim_id, content_hash FROM claims
+        WHERE target = 'facts/same-body' AND status = 'live'
+        ORDER BY created_at, claim_id`,
+    )
+    .all();
+}
+
+function rewriteClaimsJsonl(
+  backup: string,
+  manifest: ExportManifest,
+  rewrite: (row: Record<string, unknown>) => Record<string, unknown>,
+): void {
+  const path = join(backup, "claims", "claims.jsonl");
+  const rewritten = `${readFileSync(path, "utf8")
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.stringify(rewrite(JSON.parse(line) as Record<string, unknown>)))
+    .join("\n")}\n`;
+  const payload = Buffer.from(rewritten);
+  writeFileSync(path, payload);
+  chmodSync(path, 0o600);
+  const key = "claims/claims.jsonl";
+  const previous = manifest.files[key];
+  if (previous === undefined) throw new Error("expected claims/claims.jsonl");
+  writeSignedManifest(backup, {
+    ...manifest,
+    files: {
+      ...manifest.files,
+      [key]: {
+        count: previous.count,
+        size: payload.byteLength,
+        mode: 0o600,
+        sha256: new Bun.CryptoHasher("sha256").update(payload).digest("hex"),
+      },
+    },
+  });
 }
 
 function grantExport(db: ReturnType<typeof openLedger>, sourceKey: string): void {
@@ -286,6 +370,7 @@ describe("exportVault", () => {
     expect(manifest.files["ledger/event_purges.jsonl"]?.count).toBe(1);
     expect(manifest.files["connections.jsonl"]?.count).toBe(1);
     expect(manifest.files["checkpoints.jsonl"]?.count).toBe(1);
+    expect(manifest.files["rail_cursors.jsonl"]?.count).toBe(0);
     expect(manifest.snapshot.event_count).toBe(1);
     expect(JSON.parse(readFileSync(join(outDir, "manifest.json"), "utf8"))).toEqual(
       manifest,
@@ -300,6 +385,47 @@ describe("exportVault", () => {
       expect(lstatSync(join(outDir, path)).mode & 0o777).toBe(0o600);
     }
     expect(lstatSync(outDir).mode & 0o777).toBe(0o700);
+    db.close();
+  });
+
+  test("round-trips extract rail cursors without putting them in checkpoints", () => {
+    const { db, vaultPath } = populated();
+    writeRailCursor(db, "kizuki.producer.model", "extract", "2026-01-01T00:00:00Z\t01ARZ3NDEKTSV4RRFFQ69G5FAV");
+    writeRailCursor(db, "kizuki.producer.model", "extract-deferred-scan", "01ARZ3NDEKTSV4RRFFQ69G5FAV");
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    const manifest = exportVault(db, vaultPath, backup);
+    expect(manifest.files["rail_cursors.jsonl"]?.count).toBe(2);
+    const rails = readFileSync(join(backup, "rail_cursors.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(rails).toEqual([
+      {
+        rail: "kizuki.producer.model",
+        source_key: "extract",
+        cursor: "2026-01-01T00:00:00Z\t01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        updated_at: expect.any(String),
+      },
+      {
+        rail: "kizuki.producer.model",
+        source_key: "extract-deferred-scan",
+        cursor: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        updated_at: expect.any(String),
+      },
+    ]);
+    expect(readFileSync(join(backup, "checkpoints.jsonl"), "utf8")).not.toContain(
+      "kizuki.producer.model",
+    );
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    restoreVault(backup, target);
+    const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
+    expect(readRailCursor(restored, "kizuki.producer.model", "extract")).toBe(
+      "2026-01-01T00:00:00Z\t01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    );
+    expect(readRailCursor(restored, "kizuki.producer.model", "extract-deferred-scan")).toBe(
+      "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    );
+    restored.close();
     db.close();
   });
 
@@ -631,6 +757,81 @@ describe("restoreVault", () => {
         )
         .all(),
     ).toEqual([{ page_id: "ada", rel_path: "people/Ada.md" }]);
+    restored.close();
+    db.close();
+  });
+
+  test("restore keeps split content signatures so a refile stays a duplicate", () => {
+    const { db, vaultPath, remainingEventId } = populated();
+    const { first, second, shared } = fileSplitSignatures(db, remainingEventId);
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    const manifest = exportVault(db, vaultPath, backup);
+    const exported = readFileSync(join(backup, "claims", "claims.jsonl"), "utf8")
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line) as { claim_id: string; content_hash: unknown })
+      .filter((row) => row.claim_id === first.proposal_id || row.claim_id === second.proposal_id);
+    expect(exported).toHaveLength(2);
+    expect(exported[0]?.content_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(exported[1]?.content_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(exported[0]?.content_hash).not.toBe(exported[1]?.content_hash);
+    expect(manifest.files["claims/claims.jsonl"]?.count).toBeGreaterThanOrEqual(2);
+
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    restoreVault(backup, target);
+    const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
+    const rows = liveSplitSignatures(restored);
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.claim_id).sort()).toEqual(
+      [first.proposal_id, second.proposal_id].sort(),
+    );
+    expect(rows[0]?.content_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(rows[1]?.content_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(rows[0]?.content_hash).not.toBe(rows[1]?.content_hash);
+
+    const again = fileProposal(restored, {
+      ...shared,
+      frontmatter: { type: "fact", title: "one" },
+    });
+    expect(again.outcome).toBe("duplicate");
+    if (again.outcome === "duplicate") {
+      expect(again.proposal.proposal_id).toBe(first.proposal_id);
+    }
+    restored.close();
+    db.close();
+  });
+
+  test("restore heals an old backup that omitted claim content hashes", () => {
+    const { db, vaultPath, remainingEventId } = populated();
+    const { first, second, shared } = fileSplitSignatures(db, remainingEventId);
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    const manifest = exportVault(db, vaultPath, backup);
+    rewriteClaimsJsonl(backup, manifest, (row) => {
+      const { content_hash: _omitted, ...rest } = row;
+      void _omitted;
+      return rest;
+    });
+
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    restoreVault(backup, target);
+    const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
+    const rows = liveSplitSignatures(restored);
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.claim_id).sort()).toEqual(
+      [first.proposal_id, second.proposal_id].sort(),
+    );
+    expect(rows[0]?.content_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(rows[1]?.content_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(rows[0]?.content_hash).not.toBe(rows[1]?.content_hash);
+
+    const again = fileProposal(restored, {
+      ...shared,
+      frontmatter: { type: "fact", title: "two" },
+    });
+    expect(again.outcome).toBe("duplicate");
+    if (again.outcome === "duplicate") {
+      expect(again.proposal.proposal_id).toBe(second.proposal_id);
+    }
     restored.close();
     db.close();
   });
