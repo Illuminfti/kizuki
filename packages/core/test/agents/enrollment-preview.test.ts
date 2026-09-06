@@ -12,11 +12,12 @@ function request(destination: string) {
   };
 }
 
-function fixture(): { vault: string; dbPath: string; clean(): void } {
+function fixture(): { vault: string; dbPath: string; credentialDir: string; clean(): void } {
   const vault = mkdtempSync(join(tmpdir(), "kizuki-enrollment-preview-"));
   const control = join(vault, ".kizuki"); mkdirSync(control); chmodSync(control, 0o700);
   const dbPath = join(control, "kizuki.db"); const db = openLedger(dbPath); db.close(); chmodSync(dbPath, 0o600);
-  return { vault, dbPath, clean: () => rmSync(vault, { recursive: true, force: true }) };
+  const credentialDir = mkdtempSync(join(tmpdir(), "kizuki-enrollment-credential-")); chmodSync(credentialDir, 0o700);
+  return { vault, dbPath, credentialDir, clean: () => { rmSync(vault, { recursive: true, force: true }); rmSync(credentialDir, { recursive: true, force: true }); } };
 }
 
 describe("agent enrollment preview", () => {
@@ -24,7 +25,7 @@ describe("agent enrollment preview", () => {
     const f = fixture();
     try {
       const before = readFileSync(f.dbPath);
-      expect(previewAgentEnrollment(f.vault, request(join(tmpdir(), "credential.json")))).toMatchObject({ status: "preview", authority: "none", credential: "absent" });
+      expect(previewAgentEnrollment(f.vault, request(join(f.credentialDir, "credential.json")))).toMatchObject({ status: "preview", authority: "none", credential: "absent" });
       expect(readFileSync(f.dbPath)).toEqual(before);
     } finally { f.clean(); }
   });
@@ -34,8 +35,8 @@ describe("agent enrollment preview", () => {
     try {
       const db = openLedger(f.dbPath); db.query("UPDATE schema_version SET version = 16").run(); db.close();
       const before = readFileSync(f.dbPath);
-      expect(() => previewAgentEnrollment(f.vault, request(join(tmpdir(), "credential.json")))).toThrow(AgentEnrollmentError);
-      try { previewAgentEnrollment(f.vault, request(join(tmpdir(), "credential.json"))); } catch (error) { expect((error as AgentEnrollmentError).code).toBe("migration_required"); }
+      expect(() => previewAgentEnrollment(f.vault, request(join(f.credentialDir, "credential.json")))).toThrow(AgentEnrollmentError);
+      try { previewAgentEnrollment(f.vault, request(join(f.credentialDir, "credential.json"))); } catch (error) { expect((error as AgentEnrollmentError).code).toBe("migration_required"); }
       expect(readFileSync(f.dbPath)).toEqual(before);
     } finally { f.clean(); }
   });
