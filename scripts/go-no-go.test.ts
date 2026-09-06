@@ -19,7 +19,7 @@ function fixture(platform = target) {
   const artifact = join(root, "artifact"); mkdirSync(artifact);
   const names = ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"];
   for (const name of names.slice(0, 3)) writeFileSync(join(artifact, name), "Synthetic evaluator fixture. Never executed.");
-  writeFileSync(join(artifact, "BUILD.json"), JSON.stringify({ schema: "kizuki.release-build/v1", source_sha: source, target: platform, bun_version: "1.3.10" }));
+  writeFileSync(join(artifact, "BUILD.json"), JSON.stringify({ schema: "kizuki.release-build/v1", source_sha: source, target: platform, bun_version: "1.3.14" }));
   writeFileSync(join(artifact, "SHA256SUMS"), names.map(name => `${digest(readFileSync(join(artifact, name)))}  ${name}`).join("\n") + "\n");
   const execution = "/tmp/kizuki-artifact-proof-synthetic/execution", vault = `${execution}/vault`, restored = `${execution}/restored`, exported = `${execution}/export`;
   const commands: [string, string[]][] = [
@@ -35,7 +35,7 @@ function fixture(platform = target) {
   const receipt = {
     schema: "kizuki.artifact-proof/v1", source_sha: source, target: platform,
     host_platform: platform === target ? "linux" : "darwin", host_arch: platform === target ? "x64" : "arm64",
-    binary_sha256: digest(readFileSync(join(artifact, "kizuki"))), bun_version: "1.3.10",
+    binary_sha256: digest(readFileSync(join(artifact, "kizuki"))), bun_version: "1.3.14",
     package_sha256: Object.fromEntries([...names, "SHA256SUMS"].map(name => [name, digest(readFileSync(join(artifact, name)))])),
     paths: { executable: "/tmp/kizuki-artifact-proof-synthetic/artifact/kizuki", home: `${execution}/home`, config: `${execution}/config/kizuki.toml`, vault, restored_vault: restored },
     steps: commands.map(([id, args]) => ({ id, command: args.length ? ["kizuki", ...args] : ["assert", "fixture is recalled"], exit_code: 0, passed: true, timeout_ms: args.length ? 30000 : 0 })), failures: [] as string[],
@@ -268,14 +268,14 @@ test("failed reads and mismatched evidence never report a caller-asserted digest
   expect(mismatched.status).toBe("FAIL"); expect(mismatched.evidence_sha256).toBeNull();
 });
 
-test("self-consistent packages must use the release policy Bun version, which is bound into verifier identity", () => {
+test.each(["1.3.10", "9.9.9"])("self-consistent packages with Bun %s are refused by the release policy and verifier identity", (version) => {
   const f = fixture();
-  const build = JSON.parse(readFileSync(join(f.artifact, "BUILD.json"), "utf8")); build.bun_version = "9.9.9";
+  const build = JSON.parse(readFileSync(join(f.artifact, "BUILD.json"), "utf8")); build.bun_version = version;
   writeFileSync(join(f.artifact, "BUILD.json"), JSON.stringify(build));
   const names = ["kizuki", "kizuki-mcp", "README.txt", "BUILD.json"];
   writeFileSync(join(f.artifact, "SHA256SUMS"), names.map(name => `${digest(readFileSync(join(f.artifact, name)))}  ${name}`).join("\n") + "\n");
   for (const name of [...names, "SHA256SUMS"]) f.receipt.package_sha256[name] = digest(readFileSync(join(f.artifact, name)));
-  f.receipt.bun_version = "9.9.9"; f.save();
+  f.receipt.bun_version = version; f.save();
   const result = evaluateRelease("rc", f.indexPath);
   expect(gate(result, `artifact.${target}`).status).toBe("FAIL");
   expect(gate(result, `artifact.${target}`).reason).toBe("unsupported-package-bun-version");

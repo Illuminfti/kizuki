@@ -10,9 +10,11 @@ import {
 
 test("runtime, package metadata and resolved types share the checked-in Bun pin", () => {
   expect(validateToolchain()).toEqual([]);
-  expect(validateToolchain(undefined, "1.4.0")).toEqual([
-    expect.objectContaining({ reason: "verification requires Bun 1.3.10" }),
-  ]);
+  for (const runtime of ["1.3.10", "1.4.0"]) {
+    expect(validateToolchain(undefined, runtime)).toEqual([
+      expect.objectContaining({ reason: "verification requires Bun 1.3.14" }),
+    ]);
+  }
   const root = mkdtempSync(join(tmpdir(), "kizuki-toolchain-"));
   try {
     for (const name of [".bun-version", "package.json", "bun.lock"]) {
@@ -23,7 +25,7 @@ test("runtime, package metadata and resolved types share the checked-in Bun pin"
     pkg.devDependencies["@types/bun"] = "^1.3.0";
     writeFileSync(join(root, "package.json"), JSON.stringify(pkg));
     expect(validateToolchain(root).some(failure => failure.reason.includes("runtime types"))).toBe(true);
-    const lock = readFileSync(join(root, "bun.lock"), "utf8").replace('"bun-types@1.3.10"', '"bun-types@1.4.0"');
+    const lock = readFileSync(join(root, "bun.lock"), "utf8").replace('"bun-types@1.3.14"', '"bun-types@1.4.0"');
     writeFileSync(join(root, "bun.lock"), lock);
     expect(validateToolchain(root).some(failure => failure.reason.includes("resolved Bun"))).toBe(true);
     writeFileSync(join(root, "package.json"), "{");
@@ -45,7 +47,7 @@ function ciWorkflow(overrides?: {
     `      - uses: ${pinnedCheckout}
         with: { fetch-depth: 0, ref: "${pinnedRef}" }
       - uses: ${pinnedBun}
-        with: { bun-version: 1.3.10 }
+        with: { bun-version: 1.3.14 }
       - run: bun run verify`;
   return `name: ${name}
 on:
@@ -136,7 +138,7 @@ describe("workflow validation", () => {
       testSteps: `      - uses: ${pinnedCheckout}
         with: { fetch-depth: 1, ref: "${pinnedRef}" }
       - uses: ${pinnedBun}
-        with: { bun-version: 1.3.10 }
+        with: { bun-version: 1.3.14 }
       - run: bun run verify`,
     });
     expect(validateWorkflowText(".github/workflows/ci.yml", text)).toEqual([
@@ -175,7 +177,7 @@ jobs:
       testSteps: `      - uses: ${pinnedCheckout}
         with: { fetch-depth: 0, ref: "${pinnedRef}" }
       - uses: ${pinnedBun}
-        with: { bun-version: 1.3.10 }
+        with: { bun-version: 1.3.14 }
       - if: hashFiles('scripts/verify.sh') == ''
         run: bun run verify`,
     });
