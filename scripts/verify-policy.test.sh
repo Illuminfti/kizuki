@@ -199,7 +199,7 @@ if assert_safe_reachable_commit_messages "$history_messages" >/dev/null 2>&1; th
   exit 1
 fi
 
-remaining_tokens=('her''mes' 'ika-''hetzner' 'alb''edo' 'g''brain')
+remaining_tokens=('her''mes' 'ika-''hetzner' 'g''brain')
 for remaining in "${remaining_tokens[@]}"; do
   printf 'review notes mention %s\n' "$remaining" >"$history_messages"
   if assert_safe_reachable_commit_messages "$history_messages" >/dev/null 2>&1; then
@@ -208,10 +208,13 @@ for remaining in "${remaining_tokens[@]}"; do
   fi
 done
 
-# Trailer lines are ignored by denylist-history; body tokens still fail.
+# Trailer lines are ignored by denylist-history.
+# Floor-guardian display names are tracked-text only (not history).
 printf 'Harden doctor\n\nCo-authored-by: Alb''edo <nazarick@agentmail.to>\n' >"$history_messages"
 assert_safe_reachable_commit_messages "$history_messages"
 printf 'Harden doctor\n\nmentions alb''edo in the body\n\nCo-authored-by: bot <bot@example.invalid>\n' >"$history_messages"
+assert_safe_reachable_commit_messages "$history_messages"
+printf 'Harden doctor\n\nmentions her''mes in the body\n\nCo-authored-by: bot <bot@example.invalid>\n' >"$history_messages"
 if assert_safe_reachable_commit_messages "$history_messages" >/dev/null 2>&1; then
   printf 'policy test failed: body denylist token passed when trailer present\n' >&2
   exit 1
