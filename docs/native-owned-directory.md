@@ -116,3 +116,74 @@ The positive adapter cases require a qualified native filesystem ancestry.
 An unsupported or UID-mapped sandbox is recorded as refusal, with positive
 cases skipped; those skips provide no backend qualification. Native Linux CI
 requires qualified custody. No macOS adapter qualification is claimed.
+
+## Internal sibling publication
+
+`OwnedDirectory.createStaging(name)` exclusively creates a 0700 child through
+the retained parent descriptor, syncs the new directory and parent, and returns
+the observed device/inode identity. An error preserves any remaining child;
+it does not grant cleanup authority for an inode that was never returned.
+
+`publishStaging(stageName, stageIdentity, destinationName, expectedDestination)`
+moves that private staging directory to a sibling. Names are single valid UTF-8
+components of at most 255 bytes; identities are bounded unsigned 64-bit values.
+The parent must belong to the effective user without group/other write access,
+or be a root-owned sticky directory such as `/tmp`. Staging and an existing
+destination must belong to the effective user with no group/other permission
+bits. The method retains the stage and existing destination descriptors and
+checks their identities along with the selected parent before effects.
+
+Every move uses the fixed Linux x86_64 `renameat2` syscall 316 with
+`RENAME_NOREPLACE`, returning the signed kernel status through the sealed
+loader. An occupied destination cannot be overwritten. Unsupported syscall or
+filesystem flag results refuse publication without a pathname fallback. The
+existing page and credential helper symbols retain their behavior.
+
+An expected absent destination publishes directly. An expected owner-only empty
+destination is first moved without replacement to the bounded sibling name
+`.kizuki-empty-<destination-device-hex>-<destination-inode-hex>-<stage-inode-hex>`.
+The helper checks and syncs this parked inode before publishing. Following
+publication it checks that the parked inode is still the original empty
+directory, removes it using fixed empty-directory-only `unlinkat`, and syncs
+the parent. An occupied parking name refuses the operation. No recursive
+deletion is used for publication or recovery.
+
+Success returns only `{ publication: "published", durability: "synced" }` after
+the required directory syncs and final observations. The caller must sync staged
+file contents and hold its mutation ownership across staging, final guards,
+publication and cleanup. These directory syncs do not qualify file contents,
+archive consistency or a complete backup/recovery protocol.
+
+`OwnedDirectoryPublicationError` reports a bounded reason, publication state
+(`not_published`, `published`, or `uncertain`), directory durability state,
+`cleanup_safe`, and an optional parked-name/identity recovery hint. A failed
+publication can restore the original empty inode only through another
+no-replace move. `cleanup_safe` is true only after the original stage is
+revalidated and any originally present destination is proved restored; a
+caller must still revalidate before cleanup. Failed restoration preserves the
+stage and parked inode. A published result followed by a failed sync or parked
+removal is an error with cleanup refused, never success. Unknown observations
+preserve all remaining names. The recovery hint is not a deletion capability.
+
+The protocol does not provide atomic source-inode compare-and-swap against an
+unrestricted same-owner external editor. It relies on the caller excluding
+those writers; final inode checks cannot remove that limitation. Process
+termination can leave a parked empty inode, and no general crash journal or
+automatic post-crash cleanup is introduced. Qualification covers the local
+Linux filesystem used by the fixtures; it does not qualify NFS or another
+remote filesystem, where a reported rename error can follow a server-side
+effect. See the [Linux rename documentation](https://man7.org/linux/man-pages/man2/rename.2.html).
+
+The bounded qualification uses fixed private fixtures and deterministic syscall
+or sync refusal injection, without concurrent pathname replacement:
+
+```bash
+bun test packages/core/test/util/owned-directory-publication.test.ts packages/core/test/util/native-loader.test.ts
+```
+
+It covers absent and empty destinations, occupied and changed expectations,
+parking collisions, staging custody, signed unsupported results, restoration,
+and publication/durability uncertainty. The sticky `/tmp` positive case requires
+root custody; a UID-mapped sandbox instead verifies refusal and gives that
+positive case no qualification credit. Export and canon integrations, copied
+executable proof, and release acceptance remain separate gates.

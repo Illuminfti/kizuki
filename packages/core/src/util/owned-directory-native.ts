@@ -56,6 +56,23 @@ long kizuki_unlink_owned_child(int parent, const char *name) {
     : "rcx", "r11", "memory", "cc");
   return result;
 }
+long kizuki_rename_owned_child_noreplace(int from_parent, const char *from_name,
+                                        int to_parent, const char *to_name) {
+  long result;
+  register const char *destination __asm__("r10") = to_name;
+  register long flags __asm__("r8") = 1L; /* RENAME_NOREPLACE */
+  __asm__ volatile ("syscall" : "=a"(result)
+    : "a"(316L), "D"((long)from_parent), "S"(from_name), "d"((long)to_parent), "r"(destination), "r"(flags)
+    : "rcx", "r11", "memory", "cc");
+  return result;
+}
+long kizuki_remove_empty_owned_child(int parent, const char *name) {
+  long result;
+  __asm__ volatile ("syscall" : "=a"(result)
+    : "a"(263L), "D"((long)parent), "S"(name), "d"(0x200L) /* AT_REMOVEDIR */
+    : "rcx", "r11", "memory", "cc");
+  return result;
+}
 `;
 
 /** Fixed, sealed source needs no compiler executable, headers or writable path.
@@ -88,6 +105,8 @@ export function loadOwnedDirectoryNative() {
           kizuki_mkdir_owned_child: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.i64_fast },
           kizuki_rename_owned_child: { args: [FFIType.i32, FFIType.ptr, FFIType.i32, FFIType.ptr], returns: FFIType.i64_fast },
           kizuki_unlink_owned_child: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.i64_fast },
+          kizuki_rename_owned_child_noreplace: { args: [FFIType.i32, FFIType.ptr, FFIType.i32, FFIType.ptr], returns: FFIType.i64_fast },
+          kizuki_remove_empty_owned_child: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.i64_fast },
         },
       });
       return {
@@ -101,6 +120,8 @@ export function loadOwnedDirectoryNative() {
           mkdirChild: compiled.symbols.kizuki_mkdir_owned_child,
           renameChild: compiled.symbols.kizuki_rename_owned_child,
           unlinkChild: compiled.symbols.kizuki_unlink_owned_child,
+          renameChildNoReplace: compiled.symbols.kizuki_rename_owned_child_noreplace,
+          removeEmptyChild: compiled.symbols.kizuki_remove_empty_owned_child,
         },
       };
     } finally { closeSync(fd); }
