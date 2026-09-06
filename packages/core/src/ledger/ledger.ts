@@ -276,6 +276,14 @@ export function readEvent(db: Database, eventId: string): CaptureEvent | null {
   return row === null ? null : decodeStored(row, db);
 }
 
+/** Bounded current evidence lookup, sharing replay's source-tombstone ordering. */
+export function readLiveEvent(db: Database, eventId: string): CaptureEvent | null {
+  const row = db.query<EventRow, [string]>(
+    `SELECT ${EVENT_COLUMNS} FROM events WHERE event_id=? AND ${LIVE_PREDICATE}`,
+  ).get(eventId);
+  return row === null ? null : decodeStored(row, db);
+}
+
 export function readSince(
   db: Database,
   cursor: LedgerCursor | null,

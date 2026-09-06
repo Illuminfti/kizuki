@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { CanonAuthorityResolver, type CanonRevisionBasis } from "../canon/authority";
-import { readEvent } from "../ledger/ledger";
+import { readLiveEvent } from "../ledger/ledger";
 import { sourceEventsAllowed } from "../ledger/source-grants";
 import { eventIdFromReference } from "../retrieval/ids";
 import { isLiveCanonPage, type CanonPage } from "./pages";
@@ -22,8 +22,8 @@ export function assessLivePageEvidence(
   const sourceIds = [...new Set(sources.value.map(eventIdFromReference))];
   try {
     for (const id of sourceIds) {
-      const event = readEvent(db, id);
-      if (event === null || event.deleted || event.origin !== "external") {
+      const event = readLiveEvent(db, id);
+      if (event === null || event.origin !== "external") {
         return { admitted: false, reason: "sources_unavailable" };
       }
     }
