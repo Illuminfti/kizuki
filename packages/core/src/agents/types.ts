@@ -76,13 +76,21 @@ function freezeGrant(grant: Grant): Grant {
   }) as Grant;
 }
 
-/**
- * Everything but `correct`. Relaying the owner's own words files at the top
- * authority tier and retires live claims, so it is granted deliberately or
- * not at all (RFC 0002 §6.4; invariant 8).
- */
+/** New arbitrary agents authenticate and audit, but receive no authority. */
 export const DEFAULT_GRANT: Grant = freezeGrant({
-  ceiling: "personal",
+  ceiling: "public",
+  types: [],
+  subjects: [],
+  since: null,
+  until: null,
+  tools: [],
+  rate_limit_per_minute: 60,
+  relay_owner_corrections: false,
+});
+
+/** Harnesses the owner runs themselves (RFC 0002 §8.4). */
+export const OWNER_AGENT_GRANT: Grant = freezeGrant({
+  ceiling: "private",
   types: null,
   subjects: null,
   since: null,
@@ -99,13 +107,6 @@ export const DEFAULT_GRANT: Grant = freezeGrant({
   ],
   rate_limit_per_minute: 60,
   relay_owner_corrections: true,
-});
-
-/** Harnesses the owner runs themselves (RFC 0002 §8.4). */
-export const OWNER_AGENT_GRANT: Grant = freezeGrant({
-  ...DEFAULT_GRANT,
-  ceiling: "private",
-  tools: [...DEFAULT_GRANT.tools],
 });
 
 export interface Agent {

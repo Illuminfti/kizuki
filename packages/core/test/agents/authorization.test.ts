@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_GRANT,
   OWNER,
+  OWNER_AGENT_GRANT,
   authorize,
   filterServable,
   toolAllowed,
@@ -9,7 +10,7 @@ import {
 import type { Grant, Servable } from "../../src/agents";
 
 function grant(overrides: Partial<Grant> = {}): Grant {
-  return { ...DEFAULT_GRANT, tools: [...DEFAULT_GRANT.tools], ...overrides };
+  return { ...OWNER_AGENT_GRANT, ceiling: "personal", tools: [...OWNER_AGENT_GRANT.tools], ...overrides };
 }
 
 function item(overrides: Partial<Servable> = {}): Servable {

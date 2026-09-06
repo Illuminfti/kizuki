@@ -17,9 +17,13 @@
   receipt records `relayed_by`, and `Grant.tools` may exclude `correct` or
   set `relay_owner_corrections: false` to downgrade the tier to
   `owner_authored` (RFC 0002 §6.4).
-- `DEFAULT_GRANT.ceiling` stays `personal`. Add the `OWNER_AGENT_GRANT`
-  preset with `ceiling: "private"`, created by
-  `kizuki agent add <name> --owner-agent` (RFC 0002 §8.4).
+- **Superseded by D18 (2026-09-05):** arbitrary enrollment defaults to
+  `ceiling: "public"`, empty tools/types/subjects, null time bounds, 60/minute
+  and `relay_owner_corrections: false`. Empty arrays deny; explicit `null`
+  selects unscoped access. `OWNER_AGENT_GRANT` is the separate literal private
+  preset chosen explicitly by a trusted caller; `addAgent` never selects it
+  by omission. Existing stored grants and the built-in `OWNER` are unchanged.
+  See RFC 0002 §8.4; this spec does not prescribe a CLI preset flag.
 - Sensitivity is never owner-labeled (D11). Enforcement order is unchanged
   and stays below the prompt layer: `held`, then `missing_sensitivity`, then
   `above_ceiling`, then type, subject and time. A ceiling filter fails
@@ -33,7 +37,7 @@ CONVENTIONS.md first. Do NOT edit `ledger/`, `staging/`, `vault/`,
 ## Objective
 
 Architecture §8.1: agents are first-class consumers with identity, scoped
-read grants with a sensitivity ceiling, propose-only writes, rate limits and
+read grants with a sensitivity ceiling, `propose` and `correct` writes, rate limits and
 a full audit trail — enforced below the prompt layer by pure functions the
 serving lanes call.
 
@@ -75,13 +79,15 @@ CREATE INDEX IF NOT EXISTS agent_audit_by_agent ON agent_audit(agent_id, at);
 export const TOOLS = ['search','get_page','query_entities','timeline','context_packet','graph_neighbors','system_health','propose','correct'] as const
 export type Tool = typeof TOOLS[number]
 export const SENSITIVITY_ORDER = { public: 0, personal: 1, private: 2 } as const
-export interface Grant { ceiling: Sensitivity; types: string[] | null; subjects: string[] | null; since: string | null; until: string | null; tools: Tool[]; rate_limit_per_minute: number }
-export const DEFAULT_GRANT: Grant   // ceiling 'personal', types null, subjects null, since/until null, tools = all TOOLS, 60/min
+export interface Grant { ceiling: Sensitivity; types: string[] | null; subjects: string[] | null; since: string | null; until: string | null; tools: Tool[]; rate_limit_per_minute: number; relay_owner_corrections: boolean }
+export const DEFAULT_GRANT: Grant   // ceiling 'public', tools/types/subjects [], since/until null, 60/min, relay false
+export const OWNER_AGENT_GRANT: Grant // explicit literal private preset; tools ['search','get_page','query_entities','timeline','context_packet','graph_neighbors','system_health','propose']; types/subjects/since/until null, 60/min, relay true
 export const OWNER: Principal       // { kind:'owner', name:'owner', grant: { ceiling:'private', ... unlimited } } — never persisted
 export interface Agent { agent_id; name; created_at; revoked_at: string | null }
 export type Principal = { kind: 'owner'; name: 'owner'; grant: Grant } | { kind: 'agent'; agent: Agent; grant: Grant }
 
 export function addAgent(db, name, grant?: Partial<Grant>): { agent: Agent; token: string }
+   // omitted grant uses DEFAULT_GRANT; the owner preset requires an explicit argument
    // token = 'kzk_' + 32 bytes crypto.getRandomValues base32 (Crockford); shown once; store sha256
 export function authenticate(db, token): Principal | null     // null for unknown, revoked, or malformed; constant-time compare on the hash
 export function getAgent(db, name): Agent | null
