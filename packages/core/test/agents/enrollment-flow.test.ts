@@ -22,4 +22,16 @@ describe("agent enrollment flow", () => {
       expect(enrollAgent(f.vault, f.request)).toMatchObject({ status: "completed", credential: "ready", replayed: true });
     } finally { f.clean(); }
   });
+  test("recovers a durable bound credential after reopening the ledger", () => {
+    const f = fixture(); try {
+      const first = enrollAgent(f.vault, f.request);
+      const db = openLedger(f.dbPath);
+      db.query("DELETE FROM agent_grants WHERE agent_id = ?").run(first.agent_id);
+      db.query("DELETE FROM agents WHERE agent_id = ?").run(first.agent_id);
+      db.query("UPDATE agent_enrollments SET state = 'file_bound', completed_at = NULL WHERE operation_id = ?").run(f.request.operation_id);
+      db.close();
+      expect(enrollAgent(f.vault, f.request)).toMatchObject({ status: "completed", credential: "ready", replayed: true });
+    } finally { f.clean(); }
+  });
+
 });
