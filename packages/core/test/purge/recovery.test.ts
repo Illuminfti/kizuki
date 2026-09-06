@@ -2,6 +2,17 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { OWNER, initAgents } from "../../src/agents";
+import { loadCanon, pageDecision, canonChunk } from "../../src/serving/canon";
+import { serveGetPage } from "../../src/serving/page";
+import { serveSearch } from "../../src/serving/search";
+import { serveEntities } from "../../src/serving/entities";
+import { serveGraph } from "../../src/serving/graph";
+import { serveHealth } from "../../src/serving/health";
+import { serveContextPacket } from "../../src/serving/packet";
+import { gateAsync } from "../../src/serving/gate";
+import { ServeError } from "../../src/serving/types";
+import { runRail } from "../../src/serve/rails";
 import { insertClaim } from "../../src/claims/store";
 import { PROVENANCE_ERASURE_CAPABILITY, type RetrievalDoc, type RetrievalPort } from "../../src/contracts/retrieval";
 import { rebuildDerived, refreshDerivedPage } from "../../src/derived";
@@ -11,6 +22,7 @@ import { listCanonPagesReport } from "../../src/vault/pages";
 import { exportVault, restoreVault } from "../../src/export";
 import { openLedger } from "../../src/ledger/db";
 import { accept } from "../../src/ledger/ledger";
+import { sourcePolicyEpoch } from "../../src/ledger/source-grants";
 import { createVaultFts5Port, inspectPurgeHealth, isHeld, purgeEvents, resumePurge, runPurge, setAfterCanonSnapshot, setPurgeRecoveryHook, verifyPurge } from "../../src/ledger/purge";
 import { search } from "../../src/search/query";
 import { DIRECT_RETRIEVAL_DESCRIPTOR, ReferenceRetrievalPort } from "../contracts/reference-retrieval";
@@ -29,6 +41,7 @@ async function fixture() {
   const disk = tempVault("kizuki-purge-recovery-");
   const path = join(disk.path, ".kizuki", "kizuki.db");
   let db = openLedger(path);
+  initAgents(db);
   disposers.push(disk.dispose, () => db.close());
   const event = (name: string, connector: string) => {
     const result = accept(db, { ...validEvent(), connector_id: connector, source_record_id: name, text: name });
@@ -93,6 +106,7 @@ describe("durable purge discovery", () => {
       expect(progress).toBe(0);
       expect(existsSync(target.backup)).toBe(false);
       f.reopen();
+      expect(() => serveGetPage({ db: f.db, vaultPath: f.vaultPath, principal: OWNER }, { id: "late-atlas" })).toThrow("canon unavailable during purge recovery");
       const pages = listCanonPagesReport(f.vaultPath).pages;
       const late = pages.find(page => page.id === "late-atlas")!;
       for (const rebuild of [
@@ -105,6 +119,9 @@ describe("durable purge discovery", () => {
       const result = await resumePurge(f.db, f.vaultPath, aliases[1]!.receipt_id, { retrieval: f.port, now: () => AT });
       expect(result.ok).toBe(true);
       expect(result.pages_rewritten).toBe(2);
+      const served = serveGetPage({ db: f.db, vaultPath: f.vaultPath, principal: OWNER }, { id: "late-atlas" });
+      expect(served.canon[0]?.excerpt).toContain("Current Atlas notes.");
+      expect(served.canon[0]?.excerpt).not.toContain(f.body);
       expect(JSON.parse(operation(f.db).ids)).toContain("page:late-atlas");
       expect(isHeld(f.db, "facts/late-atlas.md")).toBe(false);
       for (const id of ["atlas", "late-atlas"]) {
@@ -203,3 +220,106 @@ for (const advertised of [false, true]) {
     expect((await port.verifyAbsent([doc.doc_id])).found).toEqual([doc.doc_id]);
   });
 }
+
+test("canon admission withholds direct readers and cached snapshots until fresh ready-batch bytes are loaded", async () => {
+  const f = await fixture();
+  expect(sourcePolicyEpoch(f.db)).toBe(0);
+  const ctx = { db: f.db, vaultPath: f.vaultPath, principal: OWNER };
+  let cached: ReturnType<typeof loadCanon> | undefined;
+  setAfterCanonSnapshot(() => { f.page("late-atlas"); cached = loadCanon(ctx); });
+  setPurgeRecoveryHook(stage => { if (stage === "phase-one-committed") throw new Error("ordinary recovery fixture interruption"); });
+  expect(() => purgeEvents(f.db, f.vaultPath, { event_id: f.erased.event_id }, "retire ordinary fixture", {
+    retrieval_store: f.port.descriptor.id, now: () => AT,
+  })).toThrow("ordinary recovery fixture interruption");
+  setAfterCanonSnapshot(); setPurgeRecoveryHook();
+  if (cached === undefined) throw new Error("fixture canon snapshot was not loaded");
+  const late = cached.byId.get("late-atlas")!;
+  expect(isHeld(f.db, late.relPath)).toBe(false);
+  for (const read of [
+    () => serveGetPage(ctx, { id: "late-atlas" }), () => serveEntities(ctx, {}),
+    () => serveGraph(ctx, { id: "late-atlas" }), () => serveHealth(ctx),
+    () => canonChunk(cached!, late, { sensitivity: "personal", taint: "quoted" }, late.body, false),
+  ]) {
+    try { read(); throw new Error("fixture read should be refused"); }
+    catch (error) {
+      expect(error).toBeInstanceOf(ServeError);
+      expect(error).toMatchObject({ code: "held", message: "canon unavailable during purge recovery" });
+    }
+  }
+  expect(pageDecision(cached, OWNER.grant, late)).toEqual({ allow: false, reason: "held" });
+  await expect(serveSearch(ctx, { query: "Atlas", scope: "canon" })).rejects.toMatchObject({ code: "held" });
+  const packet = await serveContextPacket(ctx, { query: "Atlas", include: ["canon"], budget_tokens: 1000 });
+  expect(packet.canon).toEqual([]);
+  expect(packet.data?.packet_md).not.toContain(f.body);
+  expect(packet.data?.retrieval_degraded).toContain("context-unavailable");
+  const complete = await resumePurge(f.db, f.vaultPath, operation(f.db).receipt_id, { retrieval: f.port, now: () => AT });
+  expect(complete.ok).toBe(true);
+  // The earlier snapshot still contains retired support after the hold lifts.
+  expect(pageDecision(cached, OWNER.grant, late)).toEqual({ allow: false, reason: "held" });
+  expect(() => canonChunk(cached!, late, { sensitivity: "personal", taint: "quoted" }, late.body, false)).toThrow("canon unavailable during purge recovery");
+  const current = serveGetPage(ctx, { id: "late-atlas" });
+  expect(current.canon[0]?.excerpt).toContain("Current Atlas notes.");
+  expect(current.canon[0]?.excerpt).not.toContain(f.body);
+});
+
+test("unresolved legacy discovery refuses canon before walking the vault", async () => {
+  const f = await fixture();
+  const outcome = purgeEvents(f.db, f.vaultPath, { event_id: f.erased.event_id }, "retire ordinary fixture", { retrieval_store: f.port.descriptor.id, now: () => AT });
+  f.db.query("UPDATE purge_batches SET state='legacy_unresolved' WHERE batch_id=?").run(outcome.receipts[0]!.receipt_id);
+  const context = { db: f.db, vaultPath: join(f.vaultPath, "ordinary-unavailable-vault"), principal: OWNER };
+  expect(() => loadCanon(context)).toThrow("canon unavailable during purge recovery");
+  expect(() => serveGetPage(context, { id: "atlas" })).toThrow("canon unavailable during purge recovery");
+  const swept = await runRail(f.db, f.vaultPath, "purge-sweep", { now: () => AT, hooks: { claims: { db: f.db, retrieval: f.port } } });
+  expect(swept.status).toBe("degraded");
+  expect(swept.retrieval.pending_ops).toBe(1);
+  expect(f.db.query("SELECT state FROM purge_batches").all()).toEqual([{ state: "legacy_unresolved" }]);
+  expect(isHeld(f.db, "facts/atlas.md")).toBe(true);
+});
+
+for (const configured of [true, false]) {
+  for (const cut of ["phase-one-committed", "discovery-held"] as const) {
+    test(`scheduled purge recovery discovers ${cut} batches ${configured ? "with" : "without"} a retrieval operation`, async () => {
+      const f = await fixture();
+      if (!configured) {
+        await f.port.close();
+        rmSync(join(f.vaultPath, ".kizuki", "retrieval"), { recursive: true, force: true });
+      }
+      setAfterCanonSnapshot(() => f.page("late-atlas"));
+      setPurgeRecoveryHook(stage => { if (stage === cut) throw new Error("ordinary recovery fixture interruption"); });
+      expect(() => purgeEvents(f.db, f.vaultPath, { connector_id: "fixture" }, "retire ordinary fixture", {
+        retrieval_store: configured ? f.port.descriptor.id : null, now: () => AT,
+      })).toThrow("ordinary recovery fixture interruption");
+      setAfterCanonSnapshot(); setPurgeRecoveryHook();
+      expect(f.db.query("SELECT 1 FROM purge_ops").all()).toHaveLength(configured ? 1 : 0);
+      f.reopen();
+      const result = await runRail(f.db, f.vaultPath, "purge-sweep", {
+        now: () => AT, ...(configured ? { hooks: { claims: { db: f.db, retrieval: f.port } } } : {}),
+      });
+      expect(result.status).toBe("ok");
+      expect(result.retrieval.pending_ops).toBe(0);
+      expect(result.retrieval.removals).toBe(1);
+      expect(f.db.query("SELECT state FROM purge_batches").all()).toEqual([{ state: "ready" }]);
+      expect(f.db.query("SELECT 1 FROM canon_holds").all()).toEqual([]);
+      const served = serveGetPage({ db: f.db, vaultPath: f.vaultPath, principal: OWNER }, { id: "late-atlas" });
+      expect(served.canon[0]?.excerpt).toContain("Current Atlas notes.");
+      expect(served.canon[0]?.excerpt).not.toContain(f.body);
+    });
+  }
+}
+
+test("shared serving gate refuses a previously assembled canon response after an ordinary purge settles", async () => {
+  const f = await fixture();
+  const ctx = { db: f.db, vaultPath: f.vaultPath, principal: OWNER };
+  await expect(gateAsync(ctx, "search", {}, async ({ ctx: live }) => {
+    const index = loadCanon(live);
+    const page = index.byId.get("atlas")!;
+    const decision = pageDecision(index, OWNER.grant, page);
+    if (!decision.allow) throw new Error("ordinary fixture page unexpectedly held");
+    const chunk = canonChunk(index, page, decision, page.body, false);
+    const outcome = await runPurge(f.db, f.vaultPath, { event_id: f.erased.event_id }, "retire fixture", { retrieval: f.port, now: () => AT });
+    expect(outcome.purge_ops[0]?.state).toBe("done");
+    expect(isHeld(f.db, "facts/atlas.md")).toBe(false);
+    return { canon: [chunk], quoted: [], withheld: [] };
+  })).rejects.toMatchObject({ code: "held", message: "canon unavailable during purge recovery" });
+  expect(serveGetPage(ctx, { id: "atlas" }).canon[0]?.excerpt).not.toContain(f.body);
+});

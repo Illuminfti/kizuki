@@ -223,3 +223,32 @@ test("an ambiguous held title cannot return as an unresolved graph target", asyn
   expect(db.query("SELECT 1 FROM graph_edges WHERE dst IN ('Atlas','atlas') OR src='atlas'").all()).toEqual([]);
   expect(readDerivedMeta(db, "graph")?.status).toBe("degraded");
 });
+
+test("readable inactive held aliases preserve unrelated live graph edges in both rebuild paths", async () => {
+  const { db, vaultPath, erased, kept, port } = await fixture();
+  writeCanon(vaultPath, "facts/atlas.md", {
+    id: "atlas", title: "Atlas", type: "fact", status: "archived", sensitivity: "personal", taint: "quoted",
+    sources: [erased.event_id],
+  }, "Retired ordinary Atlas fixture.\n");
+  writeCanon(vaultPath, "facts/keeper.md", {
+    id: "keeper", title: "Keeper", type: "fact", status: "active", sensitivity: "personal", taint: "quoted",
+    sources: [kept.event_id],
+  }, "Current keeper fixture.\n");
+  writeCanon(vaultPath, "facts/reference.md", {
+    id: "reference", title: "Reference", type: "fact", status: "active", sensitivity: "personal", taint: "quoted",
+    sources: [kept.event_id],
+  }, "See [[Atlas]] and [[Keeper]].\n");
+  purgeEvents(db, vaultPath, { event_id: erased.event_id }, "retire inactive fixture", {
+    retrieval_store: port.descriptor.id, now: () => AT,
+  });
+  expect(isHeld(db, "facts/atlas.md")).toBe(true);
+  for (const rebuild of [() => rebuildDerived(db, vaultPath).graph, () => rebuildGraph(db, vaultPath)]) {
+    expect(rebuild()).toMatchObject({ pages: 2, edges: 3, status: "degraded" });
+    expect(db.query("SELECT src,dst,kind FROM graph_edges ORDER BY src,kind").all()).toEqual([
+      { src: "keeper", dst: kept.event_id, kind: "source" },
+      { src: "reference", dst: kept.event_id, kind: "source" },
+      { src: "reference", dst: "keeper", kind: "wikilink" },
+    ]);
+    expect(readDerivedMeta(db, "graph")).toMatchObject({ source_count: 2, canon_hash: null, status: "degraded" });
+  }
+});

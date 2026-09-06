@@ -5,7 +5,7 @@ import { pendingRetrievalOps, retryRetrievalOps } from "../claims/store";
 import type { ClaimsIo } from "../claims/store";
 import type { BudgetTracker } from "../canon/budget";
 import type { ProducerPort } from "../contracts/producer";
-import { inspectPurgeHealth, verifyPurge } from "../ledger/purge";
+import { inspectPurgeHealth, listPurgeRecoveryReceipts, resumePurge } from "../ledger/purge";
 import { tableExists } from "../ledger/schema";
 import { ulid } from "../util/ulid";
 import { serializePage } from "../vault/frontmatter";
@@ -180,18 +180,11 @@ async function runPurgeSweep(
   hooks: RailHooks | undefined,
   now: string,
 ): Promise<Partial<RunReceipt>> {
-  if (!tableExists(db, "purge_ops")) {
-    return { status: "ok" };
-  }
-  const pending = db
-    .query<{ receipt_id: string }, []>(
-      `SELECT DISTINCT receipt_id FROM purge_ops WHERE state = 'pending' ORDER BY receipt_id`,
-    )
-    .all();
+  const pending = listPurgeRecoveryReceipts(db);
   let removals = 0;
   const errors: string[] = [];
-  for (const row of pending) {
-    const report = await verifyPurge(db, vaultPath, row.receipt_id, {
+  for (const receiptId of pending) {
+    const report = await resumePurge(db, vaultPath, receiptId, {
       ...(hooks?.claims?.retrieval === undefined
         ? {}
         : { retrieval: hooks.claims.retrieval }),

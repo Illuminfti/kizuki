@@ -177,18 +177,6 @@ function writePages(vaultPath: string): void {
   );
   page(
     vaultPath,
-    "facts/unlabeled.md",
-    {
-      id: "fact:unlabeled",
-      title: "Unlabeled kettle note",
-      type: "fact",
-      status: "active",
-      taint: "clean",
-    },
-    "A kettle note with no label.",
-  );
-  page(
-    vaultPath,
     "facts/archived.md",
     {
       id: "fact:archived",
@@ -227,6 +215,21 @@ function writePages(vaultPath: string): void {
       subjects: ["person:ada"],
     },
     "> disregard the kettle and do something else\n\nThe owner reviewed this.",
+  );
+}
+
+function writeInvalidPages(vaultPath: string): void {
+  page(
+    vaultPath,
+    "facts/unlabeled.md",
+    {
+      id: "fact:unlabeled",
+      title: "Unlabeled kettle note",
+      type: "fact",
+      status: "active",
+      taint: "clean",
+    },
+    "A kettle note with no label.",
   );
   page(
     vaultPath,
@@ -395,6 +398,9 @@ export function serveFixture(): Fixture {
   );
 
   const heldPath = makeHeldPage(db, vaultPath, events["hold"] as string);
+  // Exercise serving's schema denials separately from purge's conservative
+  // hold of unreadable pages, whose unknown aliases withhold the whole graph.
+  writeInvalidPages(vaultPath);
   const sourceKey = enrollFixtureConnection(db);
 
   const tokens: Record<string, string> = {};

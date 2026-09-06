@@ -3,7 +3,7 @@ import {
   previewPurge,
   resolvePurgeConnectorId,
   runPurge,
-  verifyPurge,
+  resumePurge,
 } from "@kizuki/core";
 import type { PurgeFilter, PurgePreview } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
@@ -97,24 +97,25 @@ export const purgeCommand: Command = {
         throw new UsageError(this.usage);
       }
       return withVault(io, async (ctx) => {
-        const report = await verifyPurge(ctx.db, ctx.vaultPath, verifyId, ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval });
+        const report = await resumePurge(ctx.db, ctx.vaultPath, verifyId, ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval });
         if (asJson) {
           io.out(
             jsonEnvelope("purge", report.ok ? "ok" : "error", {
               ...report,
               ops: report.proofs.map((proof) => ({
                 store: proof.store,
-                state: proof.found.length === 0 ? "done" : "failed",
+                state: proof.found.length === 0 && proof.provenance.found.length === 0 ? "done" : "pending",
                 checked: proof.checked,
                 found: proof.found,
+                provenance: proof.provenance,
               })),
             }),
           );
         } else {
           for (const proof of report.proofs) {
-            const status = proof.found.length === 0 ? "done" : "failed";
+            const status = proof.found.length === 0 && proof.provenance.found.length === 0 ? "done" : "pending";
             io.out(
-              `${pad(proof.store, 23)} checked ${proof.checked}  found ${proof.found.length}   ${status}`,
+              `${pad(proof.store, 23)} checked ${proof.checked}  found ${proof.found.length}   ${status}   provenance checked ${proof.provenance.checked}  found ${proof.provenance.found.length}`,
             );
           }
           const hold = report.hold_lifted ? "hold lifted" : "hold remains";

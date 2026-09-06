@@ -451,6 +451,7 @@ describe("public surface", () => {
       "resolveSensitivity",
       "resolveTarget",
       "restoreVault",
+      "resumePurge",
       "resumeSourceRevocation",
       "resupersedeClaim",
       "retrievalDocId",
