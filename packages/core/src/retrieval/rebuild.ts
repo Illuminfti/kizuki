@@ -13,6 +13,7 @@ import { rebuildDerived } from "../derived";
 import { loadCanon, pageDecision } from "../serving/canon";
 import { claimReader } from "../serving/claims";
 import { currentQuotedSource, eventDecision } from "../serving/ledger";
+import { sha256Hex } from "../util/hash";
 import { isRfc3339 } from "../util/time";
 import { isLiveCanonPage, stringArray } from "../vault/pages";
 
@@ -45,8 +46,14 @@ function boundCanon(vaultPath: string): void {
   }
 }
 
-/** A bounded owner-authorized snapshot; dates come only from authoritative records. */
-export function readRetrievalDocuments(db: Database, vaultPath: string): RetrievalDoc[] {
+interface RebuildSnapshot {
+  epoch: number;
+  docs: RetrievalDoc[];
+  revisions: Map<string, string>;
+}
+
+/** No database transaction spans a port call. Revision hashes stay host-owned. */
+function readRebuildSnapshot(db: Database, vaultPath: string): RebuildSnapshot {
   boundCanon(vaultPath);
   return db.transaction(() => {
     const totals = db.query<{ n: number; bytes: number }, []>(
@@ -60,11 +67,17 @@ export function readRetrievalDocuments(db: Database, vaultPath: string): Retriev
     const index = loadCanon(ctx);
     if (index.pages.length + totals.n + claimTotal.n > MAX_REBUILD_RECORDS) tooLarge();
     const docs: RetrievalDoc[] = [];
+    const revisions = new Map<string, string>();
+    const admit = (input: RetrievalDoc, revision: unknown): void => {
+      const doc = validateRetrievalDoc(input);
+      docs.push(doc);
+      revisions.set(doc.doc_id, sha256Hex(JSON.stringify([doc, revision])));
+    };
     for (const page of index.pages) {
       if (!isLiveCanonPage(page)) continue;
       const decision = pageDecision(index, OWNER.grant, page);
       if (!decision.allow) continue;
-      docs.push({
+      admit({
         doc_id: `page:${page.id}`, kind: "page",
         title: typeof page.data["title"] === "string" ? page.data["title"] : page.id,
         text: page.body, sensitivity: decision.sensitivity, taint: decision.taint,
@@ -75,7 +88,7 @@ export function readRetrievalDocuments(db: Database, vaultPath: string): Retriev
         ])],
         provenance: decision.evidence.sourceIds, occurred_at: null,
         updated_at: isRfc3339(decision.evidence.revision.at) ? decision.evidence.revision.at : null,
-      });
+      }, { path: page.relPath, hash: page.contentHash, receipt: decision.evidence.revision });
     }
     for (const row of db.query<{ event_id: string; observed_at: string }, []>(
       "SELECT event_id,observed_at FROM events ORDER BY event_id",
@@ -84,43 +97,70 @@ export function readRetrievalDocuments(db: Database, vaultPath: string): Retriev
       if (source === null) continue;
       const access = eventDecision(OWNER.grant, source, ctx);
       if (!access.allow) continue;
-      docs.push({ doc_id: `event:${source.event_id}`, kind: "event", title: source.connector_id,
+      admit({ doc_id: `event:${source.event_id}`, kind: "event", title: source.connector_id,
         text: source.text, sensitivity: access.sensitivity, taint: "quoted",
         authority: "connector_evidence", subjects: source.subjects, provenance: [source.event_id],
-        occurred_at: source.occurred_at, updated_at: row.observed_at });
+        occurred_at: source.occurred_at, updated_at: row.observed_at }, null);
     }
     const reader = claimReader(db, OWNER.grant, { owner: true, purpose: "derive" });
     for (const claim of listClaims(db, { status: "live", limit: MAX_REBUILD_RECORDS })) {
-      if (reader.canRead(claim)) docs.push({ ...claimRetrievalDoc(claim), sensitivity: sourceSensitivity(db, claim.provenance, claim.sensitivity) });
+      if (reader.canRead(claim)) admit({ ...claimRetrievalDoc(claim), sensitivity: sourceSensitivity(db, claim.provenance, claim.sensitivity) }, claim);
     }
-    return docs.map(validateRetrievalDoc).sort((a, b) => a.doc_id.localeCompare(b.doc_id));
+    return { epoch: sourcePolicyEpoch(db), docs: docs.sort((a, b) => a.doc_id.localeCompare(b.doc_id)), revisions };
   }).deferred();
+}
+
+/** A bounded owner-authorized snapshot; dates come only from authoritative records. */
+export function readRetrievalDocuments(db: Database, vaultPath: string): RetrievalDoc[] {
+  return readRebuildSnapshot(db, vaultPath).docs;
 }
 
 /** Atomic inside each derived store; the stores do not share a distributed transaction. */
 async function rebuildUnderFence(scope: VaultMutationScope, db: Database, vaultPath: string, port: RetrievalPort | undefined, expired: () => boolean) {
   assertVaultMutationScope(scope, { db, vault_path: vaultPath });
   if (port !== undefined && sourcePolicyEpoch(db) > 0 && !isLocalSourcePort(port)) throw new PortError("unavailable", "source egress authorization unavailable", false);
-  const epoch = sourcePolicyEpoch(db);
-  const docs = readRetrievalDocuments(db, vaultPath);
+  const snapshot = readRebuildSnapshot(db, vaultPath);
+  const { docs } = snapshot;
   if (port !== undefined) {
     for (const doc of docs) requireSourceEvents(db, doc.provenance, { owner: true, purpose: "derive", port });
     if (port.rebuildFromDocuments === undefined) {
       throw new PortError("not_supported", "configured retrieval does not support atomic authoritative rebuild", false);
     }
+    const store = port.descriptor.id;
     recordSourceStoreWrite(db, port, docs.flatMap(doc => doc.provenance));
     let failure: unknown;
-    try { await port.rebuildFromDocuments(docs); } catch (error) { failure = error; }
-    if (expired() || epoch !== sourcePolicyEpoch(db)) {
-      const invalid = docs.filter(doc => expired() || !sourceEventsAllowed(db, doc.provenance, { owner: true, purpose: "derive", port })).map(doc => doc.doc_id);
-      for (let offset=0; offset<invalid.length; offset+=100) {
-        const ids = invalid.slice(offset, offset+100);
+    try { await port.rebuildFromDocuments(structuredClone(docs)); } catch (error) { failure = error; }
+    // Keep final admission and the floor rebuild in one synchronous continuation.
+    const remaining = new Map(snapshot.docs.map(doc => [doc.doc_id, doc]));
+    let refused = false;
+    let unreadable: unknown;
+    do {
+      let current: RebuildSnapshot | undefined;
+      try { current = readRebuildSnapshot(db, vaultPath); }
+      catch (error) { unreadable = error; }
+      const discardAll = expired() || port.descriptor.id !== store || current === undefined;
+      if (discardAll || snapshot.epoch !== current?.epoch) refused = true;
+      const invalid = [...remaining.values()].filter(doc => discardAll ||
+        current!.revisions.get(doc.doc_id) !== snapshot.revisions.get(doc.doc_id) ||
+        !sourceEventsAllowed(db, doc.provenance, { owner: true, purpose: "derive", port }));
+      if (invalid.length === 0) break;
+      refused = true;
+      const ids = invalid.slice(0, 100).map(doc => doc.doc_id);
+      try {
         await port.remove(ids);
         const proof = validateAbsenceProof(await port.verifyAbsent(ids), ids);
-        if (proof.found.length !== 0 || proof.store !== port.descriptor.id) throw new PortError("unavailable", "source rebuild cleanup could not establish absence", true);
+        if (proof.found.length !== 0 || proof.store !== store || port.descriptor.id !== store) {
+          throw new PortError("unavailable", "source rebuild cleanup could not establish absence", true);
+        }
+      } catch (error) {
+        // recordSourceStoreWrite's durable pending obligation is deliberately retained.
+        invalidateLocalSourcePort(port);
+        throw new PortError("unavailable", "source rebuild cleanup could not establish absence", true, { cause: error });
       }
-      throw new PortError("unavailable", "source authorization changed during rebuild", true);
-    }
+      for (const id of ids) remaining.delete(id);
+    } while (remaining.size > 0);
+    if (refused) throw new PortError("unavailable", "source authorization changed during rebuild; current evidence must be rebuilt", true,
+      unreadable === undefined ? undefined : { cause: unreadable });
     if (failure !== undefined) throw failure;
   }
   const floor = rebuildDerived(db, vaultPath);
