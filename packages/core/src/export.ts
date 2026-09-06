@@ -50,6 +50,15 @@ import { isUlid, ulid } from "./util/ulid";
 import { writeRailCursor } from "./ledger/checkpoints";
 import { NULL_CONNECTION_CONFIG } from "./ledger/connection-state";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "./ledger/db";
+import {
+  LINEAGE_UNAVAILABLE_WARNING,
+  MAX_SOURCE_SURVIVOR_LINEAGE_ROW_BYTES,
+  MAX_SOURCE_SURVIVOR_LINEAGE_ROWS,
+  SOURCE_SURVIVOR_LINEAGE_BACKUP,
+  assertSourceSurvivorLineageGraph,
+  restoreSourceSurvivorLineageRow,
+  sourceSurvivorLineageExportRows,
+} from "./ledger/canon-source-survivor-lineage";
 import { eventFromRow, parseEventRecord, type LegacyEventRecord } from "./ledger/event-record";
 import { bindLegacyEventOrigins, installEventIdentityGuards } from "./ledger/event-identity-schema";
 import { readSchemaVersion } from "./ledger/integrity";
@@ -1645,6 +1654,9 @@ function exportVaultOwned(
         options.signal,
       );
       writeStream(staging, "canon/receipts.jsonl", pageReceipts(db), files, options.signal);
+      if (schema.ledger >= 20) {
+        writeStream(staging, SOURCE_SURVIVOR_LINEAGE_BACKUP, sourceSurvivorLineageExportRows(db), files, options.signal);
+      }
       writeStream(
         staging,
         MACHINE_BYTE_INTENTS_BACKUP,
@@ -1796,6 +1808,20 @@ function verifyFiles(root: string, manifest: ExportManifest): void {
       manifest.files[RAIL_CURSORS_BACKUP] === undefined) {
     throw new Error("backup extract rail cursor stream is missing");
   }
+  const lineage = manifest.files[SOURCE_SURVIVOR_LINEAGE_BACKUP];
+  if (manifest.schema !== BACKUP_SCHEMA && lineage !== undefined) {
+    throw new Error("legacy backup must not include source-survivor lineage");
+  }
+  if (manifest.schema === BACKUP_SCHEMA && manifest.schema_versions.ledger >= 20) {
+    if (lineage === undefined) throw new Error("backup source-survivor lineage stream is missing");
+    if (!Number.isSafeInteger(lineage.count) || lineage.count < 0 || lineage.count > MAX_SOURCE_SURVIVOR_LINEAGE_ROWS ||
+        !Number.isSafeInteger(lineage.size) || lineage.size < 0) {
+      throw new Error("backup source-survivor lineage stream exceeds its bound");
+    }
+  }
+  if (manifest.schema === BACKUP_SCHEMA && manifest.schema_versions.ledger < 20 && lineage !== undefined) {
+    throw new Error("backup source-survivor lineage stream is incompatible with this ledger version");
+  }
   for (const key of Object.keys(manifest.files).sort(compareCodeUnits)) {
     const entry = manifest.files[key];
     if (entry === undefined) continue;
@@ -1861,9 +1887,11 @@ function assertBackupFormat(manifest: ExportManifest): void {
   // Ledger17 adds explicit rail cursors; ledger16 keeps them in checkpoints.
   // Ledger18 adds local enrollment custody. Ledger19 adds purge batches;
   // their completed history is optional in older v3 backups. Pending work is refused.
-  // Future migrations must make their own explicit compatibility decision.
+  // Ledger20 adds source-survivor lineage. Future migrations must make their
+  // own explicit compatibility decision.
   if ((manifest.schema === BACKUP_SCHEMA || manifest.schema === V2_BACKUP_SCHEMA) &&
-      versions.ledger !== 16 && versions.ledger !== 17 && versions.ledger !== 18 && versions.ledger !== 19) {
+      versions.ledger !== 16 && versions.ledger !== 17 && versions.ledger !== 18 &&
+      versions.ledger !== 19 && versions.ledger !== 20) {
     throw new Error("current backup ledger schema is invalid");
   }
   if (manifest.schema === LEGACY_BACKUP_SCHEMA && (versions.ledger < 1 || versions.ledger > 15)) {
@@ -2294,7 +2322,8 @@ function* streamRows(
     : relativePath === IDENTITY_BACKUP ? MAX_IDENTITY_BACKUP_ROW_BYTES
     : relativePath === SOURCE_INVENTORY_BACKUP ? MAX_SOURCE_INVENTORY_ROW_BYTES
     : relativePath === "ledger/purge_ops.jsonl" ? MAX_PURGE_OP_ROW_BYTES
-    : relativePath === "ledger/purge_batches.jsonl" || relativePath === "ledger/purge_batch_receipts.jsonl" ? 16_384 : Infinity;
+    : relativePath === "ledger/purge_batches.jsonl" || relativePath === "ledger/purge_batch_receipts.jsonl" ? 16_384
+    : relativePath === SOURCE_SURVIVOR_LINEAGE_BACKUP ? MAX_SOURCE_SURVIVOR_LINEAGE_ROW_BYTES : Infinity;
   let rows = 0;
   for (const row of readJsonl(path, maxRowBytes)) {
     if (relativePath === IDENTITY_BACKUP && ++rows > LEGACY_IDENTITY_SCAN_MAX_ROWS) {
@@ -2406,6 +2435,7 @@ export function restoreVault(
         for (const row of streamRows(source, manifest, "canon/receipts.jsonl", true)) {
           insertReceipt(db, row);
         }
+        restoreSourceSurvivorLineage(db, source, manifest);
         for (const row of streamRows(source, manifest, "connections.jsonl", true)) {
           insertConnectionRow(db, row);
         }
@@ -2499,6 +2529,9 @@ export function restoreVault(
         recovery_warnings: [
           ...(!hasPurgeHistory(manifest) || hasUnassignedPurgeReceipts(db)
             ? [PURGE_HISTORY_RECOVERY_WARNING]
+            : []),
+          ...(!hasSourceSurvivorLineage(manifest)
+            ? [LINEAGE_UNAVAILABLE_WARNING]
             : []),
           ...(manifest.schema_versions.serve < 8
             ? ["backup predates durable extraction recovery; an interrupted model decision was not preserved"]
@@ -2606,12 +2639,31 @@ function hasPurgeHistory(manifest: ExportManifest): boolean {
   const entries = PURGE_HISTORY_TABLES.map(table => manifest.files[`ledger/${table}.jsonl`]);
   const present = entries.filter(entry => entry !== undefined).length;
   if (present === 0) return false;
-  if (present !== entries.length || manifest.schema !== BACKUP_SCHEMA || manifest.schema_versions.ledger !== 19 ||
+  if (present !== entries.length || manifest.schema !== BACKUP_SCHEMA ||
+      (manifest.schema_versions.ledger !== 19 && manifest.schema_versions.ledger !== 20) ||
       entries.some(entry => entry === undefined || !Number.isSafeInteger(entry.count) || entry.count < 0 ||
         !Number.isSafeInteger(entry.size) || entry.size < 0)) {
     throw new Error("backup completed purge history streams are incomplete or incompatible");
   }
   return true;
+}
+
+function hasSourceSurvivorLineage(manifest: ExportManifest): boolean {
+  return manifest.schema === BACKUP_SCHEMA && manifest.schema_versions.ledger >= 20 &&
+    manifest.files[SOURCE_SURVIVOR_LINEAGE_BACKUP] !== undefined;
+}
+
+function restoreSourceSurvivorLineage(db: Database, backup: string, manifest: ExportManifest): void {
+  if (!hasSourceSurvivorLineage(manifest)) return;
+  const path = SOURCE_SURVIVOR_LINEAGE_BACKUP;
+  let count = 0;
+  for (const row of streamRows(backup, manifest, path, true)) {
+    restoreSourceSurvivorLineageRow(db, row);
+    count += 1;
+    if (count > MAX_SOURCE_SURVIVOR_LINEAGE_ROWS) throw new Error("backup source-survivor lineage exceeds its bound");
+  }
+  if (count !== manifest.files[path]!.count) throw new Error("backup source-survivor lineage count mismatch");
+  assertSourceSurvivorLineageGraph(db);
 }
 
 function purgeColumnLimit(column: string): number {

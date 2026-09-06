@@ -205,6 +205,22 @@ test("prototype property names are never authority tiers in any projection", asy
   }
 });
 
+test("an invalid survivor checkpoint is unavailable and does not fall back to raw receipt authority", async () => {
+  const f = fixture();
+  const event = putEvent(f.db);
+  const receipt = write(f.io, await storeClaim(f.db, event, { producer: "model", model_ref: "fixture:model", body: "A model note. Grace retained context." }));
+  const purged = withCanonMutationSync(snapshotCanonIo(f.io), (scope, io) => applyPurgeRewrite(scope, io, { rel_path: receipt.page_path, purged_event_ids: [], purged_claim_ids: [], purged_claim_bodies: ["A model note."] }));
+  expect(purged.authority).toBe("model_inference");
+  expectAuthority(f, receipt.page_path, "model_inference");
+  f.db.query(
+    `INSERT INTO canon_source_survivor_lineage
+      (version,kind,child_receipt_id,predecessor_receipt_id,before_hash,after_hash,predecessor_effective_authority,result_authority)
+     VALUES (1,'source_survivor',?,?,?,?,'model_inference','owner_correction')`,
+  ).run(purged.receipt_id, receipt.receipt_id, purged.before_hash, purged.after_hash);
+  rebuildDerived(f.db, f.vault);
+  expectWithheld(f, receipt.page_path);
+});
+
 test("a revert must begin at the after-hash of the write it names", async () => {
   const f = fixture();
   const event = nativeOwnerEvent(f.db, "Grace runs partnerships at Acme.");

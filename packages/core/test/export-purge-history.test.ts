@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exportVault, restoreVault, verifyBackup, type ExportManifest } from "../src/export";
-import { openLedger } from "../src/ledger/db";
+import { LEDGER_SCHEMA_VERSION, openLedger } from "../src/ledger/db";
 import { accept } from "../src/ledger/ledger";
 import { createVaultFts5Port, resumePurge, runPurge, verifyPurge } from "../src/ledger/purge";
 import { resumeSourceRevocation, revokeSourceGrant, setSourceGrant } from "../src/ledger/source-grants";
@@ -87,6 +87,8 @@ describe("completed purge history backup", () => {
     const second = await runPurge(f.db, f.vault, { connector_id: "boreal" }, "retire fixture", { now: () => AT });
     const before = history(f.db);
     const manifest = exportVault(f.db, f.vault, f.backup);
+    expect(manifest.schema_versions.ledger).toBe(LEDGER_SCHEMA_VERSION);
+    expect(manifest.files["canon/source-survivor-lineage.v1.jsonl"]?.count).toBe(0);
     expect(TABLES.map(table => manifest.files[`ledger/${table}.jsonl`]?.count)).toEqual([2, 3, 0]);
     expect(restoreVault(f.backup, f.restored).recovery_warnings).toEqual([]);
     const copy = f.openRestored();
@@ -149,7 +151,7 @@ describe("completed purge history backup", () => {
     const result = await runPurge(f.db, f.vault, { event_id: event.event_id }, "retire fixture");
     exportVault(f.db, f.vault, f.backup);
     rewriteBackup(f.backup, { purge_batches: null, purge_batch_receipts: null, purge_ops: null });
-    expect(verifyBackup(f.backup).schema_versions.ledger).toBe(19);
+    expect(verifyBackup(f.backup).schema_versions.ledger).toBe(LEDGER_SCHEMA_VERSION);
     expect(restoreVault(f.backup, f.restored).recovery_warnings.join(" ")).toContain("no membership was inferred");
     const copy = f.openRestored();
     expect(history(copy)).toEqual([[], [], []]);

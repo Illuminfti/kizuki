@@ -85,6 +85,11 @@ function historicalConnection(backup: string, manifest: ExportManifest, source: 
       delete manifest.files[`ledger/${table}.jsonl`];
       unlinkSync(join(backup, "ledger", `${table}.jsonl`));
     }
+    const lineage = "canon/source-survivor-lineage.v1.jsonl";
+    if (manifest.files[lineage] !== undefined) {
+      delete manifest.files[lineage];
+      unlinkSync(join(backup, lineage));
+    }
   }
   if (schema === LEGACY_BACKUP_SCHEMA) {
     manifest.schema_versions.ledger = 15;
