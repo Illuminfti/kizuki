@@ -7,8 +7,11 @@ native installed-service execution, live accounts and unfamiliar-user acceptance
 lack reviewed evidence adapters. The current readiness bar is a stranger who
 can install and use the product, zero live P0 findings, and honest installation.
 The [current campaign decision](decision-log.md#owner-amendment-to-readiness-2026-09-05)
-supersedes seven- and fourteen-day calendar gates. Longer observation remains
-an optional diagnostic after readiness; operational cutover requires its own authority.
+supersedes seven- and fourteen-day calendar gates and estate cutover as
+readiness or 1.0 tag prerequisites. Longer observation remains an optional
+diagnostic after readiness; operational cutover requires its own authority.
+Product, connector, model, security, recovery, platform, independent review,
+and unfamiliar-human requirements remain.
 
 This is release tooling. It does not add a canon review or promotion step to
 the product. The owner corrects beliefs and uses receipt undo.

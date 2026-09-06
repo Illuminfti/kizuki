@@ -192,7 +192,7 @@ Importing does **not** itself write canon. Without a model, expect `canon writin
 
 Start with `kizuki connect` to see the catalog and `kizuki connect status` to inspect enrolled sources and their last run. New enrollment requires an explicit [source consent policy](docs/cli.md#source-consent) before capture.
 
-Current entry points include local Markdown, ChatGPT/Claude exports, WhatsApp/Pocket/Omnivore exports, Beeper Desktop, read-only IMAP, ICS files, offline Screenpipe ingestion, and one-shot [estate importers](docs/legacy-import.md) with owner-written mapping files. Provider-specific coverage and qualification limits are documented honestly rather than implied.
+Current entry points include local Markdown, ChatGPT/Claude exports, WhatsApp/Pocket/Omnivore exports, Beeper Desktop, read-only IMAP, native Telegram sign-in, Gmail and Google Calendar browser sign-in, ICS files, offline Screenpipe ingestion, and one-shot [estate importers](docs/legacy-import.md) with owner-written mapping files. Telegram, Gmail, and Google Calendar require operator-supplied app credentials; none of those account paths are live-account qualified on this revision. WHOOP and the X API package exist but are not CLI-enrollable. Provider-specific coverage and qualification limits are documented honestly rather than implied.
 
 [Connection setup and limits →](docs/connect.md)
 
