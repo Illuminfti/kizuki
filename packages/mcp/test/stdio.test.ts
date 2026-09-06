@@ -3,6 +3,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openEmbeddedRetrievalPort } from "@kizuki/retrieval-pg";
 import { serializePage } from "@kizuki/core";
+import { readSqliteRuntime } from "@kizuki/core/internal";
 import { mcpFixture } from "./helpers";
 import type { McpFixture } from "./helpers";
 
@@ -54,6 +55,23 @@ const HANDSHAKE = [
 ].join("\n");
 
 describe("the stdio process entry", () => {
+  test("system_health returns the child runtime in its protocol envelope", async () => {
+    const running = live();
+    const input = HANDSHAKE + JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/call",
+      params: { name: "system_health", arguments: {} } }) + "\n";
+    const result = await run(["--vault", running.vaultPath, "--owner"], input);
+    expect(result.code).toBe(0);
+    const messages = result.stdout.trim().split("\n").map(line => JSON.parse(line));
+    expect(messages.map(message => message.id).sort()).toEqual([1, 2, 3]);
+    expect(messages.every(message => message.jsonrpc === "2.0")).toBe(true);
+    const health = messages.find(message => message.id === 3)?.result;
+    expect(health.isError).toBeUndefined();
+    expect(health.content).toHaveLength(1);
+    expect(JSON.parse(health.content[0].text)).toEqual(health.structuredContent);
+    expect(health.structuredContent.data.runtime).toEqual(readSqliteRuntime(running.db));
+    expect(result.stderr.trim()).toBe("kizuki-mcp ready principal=owner tools=9");
+  });
+
   test("an owner session answers a handshake and exits cleanly", async () => {
     const running = live();
     const result = await run(
