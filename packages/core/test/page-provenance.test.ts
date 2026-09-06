@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { rebuildPageIndex } from "../src/canon/store";
 import { ownerEdited } from "../src/canon/arbiter";
@@ -126,6 +126,33 @@ test("archived history and owner-edited doctrine need no surviving ledger event"
   expect(report.doctrine).toContainEqual({ file: "CANON.md", state: "owner-edited" });
   expect(readFileSync(doctrine, "utf8")).toBe("Owner-edited doctrine.\n");
   expect(readFileSync(archived.path, "utf8")).toBe(archived.bytes);
+});
+
+test("discovery and doctor include nested doctrine names and archive folders as ordinary canon", () => {
+  const f = fixture();
+  const eventId = putEvent(f.db);
+  mkdirSync(join(f.vault, "facts", "archive"));
+  const pages = [
+    seed(f.vault, "CANON", data("nested-canon", [eventId])),
+    seed(f.vault, "SCHEMA", data("nested-schema", [eventId])),
+    seed(f.vault, "archive/item", data("nested-archive", [eventId])),
+  ];
+  const doctrine = ["CANON.md", "SCHEMA.md"].map(name => ({
+    path: join(f.vault, name), bytes: readFileSync(join(f.vault, name), "utf8"),
+  }));
+  const history = join(f.vault, "archive", "history.md");
+  writeFileSync(history, "Historical bytes outside live page discovery.\n");
+  const discovered = listCanonPagesReport(f.vault);
+  expect(discovered.pages.map(page => page.relPath)).toEqual([
+    "facts/CANON.md", "facts/SCHEMA.md", "facts/archive/item.md",
+  ]);
+  expect(discovered.skipped).toEqual([]);
+  expect(discovered.truncated).toBe(false);
+  const report = doctorVault(f.vault, f.db);
+  expect(report.counts).toEqual({ total: 3, valid: 3, invalid: 0 });
+  expect(report.pages.map(page => page.page)).toEqual(discovered.pages.map(page => page.relPath));
+  for (const file of [...pages, ...doctrine]) expect(readFileSync(file.path, "utf8")).toBe(file.bytes);
+  expect(readFileSync(history, "utf8")).toBe("Historical bytes outside live page discovery.\n");
 });
 
 test("a ledger that cannot answer provenance produces a fixed failure without database details", () => {
