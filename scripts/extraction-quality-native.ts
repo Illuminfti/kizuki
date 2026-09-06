@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   EXTRACTION_SYSTEM_PROMPT, addAgent, authenticate, authorize, toolAllowed,
-  initAgents, listCanonReceipts, listClaims, listConnections, readSince, setSourceGrant,
+  initAgents, listClaims, listConnections, readSince, receiptsForClaim, setSourceGrant,
 } from "../packages/core/src/index";
 import type { CaptureEvent, Claim, Envelope, RunReceipt, SearchHit } from "../packages/core/src/index";
 import { openLedger } from "../packages/core/src/ledger/db";
@@ -395,7 +395,7 @@ export async function runNativeQuality(options: { artifact?: string } = {}) {
         consumers: { before, after }, failures });
       if (item.id === "q01") {
         assert(claims.length === 1, "direct fixture did not file one model claim");
-        const initialReceipt = withLedger(fixture.vault, (db) => listCanonReceipts(db, { writer: "loop", limit: 8 })[0]);
+        const initialReceipt = withLedger(fixture.vault, (db) => receiptsForClaim(db, claims[0]!.claim_id)[0]);
         assert(initialReceipt !== undefined, "direct fixture has no canon write receipt");
         const page = join(fixture.vault, initialReceipt.page_path), initialBytes = sha256(readFileSync(page));
         // Remove the model before exercising the deterministic consumers.
