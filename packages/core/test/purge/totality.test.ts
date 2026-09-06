@@ -128,6 +128,8 @@ describe("RFC 0002 purge totality", () => {
       health: () => inner.health(),
       close: () => inner.close(),
       verifyAbsent: (ids) => inner.verifyAbsent(ids),
+      removeByProvenance: ids => inner.removeByProvenance!(ids),
+      verifyProvenanceAbsent: ids => inner.verifyProvenanceAbsent!(ids),
       async remove(ids) {
         holdsWhenStoreTouched = readHolds(db).length;
         expect(isHeld(db, "people/grace.md")).toBe(true);

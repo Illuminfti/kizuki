@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { openLedger } from "../../src/ledger/db";
+import { LEDGER_SCHEMA_VERSION, openLedger } from "../../src/ledger/db";
 import { assertLedgerSchema } from "../../src/ledger/integrity";
 import { LedgerStoreError } from "../../src/ledger/errors";
 import { addAgent, revokeAgent } from "../../src/agents/identity";
@@ -38,7 +38,7 @@ describe("agent enrollment migration", () => {
         reservation(db, "reserved");
         db.exec(sql);
         const before = db.query("SELECT type,name,sql FROM sqlite_master ORDER BY type,name").all();
-        expect(() => assertLedgerSchema(db, 18)).toThrow(LedgerStoreError);
+        expect(() => assertLedgerSchema(db, LEDGER_SCHEMA_VERSION)).toThrow(LedgerStoreError);
         expect(db.query("SELECT type,name,sql FROM sqlite_master ORDER BY type,name").all()).toEqual(before);
       } finally { db.close(true); }
       let reopened: ReturnType<typeof openLedger> | undefined;
@@ -53,7 +53,7 @@ describe("agent enrollment migration", () => {
     let before: string;
     const authority = (db: ReturnType<typeof openLedger>) => JSON.stringify(["agents", "agent_grants", "agent_audit"].map(table => db.query(`SELECT * FROM ${table}`).all()));
     try {
-      old.exec("DROP TRIGGER agent_enrollments_block_legacy_agent_insert; DROP TRIGGER agent_enrollments_block_token_update; DROP TABLE agent_enrollments; UPDATE schema_version SET version=17");
+      old.exec("DROP TRIGGER agent_enrollments_block_legacy_agent_insert; DROP TRIGGER agent_enrollments_block_token_update; DROP TABLE agent_enrollments; DROP TABLE purge_batch_receipts; DROP TABLE purge_batches; UPDATE schema_version SET version=17");
       addAgent(old, "legacy-migration");
       before = authority(old);
     } finally { old.close(); }
@@ -61,7 +61,7 @@ describe("agent enrollment migration", () => {
       const migrated = openLedger(path);
       try {
         expect(authority(migrated) === before, "migration preserves every existing authority row").toBe(true);
-        expect(migrated.query("SELECT version FROM schema_version").get()).toEqual({ version: 18 });
+        expect(migrated.query("SELECT version FROM schema_version").get()).toEqual({ version: LEDGER_SCHEMA_VERSION });
         expect(migrated.query("SELECT count(*) AS n FROM agent_enrollments").get()).toEqual({ n: 0 });
         expect(migrated.query("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'agent_enrollments_%' ORDER BY name").all()).toEqual([
           { name: "agent_enrollments_block_legacy_agent_insert" }, { name: "agent_enrollments_block_token_update" },
