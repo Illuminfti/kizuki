@@ -113,9 +113,71 @@ function sha256File(path: string): string {
   return new Bun.CryptoHasher("sha256").update(readFileSync(path)).digest("hex");
 }
 
+interface AuditPage {
+  receipts: Record<string, unknown>[];
+  truncated: boolean;
+  next_offset: number | null;
+}
+
+function parseAuditPage(stdout: string): AuditPage {
+  const envelope = JSON.parse(stdout) as { data: AuditPage };
+  return envelope.data;
+}
+
 function parseAuditReceipts(stdout: string): Record<string, unknown>[] {
-  const envelope = JSON.parse(stdout) as { data: { receipts: Record<string, unknown>[] } };
-  return envelope.data.receipts;
+  return parseAuditPage(stdout).receipts;
+}
+
+function receiptIds(page: AuditPage): string[] {
+  return page.receipts.map((row) => {
+    const id = row.receipt_id;
+    if (typeof id !== "string") throw new Error("audit receipt is missing receipt_id");
+    return id;
+  });
+}
+
+async function writePersonPages(
+  vault: string,
+  people: readonly { name: string; writer: "loop" | "correction" }[],
+): Promise<{ name: string; writer: "loop" | "correction"; pagePath: string; receiptId: string }[]> {
+  const db = openLedger(join(vault, ".kizuki", "kizuki.db"));
+  try {
+    const io = { db, vault_path: vault };
+    const written: { name: string; writer: "loop" | "correction"; pagePath: string; receiptId: string }[] =
+      [];
+    for (const person of people) {
+      const accepted = accept(db, {
+        ...fixtureEvent(),
+        text: `${person.name} works at Acme.`,
+        subjects: [
+          { subject_id: `person:${person.name}`, role: "from", display_name: person.name },
+        ],
+      });
+      if (accepted.status !== "stored") {
+        throw new Error(`failed to store event: ${JSON.stringify(accepted)}`);
+      }
+      const claim = await storeClaim(db, accepted.event.event_id, {
+        target: `people/${person.name}`,
+        subject: `person:${person.name}`,
+        subjects: [`person:${person.name}`],
+        body: `${person.name} works at Acme.`,
+        frontmatter: { type: "person", title: person.name },
+      });
+      const created = applyCanonWrite(io, claim, resolveTarget(io, claim), {
+        writer: person.writer,
+        budget: createBudgetTracker({ canon_writes_per_run: 4 }),
+      });
+      written.push({
+        name: person.name,
+        writer: person.writer,
+        pagePath: created.page_path,
+        receiptId: created.receipt_id,
+      });
+    }
+    return written;
+  } finally {
+    db.close();
+  }
 }
 
 describe("kizuki audit and undo", () => {
@@ -130,7 +192,16 @@ describe("kizuki audit and undo", () => {
     const listed = runCli(setup.env, "audit", "--json");
     expect(listed.exitCode).toBe(0);
     expect(listed.stderr).toBe("");
-    const rows = parseAuditReceipts(listed.stdout);
+    const listedEnvelope = JSON.parse(listed.stdout) as {
+      schema: string;
+      status: string;
+      data: AuditPage;
+    };
+    expect(listedEnvelope.schema).toBe("kizuki.cli.audit/v1");
+    expect(listedEnvelope.status).toBe("ok");
+    expect(listedEnvelope.data.truncated).toBe(false);
+    expect(listedEnvelope.data.next_offset).toBe(null);
+    const rows = listedEnvelope.data.receipts;
     expect(rows.length).toBeGreaterThanOrEqual(2);
     const edited = rows.find((row) => row.receipt_id === written.editedId);
     const created = rows.find((row) => row.receipt_id === written.createdId);
@@ -196,5 +267,142 @@ describe("kizuki audit and undo", () => {
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain(`usage: kizuki ${verb}`);
     }
+    const auditHelp = runCli(env, "help", "audit");
+    expect(auditHelp.stdout).toContain("--limit");
+    expect(auditHelp.stdout).toContain("--offset");
+  });
+});
+
+describe("kizuki audit pagination", () => {
+  test("pages a small receipt set with explicit truncation and next_offset", async () => {
+    const setup = tempVault();
+    await writePersonPages(
+      setup.vault,
+      ["ada", "grace", "linus", "mae", "nora"].map((name) => ({ name, writer: "loop" as const })),
+    );
+
+    const all = parseAuditPage(runCli(setup.env, "audit", "--json").stdout);
+    expect(all.receipts.length).toBe(5);
+    expect(all.truncated).toBe(false);
+    expect(all.next_offset).toBe(null);
+    const ids = receiptIds(all);
+
+    const first = parseAuditPage(runCli(setup.env, "audit", "--json", "--limit", "2").stdout);
+    expect(receiptIds(first)).toEqual(ids.slice(0, 2));
+    expect(first.receipts).toHaveLength(2);
+    expect(first.truncated).toBe(true);
+    expect(first.next_offset).toBe(2);
+
+    const next = parseAuditPage(
+      runCli(setup.env, "audit", "--json", "--limit", "2", "--offset", String(first.next_offset)).stdout,
+    );
+    expect(receiptIds(next)).toEqual(ids.slice(2, 4));
+    expect(next.receipts).toHaveLength(2);
+    expect(next.truncated).toBe(true);
+    expect(next.next_offset).toBe(4);
+
+    const last = parseAuditPage(
+      runCli(setup.env, "audit", "--json", "--limit", "2", "--offset", String(next.next_offset)).stdout,
+    );
+    expect(receiptIds(last)).toEqual(ids.slice(4));
+    expect(last.receipts).toHaveLength(1);
+    expect(last.truncated).toBe(false);
+    expect(last.next_offset).toBe(null);
+
+    const walked = [...receiptIds(first), ...receiptIds(next), ...receiptIds(last)];
+    expect(walked).toEqual(ids);
+    expect(new Set(walked).size).toBe(ids.length);
+
+    const tableFirst = runCli(setup.env, "audit", "--limit", "2");
+    expect(tableFirst.exitCode).toBe(0);
+    expect(tableFirst.stderr).toBe("");
+    expect(tableFirst.stdout).toContain(ids[0] ?? "");
+    expect(tableFirst.stdout).toContain(ids[1] ?? "");
+    expect(tableFirst.stdout).not.toContain(ids[2] ?? "missing-third");
+    expect(tableFirst.stdout).toContain("truncated  next_offset=2");
+
+    const tableLast = runCli(setup.env, "audit", "--limit", "2", "--offset", "4");
+    expect(tableLast.exitCode).toBe(0);
+    expect(tableLast.stderr).toBe("");
+    expect(tableLast.stdout).toContain(ids[4] ?? "");
+    expect(tableLast.stdout).not.toContain("truncated");
+    expect(tableLast.stdout).not.toContain("next_offset=");
+  });
+
+  test("filtered pages stay newest-first and do not duplicate or omit matches", async () => {
+    const setup = tempVault();
+    await writePersonPages(setup.vault, [
+      { name: "ada", writer: "loop" },
+      { name: "grace", writer: "correction" },
+      { name: "linus", writer: "loop" },
+      { name: "mae", writer: "correction" },
+      { name: "nora", writer: "loop" },
+    ]);
+
+    const all = parseAuditPage(runCli(setup.env, "audit", "--json").stdout);
+    const filtered = parseAuditPage(runCli(setup.env, "audit", "--json", "--writer", "loop").stdout);
+    expect(filtered.truncated).toBe(false);
+    expect(filtered.next_offset).toBe(null);
+    expect(filtered.receipts.length).toBe(3);
+    expect(filtered.receipts.every((row) => row.writer === "loop")).toBe(true);
+    expect(receiptIds(filtered)).toEqual(
+      receiptIds(all).filter((_, index) => all.receipts[index]?.writer === "loop"),
+    );
+
+    const first = parseAuditPage(
+      runCli(setup.env, "audit", "--json", "--writer", "loop", "--limit", "1").stdout,
+    );
+    expect(receiptIds(first)).toEqual(receiptIds(filtered).slice(0, 1));
+    expect(first.truncated).toBe(true);
+    expect(first.next_offset).toBe(1);
+
+    const middle = parseAuditPage(
+      runCli(setup.env, "audit", "--json", "--writer", "loop", "--limit", "1", "--offset", "1")
+        .stdout,
+    );
+    expect(receiptIds(middle)).toEqual(receiptIds(filtered).slice(1, 2));
+    expect(middle.truncated).toBe(true);
+    expect(middle.next_offset).toBe(2);
+
+    const last = parseAuditPage(
+      runCli(setup.env, "audit", "--json", "--writer", "loop", "--limit", "1", "--offset", "2")
+        .stdout,
+    );
+    expect(receiptIds(last)).toEqual(receiptIds(filtered).slice(2));
+    expect(last.truncated).toBe(false);
+    expect(last.next_offset).toBe(null);
+
+    expect([...receiptIds(first), ...receiptIds(middle), ...receiptIds(last)]).toEqual(
+      receiptIds(filtered),
+    );
+  });
+
+  test("rejects missing, non-integer, zero, negative, and over-bound pagination", () => {
+    const setup = tempVault();
+    const cases: string[][] = [
+      ["--limit"],
+      ["--offset"],
+      ["--limit", "0"],
+      ["--limit", "-1"],
+      ["--limit", "x"],
+      ["--limit", "1.5"],
+      ["--limit", "5001"],
+      ["--offset", "-1"],
+      ["--offset", "x"],
+      ["--offset", "1.5"],
+    ];
+    for (const args of cases) {
+      const result = runCli(setup.env, "audit", "--json", ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("usage: kizuki audit");
+    }
+
+    const ok = runCli(setup.env, "audit", "--json", "--limit", "5000", "--offset", "0");
+    expect(ok.exitCode).toBe(0);
+    const page = parseAuditPage(ok.stdout);
+    expect(page.truncated).toBe(false);
+    expect(page.next_offset).toBe(null);
+    expect(page.receipts.length).toBeLessThanOrEqual(5000);
   });
 });
