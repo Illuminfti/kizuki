@@ -25,6 +25,26 @@ long kizuki_create_credential_child(int parent, const char *name) {
     : "rcx", "r11", "memory", "cc");
   return result;
 }
+long kizuki_open_receipt_append_child(int parent, const char *name, int exclusive) {
+  if (exclusive != 0 && exclusive != 1) return -22L;
+  long result;
+  long flags = 0x1L | 0x400L | 0x20000L | 0x800L | 0x80000L | (exclusive ? 0x40L | 0x80L : 0);
+  register long mode __asm__("r10") = 0600;
+  __asm__ volatile ("syscall" : "=a"(result)
+    : "a"(257L), "D"((long)parent), "S"(name), "d"(flags), "r"(mode)
+    : "rcx", "r11", "memory", "cc");
+  return result;
+}
+long kizuki_open_receipt_read_append_child(int parent, const char *name, int exclusive) {
+  if (exclusive != 0 && exclusive != 1) return -22L;
+  long result;
+  long flags = 0x2L | 0x400L | 0x20000L | 0x800L | 0x80000L | (exclusive ? 0x40L | 0x80L : 0);
+  register long mode __asm__("r10") = 0600;
+  __asm__ volatile ("syscall" : "=a"(result)
+    : "a"(257L), "D"((long)parent), "S"(name), "d"(flags), "r"(mode)
+    : "rcx", "r11", "memory", "cc");
+  return result;
+}
 long kizuki_stat_owned_child(int parent, const char *name, void *stat_buffer) {
   long result;
   register long flags __asm__("r10") = 0x100L;
@@ -101,6 +121,8 @@ export function loadOwnedDirectoryNative() {
         symbols: {
           kizuki_open_owned_child: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i64_fast },
           kizuki_create_credential_child: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.i64_fast },
+          kizuki_open_receipt_append_child: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i64_fast },
+          kizuki_open_receipt_read_append_child: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i64_fast },
           kizuki_stat_owned_child: { args: [FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i64_fast },
           kizuki_mkdir_owned_child: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.i64_fast },
           kizuki_rename_owned_child: { args: [FFIType.i32, FFIType.ptr, FFIType.i32, FFIType.ptr], returns: FFIType.i64_fast },
@@ -116,6 +138,8 @@ export function loadOwnedDirectoryNative() {
           ...libc.symbols,
           openChild: compiled.symbols.kizuki_open_owned_child,
           createCredentialChild: compiled.symbols.kizuki_create_credential_child,
+          openReceiptAppendChild: compiled.symbols.kizuki_open_receipt_append_child,
+          openReceiptReadAppendChild: compiled.symbols.kizuki_open_receipt_read_append_child,
           statChild: compiled.symbols.kizuki_stat_owned_child,
           mkdirChild: compiled.symbols.kizuki_mkdir_owned_child,
           renameChild: compiled.symbols.kizuki_rename_owned_child,

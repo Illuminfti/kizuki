@@ -1,11 +1,9 @@
 import type { Database } from "bun:sqlite";
-import { closeSync, constants, fchmodSync, fsyncSync, fstatSync, lstatSync, openSync, readFileSync, writeSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { sha256Hex } from "../util/hash";
 import { requireSourceEvents } from "../ledger/source-grants";
 import type { CanonReceipt } from "./receipts";
-import { RECEIPTS_PATH } from "./receipts";
 import type { CanonIo } from "./store";
+import { openSourceErasureReceiptStream } from "./receipt-stream";
 import { assertVaultMutationScope, type VaultMutationScope } from "../vault/mutation-scope";
 interface PolicyBinding {
     source_key: string;
@@ -110,81 +108,28 @@ export interface SourceErasureReceiptStream {
 /** The existing receipt stream remains authoritative; retry never adds a second same-ID line. */
 export function appendSourceErasureReceipt(scope: VaultMutationScope, io: CanonIo, receipt: CanonReceipt): SourceErasureReceiptStream {
     assertVaultMutationScope(scope, io);
-    const path = join(io.vault_path, RECEIPTS_PATH);
-    const directory = dirname(path);
-    const limit = 32 * 1024 * 1024;
-    let fd: number | undefined;
-    let parentFd: number | undefined;
-    const close = (): void => {
-        if (fd !== undefined) { const held = fd; fd = undefined; closeSync(held); }
-        if (parentFd !== undefined) { const held = parentFd; parentFd = undefined; closeSync(held); }
-    };
+    const receiptId = receipt.receipt_id, expected = JSON.stringify(receipt);
+    const stream = openSourceErasureReceiptStream(scope, io);
     try {
-        parentFd = openSync(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-        const parent = fstatSync(parentFd);
-        if (!parent.isDirectory() || parent.uid !== process.geteuid?.() || (parent.mode & 0o022) !== 0)
-            throw Error("source erasure receipt directory unavailable");
-        let stat: ReturnType<typeof lstatSync> | null;
-        try { stat = lstatSync(path); }
-        catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-            stat = null;
-        }
-        if (stat !== null && (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.uid !== process.geteuid?.() || stat.size > limit))
-            throw Error("source erasure receipt log unavailable");
-        if (stat !== null && (stat.mode & 0o200) === 0)
-            throw Error("source erasure receipt log is read-only");
-        fd = openSync(path, constants.O_RDWR | constants.O_APPEND | constants.O_NOFOLLOW |
-            (stat === null ? constants.O_CREAT | constants.O_EXCL : 0), 0o600);
-        const held = fstatSync(fd);
-        if (!held.isFile() || held.nlink !== 1 || held.uid !== process.geteuid?.() || held.size > limit ||
-            (stat !== null && (held.ino !== stat.ino || held.dev !== stat.dev)))
-            throw Error("source erasure receipt log unavailable");
-        // Adopt only an already owner-writable native stream; its bytes confer no authority.
-        fchmodSync(fd, 0o600);
-        fsyncSync(fd);
-        let expectedSize = held.size;
-        const verifyBinding = (): void => {
-            assertVaultMutationScope(scope, io);
-            if (fd === undefined || parentFd === undefined) throw Error("source erasure receipt stream closed");
-            const current = fstatSync(fd), named = lstatSync(path), namedParent = lstatSync(directory);
-            if (!named.isFile() || named.isSymbolicLink() || named.nlink !== 1 || current.nlink !== 1 ||
-                current.uid !== process.geteuid?.() || (current.mode & 0o777) !== 0o600 ||
-                current.ino !== held.ino || current.dev !== held.dev || named.ino !== held.ino || named.dev !== held.dev ||
-                current.size !== expectedSize || named.size !== expectedSize ||
-                !namedParent.isDirectory() || namedParent.isSymbolicLink() || namedParent.ino !== parent.ino || namedParent.dev !== parent.dev)
-                throw Error("source erasure receipt stream identity changed");
-        };
-        verifyBinding();
-        const content = readFileSync(fd, "utf8");
+        const content = stream.readUtf8();
         let found = false;
         for (const line of content.split("\n")) {
             if (line === "") continue;
             const row = JSON.parse(line);
-            if (row.receipt_id !== receipt.receipt_id) continue;
-            if (found || JSON.stringify(row) !== JSON.stringify(receipt))
+            if (row.receipt_id !== receiptId) continue;
+            if (found || JSON.stringify(row) !== expected)
                 throw Error("source erasure receipt conflict");
             found = true;
         }
-        // A pathname replacement after the read cannot redirect an append or authorize completion.
-        verifyBinding();
-        if (!found) {
-            const bytes = Buffer.from(`${JSON.stringify(receipt)}\n`);
-            if (expectedSize + bytes.byteLength > limit) throw Error("source erasure receipt log exceeds bound");
-            let offset = 0;
-            while (offset < bytes.byteLength) {
-                const written = writeSync(fd, bytes, offset, bytes.byteLength - offset);
-                if (written <= 0) throw Error("source erasure receipt append incomplete");
-                offset += written;
-            }
-            expectedSize += bytes.byteLength;
-            fsyncSync(fd);
-        }
-        fsyncSync(parentFd);
-        verifyBinding();
-        return { verifyBinding, close };
+        stream.verifyBinding();
+        if (!found) stream.append(Buffer.from(`${expected}\n`));
+        stream.sync();
+        return Object.freeze({
+            verifyBinding() { stream.verifyBinding(); },
+            close() { stream.close(); },
+        });
     } catch (error) {
-        close();
+        try { stream.close(); } catch { /* Retain the original refusal. */ }
         throw error;
     }
 }

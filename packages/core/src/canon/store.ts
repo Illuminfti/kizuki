@@ -1,27 +1,21 @@
 import type { Database } from "bun:sqlite";
-import {
-  appendFileSync,
-  closeSync,
-  fsyncSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-} from "node:fs";
-import { dirname, join } from "node:path";
+import { join, resolve } from "node:path";
 import { tableExists } from "../ledger/schema";
 import { ulid } from "../util/ulid";
 import { parseFrontmatter } from "../vault/frontmatter";
 import type { VaultPage } from "../vault/frontmatter";
 import { fatalCanonSkips, listCanonPagesReport } from "../vault/pages";
 import type { RetrievalPort } from "../contracts/retrieval";
-import { containedVaultFile, hashBytes } from "../vault/write";
+import { hashBytes } from "../vault/write";
+import { openCanonFiles } from "../vault/canon-files";
 import { assertStoredPageRelPath } from "./paths";
-import { RECEIPTS_PATH, getCanonReceipt, latestReceiptForPage } from "./receipts";
+import { getCanonReceipt, latestReceiptForPage } from "./receipts";
 import type { CanonReceipt } from "./receipts";
 import { initCanon } from "./schema";
 import type { MachineByteIntent } from "../ledger/event-origin";
 import { canonFilesFor } from "./io";
 import { assertVaultMutationScope, type VaultMutationScope } from "../vault/mutation-scope";
+import { openOrdinaryReceiptStream } from "./receipt-stream";
 
 /**
  * The canon store as the writer sees it: the SQLite ledger that holds
@@ -83,23 +77,20 @@ function fsCode(error: unknown): string {
   return "EIO";
 }
 
-
 export function readPage(io: CanonIo, relPath: string): ExistingPage | null {
   assertStoredPageRelPath(relPath);
   let path: string;
   let bytes: Buffer;
   try {
-    const files = canonFilesFor(io);
-    if (files === undefined) {
-      path = containedVaultFile(io.vault_path, relPath);
-      bytes = readFileSync(path);
-    } else {
-      path = join(io.vault_path, relPath);
+    const vaultPath = resolve(io.vault_path);
+    const borrowed = canonFilesFor(io), files = borrowed ?? openCanonFiles(vaultPath);
+    path = join(vaultPath, relPath);
+    try {
       const snapshot = files.read(relPath);
       if (snapshot === null) return null;
       try { bytes = Buffer.from(snapshot.bytes); }
       finally { snapshot.close(); }
-    }
+    } finally { if (borrowed === undefined) files.close(); }
   } catch (error) {
     if (fsCode(error) === "ENOENT") return null;
     throw new CanonPageUnreadable(relPath, fsCode(error));
@@ -116,15 +107,14 @@ export function readPage(io: CanonIo, relPath: string): ExistingPage | null {
 
 export function appendReceiptLine(scope: VaultMutationScope, io: CanonIo, receipt: CanonReceipt): void {
   assertVaultMutationScope(scope, io);
-  const receiptsPath = join(io.vault_path, RECEIPTS_PATH);
-  mkdirSync(dirname(receiptsPath), { recursive: true });
-  appendFileSync(receiptsPath, `${JSON.stringify(receipt)}\n`, {encoding:"utf8",mode:0o600});
-  const fd = openSync(receiptsPath, "r");
-  try {
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
+  const bytes = Buffer.from(`${JSON.stringify(receipt)}\n`);
+  const stream = openOrdinaryReceiptStream(scope, io);
+  try { stream.append(bytes); stream.sync(); stream.verifyBinding(); }
+  catch (error) {
+    try { stream.close(); } catch { /* Retain the original append or durability failure. */ }
+    throw error;
   }
+  stream.close();
 }
 
 export function insertReceiptRow(
