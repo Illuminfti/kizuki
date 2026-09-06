@@ -33,6 +33,8 @@ export interface SupervisorHost {
   /** Activate the current unit bytes, including replacement of an older running definition. */
   enable(unitPath: string, unitName: string): { ok: boolean; detail: string };
   disable(unitName: string): { ok: boolean; detail: string };
+  /** Restore unit enablement without starting or restarting it. */
+  enableWithoutStart?(unitName: string): { ok: boolean; detail: string };
 }
 
 export function detectSupervisorKind(
@@ -166,6 +168,14 @@ export function realSupervisorHost(
       }
       return { ok: true, detail: "no supervisor" };
     },
+    ...(kind === "systemd"
+      ? {
+          enableWithoutStart(unitName: string) {
+            const result = runCommand(["systemctl", "--user", "enable", unitName]);
+            return { ok: result.ok, detail: result.ok ? "enabled without start" : "service enable failed" };
+          },
+        }
+      : {}),
   };
 }
 
@@ -176,14 +186,15 @@ export function queryServeService(
   return host.query(ensureVaultId(vaultPath));
 }
 
-interface ServiceChange {
-  readonly version: 2;
-  readonly kind: SupervisorKind;
-  readonly identity_hash: string;
+interface RecoveredChange {
   readonly previous_unit: string | null;
   readonly previous_intent: ServeIntent;
   readonly previous_enabled: boolean;
+  readonly previous_active: boolean;
 }
+
+const SERVICE_CHANGE_V2_KEYS = "identity_hash,kind,previous_enabled,previous_intent,previous_unit,version";
+const SERVICE_CHANGE_V3_KEYS = "identity_hash,kind,previous_active,previous_enabled,previous_intent,previous_unit,version";
 
 function servicePaths(vaultPath: string, host: SupervisorHost) {
   const vaultId = ensureVaultId(vaultPath);
@@ -205,30 +216,60 @@ function confirmedActive(status: SupervisorStatus): boolean { return status.stat
 function confirmedStopped(status: SupervisorStatus): boolean {
   return !status.enabled && (status.state === "disabled" || status.state === "absent" || status.state === "masked");
 }
+/** Known systemd inactive runtime that remains enabled. Not a confirmed stop. */
+function confirmedInactiveEnabled(status: SupervisorStatus): boolean {
+  return status.kind === "systemd" && status.state === "disabled" && status.enabled;
+}
+function hasEnablementOnly(host: SupervisorHost): host is SupervisorHost & { enableWithoutStart: NonNullable<SupervisorHost["enableWithoutStart"]> } {
+  return typeof host.enableWithoutStart === "function";
+}
+
+function readServiceChange(raw: string, kind: SupervisorKind, identityHash: string): RecoveredChange {
+  const value = JSON.parse(raw);
+  if (value === null || typeof value !== "object" || Array.isArray(value) ||
+    value.kind !== kind || value.identity_hash !== identityHash ||
+    !(value.previous_unit === null || typeof value.previous_unit === "string") ||
+    typeof value.previous_enabled !== "boolean" || (value.previous_enabled && value.previous_unit === null) ||
+    !isServeIntent(value.previous_intent)) throw new Error();
+  const keys = Object.keys(value).sort().join(",");
+  if (value.version === 2 && keys === SERVICE_CHANGE_V2_KEYS) {
+    return {
+      previous_unit: value.previous_unit, previous_intent: value.previous_intent,
+      previous_enabled: value.previous_enabled, previous_active: value.previous_enabled,
+    };
+  }
+  if (value.version === 3 && keys === SERVICE_CHANGE_V3_KEYS && typeof value.previous_active === "boolean" &&
+    (!value.previous_active || (value.previous_enabled && value.previous_unit !== null))) {
+    return {
+      previous_unit: value.previous_unit, previous_intent: value.previous_intent,
+      previous_enabled: value.previous_enabled, previous_active: value.previous_active,
+    };
+  }
+  throw new Error();
+}
 
 function recoverChange(vaultPath: string, host: SupervisorHost, paths: ReturnType<typeof servicePaths>): void {
   const raw = serviceFile(paths.journal);
   if (raw === null) return;
-  let entry: ServiceChange;
-  try {
-    const value = JSON.parse(raw);
-    if (value === null || typeof value !== "object" || Array.isArray(value) ||
-      Object.keys(value).sort().join(",") !== "identity_hash,kind,previous_enabled,previous_intent,previous_unit,version" ||
-      value.version !== 2 || value.kind !== host.kind || value.identity_hash !== paths.identityHash ||
-      !(value.previous_unit === null || typeof value.previous_unit === "string") ||
-      typeof value.previous_enabled !== "boolean" || (value.previous_enabled && value.previous_unit === null) ||
-      !isServeIntent(value.previous_intent)) throw new Error();
-    entry = value;
-  } catch { throw new Error("service recovery snapshot is invalid or belongs to another vault or service location"); }
+  let entry: RecoveredChange;
+  try { entry = readServiceChange(raw, host.kind, paths.identityHash); }
+  catch { throw new Error("service recovery snapshot is invalid or belongs to another vault or service location"); }
+  if (entry.previous_enabled && !entry.previous_active && !hasEnablementOnly(host)) {
+    throw new Error("service recovery cannot restore enablement; previous configuration retained");
+  }
   const current = host.query(paths.vaultId);
   if (!confirmedStopped(current)) {
     if (!host.disable(paths.unit).ok || !confirmedStopped(host.query(paths.vaultId))) throw new Error("service recovery could not confirm stop; previous configuration retained");
   }
   replaceServiceFile(paths.path, entry.previous_unit);
   if (!host.reload().ok) throw new Error("previous service definition reload remains unverified");
-  if (entry.previous_enabled) {
+  if (entry.previous_active) {
     if (entry.previous_unit === null || !host.enable(paths.path, paths.unit).ok || !confirmedActive(host.query(paths.vaultId))) {
       throw new Error("previous service configuration restored but activation remains unverified");
+    }
+  } else if (entry.previous_enabled) {
+    if (!hasEnablementOnly(host) || !host.enableWithoutStart(paths.unit).ok || !confirmedInactiveEnabled(host.query(paths.vaultId))) {
+      throw new Error("previous service configuration restored but enablement remains unverified");
     }
   } else if (!confirmedStopped(host.query(paths.vaultId))) {
     throw new Error("previous service definition restored but stopped state remains unverified");
@@ -244,14 +285,20 @@ function changeService<T>(vaultPath: string, host: SupervisorHost, operation: (p
   try {
     recoverChange(vaultPath, host, paths);
     const previous = host.query(paths.vaultId);
-    if (!confirmedActive(previous) && !confirmedStopped(previous)) throw new Error("service state is unknown or inconsistent; no service change made");
-    const entry: ServiceChange = {
-      version: 2, kind: host.kind, identity_hash: paths.identityHash,
-      previous_unit: serviceFile(paths.path), previous_intent: readServeIntent(vaultPath),
-      previous_enabled: previous.enabled || previous.state === "active",
-    };
-    if (entry.previous_enabled && entry.previous_unit === null) throw new Error("refusing to replace a service without its owned definition");
-    replaceServiceFile(paths.journal, JSON.stringify(entry));
+    if (!confirmedActive(previous) && !confirmedStopped(previous) && !confirmedInactiveEnabled(previous)) {
+      throw new Error("service state is unknown or inconsistent; no service change made");
+    }
+    if (confirmedInactiveEnabled(previous) && !hasEnablementOnly(host)) {
+      throw new Error("service enablement-only restoration is unsupported; no service change made");
+    }
+    const previous_unit = serviceFile(paths.path);
+    const previous_enabled = previous.enabled;
+    const previous_active = confirmedActive(previous);
+    if ((previous_enabled || previous_active) && previous_unit === null) throw new Error("refusing to replace a service without its owned definition");
+    replaceServiceFile(paths.journal, JSON.stringify({
+      version: 3, kind: host.kind, identity_hash: paths.identityHash,
+      previous_unit, previous_intent: readServeIntent(vaultPath), previous_enabled, previous_active,
+    }));
     try {
       const result = operation(paths);
       replaceServiceFile(paths.journal, null);
