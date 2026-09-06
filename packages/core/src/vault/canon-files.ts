@@ -11,7 +11,7 @@ const MAX_DEPTH = 64;
 export type CanonFilesFailure = "unsupported" | "native_unavailable" | "invalid_path" | "bounds" |
   "unsafe" | "changed" | "conflict" | "closed" | "handle" | "io";
 export class CanonFilesError extends Error {
-  constructor(readonly reason: CanonFilesFailure) { super(`canon_files_${reason}`); this.name = "CanonFilesError"; }
+  constructor(readonly reason: CanonFilesFailure, readonly code?: "EISDIR") { super(`canon_files_${reason}`); this.name = "CanonFilesError"; }
 }
 function fail(reason: CanonFilesFailure): never { throw new CanonFilesError(reason); }
 function guarded<T>(work: () => T): T {
@@ -72,6 +72,7 @@ function openRoot(path: string): number {
 }
 function readSnapshot(fd: number): { stat: BigIntStats; bytes: Buffer } {
   const before = fstatSync(fd, { bigint: true });
+  if (before.isDirectory()) throw new CanonFilesError("unsafe", "EISDIR");
   if (!before.isFile() || before.nlink !== 1n || before.uid !== BigInt(process.geteuid!()) || (before.mode & 0o022n) !== 0n) fail("unsafe");
   if (before.size < 0n || before.size > BigInt(MAX_CANON_FILE_BYTES)) fail("bounds");
   const bytes = Buffer.alloc(Number(before.size));
