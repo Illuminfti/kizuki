@@ -376,7 +376,9 @@ export function validateAbsenceProof(
     typeof value["checked"] !== "number" ||
     !Number.isSafeInteger(value["checked"]) ||
     value["checked"] < 0 ||
-    !validStrings(value["found"], { max: 10_000 }) ||
+    // A scoped response is bounded by the finite request already held by the
+    // caller. Unscoped responses retain the standalone contract ceiling.
+    !validStrings(value["found"], { max: requestedIds?.length ?? 10_000 }) ||
     typeof value["store"] !== "string" ||
     value["store"].length === 0 ||
     typeof value["method"] !== "string" ||
@@ -386,10 +388,11 @@ export function validateAbsenceProof(
     invalid("absence proof");
   }
   const found = value["found"] as string[];
+  const requested = requestedIds === undefined ? undefined : new Set(requestedIds);
   if (
     requestedIds !== undefined &&
     (value["checked"] !== requestedIds.length ||
-      found.some((id) => !requestedIds.includes(id)))
+      found.some((id) => !requested!.has(id)))
   ) {
     invalid("absence proof scope");
   }

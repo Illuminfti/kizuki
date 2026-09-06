@@ -14,12 +14,15 @@ import { PortError } from "../contracts/ports";
 import { EVENT_LIMITS } from "../contracts/event";
 import type { Claim } from "../contracts/proposal";
 import type { AbsenceProof, RetrievalPort } from "../contracts/retrieval";
+import { validateAbsenceProof } from "../contracts/retrieval";
+import { markDerivedHeld, readDerivedHolds } from "../derived-holds";
+import { removeHeldPageEdges } from "../graph/graph";
 import {
   FTS5_RETRIEVAL_ID,
   FTS5_RETRIEVAL_STORE_REL,
   createFts5RetrievalPort,
 } from "../retrieval";
-import { removeDoc } from "../search/indexer";
+import { eventIdFromReference } from "../retrieval/ids";
 import { withdrawForTombstone } from "../staging/producers";
 import { sha256Hex } from "../util/hash";
 import { isVisibleIdentifier } from "../util/opaque-identifier";
@@ -418,7 +421,7 @@ function pageSources(raw: unknown): string[] | null {
   if (!Array.isArray(raw) || !raw.every((source) => typeof source === "string")) {
     return null;
   }
-  return raw;
+  return raw.map(eventIdFromReference);
 }
 
 function fileHash(path: string): string {
@@ -585,25 +588,31 @@ function removeDerivedForPurge(
   db: Database,
   eventIds: readonly string[],
   pageIds: readonly string[],
+  pages: readonly CanonPage[],
 ): string[] {
   const events = JSON.stringify(eventIds);
   const documents = JSON.stringify(retrievalIds(eventIds, pageIds, []));
-  const removed = new Map<string, "canon" | "ledger">();
+  const removed = new Set<string>();
   // Inspect both copies so an interrupted prior projection cannot hide a row.
   for (const table of ["search_documents", "search_docs"] as const) {
     if (!tableExists(db, table)) continue;
-    const rows = db.query<{ doc_id: string; scope: "canon" | "ledger" }, [string, string]>(
-      `SELECT doc_id, scope FROM ${table}
+    const rows = db.query<{ doc_id: string }, [string, string]>(
+      `SELECT doc_id FROM ${table}
         WHERE doc_id IN (SELECT value FROM json_each(?))
+           OR (scope='canon' AND path IN (SELECT page_path FROM canon_holds))
            OR EXISTS (
              SELECT 1 FROM json_each(${table}.provenance) AS p
              JOIN json_each(?) AS e
                ON p.value = e.value OR p.value = 'event:' || e.value
            )`,
     ).all(documents, events);
-    for (const row of rows) removed.set(row.doc_id, row.scope);
+    for (const row of rows) removed.add(row.doc_id);
   }
-  for (const [id, scope] of removed) removeDoc(db, scope, id);
+  for (const table of ["search_documents", "search_docs"] as const) {
+    if (!tableExists(db, table)) continue;
+    const remove = db.query<never, [string]>(`DELETE FROM ${table} WHERE doc_id = ?`);
+    for (const id of removed) remove.run(id);
+  }
   if (tableExists(db, "graph_edges")) {
     db.query<never, [string, string, string]>(
       `WITH erased(id) AS (SELECT value FROM json_each(?))
@@ -617,8 +626,10 @@ function removeDerivedForPurge(
              JOIN erased AS e ON p.value = e.id OR p.value = 'event:' || e.id
            )`,
     ).run(events, JSON.stringify(pageIds), JSON.stringify(pageIds));
+    removeHeldPageEdges(db, pages);
   }
-  return [...removed.keys()];
+  markDerivedHeld(db, "search", readDerivedHolds(db).paths.size);
+  return [...removed];
 }
 
 function rowToOp(row: {
@@ -975,7 +986,7 @@ function purgeEventsLocked(
     const pageIds = matched.affected
       .map((page) => page.id)
       .filter((id) => id.length > 0);
-    const derivedDocIds = removeDerivedForPurge(db, eventIds, pageIds);
+    const derivedDocIds = removeDerivedForPurge(db, eventIds, pageIds, snapshot.flatMap(row => row.page === null ? [] : [row.page]));
 
     const citing = claimsCiting(db, eventIds);
     const claimIds = [...new Set(citing.map((claim) => claim.claim_id))].sort();
@@ -1047,6 +1058,20 @@ function ownedErasureProof(db:Database, receiptId:string, op:PurgeOp, at:string)
   return proved===null ? null : {checked:op.ids.length,found:[],store:op.store,method:"owned-generation-erasure",at};
 }
 
+function checkedPurgeProof(value: unknown, op: PurgeOp): AbsenceProof {
+  const proof = validateAbsenceProof(value, op.ids);
+  if (proof.store !== op.store) {
+    throw new PurgeError("absence_failed", "purge proof names a different store");
+  }
+  return proof;
+}
+
+function requirePurgeStore(port: RetrievalPort, op: PurgeOp): void {
+  if (port.descriptor.id !== op.store) {
+    throw new PurgeError("absence_failed", "purge retrieval binding names a different store");
+  }
+}
+
 async function reconcileOps(
   db: Database,
   receiptId: string,
@@ -1057,8 +1082,9 @@ async function reconcileOps(
   if (binding.port === null) return ops;
   for (const op of ops) {
     try {
+      requirePurgeStore(binding.port, op);
       await binding.port.remove(op.ids);
-      const proof = await binding.port.verifyAbsent(op.ids);
+      const proof = checkedPurgeProof(await binding.port.verifyAbsent(op.ids), op);
       if (proof.found.length === 0) {
         const doneAt = clock();
         db.query(
@@ -1150,10 +1176,8 @@ function catchUpHolds(
   const eventIds = outcome.receipts.map((receipt) => receipt.event_id);
   const batch = outcome.receipts[0];
   if (eventIds.length === 0 || batch === undefined) return;
-  const { matched, holdPaths } = holdPathsFor(
-    collectCanonSnapshot(vaultPath),
-    new Set(eventIds),
-  );
+  const snapshot = collectCanonSnapshot(vaultPath);
+  const { matched, holdPaths } = holdPathsFor(snapshot, new Set(eventIds));
   const already = new Set(outcome.canon_holds.map((hold) => hold.page_path));
   for (const relPath of holdPaths) {
     insertHold(db, relPath, batch.receipt_id, batch.reason, batch.purged_at);
@@ -1169,9 +1193,14 @@ function catchUpHolds(
   const latePages = matched.affected
     .filter((page) => page.id.length > 0)
     .map((page) => `page:${page.id}`);
+  const derivedDocIds = removeDerivedForPurge(
+    db, eventIds, matched.affected.map(page => page.id),
+    snapshot.flatMap(row => row.page === null ? [] : [row.page]),
+  );
   for (const op of outcome.purge_ops) {
     if (op.state !== "pending") continue;
-    const extra = latePages.filter((id) => !op.ids.includes(id));
+    const known = new Set(op.ids);
+    const extra = [...new Set([...latePages, ...derivedDocIds])].filter(id => !known.has(id));
     if (extra.length === 0) continue;
     op.ids = [...op.ids, ...extra];
     db.query("UPDATE purge_ops SET ids = ? WHERE op_id = ?").run(
@@ -1188,6 +1217,13 @@ function rewriteHolds(
 ): PurgeRewriteRef[] {
   const rewritten: PurgeRewriteRef[] = [];
   const holds = readHolds(db);
+  const unprovedReceipts = new Set<string>();
+  for (const op of listOps(db)) {
+    try {
+      if (op.state !== "done" || checkedPurgeProof(op.proof, op).found.length > 0) unprovedReceipts.add(op.receipt_id);
+    } catch { unprovedReceipts.add(op.receipt_id); }
+  }
+  const unprovedPages = new Set(holds.filter(hold => unprovedReceipts.has(hold.proposal_id)).map(hold => hold.page_path));
   if (holds.length === 0) return rewritten;
   const matchable = matchablePagePaths(vaultPath);
   const io: CanonIo = {
@@ -1199,6 +1235,9 @@ function rewriteHolds(
     ...(options.retrieval !== undefined ? { retrieval: options.retrieval } : {}),
   };
   for (const hold of holds) {
+    // A held page cannot be republished until the complete store closure has
+    // an exact, validated absence proof. Legacy malformed receipts stay held.
+    if (unprovedPages.has(hold.page_path)) continue;
     const sources = readHoldSources(vaultPath, hold.page_path);
     if (sources === null) continue;
     const toRemove = purgedCitations(db, sources);
@@ -1288,19 +1327,23 @@ export async function verifyPurge(
   const proofs: AbsenceProof[] = [];
   let ok = true;
   for (const op of ops) {
-    if (binding.port === null && ownedErasureProof(db,receiptId,op,clock()) === null) {
-      ok = false;
-      continue;
-    }
-    const proof = ownedErasureProof(db,receiptId,op,clock()) ?? await binding.port!.verifyAbsent(op.ids);
-    proofs.push(proof);
-    if (proof.found.length > 0) ok = false;
-    if (proof.found.length === 0 && op.state !== "done") {
+    try {
+      const owned = ownedErasureProof(db, receiptId, op, clock());
+      if (owned === null) {
+        if (binding.port === null) throw new PurgeError("absence_failed", "purge retrieval store is unavailable");
+        requirePurgeStore(binding.port, op);
+      }
+      const proof = checkedPurgeProof(owned ?? await binding.port!.verifyAbsent(op.ids), op);
+      proofs.push(proof);
+      if (proof.found.length > 0) throw new PurgeError("absence_failed", "purge retrieval documents remain");
       db.query(
         `UPDATE purge_ops
             SET state = 'done', proof = ?, done_at = ?
           WHERE op_id = ?`,
       ).run(JSON.stringify(proof), clock(), op.op_id);
+    } catch {
+      ok = false;
+      db.query("UPDATE purge_ops SET state='pending', proof=NULL, done_at=NULL WHERE op_id=?").run(op.op_id);
     }
   }
   const holds = readHolds(db).filter((hold) => hold.proposal_id === receiptId);
@@ -1342,6 +1385,8 @@ export async function resumePurge(db: Database, vaultPath: string, receiptId: st
   const binding = bindRetrieval(vaultPath, options.retrieval, clock);
   try {
     await reconcileOps(db, receiptId, binding, clock);
+    // Revalidate old done rows before a resumed rewrite can lift their holds.
+    await verifyPurge(db, vaultPath, receiptId, {...options,...(binding.port === null ? {} : {retrieval:binding.port})});
     rewriteHolds(db, vaultPath, options);
     return await verifyPurge(db, vaultPath, receiptId, {...options,...(binding.port === null ? {} : {retrieval:binding.port})});
   } finally { if (binding.owned) await binding.port?.close(); }

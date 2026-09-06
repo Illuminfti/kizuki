@@ -208,11 +208,28 @@ describe("kizuki.retrieval.fts5", () => {
     expect(present.checked).toBe(2);
     expect(present.found).toEqual(["page:grace"]);
     expect(present.store).toBe(FTS5_RETRIEVAL_ID);
-    expect(present.method).toBe("lookup-limit-100");
+    expect(present.method).toBe("sql-docs-provenance-cascade");
 
     await port.remove(["page:grace"]);
     const absent = await port.verifyAbsent(["page:grace"]);
     expect(absent.found).toEqual([]);
+  });
+
+  test("event removal cascades through raw and prefixed provenance without changing document identity", async () => {
+    const { port } = openPort();
+    const base = SYNTHETIC_DOCS[0]!;
+    await port.upsert([
+      { ...base, doc_id: "page:derived-raw", provenance: ["atlas-source"] },
+      { ...base, doc_id: "page:derived-prefixed", provenance: ["event:atlas-source"] },
+      { ...base, doc_id: "page:atlas-source", provenance: ["other-source"] },
+      { ...base, doc_id: "page:unrelated", provenance: ["other-source"] },
+    ]);
+    const requested = ["event:atlas-source"];
+    expect((await port.verifyAbsent(requested)).found).toEqual(requested);
+    await port.remove(requested);
+    expect((await port.verifyAbsent(requested)).found).toEqual([]);
+    expect((await port.verifyAbsent(["page:derived-raw", "page:derived-prefixed"])).found).toEqual([]);
+    expect((await port.verifyAbsent(["page:atlas-source", "page:unrelated"])).found).toEqual(["page:atlas-source", "page:unrelated"]);
   });
 
   test("persists under the port data dir and survives restart", async () => {

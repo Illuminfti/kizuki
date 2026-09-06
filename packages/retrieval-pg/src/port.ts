@@ -159,12 +159,19 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
   }
   async remove(ids: readonly string[]): Promise<RetrievalMutationReport> {
     this.assertMutable();
+    // Document identity stays namespaced; event support may use either the
+    // raw ledger ID or its event reference in an older projection.
+    const provenance = [...new Set(ids.flatMap(id =>
+      id.startsWith("event:") ? [id, id.slice("event:".length)] : [id],
+    ))];
     await this.store.run(async () => {
       this.assertMutable();
       await this.assertAvailable();
       return this.store.transaction(async (tx) => {
-        await tx.query("DELETE FROM retrieval_docs WHERE doc_id=ANY($1::text[]) OR provenance && $1::text[]", [[...ids]]);
-        if (this.checkpoint !== null && ids.includes(this.checkpoint.doc_id)) {
+        await tx.query("DELETE FROM retrieval_docs WHERE doc_id=ANY($1::text[]) OR provenance && $2::text[]", [[...ids], provenance]);
+        if (this.checkpoint !== null && (await tx.query(
+          "SELECT 1 FROM retrieval_docs WHERE doc_id=$1", [this.checkpoint.doc_id],
+        )).rows.length === 0) {
           this.checkpoint = null;
           await this.store.setMeta("checkpoint", null, tx);
         }
@@ -179,7 +186,17 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
       await this.assertAvailable();
       return (await this.store.db.query<{
         doc_id: string;
-      }>("SELECT doc_id FROM retrieval_docs WHERE doc_id=ANY($1::text[]) OR provenance && $1::text[] ORDER BY doc_id", [[...ids]])).rows.map(row => row.doc_id);
+      }>(`SELECT DISTINCT requested.id AS doc_id
+           FROM unnest($1::text[]) AS requested(id)
+          WHERE EXISTS (
+            SELECT 1 FROM retrieval_docs AS d
+             WHERE d.doc_id = requested.id
+                OR d.provenance && CASE
+                  WHEN left(requested.id, 6) = 'event:'
+                  THEN ARRAY[requested.id, substring(requested.id FROM 7)]
+                  ELSE ARRAY[requested.id]
+                END
+          ) ORDER BY doc_id`, [[...ids]])).rows.map(row => row.doc_id);
     });
     return { checked: ids.length, found, store: this.descriptor.id, method: "sql-docs-provenance-cascade", at: this.ctx.clock() };
   }
