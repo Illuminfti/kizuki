@@ -8,7 +8,7 @@ import {
 } from "../src/export";
 import { runSync } from "../src/ingest/run";
 import { ConnectionStateStore, NULL_CONNECTION_CONFIG, STATE_CONNECTION_CONFIG } from "../src/ledger/connection-state";
-import { getCheckpoint, getConnection, listConnections, registerConnection, saveCheckpoint } from "../src/ledger/connections";
+import { getCheckpoint, getConnection, listConnections, registerConnection, type Checkpoint } from "../src/ledger/connections";
 import { openLedger } from "../src/ledger/db";
 import { enrollConnection } from "../src/ledger/enroll";
 import { inspectSourceGrant, setSourceGrant, sourceCaptureAdmission } from "../src/ledger/source-grants";
@@ -39,9 +39,19 @@ function fixture() {
 function addHistory(db: ReturnType<typeof openLedger>, options: { opaque?: boolean; disconnected?: boolean; grant?: boolean } = {}) {
   const source = ulid();
   registerConnection(db, "fixture", source, { implementation_version: "fixture@1" });
-  const checkpoint = saveCheckpoint(db, "fixture", source, "historical-cursor", "sync", {
-    stored: 0, duplicates: 0, errors: [], proposals_created: 0, withdrawn: 0, retractions_filed: 0, cursor: "historical-cursor",
-  });
+  // Seed an archived checkpoint snapshot for read and round-trip tests.
+  const checkpoint: Checkpoint = {
+    connector_id: "fixture", source_key: source, cursor: "historical-cursor", mode: "sync",
+    updated_at: CONNECTED_AT, last_run_at: CONNECTED_AT,
+    last_result: {
+      stored: 0, duplicates: 0, errors: [], proposals_created: 0, withdrawn: 0, retractions_filed: 0, cursor: "historical-cursor",
+    },
+  };
+  db.query(`INSERT INTO checkpoints
+    (connector_id, source_key, cursor, mode, updated_at, last_run_at, last_result)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .run(checkpoint.connector_id, checkpoint.source_key, checkpoint.cursor, checkpoint.mode,
+      checkpoint.updated_at, checkpoint.last_run_at, JSON.stringify(checkpoint.last_result));
   db.query("UPDATE connections SET config=?,secret_refs=?,connected_at=?,disconnected_at=? WHERE source_key=?").run(
     options.opaque ? STATE_CONNECTION_CONFIG : NULL_CONNECTION_CONFIG,
     options.opaque ? JSON.stringify([`file:connections/${source}.state`]) : "[]",
