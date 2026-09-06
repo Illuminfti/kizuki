@@ -26,6 +26,7 @@ type HandleState = {
   readonly name: string;
   readonly writable: boolean;
   readonly identity: CredentialFileIdentity;
+  readonly created: BigIntStats | null;
   closed: boolean;
 };
 
@@ -175,6 +176,18 @@ export class CredentialDirectory {
     finally { call(() => closeSync(fd)); }
   }
 
+  private verifyCreatedEmpty(state: HandleState): void {
+    if (state.created === null) fail("handle");
+    const fd = this.openExisting(state.name);
+    if (fd === null) fail("identity_changed");
+    try {
+      const current = call(() => fstatSync(fd, { bigint: true }));
+      fileIsSafe(state.fd, state.identity);
+      fileIsSafe(fd, state.identity);
+      if (!sameBigStat(state.created, current) || current.size !== 0n) fail("changed");
+    } finally { call(() => closeSync(fd)); }
+  }
+
   inspect(name: string): CredentialFileInspection | null {
     this.assertCurrent();
     const fd = this.openExisting(name);
@@ -183,7 +196,7 @@ export class CredentialDirectory {
       fileIsSafe(fd);
       const found = identity(fd), bytes = readBounded(fd, found);
       this.assertCurrent();
-      return makeHandle({ directory: this, fd, name, writable: false, identity: found, closed: false }, bytes);
+      return makeHandle({ directory: this, fd, name, writable: false, identity: found, created: null, closed: false }, bytes);
     } catch (error) {
       call(() => closeSync(fd));
       throw error;
@@ -196,13 +209,14 @@ export class CredentialDirectory {
     const fd = validFd(result);
     try {
       fileIsSafe(fd);
-      const created = identity(fd);
+      const created = identity(fd), creation = call(() => fstatSync(fd, { bigint: true }));
       call(() => fsyncSync(fd));
       call(() => fsyncSync(this.fd));
       this.assertCurrent();
       const bytes = this.verifyName(name, created);
       if (bytes.length !== 0) fail("changed");
-      return makeHandle({ directory: this, fd, name, writable: true, identity: created, closed: false }, bytes);
+      if (!sameBigStat(creation, call(() => fstatSync(fd, { bigint: true })))) fail("changed");
+      return makeHandle({ directory: this, fd, name, writable: true, identity: created, created: creation, closed: false }, bytes);
     } catch (error) {
       call(() => closeSync(fd));
       throw error;
@@ -225,18 +239,14 @@ export class CredentialDirectory {
     if (!(bytes instanceof Uint8Array) || bytes.byteLength > MAX_CREDENTIAL_BYTES) fail("bounds");
     const state = this.state(handle);
     if (!state.writable) fail("handle");
-    let complete = false;
-    try {
-      this.assertCurrent();
-      if (this.verifyName(state.name, state.identity).length !== 0) fail("changed");
-      for (let offset = 0; offset < bytes.byteLength;) {
-        const count = call(() => writeSync(state.fd, bytes, offset, bytes.byteLength - offset, offset));
-        if (count <= 0) fail("write");
-        offset += count;
-      }
-      this.syncAndVerify(handle, bytes);
-      complete = true;
-    } finally { if (complete) handle.close(); }
+    this.assertCurrent();
+    this.verifyCreatedEmpty(state);
+    for (let offset = 0; offset < bytes.byteLength;) {
+      const count = call(() => writeSync(state.fd, bytes, offset, bytes.byteLength - offset, offset));
+      if (count <= 0) fail("write");
+      offset += count;
+    }
+    this.syncAndVerify(handle, bytes);
   }
 
   /** Same-process cleanup only. Restarted files are intentionally retained. */
