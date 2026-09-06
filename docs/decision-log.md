@@ -24,7 +24,7 @@ settled 2026-09-02.
 | D16 | 2026-09-02 | Modular monolith with ports | One process. Every replaceable component sits behind a versioned port, a registry, and a shared conformance suite. |
 | D17 | 2026-09-04 | Retrieval permitted fork | Owner override: stop treating clean-reimplementation-only as the final word for the retrieval engine. Fork the public upstream tip (reachable default branch) of the retrieval recipe and entity graph into `@kizuki/retrieval-pg` as a permitted fork behind `kizuki.retrieval/v1`. Hybrid when embeddings exist; FTS otherwise, with declared degradation. Rerank and local GGUF remain Kizuki-own. Do not use the unreachable fork snapshot named in the D13 implementation notes. Do not invent a second product. |
 | D18 | 2026-09-05 | Arbitrary-agent enrollment | Supersedes RFC 0002 §8.4's personal default. New arbitrary agents authenticate with an inert public grant: empty tools/types/subjects, rate 60, and no owner-correction relay. `OWNER` is unchanged. `OWNER_AGENT_GRANT` remains an explicit private harness preset with its former useful scope. Existing stored grants are unchanged. |
-| D19 | 2026-09-05 | Readiness without calendar gates | Owner amendment in [#403](https://github.com/Illuminfti/kizuki/issues/403): ready means a stranger can install and use Kizuki, with executable stranger proof, zero live P0s on the exact candidate and an honest install path. Supersedes C1's estate-cutover prerequisite and mandatory seven-/fourteen-day elapsed release gates. Long observation is optional post-ready; operational cutover requires separate authorization. Other product acceptance requirements remain. |
+| D19 | 2026-09-05 | Readiness without calendar gates | Owner amendment in issue #403: ready means a stranger can install and use Kizuki, with executable stranger proof, zero live P0s on the exact candidate and an honest install path. Supersedes C1's estate-cutover prerequisite and mandatory seven-/fourteen-day elapsed release gates. Long observation is optional post-ready; operational cutover requires separate authorization. Other product acceptance requirements remain. |
 
 D9–D16 supersede any earlier Gate 0 answer that made the owner the only
 consumer of a review queue, or that forbade scheduled canon writes.
@@ -105,7 +105,7 @@ C2–C6 and C8 are unchanged by the readiness amendment.
 ## Owner amendment to readiness (2026-09-05)
 
 D19 records the explicit supersession at the top of
-[#403](https://github.com/Illuminfti/kizuki/issues/403). A stranger must be able
+issue #403. A stranger must be able
 to install Kizuki, connect a source and get value. Executable stranger proof,
 zero live P0s on the exact candidate and truthful installation claims define
 the readiness bar; this entry does not assert that the evidence exists.

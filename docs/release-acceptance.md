@@ -6,7 +6,7 @@ The current producer set cannot establish release `GO`: independent review,
 native installed-service execution, live accounts and unfamiliar-user acceptance
 lack reviewed evidence adapters. The current readiness bar is a stranger who
 can install and use the product, zero live P0 findings, and honest installation.
-The [current campaign decision](https://github.com/Illuminfti/kizuki/issues/403)
+The [current campaign decision](decision-log.md#owner-amendment-to-readiness-2026-09-05)
 supersedes seven- and fourteen-day calendar gates. Longer observation remains
 an optional diagnostic after readiness; operational cutover requires its own authority.
 

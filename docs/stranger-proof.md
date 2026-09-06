@@ -27,7 +27,7 @@ must contain a valid `BUILD.json` and checksum manifest.
 
 This does not establish human stranger acceptance, a model/canon proof, or
 live-connector qualification. Seven- and fourteen-day observation are optional
-post-readiness diagnostics under the [current decision](https://github.com/Illuminfti/kizuki/issues/403).
+post-readiness diagnostics under the [current decision](decision-log.md#owner-amendment-to-readiness-2026-09-05).
 It is automated evidence
 that the built artifact can perform the deterministic local recovery path
 outside its source checkout.
