@@ -19,8 +19,8 @@ export interface SensitivityPolicy {
 /**
  * Connector helper kept at `(policy, hint?)` for existing callers. Delegates
  * to core `max(floor, default, upward event hint)`; a valid hint may only
- * raise the connector default, and unknown or absent values fail closed to
- * private.
+ * raise the connector default. Unknown or absent policy values fail closed
+ * to private; an unrecognized event hint leaves the resolved policy intact.
  */
 export function resolveSensitivity(
   policy: Partial<SensitivityPolicy>,

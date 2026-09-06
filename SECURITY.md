@@ -64,7 +64,7 @@ does not claim that third-party sign-in is universally prohibited.
 ## What this revision does not claim
 
 - Disk encryption of the vault or canon.
-- A packaged binary or signed installer.
+- A published or signed installer.
 - Live-account, copied-artifact, or unfamiliar-user qualification of any
   connector.
 - CLI enrollment of WHOOP, the X API package, Composio, or WhatsApp Business
