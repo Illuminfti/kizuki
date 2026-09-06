@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OWNER, initAgents } from "../../src/agents";
@@ -13,6 +13,8 @@ import { serveContextPacket } from "../../src/serving/packet";
 import { gateAsync } from "../../src/serving/gate";
 import { ServeError } from "../../src/serving/types";
 import { runRail } from "../../src/serve/rails";
+import { recordedPage } from "../helpers/recorded-page";
+import { write } from "../canon/helpers";
 import { insertClaim } from "../../src/claims/store";
 import { PROVENANCE_ERASURE_CAPABILITY, type RetrievalDoc, type RetrievalPort } from "../../src/contracts/retrieval";
 import { rebuildDerived, refreshDerivedPage } from "../../src/derived";
@@ -28,9 +30,11 @@ import { search } from "../../src/search/query";
 import { DIRECT_RETRIEVAL_DESCRIPTOR, ReferenceRetrievalPort } from "../contracts/reference-retrieval";
 import { temporaryPortContext } from "../contracts/fixtures";
 import { validEvent } from "../fixtures";
-import { tempVault, writeCanon } from "../helpers/vault";
+import { tempVault } from "../helpers/vault";
 
 const AT = "2026-09-06T15:00:00.000Z";
+const RECORDED_AT = new Date(Date.parse(AT) - 2_000).toISOString();
+const MERGED_AT = new Date(Date.parse(AT) - 1_000).toISOString();
 const disposers: (() => void | Promise<void>)[] = [];
 afterEach(async () => {
   setAfterCanonSnapshot(); setPurgeRecoveryHook();
@@ -52,15 +56,29 @@ async function fixture() {
   const second = event("Retired Beacon note", "fixture");
   const kept = event("Current Atlas note", "fixture-kept");
   const body = "Retiredword Atlas fixture.";
-  await insertClaim({ db, now: () => AT }, {
-    kind: "claim", target: "facts/atlas", body, provenance: [erased.event_id],
-    producer: "deterministic", confidence: 0.8, sensitivity: "personal", taint: "quoted",
-  });
-  const page = (id: string) => writeCanon(disk.path, `facts/${id}.md`, {
-    id, title: id, type: "fact", status: "active", sensitivity: "personal", taint: "quoted",
-    sources: [`event:${erased.event_id}`, kept.event_id],
-  }, `${body}\nCurrent Atlas notes.\n`);
-  page("atlas");
+  const preparePage = async (id: string) => {
+    await recordedPage(db, disk.path, `facts/${id}.md`, {
+      id, title: id, type: "fact", status: "active", sensitivity: "personal", taint: "quoted",
+    }, body, [erased.event_id], { now: () => RECORDED_AT });
+    const current = await insertClaim({ db, now: () => MERGED_AT }, {
+      provenance: [kept.event_id], sensitivity: "personal", confidence: 0.8,
+      kind: "merge", target: `facts/${id}`, body: "Current Atlas notes.",
+      subjects: [], subject: null, predicate: null, object: null, frontmatter: {},
+      producer: "model", model_ref: "fixture:synthetic", taint: "quoted",
+    });
+    if (current.outcome !== "stored") throw new Error("current fixture claim was not stored");
+    write({ db, vault_path: disk.path, now: () => MERGED_AT }, current.claim);
+  };
+  await preparePage("atlas");
+  await preparePage("late-atlas");
+  const latePath = join(disk.path, "facts/late-atlas.md");
+  const lateBytes = readFileSync(latePath);
+  rmSync(latePath);
+  // Reintroduce an actual recorded revision synchronously after the discovery snapshot.
+  const page = (id: string) => {
+    if (id !== "late-atlas") throw new Error("only the prepared late page may be restored");
+    writeFileSync(latePath, lateBytes);
+  };
   rebuildDerived(db, disk.path);
   const port = createVaultFts5Port(disk.path, () => AT);
   disposers.push(() => port.close());

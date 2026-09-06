@@ -361,7 +361,9 @@ describe("graph rebuild", () => {
     });
     removeDerivedPage(db, "fact:target", path);
 
-    expect(edgeRows(db)).toEqual([]);
+    expect(edgeRows(db)).toEqual([
+      { src: "fact:origin", dst: "Target", kind: "wikilink" },
+    ]);
   });
 });
 

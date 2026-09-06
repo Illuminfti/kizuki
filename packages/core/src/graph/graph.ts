@@ -294,7 +294,8 @@ function graphExclusions(db: Database, pages: readonly CanonPage[]) {
   let withheldCount = held.paths.size;
   for (const page of pages) {
     missing.delete(page.relPath);
-    if (!held.paths.has(page.relPath) && evidence.has(page.relPath)) continue;
+    // Unheld inactive pages do not resolve links or suppress ordinary prose targets.
+    if (!held.paths.has(page.relPath) && (!isLiveCanonPage(page) || evidence.has(page.relPath))) continue;
     if (!held.paths.has(page.relPath) && isLiveCanonPage(page)) withheldCount += 1;
     held.paths.add(page.relPath);
     held.pageIds.add(page.id);

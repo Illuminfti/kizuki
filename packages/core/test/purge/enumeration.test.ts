@@ -12,9 +12,14 @@ import {
   createVaultFts5Port, isHeld, purgeEvents, resumePurge, runPurge, verifyPurge,
 } from "../../src/ledger/purge";
 import { validEvent } from "../fixtures";
-import { tempVault, writeCanon } from "../helpers/vault";
+import { recordedPage } from "../helpers/recorded-page";
+import { write } from "../canon/helpers";
+import { insertClaim } from "../../src/claims/store";
+import { tempVault } from "../helpers/vault";
 
 const AT = "2026-09-06T12:00:00.000Z";
+const RECORDED_AT = new Date(Date.parse(AT) - 2_000).toISOString();
+const MERGED_AT = new Date(Date.parse(AT) - 1_000).toISOString();
 const disposers: (() => void | Promise<void>)[] = [];
 
 afterEach(async () => {
@@ -137,17 +142,25 @@ describe("purge exhaustive enumeration", () => {
 
   test("removes provenance projections in phase one and matches a fresh rebuild after rewriting", async () => {
     const { db, vaultPath, erased, kept } = fixture();
-    const [claimId] = seedClaims(db, "atlas-retired", 1, [erased.event_id]);
-    const retiredBody = getClaim(db, claimId!)!.body;
-    const page = (id: string, title: string, sources: string[], body: string) => writeCanon(
-      vaultPath, `facts/${id}.md`, {
+    const retiredBody = "Atlas fixture atlas-retired.";
+    const page = (id: string, title: string, sources: string[], body: string) => recordedPage(
+      db, vaultPath, `facts/${id}.md`, {
         id, title, type: "fact", status: "active", sensitivity: "personal", taint: "quoted",
-        sources, subjects: ["person:ada"],
-      }, body,
+        subjects: ["person:ada"],
+      }, body, sources, { now: () => RECORDED_AT },
     );
-    page("atlas", "Atlas", [erased.event_id, kept.event_id], `${retiredBody}\nCurrent Atlas notes.\n`);
-    page("reference", "Reference", [kept.event_id], "See [[Atlas]].\n");
-    page("retired-copy", "Retired copy", [`event:${erased.event_id}`], "Previous Atlas projection.\n");
+    const retired = await page("atlas", "Atlas", [erased.event_id], retiredBody);
+    const claimId = retired.claim.claim_id;
+    const current = await insertClaim({ db, now: () => MERGED_AT }, {
+      provenance: [kept.event_id], sensitivity: "personal", confidence: 0.8,
+      kind: "merge", target: "facts/atlas", body: "Current Atlas notes.",
+      subjects: [], subject: null, predicate: null, object: null, frontmatter: {},
+      producer: "model", model_ref: "fixture:synthetic", taint: "quoted",
+    });
+    if (current.outcome !== "stored") throw new Error("current fixture claim was not stored");
+    write({ db, vault_path: vaultPath, now: () => MERGED_AT }, current.claim);
+    await page("reference", "Reference", [kept.event_id], "See [[Atlas]].");
+    await page("retired-copy", "Retired copy", [erased.event_id], "Previous Atlas projection.");
     rebuildDerived(db, vaultPath);
     // A normal removed page can leave its old projection awaiting maintenance.
     rmSync(join(vaultPath, "facts/retired-copy.md"));

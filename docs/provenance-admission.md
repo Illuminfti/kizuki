@@ -11,8 +11,10 @@ overwrite decisions, but does not provide positive evidence.
 Serving additionally checks current source permissions, labels and purge
 holds. Local FTS and graph writes require derivation permission. A full or
 incremental rebuild withdraws inadmissible pages; graph maintenance also
-withdraws their incoming relations, including known aliases during an
-incomplete scan. Page identity and owner bytes remain available to the arbiter.
+withdraws incoming relations to unrecorded active pages, including known
+aliases during an incomplete scan. Purge-held aliases remain suppressed even
+for inactive pages. Other inactive pages leave ordinary unresolved prose links
+unchanged. Page identity and owner bytes remain available to the arbiter.
 Schema-only FTS recovery restores ledger rows and withholds canon companion
 rows until a rebuild supplies a current page snapshot.
 

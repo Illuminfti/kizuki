@@ -1,6 +1,6 @@
 import { snapshotCanonIo, withCanonMutationSync } from "../../src/canon/io";
 import { afterEach, describe, expect, test } from "bun:test";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { applyPurgeRewrite } from "../../src/canon/apply";
 import { rebuildDerived, refreshDerivedPage } from "../../src/derived";
@@ -9,7 +9,13 @@ import { neighbors } from "../../src/graph/graph";
 import { indexEvent } from "../../src/search/indexer";
 import { search } from "../../src/search/query";
 import { serializePage } from "../../src/vault/frontmatter";
+import { listCanonPages } from "../../src/vault/pages";
 import type { CanonPage } from "../../src/vault/pages";
+import type { Database } from "bun:sqlite";
+import type { FrontmatterValue } from "../../src/contracts/proposal";
+import { readEvent } from "../../src/ledger/ledger";
+import { recordedPage } from "../helpers/recorded-page";
+import { storeClaim, write } from "../canon/helpers";
 import { searchDb, storedEvent, tempVault } from "../search/helpers";
 
 const disposers: (() => void)[] = [];
@@ -18,7 +24,7 @@ afterEach(() => {
   for (const dispose of disposers.splice(0)) dispose();
 });
 
-function writeCanonPage(
+function writeRawPage(
   vaultPath: string,
   relPath: string,
   data: Record<string, unknown>,
@@ -35,14 +41,35 @@ function writeCanonPage(
   };
 }
 
+async function writeCanonPage(
+  db: Database,
+  vaultPath: string,
+  relPath: string,
+  data: Record<string, unknown>,
+  body: string,
+): Promise<CanonPage> {
+  if (data["status"] !== "active") return writeRawPage(vaultPath, relPath, data, body);
+  await recordedPage(db, vaultPath, relPath, data as Record<string, FrontmatterValue>, body);
+  return listCanonPages(vaultPath).find(page => page.relPath === relPath)!;
+}
+
+// These cases exercise canon projection; captured evidence remains independently searchable.
+function canonSearch(db: Database, query: string) {
+  return search(db, query, { ceiling: "private", scope: "canon" });
+}
+function links(db: Database, id: string) {
+  return neighbors(db, id, { kinds: ["wikilink"] }).edges
+    .map(edge => `${edge.src}|${edge.dst}|${edge.kind}`).sort();
+}
+
 describe("derived rebuild equivalence", () => {
-  test("incremental search and graph match a full rebuild", () => {
+  test("incremental search and graph match a full rebuild", async () => {
     const db = searchDb();
     const vault = tempVault();
     disposers.push(vault.dispose);
 
-    const tea = writeCanonPage(
-      vault.path,
+    const tea = await writeCanonPage(
+      db, vault.path,
       "facts/tea.md",
       {
         id: "fact:tea",
@@ -52,12 +79,11 @@ describe("derived rebuild equivalence", () => {
         sensitivity: "personal",
         taint: "clean",
         subjects: ["person:ada"],
-        sources: ["event:source"],
       },
       "Tea uses a [[Kettle]].",
     );
-    const kettle = writeCanonPage(
-      vault.path,
+    const kettle = await writeCanonPage(
+      db, vault.path,
       "facts/kettle.md",
       {
         id: "fact:kettle",
@@ -73,6 +99,9 @@ describe("derived rebuild equivalence", () => {
     refreshDerivedPage(db, tea, vault.path);
     refreshDerivedPage(db, kettle, vault.path);
     indexEvent(db, event);
+    for (const page of [tea, kettle]) {
+      for (const id of page.data["sources"] as string[]) indexEvent(db, readEvent(db, id)!);
+    }
 
     const incrementalSearch = search(db, "tea", { ceiling: "private" })
       .map(({ doc_id }) => doc_id)
@@ -93,17 +122,18 @@ describe("derived rebuild equivalence", () => {
     ).toEqual(incrementalGraph);
     expect(incrementalSearch).toEqual([
       `event:${event.event_id}`,
+      ...((tea.data["sources"] as string[]).map(id => `event:${id}`)),
       "page:fact:tea",
-    ]);
+    ].sort());
     expect(incrementalGraph).toContain("fact:tea|fact:kettle|wikilink");
   });
 
-  test("refreshing an archived page drops incoming edges and a restore brings them back", () => {
+  test("refreshing an archived page drops incoming edges and a restore brings them back", async () => {
     const db = searchDb();
     const vault = tempVault();
     disposers.push(vault.dispose);
-    const target = writeCanonPage(
-      vault.path,
+    const target = await writeCanonPage(
+      db, vault.path,
       "facts/target.md",
       {
         id: "fact:target",
@@ -115,8 +145,8 @@ describe("derived rebuild equivalence", () => {
       },
       "Destination.",
     );
-    writeCanonPage(
-      vault.path,
+    await writeCanonPage(
+      db, vault.path,
       "facts/origin.md",
       {
         id: "fact:origin",
@@ -130,45 +160,36 @@ describe("derived rebuild equivalence", () => {
     );
     rebuildDerived(db, vault.path);
     expect(
-      neighbors(db, "fact:target").edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`),
+      links(db, "fact:target"),
     ).toEqual(["fact:origin|fact:target|wikilink"]);
 
-    writeCanonPage(
-      vault.path,
+    const archived = await writeCanonPage(
+      db, vault.path,
       "facts/target.md",
       { ...target.data, status: "archived" },
       target.body,
     );
-    refreshDerivedPage(
-      db,
-      { ...target, data: { ...target.data, status: "archived" } },
-      vault.path,
-    );
+    refreshDerivedPage(db, archived, vault.path);
     expect(neighbors(db, "fact:target").edges).toEqual([]);
-    expect(search(db, "Destination", { ceiling: "private" }).map(({ doc_id }) => doc_id)).toEqual([]);
+    expect(canonSearch(db, "Destination").map(({ doc_id }) => doc_id)).toEqual([]);
 
-    writeCanonPage(
-      vault.path,
-      "facts/target.md",
-      target.data,
-      target.body,
-    );
+    writeRawPage(vault.path, target.relPath, target.data, target.body);
     refreshDerivedPage(db, target, vault.path);
     expect(
-      neighbors(db, "fact:target").edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`),
+      links(db, "fact:target"),
     ).toEqual(["fact:origin|fact:target|wikilink"]);
     rebuildDerived(db, vault.path);
     expect(
-      neighbors(db, "fact:target").edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`),
+      links(db, "fact:target"),
     ).toEqual(["fact:origin|fact:target|wikilink"]);
   });
 
-  test("refreshing a page rewrites other pages when resolution changes", () => {
+  test("refreshing a page rewrites other pages when resolution changes", async () => {
     const db = searchDb();
     const vault = tempVault();
     disposers.push(vault.dispose);
-    const origin = writeCanonPage(
-      vault.path,
+    const origin = await writeCanonPage(
+      db, vault.path,
       "facts/origin.md",
       {
         id: "fact:origin",
@@ -182,11 +203,11 @@ describe("derived rebuild equivalence", () => {
     );
     refreshDerivedPage(db, origin, vault.path);
     expect(
-      neighbors(db, "fact:origin").edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`),
+      links(db, "fact:origin"),
     ).toEqual(["fact:origin|Target|wikilink"]);
 
-    const target = writeCanonPage(
-      vault.path,
+    const target = await writeCanonPage(
+      db, vault.path,
       "facts/target.md",
       {
         id: "fact:target",
@@ -201,40 +222,32 @@ describe("derived rebuild equivalence", () => {
     refreshDerivedPage(db, target, vault.path);
     const resolved = ["fact:origin|fact:target|wikilink"];
     expect(
-      neighbors(db, "fact:origin").edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`),
+      links(db, "fact:origin"),
     ).toEqual(resolved);
     rebuildDerived(db, vault.path);
     expect(
-      neighbors(db, "fact:origin").edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`),
+      links(db, "fact:origin"),
     ).toEqual(resolved);
 
-    writeCanonPage(
-      vault.path,
-      "facts/target.md",
-      { ...target.data, title: "Other" },
-      target.body,
-    );
-    refreshDerivedPage(
-      db,
-      { ...target, data: { ...target.data, title: "Other" } },
-      vault.path,
-    );
+    const renamed = await writeCanonPage(db, vault.path, target.relPath,
+      { ...target.data, title: "Other" }, target.body);
+    refreshDerivedPage(db, renamed, vault.path);
     const raw = ["fact:origin|Target|wikilink"];
     expect(
-      neighbors(db, "fact:origin").edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`),
+      links(db, "fact:origin"),
     ).toEqual(raw);
     rebuildDerived(db, vault.path);
     expect(
-      neighbors(db, "fact:origin").edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`),
+      links(db, "fact:origin"),
     ).toEqual(raw);
   });
 
-  test("purged and archived pages are absent after rebuild", () => {
+  test("purged and archived pages are absent after rebuild", async () => {
     const db = searchDb();
     const vault = tempVault();
     disposers.push(vault.dispose);
-    writeCanonPage(
-      vault.path,
+    await writeCanonPage(
+      db, vault.path,
       "facts/live.md",
       {
         id: "fact:live",
@@ -246,8 +259,8 @@ describe("derived rebuild equivalence", () => {
       },
       "keepword",
     );
-    writeCanonPage(
-      vault.path,
+    await writeCanonPage(
+      db, vault.path,
       "facts/old.md",
       {
         id: "fact:old",
@@ -261,31 +274,29 @@ describe("derived rebuild equivalence", () => {
     );
     storedEvent(db, "gone", { text: "keepword deleted", deleted: true });
     rebuildDerived(db, vault.path);
-    expect(search(db, "keepword", { ceiling: "private" }).map(({ doc_id }) => doc_id)).toEqual([
+    expect(canonSearch(db, "keepword").map(({ doc_id }) => doc_id)).toEqual([
       "page:fact:live",
     ]);
   });
 
-  test("purge rewrite refreshes search and drops archived incoming edges", () => {
+  test("purge rewrite refreshes search and drops archived incoming edges", async () => {
     const db = searchDb();
     const vault = tempVault();
     disposers.push(vault.dispose);
-    writeCanonPage(
-      vault.path,
-      "facts/tea.md",
-      {
-        id: "fact:tea",
-        title: "Tea",
-        type: "fact",
-        status: "active",
-        sensitivity: "personal",
-        taint: "clean",
-        sources: ["event:keep", "event:purge"],
-      },
-      "keepword secretword",
-    );
-    writeCanonPage(
-      vault.path,
+    const keepEvent = storedEvent(db, "keep", { text: "keepword" });
+    const purgeEvent = storedEvent(db, "purge", { text: "secretword" });
+    const kept = await recordedPage(db, vault.path, "facts/tea.md", {
+      id: "fact:tea", title: "Tea", type: "fact", status: "active",
+      sensitivity: "personal", taint: "clean",
+    }, "keepword", [keepEvent.event_id]);
+    const purged = await storeClaim(db, purgeEvent.event_id, {
+      kind: "merge", target: "facts/tea", body: "secretword", subjects: [],
+      subject: null, predicate: null, object: null, frontmatter: {},
+      producer: "model", model_ref: "fixture:synthetic",
+    });
+    write({ db, vault_path: vault.path }, purged);
+    await writeCanonPage(
+      db, vault.path,
       "facts/kettle.md",
       {
         id: "fact:kettle",
@@ -298,59 +309,59 @@ describe("derived rebuild equivalence", () => {
       "See [[Tea]].",
     );
     rebuildDerived(db, vault.path);
-    expect(search(db, "secretword", { ceiling: "private" }).map(({ doc_id }) => doc_id)).toEqual([
+    expect(canonSearch(db, "secretword").map(({ doc_id }) => doc_id)).toEqual([
       "page:fact:tea",
     ]);
     expect(
       neighbors(db, "fact:tea").edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`).sort(),
     ).toEqual([
       "fact:kettle|fact:tea|wikilink",
-      "fact:tea|event:keep|source",
-      "fact:tea|event:purge|source",
-    ]);
+      `fact:tea|${keepEvent.event_id}|source`,
+      `fact:tea|${purgeEvent.event_id}|source`,
+    ].sort());
 
     withCanonMutationSync(snapshotCanonIo({ db, vault_path: vault.path }), (scope, io) => applyPurgeRewrite(
       scope, io,
       {
         rel_path: "facts/tea.md",
-        purged_event_ids: ["event:purge"],
-        purged_claim_ids: ["claim:purged"],
+        purged_event_ids: [purgeEvent.event_id],
+        purged_claim_ids: [purged.claim_id],
         purged_claim_bodies: ["secretword"],
       },
     ));
-    expect(search(db, "secretword", { ceiling: "private" })).toEqual([]);
-    expect(search(db, "keepword", { ceiling: "private" }).map(({ doc_id }) => doc_id)).toEqual([
+    expect(canonSearch(db, "secretword")).toEqual([]);
+    expect(canonSearch(db, "keepword").map(({ doc_id }) => doc_id)).toEqual([
       "page:fact:tea",
     ]);
     expect(
       neighbors(db, "fact:tea").edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`).sort(),
     ).toEqual([
       "fact:kettle|fact:tea|wikilink",
-      "fact:tea|event:keep|source",
-    ]);
+      `fact:tea|${keepEvent.event_id}|source`,
+    ].sort());
 
     withCanonMutationSync(snapshotCanonIo({ db, vault_path: vault.path }), (scope, io) => applyPurgeRewrite(
       scope, io,
       {
         rel_path: "facts/tea.md",
-        purged_event_ids: ["event:keep"],
-        purged_claim_ids: ["claim:rest"],
+        purged_event_ids: [keepEvent.event_id],
+        purged_claim_ids: [kept.claim.claim_id],
         purged_claim_bodies: ["keepword"],
       },
     ));
-    expect(search(db, "keepword", { ceiling: "private" })).toEqual([]);
+    expect(canonSearch(db, "keepword")).toEqual([]);
     expect(neighbors(db, "fact:tea").edges).toEqual([]);
     expect(
-      neighbors(db, "fact:kettle").edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`),
+      links(db, "fact:kettle"),
     ).toEqual(["fact:kettle|Tea|wikilink"]);
   });
 
-  test("an unreadable page keeps its edges across an incremental refresh", () => {
+  test("an unreadable page keeps its edges across an incremental refresh", async () => {
     const db = searchDb();
     const vault = tempVault();
     disposers.push(vault.dispose);
-    const origin = writeCanonPage(
-      vault.path,
+    const origin = await writeCanonPage(
+      db, vault.path,
       "facts/origin.md",
       {
         id: "fact:origin",
@@ -362,8 +373,8 @@ describe("derived rebuild equivalence", () => {
       },
       "See [[Target]].",
     );
-    writeCanonPage(
-      vault.path,
+    const target = await writeCanonPage(
+      db, vault.path,
       "facts/target.md",
       {
         id: "fact:target",
@@ -372,13 +383,12 @@ describe("derived rebuild equivalence", () => {
         status: "active",
         sensitivity: "personal",
         taint: "clean",
-        sources: ["event:kept"],
       },
       "See [[Origin]].",
     );
     rebuildDerived(db, vault.path);
     const targetOutgoing = [
-      "fact:target|event:kept|source",
+      ...(target.data["sources"] as string[]).map(id => `fact:target|${id}|source`),
       "fact:target|fact:origin|wikilink",
     ];
     const resolved = [
@@ -391,6 +401,7 @@ describe("derived rebuild equivalence", () => {
         .sort(),
     ).toEqual(resolved);
 
+    const targetBytes = readFileSync(join(vault.path, target.relPath));
     writeFileSync(
       join(vault.path, "facts/target.md"),
       `---
@@ -408,7 +419,7 @@ See [[Origin]].
         .edges.map((edge) => `${edge.src}|${edge.dst}|${edge.kind}`)
         .sort(),
     ).toEqual(targetOutgoing);
-    expect(search(db, "Origin", { ceiling: "private" }).map(({ doc_id }) => doc_id).sort()).toEqual([
+    expect(canonSearch(db, "Origin").map(({ doc_id }) => doc_id).sort()).toEqual([
       "page:fact:origin",
       "page:fact:target",
     ]);
@@ -417,20 +428,7 @@ See [[Origin]].
       skipped_count: 1,
     });
 
-    writeCanonPage(
-      vault.path,
-      "facts/target.md",
-      {
-        id: "fact:target",
-        title: "Target",
-        type: "fact",
-        status: "active",
-        sensitivity: "personal",
-        taint: "clean",
-        sources: ["event:kept"],
-      },
-      "See [[Origin]].",
-    );
+    writeFileSync(join(vault.path, target.relPath), targetBytes);
     refreshDerivedPage(db, origin, vault.path);
     expect(
       neighbors(db, "fact:target")
@@ -440,12 +438,12 @@ See [[Origin]].
     expect(readDerivedMeta(db, "graph")?.status).toBe("ok");
   });
 
-  test("a complete incremental walk recounts a degraded graph stamp", () => {
+  test("a complete incremental walk recounts a degraded graph stamp", async () => {
     const db = searchDb();
     const vault = tempVault();
     disposers.push(vault.dispose);
-    const origin = writeCanonPage(
-      vault.path,
+    const origin = await writeCanonPage(
+      db, vault.path,
       "facts/origin.md",
       {
         id: "fact:origin",
@@ -457,8 +455,8 @@ See [[Origin]].
       },
       "See [[Target]].",
     );
-    writeCanonPage(
-      vault.path,
+    await writeCanonPage(
+      db, vault.path,
       "facts/target.md",
       {
         id: "fact:target",
@@ -471,7 +469,7 @@ See [[Origin]].
       "Destination.",
     );
     rebuildDerived(db, vault.path);
-    const edges = neighbors(db, "fact:origin").edges.length;
+    const edges = db.query<{ count: number }, []>("SELECT count(*) AS count FROM graph_edges").get()!.count;
     expect(edges).toBeGreaterThan(0);
 
     stampDerived(db, {
