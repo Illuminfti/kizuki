@@ -44,6 +44,13 @@ const QUOTED_CHUNK = z.object({
 
 const DENIED = z.object({ reason: z.string(), count: z.int() });
 
+/** Exact object core emits once the source-policy epoch is positive; omitted at epoch 0. */
+const SOURCE_POLICY = z.strictObject({
+  mode: z.literal("enforced"),
+  epoch: z.int().min(1),
+  legacy_unbound: z.literal("owner_only"),
+});
+
 export const ENVELOPE_SHAPE = z.object({
   schema: z.literal(ENVELOPE_SCHEMA),
   tool: z.enum(TOOLS),
@@ -52,6 +59,7 @@ export const ENVELOPE_SHAPE = z.object({
   canon: z.array(CANON_CHUNK),
   quoted: z.array(QUOTED_CHUNK),
   denied: z.array(DENIED),
+  source_policy: SOURCE_POLICY.optional(),
   data: z.record(z.string(), z.unknown()).optional(),
 });
 
