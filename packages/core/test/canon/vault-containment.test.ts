@@ -117,3 +117,28 @@ test("correction keeps archived and erased receipt history inert", async () => {
     expect(f.db.query<{ n: number }, []>("SELECT count(*) AS n FROM canon_receipts").get()?.n).toBe(1);
   }
 });
+
+test("repeated correction keeps archived and erased byte history out of rewritten results", async () => {
+  const f = fixture();
+  const claim = await storeClaim(f.db, putEvent(f.db));
+  const receipt = write(f.io, claim);
+  const input = { statement: "Grace is at Initech now, not Acme.", target: { claim_id: claim.claim_id } };
+  const first = await correct(f.io, input);
+  expect(first.rewritten).toHaveLength(1);
+  const archivePath = "archive/grace.prev-20250102.md";
+  const bytes = readFileSync(join(f.vault, receipt.page_path), "utf8");
+  renameSync(join(f.vault, receipt.page_path), join(f.vault, archivePath));
+  for (const historyPath of [archivePath, ""]) {
+    f.db.query("UPDATE canon_receipts SET page_path=?,archive_path=NULL WHERE receipt_id=?")
+      .run(historyPath, first.receipt_id);
+    const repeated = await correct(f.io, input);
+    expect(repeated.event_id).toBe(first.event_id);
+    expect(repeated.receipt_id).toBe(first.receipt_id);
+    expect(repeated.claim_ids).toEqual(first.claim_ids);
+    expect(repeated.rewritten).toEqual([]);
+    expect(repeated.answer).not.toContain("Rewrote ");
+    expect(repeated.answer).not.toContain("Undo:");
+    expect(readFileSync(join(f.vault, archivePath), "utf8")).toBe(bytes);
+    expect(f.db.query<{ n: number }, []>("SELECT count(*) AS n FROM canon_receipts").get()?.n).toBe(2);
+  }
+});
