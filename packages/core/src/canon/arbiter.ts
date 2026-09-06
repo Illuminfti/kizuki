@@ -4,6 +4,7 @@ import { AUTHORITY_TIERS } from "../contracts/proposal";
 import { tableExists } from "../ledger/schema";
 import { findPageById } from "../vault/pages";
 import { CanonWriteError } from "./errors";
+export { assertPageRelPath } from "./paths";
 import type { PageCandidate } from "./receipts";
 import { latestReceiptForPage, listCanonReceipts } from "./receipts";
 import { initCanon } from "./schema";
@@ -32,9 +33,6 @@ export type TargetDecision =
     }
   | { action: "conflict"; candidates: PageCandidate[]; chosen: PageCandidate };
 
-const PATH_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-const MAX_SEGMENTS = 8;
-const MAX_SEGMENT_LENGTH = 64;
 
 /** Kinds that mint a page; the rest require one (§4.4, structural refusals). */
 const CREATE_KINDS: ReadonlySet<ClaimKind> = new Set(["entity", "claim"]);
@@ -57,32 +55,6 @@ export function pageRelPath(claim: { claim_id: string; target: string | null }):
   const refusal = targetRefusal(target);
   if (refusal !== null) throw new CanonWriteError("target_invalid", refusal);
   return `${target.split(/[:/]/).join("/")}.md`;
-}
-
-/**
- * A decision is caller-built, so the writer re-validates the path it names:
- * vault-relative, Markdown, the same segment rules as `pageRelPath`, and
- * never the archive directory or a doctrine file.
- */
-export function assertPageRelPath(relPath: string): void {
-  const segments = relPath.split("/");
-  const last = segments.at(-1);
-  if (
-    segments.length > MAX_SEGMENTS ||
-    last === undefined ||
-    !last.endsWith(".md") ||
-    last.length <= 3 ||
-    segments[0] === "archive" ||
-    (segments.length === 1 && (last === "CANON.md" || last === "SCHEMA.md"))
-  ) {
-    throw new CanonWriteError("target_invalid", "decision names an unusable page path");
-  }
-  for (const [index, segment] of segments.entries()) {
-    const limit = index === segments.length - 1 ? MAX_SEGMENT_LENGTH + 3 : MAX_SEGMENT_LENGTH;
-    if (segment.length > limit || !PATH_SEGMENT.test(segment)) {
-      throw new CanonWriteError("target_invalid", "decision names an unusable page path");
-    }
-  }
 }
 
 interface ResolvedPage {

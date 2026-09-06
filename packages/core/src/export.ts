@@ -1,3 +1,4 @@
+import { assertReceiptPaths } from "./canon/paths";
 import { isRfc3339 } from "./util/time";
 import { sourcePolicyEpoch, inspectSourceGrant, sourceEventsAllowed } from "./ledger/source-grants";
 import type { Database } from "bun:sqlite";
@@ -1654,6 +1655,9 @@ function insertConnectionRow(db: Database, raw: Record<string, unknown>): void {
 }
 
 function insertReceipt(db: Database, raw: Record<string, unknown>): void {
+  const pagePath = asString(raw.page_path, "page_path");
+  const archivePath = asStringOrNull(raw.archive_path, "archive_path");
+  assertReceiptPaths({ page_path: pagePath, archive_path: archivePath });
   db.query(
     `INSERT INTO canon_receipts
        (receipt_id, claim_ids, provenance, sensitivity, page_path, kind,
@@ -1666,14 +1670,14 @@ function insertReceipt(db: Database, raw: Record<string, unknown>): void {
     JSON.stringify(raw.claim_ids ?? []),
     JSON.stringify(raw.provenance ?? []),
     asString(raw.sensitivity, "sensitivity"),
-    asString(raw.page_path, "page_path"),
+    pagePath,
     asString(raw.claim_kind ?? "claim", "claim_kind"),
     asStringOrNull(raw.before_hash, "before_hash"),
     asString(raw.after_hash, "after_hash"),
     asString(raw.at, "at"),
     asString(raw.kind ?? "write", "kind"),
     asString(raw.page_action ?? "edit", "page_action"),
-    asStringOrNull(raw.archive_path, "archive_path"),
+    archivePath,
     asString(raw.writer ?? "import", "writer"),
     asString(raw.producer ?? "deterministic", "producer"),
     asStringOrNull(raw.model_ref, "model_ref"),
