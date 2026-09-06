@@ -1,6 +1,6 @@
 # Release acceptance evidence
 
-Evidence date: 5 September 2026. The checked-in acceptance checker inventories
+Evidence date: 6 September 2026. The checked-in acceptance checker inventories
 the fixed RC and 1.0 obligations and validates the supported local evidence.
 The current producer set cannot establish release `GO`: independent review,
 native installed-service execution, live accounts, unfamiliar-user acceptance,
@@ -38,14 +38,14 @@ waivers, actor declarations, skip flags, threshold overrides or clock flags.
 
 ## Index schema
 
-`kizuki.acceptance-evidence/v1` has exactly four keys: `schema`,
+`kizuki.acceptance-evidence/v2` has exactly four keys: `schema`,
 `candidate_source_sha`, `artifacts` and `fixture_observation`. The candidate
 is one lowercase 40-character Git SHA. An empty evidence inventory is valid
 and produces missing gates:
 
 ```json
 {
-  "schema": "kizuki.acceptance-evidence/v1",
+  "schema": "kizuki.acceptance-evidence/v2",
   "candidate_source_sha": "0000000000000000000000000000000000000000",
   "artifacts": [],
   "fixture_observation": null
@@ -57,7 +57,7 @@ artifact entries has exactly these keys:
 
 | Key | Required value |
 | --- | --- |
-| `producer` | `kizuki.artifact-proof/v1` |
+| `producer` | `kizuki.artifact-proof/v2`, or historical `kizuki.artifact-proof/v1` with no engine credit |
 | `target` | `bun-linux-x64-baseline` or `bun-darwin-arm64`, each at most once |
 | `directory` | Absolute path to the retained native package directory |
 | `proof` | Absolute path to the retained artifact proof `receipt.json` |
@@ -70,9 +70,27 @@ and requires candidate SHA, target, Bun version, both binaries and every
 package hash to agree with the receipt. The package and proof Bun version
 must also equal the repository's `.bun-version`, which is bound into the
 policy and verifier identities. The recorded native platform and
-architecture must agree with that target. All fourteen producer steps must
+architecture must agree with that target. All sixteen v2 producer steps must
 appear in their exact order, with their actual command shapes, timeouts and
 successful semantic assertions. A failed receipt cannot supply credit.
+
+V2 includes `host_kernel_release` and an `engine_observations` object with
+exactly `kizuki` and `kizuki_mcp`. Each observation binds the copied executable
+hash and the closed `kizuki.sqlite-runtime/v1` fragment. CLI records its actual
+exit code and doctor status: only 0/ok or 1/error can supply an observation.
+MCP requires exit 0 and a successful `system_health` result after a normal
+initialize/close session. The two child Bun versions must match BUILD and
+policy; their SQLite version/source-ID pairs must agree and match a sourced
+policy entry. Unknown identities fail the separate required engine gate.
+The kernel-release field does not establish a vendor's OS patch status.
+See [the collection contract](stranger-proof.md#effective-sqlite-engine-evidence).
+
+Historical v1 indexes accept only v1 artifact references; their fourteen-step
+receipts remain readable as fixture evidence. V2 indexes can inventory either
+version, with the reference producer matching the receipt exactly. A v1
+receipt leaves `engine.<target>` missing with `missing-engine-proof`. Changing
+the evaluator never upgrades old evidence; rerun the compiled binaries for v2.
+The report and acceptance policy use explicit v2 schema tags.
 
 An optional fixture observation has exactly `producer`, `directory`,
 `manifest_sha256`, `genesis_sha256` and `samples_sha256`. Its producer must be
@@ -96,7 +114,7 @@ participant identity or account details are copied into the report.
 
 ## Fixed gates
 
-The report always prints all 39 rows. `required` distinguishes the selected
+The report always prints all 41 rows. `required` distinguishes the selected
 profile's obligations. The three final operational rows are required only
 for `1.0`; the fixture diagnostic never supplies release credit. The RC
 profile does not accept 1.0.
@@ -105,6 +123,7 @@ profile does not accept 1.0.
 | --- | --- |
 | `evidence.index` | Closed index validation; implemented |
 | `artifact.<target>` for both targets | Local package and recorded fixture-step consistency; implemented with `automated-fixture-integrity` scope |
+| `engine.<target>` for both targets | Both copied executables report the matching qualified SQLite identity and pinned Bun; v1 is missing, unknown identities fail |
 | `native.<target>` for both targets | Trusted producer revision and native execution attestation; `UNVERIFIABLE` |
 | `lifecycle.<target>` for both targets | Actual normal install, upgrade, restart, reboot and uninstall; `NOT_IMPLEMENTED` |
 | `candidate.required-checks` | Exact-candidate required CI/check identities; adapter `NOT_IMPLEMENTED` |
@@ -153,7 +172,7 @@ policy digest and hashes of the local verifier files. Gate evidence digests
 refer only to successfully verified retained bytes; failed rows have no
 verified digest, while the index digest binds the submitted claims. All gates
 share the report's candidate and verifier
-identity. Artifact-proof v1 has no observation interval. Fixture diagnostics
+identity. Artifact proofs have no operational observation interval. Fixture diagnostics
 display actual observed and credited duration, last observation and pending
 boundary rails, with `release_credit: false`. Nothing advances observation
 time, starts a service, opens an account, or calls a model.
@@ -175,7 +194,7 @@ run, and does not itself produce a trusted passing receipt.
 ## Verification
 
 ```bash
-bun test scripts/go-no-go.test.ts scripts/stranger-proof.test.ts scripts/release-artifacts.test.ts scripts/release-targets.test.ts scripts/qualification.test.ts
+bun test scripts/artifact-proof.test.ts scripts/artifact-engine.test.ts scripts/go-no-go.test.ts scripts/stranger-proof.test.ts scripts/release-artifacts.test.ts scripts/release-targets.test.ts scripts/qualification.test.ts
 bun run typecheck
 bun run verify
 ```
