@@ -114,7 +114,8 @@ export function printRootHelp(
   write("");
   write("Give your agent a focused context packet, with sources, using context.");
   write("Capture and recall work without a model. Automatic canon writing needs one.");
-  write("Use connect to browse local files, exports, and Beeper messaging. Direct account sign-in is not available here.");
+  write("Use connect to enroll local files, exports, Beeper messaging, IMAP, Telegram, Gmail, and Google Calendar.");
+  write("Other account connectors are not enrollable here. None of these sign-in paths are live-account qualified.");
   write(
     `${RETIRED_OWNER_GATE_VERBS.join(", ")} are retired. Use audit, undo, and tell.`,
   );

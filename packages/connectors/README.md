@@ -24,17 +24,26 @@ Markdown sources must be separate from the Kizuki vault. See the
 
 ## The registry
 
+These ids match `defaultConnectorRegistry.ids()` on this revision.
+
 | Registry id              | Reads                                                                                                 | Kind              |
 | ------------------------ | ----------------------------------------------------------------------------------------------------- | ----------------- |
+| `kizuki.beeper`          | Local Beeper Desktop API history through an approved token reference; synthetic coverage only          | Live local source |
+| `kizuki.gmail`           | Read-only Gmail via operator desktop OAuth client and browser sign-in; live-account qualification unrun | Bounded live source |
 | `kizuki.google-calendar` | Explicitly selected read-only Google calendar revisions; native CLI, explicit source consent | Bounded live source |
-| `kizuki.markdown-folder` | A folder of Markdown files, rescanned each run                                                        | Live source       |
-| `kizuki.screenpipe`      | A local screenpipe SQLite database, read-only and offline (see that package's README before using it) | Live local source |
+| `kizuki.ics`             | A local iCalendar file. CLI enrolls the file path; URL sign-in is library surface, not a connect verb | Live local source |
+| `kizuki.imap`            | Read-only IMAP mailbox via interactive app-password sign-in                                           | Bounded live source |
 | `kizuki.import-chatgpt`  | The `conversations.json` of a ChatGPT data export                                                     | Snapshot importer |
 | `kizuki.import-claude`   | The `conversations.json` of a Claude data export                                                      | Snapshot importer |
-| `kizuki.import-whatsapp` | An unzipped WhatsApp "Export chat" folder, or the chat `.txt` inside it                               | Snapshot importer |
-| `kizuki.import-pocket`   | A Pocket CSV export: one `.csv`, or a folder of `part_*.csv`                                          | Snapshot importer |
+| `kizuki.import-legacy-events` | Owner-mapped event table or JSONL export; not live sync                                          | Snapshot importer |
+| `kizuki.import-legacy-wiki` | Owner-mapped markdown wiki export; not live sync                                                 | Snapshot importer |
 | `kizuki.import-omnivore` | An unzipped Omnivore export folder                                                                    | Snapshot importer |
+| `kizuki.import-pocket`   | A Pocket CSV export: one `.csv`, or a folder of `part_*.csv`                                          | Snapshot importer |
+| `kizuki.import-whatsapp` | An unzipped WhatsApp "Export chat" folder, or the chat `.txt` inside it                               | Snapshot importer |
 | `kizuki.import-x-archive` | Owner posts from an unzipped X data archive; local and read-only                                       | Snapshot importer |
+| `kizuki.markdown-folder` | A folder of Markdown files, rescanned each run                                                        | Live source       |
+| `kizuki.screenpipe`      | A local screenpipe SQLite database, read-only and offline (see that package's README before using it) | Live local source |
+| `kizuki.telegram`        | Native Telegram user sign-in; accessible dialogs. Project app credentials required; live-account qualification unrun | Bounded live source |
 
 In the examples below, `kizuki` stands for `bun packages/cli/src/main.ts` run
 from the tree, as in the repository README.
@@ -228,8 +237,13 @@ X API access are not supported by this bounded importer.
 - Live sync of WhatsApp, Pocket, or Omnivore. There is no sanctioned personal
   API for any of the three: the first has none for personal history, and the
   other two are closed services.
-- Live X sync and X API access. This package implements only the bounded local
-  archive slice described above.
+- Live X sync and X API access. This package registers only the bounded local
+  archive slice described above. `@kizuki/connector-x/api` exists as an
+  unregistered package subpath and is not CLI-enrollable.
+- WHOOP. `@kizuki/connector-whoop` exists as a synthetic-tested component and
+  is not registered here. Native enrollment, live-account qualification, and
+  provider OAuth compatibility are unrun. Local desktop custody of a WHOOP
+  Client Secret is not sanctioned.
 - The WhatsApp Business API, and Composio as an integration provider. Both were
   deferred by an explicit decision.
 - Reading zip archives, downloading or parsing media, and converting saved

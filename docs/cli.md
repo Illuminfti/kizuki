@@ -31,6 +31,19 @@ Retired verbs `review`, `promote`, and `reject` exit 2 and point at `audit`,
 Binding design for autonomous canon is [RFC 0002](../rfcs/0002-autonomous-canon.md).
 This page documents the verbs that exist on this revision.
 
+## app
+
+```text
+usage: kizuki app [--no-open] [--no-service]
+```
+
+Opens the bundled private local app on a random `127.0.0.1` port. It is a
+client of the existing Core and does not start another writer. `--no-open`
+starts the diagnostic host without launching a browser; the printed address
+alone is not an authenticated session. `--no-service` opts out of installing
+the native background service on first-run setup. This is not an OS
+application installer. See [the local app](local-app.md).
+
 ## init
 
 ```text
@@ -82,18 +95,23 @@ usage: kizuki connect [--list|status] [--json]
        kizuki connect <connector> --source PATH [--sensitivity public|personal|private]
        kizuki connect beeper --token-ref env:VAR|file:/absolute/path [--endpoint http://127.0.0.1:23373] [--sensitivity public|personal|private] [--json]
        kizuki connect imap [--source KEY] [--sensitivity public|personal|private]
+       kizuki connect telegram [--source KEY] [--sensitivity public|personal|private] [--json]
+       kizuki connect gmail --fields text,subjects,headers,labels,attachments [--source KEY | --new-source] [--json]
+       kizuki connect google-calendar --calendar CANONICAL_ID --fields summary,description,location,attendees,attachments|none [--source KEY | --new-source] [--json]
 ```
 
 Browse sources, inspect saved sync status, or enroll a source. Local Beeper
 enrollment checks its authenticated Desktop API before saving a secret
 reference. IMAP enrollment uses a local interactive prompt and stores its
 opaque connector state in the owner-only connection-state store. File sources
-remain supported. `connect telegram [--source KEY] [--json]` uses native
-phone/code sign-in and optional two-step verification in an interactive terminal.
-Project app credentials are required; missing credentials refuse before any
-prompt or network connection. Re-sign-in preserves account identity and history.
-Other account sign-in flows are unavailable and labeled in
-the catalog. See [connection setup](connect.md).
+remain supported. `connect telegram` uses native phone/code sign-in and
+optional two-step verification in an interactive terminal. Project app
+credentials are required; missing credentials refuse before any prompt or
+network connection. Re-sign-in preserves account identity and history.
+Gmail and Google Calendar use operator desktop clients and browser sign-in;
+see the flags above and [connection setup](connect.md). Other account sign-in
+connectors are not enrollable through this CLI. None of these sign-in paths
+are live-account qualified.
 
 Sensitivity is optional: trusted connector runs resolve each valid event
 against that connection's default, floor, owner label, and source hint.
@@ -228,14 +246,17 @@ unless `--degraded` is set. Zero labeled hits and zero withheld prints
 ## doctor
 
 ```text
-usage: kizuki doctor [--json]
+usage: kizuki doctor [--json] [--integrity]
 ```
 
 Vault path, event count, claim counts (filed/live/written/unwritten), live
 claim ids (for `tell --claim`), leftover skipped rows, connections,
 checkpoints, derived-index freshness, writer ROLE stamps, machine vs human
 origin counts, calibration/liveness probes, receipts, holds, serve rails,
-and `canon writing: on|off`. Off when no model is configured. Exit 1 when
+and `canon writing: on|off`. Off when no model is configured. The default
+report runs SQLite `quick_check` and samples ledger events. `--integrity`
+also runs `PRAGMA integrity_check` on the vault ledger; JSON then reports
+that result in `ledger.integrity_check` (otherwise `null`). Exit 1 when
 the report is not ok. After a folder import, expect live claims; the writer
 still needs a model before those claims become pages. Loop creates land
 under `auto/`; human pages stay where they are.
