@@ -6,7 +6,7 @@ import { join } from "node:path";
 import * as core from "../src/index";
 import { insertClaim } from "../src/claims/store";
 import { LEDGER_SCHEMA_VERSION, inspectOpenLedgerHealth, openLedger } from "../src/ledger/db";
-import { LedgerStoreError } from "../src/ledger/errors";
+import { classifySqliteFailure, LedgerStoreError } from "../src/ledger/errors";
 import { LEDGER_BUSY_TIMEOUT_MS, MAX_READ_SINCE } from "../src/ledger/limits";
 import { accept, readSince, replay } from "../src/ledger/ledger";
 import { validEvent } from "./fixtures";
@@ -167,6 +167,37 @@ describe("ledger p1 store", () => {
     const db = openLedger(":memory:");
     db.close();
     expect(() => accept(db, validEvent())).toThrow();
+  });
+
+  test("foreign-key and check failures are infrastructure, not a bad record", () => {
+    const foreignKey = Object.assign(new Error("FOREIGN KEY constraint failed"), {
+      code: "SQLITE_CONSTRAINT_FOREIGNKEY",
+    });
+    const check = Object.assign(new Error("CHECK constraint failed: events"), {
+      code: "SQLITE_CONSTRAINT_CHECK",
+    });
+    const missing = Object.assign(new Error("NOT NULL constraint failed: events.text"), {
+      code: "SQLITE_CONSTRAINT_NOTNULL",
+    });
+    const unique = Object.assign(new Error("UNIQUE constraint failed"), {
+      code: "SQLITE_CONSTRAINT_UNIQUE",
+    });
+    expect(classifySqliteFailure(foreignKey)).toMatchObject({
+      code: "infrastructure",
+    });
+    expect(classifySqliteFailure(check)).toMatchObject({ code: "infrastructure" });
+    expect(classifySqliteFailure(missing)).toMatchObject({ code: "infrastructure" });
+    expect(classifySqliteFailure(unique)).toBeNull();
+
+    const db = openLedger(":memory:");
+    db.exec(`
+      CREATE TRIGGER fail_fk BEFORE INSERT ON events
+      BEGIN
+        SELECT RAISE(ABORT, 'SQLITE_CONSTRAINT_FOREIGNKEY');
+      END;
+    `);
+    expect(() => accept(db, validEvent())).toThrow(LedgerStoreError);
+    db.close();
   });
 
   test("readSince retains the last token at end-of-stream", () => {

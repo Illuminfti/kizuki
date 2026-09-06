@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { installEventIdentityGuards } from "./event-identity-schema";
-import { oneShotGet, oneShotRun, tableColumns, tableExists } from "./schema";
+import { oneShotAll, oneShotGet, oneShotRun, tableColumns, tableExists } from "./schema";
 
 const ULID_CHECK = `length(event_id) = 26 AND event_id NOT GLOB '*[^0123456789ABCDEFGHJKMNPQRSTVWXYZ]*'`;
 const HASH_CHECK = `length(content_hash) = 64 AND content_hash NOT GLOB '*[^0-9a-f]*'`;
@@ -88,7 +88,38 @@ function rebuildSchemaVersion(db: Database): void {
   db.exec("ALTER TABLE schema_version_v16 RENAME TO schema_version");
 }
 
+interface DeferredInputSnapshot {
+  event_id: string;
+  source_key: string | null;
+  checked_revision: number;
+  checked_binding_digest: string;
+}
+
+function snapshotDeferredInputs(db: Database): DeferredInputSnapshot[] {
+  if (!tableExists(db, "extract_deferred_inputs")) return [];
+  return oneShotAll<DeferredInputSnapshot>(
+    db,
+    "SELECT event_id, source_key, checked_revision, checked_binding_digest FROM extract_deferred_inputs",
+  );
+}
+
+function restoreDeferredInputs(db: Database, rows: DeferredInputSnapshot[]): void {
+  for (const row of rows) {
+    oneShotRun(
+      db,
+      `INSERT INTO extract_deferred_inputs
+        (event_id, source_key, checked_revision, checked_binding_digest)
+       VALUES (?, ?, ?, ?)`,
+      row.event_id,
+      row.source_key,
+      row.checked_revision,
+      row.checked_binding_digest,
+    );
+  }
+}
+
 function rebuildEvents(db: Database): void {
+  const deferred = snapshotDeferredInputs(db);
   db.exec(EVENTS_V16);
   db.exec(`
     INSERT INTO events_v16 (
@@ -121,6 +152,7 @@ function rebuildEvents(db: Database): void {
     DROP TRIGGER IF EXISTS native_owner_hash_update;
   `);
   installEventIdentityGuards(db);
+  restoreDeferredInputs(db, deferred);
 }
 
 function moveExtractCheckpoints(db: Database): void {

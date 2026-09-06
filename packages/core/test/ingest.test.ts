@@ -283,6 +283,27 @@ describe("runBatch", () => {
     }
   });
 
+  test("a corrupt stored duplicate aborts the batch and does not store later events", () => {
+    const db = database();
+    runBatch(db, { events: [validEvent()], cursor: "one" }, NOTHING);
+    db.exec("DROP TRIGGER events_identity_update; UPDATE events SET origin='self'");
+    const result = runBatch(
+      db,
+      {
+        events: [validEvent(), { ...validEvent(), source_record_id: "rec-2" }],
+        cursor: "two",
+      },
+      NOTHING,
+    );
+    expect(result.stored).toBe(0);
+    expect(result.duplicates).toBe(0);
+    expect(result.errors.some((error) => /invalid|corrupt|origin/i.test(error))).toBe(true);
+    expect(
+      db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM events").get()?.count,
+    ).toBe(1);
+    db.close();
+  });
+
   test("collects invalid-event errors and continues the batch", () => {
     const db = database();
     const invalid = { ...validEvent(), occurred_at: "not-a-time" };

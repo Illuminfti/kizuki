@@ -208,6 +208,28 @@ function position(db: Database): { event_id: string; accepted_at: string } {
   return db.query<{ event_id: string; accepted_at: string }, []>("SELECT event_id,accepted_at FROM events").get()!;
 }
 
+test("v17 event rebuild keeps pending deferred extract rows", () => {
+  const f = legacyFixture();
+  const row = position(f.db);
+  f.db.query("INSERT INTO extract_deferred_inputs VALUES (?, '01ARZ3NDEKTSV4RRFFQ69G5FAV', 1, ?)")
+    .run(row.event_id, "a".repeat(64));
+  const deferred = f.db.query("SELECT * FROM extract_deferred_inputs").all();
+  f.db.close();
+  try {
+    const db = openLedger(f.path);
+    try {
+      expect(db.query("SELECT version FROM schema_version").get()).toEqual({
+        version: LEDGER_SCHEMA_VERSION,
+      });
+      expect(db.query("SELECT * FROM extract_deferred_inputs").all()).toEqual(deferred);
+    } finally {
+      db.close();
+    }
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test("legacy receipt match without derived effects receives one stable legacy binding", () => {
   const f = legacyFixture();
   receiptMatch(f.db, validEvent().text);

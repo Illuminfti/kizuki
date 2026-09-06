@@ -21,6 +21,7 @@ import {
   type ExportManifest,
   type ExportManifestEntry,
 } from "../src/export";
+import { readRailCursor, writeRailCursor } from "../src/ledger/checkpoints";
 import { saveCheckpoint } from "../src/ledger/connections";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "../src/ledger/db";
 import { accept } from "../src/ledger/ledger";
@@ -369,6 +370,7 @@ describe("exportVault", () => {
     expect(manifest.files["ledger/event_purges.jsonl"]?.count).toBe(1);
     expect(manifest.files["connections.jsonl"]?.count).toBe(1);
     expect(manifest.files["checkpoints.jsonl"]?.count).toBe(1);
+    expect(manifest.files["rail_cursors.jsonl"]?.count).toBe(0);
     expect(manifest.snapshot.event_count).toBe(1);
     expect(JSON.parse(readFileSync(join(outDir, "manifest.json"), "utf8"))).toEqual(
       manifest,
@@ -383,6 +385,47 @@ describe("exportVault", () => {
       expect(lstatSync(join(outDir, path)).mode & 0o777).toBe(0o600);
     }
     expect(lstatSync(outDir).mode & 0o777).toBe(0o700);
+    db.close();
+  });
+
+  test("round-trips extract rail cursors without putting them in checkpoints", () => {
+    const { db, vaultPath } = populated();
+    writeRailCursor(db, "kizuki.producer.model", "extract", "2026-01-01T00:00:00Z\t01ARZ3NDEKTSV4RRFFQ69G5FAV");
+    writeRailCursor(db, "kizuki.producer.model", "extract-deferred-scan", "01ARZ3NDEKTSV4RRFFQ69G5FAV");
+    const backup = join(temporary("kizuki-export-parent-"), "dump");
+    const manifest = exportVault(db, vaultPath, backup);
+    expect(manifest.files["rail_cursors.jsonl"]?.count).toBe(2);
+    const rails = readFileSync(join(backup, "rail_cursors.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(rails).toEqual([
+      {
+        rail: "kizuki.producer.model",
+        source_key: "extract",
+        cursor: "2026-01-01T00:00:00Z\t01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        updated_at: expect.any(String),
+      },
+      {
+        rail: "kizuki.producer.model",
+        source_key: "extract-deferred-scan",
+        cursor: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        updated_at: expect.any(String),
+      },
+    ]);
+    expect(readFileSync(join(backup, "checkpoints.jsonl"), "utf8")).not.toContain(
+      "kizuki.producer.model",
+    );
+    const target = join(temporary("kizuki-restore-parent-"), "vault");
+    restoreVault(backup, target);
+    const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
+    expect(readRailCursor(restored, "kizuki.producer.model", "extract")).toBe(
+      "2026-01-01T00:00:00Z\t01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    );
+    expect(readRailCursor(restored, "kizuki.producer.model", "extract-deferred-scan")).toBe(
+      "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    );
+    restored.close();
     db.close();
   });
 

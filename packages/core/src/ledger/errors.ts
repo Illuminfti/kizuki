@@ -52,7 +52,7 @@ export function classifySqliteFailure(error: unknown): LedgerStoreError | null {
     return new LedgerStoreError("corrupt", "ledger is corrupt", { cause: error });
   }
   const infra = haystack.match(
-    /SQLITE_(IOERR|FULL|CANTOPEN|READONLY|NOMEM|PROTOCOL|NOLFS|MISUSE|RANGE)[A-Z0-9_]*/,
+    /SQLITE_(IOERR|FULL|CANTOPEN|READONLY|NOMEM|PROTOCOL|NOLFS|MISUSE|RANGE|CONSTRAINT_FOREIGNKEY|CONSTRAINT_CHECK|CONSTRAINT_NOTNULL)[A-Z0-9_]*/,
   );
   if (infra !== null) {
     return new LedgerStoreError(

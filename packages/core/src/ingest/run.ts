@@ -85,8 +85,17 @@ function processEvent(
       };
       const accepted = accept(db, input, source === undefined ? {} : { source });
       if (accepted.status === "error") {
-        result.errors.push(accepted.error);
-        return result;
+        switch (accepted.kind) {
+          case "infrastructure":
+            throw new LedgerStoreError("corrupt", accepted.error);
+          case "validation":
+            result.errors.push(accepted.error);
+            return result;
+          default: {
+            const _exhaustive: never = accepted.kind;
+            throw new LedgerStoreError("infrastructure", String(_exhaustive));
+          }
+        }
       }
       if (accepted.status === "duplicate") {
         result.duplicates = 1;
