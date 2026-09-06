@@ -1,5 +1,6 @@
 export type CanonWriteErrorCode =
   | "claim_not_live"
+  | "claim_kind_retired"
   | "claim_unknown"
   | "claim_mismatch"
   | "batch_mismatch"

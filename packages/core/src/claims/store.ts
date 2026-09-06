@@ -233,6 +233,9 @@ function assertInput(input: InsertClaimInput): void {
   if (!isClaimKind(input.kind)) {
     throw new ClaimError("schema_invalid", "kind is not a claim kind");
   }
+  if (input.kind === "purge_review") {
+    throw new ClaimError("schema_invalid", "purge_review is retained for historical compatibility only");
+  }
   if (typeof input.body !== "string") {
     throw new ClaimError("schema_invalid", "body must be a string");
   }
@@ -620,14 +623,14 @@ export function countClaims(
   );
 }
 
-/** Live claims the receipted writer has not yet materialized. */
+/** Live writable claims the receipted writer has not yet materialized. */
 export function countUnwrittenLiveClaims(db: Database): number {
   if (!tableExists(db, "claims")) return 0;
   return (
     db
       .query<{ n: number }, []>(
         `SELECT count(*) AS n FROM claims
-          WHERE status = 'live' AND receipt_id IS NULL`,
+          WHERE status = 'live' AND receipt_id IS NULL AND kind <> 'purge_review'`,
       )
       .get()?.n ?? 0
   );
@@ -659,7 +662,7 @@ export function listUnwrittenLiveClaims(
   return db
     .query<ClaimRow, [number]>(
       `SELECT * FROM claims
-        WHERE status = 'live' AND receipt_id IS NULL
+        WHERE status = 'live' AND receipt_id IS NULL AND kind <> 'purge_review'
         ORDER BY created_at, claim_id
         LIMIT ?`,
     )
@@ -935,9 +938,9 @@ export async function prepareClaimInsert(
   io: ClaimsIo,
   input: InsertClaimInput,
 ): Promise<PreparedClaimInsert> {
-  assertInput(input);
   // A caller cannot alter the prepared draft while the semantic lookup waits.
   input = structuredClone(input);
+  assertInput(input);
   io = { ...io };
   const scope = { owner: canonicalizeProducer(input.producer) !== "model" && !input.producer.startsWith("agent:"),
     model: canonicalizeProducer(input.producer) === "model",
