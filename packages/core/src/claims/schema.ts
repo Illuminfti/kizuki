@@ -527,31 +527,31 @@ function stagingIdempotencyReady(db: Database): boolean {
 }
 
 function emptyLiveSignature(db: Database): boolean {
-  if (
-    db
-      .query<{ ok: number }, []>(
-        `SELECT 1 AS ok FROM proposals
-          WHERE content_hash = '' AND status IN ('pending', 'promoted')
-          LIMIT 1`,
-      )
-      .get() !== null
-  ) {
-    return true;
+  const proposals = db.prepare<{ ok: number }, []>(
+    `SELECT 1 AS ok FROM proposals
+      WHERE content_hash = '' AND status IN ('pending', 'promoted')
+      LIMIT 1`,
+  );
+  try {
+    if (proposals.get() !== null) return true;
+  } finally {
+    proposals.finalize();
   }
   if (!tableExists(db, "claims") || !columnNames(db, "claims").has("content_hash")) {
     return false;
   }
-  return (
-    db
-      .query<{ ok: number }, []>(
-        `SELECT 1 AS ok FROM claims
-          WHERE content_hash = ''
-            AND status = 'live'
-            AND kind <> 'purge_review'
-          LIMIT 1`,
-      )
-      .get() !== null
+  const claims = db.prepare<{ ok: number }, []>(
+    `SELECT 1 AS ok FROM claims
+      WHERE content_hash = ''
+        AND status = 'live'
+        AND kind <> 'purge_review'
+      LIMIT 1`,
   );
+  try {
+    return claims.get() !== null;
+  } finally {
+    claims.finalize();
+  }
 }
 
 /** Cheap no-op once v3 exists. `applyClaimsV3` stays the migration path. */
