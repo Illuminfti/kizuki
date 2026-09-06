@@ -1,4 +1,4 @@
-import { stageSourceErasureIntent, readSourceErasureIntent, appendSourceErasureReceipt, type SourceErasureIntent } from "./source-erasure-intent";
+import { stageSourceErasureIntent, readSourceErasureIntent, appendSourceErasureReceipt, isLiveSourceSurvivorPath, isLiveSourceSurvivorReceipt, type SourceErasureIntent } from "./source-erasure-intent";
 import {
   getSourceSurvivorLineage,
   insertSourceSurvivorLineage,
@@ -756,7 +756,10 @@ export function applyPurgeRewrite(
         "decision_stale",
         "retained source claims are unavailable",
       );
-    if (resolver.basis(input.rel_path, existing.hash) === null) {
+    if (
+      isLiveSourceSurvivorPath(input.rel_path) &&
+      resolver.basis(input.rel_path, existing.hash) === null
+    ) {
       throw new CanonWriteError(
         "decision_stale",
         "source erasure origin has no positive basis",
@@ -907,24 +910,11 @@ export function applyPurgeRewrite(
   return receipt;
 }
 
-function isLiveSurvivorIntent(intent: SourceErasureIntent): boolean {
-    const receipt = intent.receipt;
-    return receipt.kind === "purge_rewrite" &&
-        receipt.page_action === "edit" &&
-        receipt.archive_path === null &&
-        receipt.reverts === null &&
-        receipt.writer === "loop" &&
-        receipt.producer === "deterministic" &&
-        receipt.model_ref === null &&
-        receipt.page_path !== "" &&
-        !receipt.page_path.startsWith("archive/");
-}
-
 function finishSourceErasure(scope: VaultMutationScope, io: CanonIo, intent: SourceErasureIntent, page: VaultPage | null): void {
     assertVaultMutationScope(scope, io);
     const receipt = intent.receipt;
     const lineage = intent.version === 2 ? intent.lineage : null;
-    if (intent.version === 2 && isLiveSurvivorIntent(intent) !== (lineage !== null)) {
+    if (intent.version === 2 && isLiveSourceSurvivorReceipt(receipt) !== (lineage !== null)) {
         throw new Error("source erasure lineage invalid");
     }
     const stream = appendSourceErasureReceipt(scope, io, receipt);
@@ -992,9 +982,9 @@ export function recoverSourceErasureIntents(scope: VaultMutationScope, io: Canon
                 continue;
             if (hash !== intent.receipt.after_hash)
                 return false;
-            if (intent.version === 1 && isLiveSurvivorIntent(intent))
+            if (intent.version === 1 && isLiveSourceSurvivorReceipt(intent.receipt))
                 return false;
-            if (intent.version === 2 && isLiveSurvivorIntent(intent) &&
+            if (intent.version === 2 && isLiveSourceSurvivorReceipt(intent.receipt) &&
                 (intent.lineage === null || intent.lineage.after_hash !== hash ||
                  intent.lineage.child_receipt_id !== intent.receipt.receipt_id))
                 return false;

@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { applyPurgeRewrite } from "../../src/canon/apply";
 import { CanonAuthorityResolver } from "../../src/canon/authority";
 import { snapshotCanonIo, withCanonMutationSync } from "../../src/canon/io";
@@ -35,7 +35,7 @@ afterEach(() => {
 
 function policy() {
   return {
-    purposes: ["capture", "recall", "session", "derive", "extract", "export"],
+    purposes: ["capture", "recall", "session", "derive", "extract", "export", "correction"],
     allowed_fields: ["text", "subjects", "attachments", "metadata"],
     retention: "persistent_owned_until_revoked" as const,
     egress: "local_only" as const,
@@ -44,8 +44,9 @@ function policy() {
 }
 
 function setup() {
-  const dir = mkdtempSync(join(tmpdir(), "source-survivor-"));
-  dirs.push(dir);
+  const root = mkdtempSync(join(tmpdir(), "source-survivor-"));
+  dirs.push(root);
+  const dir = join(root, "vault");
   initVault(dir);
   const db = openLedger(join(dir, ".kizuki", "kizuki.db"));
   const a = ulid();
@@ -54,7 +55,7 @@ function setup() {
   registerConnection(db, "kizuki.fixture", a);
   registerConnection(db, "kizuki.fixture", b);
   registerConnection(db, "kizuki.fixture", c);
-  return { dir, db, a, b, c };
+  return { root, dir, db, a, b, c, backup: join(root, "backup"), restored: join(root, "restored") };
 }
 
 function grant(db: ReturnType<typeof openLedger>, key: string, operation: string) {
@@ -204,18 +205,11 @@ test("ordinary purge, revert and undo-of-undo reach a source-survivor checkpoint
       kind: "merge", predicate: null, object: null, body: "B survivor marker",
       frontmatter: { type: "person", title: "Shared" },
     }));
-    const edited = write(io, await storeClaim(db, bb.event_id, {
-      kind: "edit", predicate: null, object: null, body: "B survivor marker",
-      frontmatter: { type: "person", title: "Shared" },
-    }));
-    const reverted = await undoReceipt(io, edited.receipt_id);
-    expect(reverted.kind).toBe("revert");
-    const restored = await undoReceipt(io, reverted.receipt_id);
-    expect(restored.kind).toBe("revert");
     revokeSourceGrant(db, { source_key: a, expected_revision: 1, operation_id: "erase-a" });
     expect((await resumeSourceRevocation(db, dir, "erase-a", retrieval)).status).toBe("purged");
-    const page = listCanonPages(dir).find(row => row.relPath === original.page_path)!;
-    expect(assessLivePageEvidence(db, page).admitted).toBe(true);
+    const survivor = listCanonPages(dir).find(row => row.relPath === original.page_path)!;
+    expect(assessLivePageEvidence(db, survivor).admitted).toBe(true);
+    expect(lineageRowCount(db)).toBe(1);
     const purged = withCanonMutationSync(snapshotCanonIo(io), (scope, bound) => applyPurgeRewrite(scope, bound, {
       rel_path: original.page_path,
       purged_event_ids: [],
@@ -224,12 +218,22 @@ test("ordinary purge, revert and undo-of-undo reach a source-survivor checkpoint
     }));
     expect(purged.kind).toBe("purge_rewrite");
     expect(getSourceSurvivorLineage(db, purged.receipt_id)).toBeNull();
-    const after = listCanonPages(dir).find(row => row.relPath === original.page_path)!;
-    const evidence = assessLivePageEvidence(db, after);
+    const afterPurge = listCanonPages(dir).find(row => row.relPath === original.page_path)!;
+    const purgedEvidence = assessLivePageEvidence(db, afterPurge);
+    expect(purgedEvidence.admitted).toBe(true);
+    expect(purgedEvidence.admitted && purgedEvidence.revision.authority).toBe("connector_evidence");
+    const reverted = await undoReceipt(io, purged.receipt_id);
+    expect(reverted.kind).toBe("revert");
+    const afterRevert = listCanonPages(dir).find(row => row.relPath === original.page_path)!;
+    expect(assessLivePageEvidence(db, afterRevert).admitted).toBe(true);
+    const restored = await undoReceipt(io, reverted.receipt_id);
+    expect(restored.kind).toBe("revert");
+    const afterUndo = listCanonPages(dir).find(row => row.relPath === original.page_path)!;
+    const evidence = assessLivePageEvidence(db, afterUndo);
     expect(evidence.admitted).toBe(true);
     expect(lineageRowCount(db)).toBe(1);
     expect(evidence.admitted && evidence.revision.authority).toBe("connector_evidence");
-    expect(merged.after_hash).not.toBe(after.contentHash);
+    expect(merged.after_hash).not.toBe(afterUndo.contentHash);
   } finally {
     db.close();
   }
@@ -344,7 +348,7 @@ test("a legacy live-survivor postimage without a checkpoint stays incomplete and
 });
 
 test("export round-trips lineage and refuses a current backup that omits the required stream", async () => {
-  const { db, dir, a, b } = setup();
+  const { db, dir, a, b, backup, restored: restoredDir, root } = setup();
   try {
     grant(db, a, "grant-a");
     grant(db, b, "grant-b");
@@ -361,11 +365,9 @@ test("export round-trips lineage and refuses a current backup that omits the req
     }));
     revokeSourceGrant(db, { source_key: a, expected_revision: 1, operation_id: "erase-a" });
     expect((await resumeSourceRevocation(db, dir, "erase-a", retrieval)).status).toBe("purged");
-    const backup = join(dir, "backup");
     const manifest = exportVault(db, dir, backup);
     expect(manifest.schema_versions.ledger).toBe(LEDGER_SCHEMA_VERSION);
     expect(manifest.files[SOURCE_SURVIVOR_LINEAGE_BACKUP]?.count).toBe(1);
-    const restoredDir = join(dir, "restored");
     restoreVault(backup, restoredDir);
     const restored = openLedger(join(restoredDir, ".kizuki", "kizuki.db"));
     try {
@@ -375,7 +377,7 @@ test("export round-trips lineage and refuses a current backup that omits the req
     } finally {
       restored.close();
     }
-    const missing = join(dir, "missing");
+    const missing = join(root, "missing");
     const missingManifest = JSON.parse(readFileSync(join(backup, "manifest.json"), "utf8")) as ExportManifest;
     unlinkSync(join(backup, SOURCE_SURVIVOR_LINEAGE_BACKUP));
     delete missingManifest.files[SOURCE_SURVIVOR_LINEAGE_BACKUP];
@@ -389,34 +391,31 @@ test("export round-trips lineage and refuses a current backup that omits the req
 });
 
 test("a legacy-format backup carrying lineage is refused before publication", async () => {
-  const { db, dir, a } = setup();
+  const { db, dir, a, backup, restored } = setup();
   try {
     grant(db, a, "grant-a");
     acceptSource(db, a, "a", "plain event");
-    const backup = join(dir, "backup");
     const manifest = exportVault(db, dir, backup);
     manifest.schema = V2_BACKUP_SCHEMA;
     signManifest(backup, manifest);
     expect(() => verifyBackup(backup)).toThrow(/must not include source-survivor lineage/);
-    expect(() => restoreVault(backup, join(dir, "restored"))).toThrow(/must not include source-survivor lineage/);
-    expect(existsSync(join(dir, "restored"))).toBe(false);
+    expect(() => restoreVault(backup, restored)).toThrow(/must not include source-survivor lineage/);
+    expect(existsSync(restored)).toBe(false);
   } finally {
     db.close();
   }
 });
 
 test("supported backups without the stream restore without inventing checkpoints", async () => {
-  const { db, dir, a } = setup();
+  const { db, dir, a, backup, restored: restoredDir } = setup();
   try {
     grant(db, a, "grant-a");
     acceptSource(db, a, "a", "plain event");
-    const backup = join(dir, "backup");
     const manifest = exportVault(db, dir, backup);
     unlinkSync(join(backup, SOURCE_SURVIVOR_LINEAGE_BACKUP));
     delete manifest.files[SOURCE_SURVIVOR_LINEAGE_BACKUP];
     manifest.schema_versions = { ...manifest.schema_versions, ledger: 19 };
     signManifest(backup, manifest);
-    const restoredDir = join(dir, "restored");
     const report = restoreVault(backup, restoredDir);
     expect(report.recovery_warnings).toContain(LINEAGE_UNAVAILABLE_WARNING);
     const restored = openLedger(join(restoredDir, ".kizuki", "kizuki.db"));
@@ -425,6 +424,147 @@ test("supported backups without the stream restore without inventing checkpoints
     } finally {
       restored.close();
     }
+  } finally {
+    db.close();
+  }
+});
+
+test("mixed-source archive continuity keeps independent archive claims without live lineage", async () => {
+  const { db, dir, a, b, c } = setup();
+  try {
+    grant(db, a, "grant-a");
+    grant(db, b, "grant-b");
+    grant(db, c, "grant-c");
+    const aa = acceptSource(db, a, "a", "A_ONLY");
+    const bb = acceptSource(db, b, "b", "B survivor marker");
+    const cc = acceptSource(db, c, "c", "C_ONLY");
+    const io = { db, vault_path: dir };
+    const original = write(io, await storeClaim(db, aa.event_id, {
+      body: "A_ONLY",
+      frontmatter: { type: "person", title: "Shared" },
+    }));
+    write(io, await storeClaim(db, bb.event_id, {
+      kind: "merge", predicate: null, object: null, body: "B survivor marker",
+      frontmatter: { type: "person", title: "Shared" },
+    }));
+    const later = write(io, await storeClaim(db, cc.event_id, {
+      kind: "merge", predicate: null, object: null, body: "C_ONLY",
+      frontmatter: { type: "person", title: "Shared" },
+    }));
+    expect(later.archive_path).not.toBeNull();
+    const mixedArchive = later.archive_path!;
+    revokeSourceGrant(db, { source_key: a, expected_revision: 1, operation_id: "erase-a" });
+    expect((await resumeSourceRevocation(db, dir, "erase-a", retrieval)).status).toBe("purged");
+    const live = listCanonPages(dir).find(row => row.relPath === original.page_path)!;
+    const liveEvidence = assessLivePageEvidence(db, live);
+    expect(liveEvidence.admitted).toBe(true);
+    if (!liveEvidence.admitted) throw new Error("expected admitted survivor");
+    expect(getSourceSurvivorLineage(db, liveEvidence.revision.receipt_id)).not.toBeNull();
+    expect(live.body).toContain("B survivor marker");
+    expect(live.body).toContain("C_ONLY");
+    expect(live.body).not.toContain("A_ONLY");
+    expect(existsSync(join(dir, mixedArchive))).toBe(true);
+    const archived = readFileSync(join(dir, mixedArchive), "utf8");
+    expect(archived).toContain("B survivor marker");
+    expect(archived).not.toContain("A_ONLY");
+    const archiveRewrite = db.query<{ receipt_id: string }, [string]>(
+      "SELECT receipt_id FROM canon_receipts WHERE page_path=? AND receipt_kind='purge_rewrite' ORDER BY at DESC, receipt_id DESC LIMIT 1",
+    ).get(mixedArchive);
+    expect(archiveRewrite).not.toBeNull();
+    expect(getSourceSurvivorLineage(db, archiveRewrite!.receipt_id)).toBeNull();
+    expect(serveGetPage({ db, vaultPath: dir, principal: OWNER }, { path: original.page_path }).canon).toHaveLength(1);
+    expect(readdirSync(join(dir, "archive")).length).toBeGreaterThan(0);
+  } finally {
+    db.close();
+  }
+});
+
+test("a legacy live-survivor preimage upgrades to a version-2 checkpoint", async () => {
+  const { db, dir, a, b } = setup();
+  try {
+    grant(db, a, "grant-a");
+    grant(db, b, "grant-b");
+    const aa = acceptSource(db, a, "a", "A_ONLY");
+    const bb = acceptSource(db, b, "b", "B survivor marker");
+    const io = { db, vault_path: dir };
+    const original = write(io, await storeClaim(db, aa.event_id, {
+      body: "A_ONLY",
+      frontmatter: { type: "person", title: "Shared" },
+    }));
+    write(io, await storeClaim(db, bb.event_id, {
+      kind: "merge", predicate: null, object: null, body: "B survivor marker",
+      frontmatter: { type: "person", title: "Shared" },
+    }));
+    const pageDir = dirname(join(dir, original.page_path));
+    revokeSourceGrant(db, { source_key: a, expected_revision: 1, operation_id: "erase-upgrade" });
+    chmodSync(pageDir, 0o500);
+    try {
+      const pending = await resumeSourceRevocation(db, dir, "erase-upgrade", retrieval);
+      expect(pending.status).toBe("denied");
+      const row = db.query<{ intent: string }, []>("SELECT intent FROM canon_source_erasure_intents").get();
+      expect(row).not.toBeNull();
+      const parsed = JSON.parse(row!.intent) as Record<string, unknown>;
+      expect(parsed["version"]).toBe(2);
+      delete parsed["lineage"];
+      parsed["version"] = 1;
+      const json = JSON.stringify(parsed);
+      db.query("UPDATE canon_source_erasure_intents SET intent=?,digest=?").run(json, sha256Hex(json));
+    } finally {
+      chmodSync(pageDir, 0o700);
+    }
+    const done = await resumeSourceRevocation(db, dir, "erase-upgrade", retrieval);
+    expect(done.status).toBe("purged");
+    expect(lineageRowCount(db)).toBe(1);
+    const page = listCanonPages(dir).find(row => row.relPath === original.page_path)!;
+    expect(page.body).toContain("B survivor marker");
+    expect(page.body).not.toContain("A_ONLY");
+    expect(assessLivePageEvidence(db, page).admitted).toBe(true);
+    expect(db.query("SELECT 1 FROM canon_source_erasure_intents LIMIT 1").get()).toBeNull();
+  } finally {
+    db.close();
+  }
+});
+
+test("restore refuses a duplicated lineage child before publication", async () => {
+  const { db, dir, a, b, backup, restored, root } = setup();
+  try {
+    grant(db, a, "grant-a");
+    grant(db, b, "grant-b");
+    const aa = acceptSource(db, a, "a", "A_ONLY");
+    const bb = acceptSource(db, b, "b", "B survivor marker");
+    const io = { db, vault_path: dir };
+    write(io, await storeClaim(db, aa.event_id, {
+      body: "A_ONLY",
+      frontmatter: { type: "person", title: "Shared" },
+    }));
+    write(io, await storeClaim(db, bb.event_id, {
+      kind: "merge", predicate: null, object: null, body: "B survivor marker",
+      frontmatter: { type: "person", title: "Shared" },
+    }));
+    revokeSourceGrant(db, { source_key: a, expected_revision: 1, operation_id: "erase-a" });
+    expect((await resumeSourceRevocation(db, dir, "erase-a", retrieval)).status).toBe("purged");
+    const manifest = exportVault(db, dir, backup);
+    const stream = join(backup, SOURCE_SURVIVOR_LINEAGE_BACKUP);
+    const original = readFileSync(stream);
+    writeFileSync(stream, Buffer.concat([original, original]));
+    chmodSync(stream, 0o600);
+    const duplicated = {
+      ...manifest,
+      files: {
+        ...manifest.files,
+        [SOURCE_SURVIVOR_LINEAGE_BACKUP]: {
+          ...manifest.files[SOURCE_SURVIVOR_LINEAGE_BACKUP]!,
+          count: 2,
+          size: original.byteLength * 2,
+          sha256: new Bun.CryptoHasher("sha256").update(Buffer.concat([original, original])).digest("hex"),
+        },
+      },
+    };
+    signManifest(backup, duplicated);
+    const refused = join(root, "duplicate-restore");
+    expect(() => restoreVault(backup, refused)).toThrow(/source-survivor lineage duplicate/);
+    expect(existsSync(refused)).toBe(false);
+    expect(existsSync(restored)).toBe(false);
   } finally {
     db.close();
   }

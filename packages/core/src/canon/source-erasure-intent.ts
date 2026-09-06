@@ -62,7 +62,12 @@ function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boo
     return Object.keys(value).sort().join(",") === [...keys].sort().join(",");
 }
 
-function isLiveSurvivorReceipt(receipt: CanonReceipt): boolean {
+export function isLiveSourceSurvivorPath(path: string): boolean {
+    return path !== "" && !path.startsWith("archive/");
+}
+
+/** Live remaining pages require lineage; archive and deletion keep null lineage. */
+export function isLiveSourceSurvivorReceipt(receipt: CanonReceipt): boolean {
     return receipt.kind === "purge_rewrite" &&
         receipt.page_action === "edit" &&
         receipt.archive_path === null &&
@@ -70,6 +75,11 @@ function isLiveSurvivorReceipt(receipt: CanonReceipt): boolean {
         receipt.writer === "loop" &&
         receipt.producer === "deterministic" &&
         receipt.model_ref === null &&
+        isLiveSourceSurvivorPath(receipt.page_path);
+}
+
+function isLiveSurvivorReceipt(receipt: CanonReceipt): boolean {
+    return isLiveSourceSurvivorReceipt(receipt) &&
         isLineageHash(receipt.before_hash) &&
         isLineageHash(receipt.after_hash);
 }
@@ -177,7 +187,7 @@ function validate(db: Database, intent: SourceErasureIntent): void {
             !isLiveSurvivorReceipt(intent.receipt))
             throw Error("source erasure lineage invalid");
     }
-    if (intent.version === 2 && intent.lineage === null && isLiveSurvivorReceipt(intent.receipt))
+    if (intent.version === 2 && intent.lineage === null && isLiveSourceSurvivorReceipt(intent.receipt))
         throw Error("source erasure lineage invalid");
 }
 
@@ -191,7 +201,7 @@ function parseIntentBytes(bytes: Uint8Array, digest: string): SourceErasureInten
     return parsed as SourceErasureIntent;
 }
 
-function writeIntent(db: Database, intent: SourceErasureIntent): string {
+function writeIntent(intent: SourceErasureIntent): string {
     const json = JSON.stringify(intent);
     if (Buffer.byteLength(json, "utf8") > MAX_INTENT_BYTES)
         throw Error("source erasure intent exceeds bound");
@@ -251,7 +261,7 @@ export function stageSourceErasureIntent(io: CanonIo, source: string, ids: reado
                 child_receipt_id: next.receipt.receipt_id,
             });
         }
-        if (pending.version === 1 && isLiveSurvivorReceipt(next.receipt)) {
+        if (pending.version === 1 && isLiveSourceSurvivorReceipt(next.receipt)) {
             const upgraded = liveSurvivorLineage(io, next.receipt, original);
             next.lineage = upgraded;
             if (!coreEqual(pending, next) || pending.original_receipt_id !== next.original_receipt_id)
