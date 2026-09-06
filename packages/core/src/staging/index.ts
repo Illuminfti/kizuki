@@ -22,9 +22,11 @@ export type {
 export { pageCandidateProposal } from "./page-candidate";
 
 export {
+  DETERMINISTIC_PRODUCER_BUDGET,
   cascadeTombstone,
   proposalsForEvent,
   withdrawForTombstone,
 } from "./producers";
 export type { ProducerGrants, TombstoneCascade } from "./producers";
 export type { SourceTombstoneContext } from "../canon/source-tombstone";
+export { NAMESPACED_SUBJECT_MAX, encodeSubjectSegment, namespacedSubjectId } from "./subjects";

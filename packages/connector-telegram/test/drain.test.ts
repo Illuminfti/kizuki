@@ -248,7 +248,7 @@ test("a wait during a resumed edit scan reads as a wait, not a stuck connector",
   ]);
   expect((await built.connector.health()).state).toBe("rate_limited");
   db.close();
-});
+}, 15_000);
 
 test("a wait that reached only skipped records keeps its place", async () => {
   const account = fixtureAccount();

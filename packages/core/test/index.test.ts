@@ -40,6 +40,7 @@ describe("public surface", () => {
       "DEFAULT_MAX_BATCHES",
       "DEFAULT_RAILS",
       "DEFAULT_SERVE_CONFIG",
+      "DETERMINISTIC_PRODUCER_BUDGET",
       "DOCTRINE_VERSION",
       "DROPPED_DRAFT_REASONS",
       "DeadlineError",

@@ -173,6 +173,8 @@ export function runBatch(
     }
   }
 
+  // bun:sqlite close() can leave this batch in the WAL; PASSIVE copies idle frames.
+  db.exec("PRAGMA wal_checkpoint(PASSIVE)");
   return result;
 }
 

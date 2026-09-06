@@ -4,12 +4,14 @@ import { join } from "node:path";
 import {
   PAGE_CANDIDATE_KEY,
   PAGE_CANDIDATE_SCHEMA,
+  validatePageCandidate,
 } from "../../src/contracts/page-candidate";
 import { getCanonReceipt } from "../../src/canon/receipts";
 import { insertClaim } from "../../src/claims/store";
 import type { Claim } from "../../src/contracts/proposal";
 import { accept } from "../../src/ledger/ledger";
-import { proposalsForEvent } from "../../src/staging/producers";
+import { pageCandidateProposal } from "../../src/staging/page-candidate";
+import { DETERMINISTIC_PRODUCER_BUDGET, proposalsForEvent } from "../../src/staging/producers";
 import { fileProposal } from "../../src/staging/proposals";
 import { validatePage } from "../../src/vault/schema";
 import { parseFrontmatter } from "../../src/vault/frontmatter";
@@ -60,7 +62,7 @@ describe("a page candidate on an event", () => {
             );
       const note = proposals[1];
       expect(note?.kind).toBe("claim");
-      expect(note?.target).toBeNull();
+      expect(note?.target).toBe("captures/fixture/2026-02-28");
       expect(note?.frontmatter["type"]).toBe("source");
       expect(note?.frontmatter["title"]).toContain("Capture from");
       expect(note?.body).toContain("> line one");
@@ -81,7 +83,7 @@ describe("a page candidate on an event", () => {
     expect(page?.body).toBe("# Ada\n\nMet at the fair.");
     expect(page?.producer).toBe("deterministic");
     expect(page?.confidence).toBe(1);
-    expect(page?.subjects).toEqual(["person:ada"]);
+    expect(page?.subjects).toEqual(["fixture/person/ada"]);
   });
 
   test("a non-entity type files as a claim", () => {
@@ -137,7 +139,7 @@ describe("a page candidate on an event", () => {
     );
     const note = proposals[1];
     expect(note?.kind).toBe("claim");
-    expect(note?.target).toBeNull();
+    expect(note?.target).toBe("captures/fixture/2026-02-28");
     expect(note?.frontmatter["type"]).toBe("source");
     expect(note?.body).toContain("> line one");
   });
@@ -148,6 +150,32 @@ describe("a page candidate on an event", () => {
         event({ deleted: true, metadata: candidateMetadata() }),
       ),
     ).toEqual([]);
+  });
+
+  test("a granted candidate honors the subject budget so ingest can store the event", () => {
+    const subjects = Array.from({ length: 65 }, (_, i) => ({
+      subject_id: `person:s${i}`,
+      role: "about" as const,
+    }));
+    const ev = event({ subjects, metadata: candidateMetadata() });
+    const parsed = validatePageCandidate(ev.metadata);
+    if (parsed === null || !parsed.ok) {
+      throw new Error(
+        parsed === null ? "expected a page candidate" : parsed.errors.join("; "),
+      );
+    }
+    const direct = pageCandidateProposal(ev, parsed.value);
+    expect(direct.subjects).toHaveLength(DETERMINISTIC_PRODUCER_BUDGET.maxSubjectsPerEvent);
+
+    const proposals = granted(ev);
+    const page = proposals.find((proposal) => proposal.target === "entities/ada");
+    expect(page?.subjects).toHaveLength(DETERMINISTIC_PRODUCER_BUDGET.maxSubjectsPerEvent);
+    expect(page?.subjects).toEqual(direct.subjects);
+
+    const db = memoryDb([ev]);
+    if (page === undefined) throw new Error("expected a granted page candidate");
+    expect(fileProposal(db, page).outcome).toBe("stored");
+    db.close();
   });
 
   test("refiling the same page is a duplicate, not a second staged item", () => {

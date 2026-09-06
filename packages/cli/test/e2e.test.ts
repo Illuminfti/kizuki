@@ -37,8 +37,12 @@ describe("kizuki CLI stranger loop", () => {
       expect(new Set(entities.flatMap((claim) => claim.subjects)).size).toBe(3);
       for (const entity of entities) {
         expect(entity.frontmatter["type"]).toBe("topic");
-        expect(entity.subjects[0]).toMatch(/^markdown-folder:[a-f0-9]{64}$/);
-        expect(entity.frontmatter["x-subject-id"]).toBe(entity.subjects[0]);
+        expect(entity.subjects[0]).toMatch(
+          /^kizuki\.markdown-folder\/markdown-folder\/[a-f0-9]{64}$/,
+        );
+        expect(entity.frontmatter["x-subject-id"]).toMatch(
+          /^markdown-folder:[a-f0-9]{64}$/,
+        );
         expect(entity.authority).toBe("connector_evidence");
         expect(entity.provenance).toHaveLength(1);
       }

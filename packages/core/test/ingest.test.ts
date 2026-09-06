@@ -1,5 +1,8 @@
 import { setSourceGrant } from "../src/ledger/source-grants";
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   Connector,
   HealthReport,
@@ -255,6 +258,29 @@ describe("runBatch", () => {
     });
     expect(listProposals(db)).toHaveLength(2);
     db.close();
+  });
+
+  test("a multi-event batch lands in the main sqlite file after close", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kizuki-ingest-wal-"));
+    const dbPath = join(directory, "ledger.sqlite");
+    try {
+      const db = openLedger(dbPath);
+      initStaging(db);
+      const events = Array.from({ length: 15 }, (_, i) => ({
+        ...validEvent(),
+        source_record_id: `rec-${i}`,
+        text: `wal-batch-marker ${i}`,
+      }));
+      const result = runBatch(db, { events, cursor: null }, NOTHING);
+      expect(result.errors).toEqual([]);
+      expect(result.stored).toBe(15);
+      db.close();
+      expect(readFileSync(dbPath).includes(Buffer.from("wal-batch-marker"))).toBe(
+        true,
+      );
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   test("collects invalid-event errors and continues the batch", () => {

@@ -26,7 +26,10 @@ import {
   type CanonReceiptRow,
   rowToReceipt,
 } from "./canon/receipts";
+import { contentSignature } from "./claims/hash";
 import { CLAIMS_SCHEMA_VERSION, syncCompatProposals } from "./claims/schema";
+import { canonicalizeProducer, isProducer } from "./contracts/proposal";
+import { isPlainObject } from "./util/validate";
 import {
   LEGACY_IDENTITY_EVIDENCE_MAX_BYTES,
   LEGACY_IDENTITY_ENDPOINT_MAX_BYTES,
@@ -197,6 +200,7 @@ interface ClaimRow {
   receipt_id: string | null;
   corroboration: number;
   last_confirmed_at: string | null;
+  content_hash: string;
 }
 
 interface ConnectionRow {
@@ -558,6 +562,7 @@ function claimRecord(row: ClaimRow): Record<string, unknown> {
     receipt_id: row.receipt_id,
     corroboration: row.corroboration,
     last_confirmed_at: row.last_confirmed_at,
+    content_hash: row.content_hash,
   };
 }
 
@@ -1431,6 +1436,28 @@ function insertPurge(db: Database, raw: Record<string, unknown>): void {
   );
 }
 
+const CLAIM_CONTENT_HASH = /^[0-9a-f]{64}$/;
+
+function restoreClaimContentHash(raw: Record<string, unknown>): string {
+  const recorded = raw.content_hash;
+  if (typeof recorded === "string" && CLAIM_CONTENT_HASH.test(recorded)) {
+    return recorded;
+  }
+  const producer = asString(raw.producer, "producer");
+  return contentSignature({
+    kind: asString(raw.kind, "kind"),
+    target: asStringOrNull(raw.target, "target"),
+    body: asString(raw.body, "body"),
+    frontmatter: isPlainObject(raw.frontmatter) ? raw.frontmatter : {},
+    subjects:
+      Array.isArray(raw.subjects) && raw.subjects.every((item) => typeof item === "string")
+        ? raw.subjects
+        : [],
+    producer: isProducer(producer) ? canonicalizeProducer(producer) : producer,
+    confidence: asNumber(raw.confidence, "confidence"),
+  });
+}
+
 function insertClaimRow(db: Database, raw: Record<string, unknown>): void {
   db.query(
     `INSERT INTO claims
@@ -1438,8 +1465,9 @@ function insertClaimRow(db: Database, raw: Record<string, unknown>): void {
         producer, confidence, status, created_at, body_hash,
         subject, predicate, object, polarity, claim_key, authority,
         sensitivity, taint, model_ref, valid_from, valid_to, asserted_at,
-        retracted_at, superseded_by, receipt_id, corroboration, last_confirmed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        retracted_at, superseded_by, receipt_id, corroboration, last_confirmed_at,
+        content_hash)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     asString(raw.claim_id, "claim_id"),
     asString(raw.kind, "kind"),
@@ -1470,6 +1498,7 @@ function insertClaimRow(db: Database, raw: Record<string, unknown>): void {
     asStringOrNull(raw.receipt_id, "receipt_id"),
     asNumber(raw.corroboration ?? 1, "corroboration"),
     asStringOrNull(raw.last_confirmed_at, "last_confirmed_at"),
+    restoreClaimContentHash(raw),
   );
 }
 

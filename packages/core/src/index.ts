@@ -682,7 +682,10 @@ export {
   runSync,
   runToCompletion,
 } from "./ingest/run";
-export { proposalsForEvent } from "./staging/producers";
+export {
+  DETERMINISTIC_PRODUCER_BUDGET,
+  proposalsForEvent,
+} from "./staging/producers";
 export { BACKUP_SCHEMA, exportVault, restoreVault, verifyBackup } from "./export";
 export type {
   BackupSchemaVersions,
