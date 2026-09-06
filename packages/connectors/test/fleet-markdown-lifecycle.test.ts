@@ -107,18 +107,26 @@ test("resume reports one mixed ordinary-file lifecycle without repeating identit
   await writeFile(path.join(selected, "edited.md"), "SYNTHETIC_AFTER\n");
   await unlink(path.join(selected, "removed.md"));
 
-  const mixed = await createMarkdownFolderConnector({ path: selected }).sync(
+  let mixed = await createMarkdownFolderConnector({ path: selected }).sync(
     requireCursor(unchanged.cursor),
   );
-  expect(idsOf(mixed.events)).toEqual(["edited.md", "removed.md"]);
+  const mixedEvents = [...mixed.events];
+  for (let page = 0; !mixed.exhausted && page < 4; page += 1) {
+    mixed = await createMarkdownFolderConnector({ path: selected }).sync(
+      requireCursor(mixed.cursor),
+    );
+    mixedEvents.push(...mixed.events);
+  }
+  expect(mixed.exhausted).toBe(true);
+  expect(idsOf(mixedEvents)).toEqual(["edited.md", "removed.md"]);
 
-  const editedAgain = named(mixed.events, "edited.md");
+  const editedAgain = named(mixedEvents, "edited.md");
   expect(editedAgain.deleted).toBe(false);
   expect(editedAgain.text).toBe("SYNTHETIC_AFTER\n");
   expect(editedAgain.source_record_id).toBe(edited.source_record_id);
   expect(editedAgain.subjects).toEqual(edited.subjects);
 
-  const tombstone = named(mixed.events, "removed.md");
+  const tombstone = named(mixedEvents, "removed.md");
   expect(tombstone.deleted).toBe(true);
   expect(tombstone.text).toBe("");
   expect(tombstone.source_record_id).toBe(removed.source_record_id);
